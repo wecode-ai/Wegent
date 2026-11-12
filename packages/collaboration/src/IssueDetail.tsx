@@ -89,14 +89,14 @@ interface IssueDetailProps {
   onError(): void;
 }
 
-interface IssueCreateProps {
+export interface IssueCreateProps {
   defaults?: BoardIssueCreateDefaults;
   api: IssueDetailProps["api"];
   project: CollaborationProject;
   allIssues: CollaborationIssue[];
   messages: Messages;
   translate?: CollaborationTranslate;
-  environmentNotice?: ReactNode;
+  environmentNotice?: ReactNode | ((context: { saving: boolean }) => ReactNode);
   environmentReadiness?: ProjectExecutionEnvironmentReadinessKind;
   onClose(): void;
   onCreated(issue: CollaborationIssue): void | Promise<void>;
@@ -122,6 +122,15 @@ function browserSave(blob: Blob, filename: string): Promise<void> {
 }
 
 export function IssueCreate({
+  renderHost,
+  ...props
+}: IssueCreateProps & {
+  renderHost?(props: IssueCreateProps): ReactNode;
+}) {
+  return renderHost ? renderHost(props) : <DefaultIssueCreate {...props} />;
+}
+
+function DefaultIssueCreate({
   defaults,
   api,
   project,
@@ -170,7 +179,12 @@ export function IssueCreate({
         extensions={{
           ...browserDueDateExtensions,
           ...(environmentNotice
-            ? { renderCreateOptions: () => environmentNotice }
+            ? {
+                renderCreateOptions: (context) =>
+                  typeof environmentNotice === "function"
+                    ? environmentNotice(context)
+                    : environmentNotice,
+              }
             : {}),
         }}
       />

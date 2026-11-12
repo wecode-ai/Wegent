@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -24,6 +24,7 @@ pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
 mod ordering;
+mod project_board_order;
 #[path = "project_coordination.rs"]
 mod project_coordination;
 #[path = "project_coordination_commands.rs"]
@@ -155,9 +156,12 @@ impl LocalTaskStore {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TaskRuntimeError> {
+        let started = Instant::now();
         let _initialization = LOCAL_TASK_STORE_INITIALIZATION
             .lock()
             .map_err(|_| TaskRuntimeError::LockPoisoned)?;
+        let lock_wait_ms = started.elapsed().as_millis();
+        let open_started = Instant::now();
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -167,7 +171,21 @@ impl LocalTaskStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        let open_ms = open_started.elapsed().as_millis();
+        let migration_started = Instant::now();
         migrate(&connection)?;
+        crate::logging::log_executor_event(
+            "task store initialization finished",
+            &[
+                ("lock_wait_ms", lock_wait_ms.to_string()),
+                ("open_ms", open_ms.to_string()),
+                (
+                    "migration_ms",
+                    migration_started.elapsed().as_millis().to_string(),
+                ),
+                ("total_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
             path,
@@ -312,6 +330,11 @@ mod archive_tests;
 #[path = "store/tests/mod.rs"]
 mod tests;
 
+mod chat_groups;
+mod thread_migration;
+mod thread_project_links;
+use chat_groups::work_container_from;
+
 mod project_records;
 
 mod task_records;
@@ -343,6 +366,8 @@ mod validation;
 mod record_rows;
 
 mod collaboration;
+mod group_configuration;
+mod resource_bindings;
 
 mod execution_payload;
 use binding_rows::get_binding_by_kind;
@@ -384,6 +409,10 @@ use record_rows::map_chat_agent;
 use record_rows::map_comment;
 use record_rows::map_execution;
 use record_rows::move_runtime_comment_task_to_in_progress;
+use resource_bindings::{
+    group_resource_agent, scope_resource_group, task_execution_agent, task_resource_agent,
+    task_resource_group,
+};
 use schema::migrate;
 use schema::unused_project_key;
 use validation::validate_chat_agent_runtime;

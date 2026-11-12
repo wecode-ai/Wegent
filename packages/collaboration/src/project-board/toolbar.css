@@ -1,4 +1,4 @@
-.project-board-toolbar {
+.project-board-controls {
   container: project-board-toolbar / inline-size;
 }
 
@@ -17,7 +17,7 @@
   line-height: 1.5;
 }
 
-/* Use the board pane width, including when a conversation shares the window. */
+/* Measure the controls' available width, excluding the separate layout action. */
 @container project-board-toolbar (max-width: 900px) {
   .project-board-compact-action {
     min-width: 32px;
@@ -33,6 +33,11 @@
 
   .project-board-action-icon {
     display: block;
+  }
+
+  .project-board-group-filter[data-active='true'] .project-board-action-label {
+    display: inline;
+    margin-inline-start: 6px;
   }
 
   .project-board-search {

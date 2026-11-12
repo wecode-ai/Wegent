@@ -4,3 +4,4 @@
 
 export * from "./IssueArchiveDialog";
 export * from "./IssueArchiveDrawer";
+export { prepareIssueArchiveSubtree } from "./prepareIssueArchive";

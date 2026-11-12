@@ -48,7 +48,7 @@ impl LocalTaskStore {
     pub fn list_milestones(&self, project: &str) -> Result<Vec<Value>, TaskRuntimeError> {
         let connection = self.connection()?;
         require_project(&connection, project)?;
-        let mut statement = connection.prepare(
+        let mut statement = connection.prepare(&format!(
             "SELECT m.id,m.title,m.description,m.status,json_extract(m.metadata,'$.due_on'),m.version,
                 COALESCE(c.open_issues,0),COALESCE(c.closed_issues,0),COALESCE(c.archived_issues,0)
              FROM loop_items m LEFT JOIN (
@@ -56,12 +56,12 @@ impl LocalTaskStore {
                     SUM(CASE WHEN status='completed' THEN 0 ELSE 1 END) AS open_issues,
                     SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS closed_issues,
                     SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS archived_issues
-                FROM loop_items WHERE cloud_project_id=?1 AND resource_type='task'
+                FROM loop_items WHERE {} AND resource_type='task'
                 GROUP BY json_extract(metadata,'$.milestone_id')
              ) c ON c.milestone_id=m.id
              WHERE m.cloud_project_id=?1 AND m.resource_type='milestone' AND m.deleted_at IS NULL
-             ORDER BY m.created_at DESC,m.id")?;
-        let rows = statement.query_map([project], |row| {
+             ORDER BY m.created_at DESC,m.id", thread_project_links::project_task_scope("loop_items")))?;
+        let rows = statement.query_map(params![project, true], |row| {
             Ok(json!({
                 "id":row.get::<_,String>(0)?, "project_id":project, "title":row.get::<_,String>(1)?,
                 "description":row.get::<_,String>(2)?, "state":row.get::<_,String>(3)?,
@@ -130,7 +130,7 @@ impl LocalTaskStore {
         if changed != 1 {
             return Err(TaskRuntimeError::VersionConflict);
         }
-        transaction.execute("UPDATE loop_items SET metadata=json_remove(metadata,'$.milestone_id'),version=version+1,updated_at=?1 WHERE cloud_project_id=?2 AND resource_type='task' AND json_extract(metadata,'$.milestone_id')=?3",params![now(),project,id])?;
+        transaction.execute(&format!("UPDATE loop_items SET metadata=json_remove(metadata,'$.milestone_id'),version=version+1,updated_at=?4 WHERE {} AND resource_type='task' AND json_extract(metadata,'$.milestone_id')=?3", thread_project_links::project_task_scope("loop_items")),params![project,true,id,now()])?;
         transaction.commit()?;
         Ok(())
     }

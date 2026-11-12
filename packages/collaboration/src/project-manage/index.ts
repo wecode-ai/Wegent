@@ -9,6 +9,8 @@ export * from "./ProjectCollaborationParticipants";
 export * from "./projectAiTeamSections";
 export * from "./ProjectBoardSettingsDialog";
 export * from "./ProjectExecutionEnvironments";
+export * from "./ProjectEnvironmentDevices";
+export * from "../execution-environment/useExecutionEnvironmentList";
 export * from "./ProjectCollaborationGroups";
 export * from "./ProjectAutomaticProcessing";
 export * from "./memberSearch";

@@ -126,11 +126,17 @@ async def annotate_queue(db: Session, rows: list[dict]) -> None:
             continue
         snapshot = execution.runtime_selection["runner_routing"]
         try:
+            from app.services.issue_resource_context import (
+                execution_resource_agent_id,
+                execution_resource_owner,
+            )
+
             candidates = _candidates(
                 db,
                 ExecutionPolicy.model_validate(snapshot["execution_policy"]),
-                execution.cloud_project_id,
+                execution_resource_owner(db, execution),
                 execution.assigner_user_id,
+                execution_resource_agent_id(execution),
             )
             candidates = [
                 device

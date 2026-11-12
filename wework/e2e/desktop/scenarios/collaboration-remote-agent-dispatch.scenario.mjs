@@ -1,5 +1,6 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -146,6 +147,10 @@ export async function createAutoTaggedIssue(
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
   await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
   const title = `${ISSUE}-auto`
+  await prepareGroupThreadCreation(control, {
+    groupName: `${title} discussion`,
+    timeoutMs,
+  })
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。添加 auto 标签后由配置的智能体完成并提交待确认。`,

@@ -2,7 +2,11 @@ import { editProjectSource, openProjectStandIn } from '../modules/stand-in-flows
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { expandCollaborationWorkspace, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  enterProjectCollaborationView,
+  expandCollaborationWorkspace,
+  reloadMainWindow,
+} from '../modules/workspace-flows.mjs'
 import {
   collaborationProjectViewSelector,
   selectCollaborationProjectView,
@@ -63,6 +67,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]', {
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    await enterProjectCollaborationView(control, CONTENT)
     await expandCollaborationWorkspace(
       control,
       `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`

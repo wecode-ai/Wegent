@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.services.resource_authority_reads import authority_query
 
 logger = logging.getLogger(__name__)
 
@@ -302,21 +303,19 @@ def resolve_entity_roles_for_resource(
     excludes = set(exclude_entity_types or [])
     excludes.update({"user", ""})
 
-    entity_rows = (
+    entity_rows = authority_query(
         db.query(
             ResourceMember.entity_type,
             ResourceMember.entity_id,
             ResourceMember.role,
-        )
-        .filter(
+        ).filter(
             ResourceMember.resource_type.in_(resource_types),
             ResourceMember.resource_id == resource_id,
             ResourceMember.entity_type.notin_(list(excludes)),
             ResourceMember.entity_id.isnot(None),
             ResourceMember.status.in_(statuses),
         )
-        .all()
-    )
+    ).all()
 
     if not entity_rows:
         return []

@@ -361,6 +361,28 @@ describe('standard cloud board controller', () => {
     ])
   })
 
+  it('moves group Threads through shared statuses while keeping legacy project lanes separate', () => {
+    const thread = { ...items[0], group_id: 'group-1' }
+    const resolve = (item: typeof thread | Item, status: string) =>
+      resolveStandardCloudBoardMutation({
+        beforeItemId: null,
+        column: column(status),
+        groupBy: 'status',
+        item,
+        items: [item],
+        sourceColumn: sourceColumn(item, 'status'),
+      })
+    expect(resolve(thread, 'in_review')).toMatchObject({
+      kind: 'status',
+      status: 'in_review',
+    })
+    expect(resolve(thread, 'project_custom')).toBeNull()
+    expect(resolve(items[0], 'project_custom')).toMatchObject({
+      kind: 'status',
+      status: 'project_custom',
+    })
+  })
+
   it('resolves every standard drop into one shared field mutation', () => {
     const item = {
       ...items[0],

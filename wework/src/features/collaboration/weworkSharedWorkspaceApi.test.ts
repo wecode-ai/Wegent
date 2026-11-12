@@ -238,6 +238,16 @@ function createMockDeliveryApi() {
 }
 
 describe('createWeworkDeliverySharedWorkspaceApi', () => {
+  it('creates a group-owned Thread with an atomic project classification', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    await api.issues.create('group-1', { title: 'Thread', classificationProjectId: 'project-1' })
+    expect(deliveryApi.createLoopItem).toHaveBeenCalledExactlyOnceWith('group-1', {
+      title: 'Thread',
+      classification_project_id: 'project-1',
+    })
+  })
+
   it.each(['renamed', null])(
     'maps atomic tag change target %s to the delivery API',
     async target => {

@@ -8,5 +8,23 @@
       "shard": 8,
       "position": 17000
     }
-  }
+  },
+  "paths": [
+    "packages/collaboration/src/project-board/*",
+    "packages/collaboration/src/web-adapter/ProjectBoardAdapter.tsx",
+    "packages/collaboration/src/CollaborationApp.tsx",
+    "packages/collaboration/src/ports/SharedWorkspaceApi.ts",
+    "wework/src/api/local/localDelivery.ts",
+    "wework/src/api/deliveries.ts",
+    "backend/app/schemas/loop_item_position.py",
+    "backend/app/services/loop_items/ordering.py",
+    "backend/app/services/loop_items/service.py",
+    "backend/app/services/project_board_order.py",
+    "backend/app/services/project_board_snapshot.py",
+    "executor/crates/task-store/src/task_runtime/model.rs",
+    "executor/crates/task-store/src/task_runtime/store/project_board_order.rs",
+    "executor/crates/task-store/src/task_runtime/store/task_records.rs",
+    "backend/app/services/project_classification_access.py",
+    "packages/collaboration/src/workspace-controller/useCollaborationWorkspaceController.ts"
+  ]
 }

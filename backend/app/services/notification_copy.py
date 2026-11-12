@@ -28,6 +28,7 @@ COLLABORATION_NOTIFICATION_KINDS = (
     "mention",
     "execution",
     "issue_dispatch_assignment",
+    "thread_message",
 )
 
 
@@ -79,6 +80,7 @@ class NotificationTarget:
     item_priority: str | None = None
     item_due_at: str | None = None
     assignee_name: str | None = None
+    group_id: str | None = None
 
     def payload(self) -> dict[str, Any]:
         """The board fields every board notification carries."""
@@ -88,6 +90,7 @@ class NotificationTarget:
             "projectName": self.project_name,
         }
         for key, value in (
+            ("groupId", self.group_id),
             ("itemId", self.item_id),
             ("itemKey", self.item_key),
             ("itemTitle", self.item_title),
@@ -277,6 +280,24 @@ def _detail_label(kind: str, payload: dict[str, Any]) -> str:
     if label:
         return label
     return "最新回复" if kind == "runtime" else "说明"
+
+
+def thread_message(
+    *, actor_name: str, preview: str, comment_id: str, target: NotificationTarget
+) -> NotificationMessage:
+    """A subscribed Thread has a new discussion message."""
+    return NotificationMessage(
+        kind="thread_message",
+        title=f"{actor_name} · {target.item_title or '事项'}",
+        body=preview,
+        comment_id=comment_id,
+        payload={
+            **target.payload(),
+            "actorName": actor_name,
+            "commentId": comment_id,
+            "commentPreview": preview,
+        },
+    )
 
 
 def mention_message(

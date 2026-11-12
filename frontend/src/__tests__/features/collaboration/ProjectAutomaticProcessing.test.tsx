@@ -460,7 +460,7 @@ describe('ProjectAutomaticProcessing prompts', () => {
       const field = screen.getByLabelText('提示词（可选）')
       expect(field).toHaveValue('')
       expect(field).toHaveAccessibleDescription(
-        '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+        '触发时发送给 AI，用于处理当前事项；留空按目标职责处理。'
       )
       fireEvent.change(field, { target: { value: prompt } })
       fireEvent.click(screen.getByTestId(`automatic-processing-trigger-${trigger}`))
@@ -605,7 +605,7 @@ describe('ProjectAutomaticProcessing prompts', () => {
     await screen.findByText('自动分配')
     fireEvent.click(screen.getByTestId('automatic-processing-create'))
     expect(screen.getByLabelText('Prompt (optional)')).toHaveAccessibleDescription(
-      "Sent to AI when triggered to work on the current Issue. Leave blank to use the target's responsibilities."
+      "Sent to AI when triggered to work on the current Thread. Leave blank to use the target's responsibilities."
     )
   })
 })

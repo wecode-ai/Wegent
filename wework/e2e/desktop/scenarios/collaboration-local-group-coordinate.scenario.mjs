@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 
 import {
@@ -265,6 +266,10 @@ async function createCoordinateGroup(control, timeoutMs) {
 async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
+  await prepareGroupThreadCreation(control, {
+    groupName: `${title} discussion`,
+    timeoutMs,
+  })
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: title,
   })

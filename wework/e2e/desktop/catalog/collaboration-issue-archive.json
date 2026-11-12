@@ -2,6 +2,10 @@
   "order": 71000,
   "scenario": "./scenarios/collaboration-issue-archive.scenario.mjs",
   "scenarioOnly": true,
+  "paths": [
+    "packages/collaboration/src/issue-archive/*",
+    "packages/collaboration/src/issue-detail/issueConversationDrawers.css"
+  ],
   "ci": {
     "core": {
       "order": 16000,

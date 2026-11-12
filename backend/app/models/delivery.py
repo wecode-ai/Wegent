@@ -200,7 +200,48 @@ class StandInIssueEvent(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "stand_in_issue_event"}
 
 
-class CloudProject(LoopNode):
+class CollaborationContainerFields:
+    """Metadata used by group and project work containers, without shared authority."""
+
+    @property
+    def tags(self) -> list[str]:
+        """Project-level tag registry stored inside the metadata JSON column."""
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return []
+        tags = metadata.get("tags")
+        if not isinstance(tags, list):
+            return []
+        return [str(tag) for tag in tags]
+
+    @property
+    def project_store(self) -> str:
+        return "backend"
+
+    @property
+    def task_provider(self) -> str:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return "local"
+        provider = metadata.get("task_provider")
+        known = {"local", "github", "gitlab", "dingtalk_aitable"}
+        return provider if provider in known else "local"
+
+    @property
+    def provider_config(self) -> dict[str, object]:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return {}
+        config = metadata.get("provider_config")
+        return mask_provider_config(config)
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        kwargs.setdefault("next_item_number", 1)
+        super().__init__(**kwargs)
+
+
+class CloudProject(CollaborationContainerFields, LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
     # Old and new backends use the same containment records. Ambiguous parents
@@ -239,42 +280,29 @@ class CloudProject(LoopNode):
             cls.metadata_json["membership_mode"].as_string(), "inherit"
         )
 
-    @property
-    def tags(self) -> list[str]:
-        """Project-level tag registry stored inside the metadata JSON column."""
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return []
-        tags = metadata.get("tags")
-        if not isinstance(tags, list):
-            return []
-        return [str(tag) for tag in tags]
 
-    @property
-    def project_store(self) -> str:
-        return "backend"
+class CollaborationChatGroup(CollaborationContainerFields, LoopNode):
+    """An independent collaboration container, never a project or workspace."""
 
-    @property
-    def task_provider(self) -> str:
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return "local"
-        provider = metadata.get("task_provider")
-        known = {"local", "github", "gitlab", "dingtalk_aitable"}
-        return provider if provider in known else "local"
+    __mapper_args__ = {"polymorphic_identity": "chat_group"}
 
-    @property
-    def provider_config(self) -> dict[str, object]:
-        metadata = self.metadata_json
-        if not isinstance(metadata, dict):
-            return {}
-        config = metadata.get("provider_config")
-        return mask_provider_config(config)
 
-    def __init__(self, **kwargs: object) -> None:
-        kwargs.setdefault("status", "active")
-        kwargs.setdefault("next_item_number", 1)
-        super().__init__(**kwargs)
+class ThreadParticipant(LoopNode):
+    """Explicit participation under a Thread; membership is not read authority."""
+
+    __mapper_args__ = {"polymorphic_identity": "thread_participant"}
+
+
+class ThreadProjectLink(LoopNode):
+    """Optional project classification, independent of the owning chat group."""
+
+    __mapper_args__ = {"polymorphic_identity": "thread_project_link"}
+
+
+class ThreadMigrationCheckpoint(LoopNode):
+    """One committed forward migration, never a grant or a rollback snapshot."""
+
+    __mapper_args__ = {"polymorphic_identity": "thread_migration"}
 
 
 class LoopItem(LoopNode):

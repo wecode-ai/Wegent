@@ -180,6 +180,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "external_projects.*",
     "external_todos.*",
     "files.*",
+    "chat_groups.*",
     "projects.*",
     "milestones.*",
     "runtime.*",
@@ -877,7 +878,8 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        if method.starts_with("milestones.")
+        if method.starts_with("chat_groups.")
+            || method.starts_with("milestones.")
             || method.starts_with("projects.")
             || method.starts_with("external_projects.")
             || method.starts_with("dws.")
@@ -1938,6 +1940,9 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
     let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
     match method {
+        group if group.starts_with("chat_groups.") => runtime
+            .chat_group_request(group.trim_start_matches("chat_groups."), params)
+            .map_err(task_runtime_error),
         "dws.auth_status" => serialize_task_value(
             runtime
                 .dws_auth_status()
@@ -2316,6 +2321,11 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.owner" => serialize_task_value(
+            runtime
+                .task_owner(required_task_string(&params, "task_id")?)
+                .map_err(task_runtime_error)?,
+        ),
         "todos.get" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;
@@ -2366,11 +2376,12 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task_with_schedule(
+                    .create_task_with_context(
                         project_id,
                         input,
                         optional_nullable_task_string(todo, "start_at")?.flatten(),
                         optional_nullable_task_string(todo, "due_at")?.flatten(),
+                        optional_nullable_task_string(todo, "classification_project_id")?.flatten(),
                     )
                     .await
                     .map_err(task_runtime_error)?,
@@ -2447,7 +2458,10 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         }
         "todos.comment.list" => {
             let project_id = required_task_string(&params, "project_id")?;
-            let task_id = required_task_string(&params, "task_id")?;
+            let task_id = params
+                .get("task_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| AppIpcError::new("bad_request", "task_id must be a string"))?;
             let after_sequence = params
                 .get("after_sequence")
                 .and_then(Value::as_i64)
@@ -2649,6 +2663,23 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .unbind_task(device_id, runtime_task_id, item_id)
                 .map_err(task_runtime_error)?;
             Ok(json!({"unbound": true}))
+        }
+        "chat_agents.resolve_for_task" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let assignee_type = required_task_string(&params, "assignee_type")?;
+            let assignee_id = required_task_string(&params, "assignee_id")?;
+            let source_id =
+                optional_nullable_task_string(&params, "assignee_group_source_id")?.flatten();
+            runtime
+                .resolve_chat_agents_for_task(
+                    project_id,
+                    task_id,
+                    assignee_type,
+                    assignee_id,
+                    source_id.as_deref(),
+                )
+                .map_err(task_runtime_error)
         }
         "chat_agents.list" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -3916,6 +3947,41 @@ mod tests {
         APP_IPC_REQUEST_TIMEOUT_SECONDS,
     };
     use crate::runtime_work::CONTEXT_COMPACTION_ACTION_BUDGET_SECONDS;
+
+    #[test]
+    fn task_agent_resolution_rpc_uses_current_group_authority_and_validates_source() {
+        let _lock = crate::test_env::lock();
+        let directory = tempfile::tempdir().unwrap();
+        struct RestoreHome(Option<std::ffi::OsString>);
+        impl Drop for RestoreHome {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("WEGENT_EXECUTOR_HOME", value),
+                    None => std::env::remove_var("WEGENT_EXECUTOR_HOME"),
+                }
+            }
+        }
+        let _restore = RestoreHome(std::env::var_os("WEGENT_EXECUTOR_HOME"));
+        std::env::set_var("WEGENT_EXECUTOR_HOME", directory.path());
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let server = AppIpcServer::new();
+            let group=server.dispatch("chat_groups.create",json!({"name":"Exact resource RPC"})).await.unwrap();
+            let owner=&group["group"]["id"];
+            let agent=server.dispatch("chat_agents.create",json!({"project_id":owner,"agent":{"name":"Configured Agent"}})).await.unwrap();
+            let task=server.dispatch("todos.create",json!({"project_id":owner,"todo":{"title":"Resolve configured resource"}})).await.unwrap();
+            let request=json!({"project_id":owner,"task_id":task["id"],"assignee_type":"agent","assignee_id":agent["id"]});
+            let resolved=server.dispatch("chat_agents.resolve_for_task",request.clone()).await.unwrap();
+            assert_eq!(resolved["work_owner_id"],*owner);
+            assert_eq!(resolved["resource_owner_id"],*owner);
+            assert_eq!(resolved["agents"][0]["id"],agent["id"]);
+            assert_eq!(resolved["references"][agent["id"].as_str().unwrap()],agent["id"]);
+            let mut invalid=request.clone();
+            invalid["assignee_group_source_id"]=json!(["not-an-identity"]);
+            assert_eq!(server.dispatch("chat_agents.resolve_for_task",invalid).await.unwrap_err().code,"bad_request");
+            server.dispatch("chat_groups.participation.update",json!({"group_id":owner,"thread_id":task["id"],"joined":false})).await.unwrap();
+            assert_eq!(server.dispatch("chat_agents.resolve_for_task",request).await.unwrap_err().code,"bad_request");
+        });
+    }
 
     #[test]
     fn native_plugin_sessions_are_not_renderer_capabilities() {

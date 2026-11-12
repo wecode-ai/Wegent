@@ -108,7 +108,7 @@ pub(crate) async fn locked(
 }
 
 /// Provider-owned Issues can have no index; avoid range-locking an absent key.
-pub(crate) async fn locked_existing(
+pub(crate) async fn locked_live_existing(
     tx: &mut impl MysqlTransaction,
     kind: &str,
     id: &str,
@@ -122,7 +122,13 @@ pub(crate) async fn locked_existing(
     if present.is_none() {
         return Ok(None);
     }
-    locked(tx, kind, id).await
+    tx.fetch_optional(
+        format!(
+            "SELECT {COLUMNS} FROM loop_items WHERE id=? AND resource_type=? AND {LIVE} FOR UPDATE"
+        ),
+        (id, kind),
+    )
+    .await
 }
 
 #[derive(Debug, FromMysqlRow)]

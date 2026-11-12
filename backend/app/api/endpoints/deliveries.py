@@ -76,11 +76,12 @@ from app.schemas.project_incoming_hook import (
     ChangeRequestBindingInput,
     ChangeRequestBindingView,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.access import (
     IssueAction,
-    require_cloud_project_role,
     require_issue_action,
+)
+from app.services.collaboration_container_access import (
+    require_collaboration_container_access,
 )
 from app.services.delivery import delivery_service
 from app.services.issue_assignments import issue_assignment_service
@@ -364,7 +365,9 @@ async def create_loop_item(
 ) -> LoopItemResponse:
     """Create a board task using a user JWT, personal API key, or task token."""
 
-    project = cloud_project_service.get(db, project_id, current_user.id)
+    project = require_collaboration_container_access(
+        db, project_id, current_user.id
+    ).project
     event_payload = values.model_dump(
         mode="json",
         exclude={"automation_rule_id"},
@@ -465,7 +468,9 @@ def reorder_loop_items(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemListResponse:
-    project = cloud_project_service.get(db, project_id, current_user.id)
+    project = require_collaboration_container_access(
+        db, project_id, current_user.id
+    ).project
     if project.task_provider in {"github", "gitlab"}:
         return LoopItemListResponse(
             items=[
@@ -538,11 +543,11 @@ async def update_loop_item(
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
     previous_tags = set(existing.tags)
-    project = cloud_project_service.get(
+    project = require_collaboration_container_access(
         db,
         int(existing.cloud_project_id),
         current_user.id,
-    )
+    ).project
     selected_status_automation_id: str | None = None
     selected_tag_automation_id: str | None = None
     requested_status = (
@@ -763,7 +768,9 @@ def list_archived_loop_items(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Invalid archive cursor",
         )
-    project = cloud_project_service.get(db, project_id, current_user.id)
+    project = require_collaboration_container_access(
+        db, project_id, current_user.id
+    ).project
     if project.task_provider in {"github", "gitlab"}:
         external_items, next_cursor = external_loop_item_provider.list_archived(
             db,
@@ -883,11 +890,22 @@ async def create_issue_assignment(
         issue_id=item_id,
         user_id=current_user.id,
     )
-    access = require_cloud_project_role(
+    from app.services.project_chat.group_message_authority import (
+        prepare_group_message_authority,
+    )
+
+    prepare_group_message_authority(
+        db,
+        group_id=str(project.id),
+        thread_id=str(item.id),
+        actor_user_id=current_user.id,
+    )
+    access = require_collaboration_container_access(
         db,
         int(project.id),
         current_user.id,
         BaseRole.Viewer,
+        write=True,
     )
     require_issue_action(
         access,

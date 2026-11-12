@@ -35,6 +35,7 @@ export interface IssueDetailDraftSource<TWorkflow = unknown> {
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
   assignee_group_id?: string | null;
+  assignee_group_source_id?: string | null;
   workflow?: TWorkflow | null;
 }
 
@@ -48,6 +49,7 @@ export interface IssueDetailDraftValue<TWorkflow = unknown> {
   dueDate: string;
   tags: string[];
   assigneeTarget: IssueAssigneeTarget;
+  assigneeGroupSourceId: string | null;
   workflow: TWorkflow | null;
 }
 
@@ -64,6 +66,8 @@ export interface IssueDetailDraftOptions<TWorkflow = unknown> {
   source: IssueDetailDraftSource<TWorkflow> | null;
   initial: IssueDetailDraftInitial<TWorkflow>;
   normalizeDescription?: (description: string) => string;
+  /** Preserve explicit edits while serialized saves reconcile their responses. */
+  preserveEditedFields?: boolean;
   startDateFromSource?: (startAt: string | null) => string;
   dueDateFromSource?: (dueAt: string | null) => string;
 }
@@ -131,6 +135,7 @@ function draftFromSource<TWorkflow>(
     dueDate: dueDateFromSource(source.due_at),
     tags: source.tags ?? [],
     assigneeTarget: issueAssigneeTarget(source),
+    assigneeGroupSourceId: source.assignee_group_source_id ?? null,
     workflow: source.workflow ?? null,
   };
 }
@@ -139,6 +144,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
   source,
   initial,
   normalizeDescription = identityDescription,
+  preserveEditedFields,
   startDateFromSource = defaultDueDate,
   dueDateFromSource = defaultDueDate,
 }: IssueDetailDraftOptions<TWorkflow>) {
@@ -152,6 +158,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
     dueDate: initial.dueDate ?? "",
     tags: initial.tags ?? [],
     assigneeTarget: initial.assigneeTarget ?? "",
+    assigneeGroupSourceId: initial.assigneeGroupSourceId ?? null,
     workflow: initial.workflow ?? null,
   };
   const [draft, setDraft] = useState<IssueDetailDraftValue<TWorkflow>>(() =>
@@ -164,13 +171,23 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
         )
       : initialValue,
   );
+  const editedFields = useRef(
+    new Set<keyof IssueDetailDraftValue<TWorkflow>>(),
+  );
+  const wasPreservingEdits = useRef(false);
   const syncedSourceRef = useRef<IssueDetailDraftSource<TWorkflow> | null>(
     source,
   );
 
   useEffect(() => {
+    // The final response and pending=false can arrive in the same React batch.
+    const preserveEdits = preserveEditedFields || wasPreservingEdits.current;
+    wasPreservingEdits.current = Boolean(preserveEditedFields);
     if (!source) return;
     const previous = syncedSourceRef.current;
+    const edited = new Set(editedFields.current);
+    if (!preserveEditedFields || previous?.id !== source.id)
+      editedFields.current.clear();
     if (previous === source) return;
 
     const sameIssue = previous?.id === source.id;
@@ -188,50 +205,65 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       startDateFromSource,
       dueDateFromSource,
     );
+    const merge = (
+      field: keyof IssueDetailDraftValue<TWorkflow>,
+      unchanged: boolean,
+    ) => !sameIssue || ((!preserveEdits || !edited.has(field)) && unchanged);
     setDraft((current) => ({
-      title:
-        !sameIssue || current.title === previousDraft?.title
-          ? nextDraft.title
-          : current.title,
-      description:
-        !sameIssue || current.description === previousDraft?.description
-          ? nextDraft.description
-          : current.description,
-      status:
-        !sameIssue || current.status === previousDraft?.status
-          ? nextDraft.status
-          : current.status,
-      priority:
-        !sameIssue || current.priority === previousDraft?.priority
-          ? nextDraft.priority
-          : current.priority,
-      parentId:
-        !sameIssue || current.parentId === previousDraft?.parentId
-          ? nextDraft.parentId
-          : current.parentId,
-      startDate:
-        !sameIssue || current.startDate === previousDraft?.startDate
-          ? nextDraft.startDate
-          : current.startDate,
-      dueDate:
-        !sameIssue || current.dueDate === previousDraft?.dueDate
-          ? nextDraft.dueDate
-          : current.dueDate,
-      tags:
-        !sameIssue || equalTags(current.tags, previousDraft?.tags ?? [])
-          ? nextDraft.tags
-          : current.tags,
-      assigneeTarget:
-        !sameIssue || current.assigneeTarget === previousDraft?.assigneeTarget
-          ? nextDraft.assigneeTarget
-          : current.assigneeTarget,
-      workflow:
-        !sameIssue || current.workflow === previousDraft?.workflow
-          ? nextDraft.workflow
-          : current.workflow,
+      title: merge("title", current.title === previousDraft?.title)
+        ? nextDraft.title
+        : current.title,
+      description: merge(
+        "description",
+        current.description === previousDraft?.description,
+      )
+        ? nextDraft.description
+        : current.description,
+      status: merge("status", current.status === previousDraft?.status)
+        ? nextDraft.status
+        : current.status,
+      priority: merge("priority", current.priority === previousDraft?.priority)
+        ? nextDraft.priority
+        : current.priority,
+      parentId: merge("parentId", current.parentId === previousDraft?.parentId)
+        ? nextDraft.parentId
+        : current.parentId,
+      startDate: merge(
+        "startDate",
+        current.startDate === previousDraft?.startDate,
+      )
+        ? nextDraft.startDate
+        : current.startDate,
+      dueDate: merge("dueDate", current.dueDate === previousDraft?.dueDate)
+        ? nextDraft.dueDate
+        : current.dueDate,
+      tags: merge("tags", equalTags(current.tags, previousDraft?.tags ?? []))
+        ? nextDraft.tags
+        : current.tags,
+      assigneeTarget: merge(
+        "assigneeTarget",
+        current.assigneeTarget === previousDraft?.assigneeTarget,
+      )
+        ? nextDraft.assigneeTarget
+        : current.assigneeTarget,
+      workflow: merge("workflow", current.workflow === previousDraft?.workflow)
+        ? nextDraft.workflow
+        : current.workflow,
+      assigneeGroupSourceId: merge(
+        "assigneeGroupSourceId",
+        current.assigneeGroupSourceId === previousDraft?.assigneeGroupSourceId,
+      )
+        ? nextDraft.assigneeGroupSourceId
+        : current.assigneeGroupSourceId,
     }));
     syncedSourceRef.current = source;
-  }, [dueDateFromSource, normalizeDescription, source, startDateFromSource]);
+  }, [
+    dueDateFromSource,
+    normalizeDescription,
+    preserveEditedFields,
+    source,
+    startDateFromSource,
+  ]);
 
   const sourceDraft = source
     ? draftFromSource(
@@ -251,6 +283,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       draft.dueDate !== sourceDraft.dueDate ||
       !equalTags(draft.tags, sourceDraft.tags) ||
       draft.assigneeTarget !== sourceDraft.assigneeTarget ||
+      draft.assigneeGroupSourceId !== sourceDraft.assigneeGroupSourceId ||
       JSON.stringify(draft.workflow) !== JSON.stringify(sourceDraft.workflow)
     : false;
 
@@ -259,19 +292,20 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       field: K,
       value: SetStateAction<IssueDetailDraftValue<TWorkflow>[K]>,
     ) => {
-      setDraft((current) => ({
-        ...current,
-        [field]:
+      if (preserveEditedFields !== undefined) editedFields.current.add(field);
+      setDraft((current) => {
+        const next =
           typeof value === "function"
             ? (
                 value as (
                   previous: IssueDetailDraftValue<TWorkflow>[K],
                 ) => IssueDetailDraftValue<TWorkflow>[K]
               )(current[field])
-            : value,
-      }));
+            : value;
+        return { ...current, [field]: next };
+      });
     },
-    [],
+    [preserveEditedFields],
   );
 
   return { draft, setDraft, setField, dirty };

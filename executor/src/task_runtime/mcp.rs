@@ -361,6 +361,7 @@ pub(crate) fn control_mcp_client_config(
 }
 
 pub async fn run() -> Result<(), String> {
+    crate::logging::reserve_executor_stdout_for_protocol();
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
     let context = SpaceMcpRequestContext::from_env();
     let grant = context.grant();
@@ -906,12 +907,16 @@ async fn call_tool_with_runtime_context(
             Err(error) => return text_result(error, true),
         }
     }
-    let default_project_id = grant
-        .as_ref()
-        .and_then(|grant| grant.space_id.clone())
-        .filter(|project_id| {
-            name != "send_notification" || !is_locally_routed_project(runtime, project_id, name)
-        });
+    let mut default_project_id = grant.as_ref().and_then(|grant| grant.space_id.clone());
+    if name == "send_notification" {
+        if let Some(project_id) = default_project_id.as_deref() {
+            match is_locally_routed_project(runtime, project_id, name) {
+                Ok(true) => default_project_id = None,
+                Ok(false) => {}
+                Err(error) => return text_result(error.to_string(), true),
+            }
+        }
+    }
     let default_item_id = grant
         .as_ref()
         .and_then(|grant| grant.item_id.clone())
@@ -945,9 +950,13 @@ async fn call_tool_with_runtime_context(
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .or_else(|| default_project_id.clone());
-    let is_locally_routed = requested_project_id
-        .as_deref()
-        .is_some_and(|project_id| is_locally_routed_project(runtime, project_id, name));
+    let is_locally_routed = match requested_project_id.as_deref() {
+        Some(id) => match is_locally_routed_project(runtime, id, name) {
+            Ok(local) => local,
+            Err(error) => return text_result(error.to_string(), true),
+        },
+        None => false,
+    };
     if name == "list_spaces" {
         let local_projects = match runtime.list_projects().and_then(|mut projects| {
             projects.retain(|project| project.metadata["project_store"] != "backend");
@@ -1099,11 +1108,8 @@ async fn call_tool_with_runtime_context(
         }
         "get_assignment_candidates" => {
             let project_id = string_argument(&arguments, "space_id");
-            match (project_id, runtime.list_projects()) {
-                (Ok(project_id), Ok(projects)) => projects
-                    .into_iter()
-                    .find(|project| project.id == project_id)
-                    .ok_or(super::TaskRuntimeError::ProjectNotFound)
+            match project_id {
+                Ok(project_id) => runtime.get_work_container(project_id)
                     .and_then(|project| {
                         runtime.list_chat_agents(project_id).map(|agents| {
                             let groups = project.metadata["collaboration_groups"]
@@ -1152,8 +1158,7 @@ async fn call_tool_with_runtime_context(
                             })
                         })
                     }),
-                (Err(error), _) => Err(error),
-                (_, Err(error)) => Err(error),
+                Err(error) => Err(error),
             }
         }
         "assign_board_item" => {
@@ -1820,17 +1825,23 @@ async fn local_update_issue_status(
     serde_json::to_value(updated).map_err(invalid_json)
 }
 
-fn is_locally_routed_project(runtime: &TaskRuntime, project_id: &str, tool_name: &str) -> bool {
+fn is_locally_routed_project(
+    runtime: &TaskRuntime,
+    project_id: &str,
+    tool_name: &str,
+) -> Result<bool, super::TaskRuntimeError> {
+    if runtime.is_private_chat_group(project_id)? {
+        return Ok(true);
+    }
     let project = runtime
-        .list_projects()
-        .unwrap_or_default()
+        .list_projects()?
         .into_iter()
         .find(|project| project.id == project_id);
-    project.is_some_and(|project| {
+    Ok(project.is_some_and(|project| {
         project.metadata["project_store"].as_str() == Some("local")
             || (project.metadata["task_provider"].as_str() == Some("dingtalk_aitable")
                 && is_dingtalk_read_tool(tool_name))
-    })
+    }))
 }
 
 fn is_dingtalk_project(runtime: &TaskRuntime, project_id: &str) -> bool {
@@ -4060,6 +4071,172 @@ mod tests {
     }
 
     #[test]
+    fn identifies_local_groups_before_selecting_the_backend_route() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let created = store
+            .chat_group_request("create", json!({"name":"Private group"}))
+            .unwrap();
+        let group_id = created["group"]["id"].as_str().unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        assert!(!runtime
+            .list_projects()
+            .unwrap()
+            .iter()
+            .any(|project| project.id == group_id));
+        for tool in [
+            "get_current_context",
+            "get_board_item",
+            "list_board_item_comments",
+            "list_deliveries",
+            "read_delivery",
+        ] {
+            assert!(
+                is_locally_routed_project(&runtime, group_id, tool).unwrap(),
+                "A private group was routed to the backend for {tool}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn local_group_tools_never_fall_through_to_a_connected_backend() {
+        use axum::{http::StatusCode, Router};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&database).unwrap();
+        let created = store
+            .chat_group_request("create", json!({"name":"Private group"}))
+            .unwrap();
+        let group_id = created["group"]["id"].as_str().unwrap();
+        let thread = store
+            .create_task(
+                group_id,
+                serde_json::from_value(json!({"title":"Private Thread"})).unwrap(),
+            )
+            .unwrap();
+        let other = store
+            .chat_group_request("create", json!({"name":"Other group"}))
+            .unwrap();
+        let other_id = other["group"]["id"].as_str().unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let observed = requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().fallback(move || {
+            let observed = observed.clone();
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                StatusCode::BAD_GATEWAY
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let context = SpaceMcpRequestContext::new(None, Some(url), Some("unit-token".into()));
+        let posted = call_tool_with_runtime_context(
+            &runtime,
+            "add_board_item_comment",
+            json!({"space_id":group_id,"item_id":thread.id,"body":"Private group tool discussion"}),
+            &context,
+        )
+        .await;
+        assert_eq!(posted["isError"], false, "{posted}");
+        for tool in [
+            "get_board_item",
+            "list_board_items",
+            "list_board_item_comments",
+            "list_deliveries",
+            "get_assignment_candidates",
+        ] {
+            let result = call_tool_with_runtime_context(
+                &runtime,
+                tool,
+                json!({"space_id":group_id,"item_id":thread.id}),
+                &context,
+            )
+            .await;
+            assert_eq!(result["isError"], false, "{tool}: {result}");
+        }
+        let denied = call_tool_with_runtime_context(
+            &runtime,
+            "get_board_item",
+            json!({"space_id":other_id,"item_id":thread.id}),
+            &context,
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        let grant = SpaceContextGrant {
+            space_id: Some(group_id.into()),
+            item_id: Some(thread.id.clone()),
+            ..role_grant(SpaceContextRole::Executor)
+        };
+        let delegated = SpaceMcpRequestContext::new(
+            Some(grant),
+            context.backend_url.clone(),
+            context.auth_token.clone(),
+        );
+        let current =
+            call_tool_with_runtime_context(&runtime, "get_current_context", json!({}), &delegated)
+                .await;
+        assert_eq!(current["isError"], false);
+        let current: Value =
+            serde_json::from_str(current["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(current["item_id"], thread.id);
+        assert_eq!(current["space_id"], group_id);
+        let denied = call_tool_with_runtime_context(
+            &runtime,
+            "get_board_item",
+            json!({"space_id":other_id,"item_id":thread.id}),
+            &delegated,
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        connection
+            .execute(
+                "UPDATE loop_items SET metadata='{\"project_store\":\"backend\"}' WHERE id=?1",
+                [group_id],
+            )
+            .unwrap();
+        assert!(!is_locally_routed_project(&runtime, group_id, "get_board_item").unwrap());
+        let denied = call_tool_with_runtime_context(
+            &runtime,
+            "get_board_item",
+            json!({"space_id":group_id,"item_id":thread.id}),
+            &context,
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        for (metadata, deleted) in [("{}", Some("2026-11-11")), ("invalid-json", None)] {
+            connection
+                .execute(
+                    "UPDATE loop_items SET metadata=?1,deleted_at=?2 WHERE id=?3",
+                    rusqlite::params![metadata, deleted, group_id],
+                )
+                .unwrap();
+            let denied = call_tool_with_runtime_context(
+                &runtime,
+                "get_board_item",
+                json!({"space_id":group_id,"item_id":thread.id}),
+                &context,
+            )
+            .await;
+            assert_eq!(denied["isError"], true);
+            assert_eq!(
+                requests.load(Ordering::SeqCst),
+                1,
+                "A deleted or unreadable private source reached the backend"
+            );
+        }
+        server.abort();
+    }
+
+    #[test]
     fn identifies_local_projects_before_selecting_the_backend_route() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -4074,16 +4251,8 @@ mod tests {
             .unwrap();
         let runtime = TaskRuntime::new(store).unwrap();
 
-        assert!(is_locally_routed_project(
-            &runtime,
-            &project.id,
-            "list_board_items"
-        ));
-        assert!(!is_locally_routed_project(
-            &runtime,
-            "cloud-project",
-            "list_board_items"
-        ));
+        assert!(is_locally_routed_project(&runtime, &project.id, "list_board_items").unwrap());
+        assert!(!is_locally_routed_project(&runtime, "cloud-project", "list_board_items").unwrap());
     }
 
     #[tokio::test]
@@ -4133,16 +4302,10 @@ mod tests {
         }
         assert!(names.iter().any(|name| name == "list_space_files"));
         assert!(names.iter().any(|name| name == "list_deliveries"));
-        assert!(is_locally_routed_project(
-            &runtime,
-            "cloud-aitable",
-            "get_current_context"
-        ));
-        assert!(!is_locally_routed_project(
-            &runtime,
-            "cloud-aitable",
-            "list_space_files"
-        ));
+        assert!(
+            is_locally_routed_project(&runtime, "cloud-aitable", "get_current_context").unwrap()
+        );
+        assert!(!is_locally_routed_project(&runtime, "cloud-aitable", "list_space_files").unwrap());
     }
 
     #[test]
@@ -4885,6 +5048,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Investigate load".to_owned(),
                     description: String::new(),
@@ -5068,6 +5232,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Fix OAuth callback".to_owned(),
                     description: "Login fails after redirect".to_owned(),
@@ -5086,6 +5251,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Write deployment guide".to_owned(),
                     description: String::new(),
@@ -5150,6 +5316,7 @@ mod tests {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        assignee_group_source_id: None,
                         milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
@@ -5197,6 +5364,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Inspect attachment".to_owned(),
                     description: String::new(),

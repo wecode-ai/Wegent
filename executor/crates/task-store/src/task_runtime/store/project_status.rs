@@ -18,6 +18,26 @@ pub(super) fn default_board_config() -> Value {
     })
 }
 
+pub(super) fn group_board_config(value: &Value) -> Result<Value, TaskRuntimeError> {
+    let mut config = if value.is_null() {
+        json!({})
+    } else {
+        value.clone()
+    };
+    if !config.is_object() {
+        return Err(TaskRuntimeError::Invalid(
+            "Invalid group board configuration".into(),
+        ));
+    }
+    let defaults = default_board_config();
+    config["statuses"] = defaults["statuses"].clone();
+    config["processing_start_status_id"] = json!("pending");
+    if config.get("group_by").is_none() {
+        config["group_by"] = json!("status")
+    }
+    Ok(config)
+}
+
 fn status_ids(metadata: &Value) -> Vec<String> {
     let config = &metadata["board_config"];
     let defaults = default_board_config();

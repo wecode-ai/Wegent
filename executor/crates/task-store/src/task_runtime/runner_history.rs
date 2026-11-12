@@ -36,7 +36,9 @@ pub(super) fn enrich_project_tasks(
         devices_by_task.entry(task_id).or_default().push(device);
     }
     for task in tasks {
-        if task.metadata.get("runner_binding").is_none() {
+        if task.cloud_project_id.as_deref() == Some(project_id)
+            && task.metadata.get("runner_binding").is_none()
+        {
             apply_devices(
                 &mut task.metadata,
                 devices_by_task.remove(&task.id).unwrap_or_default(),

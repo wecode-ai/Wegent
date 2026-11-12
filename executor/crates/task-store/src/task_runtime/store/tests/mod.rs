@@ -231,6 +231,7 @@ fn assert_collaboration_round_completion(has_human: bool, retry_member: bool, te
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Investigate CPU".to_owned(),
                 description: "Determine whether load is sustained.".to_owned(),
@@ -792,3 +793,9 @@ mod cases_4;
 mod cases_5;
 
 mod cases_6;
+mod chat_groups;
+mod group_agent_resources;
+mod group_runtime;
+mod thread_migration;
+
+mod project_board_order;

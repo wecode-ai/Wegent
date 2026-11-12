@@ -52,6 +52,42 @@ const pickerProjects: CloudProject[] = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('offers a public Thread form with no projects and selects an independent group directly', async () => {
+    const user = userEvent.setup()
+    const onCreateThread = vi.fn()
+    const onSelectProject = vi.fn()
+    const group = {
+      ...teamProject,
+      id: 'independent',
+      name: '独立群',
+      resource_type: 'chat_group' as const,
+    }
+    const view = render(
+      <WorkItemComposerGuide
+        toolbar
+        projects={[]}
+        onCreateThread={onCreateThread}
+        onSelectProject={onSelectProject}
+      />
+    )
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    await user.click(screen.getByTestId('task-origin-new-thread'))
+    expect(onCreateThread).toHaveBeenCalledOnce()
+    expect(onSelectProject).not.toHaveBeenCalled()
+    view.rerender(
+      <WorkItemComposerGuide
+        toolbar
+        projects={[group]}
+        onCreateThread={onCreateThread}
+        onSelectProject={onSelectProject}
+      />
+    )
+    await user.click(screen.getByTestId('project-space-context-pill'))
+    const option = screen.getByTestId('work-item-workspace-option-independent')
+    expect(option).toHaveAttribute('data-resource-type', 'chat_group')
+    await user.click(option)
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(group)
+  })
   test('reopens Issue selection for the current draft project', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
@@ -159,7 +195,7 @@ describe('WorkItemComposerGuide', () => {
     )
 
     await user.click(screen.getByTestId('project-space-context-pill'))
-    const menu = screen.getByRole('dialog', { name: '加入项目空间' })
+    const menu = screen.getByRole('dialog', { name: '选择项目' })
     const search = screen.getByTestId('project-space-picker-search')
     await waitFor(() => expect(search).toHaveFocus())
     expect(projectOptions().getAllByRole('option')).toHaveLength(4)
@@ -172,12 +208,12 @@ describe('WorkItemComposerGuide', () => {
     await user.type(search, '不存在')
     expect(projectOptions().queryAllByRole('option')).toHaveLength(0)
     expect(fireEvent.keyDown(search, { key: 'Enter' })).toBe(false)
-    expect(screen.getByTestId('project-space-picker-empty')).toHaveTextContent('没有匹配的项目')
+    expect(screen.getByTestId('project-space-picker-empty')).toHaveTextContent('没有匹配结果')
     expect(screen.getByTestId('clear-project-space-context-button')).toBeVisible()
     await user.click(screen.getByTestId('project-space-picker-clear-search'))
     expect(search).toHaveFocus()
     expect(projectOptions().getAllByRole('option')).toHaveLength(1)
-    await user.click(within(menu).getByRole('button', { name: '全部空间' }))
+    await user.click(within(menu).getByRole('button', { name: '全部来源' }))
     await user.type(search, '研发 report')
     expect(projectOptions().getByRole('option')).toHaveAccessibleName(
       '行业周报 · 产品研发 · REPORT'
@@ -202,8 +238,8 @@ describe('WorkItemComposerGuide', () => {
     )
 
     await user.click(screen.getByTestId('project-space-context-pill'))
-    const localOption = projectOptions().getByRole('option', { name: '周报 · 本地项目 · LOCAL' })
-    const cloudOption = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    const localOption = projectOptions().getByRole('option', { name: '周报 · 本地 · LOCAL' })
+    const cloudOption = projectOptions().getByRole('option', { name: '周报 · 云端 · CLOUD' })
     expect(localOption).toHaveAttribute('aria-selected', 'false')
     expect(cloudOption).toHaveAttribute('aria-selected', 'true')
     await user.click(localOption)
@@ -223,7 +259,7 @@ describe('WorkItemComposerGuide', () => {
 
     const search = screen.getByTestId('project-space-picker-search')
     await waitFor(() => expect(search).toHaveFocus())
-    const option = projectOptions().getByRole('option', { name: '周报 · 云端项目 · CLOUD' })
+    const option = projectOptions().getByRole('option', { name: '周报 · 云端 · CLOUD' })
     expect(search).toHaveAttribute('aria-activedescendant', option.id)
     await user.keyboard('{Enter}')
     expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(cloud)

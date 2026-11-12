@@ -8,6 +8,7 @@ import { useRef, useState } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import type { CollaborationStatus } from '../types'
 import { useCollaborationPortalTheme } from '../theme'
+import { Tooltip } from '../issue-detail/Tooltip'
 import { BoardViewEditor, type BoardViewEditorSettings } from './BoardViewEditor'
 import { createSavedBoardView } from './projectBoardViews'
 import type { useSavedBoardViews } from './useSavedBoardViews'
@@ -37,21 +38,27 @@ export function BoardViewNavigation({
     'flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary outline-none hover:bg-muted focus:bg-muted disabled:opacity-50 md:min-h-8'
   return (
     <>
-      <nav aria-label={t('board')} data-testid="board-view-navigation" className="shrink-0">
+      <nav
+        aria-label={t('board')}
+        data-testid="board-view-navigation"
+        className="min-w-0 max-w-full"
+      >
         <Popover.Root open={open} onOpenChange={setOpen}>
-          <Popover.Trigger asChild>
-            <button
-              ref={triggerRef}
-              type="button"
-              data-testid="board-view-picker"
-              aria-haspopup="menu"
-              className="flex min-h-11 max-w-full items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus/30 md:min-h-8"
-            >
-              <Columns3 className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-              <span className="max-w-64 truncate">{view?.name ?? builtIn.name}</span>
-              <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-            </button>
-          </Popover.Trigger>
+          <Tooltip label={view?.name ?? builtIn.name} className="min-w-0 max-w-full" side="bottom">
+            <Popover.Trigger asChild>
+              <button
+                ref={triggerRef}
+                type="button"
+                data-testid="board-view-picker"
+                aria-haspopup="menu"
+                className="flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-focus/30 md:min-h-8"
+              >
+                <Columns3 className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                <span className="min-w-0 max-w-64 truncate">{view?.name ?? builtIn.name}</span>
+                <ChevronDown className="ml-2 h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+              </button>
+            </Popover.Trigger>
+          </Tooltip>
           <Popover.Portal>
             <Popover.Content
               {...theme}

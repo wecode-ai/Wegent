@@ -43,6 +43,21 @@ impl LocalTaskStore {
                 )
             })?;
         super::project_coordination_commands::authorize_execution_on(&transaction, &manager)?;
+        if get_item_from(&transaction, &manager.cloud_project_id, "chat_group")?.is_some() {
+            chat_groups::require_participation(
+                &transaction,
+                &manager.cloud_project_id,
+                &manager.loop_item_id,
+                true,
+            )?;
+            task_execution_agent(
+                &transaction,
+                &manager.cloud_project_id,
+                &manager.loop_item_id,
+                &manager.agent_id,
+                manager_payload,
+            )?;
+        }
         let round_id = required_string(plan, "round_id")?;
         let assignments = plan
             .get("items")
@@ -80,8 +95,13 @@ impl LocalTaskStore {
             match assignee_type {
                 "agent" => {
                     validate_group_agent(group, assignee_id)?;
-                    let agent =
-                        collaboration_agent(&transaction, &manager.cloud_project_id, assignee_id)?;
+                    let agent = task_execution_agent(
+                        &transaction,
+                        &manager.cloud_project_id,
+                        &manager.loop_item_id,
+                        assignee_id,
+                        manager_payload,
+                    )?;
                     let selected_model_id = assignment.get("model_id").and_then(Value::as_str);
                     let runtime_payload = collaboration_member_runtime_payload(
                         manager_payload,
@@ -299,8 +319,13 @@ impl LocalTaskStore {
             .ok_or_else(|| {
                 TaskRuntimeError::Invalid("collaboration group leader is missing".to_owned())
             })?;
-        let leader =
-            collaboration_agent(&transaction, &source_manager.cloud_project_id, leader_id)?;
+        let leader = task_execution_agent(
+            &transaction,
+            &source_manager.cloud_project_id,
+            &source_manager.loop_item_id,
+            leader_id,
+            source_payload,
+        )?;
         let results = self.collaboration_round_results(&transaction, item_id, round_id)?;
         let mut payload = source_payload.clone();
         payload["message"] = Value::String(format!(
@@ -639,7 +664,7 @@ fn create_human_assignment_task(
             "local collaboration human assignee identity must be a numeric user id".to_owned(),
         )
     })?;
-    let project = get_item_from(connection, &manager.cloud_project_id, "project")?
+    let project = work_container_from(connection, &manager.cloud_project_id)?
         .ok_or(TaskRuntimeError::ProjectNotFound)?;
     let status = project_status::initial_status(&project.metadata)?;
     let sequence = project.next_item_number.unwrap_or(1);
@@ -697,6 +722,15 @@ fn create_human_assignment_task(
             status,
         ],
     )?;
+    chat_groups::initialize_thread(connection, &project, &task_id)?;
+    if project.resource_type == "chat_group" {
+        if let Some(classification) =
+            thread_project_links::linked_project(connection, &manager.loop_item_id)?
+        {
+            thread_project_links::require_target(connection, &classification)?;
+            thread_project_links::create_link(connection, &task_id, &classification)?;
+        }
+    }
     refresh_runtime_projection_additional_context(connection, &manager.loop_item_id)?;
     Ok(task_id)
 }

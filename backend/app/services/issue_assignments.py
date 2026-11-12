@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
+    CollaborationChatGroup,
     LoopItem,
     LoopItemActiveAssignment,
     LoopItemComment,
@@ -29,8 +30,11 @@ from app.schemas.base_role import BaseRole
 from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     IssueAction,
-    require_cloud_project_role,
     require_issue_action,
+)
+from app.services.collaboration_container_access import (
+    get_collaboration_container,
+    require_collaboration_container_access,
 )
 from app.services.loop_item_history_actor import automation_history_actor
 from app.services.loop_items.access import can_view_item
@@ -91,7 +95,9 @@ class IssueAssignmentService:
         issue_id: str,
         user_id: int,
     ) -> list[AssignmentEvent]:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        access = require_collaboration_container_access(
+            db, project_id, user_id, BaseRole.Viewer
+        )
         item = self._require_issue_project(db, project_id, issue_id)
         if access.project.task_provider in {"github", "gitlab"}:
             from app.services.loop_items.external_provider import (
@@ -248,7 +254,9 @@ class IssueAssignmentService:
         assignment_id: str,
         user_id: int,
     ) -> AssignmentEvent:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        access = require_collaboration_container_access(
+            db, project_id, user_id, BaseRole.Viewer
+        )
         item = self._require_issue_project(db, project_id, issue_id)
         require_issue_action(
             access,
@@ -344,9 +352,19 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in project_participant_ids(
-                db, project, required_role=BaseRole.Developer
-            ):
+            if isinstance(project, CollaborationChatGroup):
+                from app.services.chat_group_access import chat_group_members
+
+                participants = {
+                    int(member["user_id"])
+                    for member in chat_group_members(db, project.id, lock=True)
+                    if member["can_be_assignee"]
+                }
+            else:
+                participants = project_participant_ids(
+                    db, project, required_role=BaseRole.Developer
+                )
+            if user_id not in participants:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Assignee is not a member of this Project",
@@ -401,10 +419,12 @@ class IssueAssignmentService:
         item = db.get(LoopItem, issue_id)
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
-        project = db.get(CloudProject, item.cloud_project_id)
+        project = get_collaboration_container(db, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-        require_cloud_project_role(db, int(project.id), user_id, BaseRole.Viewer)
+        require_collaboration_container_access(
+            db, int(project.id), user_id, BaseRole.Viewer
+        )
         return project, item
 
     def project_legacy_assignment(self, db: Session, *, item: LoopItem) -> None:

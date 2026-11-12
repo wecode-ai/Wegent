@@ -1638,6 +1638,10 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    chatGroupApis: {
+      ...cloudServices.chatGroupApis,
+      ...localServices.chatGroupApis,
+    },
     localParticipationIdentity: localServices.localParticipationIdentity,
     localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
     composerCatalogApi: {

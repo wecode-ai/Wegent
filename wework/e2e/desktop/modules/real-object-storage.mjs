@@ -28,6 +28,25 @@ export async function startRealObjectStorage(resultDir, timeoutMs) {
       },
     }
   )
+  const recordLifecycle = (event, details = {}) => {
+    console.error(
+      JSON.stringify({
+        component: 'real-minio',
+        event,
+        at: new Date().toISOString(),
+        pid: server.pid ?? null,
+        ...details,
+      })
+    )
+  }
+  recordLifecycle('spawned')
+  server.once('exit', (code, signal) => {
+    recordLifecycle('exited', { code, signal })
+  })
+  const stop = () => {
+    recordLifecycle('stop-requested')
+    return stopProcessGroup(server)
+  }
   let spawnError
   server.once('error', error => {
     spawnError = error
@@ -51,7 +70,7 @@ export async function startRealObjectStorage(resultDir, timeoutMs) {
               ATTACHMENT_S3_USE_SSL: 'false',
               ATTACHMENT_S3_REGION: 'us-east-1',
             },
-            stop: () => stopProcessGroup(server),
+            stop,
           }
       } catch {
         // The real MinIO process has not bound its listening socket yet.
@@ -60,7 +79,7 @@ export async function startRealObjectStorage(resultDir, timeoutMs) {
     }
     assert.fail('Real MinIO did not become ready')
   } catch (error) {
-    await stopProcessGroup(server)
+    await stop()
     throw error
   }
 }

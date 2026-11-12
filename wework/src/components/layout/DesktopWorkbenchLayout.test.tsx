@@ -2153,7 +2153,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
     expect(window.location.pathname).toBe('/todo')
-    expect(await screen.findByTestId('wework-collaboration-platform')).toBeVisible()
+    expect(await screen.findByTestId('collaboration-groups')).toBeVisible()
   })
 
   test('keeps the active task return route when an inactive project space is retained', () => {
@@ -6858,7 +6858,7 @@ describe('DesktopWorkbenchLayout', () => {
   test('does not reveal an inactive project-space surface during startup', async () => {
     runtimeMocks.electron = true
     deliveryApiMock.available = true
-    window.history.pushState({}, '', '/todo')
+    window.history.pushState({}, '', '/todo?collaborationView=projects')
     const props = {
       ...baseProps,
       surfaceKind: 'board' as const,

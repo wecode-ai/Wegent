@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { canEditCollaborationIssue } from "../permissions";
+import { isThreadStatus } from "../board";
 import type { CollaborationAssignment, CollaborationIssue } from "../types";
 import type { IssueStatusFailure } from "./bulkIssueStatus";
 
@@ -263,6 +264,9 @@ export function ProjectIssueTable({
   const selectedIssues = visibleIssues.filter((issue) =>
     selectedIssueIds.has(issue.id),
   );
+  const bulkStatusChoices = filterOptions.statuses.filter((status) =>
+    selectedIssues.every((issue) => !issue.group_id || isThreadStatus(status)),
+  );
   const archivableSelectedIssues = selectedIssues.filter((issue) =>
     canDelete(issue),
   );
@@ -313,6 +317,7 @@ export function ProjectIssueTable({
   const applyBatchStatus = async () => {
     if (
       !batchStatus ||
+      !bulkStatusChoices.includes(batchStatus) ||
       selectedIssues.length === 0 ||
       !onBulkStatusChange ||
       batchBusy
@@ -358,9 +363,7 @@ export function ProjectIssueTable({
   const sortButton = (key: IssueTableSortKey, label: string) => (
     <button
       type="button"
-      className={`collaboration-issue-table-sort ${
-        sort?.key === key ? "is-active" : ""
-      }`}
+      className={`collaboration-issue-table-sort ${sort?.key === key ? "is-active" : ""}`}
       data-testid={`collaboration-issue-table-sort-${key}`}
       onClick={() => toggleSort(key)}
     >
@@ -417,12 +420,14 @@ export function ProjectIssueTable({
                 <select
                   aria-label={batchStatusLabel}
                   data-testid="collaboration-issue-table-batch-status"
-                  value={batchStatus}
+                  value={
+                    bulkStatusChoices.includes(batchStatus) ? batchStatus : ""
+                  }
                   onChange={(event) => setBatchStatus(event.target.value)}
                   disabled={batchBusy}
                 >
                   <option value="">{batchStatusLabel}</option>
-                  {filterOptions.statuses.map((status) => (
+                  {bulkStatusChoices.map((status) => (
                     <option key={status} value={status}>
                       {statusName(status)}
                     </option>
@@ -431,7 +436,11 @@ export function ProjectIssueTable({
                 <button
                   type="button"
                   data-testid="collaboration-issue-table-batch-apply"
-                  disabled={!batchStatus || batchBusy}
+                  disabled={
+                    !batchStatus ||
+                    !bulkStatusChoices.includes(batchStatus) ||
+                    batchBusy
+                  }
                   onClick={() => void applyBatchStatus()}
                 >
                   {batchApplyLabel}

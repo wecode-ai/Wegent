@@ -58,11 +58,7 @@ pub(super) async fn list(
 ) -> Result<Value, TaskRuntimeError> {
     let project_id = string_argument(arguments, "space_id")?;
     let item_id = string_argument(arguments, "item_id")?;
-    let project = runtime
-        .list_projects()?
-        .into_iter()
-        .find(|project| project.id == project_id)
-        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let project = runtime.get_work_container(project_id)?;
     if task_provider(&project)? != TaskProviderKind::Local {
         return Err(TaskRuntimeError::UnsupportedProvider(
             "Local activity comments require a local task provider".to_owned(),

@@ -2,6 +2,7 @@ import type { HttpClient } from './http'
 
 /** The structured detail a notification carries about what it points at. */
 export interface WeworkNotificationPayload {
+  groupId?: string
   projectId?: string
   projectName?: string
   itemId?: string

@@ -30,6 +30,8 @@ import {
 import type { LocalProjectSpaceApi } from '@/features/workbench/workbenchServices'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import { LOCAL_USER } from './localSession'
+import { createLocalChatGroupApi } from '@/api/chatGroups'
+import { groupWorkContainer } from '@/api/groupWorkContainer'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type {
   Attachment,
@@ -50,8 +52,22 @@ import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
 function localTaskUpdate(
   data: Record<string, unknown> & { version: number }
 ): Record<string, unknown> & { version: number } {
-  const position = data.position as { beforeItemId: string | null } | undefined
-  return { ...data, ...(position ? { position: { before_item_id: position.beforeItemId } } : {}) }
+  const position = data.position as
+    | { beforeItemId: string | null; classificationProjectId?: string }
+    | undefined
+  return {
+    ...data,
+    ...(position
+      ? {
+          position: {
+            before_item_id: position.beforeItemId,
+            ...(position.classificationProjectId
+              ? { classification_project_id: position.classificationProjectId }
+              : {}),
+          },
+        }
+      : {}),
+  }
 }
 
 type LocalRequest = <T>(
@@ -60,11 +76,20 @@ type LocalRequest = <T>(
   deviceId?: string
 ) => Promise<T>
 
+export interface LocalTaskAgentResources {
+  workOwnerId: string
+  resourceOwnerId: string
+  agents: LocalProjectChatAgent[]
+  references: Record<string, string>
+  collaborationGroup: import('@wegent/collaboration').CollaborationGroup | null
+}
+
 export interface LocalAssignmentExecutionPayloadInput {
   projectId: CloudProjectId
   itemId: string
   assigneeType: 'agent' | 'group'
   assigneeId: string
+  assigneeGroupSourceId?: string | null
   runnerSelection?: RunnerSelection
 }
 
@@ -78,6 +103,11 @@ interface LocalLoopItemRecord {
   id: string
   resource_type: 'project' | 'task' | string
   cloud_project_id: string | null
+  group_id?: string
+  group_name?: string
+  joined?: boolean
+  can_join?: boolean
+  group_status?: string
   parent_id: string | null
   public_id: string | null
   project_key: string | null
@@ -571,11 +601,17 @@ export function projectChatAgentFromRecord(record: LocalAgentRecord): LocalProje
 export function createLocalProjectChatAgentApi(
   request: LocalRequest,
   currentUserId?: number,
-  listRunnerEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
+  listRunnerEnvironments: (
+    projectId?: string,
+    knownContainer?: CloudProject
+  ) => Promise<RunnerEnvironment[]> = async () => {
     throw new Error('Runner catalog is unavailable')
   },
   listModels: () => Promise<UnifiedModel[]> = async () => [],
-  listEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
+  listEnvironments: (
+    projectId?: string,
+    knownContainer?: CloudProject
+  ) => Promise<RunnerEnvironment[]> = async () => {
     throw new Error('Runner inventory is unavailable')
   },
   listNativeModels: (
@@ -613,9 +649,37 @@ export function createLocalProjectChatAgentApi(
   })
   const cache = createRequestCache()
   return {
+    async resolveForTask(
+      input: LocalAssignmentExecutionPayloadInput
+    ): Promise<LocalTaskAgentResources> {
+      const result = await request<{
+        work_owner_id: string
+        resource_owner_id: string
+        agents: LocalAgentRecord[]
+        references: Record<string, string>
+        collaboration_group: import('@wegent/collaboration').CollaborationGroup | null
+      }>('chat_agents.resolve_for_task', {
+        project_id: String(input.projectId),
+        task_id: input.itemId,
+        assignee_type: input.assigneeType,
+        assignee_id: input.assigneeId,
+        ...(input.assigneeGroupSourceId !== undefined
+          ? { assignee_group_source_id: input.assigneeGroupSourceId }
+          : {}),
+      })
+      return {
+        workOwnerId: result.work_owner_id,
+        resourceOwnerId: result.resource_owner_id,
+        agents: result.agents.map(projectChatAgentFromRecord),
+        references: result.references,
+        collaborationGroup: result.collaboration_group,
+      }
+    },
     listRunnerEnvironments,
-    listEnvironments: (projectId?: string) =>
-      cache.get(`environments:${projectId ?? ''}`, () => listEnvironments(projectId)),
+    listEnvironments: (projectId?: string, knownContainer?: CloudProject) =>
+      knownContainer
+        ? listEnvironments(projectId, knownContainer)
+        : cache.get(`environments:${projectId ?? ''}`, () => listEnvironments(projectId)),
     listNativeModels: (environment: RunnerEnvironment, projectId?: string) =>
       cache.get(`native:${projectId ?? ''}:${environment.id}`, () =>
         listNativeModels(environment, projectId)
@@ -844,6 +908,9 @@ export function createLocalLoopItemExecutionApi(request: LocalRequest) {
 
 function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
   const role = project?.access_role ?? 'Owner'
+  const writable =
+    ['Owner', 'Maintainer', 'Developer'].includes(role) &&
+    (!record.group_id || record.group_status === 'active')
   const storedTags = stringList(record.metadata.tags)
   const localProjectAssociation = localProjectAssociationFromTags(storedTags)
   const creatorLabelName =
@@ -859,12 +926,29 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     runner_binding: record.metadata.runner_binding as CloudLoopItem['runner_binding'],
     id: record.id,
     cloud_project_id: record.cloud_project_id ?? '',
+    group_id: record.group_id,
+    group_name: record.group_name,
+    joined: record.joined,
+    can_join: record.can_join,
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
     created_by_user_id: record.created_by_user_id,
     created_by_user_name: creatorLabelName || localCreatorName,
     can_view_detail: true,
-    can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role),
+    can_edit: writable,
+    ...(record.group_id
+      ? {
+          permissions: {
+            edit_content: writable,
+            assign: writable,
+            comment: writable && record.joined === true,
+            execute:
+              writable &&
+              record.joined === true &&
+              !['completed', 'cancelled', 'archived'].includes(record.status ?? ''),
+          },
+        }
+      : {}),
     security_level: record.metadata.security_level === 'related' ? 'related' : 'open',
     content_revision: record.version,
     badges: Array.isArray(record.metadata.badges)
@@ -896,6 +980,11 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     assignee_group_name:
       typeof (record.metadata.collaboration_group as { name?: unknown } | null)?.name === 'string'
         ? (record.metadata.collaboration_group as { name: string }).name
+        : null,
+    assignee_group_source_id:
+      typeof (record.metadata.collaboration_group as { binding_owner_id?: unknown } | null)
+        ?.binding_owner_id === 'string'
+        ? (record.metadata.collaboration_group as { binding_owner_id: string }).binding_owner_id
         : null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -1015,28 +1104,26 @@ export function createLocalDeliveryApi(
   }
 
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
-    for (const record of records) taskProjects.set(record.id, projectId)
+    for (const record of records) taskProjects.set(record.id, record.cloud_project_id ?? projectId)
   }
 
   async function resolveProjectId(itemId: string): Promise<CloudProjectId> {
     const known = taskProjects.get(itemId)
     if (known) return known
+    const owner = await request<string | null>('todos.owner', { task_id: itemId })
+    if (owner) {
+      taskProjects.set(itemId, owner)
+      return owner
+    }
     const projectRecords = await loadProjectRecords()
     const projects = projectRecords.map(localProject)
-    const prefixMatches = projects.filter(project => itemId.startsWith(`${project.project_key}-`))
+    const prefixMatches = projects.filter(
+      project =>
+        project.task_provider !== 'local' &&
+        (itemId.startsWith(`${project.project_key}-`) ||
+          itemId.startsWith(`aitable:${project.project_key}:`))
+    )
     if (prefixMatches.length === 1) return prefixMatches[0].id
-    for (const project of projects) {
-      try {
-        const record = await request<LocalLoopItemRecord>('todos.get', {
-          project_id: project.id,
-          task_id: itemId,
-        })
-        taskProjects.set(record.id, project.id)
-        return project.id
-      } catch {
-        // Read-only probing is safe when legacy projects reuse a project key.
-      }
-    }
     throw new Error('Local task not found')
   }
 
@@ -1124,7 +1211,19 @@ export function createLocalDeliveryApi(
       invalidateProjectRecords()
     },
     async listMyWork() {
-      const projects = (await loadProjectRecords(true))
+      const groups = createLocalChatGroupApi(request)
+      const [projectResult, groupResult] = await Promise.allSettled([
+        loadProjectRecords(true),
+        groups.list(),
+      ])
+      const projectRecords = projectResult.status === 'fulfilled' ? projectResult.value : []
+      const groupRecords = groupResult.status === 'fulfilled' ? groupResult.value.items : []
+      const catalogErrors = [projectResult, groupResult].flatMap(result =>
+        result.status === 'rejected'
+          ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+          : []
+      )
+      const projects = projectRecords
         .map(localProject)
         .filter(
           project =>
@@ -1132,8 +1231,14 @@ export function createLocalDeliveryApi(
             project.id !== DEFAULT_WORK_ITEM_PROJECT_ID &&
             project.status === 'active'
         )
+      const containers = [
+        ...projects,
+        ...groupRecords
+          .filter(group => group.status === 'active')
+          .map(group => groupWorkContainer(group, 'local')),
+      ]
       const results = await Promise.all(
-        projects.map(async project => {
+        containers.map(async project => {
           try {
             const records = await request<LocalLoopItemRecord[]>('todos.list', {
               project_id: project.id,
@@ -1158,8 +1263,14 @@ export function createLocalDeliveryApi(
         })
       )
       return {
-        items: results.flatMap(result => result.items),
-        errors: results.flatMap(result => result.errors),
+        items: [
+          ...new Map(
+            results
+              .flatMap(result => result.items)
+              .map(item => [`${item.cloud_project_id}:${item.id}`, item])
+          ).values(),
+        ],
+        errors: [...catalogErrors, ...results.flatMap(result => result.errors)],
       }
     },
     async listLoopItems(
@@ -1276,6 +1387,7 @@ export function createLocalDeliveryApi(
     async createLoopItem(
       projectId: CloudProjectId,
       data: {
+        classification_project_id?: string
         title: string
         milestone_id?: string | null
         description?: string
@@ -1290,6 +1402,7 @@ export function createLocalDeliveryApi(
         automation_rule_id?: string | null
         assignee_user_id?: number | null
         assignee_group_id?: string | null
+        assignee_group_source_id?: string | null
         assignee_agent_id?: string | null
         notify_assignee?: boolean
       }
@@ -1306,6 +1419,9 @@ export function createLocalDeliveryApi(
       const record = await request<LocalLoopItemRecord>('todos.create', {
         project_id: projectId,
         todo: {
+          ...(data.classification_project_id !== undefined
+            ? { classification_project_id: data.classification_project_id }
+            : {}),
           milestone_id: data.milestone_id,
           title: data.title,
           description: data.description ?? '',
@@ -1320,6 +1436,9 @@ export function createLocalDeliveryApi(
             : {}),
           ...(data.assignee_group_id !== undefined
             ? { assignee_group_id: data.assignee_group_id }
+            : {}),
+          ...(data.assignee_group_source_id !== undefined
+            ? { assignee_group_source_id: data.assignee_group_source_id }
             : {}),
           ...(data.assignee_agent_id !== undefined
             ? { assignee_agent_id: data.assignee_agent_id }
@@ -1358,6 +1477,9 @@ export function createLocalDeliveryApi(
           itemId,
           assigneeType: assignedGroupId ? 'group' : 'agent',
           assigneeId: assignedGroupId ?? assignedAgentId!,
+          ...(assignedGroupId && data.assignee_group_source_id !== undefined
+            ? { assigneeGroupSourceId: data.assignee_group_source_id as string | null }
+            : {}),
         })
         if (executionPayload) todo = { ...todo, execution_payload: executionPayload }
       }
@@ -1376,9 +1498,10 @@ export function createLocalDeliveryApi(
         version: number
         assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
+        assigneeGroupSourceId?: string | null
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
-        position?: { beforeItemId: string | null }
+        position?: { beforeItemId: string | null; classificationProjectId?: string }
       }
     ) {
       const assignment =
@@ -1388,7 +1511,12 @@ export function createLocalDeliveryApi(
             ? { assignee_agent_id: data.assigneeId }
             : data.assigneeType === 'team'
               ? { assignee_team_id: Number(data.assigneeId) }
-              : { assignee_group_id: data.assigneeId }
+              : {
+                  assignee_group_id: data.assigneeId,
+                  ...(data.assigneeGroupSourceId !== undefined
+                    ? { assignee_group_source_id: data.assigneeGroupSourceId }
+                    : {}),
+                }
       const executionPayload =
         data.assigneeType === 'agent' || data.assigneeType === 'group'
           ? await options.prepareAssignmentExecutionPayload?.({
@@ -1396,6 +1524,9 @@ export function createLocalDeliveryApi(
               itemId,
               assigneeType: data.assigneeType,
               assigneeId: data.assigneeId,
+              ...(data.assigneeGroupSourceId !== undefined
+                ? { assigneeGroupSourceId: data.assigneeGroupSourceId }
+                : {}),
               runnerSelection: data.runnerSelection,
             })
           : null
@@ -1405,7 +1536,16 @@ export function createLocalDeliveryApi(
         todo: {
           version: data.version,
           ...assignment,
-          ...(data.position ? { position: { before_item_id: data.position.beforeItemId } } : {}),
+          ...(data.position
+            ? {
+                position: {
+                  before_item_id: data.position.beforeItemId,
+                  ...(data.position.classificationProjectId
+                    ? { classification_project_id: data.position.classificationProjectId }
+                    : {}),
+                },
+              }
+            : {}),
           ...(executionPayload ? { execution_payload: executionPayload } : {}),
         },
       })
@@ -1639,7 +1779,8 @@ export function createLocalDeliveryApi(
       projectId: CloudProjectId,
       task: RuntimeTaskAddress,
       taskTitle: string,
-      description: string
+      description: string,
+      classificationProjectId?: string
     ) {
       return trackProjectTaskOnce(projectId, task, async () => {
         try {
@@ -1662,6 +1803,9 @@ export function createLocalDeliveryApi(
           title: taskTitle,
           description,
           status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
+          ...(classificationProjectId !== undefined
+            ? { classification_project_id: classificationProjectId }
+            : {}),
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
@@ -1694,11 +1838,33 @@ export function createLocalDeliveryApi(
         device_id: task.deviceId,
         task_id: task.taskId,
       })
+      if (binding.task_user_id !== 0) throw new Error('Local task binding is unavailable')
+      if (binding.loop_item_id) taskProjects.set(binding.loop_item_id, binding.cloud_project_id)
+      const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null
+      if (loopItem) {
+        const item = loopItem
+        if (item.group_id) {
+          if (
+            item.id !== binding.loop_item_id ||
+            item.group_id !== binding.cloud_project_id ||
+            item.cloud_project_id !== binding.cloud_project_id
+          )
+            throw new Error('Local task binding is unavailable')
+          const { group } = await createLocalChatGroupApi(request).get(item.group_id)
+          if (group.id !== binding.cloud_project_id)
+            throw new Error('Local task owner is unavailable')
+          taskProjects.set(item.id, group.id)
+          return {
+            ...binding,
+            project: groupWorkContainer(group, 'local'),
+            loop_item: item,
+          }
+        }
+      }
       const projectRecords = await loadProjectRecords()
       const projectRecord = projectRecords.find(record => record.id === binding.cloud_project_id)
       if (!projectRecord) throw new Error('Local project not found')
       if (binding.loop_item_id) taskProjects.set(binding.loop_item_id, binding.cloud_project_id)
-      const loopItem = binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null
       return {
         ...binding,
         id: binding.id,

@@ -84,10 +84,14 @@ def _require_group_dispatch(db: Session, row: LoopItemExecution, context: dict) 
     from app.services.collaboration_group_execution import (
         collaboration_group_snapshot_for_dispatch,
     )
+    from app.services.collaboration_permissions import resource_query
 
-    dispatch = db.get(
-        LoopItemExecution, context.get("collaboration_dispatch_execution_id")
-    )
+    dispatch = resource_query(
+        db.query(LoopItemExecution).filter(
+            LoopItemExecution.id == context.get("collaboration_dispatch_execution_id")
+        ),
+        current=True,
+    ).one_or_none()
     if (
         dispatch is None
         or dispatch.executor_type != "collaboration_group_dispatch"
@@ -111,12 +115,13 @@ def apply_continuation(
     context = row.runtime_origin_context
     selection = row.runtime_selection
     if context.get("dispatch_role") == "manager":
+        from app.services.issue_resource_context import execution_resource_owner
         from app.services.runner_routing import resolve_group_routing
 
         selection["group_runner_requirements"] = resolve_group_routing(
             db,
             group=context["collaboration_group"],
-            project_id=row.cloud_project_id,
+            project_id=execution_resource_owner(db, row),
             issue_id=row.loop_item_id,
             user_id=row.assigner_user_id,
             selection=context.get("runner_selection"),

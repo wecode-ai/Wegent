@@ -16,11 +16,14 @@ export * from "./execution-environment/runnerEnvironmentError";
 export * from "./files";
 export * from "./http-api";
 export * from "./i18n";
+export { providerTerminology } from "./issue-detail/providerTerminology";
 export * from "./issue-card";
 export * from "./issue-archive";
 export * from "./issue-detail";
 export * from "./issueDraft";
 export { IssueCreate, IssueDetail } from "./IssueDetail";
+export type { IssueCreateProps } from "./IssueDetail";
+export { projectStatuses } from "./board";
 export * from "./my-work";
 export * from "./ports/SharedWorkspaceApi";
 export * from "./project-board";
@@ -41,6 +44,7 @@ export * from "./workspace";
 export * from "./workspace-controller";
 export * from "./workspace-header/ProjectViewSwitcher";
 export * from "./web-adapter/createSharedWorkspaceFilesViewApi";
+export * from "./web-adapter/CollaborationFilesAdapter";
 export {
   createAutomationExecutionCatalogApi,
   mapAutomationExecutionCatalog,

@@ -117,15 +117,15 @@ describe('CloudFilesView', () => {
     expect(screen.getByTestId('task-attachment-attachment-1')).toHaveTextContent(
       'conversation-image.png'
     )
-    await screen.findByText('Issues')
-    await userEvent.click(screen.getByRole('button', { name: 'Issues' }))
+    await screen.findByText('事项')
+    await userEvent.click(screen.getByRole('button', { name: '事项' }))
     await userEvent.click(screen.getByRole('button', { name: /Release issue/ }))
     await userEvent.click(screen.getByRole('button', { name: /Prepare report/ }))
     await userEvent.click(screen.getByRole('button', { name: /reports/ }))
 
     expect(await screen.findByTestId('delivery-file-asset-1')).toHaveTextContent('result.md')
     expect(screen.getByTestId('cloud-file-breadcrumbs')).toHaveTextContent(
-      '文件IssuesRelease issuePrepare reportreports'
+      '文件事项Release issuePrepare reportreports'
     )
 
     await userEvent.click(screen.getByTestId('delivery-file-preview-asset-1'))

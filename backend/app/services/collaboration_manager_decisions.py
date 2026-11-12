@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
-    CloudProject,
+    CollaborationChatGroup,
     LoopItem,
     ProjectAutomationRun,
     ProjectChatAgent,
@@ -98,16 +98,25 @@ def _require_manager_dispatch(
         .with_for_update()
         .one()
     )
-    if "project_coordination" in dispatch.runtime_origin_context:
+    container_is_group = isinstance(
+        db.get(CollaborationChatGroup, str(project_id)), CollaborationChatGroup
+    )
+    if container_is_group or "project_coordination" in dispatch.runtime_origin_context:
         from app.services.collaboration_revocation import execution_authorized
 
         if not execution_authorized(db, dispatch):
             raise HTTPException(403, "Project coordination authority is revoked")
     group = collaboration_group_snapshot_for_dispatch(item=item, execution=dispatch)
-    manager = db.get(ProjectChatAgent, manager_agent_id)
+    if container_is_group:
+        from app.services.group_collaboration_runtime import runtime_member_agent
+
+        manager = runtime_member_agent(db, item, dispatch, manager_agent_id)
+    else:
+        manager = db.get(ProjectChatAgent, manager_agent_id)
     if (
         manager is None
-        or str(manager.cloud_project_id) != str(project_id)
+        or not container_is_group
+        and str(manager.cloud_project_id) != str(project_id)
         or manager.status != "active"
         or str(_dispatch_context(dispatch).get("manager_agent_id") or "") != manager.id
         or not collaboration_group_agent_matches(group.get("leader"), manager)
@@ -140,7 +149,9 @@ def apply_collaboration_manager_decision(
 ) -> CollaborationManagerDecision:
     """Atomically persist the manager-owned status transition and comment."""
 
-    project = db.get(CloudProject, project_id)
+    from app.services.collaboration_container_access import get_collaboration_container
+
+    project = get_collaboration_container(db, project_id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
     item = (

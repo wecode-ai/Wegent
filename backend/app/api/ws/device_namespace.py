@@ -59,7 +59,6 @@ from app.api.ws.wework_runtime_namespace import (
     PROJECT_CHAT_CREATED_EVENT,
     WEWORK_RUNTIME_EVENT,
     WEWORK_RUNTIME_NAMESPACE,
-    project_chat_room,
     wework_runtime_user_room,
 )
 from app.core.auth_utils import is_api_key, verify_api_key
@@ -1017,9 +1016,16 @@ def _project_chat_runtime_event_sync(
                 "workflow_continuation": workflow_continuation,
             }
         message, mode = projected
+        from app.services.project_chat.audience import publication_rooms
+
         return {
             "message": message.model_dump(mode="json", by_alias=True),
             "mode": mode,
+            "rooms": publication_rooms(
+                db,
+                str(message.project_id),
+                str(message.task_id) if message.task_id else None,
+            ),
             "workflow_continuation": workflow_continuation,
         }
 
@@ -3138,14 +3144,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     message.get("messageId"),
                     message.get("status"),
                 )
-                await get_sio().emit(
-                    PROJECT_CHAT_CREATED_EVENT,
-                    message,
-                    room=project_chat_room(
-                        project_id, str(project_task_id) if project_task_id else None
-                    ),
-                    namespace=WEWORK_RUNTIME_NAMESPACE,
-                )
+                for room in projected["rooms"]:
+                    await get_sio().emit(
+                        PROJECT_CHAT_CREATED_EVENT,
+                        message,
+                        room=room,
+                        namespace=WEWORK_RUNTIME_NAMESPACE,
+                    )
 
         if _is_runtime_task_reply_status(status) and not content.strip():
             logger.info(
@@ -3246,19 +3251,18 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
         if projected and projected.get("message"):
             message = projected["message"]
-            project_id = str(message["projectId"])
-            task_id = message.get("taskId")
             event_name = (
                 PROJECT_CHAT_AGENT_CHUNK_EVENT
                 if projected["mode"] == "delta"
                 else PROJECT_CHAT_CREATED_EVENT
             )
-            await get_sio().emit(
-                event_name,
-                message,
-                room=project_chat_room(project_id, str(task_id) if task_id else None),
-                namespace=WEWORK_RUNTIME_NAMESPACE,
-            )
+            for room in projected["rooms"]:
+                await get_sio().emit(
+                    event_name,
+                    message,
+                    room=room,
+                    namespace=WEWORK_RUNTIME_NAMESPACE,
+                )
         await get_sio().emit(
             WEWORK_RUNTIME_EVENT,
             payload,

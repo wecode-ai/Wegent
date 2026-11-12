@@ -63,9 +63,13 @@ Selecting **New Issue** in a workspace opens a lightweight composer instead of a
 
 Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. Existing runtime tasks are also linked into **My tasks**, so this board is another view of the Task-page inventory rather than an independent task list.
 
+The group or project picker above the task composer can select a standalone group directly, without creating a project. When selecting an existing Thread you have not joined, **Join and link** explicitly joins that Thread before linking the task. Cancelling does neither. Read-only group members cannot execute work.
+
+**New Thread** opens the full form to select the owning group, an optional project, and the public title and description. The description starts empty; your private task's first message is never copied into the group automatically. Confirming the form creates the Thread and links the original task while preserving its conversation, model and workspace. A draft task can select or create a Thread before its first message; binding waits until its runtime conversation exists. Selecting another Thread replaces the extra link while retaining the system **My tasks** record.
+
 On local boards, when a linked task finishes and moves to **In review**, its card shows an unread dot, a blue border, and a light blue background, with a muted blue surface in dark mode. Opening the item details marks it as read; returning to the board preserves its normal appearance. A subsequent run with a new result makes the card unread again.
 
-Every runtime task has at least one system-managed **My tasks** issue. A user may additionally link the task to one issue in a local or cloud project space. Task context prefers the user-selected issue and falls back to the system issue when no user link exists. The system issue remains linked and receives runtime status, task-title, and archive-state updates even after the extra project-space link is removed, so unlinking another board never removes the task from **My tasks**. Issues may also exist without a runtime task, which is why an ordinary project-space board is not itself a task inventory.
+Every runtime task has at least one system-managed **My tasks** item. A user may additionally link one local or cloud Thread. A group Thread belongs to its group; an optional project classifies and aggregates it. Task context prefers the selected Thread and shows the system item when no extra association exists. The system item continues receiving runtime status, task-title and archive-state updates; removing the extra association keeps the task in **My tasks**. Threads can also exist without a runtime task.
 
 A newly created system **My tasks** issue contains only a projection of the runtime task title and description, so Wework does not inject it as independent project context into the first model request. If a user later changes the title or description, or adds priority, hierarchy, participants, tags, workflow, a due date, attachments, deliveries, or comments, the Executor marks the issue as containing additional context. Wework reads the current issue again before a later turn and injects that new context. Status changes produced only by the runtime lifecycle do not enable injection.
 
@@ -75,7 +79,7 @@ Hover anywhere on a board card to open a task-progress panel at a stable positio
 
 The work-item summary above the composer shows the current project or linked Issue. Click its title to open the current work-item details; when no Issue-details action is available, it opens the matching board. The details icon opens Issue details, and the board icon focuses the current work item in its project-space board. Opening the board preserves the original Task tab and reuses an already-open board tab for the same project instead of loading a duplicate. Reference chips in the composer and sent messages open a conversation or Issue according to their type; see [Working with AI](./tasks.md).
 
-When changing the composer's project-space association, filter by owning space on the left. Each project on the right shows its name, key, and owning space to distinguish duplicate names. Search combines project names, space names, and project keys. Projects default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **Do not add to another project space** removes the extra association.
+When changing a task association, choose a group or project directly. Filter by source on the left; entries show their name, key and source to distinguish duplicate names. Search combines names, sources and keys. Results default to ascending name order, with descending order also available. In the search field, use the arrow keys to select, `Enter` to confirm, and `Esc` to close. **No additional thread** removes only the extra task association. To leave the discussion, choose **Leave discussion** in the Thread members section.
 
 Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
 
@@ -124,11 +128,11 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 
 <a id="ai-questions"></a>
 
-## Handle AI questions and project work
+## Handle AI questions and pending work
 
 <!-- ui-source: src/features/notifications/RuntimeInteractionsPage.tsx -->
 
-Open **top tab bar → + → Needs your input**, or choose **Needs your input** from the title-bar notification bell. The tab collects structured questions from task conversations, projects and your stand-in, plus ordinary Issues currently awaiting you in native local and cloud projects. Its left list groups entries under **Tasks, Projects, and Stand-in**, newest recorded time first within each group. Empty groups are hidden. Each question appears once; project questions initiated by your stand-in belong to Stand-in, and an Issue with a question entry is not repeated as ordinary work.
+Open **top tab bar → + → Needs your input**, or choose **Needs your input** from the title-bar notification bell. The tab collects structured questions from task conversations, Threads and your stand-in, plus ordinary local and cloud Threads currently awaiting you. Its left list groups entries under **Tasks, Threads, and Stand-in**, newest recorded time first within each group. Empty groups are hidden. Group Threads can appear without a project link. Each question appears once; Thread questions initiated by your stand-in belong to Stand-in, and a Thread with a question entry is not repeated as ordinary work.
 
 List entries and detail headers show a timestamp: the request time for pending questions and the recorded handling time for handled entries. Today's entries show hours and minutes; other dates show month and day, including the year for a different year. Hover over the timestamp for the complete date and time in your local timezone. Missing or invalid timestamps are omitted.
 
@@ -152,9 +156,9 @@ A queued Issue answer does not clear the wait. After confirmed acceptance, local
 
 <a id="project-pending-work"></a>
 
-### Project work and waiting time
+### Threads and waiting time
 
-Selecting ordinary project work opens its original Issue details on the right, even without a running task; it never creates a placeholder task. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
+Selecting a group Thread opens its discussion on the right. Read messages, join when needed, and use the information button to inspect metadata and your linked tasks. A project association is optional, and opening never creates a placeholder task. Linked group Threads use the same interface inside a task; private task conversations are not automatically shared. Original project and external-provider items retain their existing detail interface. Unassigned work belongs to its creator. Questions match their effective recipient or responsible participant first. Confirmed running agents and stand-ins do not count as ordinary human work, but questions assigned to you remain visible while independent AI steps continue. Opening this page does not expand project permissions.
 
 For one project, open **Collaboration → select project → board**, then select the toolbar's **Needs my action** button and count; select it again to clear. This temporary filter resets when switching projects and does not change saved views. Use **Only issues needing my input** in board view settings for a persistent view; it evaluates the current viewer. Local discovery includes native ownership and explicit assignments to the current verified sign-in identity, without globally merging matching names or IDs. Answers use the session's actual author. If a question still targets another identity, explicitly transfer it to the current name before answering; old recipients and historical authors are never silently rewritten. Cloud authorization always uses the server's current account.
 

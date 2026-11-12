@@ -1,5 +1,29 @@
 use super::*;
 
+fn require_execution_authority(
+    connection: &Connection,
+    execution: &LocalExecution,
+) -> Result<(), TaskRuntimeError> {
+    let owner = work_container_from(connection, &execution.cloud_project_id)?
+        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let item = get_item_from(connection, &execution.loop_item_id, "task")?
+        .ok_or(TaskRuntimeError::TaskNotFound)?;
+    if item.cloud_project_id.as_deref() != Some(execution.cloud_project_id.as_str()) {
+        return Err(TaskRuntimeError::TaskNotFound);
+    }
+    if owner.resource_type == "chat_group" {
+        chat_groups::require_participation(connection, &owner.id, &item.id, true)?;
+        task_execution_agent(
+            connection,
+            &owner.id,
+            &item.id,
+            &execution.agent_id,
+            execution.execution_payload.as_ref().unwrap_or(&Value::Null),
+        )?;
+    }
+    Ok(())
+}
+
 impl LocalTaskStore {
     pub fn claim_next_local_execution(
         &self,
@@ -105,13 +129,13 @@ impl LocalTaskStore {
                 .and_then(Value::as_str)
                 .is_some_and(|bound| bound != runtime_device_id);
         let mut payload = local_execution_runtime_payload(&pending);
-        let project = get_item_from(&connection, &pending.cloud_project_id, "project")?;
-        if project.is_none() {
+        let authority = require_execution_authority(&connection, &pending);
+        if let Err(error) = authority {
             drop(statement);
             connection.rollback()?;
             drop(guard);
-            self.fail_runtime_preflight(candidate_id, "Project is unavailable")?;
-            return Err(TaskRuntimeError::ProjectNotFound);
+            self.fail_runtime_preflight(candidate_id, &error.to_string())?;
+            return Err(error);
         }
         let resume_conflict = payload["resumeEnvironmentId"]
             .as_str()
@@ -176,14 +200,18 @@ impl LocalTaskStore {
         drop(guard);
         let mut payload = local_execution_runtime_payload(&execution);
         let preflight = self
-            .get_project(&execution.cloud_project_id)
+            .get_work_container(&execution.cloud_project_id)
             .and_then(|project| {
-                execution_workspace::apply_project_workspace(
-                    &mut payload,
-                    &project.metadata,
-                    runtime_device_id,
-                    &execution.cloud_project_id,
-                )
+                if project.resource_type == "project" {
+                    execution_workspace::apply_project_workspace(
+                        &mut payload,
+                        &project.metadata,
+                        runtime_device_id,
+                        &execution.cloud_project_id,
+                    )
+                } else {
+                    Ok(())
+                }
             });
         if let Err(error) = preflight {
             self.fail_runtime_preflight(candidate_id, &error.to_string())?;
@@ -245,6 +273,12 @@ impl LocalTaskStore {
             return Ok(None);
         }
         project_coordination_commands::authorize_execution_on(&connection, &current)?;
+        if let Err(error) = require_execution_authority(&connection, &current) {
+            connection.rollback()?;
+            drop(guard);
+            self.fail_runtime_preflight(execution_id, &error.to_string())?;
+            return Err(error);
+        }
         let timestamp = now();
         let changed = connection.execute(
             "UPDATE loop_item_executions

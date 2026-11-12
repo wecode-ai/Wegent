@@ -446,6 +446,47 @@ async fn verify_mention_inbox(
     }
 }
 
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn group_notification_reads_recheck_current_membership() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::wework_notifications::verify_group_notification_reads(&mysql).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn thread_classification_reads_current_permission_facts() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::chat_groups::verify_project_classification_facts(&mysql).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn runtime_group_context_rechecks_current_authority() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::loop_tasks::cloud_context_group_tests::verify_current_group_context(&mysql).await;
+        crate::cloud_projects::verify_group_environment_authority(&mysql).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; explicitly run by backend Rust CI"]
+async fn group_management_locks_shared_accounts_in_message_order() {
+    with_schema(4, |mysql| async move {
+        seed(&mysql).await;
+        crate::chat_groups::verify_group_account_order(&mysql).await;
+    })
+    .await;
+}
+
 async fn with_schema<F, Fut>(capacity: u32, verify: F)
 where
     F: FnOnce(MysqlService) -> Fut,

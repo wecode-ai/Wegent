@@ -567,7 +567,15 @@ test('one existing producer builds MinIO for exactly the consumers that need it 
       required.push({ scope, segment: match[1] })
     }
   }
-  assert.equal(required.length, 6)
+  assert.deepEqual(required, [
+    { scope: 'core', segment: 'collaboration-issue-mcp-comments' },
+    { scope: 'core', segment: 'collaboration-delivery-editing' },
+    { scope: 'core', segment: 'group-thread-cloud' },
+    { scope: 'cloud', segment: 'plugin-write-coordination' },
+    { scope: 'cloud', segment: 'plugin-runtime-route-refresh' },
+    { scope: 'cloud', segment: 'plugin-background-sync-isolation' },
+    { scope: 'cloud', segment: 'plugin-periodic-reconcile' },
+  ])
   const evaluate = new Function(
     'needs',
     'contains',

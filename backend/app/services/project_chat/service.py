@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
+    CollaborationChatGroup,
     LoopItem,
     ProjectChatAgent,
     loop_datetime_is_unset,
@@ -46,7 +47,11 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
-    require_cloud_project_role,
+)
+from app.services.collaboration_container_access import (
+    get_collaboration_container,
+    lock_scoped_thread,
+    require_collaboration_container_access,
 )
 from app.services.collaboration_permissions import (
     ACTION_ROLES,
@@ -64,7 +69,7 @@ from app.services.ghost_capabilities import (
     load_ghost_chain,
     merge_ghost_capabilities,
 )
-from app.services.loop_item_events import publish_loop_item_changed
+from app.services.loop_item_events import queue_loop_item_changed_after_commit
 from app.services.loop_item_status_history import (
     automatic_project_status,
     write_status_change,
@@ -117,6 +122,25 @@ def require_project_execution_environment(
     project_id: int | str,
     execution_device_id: str,
 ) -> None:
+    if isinstance(get_collaboration_container(db, project_id), CollaborationChatGroup):
+        from app.services.runner_routing import execution_environment_ids
+
+        devices = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(execution_environment_ids(db, str(project_id), None)),
+                Kind.kind == "Device",
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        if not any(
+            runtime_device_route_id(device) == execution_device_id for device in devices
+        ):
+            raise HTTPException(
+                422, "Execution environment is not authorized in this group"
+            )
+        return
     devices = (
         db.query(Kind)
         .join(ResourceMember, Kind.id == ResourceMember.resource_id)
@@ -148,7 +172,7 @@ PROJECT_CHAT_CANCELLED_EVENTS = {
 }
 
 
-def _task_id_filter(column: object, task_id: str | None) -> object:
+def chat_task_scope_filter(column: object, task_id: str | None) -> object:
     """Match a task id in both nullable dev schemas and sentinel schemas."""
     if task_id:
         return column == task_id
@@ -163,7 +187,6 @@ TASK_AI_STATE_KEY = "ai_state"
 TASK_AI_RUNNING_LEASE_SECONDS = 10 * 60
 EXECUTION_STATE_KEY = "execution_state"
 EXECUTION_UPDATED_AT_KEY = "execution_updated_at"
-PENDING_LOOP_ITEM_CHANGES_KEY = "project_chat_pending_loop_item_changes"
 _EXECUTION_STATE_FROM_AI_STATUS = {
     "running": "running",
     "completed": "completed",
@@ -495,21 +518,12 @@ class ProjectChatService:
 
     @staticmethod
     def _queue_loop_item_change(db: Session, item: LoopItem) -> None:
-        pending = db.info.setdefault(PENDING_LOOP_ITEM_CHANGES_KEY, set())
-        pending.add(item.id)
+        queue_loop_item_changed_after_commit(
+            db, item=item, reason="project_chat", actor_user_id=0
+        )
 
     def _commit(self, db: Session) -> None:
-        pending = set(db.info.pop(PENDING_LOOP_ITEM_CHANGES_KEY, set()))
         db.commit()
-        for item_id in pending:
-            item = db.get(LoopItem, item_id)
-            if item is not None:
-                publish_loop_item_changed(
-                    db,
-                    item=item,
-                    reason="project_chat",
-                    actor_user_id=0,
-                )
 
     """Read and append messages in a project's single shared chat."""
 
@@ -521,7 +535,9 @@ class ProjectChatService:
         project_id: str,
         include_archived: bool = False,
     ) -> list[ProjectChatAgentView]:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        access = require_collaboration_container_access(
+            db, project_id, user_id, BaseRole.Viewer
+        )
         return self.list_agents_for_access(
             db, access, user_id=user_id, include_archived=include_archived
         )
@@ -712,7 +728,9 @@ class ProjectChatService:
         agent_id: str,
         request: ProjectChatAgentUpdate,
     ) -> ProjectChatAgentView:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        require_collaboration_container_access(
+            db, project_id, user_id, BaseRole.Maintainer
+        )
         row = self._agent_row(db, project_id=project_id, agent_id=agent_id)
         require_project_agent_visibility(row, user_id)
         if row.version != request.version:
@@ -738,7 +756,7 @@ class ProjectChatService:
         if runtime == "wegent" and request.status != "archived":
             from app.services.project_automation_domain import runnable_wegent_team
 
-            project = db.get(CloudProject, project_id)
+            project = get_collaboration_container(db, project_id)
             self._authorize_team_binding(
                 db, project, user_id, team_id, request.share_with_workspace
             )
@@ -804,7 +822,7 @@ class ProjectChatService:
                 collaboration_permission_service,
             )
 
-            project = db.get(CloudProject, project_id)
+            project = get_collaboration_container(db, project_id)
             if request.share_with_workspace:
                 collaboration_permission_service.share_project_agent(
                     db, project, row, user_id
@@ -815,7 +833,7 @@ class ProjectChatService:
             )
             metadata.pop("permission_migration_reason", None)
         if request.status == "active" and metadata.get(BOT_WEGENT_TEAM_ID_KEY):
-            project = db.get(CloudProject, project_id)
+            project = get_collaboration_container(db, project_id)
             self._authorize_team_binding(
                 db,
                 project,
@@ -947,11 +965,21 @@ class ProjectChatService:
         )
         if request.task_id:
             query = query.filter(
-                _task_id_filter(ProjectChatMessage.task_id, request.task_id)
+                chat_task_scope_filter(ProjectChatMessage.task_id, request.task_id)
             )
         else:
-            query = query.filter(_task_id_filter(ProjectChatMessage.task_id, None))
-        if request.after_sequence > 0:
+            query = query.filter(
+                chat_task_scope_filter(ProjectChatMessage.task_id, None)
+            )
+        if request.before_sequence > 0:
+            rows = (
+                query.filter(ProjectChatMessage.id < request.before_sequence)
+                .order_by(ProjectChatMessage.id.desc())
+                .limit(request.limit)
+                .all()
+            )
+            rows.reverse()
+        elif request.after_sequence > 0:
             rows = (
                 query.filter(ProjectChatMessage.id > request.after_sequence)
                 .order_by(ProjectChatMessage.id.asc())
@@ -959,6 +987,13 @@ class ProjectChatService:
                 .all()
             )
         else:
+            if request.focus_message_id:
+                anchor = query.filter(
+                    ProjectChatMessage.message_id == request.focus_message_id
+                ).first()
+                if anchor is None:
+                    raise HTTPException(404, "Message not found in this conversation")
+                query = query.filter(ProjectChatMessage.id <= anchor.id)
             rows = (
                 query.order_by(ProjectChatMessage.id.desc()).limit(request.limit).all()
             )
@@ -979,7 +1014,18 @@ class ProjectChatService:
         user_id: int,
         user_name: str,
         request: ProjectChatSend,
+        commit: bool = True,
     ) -> ProjectChatWriteResult:
+        from app.services.project_chat.group_message_authority import (
+            prepare_group_message_authority,
+        )
+
+        prepare_group_message_authority(
+            db,
+            group_id=request.project_id,
+            thread_id=request.task_id,
+            actor_user_id=user_id,
+        )
         project = self._require_scope(
             db,
             user_id=user_id,
@@ -987,7 +1033,7 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
-        self._validate_agent_mentions(db, project, request)
+        self._validate_agent_mentions(db, project, request, user_id=user_id)
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -1022,13 +1068,20 @@ class ProjectChatService:
             project_id=request.project_id,
             task_id=request.task_id,
             reply_to_message_id=request.reply_to_message_id,
+            lock=isinstance(project, CollaborationChatGroup),
         )
         if reply.reply_to_message_id:
             from app.services.project_chat.stand_in_replies import (
                 stand_in_reply_recipient,
             )
 
-            recipient = stand_in_reply_recipient(db, reply.reply_to_message_id)
+            recipient = stand_in_reply_recipient(
+                db,
+                reply.reply_to_message_id,
+                project_id=request.project_id,
+                task_id=request.task_id,
+                lock=isinstance(project, CollaborationChatGroup),
+            )
             if recipient is not None and not request.mentions:
                 request = request.model_copy(
                     update={
@@ -1080,6 +1133,24 @@ class ProjectChatService:
         )
         if request.task_id and request.mentions:
             from app.services.project_chat.stand_in_events import enqueue_issue_wakeup
+            from app.services.thread_participation import is_participant
+
+            eligible_group_mentions = None
+            if isinstance(project, CollaborationChatGroup):
+                from app.services.chat_group_access import chat_group_members
+                from app.services.project_chat.group_message_authority import (
+                    mentioned_user_ids,
+                )
+
+                eligible_group_mentions = {
+                    int(row["user_id"])
+                    for row in chat_group_members(
+                        db,
+                        project.id,
+                        lock=True,
+                        user_ids=mentioned_user_ids(request.mentions),
+                    )
+                }
 
             for recipient_id in sorted(
                 {
@@ -1088,6 +1159,11 @@ class ProjectChatService:
                     if mention.type == "user"
                 }
             ):
+                if isinstance(project, CollaborationChatGroup) and (
+                    recipient_id not in eligible_group_mentions
+                    or not is_participant(db, request.task_id, recipient_id, lock=True)
+                ):
+                    continue
                 enqueue_issue_wakeup(
                     db,
                     user_id=recipient_id,
@@ -1107,7 +1183,10 @@ class ProjectChatService:
                 )
                 item.version += 1
                 self._queue_loop_item_change(db, item)
-        self._commit(db)
+        if commit:
+            self._commit(db)
+        else:
+            db.flush()
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
 
@@ -1118,6 +1197,7 @@ class ProjectChatService:
         project_id: str,
         task_id: str | None,
         reply_to_message_id: str | None,
+        lock: bool = False,
     ) -> ReplyContext:
         """Validate a one-level reply target and resolve its thread root.
 
@@ -1127,15 +1207,14 @@ class ProjectChatService:
         """
         if not reply_to_message_id:
             return ReplyContext()
-        target = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.message_id == reply_to_message_id,
-                ProjectChatMessage.project_id == project_id,
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .first()
+        query = db.query(ProjectChatMessage).filter(
+            ProjectChatMessage.message_id == reply_to_message_id,
+            ProjectChatMessage.project_id == project_id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
         )
+        if lock:
+            query = query.with_for_update().populate_existing()
+        target = query.first()
         if target is None:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
@@ -1165,13 +1244,26 @@ class ProjectChatService:
             project_id=request.project_id,
             task_id=request.task_id,
             required_role=BaseRole.Developer,
+            execute=True,
         )
-        configured_agent = self._agent_row(
-            db,
-            project_id=request.project_id,
-            agent_id=request.agent_id,
-            active_only=True,
-        )
+        if isinstance(project, CollaborationChatGroup) and request.task_id:
+            from app.services.issue_resource_context import require_assignment_agent
+
+            configured_agent = require_assignment_agent(
+                db,
+                container_id=str(project.id),
+                agent_id=request.agent_id,
+                user_id=user_id,
+                item=db.get(LoopItem, request.task_id),
+                execute=True,
+            )
+        else:
+            configured_agent = self._agent_row(
+                db,
+                project_id=request.project_id,
+                agent_id=request.agent_id,
+                active_only=True,
+            )
         require_project_agent_visibility(configured_agent, user_id)
         trigger = None
         if request.trigger_message_id:
@@ -1180,7 +1272,7 @@ class ProjectChatService:
                 .filter(
                     ProjectChatMessage.message_id == request.trigger_message_id,
                     ProjectChatMessage.project_id == request.project_id,
-                    _task_id_filter(ProjectChatMessage.task_id, request.task_id),
+                    chat_task_scope_filter(ProjectChatMessage.task_id, request.task_id),
                     ProjectChatMessage.sender_type == "user",
                     loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
@@ -2220,7 +2312,7 @@ class ProjectChatService:
                     "completed",
                 }
             ):
-                project = db.get(CloudProject, task.cloud_project_id)
+                project = get_collaboration_container(db, task.cloud_project_id)
                 if project is not None:
                     next_status = automatic_project_status(
                         project,
@@ -2402,7 +2494,7 @@ class ProjectChatService:
         ):
             return
         previous_status = task.status
-        project = db.get(CloudProject, task.cloud_project_id)
+        project = get_collaboration_container(db, task.cloud_project_id)
         if project is None:
             return
         next_status = automatic_project_status(
@@ -2444,7 +2536,7 @@ class ProjectChatService:
             .filter(
                 ProjectChatMessage.message_id == request.message_id,
                 ProjectChatMessage.project_id == request.project_id,
-                _task_id_filter(ProjectChatMessage.task_id, request.task_id),
+                chat_task_scope_filter(ProjectChatMessage.task_id, request.task_id),
                 ProjectChatMessage.sender_type == "agent",
                 ProjectChatMessage.status.in_(("pending", "streaming")),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
@@ -2493,9 +2585,22 @@ class ProjectChatService:
         project_id: str,
         task_id: str | None,
         required_role: BaseRole,
+        execute: bool = False,
     ) -> LoopItem:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        access = require_collaboration_container_access(
+            db,
+            project_id,
+            user_id,
+            BaseRole.Viewer,
+            write=required_role != BaseRole.Viewer or execute,
+        )
         project = access.project
+        if (
+            execute
+            and isinstance(project, CollaborationChatGroup)
+            and not has_permission(access.role, BaseRole.Developer)
+        ):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         if task_id is None:
             if not has_permission(access.role, required_role):
                 raise HTTPException(
@@ -2527,19 +2632,38 @@ class ProjectChatService:
         )
         if task is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        if required_role != BaseRole.Viewer or execute:
+            task = lock_scoped_thread(db, project.id, task.id)
         if not can_view_item(db, access, task, user_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
         if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        if required_role != BaseRole.Viewer or execute:
+            from app.services.thread_participation import require_thread_participation
+
+            require_thread_participation(db, task, user_id, execute=execute)
         return project
 
     def _validate_agent_mentions(
-        self, db: Session, project: LoopItem, request: ProjectChatSend
+        self, db: Session, project: LoopItem, request: ProjectChatSend, *, user_id: int
     ) -> None:
         agent_mentions = [
             mention for mention in request.mentions if mention.type == "agent"
         ]
         if not agent_mentions:
+            return
+        if isinstance(project, CollaborationChatGroup) and request.task_id:
+            from app.services.issue_resource_context import require_assignment_agent
+
+            for mention in agent_mentions:
+                require_assignment_agent(
+                    db,
+                    container_id=str(project.id),
+                    agent_id=mention.id,
+                    user_id=user_id,
+                    item=db.get(LoopItem, request.task_id),
+                    execute=True,
+                )
             return
         unknown = [
             mention.id
@@ -2593,6 +2717,15 @@ class ProjectChatService:
         )
         from app.services.workspaces import workspace_service
 
+        if isinstance(project, CollaborationChatGroup):
+            from app.services.group_resource_permissions import authorize_group_team
+
+            if share_with_workspace:
+                authorize_group_team(db, project, user_id, team_id)
+            collaboration_permission_service.require_project_team(
+                db, project.id, team_id, require_binding=False
+            )
+            return
         if share_with_workspace:
             workspace_service.ensure_accessible_agent_authorized(
                 db, workspace_id=project.workspace_id, user_id=user_id, team_id=team_id
@@ -2715,7 +2848,7 @@ class ProjectChatService:
                     raise ValueError("Agent must belong to the authorized project")
                 can_use = has_permission(project_access.role, ACTION_ROLES["execute"])
             else:
-                can_use = collaboration_permission_service.check(
+                can_use = collaboration_permission_service.check_container(
                     db, viewer_user_id, "execute", row.cloud_project_id
                 ).allowed
             if row.status == "active":

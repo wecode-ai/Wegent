@@ -34,7 +34,7 @@ struct Channels {
 fn channels(preferences: &Value, kind: &str) -> Channels {
     let collaboration = matches!(
         kind,
-        "assignment" | "mention" | "execution" | "issue_dispatch_assignment"
+        "assignment" | "mention" | "thread_message" | "execution" | "issue_dispatch_assignment"
     );
     let category = if collaboration {
         "collaboration"
@@ -100,7 +100,18 @@ pub(crate) async fn create_on(
     let project = payload["projectId"].as_str().unwrap_or("");
     let issue = payload["itemId"].as_str().unwrap_or("");
     let encode = crate::board_snapshot::external_provider::url_encode_path;
-    let mut url = if project.is_empty() {
+    let group = payload["groupId"].as_str().filter(|id| !id.is_empty());
+    let mut url = if let Some(group) = group {
+        if issue.is_empty() {
+            format!("wework://groups/cloud/{}", encode(group))
+        } else {
+            format!(
+                "wework://groups/cloud/{}/threads/{}",
+                encode(group),
+                encode(issue)
+            )
+        }
+    } else if project.is_empty() {
         String::new()
     } else if issue.is_empty() {
         format!("wework://boards/{}", encode(project))
@@ -111,7 +122,7 @@ pub(crate) async fn create_on(
             encode(issue)
         )
     };
-    if !issue.is_empty()
+    if (group.is_some() || !issue.is_empty())
         && !url.is_empty()
         && let Some(comment) = payload["commentId"].as_str().filter(|id| !id.is_empty())
     {
@@ -349,6 +360,22 @@ fn execution_tail(status: &str) -> &str {
 pub(crate) async fn deliver(state: &AppState, pending: Pending) {
     let notification = &pending.notification;
     let user = notification["user_id"].as_i64().unwrap_or(0);
+    if notification["payload"]["groupId"].is_string() {
+        match crate::socketio::chat_audience::notification_allowed(
+            &state.mysql,
+            user,
+            &notification["payload"],
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                tracing::warn!(%error,"Notification authority unavailable; delivery suppressed");
+                return;
+            }
+        }
+    }
     if let Some(redis) = state.redis.as_ref() {
         let mut frames = Vec::new();
         if pending.stored {
@@ -388,10 +415,12 @@ pub(crate) async fn deliver(state: &AppState, pending: Pending) {
         if let Some(url) = notification["url"].as_str().filter(|url| !url.is_empty()) {
             links.push(("在 Wework 中打开".into(), url.into()));
         }
-        if let (Some(project), Some(issue)) = (
-            notification["payload"]["projectId"].as_str(),
-            notification["payload"]["itemId"].as_str(),
-        ) {
+        if notification["payload"]["groupId"].is_null()
+            && let (Some(project), Some(issue)) = (
+                notification["payload"]["projectId"].as_str(),
+                notification["payload"]["itemId"].as_str(),
+            )
+        {
             let base = crate::config::env_or_dotenv("FRONTEND_URL")
                 .unwrap_or_else(|| "http://localhost:3000".into());
             let encode = crate::board_snapshot::external_provider::url_encode_path;

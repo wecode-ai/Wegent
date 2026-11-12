@@ -337,10 +337,10 @@ export function ProjectBoardBody<TItem>({
           <span className="ml-auto text-xs text-text-muted">{externalManagedLabel}</span>
         </div>
       ) : (
-        <div className="project-board-toolbar flex min-w-0 shrink-0 items-start">
+        <div className="project-board-toolbar flex min-w-0 shrink-0 flex-wrap items-start">
           <div
             data-testid="cloud-board-toolbar"
-            className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain px-6 pb-3"
+            className="project-board-controls flex min-w-0 flex-1 flex-wrap items-center gap-2 px-6 pb-3"
           >
             {isMyTasksBoard && localProjectFilter && localProjectFilter.options.length > 0 ? (
               <label className="relative inline-flex h-8 min-w-40 shrink-0 cursor-pointer items-center rounded-lg border border-border bg-background pl-3 pr-8 text-xs font-medium text-text-primary hover:bg-muted">
@@ -371,11 +371,14 @@ export function ProjectBoardBody<TItem>({
               </label>
             ) : null}
             {!customView && renderGroupPicker(state.groupBy, state.selectGroupBy)}
-            <Tooltip label={groupFilterLabel} side="bottom">
-              <label className="project-board-compact-action relative inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted">
+            <Tooltip label={groupFilterLabel} side="bottom" className="min-w-0 max-w-full">
+              <label
+                data-active={Boolean(state.groupFilter)}
+                className="project-board-group-filter project-board-compact-action relative inline-flex h-8 min-w-0 max-w-full cursor-pointer items-center whitespace-nowrap rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
+              >
                 <ListFilter className="project-board-action-icon h-4 w-4" aria-hidden="true" />
                 <span
-                  className="project-board-action-label"
+                  className="project-board-action-label min-w-0 truncate"
                   data-testid="cloud-board-group-filter-label"
                 >
                   {groupFilterLabel}
@@ -413,7 +416,7 @@ export function ProjectBoardBody<TItem>({
             </label>
             <div
               data-testid="cloud-board-view-actions"
-              className="ml-auto flex shrink-0 items-center gap-2"
+              className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2"
             >
               {columns.some(isExecutionColumn) ? (
                 <Tooltip label={state.focusExecutionColumns ? focusLabels.exit : focusLabels.enter}>

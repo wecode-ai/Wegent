@@ -214,6 +214,44 @@ describe("collaboration workspace controller", () => {
     expect(state.error).toBeNull();
   });
 
+  it("refreshes Project metadata after a scoped move so subsequent preference saves use the current version", async () => {
+    state = { ...state, project, projects: [project] };
+    const { api, commands } = createController();
+    vi.mocked(api.projects.get).mockResolvedValue({ ...project, version: 12 });
+    await commands.loadProjectSnapshot(project.id, {
+      invalidate: true,
+      refreshProjectMetadata: true,
+    });
+    expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(project.id);
+    expect(state.project?.version).toBe(12);
+    await commands.updateProject(project.id, {
+      version: state.project!.version,
+      name: "Still editable",
+    });
+    expect(api.projects.update).toHaveBeenCalledWith(project.id, {
+      version: 12,
+      name: "Still editable",
+    });
+  });
+
+  it("does not navigate back when a scoped move metadata refresh finishes after another Project is selected", async () => {
+    state = { ...state, project, projects: [project] };
+    const { api, commands } = createController();
+    const pending = deferred<typeof project>();
+    vi.mocked(api.projects.get).mockReturnValueOnce(pending.promise);
+    const loading = commands.loadProjectSnapshot(project.id, {
+      refreshProjectMetadata: true,
+    });
+    const other = { ...project, id: "other-project" };
+    state = { ...state, project: other, projects: [project, other] };
+    pending.resolve({ ...project, version: 12 });
+    await loading;
+    expect(state.project).toEqual(other);
+    expect(state.projects.find((item) => item.id === project.id)?.version).toBe(
+      12,
+    );
+  });
+
   it("shares an in-flight board load with refresh requests and fetches again after completion", async () => {
     state = { ...state, projects: [project] };
     const { api, commands } = createController();

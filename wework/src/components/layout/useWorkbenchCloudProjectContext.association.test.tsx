@@ -10,6 +10,7 @@ import {
   loopItem,
   project,
   renderCloudContext,
+  threadOwner,
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe.each(['local', 'backend'] as const)('new task association in %s projects', store => {
@@ -23,7 +24,12 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
     'defers the %s Issue association until the first message creates a session',
     async choice => {
       const target = project(`draft-${store}`, store)
-      const issue = loopItem(target.id)
+      const { owner: group, groups } = threadOwner(`group-${store}`, store)
+      const issue =
+        choice === 'new'
+          ? { ...loopItem(group.id), group_id: group.id, project_id: target.id }
+          : loopItem(target.id)
+      const bindingOwner = choice === 'new' ? group : target
       let boundItem: CloudLoopItem | null = null
       const api = {
         listCloudProjects: vi.fn().mockResolvedValue({ items: [target] }),
@@ -32,7 +38,7 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
         listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
         findCloudContextForTask: vi.fn().mockImplementation(async () => {
           if (!boundItem) throw new Error('Not bound yet')
-          return { project: target, loop_item: boundItem }
+          return { project: bindingOwner, loop_item: boundItem }
         }),
         bindTask: vi.fn().mockImplementation(async () => {
           boundItem = issue
@@ -45,6 +51,7 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
       const services = {
         deliveryApi: api,
         projectSpaceApis: { [store === 'local' ? 'local' : 'cloud']: api },
+        chatGroupApis: { [store === 'local' ? 'local' : 'cloud']: groups },
         ...(store === 'backend' ? { workspaceRuntimePort: cloudRuntimePort(api) } : {}),
       } as unknown as WorkbenchServices
       const { result, rerender } = renderHook(
@@ -70,18 +77,24 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
         if (choice === 'existing') result.current.associateRuntimeTaskWithExistingItem(issue)
         else result.current.associateRuntimeTaskWithNewItem()
       })
+      if (choice === 'new') {
+        expect(result.current.taskOriginCreation?.target).toEqual(target)
+        expect(result.current.pendingCloudProject).toBeNull()
+        expect(api.trackProjectTask).not.toHaveBeenCalled()
+        expect(api.bindTask).not.toHaveBeenCalled()
+        await act(() => result.current.associateCreatedTaskOrigin(issue, group))
+      }
       expect(result.current.taskBoardAssociation).toBeNull()
-      expect(result.current.pendingCloudProject).toEqual(target)
-      expect(result.current.pendingTodoItem).toEqual(choice === 'existing' ? issue : null)
-      expect(result.current.cloudActionNotice).toContain(
-        choice === 'existing' ? issue.title : target.name
-      )
+      expect(result.current.pendingCloudProject).toEqual(bindingOwner)
+      expect(result.current.pendingTodoItem).toEqual(issue)
+      expect(result.current.cloudActionNotice).toContain(issue.title)
       expect(api.bindTask).not.toHaveBeenCalled()
       expect(api.trackProjectTask).not.toHaveBeenCalled()
 
       const submission = await act(() => result.current.prepareSubmission('First message'))
-      expect(submission.origin?.loopItemId).toBe(choice === 'existing' ? issue.id : undefined)
-      expect(submission.additionalContext?.cloudCollaboration.value).toContain(target.name)
+      expect(submission.origin?.loopItemId).toBe(issue.id)
+      expect(submission.origin?.cloudProjectId).toBe(bindingOwner.id)
+      expect(submission.additionalContext?.cloudCollaboration.value).toContain(bindingOwner.name)
       expect(api.bindTask).not.toHaveBeenCalled()
       expect(api.trackProjectTask).not.toHaveBeenCalled()
       const task = { deviceId: 'draft-device', taskId: `draft-${store}-${choice}` }
@@ -89,18 +102,8 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
       rerender({ task })
 
       await waitFor(() => expect(result.current.boundCloudItem).toEqual(issue))
-      if (choice === 'existing') {
-        expect(api.bindTask).toHaveBeenCalledExactlyOnceWith(issue.id, task, 'First message')
-        expect(api.trackProjectTask).not.toHaveBeenCalled()
-      } else {
-        expect(api.trackProjectTask).toHaveBeenCalledExactlyOnceWith(
-          target.id,
-          task,
-          'First message',
-          'First message'
-        )
-        expect(api.bindTask).not.toHaveBeenCalled()
-      }
+      expect(api.bindTask).toHaveBeenCalledExactlyOnceWith(issue.id, task, 'First message')
+      expect(api.trackProjectTask).not.toHaveBeenCalled()
     }
   )
 

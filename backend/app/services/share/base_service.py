@@ -52,7 +52,14 @@ from app.schemas.share import (
     ShareLinkConfig,
     ShareLinkResponse,
 )
-from app.services.external_entity_resolver import get_entity_resolver
+from app.services.external_entity_resolver import (
+    get_all_entity_types,
+    get_entity_resolver,
+)
+from app.services.resource_authority_reads import (
+    authority_query,
+    current_authority_reads,
+)
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -1939,7 +1946,7 @@ class UnifiedShareService(ABC):
 
         from sqlalchemy import case
 
-        member = (
+        member = authority_query(
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
@@ -1956,8 +1963,7 @@ class UnifiedShareService(ABC):
                 ).desc(),
                 ResourceMember.updated_at.desc(),
             )
-            .first()
-        )
+        ).first()
 
         if member:
             # Use effective role for permission check
@@ -2069,22 +2075,22 @@ class UnifiedShareService(ABC):
         approved_status_variants = self._approved_status_variants
 
         # Query entity bindings with their stored roles for precise checks
-        entity_rows = (
-            db.query(
-                ResourceMember.entity_type,
-                ResourceMember.entity_id,
-                ResourceMember.role,
-            )
-            .filter(
-                ResourceMember.resource_type.in_(resource_type_variants),
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type != "user",
-                ResourceMember.entity_type != "",
-                ResourceMember.entity_id.isnot(None),
-                ResourceMember.status.in_(approved_status_variants),
-            )
-            .all()
+        query = db.query(
+            ResourceMember.entity_type,
+            ResourceMember.entity_id,
+            ResourceMember.role,
+        ).filter(
+            ResourceMember.resource_type.in_(resource_type_variants),
+            ResourceMember.resource_id == resource_id,
+            ResourceMember.entity_type != "user",
+            ResourceMember.entity_type != "",
+            ResourceMember.entity_id.isnot(None),
+            ResourceMember.status.in_(approved_status_variants),
         )
+        if current_authority_reads():
+            # Unknown entity types never authorize use; do not lock pending Group grants.
+            query = query.filter(ResourceMember.entity_type.in_(get_all_entity_types()))
+        entity_rows = authority_query(query).all()
 
         if not entity_rows:
             return False

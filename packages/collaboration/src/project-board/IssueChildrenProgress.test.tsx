@@ -63,9 +63,9 @@ describe('IssueChildrenProgress', () => {
       expect(onOpen).toHaveBeenCalledOnce()
       expect(onCardOpen).not.toHaveBeenCalled()
       act(() => root.render(render('en', 3)))
-      expect(button.textContent).toBe('Sub-issues 3/5')
+      expect(button.textContent).toBe('Sub-Threads 3/5')
       expect(button.getAttribute('aria-label')).toBe(
-        '3 of 5 sub-issues completed. Open the sub-issue board'
+        '3 of 5 sub-Threads completed. Open the sub-Thread board'
       )
       expect(container.querySelector('circle[pathLength]')?.getAttribute('stroke-dasharray')).toBe(
         '0.6 1'

@@ -98,11 +98,11 @@ impl LoopItemResponse {
 
 /// `LoopItemPermissions` (`app.schemas.delivery`).
 #[derive(Debug, Serialize)]
-struct Permissions {
-    edit_content: bool,
-    comment: bool,
-    assign: bool,
-    execute: bool,
+pub(crate) struct Permissions {
+    pub edit_content: bool,
+    pub comment: bool,
+    pub assign: bool,
+    pub execute: bool,
 }
 
 /// The execution-derived overlay fields. All fields are `None` when the item
@@ -202,6 +202,44 @@ pub async fn response_values(
     let is_creator = item.created_by_user_id == Some(current_user.id);
     let permissions = issue_permissions(role, is_creator);
 
+    response_with_authority(
+        state,
+        item,
+        current_user,
+        ItemReadAuthority {
+            can_view_detail,
+            security_level,
+            permissions,
+            provider_is_local: project.provider_is_local,
+        },
+    )
+    .await
+}
+
+pub(crate) struct ItemReadAuthority {
+    pub can_view_detail: bool,
+    pub security_level: &'static str,
+    pub permissions: Permissions,
+    pub provider_is_local: bool,
+}
+
+/// Shared stored fields; the caller must first authorize the actual container.
+pub(crate) async fn response_with_authority(
+    state: &AppState,
+    item: &TaskItemFullRow,
+    current_user: &SessionUser,
+    authority: ItemReadAuthority,
+) -> Result<LoopItemResponse, HttpError> {
+    let ItemReadAuthority {
+        can_view_detail,
+        security_level,
+        permissions,
+        provider_is_local,
+    } = authority;
+    let repository = LoopItemRepository::new(&state.mysql);
+    let default_metadata = ItemMetadata::default();
+    let metadata = item.metadata().unwrap_or(&default_metadata);
+
     // `db.get(User, item.assignee_user_id)`: the source identity map already
     // holds the session user, so the session name is used without a query.
     let assignee_name = match item.assignee_user_id.filter(|id| *id != 0) {
@@ -278,9 +316,13 @@ pub async fn response_values(
         String::new()
     };
 
-    let human_task_binding =
-        super::human_task_binding::human_task_binding(state, item, current_user.id, project)
-            .await?;
+    let human_task_binding = super::human_task_binding::human_task_binding(
+        state,
+        item,
+        current_user.id,
+        provider_is_local,
+    )
+    .await?;
 
     Ok(LoopItemResponse {
         id: item.id.clone(),

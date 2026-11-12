@@ -2,6 +2,10 @@
 
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
+import { createScheduleThreadFixture } from './helpers/collaboration-schedule-thread.mjs'
+
+const executor = vi.hoisted(() => ({ request: vi.fn() }))
+vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({ requestExecutor: executor.request }))
 import {
   calendarDays,
   localDateKey,
@@ -67,6 +71,8 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     vi.setSystemTime(new Date(clock))
     const keys = collaborationScheduleDates()
     const visibleDates = new Set(calendarDays(new Date(clock), true).map(localDateKey))
+    const thread = createScheduleThreadFixture('')
+    executor.request.mockImplementation(thread.read)
     const calls = []
     const captures = []
     let range = `${keys.initialStart} → ${keys.initialEnd}`
@@ -74,6 +80,8 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
     const control = {
       async command(action, selector, options = {}) {
         calls.push({ action, selector, options })
+        const metadataAction = thread.command(action, selector, options)
+        if (metadataAction.handled) return metadataAction.value
         if (action === 'chooseWhenEnabled') {
           const tabs = {
             calendar: 'collaboration-calendar-tab',
@@ -147,6 +155,11 @@ test.each(['2026-10-26T12:00:00', '2026-11-30T12:00:00'])(
       scoped: selector => selector,
       timeoutMs: 1000,
     })
+    assert.equal(
+      thread.reads.length,
+      2,
+      'Read the actual owner before and after metadata persistence'
+    )
     assert.equal(range, `${keys.movedStart} → ${keys.movedEnd}`)
     assert.equal(calls.filter(call => call.action === 'drag').length, 2)
     assert.equal(calls.filter(call => call.action === 'dragBy').length, 1)

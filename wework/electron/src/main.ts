@@ -21,6 +21,7 @@ import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
+import { installE2EBrowserDownloads } from './host/e2e-browser-downloads.js'
 import { VerificationDevtools } from './host/verification-devtools.js'
 
 import {
@@ -2002,8 +2003,12 @@ async function startupDiagnosticsText(): Promise<string> {
 
 function installIpc(): void {
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
-    const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
-    if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
+    installE2EBrowserDownloads({
+      environment: process.env,
+      app,
+      session: session.defaultSession,
+      isHostWindow: id => dshWindowLabels.has(id),
+    })
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')

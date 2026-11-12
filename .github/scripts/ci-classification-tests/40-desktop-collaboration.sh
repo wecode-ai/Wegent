@@ -81,7 +81,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}'
 for personal_board_path in \
   "wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs" \
-  "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-field-drag.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-preferences.mjs" \
   "wework/e2e/desktop/modules/collaboration-board-tag-drag.mjs" \
@@ -89,6 +88,14 @@ for personal_board_path in \
   assert_desktop_case "Personal Issue board regression selects its checkpoint: $personal_board_path" \
     "$personal_board_expected" "$personal_board_path"
 done
+
+assert_desktop_case "Shared personal board navigation selects both existing consumers" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"group-thread-cloud"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs"
 
 assert_desktop_case "Lane sorting scenario is invoked by its core CI shard" \
   'wework_desktop_e2e=true
@@ -156,7 +163,7 @@ done
 assert_desktop_case "local assignment adapter changes include activity persistence coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"task-status-sync"},{"id":"core-3","name":"Core / shard 3","segments":"collaboration-human-round-resume"},{"id":"core-4","name":"Core / shard 4","segments":"task-board-bulk-actions,collaboration-local-group-coordinate"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-issue-assignment-activity"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"task-status-sync"},{"id":"core-3","name":"Core / shard 3","segments":"collaboration-human-round-resume"},{"id":"core-4","name":"Core / shard 4","segments":"task-board-bulk-actions,collaboration-local-group-coordinate"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-issue-assignment-activity"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-board-sorting"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/api/local/localDelivery.ts"
@@ -278,7 +285,7 @@ done
 assert_desktop_case "collaboration execution environment changes select onboarding and lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"collaboration-remote-group-coordinate"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,collaboration-runtime-reconciliation,project-member-overrides,collaboration-group-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,collaboration-human-round-resume,stand-in-controls,stand-in-project-enable,stand-in-git"},{"id":"core-4","name":"Core / shard 4","segments":"collaboration-local-group-coordinate"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task"},{"id":"core-6","name":"Core / shard 6","segments":"remote-device-onboarding,collaboration-issue-archive,collaboration-milestones,collaboration-deliveries,collaboration-delivery-editing"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch,stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,collaboration-local-group-cancellation,collaboration-first-use"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-template-agents,collaboration-template-app-device-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"collaboration-remote-group-coordinate"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,collaboration-runtime-reconciliation,project-member-overrides,collaboration-group-onboarding"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in,stand-in-identities,stand-in-connections,stand-in-mcp,stand-in-cli,stand-in-plugin-bridge,stand-in-alternate-source,stand-in-action-confirmation,stand-in-email,stand-in-list-confirmation,stand-in-profile,stand-in-telemetry,collaboration-human-round-resume,stand-in-controls,stand-in-project-enable,stand-in-git"},{"id":"core-4","name":"Core / shard 4","segments":"collaboration-local-group-coordinate"},{"id":"core-5","name":"Core / shard 5","segments":"collaboration-local-agent-dispatch,collaboration-worktree-policy,stand-in-personal-task"},{"id":"core-6","name":"Core / shard 6","segments":"remote-device-onboarding,collaboration-issue-archive,collaboration-milestones,collaboration-deliveries,collaboration-delivery-editing"},{"id":"core-7","name":"Core / shard 7","segments":"collaboration-remote-agent-dispatch,stand-in-permissions,stand-in-workspace"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-remote-group-planning-details,stand-in-cloud,stand-in-assignment-notifications,collaboration-local-group-cancellation,collaboration-first-use,collaboration-board-sorting"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-shared-core,collaboration-template-agents,collaboration-template-app-device-routing"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-device-lifecycle"}]}
 wework_desktop_other_e2e=false

@@ -12,7 +12,10 @@ import type {
 } from "../types";
 import { WorkspaceCollaborationGroupsConfiguration } from "../platform/WorkspaceResourceConfiguration";
 import type { ProjectAgentConfigurationHost } from "../project-agent-config/types";
-import { readTemplateAgents, templateRoutingResolver } from "../templates/agents";
+import {
+  readTemplateAgents,
+  templateRoutingResolver,
+} from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
 
@@ -29,9 +32,11 @@ function ScopedProjectCollaborationGroups({
   agentConfiguration,
   agentResourceContext,
   onProjectChanged,
+  ownerType = "project",
 }: {
   api: SharedWorkspaceApi;
   projectId: string;
+  ownerType?: "project" | "chat_group";
   workspaceId?: string | null;
   members: CollaborationMember[];
   agents: CollaborationAgent[];
@@ -240,8 +245,12 @@ function ScopedProjectCollaborationGroups({
           data-testid="project-group-members-error"
         >
           {locale === "zh-CN"
-            ? "加载项目成员失败："
-            : "Failed to load project members: "}
+            ? ownerType === "chat_group"
+              ? "加载群成员失败："
+              : "加载项目成员失败："
+            : ownerType === "chat_group"
+              ? "Failed to load group members: "
+              : "Failed to load project members: "}
           {membersError}
           <button
             className="collaboration-link-button"
@@ -254,6 +263,7 @@ function ScopedProjectCollaborationGroups({
         </div>
       ) : null}
       <WorkspaceCollaborationGroupsConfiguration
+        ownerType={ownerType}
         groups={groups}
         availableGroups={workspaceGroups.filter(
           (group) => !projectGroupIds.has(group.id),
@@ -282,7 +292,12 @@ function ScopedProjectCollaborationGroups({
               drafts,
               locale,
               templateMessages[locale].partial,
-              templateRoutingResolver(agentConfiguration, location, projectId, locale),
+              templateRoutingResolver(
+                agentConfiguration,
+                location,
+                projectId,
+                locale,
+              ),
             );
             await reload();
             const latest = await api.projects.get(projectId);

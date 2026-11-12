@@ -12,6 +12,30 @@ fail() {
   exit 1
 }
 
+# The installer owns failure diagnostics; an outer obsolete trap must not mask its status.
+if grep -q 'report_apt_network_diagnostics' \
+  "$action_dir/prepare-electron-installer-cache/action.yml"; then
+  fail "Electron preparation must not call the removed APT diagnostic function"
+fi
+(
+  source "$script_dir/lib/apt-packages.sh"
+  apt_probe_log="$(mktemp)"
+  trap 'rm -f "$apt_probe_log"' EXIT
+  timeout() { shift; "$@"; }
+  getent() { return 2; }
+  curl() { printf '%s\n' "$*" >> "$apt_probe_log"; return 7; }
+  if CI=true run_apt_with_diagnostics bash -c 'exit 37'; then
+    fail "APT diagnostics must preserve an installer failure"
+  else
+    apt_test_status=$?
+    [[ "$apt_test_status" == 37 ]] || fail "APT diagnostics replaced the installer status"
+  fi
+  [[ "$(wc -l < "$apt_probe_log" | tr -d ' ')" == 4 ]] ||
+    fail "APT failure must collect the four bounded transport controls"
+  [[ "$(grep -c -- '--connect-timeout 2 --max-time 3' "$apt_probe_log")" == 4 ]] ||
+    fail "APT transport diagnostics must stay bounded"
+)
+
 validate_yaml_steps() {
   local mode="$1"
   local file="$2"

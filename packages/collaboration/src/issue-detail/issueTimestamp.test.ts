@@ -2,11 +2,30 @@ import { describe, expect, it } from "vitest";
 import {
   compareIssueTimestamps,
   formatIssueTimestamp,
+  formatIssueDate,
   issueExecutionElapsedMinutes,
   issueActivityTimestamp,
   issueThreadActivityTimestamp,
 } from "./issueTimestamp";
 import type { ProjectChatMessage } from "@wegent/chat-core";
+
+describe("formatIssueDate", () => {
+  it("uses the local calendar day for timestamped creation, preserving date-only values", () => {
+    expect(formatIssueDate("2026-11-10T23:25:00Z", "Asia/Shanghai")).toBe(
+      "2026-11-11",
+    );
+    expect(formatIssueDate("2026-11-10T23:25:00", "Asia/Shanghai")).toBe(
+      "2026-11-11",
+    );
+    expect(formatIssueDate("2026-11-11T01:25:00Z", "America/Los_Angeles")).toBe(
+      "2026-11-10",
+    );
+    expect(formatIssueDate("2026-11-11", "America/Los_Angeles")).toBe(
+      "2026-11-11",
+    );
+    expect(formatIssueDate("invalid")).toBeNull();
+  });
+});
 
 describe("issueActivityTimestamp", () => {
   const message = {

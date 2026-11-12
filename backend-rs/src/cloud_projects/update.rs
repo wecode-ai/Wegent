@@ -29,6 +29,20 @@
 //! The post-commit `users` reload reproduces SQLAlchemy's `expire_on_commit`:
 //! the response path re-reads the caller by primary key before its first read.
 mod fields;
+
+pub(crate) fn normalize_board_setting(
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, crate::http_compat::FastApiError> {
+    match key {
+        "board_config" => fields::board_config_value(value),
+        "card_display" => fields::card_display_value(value),
+        _ => Err(crate::http_compat::FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "Unknown board setting",
+        )),
+    }
+}
 mod metadata;
 mod provider;
 mod request;

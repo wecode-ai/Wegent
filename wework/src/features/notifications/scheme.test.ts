@@ -9,9 +9,48 @@ import {
   weworkSmartAppScheme,
   weworkTaskScheme,
   weworkInteractionScheme,
+  weworkThreadScheme,
 } from './scheme'
 
 describe('Wework scheme routing', () => {
+  it.each(['local', 'backend'] as const)('opens a Thread in its owning %s group', store => {
+    const groupId = store === 'local' ? 'group/a' : '12'
+    const destination = parseWeworkScheme(weworkThreadScheme(groupId, 'G/1', store, 'message/#1'))!
+    expect(destination).toEqual({
+      kind: 'group',
+      groupStore: store,
+      groupId,
+      threadId: 'G/1',
+      commentId: 'message/#1',
+    })
+    const route = new URL(weworkDestinationRoute(destination, 'second-open'), 'https://local')
+    expect(route.searchParams.get('collaborationView')).toBe('groups')
+    expect(route.searchParams.get('groupStore')).toBe(store === 'backend' ? 'cloud' : 'local')
+    expect(route.searchParams.get('groupId')).toBe(groupId)
+    expect(route.searchParams.get('threadId')).toBe('G/1')
+    expect(route.searchParams.get('commentId')).toBe('message/#1')
+    expect(route.searchParams.get('focusRequest')).toBe('second-open')
+    expect(route.searchParams.has('projectId')).toBe(false)
+  })
+  it('locates a main-group message without inventing a Thread', () => {
+    const destination = parseWeworkScheme('wework://groups/backend/12/comments/message')!
+    expect(destination).toEqual({
+      kind: 'group',
+      groupStore: 'backend',
+      groupId: '12',
+      commentId: 'message',
+    })
+    const route = new URL(weworkDestinationRoute(destination, 'focus'), 'https://local')
+    expect(route.searchParams.has('threadId')).toBe(false)
+    expect(route.searchParams.get('focusRequest')).toBe('focus')
+  })
+  it.each([
+    'wework://groups/12',
+    'wework://groups/backend/0',
+    'wework://groups/backend/12/tasks/T-1',
+    'wework://groups/backend/12/threads/T-1/comments/%00',
+    'wework://groups/local/group?join=true',
+  ])('rejects an invalid group destination: %s', url => expect(parseWeworkScheme(url)).toBeNull())
   it('round trips the exact question identity, including turn scope and reserved characters', () => {
     const requestKey = 'scope:turn/1#item:question?keep'
     const address = { deviceId: 'device:1', taskId: 'review/#1' }

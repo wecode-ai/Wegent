@@ -99,6 +99,8 @@ pub struct TaskCreate {
     #[serde(default)]
     pub assignee_group_id: Option<String>,
     #[serde(default)]
+    pub assignee_group_source_id: Option<String>,
+    #[serde(default)]
     pub workflow: Option<Value>,
 }
 
@@ -119,6 +121,8 @@ pub struct TaskUpdate {
     pub assignee_user_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "deserialize_optional_group_id")]
     pub assignee_group_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_group_id")]
+    pub assignee_group_source_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
     pub workflow: Option<Option<Value>>,
 }
@@ -131,6 +135,12 @@ pub struct TaskPosition {
         deserialize_with = "deserialize_position_anchor"
     )]
     pub before_item_id: Option<String>,
+    #[serde(
+        default,
+        alias = "classificationProjectId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub classification_project_id: Option<String>,
 }
 
 fn deserialize_position_anchor<'de, D: serde::Deserializer<'de>>(
@@ -588,6 +598,8 @@ pub struct LoopItem {
     pub resource_type: String,
     pub project_space: String,
     pub cloud_project_id: Option<String>,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub thread_context: Option<ThreadReadContext>,
     pub parent_id: Option<String>,
     pub public_id: Option<String>,
     pub project_key: Option<String>,
@@ -615,6 +627,15 @@ pub struct LoopItem {
     pub execution_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ThreadReadContext {
+    pub group_id: String,
+    pub group_name: String,
+    pub joined: bool,
+    pub can_join: bool,
+    pub group_status: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

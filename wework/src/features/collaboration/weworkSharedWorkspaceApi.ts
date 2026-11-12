@@ -524,12 +524,16 @@ export function createWeworkDeliverySharedWorkspaceApi(
               start_at: input.startAt,
               due_at: input.dueAt,
               milestone_id: input.milestoneId,
+              ...(input.classificationProjectId !== undefined
+                ? { classification_project_id: input.classificationProjectId }
+                : {}),
               parent_id: input.parentId,
               tags: input.tags,
               local_project_id: input.localProjectId,
               local_project_name: input.localProjectName,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,
+              assignee_group_source_id: input.assigneeGroupSourceId,
               assignee_agent_id: input.assigneeAgentId,
               notify_assignee: input.notifyAssignee,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
@@ -550,6 +554,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               parent_id: input.parentId,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,
+              assignee_group_source_id: input.assigneeGroupSourceId,
               assignee_agent_id: input.assigneeAgentId,
               assignee_team_id: input.assigneeTeamId,
               start_at: input.startAt,
@@ -815,13 +820,18 @@ export function createWeworkWorkspaceRuntimePort(
     unbindCloudContext(task) {
       return deliveryApi.unbindCloudContext(toRuntimeTaskAddress(task))
     },
-    async trackProjectTask(projectId, task, title, description) {
-      const result = await deliveryApi.trackProjectTask(
-        projectId,
-        toRuntimeTaskAddress(task),
-        title,
-        description
-      )
+    async trackProjectTask(projectId, task, title, description, classificationProjectId) {
+      const address = toRuntimeTaskAddress(task)
+      const result =
+        classificationProjectId === undefined
+          ? await deliveryApi.trackProjectTask(projectId, address, title, description)
+          : await deliveryApi.trackProjectTask(
+              projectId,
+              address,
+              title,
+              description,
+              classificationProjectId
+            )
       return { issue: toIssue(result.item) }
     },
     async reportExecutionLifecycle(projectId, executionId, event) {

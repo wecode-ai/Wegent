@@ -52,6 +52,7 @@ fn chat_agent_runtime_and_capabilities_round_trip_into_claim_payload() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Implement runtime contract".to_owned(),
                 description: String::new(),
@@ -71,6 +72,7 @@ fn chat_agent_runtime_and_capabilities_round_trip_into_claim_payload() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -308,6 +310,7 @@ fn local_claim_is_not_gated_by_reported_device_capacity() {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: title.to_owned(),
                     description: String::new(),
@@ -327,6 +330,7 @@ fn local_claim_is_not_gated_by_reported_device_capacity() {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     position: None,
                     assignee_group_id: None,
@@ -428,6 +432,7 @@ fn local_claim_does_not_apply_agent_parallelism_limits() {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: format!("Parallel {index}"),
                     description: String::new(),
@@ -447,6 +452,7 @@ fn local_claim_does_not_apply_agent_parallelism_limits() {
                 &project.id,
                 &task.id,
                 TaskUpdate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     position: None,
                     assignee_group_id: None,
@@ -520,6 +526,7 @@ fn local_claim_binds_unbound_execution_to_claiming_device() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Run unbound".to_owned(),
                 description: String::new(),
@@ -539,6 +546,7 @@ fn local_claim_binds_unbound_execution_to_claiming_device() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -585,6 +593,7 @@ fn claimed_execution_fails_when_project_was_archived() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Archived project".to_owned(),
                 description: String::new(),
@@ -634,6 +643,7 @@ fn local_fail_and_reject_close_agent_comment() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Fail me".to_owned(),
                 description: String::new(),
@@ -718,6 +728,7 @@ fn local_fail_and_reject_close_agent_comment() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Reject me".to_owned(),
                 description: String::new(),
@@ -795,6 +806,7 @@ fn local_executions_list_filters_by_status_without_agent() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Approval task".to_owned(),
                 description: String::new(),
@@ -814,6 +826,7 @@ fn local_executions_list_filters_by_status_without_agent() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,

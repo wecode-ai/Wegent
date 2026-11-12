@@ -75,6 +75,30 @@ describe("project schedule views", () => {
     expect(markup).not.toContain("PRJ-1");
   });
 
+  it("preserves a timed deadline instead of displaying the layout's midnight", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 10, 12));
+    try {
+      const issue = scheduledIssue();
+      issue.start_at = new Date(2026, 9, 11, 9).toISOString();
+      issue.due_at = new Date(2026, 9, 11, 17).toISOString();
+      const markup = renderToStaticMarkup(
+        <ProjectCalendarView
+          issues={[issue]}
+          locale="zh-CN"
+          statuses={statuses}
+          viewOptions={defaultScheduleViewOptions}
+          onOpen={vi.fn()}
+        />,
+      );
+      expect(markup).toContain(">17:00</time>");
+      expect(markup).toContain("共享设置");
+      expect(markup).not.toContain("项目设置");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders a cross-week issue as connected calendar bars", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 10, 12));

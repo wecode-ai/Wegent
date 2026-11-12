@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { openDirectProjectCreation } from '../modules/workspace-flows.mjs'
+import {
+  enterProjectCollaborationView,
+  openDirectProjectCreation,
+} from '../modules/workspace-flows.mjs'
 import { verifyProjectAgentEditing } from '../modules/project-agent-editing.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -100,6 +103,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, CONTENT)
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: workbenchReadyTimeoutMs,
       })

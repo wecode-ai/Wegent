@@ -4,12 +4,13 @@
 
 """Issue-level visibility for projects that isolate unrelated work."""
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
+    CollaborationChatGroup,
     LoopItem,
     LoopItemCollaborator,
     ProjectChatAgent,
@@ -30,6 +31,8 @@ def default_issue_security(project: object) -> str:
 
 
 def item_security(item: LoopItem, project: object) -> str:
+    if isinstance(project, CollaborationChatGroup):
+        return "open"
     metadata = item.metadata_json
     if isinstance(metadata, dict) and metadata.get("security_level") in {
         "open",
@@ -40,6 +43,8 @@ def item_security(item: LoopItem, project: object) -> str:
 
 
 def visible_item_filter(user_id: int, project: object) -> ColumnElement[bool]:
+    if isinstance(project, CollaborationChatGroup):
+        return true()
     security = func.coalesce(
         LoopItem.metadata_json["security_level"].as_string(),
         default_issue_security(project),
@@ -87,6 +92,8 @@ def can_view_item(
     item: LoopItem,
     user_id: int,
 ) -> bool:
+    if isinstance(access.project, CollaborationChatGroup):
+        return True
     if has_permission(access.role, BaseRole.Maintainer):
         return True
     return item_security(item, access.project) == "open" or is_related_item(

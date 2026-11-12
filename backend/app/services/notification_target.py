@@ -4,7 +4,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem
+from app.models.delivery import CloudProject, CollaborationChatGroup, LoopItem
 from app.models.user import User
 from app.services.loop_item_status_history import project_board_statuses
 from app.services.notification_copy import NotificationTarget
@@ -12,7 +12,7 @@ from app.services.notification_copy import NotificationTarget
 
 def board_notification_target(
     db: Session,
-    project: CloudProject,
+    project: CloudProject | CollaborationChatGroup,
     item: LoopItem | None,
     *,
     pending_assignee_user_id: int | None = None,
@@ -25,7 +25,13 @@ def board_notification_target(
     """
 
     if item is None:
-        return NotificationTarget(project_id=str(project.id), project_name=project.name)
+        return NotificationTarget(
+            project_id=str(project.id),
+            project_name=project.name,
+            group_id=(
+                str(project.id) if isinstance(project, CollaborationChatGroup) else None
+            ),
+        )
     assignee_user_id = (
         item.assignee_user_id
         if pending_assignee_user_id is None
@@ -34,6 +40,9 @@ def board_notification_target(
     return NotificationTarget(
         project_id=str(project.id),
         project_name=project.name,
+        group_id=(
+            str(project.id) if isinstance(project, CollaborationChatGroup) else None
+        ),
         item_id=item.id,
         item_key=item_display_key(item),
         item_title=item.title,

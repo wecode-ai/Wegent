@@ -11,6 +11,9 @@ pub mod assignments;
 pub mod auth;
 pub mod auth_error;
 pub mod cloud_context;
+mod cloud_context_group;
+#[cfg(test)]
+pub(crate) mod cloud_context_group_tests;
 pub mod collaborators;
 pub mod comments;
 pub mod http_error;

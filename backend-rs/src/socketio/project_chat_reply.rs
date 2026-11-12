@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 
 use super::{SendRequest, ack_error};
 use crate::socketio::project_chat_mentions::{self, Mention};
-use crate::socketio::project_chat_messages::load_message_by_message_id;
+use crate::socketio::project_chat_messages::{MessageRow, load_message_by_message_id};
 use crate::state::AppState;
 
 #[derive(Default)]
@@ -61,6 +61,10 @@ pub(super) async fn resolve(state: &AppState, request: &SendRequest) -> Result<C
             "reply target message not found",
         ));
     };
+    from_target(request, &target)
+}
+
+pub(super) fn from_target(request: &SendRequest, target: &MessageRow) -> Result<Context, Value> {
     if target.task_id != request.task_id.as_deref().unwrap_or_default() {
         return Err(ack_error(
             "INVALID_MESSAGE",
@@ -73,7 +77,7 @@ pub(super) async fn resolve(state: &AppState, request: &SendRequest) -> Result<C
         target.thread_root_message_id.clone()
     };
     Ok(Context {
-        reply_to: Some(reply_to.to_owned()),
+        reply_to: Some(target.message_id.clone()),
         root: Some(root),
         preview: Some(project_chat_mentions::preview(&target.content)),
         recipient: stand_in_recipient(&target.sender_type, &target.sender_name, &target.metadata()),

@@ -21,11 +21,28 @@ use super::{
 mod delivery;
 
 impl LocalTaskStore {
+    fn require_content_record_write(
+        &self,
+        id: &str,
+        resource_type: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let (container, thread): (String, Option<String>) = {
+            let connection = self.connection()?;
+            connection.query_row(
+                "SELECT cloud_project_id, COALESCE(loop_item_id,json_extract(metadata,'$.external_item_id'))
+                 FROM loop_items WHERE id=?1 AND resource_type=?2 AND deleted_at IS NULL",
+                params![id, resource_type],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?.ok_or(TaskRuntimeError::TaskNotFound)?
+        };
+        self.require_work_content_write(&container, thread.as_deref())
+    }
+
     pub fn list_project_files(
         &self,
         project_id: &str,
     ) -> Result<Vec<ProjectFile>, TaskRuntimeError> {
-        self.get_project(project_id)?;
+        self.get_work_container(project_id)?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, cloud_project_id, path, kind, content_type, size_bytes, sha256,
@@ -45,7 +62,7 @@ impl LocalTaskStore {
         path: &str,
     ) -> Result<ProjectFile, TaskRuntimeError> {
         let path = normalize_relative_path(path)?;
-        self.get_project(project_id)?;
+        self.require_work_content_write(project_id, None)?;
         self.ensure_parent_folders(project_id, &path)?;
         if self.project_file_id(project_id, &path)?.is_some() {
             return Err(TaskRuntimeError::Invalid(
@@ -73,7 +90,7 @@ impl LocalTaskStore {
         input: BinaryInput,
     ) -> Result<ProjectFile, TaskRuntimeError> {
         let path = normalize_relative_path(path.unwrap_or(&input.display_name))?;
-        self.get_project(project_id)?;
+        self.require_work_content_write(project_id, None)?;
         self.ensure_parent_folders(project_id, &path)?;
         if self.project_file_id(project_id, &path)?.is_some() {
             return Err(TaskRuntimeError::Invalid(
@@ -129,6 +146,7 @@ impl LocalTaskStore {
             return Err(TaskRuntimeError::VersionConflict);
         }
         drop(connection);
+        self.require_work_content_write(&project_id, None)?;
         self.ensure_parent_folders(&project_id, &path)?;
         if self.project_file_id(&project_id, &path)?.is_some() {
             return Err(TaskRuntimeError::Invalid(
@@ -177,6 +195,9 @@ impl LocalTaskStore {
             params![project_id, format!("{path}/%")],
             |row| row.get(0),
         )?;
+        drop(connection);
+        self.require_work_content_write(&project_id, None)?;
+        let connection = self.connection()?;
         if kind == "folder" && descendants > 0 && !recursive {
             return Err(TaskRuntimeError::Invalid(
                 "folder contains files".to_owned(),
@@ -393,9 +414,9 @@ impl LocalTaskStore {
         persisted_task: bool,
         input: BinaryInput,
     ) -> Result<TaskAttachment, TaskRuntimeError> {
-        self.get_project(project_id)?;
+        self.require_work_content_write(project_id, Some(item_id))?;
         if persisted_task {
-            self.get_item(item_id, "task")?;
+            self.get_task(project_id, item_id)?;
         }
         let bytes = decode_binary(&input)?;
         let id = numeric_id();
@@ -463,6 +484,7 @@ impl LocalTaskStore {
     }
 
     pub fn delete_task_attachment(&self, attachment_id: &str) -> Result<(), TaskRuntimeError> {
+        self.require_content_record_write(attachment_id, "attachment")?;
         let path = self.task_attachment_path(attachment_id)?;
         let connection = self.connection()?;
         let item_id = connection

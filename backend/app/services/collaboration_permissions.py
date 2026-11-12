@@ -5,10 +5,11 @@ from typing import Literal
 
 from fastapi import HTTPException
 from sqlalchemy import Integer, cast
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from app.models.cloud_project import CloudProject
 from app.models.delivery import (
+    CollaborationChatGroup,
     ProjectChatAgent,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
@@ -36,6 +37,15 @@ ACTION_ROLES = {
     "transfer": BaseRole.Owner,
 }
 RESOURCE_USE_ROLES = ("Owner", "Maintainer", "Developer")
+
+
+def resource_query(query: Query, *, current: bool) -> Query:
+    """Keep execution authority on locking reads without changing discovery."""
+    # Refreshing must preserve the caller's pending changes in this transaction.
+    if not current:
+        return query
+    query.session.flush()
+    return query.with_for_update().populate_existing()
 
 
 def project_agent_visible(agent: ProjectChatAgent, user_id: int) -> bool:
@@ -165,7 +175,7 @@ class CollaborationPermissionService:
         action: Action,
         resource_id: int | str,
         *,
-        scope: Literal["workspace", "project"] = "project",
+        scope: Literal["workspace", "project", "group"] = "project",
     ) -> PermissionDecision:
         required = ACTION_ROLES[action]
         if scope == "workspace":
@@ -175,6 +185,23 @@ class CollaborationPermissionService:
                 if role
                 else ()
             )
+        elif scope == "group":
+            group = db.get(CollaborationChatGroup, str(resource_id))
+            if group is None:
+                return PermissionDecision(False, None, reason="not_accessible")
+            from app.services.collaboration_container_access import (
+                require_collaboration_container_access,
+            )
+
+            try:
+                access = require_collaboration_container_access(
+                    db, group.id, user_id, required, write=action != "read"
+                )
+            except HTTPException as error:
+                if error.status_code >= 500:
+                    raise
+                return PermissionDecision(False, None, reason="not_accessible")
+            return PermissionDecision(True, access.role, access.sources)
         else:
             if not str(resource_id).isdecimal():
                 return PermissionDecision(False, None, reason="not_accessible")
@@ -189,6 +216,15 @@ class CollaborationPermissionService:
         allowed = role is not None and has_permission(role, required)
         return PermissionDecision(
             allowed, role, sources, None if allowed else "insufficient_permission"
+        )
+
+    def check_container(
+        self, db: Session, user_id: int, action: Action, resource_id: int | str
+    ) -> PermissionDecision:
+        """Explicit work/resource entry; project-only management stays project-only."""
+        group = db.get(CollaborationChatGroup, str(resource_id))
+        return self.check(
+            db, user_id, action, resource_id, scope="group" if group else "project"
         )
 
     def filter(self, db: Session, user_id: int):
@@ -206,8 +242,12 @@ class CollaborationPermissionService:
         agent_id: str,
         *,
         user_id: int | None = None,
+        current: bool = False,
     ) -> ProjectChatAgent:
-        agent = db.get(ProjectChatAgent, agent_id)
+        agent = resource_query(
+            db.query(ProjectChatAgent).filter(ProjectChatAgent.id == agent_id),
+            current=current,
+        ).first()
         if (
             agent is None
             or str(agent.cloud_project_id) != str(project_id)
@@ -217,12 +257,36 @@ class CollaborationPermissionService:
             raise HTTPException(422, "Agent is not enabled in this project")
         if user_id is not None:
             require_project_agent_visibility(agent, user_id)
+        group = db.get(CollaborationChatGroup, str(project_id))
+        if group is not None:
+            from app.services.group_resource_permissions import (
+                require_group_agent,
+                require_group_team,
+            )
+
+            if group.status != "active" or not loop_datetime_value_is_unset(
+                group.deleted_at
+            ):
+                raise HTTPException(404, "Chat group not found")
+            team_id = (agent.metadata_json or {}).get("wegent_team_id")
+            if team_id:
+                require_group_team(db, str(group.id), int(team_id))
+            else:
+                require_group_agent(db, group, agent)
+            return agent
         team_id = (agent.metadata_json or {}).get("wegent_team_id")
         if team_id:
-            self.require_project_team(db, project_id, int(team_id))
+            self.require_project_team(db, project_id, int(team_id), current=current)
         else:
             project = db.get(CloudProject, str(project_id))
-            parent = db.get(Kind, project.workspace_id) if project else None
+            parent = (
+                resource_query(
+                    db.query(Kind).filter(Kind.id == project.workspace_id),
+                    current=current,
+                ).first()
+                if project
+                else None
+            )
             if (
                 project is None
                 or project.status != "active"
@@ -231,16 +295,15 @@ class CollaborationPermissionService:
                 or not parent.is_active
             ):
                 raise HTTPException(404, "Project not found")
-            grant = (
-                db.query(ResourceMember)
-                .filter_by(
+            grant = resource_query(
+                db.query(ResourceMember).filter_by(
                     resource_type="Workspace",
                     resource_id=project.workspace_id,
                     entity_type="project_agent",
                     entity_id=agent.id,
-                )
-                .first()
-            )
+                ),
+                current=current,
+            ).first()
             if grant is None and not (agent.metadata_json or {}).get(
                 "authorization_version"
             ):
@@ -261,6 +324,11 @@ class CollaborationPermissionService:
     def share_project_agent(
         self, db: Session, project: CloudProject, agent: ProjectChatAgent, user_id: int
     ) -> None:
+        if isinstance(project, CollaborationChatGroup):
+            from app.services.group_resource_permissions import share_group_agent
+
+            share_group_agent(db, project, agent, user_id)
+            return
         grant = (
             db.query(ResourceMember)
             .filter_by(
@@ -309,36 +377,68 @@ class CollaborationPermissionService:
         team_id: int,
         *,
         require_binding: bool = True,
+        current: bool = False,
     ) -> Kind:
+        group = db.get(CollaborationChatGroup, str(project_id))
+        if group is not None:
+            from app.services.group_resource_permissions import require_group_team
+
+            if group.status != "active" or not loop_datetime_value_is_unset(
+                group.deleted_at
+            ):
+                raise HTTPException(404, "Chat group not found")
+            team = require_group_team(db, str(group.id), team_id)
+            if require_binding:
+                binding = (
+                    db.query(ProjectChatAgent.id)
+                    .filter(
+                        ProjectChatAgent.cloud_project_id == str(group.id),
+                        ProjectChatAgent.status == "active",
+                        loop_datetime_is_unset(ProjectChatAgent.deleted_at),
+                        cast(
+                            ProjectChatAgent.metadata_json[
+                                "wegent_team_id"
+                            ].as_string(),
+                            Integer,
+                        )
+                        == team_id,
+                    )
+                    .first()
+                )
+                if binding is None:
+                    raise HTTPException(422, "Agent is not enabled in this group")
+            return team
         project = db.get(CloudProject, str(project_id))
         if project is None or project.status != "active" or not project.workspace_id:
             raise HTTPException(404, "Project not found")
-        parent = db.get(Kind, project.workspace_id)
+        parent = resource_query(
+            db.query(Kind).filter(Kind.id == project.workspace_id), current=current
+        ).first()
         if (
             parent is None
             or parent.kind != "CollaborationWorkspace"
             or not parent.is_active
         ):
             raise HTTPException(404, "Project not found")
-        grant = (
-            db.query(ResourceMember)
-            .filter_by(
+        grant = resource_query(
+            db.query(ResourceMember).filter_by(
                 resource_type="Team",
                 resource_id=team_id,
                 entity_type="workspace",
                 entity_id=str(project.workspace_id),
-            )
-            .first()
-        )
-        team = db.get(Kind, team_id)
+            ),
+            current=current,
+        ).first()
+        team = resource_query(
+            db.query(Kind).filter(Kind.id == team_id), current=current
+        ).first()
         if team is None or team.kind != "Team" or not team.is_active:
             raise HTTPException(
                 422, "Agent resource authorization is revoked or unavailable"
             )
         if grant is None:
-            legacy_bindings = (
-                db.query(ProjectChatAgent)
-                .filter(
+            legacy_bindings = resource_query(
+                db.query(ProjectChatAgent).filter(
                     ProjectChatAgent.cloud_project_id == str(project_id),
                     ProjectChatAgent.status == "active",
                     loop_datetime_is_unset(ProjectChatAgent.deleted_at),
@@ -347,9 +447,9 @@ class CollaborationPermissionService:
                         Integer,
                     )
                     == team_id,
-                )
-                .all()
-            )
+                ),
+                current=current,
+            ).all()
             if not any(
                 not (binding.metadata_json or {}).get("authorization_version")
                 and (team.user_id == 0 or binding.created_by_user_id == team.user_id)
@@ -363,9 +463,8 @@ class CollaborationPermissionService:
                 422, "Agent resource authorization is revoked or unavailable"
             )
         if require_binding:
-            binding = (
-                db.query(ProjectChatAgent.id)
-                .filter(
+            binding = resource_query(
+                db.query(ProjectChatAgent.id).filter(
                     ProjectChatAgent.cloud_project_id == str(project_id),
                     ProjectChatAgent.status == "active",
                     loop_datetime_is_unset(ProjectChatAgent.deleted_at),
@@ -374,18 +473,38 @@ class CollaborationPermissionService:
                         Integer,
                     )
                     == team_id,
-                )
-                .first()
-            )
+                ),
+                current=current,
+            ).first()
             if binding is None:
                 raise HTTPException(422, "Agent is not enabled in this project")
         return team
 
     def require_project_group(
-        self, db: Session, project_id: int | str, group_id: str
+        self,
+        db: Session,
+        project_id: int | str,
+        group_id: str,
+        *,
+        current: bool = False,
     ) -> Kind:
+        container = db.get(CollaborationChatGroup, str(project_id))
+        if container is not None:
+            from app.services.group_resource_permissions import require_group_crew
+
+            if container.status != "active" or not loop_datetime_value_is_unset(
+                container.deleted_at
+            ):
+                raise HTTPException(404, "Chat group not found")
+            return require_group_crew(db, str(container.id), group_id)
         project = db.get(CloudProject, str(project_id))
-        group = db.get(Kind, int(group_id)) if group_id.isdecimal() else None
+        group = (
+            resource_query(
+                db.query(Kind).filter(Kind.id == int(group_id)), current=current
+            ).first()
+            if group_id.isdecimal()
+            else None
+        )
         if (
             project is None
             or group is None
@@ -393,7 +512,7 @@ class CollaborationPermissionService:
             or not group.is_active
         ):
             raise HTTPException(422, "Collaboration group is unavailable")
-        project_grant = (
+        project_grant = resource_query(
             db.query(ResourceMember.id)
             .filter_by(
                 resource_type="CollaborationGroup",
@@ -402,15 +521,15 @@ class CollaborationPermissionService:
                 entity_id=str(project.id),
                 status="approved",
             )
-            .filter(ResourceMember.role.in_(RESOURCE_USE_ROLES))
-            .first()
-        )
+            .filter(ResourceMember.role.in_(RESOURCE_USE_ROLES)),
+            current=current,
+        ).first()
         if project_grant is None:
             raise HTTPException(
                 422, "Collaboration group is not enabled in this project"
             )
         if group.namespace != f"projects/{project.id}":
-            grant = (
+            grant = resource_query(
                 db.query(ResourceMember.id)
                 .filter_by(
                     resource_type="CollaborationGroup",
@@ -419,9 +538,9 @@ class CollaborationPermissionService:
                     entity_id=str(project.workspace_id),
                     status="approved",
                 )
-                .filter(ResourceMember.role.in_(RESOURCE_USE_ROLES))
-                .first()
-            )
+                .filter(ResourceMember.role.in_(RESOURCE_USE_ROLES)),
+                current=current,
+            ).first()
             if grant is None or group.namespace != f"workspaces/{project.workspace_id}":
                 raise HTTPException(
                     422, "Collaboration group resource authorization is revoked"

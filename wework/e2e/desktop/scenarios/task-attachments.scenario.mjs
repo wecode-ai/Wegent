@@ -275,7 +275,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'getText',
         `${filesView} [data-testid="cloud-file-breadcrumbs"]`
       )
-      assert.match(breadcrumbText, /Issues/)
+      assert.match(breadcrumbText, /事项/)
       assert.match(breadcrumbText, /整理附件/)
       assert.match(breadcrumbText, /reports/)
 

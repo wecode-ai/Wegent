@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { groupWorkContainer } from '@/api/groupWorkContainer'
+import { useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -6,7 +7,7 @@ import { getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { openWeworkScheme } from './schemeEvents'
-import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { weworkIssueScheme, weworkTaskScheme, weworkThreadScheme } from './scheme'
 
 /** Load the destination's real records into the existing Issue detail surface. */
 export function NotificationIssueEntity({
@@ -29,8 +30,13 @@ export function NotificationIssueEntity({
   const { state, services } = useWorkbench()
   const { t } = useTranslation('common')
   const api = services.projectSpaceApis?.[store === 'local' ? 'local' : 'cloud']
+  const groups = services.chatGroupApis?.[store === 'local' ? 'local' : 'cloud']
+  const scope = useMemo(
+    () => ({ api, groups, projectId, issueId, store, user: state.user?.id, url }),
+    [api, groups, projectId, issueId, store, state.user?.id, url]
+  )
   const [result, setResult] = useState<{
-    key: string
+    scope: object
     project?: CloudProject
     item?: CloudLoopItem
     error?: string
@@ -39,26 +45,42 @@ export function NotificationIssueEntity({
   useEffect(() => {
     if (!api || !active) return
     let current = true
-    void Promise.all([api.listCloudProjects(), api.getLoopItem(issueId)])
-      .then(([projects, item]) => {
-        const project = projects.items.find(project => project.id === projectId)
-        if (!project || item.cloud_project_id !== project.id)
+    void api
+      .getLoopItem(issueId)
+      .then(async item => {
+        if (!current) return
+        if (String(item.cloud_project_id) !== projectId)
           throw new Error(t('interactions.entity_unavailable'))
-        if (current) setResult({ key: url, project, item })
+        let project: CloudProject | undefined
+        if (item.group_id) {
+          if (item.group_id !== projectId || !groups)
+            throw new Error(t('interactions.entity_unavailable'))
+          const record = await groups.get(item.group_id)
+          if (record.group.id !== item.group_id)
+            throw new Error(t('interactions.entity_unavailable'))
+          project = groupWorkContainer(record.group, store === 'local' ? 'local' : 'cloud')
+        } else {
+          project = (await api.listCloudProjects()).items.find(
+            candidate => String(candidate.id) === projectId
+          )
+        }
+        if (!project) throw new Error(t('interactions.entity_unavailable'))
+        if (current) setResult({ scope, project, item })
       })
       .catch(error => {
         if (current)
-          setResult({ key: url, error: String(error instanceof Error ? error.message : error) })
+          setResult({ scope, error: error instanceof Error ? error.message : String(error) })
       })
     return () => {
       current = false
     }
-  }, [active, api, issueId, projectId, revision, t, url])
-  if (!api || (result?.key === url && result.error))
+  }, [active, api, groups, issueId, projectId, revision, t, scope, store])
+  if (!api || (result?.scope === scope && result.error))
     return (
       <div className="space-y-3 p-5">
         <p role="alert" className="text-sm text-error">
-          {result?.error ?? t('interactions.entity_unavailable')}
+          {(result?.scope === scope ? result.error : undefined) ??
+            t('interactions.entity_unavailable')}
         </p>
         {api && (
           <button
@@ -75,7 +97,7 @@ export function NotificationIssueEntity({
         )}
       </div>
     )
-  if (result?.key !== url || !result.item || !result.project)
+  if (result?.scope !== scope || !result.item || !result.project)
     return (
       <p role="status" className="p-5 text-sm text-text-secondary">
         {t('interactions.loading')}
@@ -84,19 +106,25 @@ export function NotificationIssueEntity({
   return (
     <WorkItemContextPanel
       readFirst
+      active={active}
       key={url}
       api={api}
       services={services}
       project={result.project}
       item={result.item}
       currentTask={address}
+      runtimeWork={state.runtimeWork}
       currentUserId={state.user?.id}
       localProjects={state.projects}
       deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
       focusedCommentId={commentId}
       focusedCommentRequestKey={url}
       onOpenChildTask={item => {
-        openWeworkScheme(weworkIssueScheme(projectId, item.id, store))
+        openWeworkScheme(
+          item.group_id
+            ? weworkThreadScheme(item.group_id, item.id, store)
+            : weworkIssueScheme(projectId, item.id, store)
+        )
       }}
       onOpenRuntimeTask={task => {
         openWeworkScheme(weworkTaskScheme(task))

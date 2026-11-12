@@ -25,7 +25,11 @@ async def test_issue_lock_wait_does_not_block_other_request_cleanup(
     db = MagicMock()
     values = LoopItemCreate(title="Concurrent Issue")
     failure = HTTPException(status_code=422, detail="Assignee changed")
-    monkeypatch.setattr(deliveries.cloud_project_service, "get", lambda *_: project)
+    monkeypatch.setattr(
+        deliveries,
+        "require_collaboration_container_access",
+        lambda *_: SimpleNamespace(project=project),
+    )
     monkeypatch.setattr(
         deliveries, "_selected_event_automation_id", lambda *_args, **_kwargs: None
     )

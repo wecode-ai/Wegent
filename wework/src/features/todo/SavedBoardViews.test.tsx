@@ -200,7 +200,9 @@ describe('saved project board views', () => {
     await act(() => result.current.saveView(edited, 1))
     expect(save).toHaveBeenCalledWith({ ...config, views: [edited] })
     rerender({ projectKey: 'backend:one', revision: 2 })
-    await expect(result.current.saveView(edited, 1)).rejects.toThrow('项目已被更新')
+    await expect(result.current.saveView(edited, 1)).rejects.toThrow(
+      '看板已被更新，请关闭并重新打开视图编辑器后再保存。'
+    )
     expect(save).toHaveBeenCalledTimes(1)
     rerender({ projectKey: 'local:one', revision: 1 })
     expect(result.current.view).toBeNull()

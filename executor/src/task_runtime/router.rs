@@ -28,6 +28,26 @@ pub struct TaskRuntime {
 }
 
 impl TaskRuntime {
+    pub(crate) fn is_private_chat_group(&self, id: &str) -> Result<bool, TaskRuntimeError> {
+        self.local_store.is_private_chat_group(id)
+    }
+
+    pub(crate) fn get_work_container(&self, id: &str) -> Result<LoopItem, TaskRuntimeError> {
+        self.local_store.get_work_container(id).map(mask_project)
+    }
+
+    pub fn task_owner(&self, task_id: &str) -> Result<Option<String>, TaskRuntimeError> {
+        self.local_store.task_owner(task_id)
+    }
+
+    pub fn chat_group_request(
+        &self,
+        method: &str,
+        input: Value,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store.chat_group_request(method, input)
+    }
+
     pub(crate) fn list_milestones(&self, project: &str) -> Result<Vec<Value>, TaskRuntimeError> {
         self.local_store.list_milestones(project)
     }
@@ -235,7 +255,7 @@ impl TaskRuntime {
     }
 
     pub async fn list_tasks(&self, project_id: &str) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.list_tasks(project_id),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
@@ -381,7 +401,7 @@ impl TaskRuntime {
     }
 
     fn aitable_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         if task_provider(&project)? != TaskProviderKind::DingtalkAitable {
             return Err(TaskRuntimeError::UnsupportedProvider(
                 "project is not a DingTalk AI Table project".to_owned(),
@@ -395,7 +415,7 @@ impl TaskRuntime {
         input: super::TaskSearch,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         let projects = if let Some(project_id) = input.project_id.as_deref() {
-            vec![self.local_store.get_project(project_id)?]
+            vec![self.local_store.get_work_container(project_id)?]
         } else {
             self.local_store.list_projects()?
         };
@@ -470,7 +490,7 @@ impl TaskRuntime {
         project_id: &str,
         task_id: &str,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.get_task(project_id, task_id),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
@@ -490,22 +510,32 @@ impl TaskRuntime {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_context(project_id, input, None, None, None)
             .await
     }
 
-    pub async fn create_task_with_schedule(
+    pub async fn create_task_with_context(
         &self,
         project_id: &str,
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        classification_project_id: Option<String>,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
+        if classification_project_id.is_some() && project.resource_type != "chat_group" {
+            return Err(TaskRuntimeError::Invalid(
+                "Project classification requires an owning group".into(),
+            ));
+        }
         match task_provider(&project)? {
-            TaskProviderKind::Local => self
-                .local_store
-                .create_task_with_schedule(project_id, input, start_at, due_at),
+            TaskProviderKind::Local => self.local_store.create_task_with_context(
+                project_id,
+                input,
+                start_at,
+                due_at,
+                classification_project_id,
+            ),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 if start_at.is_some() || due_at.is_some() {
                     return Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -546,7 +576,7 @@ impl TaskRuntime {
         start_at: Option<Option<String>>,
         due_at: Option<Option<String>>,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self
                 .local_store
@@ -603,7 +633,7 @@ impl TaskRuntime {
         activity_sequence: Option<i64>,
         content_revision: Option<i64>,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.mark_task_read(
                 project_id,
@@ -622,7 +652,7 @@ impl TaskRuntime {
         project_id: &str,
         task_id: &str,
     ) -> Result<(), TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.archive_task(project_id, task_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -637,7 +667,7 @@ impl TaskRuntime {
         offset: usize,
         limit: usize,
     ) -> Result<ArchivedLoopItemPage, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self
                 .local_store
@@ -653,7 +683,7 @@ impl TaskRuntime {
         project_id: &str,
         task_id: &str,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.restore_task(project_id, task_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -668,7 +698,7 @@ impl TaskRuntime {
         task_id: &str,
         body: &str,
     ) -> Result<IssueComment, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => {
                 self.get_task(project_id, task_id).await?;
@@ -711,7 +741,7 @@ impl TaskRuntime {
         project_id: &str,
         input: TaskReorder,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.reorder_tasks(project_id, input),
             TaskProviderKind::Github
@@ -730,7 +760,7 @@ impl TaskRuntime {
         input: RuntimeTaskAddress,
         dispatch: Option<&Value>,
     ) -> Result<TaskBinding, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match (task_provider(&project)?, item_id) {
             (TaskProviderKind::Local, item_id) => self
                 .local_store
@@ -772,6 +802,23 @@ impl TaskRuntime {
 
     pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         self.local_store.list_chat_agents(project_id)
+    }
+
+    pub fn resolve_chat_agents_for_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        assignee_type: &str,
+        assignee_id: &str,
+        source_id: Option<&str>,
+    ) -> Result<Value, TaskRuntimeError> {
+        self.local_store.resolve_chat_agents_for_task(
+            project_id,
+            task_id,
+            assignee_type,
+            assignee_id,
+            source_id,
+        )
     }
 
     pub fn create_chat_agent(
@@ -1154,7 +1201,7 @@ impl TaskRuntime {
         item_id: &str,
         input: BinaryInput,
     ) -> Result<TaskAttachment, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Gitlab => {
                 self.issue_provider
@@ -1177,7 +1224,7 @@ impl TaskRuntime {
         project_id: &str,
         item_id: &str,
     ) -> Result<Vec<TaskAttachment>, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Gitlab => {
                 self.issue_provider
@@ -1199,7 +1246,7 @@ impl TaskRuntime {
         item_id: &str,
         attachment_id: &str,
     ) -> Result<String, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Gitlab => Ok(self
                 .issue_provider
@@ -1224,7 +1271,7 @@ impl TaskRuntime {
         item_id: &str,
         attachment_id: &str,
     ) -> Result<(), TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Gitlab => {
                 self.issue_provider
@@ -1311,7 +1358,7 @@ impl TaskRuntime {
         project_id: &str,
         item_id: &str,
     ) -> Result<bool, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
+        let project = self.local_store.get_work_container(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => {
                 self.local_store.get_task(project_id, item_id)?;
@@ -1775,6 +1822,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Created issue".to_owned(),
                     description: "Description".to_owned(),
@@ -1882,6 +1930,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "GitLab created".to_owned(),
                     description: "GitLab body".to_owned(),

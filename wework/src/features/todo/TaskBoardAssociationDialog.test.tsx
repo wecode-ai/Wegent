@@ -73,7 +73,7 @@ describe('TaskBoardAssociationDialog', () => {
 
     rerender(pane(true))
 
-    const dialog = screen.getByRole('dialog', { name: '加入「研发看板」' })
+    const dialog = screen.getByRole('dialog', { name: '关联到「研发看板」' })
     expect(container).not.toContainElement(dialog)
     expect(dialog.parentElement?.parentElement).toBe(document.body)
     expect(screen.getByTestId('task-board-association-search')).toHaveFocus()
@@ -114,26 +114,59 @@ describe('TaskBoardAssociationDialog', () => {
   test('requires confirmation before moving a task from another board', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn()
+    const onSelect = vi.fn()
+    const selected = item('THREAD-1', '所选事项', { group_id: 'target' })
 
     render(
       <TaskBoardAssociationDialog
         project={project('target', '目标看板')}
         currentProject={project('source', '原看板')}
-        items={[]}
+        items={[selected]}
         loading={false}
         pending={false}
         onClose={vi.fn()}
         onCreate={onCreate}
-        onSelect={vi.fn()}
+        onSelect={onSelect}
       />
     )
 
-    await user.click(screen.getByTestId('task-board-association-create'))
+    await user.click(screen.getByTestId('task-board-association-item-THREAD-1'))
     expect(onCreate).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog', { name: '移动任务关联' })).toHaveTextContent('原看板')
-    expect(screen.getByRole('dialog', { name: '移动任务关联' })).toHaveTextContent('目标看板')
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: '移动任务关联' })).toHaveTextContent(
+      '将任务关联到所选事项，替换原有关联。私人对话不会公开。'
+    )
 
     await user.click(screen.getByTestId('task-board-move-confirm'))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(selected)
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  test('does not treat a classification project as a different owner or confirm before the public form', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn()
+    const onSelect = vi.fn()
+    const selected = item('same-owner', '同群事项', {
+      group_id: 'group',
+      cloud_project_id: 'group',
+    })
+    render(
+      <TaskBoardAssociationDialog
+        project={project('classification', '可选项目')}
+        currentProject={{ ...project('group', '实际所属群'), resource_type: 'chat_group' }}
+        items={[selected]}
+        loading={false}
+        pending={false}
+        onClose={vi.fn()}
+        onCreate={onCreate}
+        onSelect={onSelect}
+      />
+    )
+    await user.click(screen.getByTestId('task-board-association-item-same-owner'))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(selected)
+    expect(screen.queryByTestId('task-board-move-confirm')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('task-board-association-create'))
     expect(onCreate).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('task-board-move-confirm')).not.toBeInTheDocument()
   })
 })

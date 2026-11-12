@@ -50,7 +50,7 @@ export interface WorkspaceResourceCommands {
   createTemplateGroups?(
     document: import("../templates/types").CollaborationTemplate,
     drafts: import("../project-create/types").ProjectCreateCollaborationGroupDraft[],
-    resolveRouting?: import('../templates/types').TemplateRoutingResolver,
+    resolveRouting?: import("../templates/types").TemplateRoutingResolver,
   ): Promise<CollaborationGroup[]>;
   searchUsers(query: string): Promise<CollaborationUser[]>;
   addMember(
@@ -167,6 +167,9 @@ const copy = {
     createGroup: "创建协作小组",
     noGroups: "空间中还没有协作小组",
     noProjectGroups: "当前项目还没有使用协作小组",
+    noGroupGroups: "本群还没有协作小组",
+    groupOwned: "群资源",
+    groupHint: "把本群成员与智能体组成协作小组，由负责人分解、委派和汇报。",
     availableWorkspaceGroups: "可从协作空间添加",
     workspaceOwned: "空间资源",
     projectOwned: "项目资源",
@@ -207,6 +210,10 @@ const copy = {
     createGroup: "Create group",
     noGroups: "No collaboration groups in this workspace",
     noProjectGroups: "This project is not using a collaboration group",
+    noGroupGroups: "This group has no collaboration teams yet",
+    groupOwned: "Group resource",
+    groupHint:
+      "Organize group members and agents into teams whose manager delegates work and reports results.",
     availableWorkspaceGroups: "Available from workspace",
     workspaceOwned: "Workspace resource",
     projectOwned: "Project resource",
@@ -235,6 +242,7 @@ function ErrorMessage({ message }: { message: string | null }) {
 }
 
 export function WorkspaceCollaborationGroupsConfiguration({
+  ownerType = "project",
   workspace,
   groups,
   availableGroups = [],
@@ -255,6 +263,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   showGroupCollection = true,
   agentConfiguration,
 }: {
+  ownerType?: "project" | "chat_group";
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
   availableGroups?: CollaborationGroup[];
@@ -276,9 +285,15 @@ export function WorkspaceCollaborationGroupsConfiguration({
   detailPresentation?: "page" | "dialog";
   agentActions?: CollaborationGroupAgentActions;
   showGroupCollection?: boolean;
-  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost;
+  agentConfiguration?: import("../project-agent-config/types").ProjectAgentConfigurationHost;
 }) {
   const messages = copy[locale];
+  const ownershipLabel = (group: CollaborationGroup) =>
+    group.owner_type === "chat_group"
+      ? messages.groupOwned
+      : group.owner_type === "project"
+        ? messages.projectOwned
+        : messages.workspaceOwned;
   const templateStore = useCollaborationTemplateStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -690,11 +705,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   ← {messages.backToGroups}
                 </button>
                 <h2>{selectedGroup.name}</h2>
-                <p>
-                  {selectedGroup.owner_type === "project"
-                    ? messages.projectOwned
-                    : messages.workspaceOwned}
-                </p>
+                <p>{ownershipLabel(selectedGroup)}</p>
               </div>
             </div>
           ) : null}
@@ -765,22 +776,14 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   <div className="collaboration-group-section-heading">
                     <div>
                       <h3>{locale === "zh-CN" ? "基本信息" : "Basics"}</h3>
-                      <p>
-                        {selectedGroup.owner_type === "project"
-                          ? messages.projectOwned
-                          : messages.workspaceOwned}
-                      </p>
+                      <p>{ownershipLabel(selectedGroup)}</p>
                     </div>
                   </div>
                 </>
               ) : (
                 <div className="collaboration-group-dialog-section-title">
                   <h3>{locale === "zh-CN" ? "基本信息" : "Basics"}</h3>
-                  <span>
-                    {selectedGroup.owner_type === "project"
-                      ? messages.projectOwned
-                      : messages.workspaceOwned}
-                  </span>
+                  <span>{ownershipLabel(selectedGroup)}</span>
                 </div>
               )}
               <div className="collaboration-group-profile-fields">
@@ -1279,7 +1282,11 @@ export function WorkspaceCollaborationGroupsConfiguration({
             <div className="collaboration-resource-heading">
               <div>
                 <h2>{messages.collaborationGroups}</h2>
-                <p>{messages.collaborationGroupHint}</p>
+                <p>
+                  {ownerType === "chat_group"
+                    ? messages.groupHint
+                    : messages.collaborationGroupHint}
+                </p>
               </div>
               {canManage && !formOpen ? (
                 <button
@@ -1389,9 +1396,14 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     <div className="collaboration-group-create-content">
                       <section className="collaboration-group-create-panel">
                         <GroupTemplateCreator
-                          modelConfiguration={agentConfiguration && workspace ? {
-                            host: agentConfiguration, location: workspace.location,
-                          } : undefined}
+                          modelConfiguration={
+                            agentConfiguration && workspace
+                              ? {
+                                  host: agentConfiguration,
+                                  location: workspace.location,
+                                }
+                              : undefined
+                          }
                           locale={locale}
                           candidates={candidates.map((candidate) => ({
                             ...candidate,
@@ -1553,11 +1565,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
                           </span>
                           <span>
                             <strong>{group.name}</strong>
-                            <small>
-                              {group.owner_type === "project"
-                                ? messages.projectOwned
-                                : messages.workspaceOwned}
-                            </small>
+                            <small>{ownershipLabel(group)}</small>
                           </span>
                         </div>
                         <div className="collaboration-group-card-summary">
@@ -1607,7 +1615,8 @@ export function WorkspaceCollaborationGroupsConfiguration({
                             >
                               {workspace
                                 ? messages.remove
-                                : group.owner_type === "project"
+                                : group.owner_type === "project" ||
+                                    group.owner_type === "chat_group"
                                   ? messages.deleteProjectGroup
                                   : messages.removeFromProject}
                             </button>
@@ -1618,7 +1627,11 @@ export function WorkspaceCollaborationGroupsConfiguration({
                   </div>
                 ) : (
                   <div className="collaboration-resource-empty">
-                    {workspace ? messages.noGroups : messages.noProjectGroups}
+                    {workspace
+                      ? messages.noGroups
+                      : ownerType === "chat_group"
+                        ? messages.noGroupGroups
+                        : messages.noProjectGroups}
                   </div>
                 )}
               </div>

@@ -9,6 +9,7 @@ fn local_execution_writeback_creates_missing_agent_comment() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Legacy run".to_owned(),
                 description: String::new(),
@@ -28,6 +29,7 @@ fn local_execution_writeback_creates_missing_agent_comment() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -98,6 +100,7 @@ fn local_read_cursor_persists_the_visible_activity_sequence() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Unread activity".to_owned(),
                 description: String::new(),
@@ -130,6 +133,7 @@ fn local_direct_execution_completion_moves_issue_to_review() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Review me".to_owned(),
                 description: String::new(),
@@ -149,6 +153,7 @@ fn local_direct_execution_completion_moves_issue_to_review() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -204,6 +209,7 @@ fn local_direct_execution_completion_moves_issue_to_review() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Already reviewed".to_owned(),
                 description: String::new(),
@@ -223,6 +229,7 @@ fn local_direct_execution_completion_moves_issue_to_review() {
             &project.id,
             &second.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -308,6 +315,7 @@ fn human_assignment_delivery_from_the_issue_settles_the_round() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "看下cpu占用".to_owned(),
                 description: String::new(),
@@ -598,6 +606,7 @@ fn manual_approval_flow_and_claim_runs_once() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Approve me".to_owned(),
                 description: String::new(),
@@ -617,6 +626,7 @@ fn manual_approval_flow_and_claim_runs_once() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -672,6 +682,7 @@ fn local_task_responses_carry_execution_state() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Approve me".to_owned(),
                 description: String::new(),
@@ -691,6 +702,7 @@ fn local_task_responses_carry_execution_state() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,

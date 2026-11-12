@@ -110,8 +110,8 @@ export function WeworkSchemeBridge() {
       }
       const cloud = connectionRef.current
       if (
-        destination.kind === 'board' &&
-        destination.projectStore !== 'local' &&
+        ((destination.kind === 'board' && destination.projectStore !== 'local') ||
+          (destination.kind === 'group' && destination.groupStore === 'backend')) &&
         (!cloud?.isConnected || !cloud.token)
       ) {
         return deferForCloud(url, deferInRenderer, cloud)
@@ -121,7 +121,8 @@ export function WeworkSchemeBridge() {
         destination.kind === 'task' ? 'task' : 'board',
         weworkDestinationRoute(
           destination,
-          destination.kind === 'board' && destination.itemId
+          (destination.kind === 'board' && destination.itemId) ||
+            (destination.kind === 'group' && (destination.threadId || destination.commentId))
             ? `${Date.now()}-${++focusRequestRef.current}`
             : undefined
         )

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import ProjectChatAgent, RuntimeProfile
+from app.models.delivery import LoopItem, ProjectChatAgent, RuntimeProfile
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.loop_item_executions.service import runtime_configuration_complete
 
@@ -63,20 +63,22 @@ def prepare_assignment(
         or (task.created_by_user_id if task else 0)
         or assigner_user_id
     )
-    from app.services.collaboration_permissions import (
-        collaboration_permission_service,
-    )
+    from app.services.issue_resource_context import require_assignment_agent
 
-    if not collaboration_permission_service.check(
-        db, assigner_user_id, "execute", cloud_project_id
-    ).allowed:
-        raise HTTPException(403, "Insufficient permission to execute in this project")
+    agent = require_assignment_agent(
+        db,
+        container_id=str(cloud_project_id),
+        agent_id=agent.id,
+        user_id=assigner_user_id,
+        item=db.get(LoopItem, loop_item_id),
+        execute=True,
+    )
     bound_team_id = persisted_config.get("wegent_team_id")
     if bound_team_id:
         from app.services.project_automation_domain import runnable_wegent_team
 
         runnable_wegent_team(
-            db, assigner_user_id, int(bound_team_id), project_id=cloud_project_id
+            db, assigner_user_id, int(bound_team_id), project_id=agent.cloud_project_id
         )
     config = compiled_bot_config(
         db,
@@ -166,7 +168,7 @@ def prepare_assignment(
             db,
             config=config,
             agent_id=agent.id,
-            project_id=cloud_project_id,
+            project_id=str(agent.cloud_project_id),
             issue_id=loop_item_id,
             user_id=assigner_user_id,
             selection=effective_context.get("runner_selection"),

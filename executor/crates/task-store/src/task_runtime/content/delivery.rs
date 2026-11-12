@@ -161,7 +161,7 @@ impl LocalTaskStore {
         &self,
         project_id: &str,
     ) -> Result<Vec<serde_json::Value>, TaskRuntimeError> {
-        self.get_project(project_id)?;
+        self.get_work_container(project_id)?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT a.id, d.id, COALESCE(d.loop_item_id, json_extract(d.metadata, '$.external_item_id')),
@@ -211,6 +211,7 @@ impl LocalTaskStore {
         delivery_id: &str,
         input: DeliveryUpdate,
     ) -> Result<DeliveryDetail, TaskRuntimeError> {
+        self.require_content_record_write(delivery_id, "delivery")?;
         let detail = self.delivery_detail(delivery_id)?;
         let invalid = |message: &str| TaskRuntimeError::Invalid(message.to_owned());
         if detail.delivery.status != "delivered" || detail.delivery.version != input.version {
@@ -376,9 +377,9 @@ impl LocalTaskStore {
         persisted_task: bool,
         input: DeliveryCreate,
     ) -> Result<Delivery, TaskRuntimeError> {
-        self.get_project(project_id)?;
+        self.require_work_content_write(project_id, Some(item_id))?;
         if persisted_task {
-            self.get_item(item_id, "task")?;
+            self.get_task(project_id, item_id)?;
         }
         let id = numeric_id();
         let base_key = format!("deliveries/{id}");
@@ -456,6 +457,7 @@ impl LocalTaskStore {
         relative_path: &str,
         input: BinaryInput,
     ) -> Result<DeliveryAsset, TaskRuntimeError> {
+        self.require_content_record_write(delivery_id, "delivery")?;
         let (project_id, loop_item_id, external_item_id, status): (
             String,
             Option<String>,
@@ -518,6 +520,7 @@ impl LocalTaskStore {
         delivery_id: &str,
         input: DeliveryFinalize,
     ) -> Result<Delivery, TaskRuntimeError> {
+        self.require_content_record_write(delivery_id, "delivery")?;
         self.get_delivery(item_id, delivery_id)?;
         let timestamp = now();
         let mut connection = self.connection()?;
@@ -756,6 +759,7 @@ impl LocalTaskStore {
     }
 
     pub fn discard_delivery(&self, delivery_id: &str) -> Result<(), TaskRuntimeError> {
+        self.require_content_record_write(delivery_id, "delivery")?;
         let connection = self.connection()?;
         let item_id = connection
             .query_row(

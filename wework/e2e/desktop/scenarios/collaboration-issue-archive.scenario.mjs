@@ -61,22 +61,69 @@ async function openArchiveDrawer(control, timeoutMs) {
   })
 }
 
-async function restoreIssue(control, issueId, title, timeoutMs) {
+async function waitForArchivedIssue(control, issueId, title, timeoutMs) {
   const archivedIssue = scoped(`[data-testid="collaboration-archived-issue-${issueId}"]`)
   await control.command('waitFor', archivedIssue, {
     text: title,
     visible: true,
     timeoutMs,
   })
+  for (const selector of [
+    scoped(`[data-testid="collaboration-archived-issue-restore-${issueId}"]`),
+    scoped('[data-testid="collaboration-issue-archive-drawer-close"]'),
+  ]) {
+    await control.command('waitFor', selector, { visible: true, timeoutMs })
+  }
+}
+
+async function assertArchiveControlsVisible(control, issueId) {
+  const itemSelector = `[data-testid="collaboration-archived-issue-${issueId}"]`
+  const drawer = scoped(`[data-testid="collaboration-issue-archive-drawer"]:has(${itemSelector})`)
+  const panes = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      scoped(`[data-testid="issue-drawer-workspace"]:has(${itemSelector})`)
+    )
+  )
+  assert.equal(panes.length, 1, 'The archived item must identify one workbench content viewport')
+  const [pane] = panes
+  assert.ok(pane?.height > 0, 'The archive must have its real workbench content viewport')
+  for (const selector of [
+    `${drawer} header`,
+    `${drawer} [data-testid="collaboration-issue-archive-drawer-close"]`,
+  ]) {
+    const boxes = JSON.parse(await control.command('getElementMetrics', selector))
+    assert.equal(boxes.length, 1, `The archive header/control must be unique: ${selector}`)
+    const [box] = boxes
+    assert.ok(box?.height > 0, `The archive header/control must be rendered: ${selector}`)
+    assert.equal(box.hitTestVisible, true, `The archive header/control is occluded: ${selector}`)
+    assert.ok(
+      box.visibleIntersection?.height >= box.height - 1 &&
+        box.visibleIntersection?.width >= box.width - 1 &&
+        box.top >= pane.top - 1 &&
+        box.bottom <= pane.bottom + 1 &&
+        box.left >= pane.left - 1 &&
+        box.right <= pane.right + 1,
+      `The archive header/control must fit its content viewport: ${JSON.stringify({ box, pane })}`
+    )
+  }
+}
+
+async function restoreIssue(control, issueId, title, timeoutMs) {
+  await waitForArchivedIssue(control, issueId, title, timeoutMs)
   await control.command(
     'clickWhenEnabled',
     scoped(`[data-testid="collaboration-archived-issue-restore-${issueId}"]`),
     { timeoutMs }
   )
-  await control.command('waitFor', archivedIssue, {
-    visible: false,
-    timeoutMs,
-  })
+  await control.command(
+    'waitFor',
+    scoped(`[data-testid="collaboration-archived-issue-${issueId}"]`),
+    {
+      visible: false,
+      timeoutMs,
+    }
+  )
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
@@ -113,6 +160,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       await archiveIssue(control, firstIssueId, FIRST_ISSUE, uiTimeoutMs)
       await openArchiveDrawer(control, uiTimeoutMs)
+      await waitForArchivedIssue(control, firstIssueId, FIRST_ISSUE, uiTimeoutMs)
+      await assertArchiveControlsVisible(control, firstIssueId)
       await captureVerificationScreenshot(
         control,
         'collaboration-issue-archive-01-single-archived.png',
@@ -155,6 +204,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       }
 
       await openArchiveDrawer(control, uiTimeoutMs)
+      for (const [issueId, title] of [
+        [firstIssueId, FIRST_ISSUE],
+        [secondIssueId, SECOND_ISSUE],
+      ]) {
+        await waitForArchivedIssue(control, issueId, title, uiTimeoutMs)
+      }
+      await assertArchiveControlsVisible(control, firstIssueId)
       await captureVerificationScreenshot(
         control,
         'collaboration-issue-archive-02-batch-archived.png',

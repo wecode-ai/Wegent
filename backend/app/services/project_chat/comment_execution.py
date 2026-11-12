@@ -10,7 +10,12 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Query, Session
 
-from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_is_unset
+from app.models.delivery import (
+    CollaborationChatGroup,
+    LoopItem,
+    ProjectChatAgent,
+    loop_datetime_is_unset,
+)
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
@@ -20,6 +25,7 @@ from app.schemas.project_chat import (
     ProjectChatMessageView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.collaboration_container_access import get_collaboration_container
 from app.services.device.identity import owned_device_aliases, same_owned_device
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.push import push_project_chat_message
@@ -31,6 +37,30 @@ from app.services.project_chat.runtime_binding import (
 )
 from app.services.project_chat.service import bot_config, project_chat_service
 from shared.telemetry.decorators import trace_async
+
+
+def _comment_agent(
+    db: Session, request: ProjectChatCommentExecution, agent_id: str, user_id: int
+) -> ProjectChatAgent:
+    if isinstance(
+        get_collaboration_container(db, request.project_id), CollaborationChatGroup
+    ):
+        from app.services.issue_resource_context import require_assignment_agent
+
+        item = db.get(LoopItem, request.task_id)
+        if item is None:
+            raise HTTPException(409, "The Thread is unavailable")
+        return require_assignment_agent(
+            db,
+            container_id=request.project_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            item=item,
+            execute=True,
+        )
+    return project_chat_service._agent_row(
+        db, project_id=request.project_id, agent_id=agent_id, active_only=True
+    )
 
 
 def _messages(
@@ -235,15 +265,13 @@ def _new_execution(
         }
         db.commit()
         return None
-    agent = project_chat_service._agent_row(
-        db, project_id=request.project_id, agent_id=agent_id, active_only=True
-    )
+    agent = _comment_agent(db, request, agent_id, user_id)
     # An assigned agent has already been authorized for this issue. Selecting
     # a different agent still requires visibility in the project agent picker.
-    if agent_id != item.assignee_agent_id:
-        access = require_cloud_project_role(
-            db, request.project_id, user_id, BaseRole.Developer
-        )
+    if agent_id != item.assignee_agent_id and not isinstance(
+        get_collaboration_container(db, request.project_id), CollaborationChatGroup
+    ):
+        require_cloud_project_role(db, request.project_id, user_id, BaseRole.Developer)
     config = bot_config(agent)
     execution = loop_item_execution_service.enqueue_for_assignment(
         db,
@@ -461,9 +489,7 @@ def _queue_reply(
     assigner_user_id: int,
 ) -> ProjectChatMessage:
     """Persist continuation intent; the queue consumer prepares the session."""
-    agent = project_chat_service._agent_row(
-        db, project_id=request.project_id, agent_id=original.agent_id, active_only=True
-    )
+    agent = _comment_agent(db, request, original.agent_id, assigner_user_id)
     group_reply = (
         original.runtime_origin_context.get("dispatch_kind") == "collaboration_group"
     )
@@ -522,6 +548,7 @@ async def execute_comment(
         project_id=request.project_id,
         task_id=request.task_id,
         required_role=BaseRole.Developer,
+        execute=True,
     )
     trigger = (
         _messages(db, request)

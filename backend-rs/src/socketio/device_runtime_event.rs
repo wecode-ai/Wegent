@@ -209,20 +209,28 @@ pub(super) async fn emit_project_chat(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let task_id = message.get("taskId").and_then(Value::as_str);
-    let room = project_chat_room(project_id, task_id);
+    let rooms = match super::chat_audience::rooms(&state.mysql, project_id, task_id).await {
+        Ok(rooms) => rooms,
+        Err(error) => {
+            tracing::warn!(?error, "Runtime chat audience unavailable");
+            return;
+        }
+    };
     let event = if projected.delta {
         PROJECT_CHAT_AGENT_CHUNK_EVENT
     } else {
         PROJECT_CHAT_CREATED_EVENT
     };
-    if let Err(error) = runtime
-        .emitters()
-        .project_chat_message(&room, projected.delta, message)
-        .await
-    {
-        tracing::warn!(%error, room, "project chat local delivery failed");
+    for room in rooms {
+        if let Err(error) = runtime
+            .emitters()
+            .project_chat_message(&room, projected.delta, message)
+            .await
+        {
+            tracing::warn!(%error, room, "project chat local delivery failed");
+        }
+        publish_room_event(state, event, message, RUNTIME_NAMESPACE, &room).await;
     }
-    publish_room_event(state, event, message, RUNTIME_NAMESPACE, &room).await;
 }
 
 /// `publish_runtime_event`: the Task-addressed live channel publish.

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
+    CollaborationChatGroup,
     LoopItem,
     ProjectChatAgent,
     loop_datetime_is_unset,
@@ -29,6 +30,7 @@ from app.schemas.runner_routing import (
 )
 from app.services.cloud_project_visibility import readable_workspace_ids
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.collaboration_permissions import resource_query
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.runner_routing_diagnostics import log_environment_denial
@@ -51,28 +53,42 @@ def active_device(db: Session, environment_id: str) -> Kind | None:
     )
 
 
-def device_grants(db: Session, entity_type: str, entity_id: str) -> set[int]:
+def device_grants(
+    db: Session, entity_type: str, entity_id: str, *, current: bool = False
+) -> set[int]:
     return {
         int(row.resource_id)
-        for row in db.query(ResourceMember)
-        .filter_by(
-            resource_type="Device",
-            entity_type=entity_type,
-            entity_id=entity_id,
-            status="approved",
+        for row in resource_query(
+            db.query(ResourceMember)
+            .filter_by(
+                resource_type="Device",
+                entity_type=entity_type,
+                entity_id=entity_id,
+                status="approved",
+            )
+            .filter(ResourceMember.role.in_(("Owner", "Maintainer", "Developer"))),
+            current=current,
         )
-        .filter(ResourceMember.role.in_(("Owner", "Maintainer", "Developer")))
     }
 
 
-def explicit_project_environment_ids(db: Session, project_id: str) -> set[int]:
+def explicit_project_environment_ids(
+    db: Session, project_id: str, *, current: bool = False
+) -> set[int]:
     """A project grant cannot outlive the parent space's device grant."""
+    group = db.get(CollaborationChatGroup, str(project_id))
+    if group is not None:
+        return (
+            device_grants(db, "chat_group", str(group.id), current=True)
+            if group.status == "active"
+            else set()
+        )
     workspace_id = workspace_id_for_project(db, project_id)
     if workspace_id is None:
         return set()
-    return device_grants(db, "workspace", str(workspace_id)) & device_grants(
-        db, "project", project_id
-    )
+    return device_grants(
+        db, "workspace", str(workspace_id), current=current
+    ) & device_grants(db, "project", project_id, current=current)
 
 
 def project_environment_ids(db: Session, project_id: str) -> set[int]:
@@ -83,16 +99,22 @@ def project_environment_ids(db: Session, project_id: str) -> set[int]:
 
 
 def execution_environment_ids(
-    db: Session, project_id: str, agent_id: str | None
+    db: Session, project_id: str, agent_id: str | None, *, current: bool = False
 ) -> set[int]:
-    explicit = explicit_project_environment_ids(db, project_id)
+    explicit = explicit_project_environment_ids(db, project_id, current=current)
     if not agent_id:
         return explicit
-    return explicit | legacy_project_environment_ids(db, project_id, agent_id=agent_id)
+    return explicit | legacy_project_environment_ids(
+        db, project_id, agent_id=agent_id, current=current
+    )
 
 
 def legacy_project_environment_ids(
-    db: Session, project_id: str, *, agent_id: str | None = None
+    db: Session,
+    project_id: str,
+    *,
+    agent_id: str | None = None,
+    current: bool = False,
 ) -> set[int]:
     """V1 owner-installed fixed device references are scoped resource consent."""
     project = db.get(CloudProject, str(project_id))
@@ -107,7 +129,7 @@ def legacy_project_environment_ids(
     )
     if agent_id is not None:
         agents = agents.filter(ProjectChatAgent.id == agent_id)
-    for agent in agents:
+    for agent in resource_query(agents, current=current):
         if (
             (agent.metadata_json or {}).get("authorization_version")
             or not agent.device_id
@@ -132,7 +154,7 @@ def legacy_project_environment_ids(
         if any(
             grant.status != "approved"
             or grant.role not in ("Owner", "Maintainer", "Developer")
-            for grant in grants
+            for grant in resource_query(grants, current=current)
         ):
             continue
         ids.add(device.id)
@@ -422,13 +444,22 @@ def _candidates(
 ) -> list[Kind]:
     """Filter authorized devices by policy and retain evidence when none match."""
     try:
-        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        from app.services.collaboration_container_access import (
+            require_collaboration_container_access,
+        )
+
+        if db.get(CollaborationChatGroup, str(project_id)) is not None:
+            require_collaboration_container_access(
+                db, project_id, user_id, BaseRole.Developer
+            )
+        else:
+            require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
     except HTTPException as error:
         raise routing_error(
             "RUNNER_PROJECT_ACCESS_REVOKED",
             "The triggering user no longer has permission to execute in the project",
         ) from error
-    authorized_ids = execution_environment_ids(db, project_id, agent_id)
+    authorized_ids = execution_environment_ids(db, project_id, agent_id, current=True)
     ids = authorized_ids.copy()
     if policy.mode == "fixed":
         ids &= {int(policy.environment_id)}
@@ -515,16 +546,20 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
         return False
     if bound_id and bound_id != str(device.id):
         return False
+    from app.services.issue_resource_context import execution_resource_agent_id
+
     routes = [
-        (execution.agent_id, snapshot),
+        (execution_resource_agent_id(execution), snapshot),
         *execution.runtime_selection.get("group_runner_requirements", {}).items(),
     ]
     for agent_id, route in routes:
         try:
+            from app.services.issue_resource_context import execution_resource_owner
+
             members = _candidates(
                 db,
                 ExecutionPolicy.model_validate(route["execution_policy"]),
-                execution.cloud_project_id,
+                execution_resource_owner(db, execution),
                 execution.assigner_user_id,
                 agent_id,
             )

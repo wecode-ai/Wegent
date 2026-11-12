@@ -86,7 +86,7 @@ function rootEntries(
     {
       kind: "folder",
       key: "root:issues",
-      name: "Issues",
+      name: t("todo.threads_label"),
       description: t("todo.delivery_issue_count", undefined, {
         count: issueCount,
       }),
@@ -235,7 +235,7 @@ export function collaborationFileBrowserBreadcrumbs(
 
   breadcrumbs.push({
     key: "issues",
-    name: "Issues",
+    name: t("todo.threads_label"),
     location: { scope: "deliveries", itemIds: [], assetPath: [] },
   });
   const matching = deliveryFiles.map(deliveryItemPath).find((path) =>

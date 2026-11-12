@@ -12,6 +12,7 @@ import { milestoneMessages } from "./milestones/messages";
 // SPDX-License-Identifier: Apache-2.0
 
 import { projectStatuses } from "./board";
+import { providerTerminology } from "./issue-detail/providerTerminology";
 import { ProjectTemplateSettings } from "./templates/ProjectTemplateSettings";
 import { useCollaborationTemplateStore } from "./templates/context";
 import { templateMessages } from "./templates/messages";
@@ -30,7 +31,7 @@ import {
 } from "./i18n";
 import { collaborationTestIds } from "./testIds";
 import { CollaborationSettings } from "./CollaborationSettings";
-import { IssueCreate, IssueDetail } from "./IssueDetail";
+import { IssueCreate, IssueDetail, type IssueCreateProps } from "./IssueDetail";
 import { IssueExecutionEnvironmentNotice } from "./execution-environment/IssueExecutionEnvironmentNotice";
 import { useProjectExecutionEnvironmentReadiness } from "./execution-environment/issueEnvironmentReadiness";
 import { IssueArchiveDialog, IssueArchiveDrawer } from "./issue-archive";
@@ -110,6 +111,8 @@ interface CollaborationAppProps {
   createProjectRequestKey?: number;
   refreshProjectRequestKey?: number;
   showProjectBack?: boolean;
+  showProjectHeading?: boolean;
+  enabledStandardViews?: readonly ("board" | "table" | "files" | "manage")[];
   /** Enables Issue archive actions and the project archive box. */
   issueArchiveEnabled?: boolean;
   onProjectChange?(project: CollaborationProject): void;
@@ -121,6 +124,7 @@ interface CollaborationAppProps {
   onPrepareIssueArchive?(issue: CollaborationIssue): Promise<void>;
   onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void;
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode;
+  renderIssueCreate?(props: IssueCreateProps): ReactNode;
   isIssueRunning?(
     issue: CollaborationIssue,
     bindings: WorkspaceTaskBinding[],
@@ -143,12 +147,15 @@ export function CollaborationApp({
   createProjectRequestKey = 0,
   refreshProjectRequestKey = 0,
   showProjectBack = true,
+  showProjectHeading = true,
+  enabledStandardViews,
   issueArchiveEnabled = false,
   onProjectChange,
   onCreateTask,
   onPrepareIssueArchive,
   renderBoardIssueCard,
   renderIssueDetail,
+  renderIssueCreate,
   isIssueRunning,
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale];
@@ -211,6 +218,10 @@ export function CollaborationApp({
     loading,
     error,
   } = state;
+  const newIssueLabel = providerTerminology(project?.task_provider, translate)(
+    "todo.new_issue",
+    messages.createIssue,
+  );
   const { assignmentsByIssueId, replaceIssueAssignments } =
     useIssueAssignmentsByIssueId({
       assignmentsApi: api.assignments,
@@ -229,7 +240,7 @@ export function CollaborationApp({
     project?.access_role === "Maintainer";
   const saveScheduleView = async (options: ScheduleViewOptions) => {
     if (!project || !canSaveScheduleView || savingScheduleView) return;
-    const statuses = projectStatuses(project, messages, translate);
+    const statuses = projectStatuses(project, messages, translate, issues);
     const boardConfig = project.board_config ?? {
       group_by: "status" as const,
       processing_start_status_id: statuses[1]?.id ?? statuses[0]?.id ?? null,
@@ -340,7 +351,9 @@ export function CollaborationApp({
         translate(
           "todo.archive_issue_failed_count",
           "{{count}} 个任务归档失败，请重试。",
-          { count: failed.length },
+          {
+            count: failed.length,
+          },
         ),
       );
     }
@@ -470,6 +483,15 @@ export function CollaborationApp({
       </div>
     ) : null;
 
+  const openIssue = (issue: CollaborationIssue, view: CollaborationView) => {
+    if (!project) return;
+    if (issue.group_id && host.openGroupThread) {
+      host.openGroupThread(issue.group_id, issue.id, project.project_store);
+      return;
+    }
+    host.navigate({ projectId: project.id, issueId: issue.id, view });
+  };
+
   const renderIssueTable = (
     tableIssues: CollaborationIssue[],
     view: CollaborationView,
@@ -508,7 +530,7 @@ export function CollaborationApp({
         dueAtLabel={messages.endTime}
         projectKey={project.project_key}
         searchPlaceholder={messages.searchIssues}
-        createLabel={messages.createIssue}
+        createLabel={newIssueLabel}
         allLabel={locale === "zh-CN" ? "全部" : "All"}
         tagLabel={messages.issueTags}
         actionsLabel={translate("common.actions", "操作")}
@@ -523,9 +545,12 @@ export function CollaborationApp({
         batchStatusLabel={locale === "zh-CN" ? "批量修改状态" : "Change status"}
         batchApplyLabel={locale === "zh-CN" ? "应用" : "Apply"}
         batchDeleteLabel={locale === "zh-CN" ? "批量归档" : "Archive selected"}
-        availableStatuses={projectStatuses(project, messages, translate).map(
-          (status) => status.id,
-        )}
+        availableStatuses={projectStatuses(
+          project,
+          messages,
+          translate,
+          issues,
+        ).map((status) => status.id)}
         canDelete={(issue) => issue.status === "completed"}
         onDelete={
           issueArchiveAvailable
@@ -565,7 +590,7 @@ export function CollaborationApp({
           )
         }
         statusName={(status) =>
-          projectStatuses(project, messages, translate).find(
+          projectStatuses(project, messages, translate, issues).find(
             (candidate) => candidate.id === status,
           )?.name ?? status
         }
@@ -583,893 +608,956 @@ export function CollaborationApp({
               }
             : requestIssueCreate
         }
-        onOpen={(issue) =>
-          host.navigate({
-            projectId: project.id,
-            issueId: issue.id,
-            view,
-          })
-        }
+        onOpen={(issue) => openIssue(issue, view)}
       />
     );
   };
 
-  if (loading) {
-    return (
-      <ProjectLoadingSkeleton
-        testId={collaborationTestIds.root}
-        label={messages.loading}
-        layout={
-          host.location.projectId &&
-          (host.location.view === "board" ||
-            host.location.view === "calendar" ||
-            host.location.view === "gantt")
-            ? "board"
-            : "list"
-        }
-      />
-    );
-  }
+  const loadingView = loading ? (
+    <ProjectLoadingSkeleton
+      label={messages.loading}
+      layout={
+        host.location.projectId &&
+        (host.location.view === "board" ||
+          host.location.view === "calendar" ||
+          host.location.view === "gantt")
+          ? "board"
+          : "list"
+      }
+    />
+  ) : null;
 
   return (
-    <RuntimeConfigurationProvider api={api} project={project} locale={locale}>
-      <BrowserTaskDrafts runtime={api.runtime}>
-        <section
-          className={`collaboration-app${project ? " collaboration-app-project issue-drawer-workspace" : ""}`}
-          data-testid={collaborationTestIds.root}
+    <>
+      {loadingView}
+      <div style={{ display: loading ? "none" : "contents" }}>
+        <RuntimeConfigurationProvider
+          api={api}
+          project={project}
+          locale={locale}
         >
-          {error && (
-            <div
-              className="collaboration-alert"
-              role="alert"
-              data-testid="collaboration-error"
+          <BrowserTaskDrafts runtime={api.runtime}>
+            <section
+              className={`collaboration-app${project ? " collaboration-app-project issue-drawer-workspace" : ""}`}
+              data-testid={collaborationTestIds.root}
             >
-              {error}
-            </div>
-          )}
-          {!project &&
-          host.capabilities.myWork === true &&
-          host.location.rootView === "my-work" ? (
-            <MyWorkAdapter
-              items={myWork}
-              locale={locale}
-              onBack={() =>
-                host.navigate({
-                  projectId: null,
-                  issueId: null,
-                  view: "board",
-                  rootView: "home",
-                })
-              }
-              onSelectItem={(item) =>
-                host.navigate({
-                  projectId: item.cloud_project_id,
-                  issueId: item.id,
-                  view: "board",
-                })
-              }
-            />
-          ) : !project ? (
-            <WorkspaceProjectsHomeAdapter
-              projects={projects}
-              projectItems={projectItems}
-              projectMembers={projectMembers}
-              myWork={host.capabilities.myWork === true ? myWork : []}
-              onCreateProject={() => setCreateProjectOpen(true)}
-              onSelectProject={(nextProject) =>
-                host.navigate({
-                  projectId: nextProject.id,
-                  issueId: null,
-                  view: "board",
-                })
-              }
-              onManageProject={(nextProject) =>
-                host.navigate({
-                  projectId: nextProject.id,
-                  issueId: null,
-                  view: "manage",
-                })
-              }
-              onOpenMyWork={
-                host.capabilities.myWork === true
-                  ? () =>
-                      host.navigate({
-                        projectId: null,
-                        issueId: null,
-                        view: "board",
-                        rootView: "my-work",
-                      })
-                  : undefined
-              }
-              onUnavailable={() =>
-                commands.reportError(messages.capabilitiesUnavailable)
-              }
-              locale={locale}
-            />
-          ) : (
-            <CollaborationProjectViewShell
-              project={project}
-              view={host.location.view}
-              labels={{
-                board: messages.board,
-                table: messages.table,
-                files: messages.files,
-                manage: messages.settings,
-              }}
-              extensions={[
-                {
-                  id: "milestones",
-                  after: "table",
-                  label: milestoneLabels.title,
-                  testId: "collaboration-milestones-tab",
-                  available: milestonesEnabled,
-                  content:
-                    host.location.view === "milestones" ? (
-                      <MilestonesPage
-                        key={project.id}
-                        api={api}
-                        project={project}
-                        issues={issues}
-                        locale={locale}
-                        onOpenArchive={
-                          issueArchiveAvailable ? openArchiveDrawer : undefined
-                        }
-                        onChanged={() =>
-                          commands.loadProjectSnapshot(project.id, {
-                            invalidate: true,
+              {error && (
+                <div
+                  className="collaboration-alert"
+                  role="alert"
+                  data-testid="collaboration-error"
+                >
+                  {error}
+                </div>
+              )}
+              {!project &&
+              host.capabilities.myWork === true &&
+              host.location.rootView === "my-work" ? (
+                <MyWorkAdapter
+                  items={myWork}
+                  locale={locale}
+                  onBack={() =>
+                    host.navigate({
+                      projectId: null,
+                      issueId: null,
+                      view: "board",
+                      rootView: "home",
+                    })
+                  }
+                  onSelectItem={(item) =>
+                    host.navigate({
+                      projectId: item.cloud_project_id,
+                      issueId: item.id,
+                      view: "board",
+                    })
+                  }
+                />
+              ) : !project ? (
+                <WorkspaceProjectsHomeAdapter
+                  projects={projects}
+                  projectItems={projectItems}
+                  projectMembers={projectMembers}
+                  myWork={host.capabilities.myWork === true ? myWork : []}
+                  onCreateProject={() => setCreateProjectOpen(true)}
+                  onSelectProject={(nextProject) =>
+                    host.navigate({
+                      projectId: nextProject.id,
+                      issueId: null,
+                      view: "board",
+                    })
+                  }
+                  onManageProject={(nextProject) =>
+                    host.navigate({
+                      projectId: nextProject.id,
+                      issueId: null,
+                      view: "manage",
+                    })
+                  }
+                  onOpenMyWork={
+                    host.capabilities.myWork === true
+                      ? () =>
+                          host.navigate({
+                            projectId: null,
+                            issueId: null,
+                            view: "board",
+                            rootView: "my-work",
+                          })
+                      : undefined
+                  }
+                  onUnavailable={() =>
+                    commands.reportError(messages.capabilitiesUnavailable)
+                  }
+                  locale={locale}
+                />
+              ) : (
+                <CollaborationProjectViewShell
+                  project={project}
+                  view={host.location.view}
+                  labels={{
+                    board: messages.board,
+                    table: messages.table,
+                    files: messages.files,
+                    manage: messages.settings,
+                  }}
+                  extensions={[
+                    {
+                      id: "milestones",
+                      after: "table",
+                      label: milestoneLabels.title,
+                      testId: "collaboration-milestones-tab",
+                      available: milestonesEnabled,
+                      content:
+                        host.location.view === "milestones" ? (
+                          <MilestonesPage
+                            key={project.id}
+                            api={api}
+                            project={project}
+                            issues={issues}
+                            locale={locale}
+                            onOpenArchive={
+                              issueArchiveAvailable
+                                ? openArchiveDrawer
+                                : undefined
+                            }
+                            onChanged={() =>
+                              commands.loadProjectSnapshot(project.id, {
+                                invalidate: true,
+                              })
+                            }
+                            renderIssues={(
+                              linkedIssues,
+                              linkedAssignments,
+                              emptyLabel,
+                              milestoneId,
+                            ) =>
+                              renderIssueTable(
+                                linkedIssues,
+                                "milestones",
+                                linkedAssignments,
+                                {
+                                  emptyLabel,
+                                  milestoneId,
+                                },
+                              )
+                            }
+                          />
+                        ) : null,
+                    },
+                    {
+                      id: "calendar",
+                      label: messages.calendar,
+                      testId: `${collaborationTestIds.calendar}-tab`,
+                      content: (
+                        <ProjectCalendarView
+                          issues={issues}
+                          locale={locale}
+                          statuses={projectStatuses(
+                            project,
+                            messages,
+                            translate,
+                            issues,
+                          )}
+                          viewOptions={scheduleView.options}
+                          hasPersonalViewOptions={
+                            scheduleView.hasPersonalOverride
+                          }
+                          savingProjectViewOptions={savingScheduleView}
+                          onViewOptionsChange={scheduleView.changeOptions}
+                          onResetViewOptions={scheduleView.resetOptions}
+                          onSaveProjectViewOptions={
+                            canSaveScheduleView ? saveScheduleView : undefined
+                          }
+                          onOpen={(issue) => openIssue(issue, "calendar")}
+                          onSchedule={async (issue, range) => {
+                            await commands.updateIssue(issue.id, {
+                              version: issue.version,
+                              startAt: range.startAt,
+                              dueAt: range.dueAt,
+                            });
+                          }}
+                        />
+                      ),
+                    },
+                    {
+                      id: "gantt",
+                      label: messages.gantt,
+                      testId: `${collaborationTestIds.gantt}-tab`,
+                      content: (
+                        <ProjectGanttView
+                          issues={issues}
+                          locale={locale}
+                          statuses={projectStatuses(
+                            project,
+                            messages,
+                            translate,
+                            issues,
+                          )}
+                          viewOptions={scheduleView.options}
+                          hasPersonalViewOptions={
+                            scheduleView.hasPersonalOverride
+                          }
+                          savingProjectViewOptions={savingScheduleView}
+                          onViewOptionsChange={scheduleView.changeOptions}
+                          onResetViewOptions={scheduleView.resetOptions}
+                          onSaveProjectViewOptions={
+                            canSaveScheduleView ? saveScheduleView : undefined
+                          }
+                          onOpen={(issue) => openIssue(issue, "gantt")}
+                          onSchedule={async (issue, range) => {
+                            await commands.updateIssue(issue.id, {
+                              version: issue.version,
+                              startAt: range.startAt,
+                              dueAt: range.dueAt,
+                            });
+                          }}
+                        />
+                      ),
+                    },
+                  ]}
+                  testIds={{
+                    board: "collaboration-tab-board",
+                    table: "collaboration-tab-table",
+                    files: "collaboration-tab-files",
+                    manage: "collaboration-tab-manage",
+                  }}
+                  enabledStandardViews={enabledStandardViews}
+                  switcherAriaLabel={messages.title}
+                  compactSwitcherIcon={<span aria-hidden="true">▾</span>}
+                  onViewChange={(view) =>
+                    navigateView(view as CollaborationView)
+                  }
+                  assistantOpen={false}
+                  backAction={
+                    showProjectBack ? (
+                      <button
+                        type="button"
+                        className="relative z-10 mr-2 flex h-8 items-center rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                        data-testid="collaboration-project-back"
+                        onClick={() =>
+                          host.navigate({
+                            projectId: null,
+                            issueId: null,
+                            view: "board",
                           })
                         }
-                        renderIssues={(
-                          linkedIssues,
-                          linkedAssignments,
-                          emptyLabel,
-                          milestoneId,
-                        ) =>
-                          renderIssueTable(
-                            linkedIssues,
-                            "milestones",
-                            linkedAssignments,
-                            { emptyLabel, milestoneId },
-                          )
-                        }
-                      />
-                    ) : null,
-                },
-                {
-                  id: "calendar",
-                  label: messages.calendar,
-                  testId: `${collaborationTestIds.calendar}-tab`,
-                  content: (
-                    <ProjectCalendarView
-                      issues={issues}
-                      locale={locale}
-                      statuses={projectStatuses(project, messages, translate)}
-                      viewOptions={scheduleView.options}
-                      hasPersonalViewOptions={scheduleView.hasPersonalOverride}
-                      savingProjectViewOptions={savingScheduleView}
-                      onViewOptionsChange={scheduleView.changeOptions}
-                      onResetViewOptions={scheduleView.resetOptions}
-                      onSaveProjectViewOptions={
-                        canSaveScheduleView ? saveScheduleView : undefined
-                      }
-                      onOpen={(issue) =>
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: issue.id,
-                          view: "calendar",
-                        })
-                      }
-                      onSchedule={async (issue, range) => {
-                        await commands.updateIssue(issue.id, {
-                          version: issue.version,
-                          startAt: range.startAt,
-                          dueAt: range.dueAt,
-                        });
-                      }}
-                    />
-                  ),
-                },
-                {
-                  id: "gantt",
-                  label: messages.gantt,
-                  testId: `${collaborationTestIds.gantt}-tab`,
-                  content: (
-                    <ProjectGanttView
-                      issues={issues}
-                      locale={locale}
-                      statuses={projectStatuses(project, messages, translate)}
-                      viewOptions={scheduleView.options}
-                      hasPersonalViewOptions={scheduleView.hasPersonalOverride}
-                      savingProjectViewOptions={savingScheduleView}
-                      onViewOptionsChange={scheduleView.changeOptions}
-                      onResetViewOptions={scheduleView.resetOptions}
-                      onSaveProjectViewOptions={
-                        canSaveScheduleView ? saveScheduleView : undefined
-                      }
-                      onOpen={(issue) =>
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: issue.id,
-                          view: "gantt",
-                        })
-                      }
-                      onSchedule={async (issue, range) => {
-                        await commands.updateIssue(issue.id, {
-                          version: issue.version,
-                          startAt: range.startAt,
-                          dueAt: range.dueAt,
-                        });
-                      }}
-                    />
-                  ),
-                },
-              ]}
-              testIds={{
-                board: "collaboration-tab-board",
-                table: "collaboration-tab-table",
-                files: "collaboration-tab-files",
-                manage: "collaboration-tab-manage",
-              }}
-              switcherAriaLabel={messages.title}
-              compactSwitcherIcon={<span aria-hidden="true">▾</span>}
-              onViewChange={(view) => navigateView(view as CollaborationView)}
-              assistantOpen={false}
-              backAction={
-                showProjectBack ? (
-                  <button
-                    type="button"
-                    className="relative z-10 mr-2 flex h-8 items-center rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-                    data-testid="collaboration-project-back"
-                    onClick={() =>
-                      host.navigate({
-                        projectId: null,
-                        issueId: null,
-                        view: "board",
-                      })
-                    }
-                    aria-label={messages.back}
-                  >
-                    ←
-                  </button>
-                ) : undefined
-              }
-              embedded
-              hasCreateAction={hasHeaderCreateAction}
-              sidebarCollapsed={false}
-              title={
-                <span className="collaboration-project-heading">
-                  <strong>{project.name}</strong>
-                  <small>
-                    {locale === "zh-CN" ? "协作项目" : "Collaboration project"}{" "}
-                    · {members.length}{" "}
-                    {locale === "zh-CN" ? "位成员" : "members"}
-                  </small>
-                </span>
-              }
-              titleIcon={
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-xs font-semibold text-indigo-600">
-                  {project.project_key.slice(0, 2)}
-                </span>
-              }
-              renderRightActions={({ actionRefs, showLabels }) => (
-                <>
-                  {host.renderProjectHeaderAction?.(project)}
-                  {hasHeaderCreateAction ? (
-                    <button
-                      ref={actionRefs.add}
-                      type="button"
-                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
-                      data-testid={collaborationTestIds.createIssue}
-                      aria-label={messages.createIssue}
-                      title={messages.createIssue}
-                      onClick={requestIssueCreate}
-                    >
-                      <span aria-hidden="true">＋</span>
-                      {showLabels ? messages.createIssue : null}
-                    </button>
-                  ) : null}
-                  {host.projectActions?.map((action) => (
-                    <button
-                      type="button"
-                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
-                      data-testid={action.testId}
-                      aria-label={action.label}
-                      title={action.label}
-                      key={action.id}
-                      onClick={() => action.invoke(project)}
-                    >
-                      {action.renderIcon?.()}
-                      {showLabels ? action.label : null}
-                    </button>
-                  ))}
-                </>
-              )}
-              slots={{
-                board: (
-                  <div className="relative flex min-h-0 min-w-0 flex-1">
-                    <ProjectBoardAdapter
-                      participationUserId={participationUserId}
-                      isIssueRunning={isIssueRunning}
-                      parentGroupingEnabled={parentGroupingEnabled}
-                      emptyState={
-                        <div
-                          className="collaboration-empty-project"
-                          data-testid="collaboration-empty-project"
+                        aria-label={messages.back}
+                      >
+                        ←
+                      </button>
+                    ) : undefined
+                  }
+                  embedded
+                  hasCreateAction={hasHeaderCreateAction}
+                  sidebarCollapsed={false}
+                  title={
+                    showProjectHeading ? (
+                      <span className="collaboration-project-heading">
+                        <strong>{project.name}</strong>
+                        <small>
+                          {locale === "zh-CN"
+                            ? "协作项目"
+                            : "Collaboration project"}{" "}
+                          · {members.length}{" "}
+                          {locale === "zh-CN" ? "位成员" : "members"}
+                        </small>
+                      </span>
+                    ) : null
+                  }
+                  titleIcon={
+                    showProjectHeading ? (
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-xs font-semibold text-indigo-600">
+                        {project.project_key.slice(0, 2)}
+                      </span>
+                    ) : null
+                  }
+                  renderRightActions={({ actionRefs, showLabels }) => (
+                    <>
+                      {host.renderProjectHeaderAction?.(project)}
+                      {hasHeaderCreateAction ? (
+                        <button
+                          ref={actionRefs.add}
+                          type="button"
+                          className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
+                          data-testid={collaborationTestIds.createIssue}
+                          aria-label={newIssueLabel}
+                          title={newIssueLabel}
+                          onClick={requestIssueCreate}
                         >
-                          <div className="collaboration-empty-project-content">
-                            <span className="collaboration-empty-project-icon">
-                              ◇
-                            </span>
-                            <span className="collaboration-empty-project-progress">
-                              {messages.emptyProjectProgress}
-                            </span>
-                            <h2>{messages.emptyProjectTitle}</h2>
-                            <p>{messages.emptyProjectHint}</p>
-                            <button
-                              type="button"
-                              className="collaboration-primary-button"
-                              data-testid="collaboration-empty-project-create"
-                              onClick={requestIssueCreate}
+                          <span aria-hidden="true">＋</span>
+                          {showLabels ? newIssueLabel : null}
+                        </button>
+                      ) : null}
+                      {host.projectActions?.map((action) => (
+                        <button
+                          type="button"
+                          className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
+                          data-testid={action.testId}
+                          aria-label={action.label}
+                          title={action.label}
+                          key={action.id}
+                          onClick={() => action.invoke(project)}
+                        >
+                          {action.renderIcon?.()}
+                          {showLabels ? action.label : null}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  slots={{
+                    board: (
+                      <div className="relative flex min-h-0 min-w-0 flex-1">
+                        <ProjectBoardAdapter
+                          participationUserId={participationUserId}
+                          isIssueRunning={isIssueRunning}
+                          parentGroupingEnabled={parentGroupingEnabled}
+                          emptyState={
+                            <div
+                              className="collaboration-empty-project"
+                              data-testid="collaboration-empty-project"
                             >
-                              {messages.createIssue}
-                            </button>
-                            <div className="collaboration-empty-project-flow">
-                              {[
-                                [
-                                  messages.emptyProjectStepIssue,
-                                  messages.emptyProjectStepIssueHint,
-                                ],
-                                [
-                                  messages.emptyProjectStepAssign,
-                                  messages.emptyProjectStepAssignHint,
-                                ],
-                                [
-                                  messages.emptyProjectStepDeliver,
-                                  messages.emptyProjectStepDeliverHint,
-                                ],
-                              ].map(([title, hint]) => (
-                                <div key={title}>
-                                  <strong>{title}</strong>
-                                  <small>{hint}</small>
+                              <div className="collaboration-empty-project-content">
+                                <span className="collaboration-empty-project-icon">
+                                  ◇
+                                </span>
+                                <span className="collaboration-empty-project-progress">
+                                  {messages.emptyProjectProgress}
+                                </span>
+                                <h2>{messages.emptyProjectTitle}</h2>
+                                <p>{messages.emptyProjectHint}</p>
+                                <button
+                                  type="button"
+                                  className="collaboration-primary-button"
+                                  data-testid="collaboration-empty-project-create"
+                                  onClick={requestIssueCreate}
+                                >
+                                  {newIssueLabel}
+                                </button>
+                                <div className="collaboration-empty-project-flow">
+                                  {[
+                                    [
+                                      messages.emptyProjectStepIssue,
+                                      messages.emptyProjectStepIssueHint,
+                                    ],
+                                    [
+                                      messages.emptyProjectStepAssign,
+                                      messages.emptyProjectStepAssignHint,
+                                    ],
+                                    [
+                                      messages.emptyProjectStepDeliver,
+                                      messages.emptyProjectStepDeliverHint,
+                                    ],
+                                  ].map(([title, hint]) => (
+                                    <div key={title}>
+                                      <strong>{title}</strong>
+                                      <small>{hint}</small>
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      }
-                      filterAction={milestoneFilterControl}
-                      toolbarAction={host.renderBoardToolbarAction?.(project)}
-                      onMarkRead={(issue) => void commands.markIssueRead(issue)}
-                      runtime={api.runtime}
-                      previewDisabled={Boolean(selectedIssue)}
-                      translate={translate}
-                      agents={agents ?? []}
-                      boardError={error}
-                      project={project}
-                      issues={filteredIssues}
-                      allIssues={issues}
-                      milestones={boardMilestones.items}
-                      onOpenChildren={milestoneFilter.openChildren}
-                      onCurrentParentIdChange={milestoneFilter.changeParent}
-                      members={members ?? []}
-                      statuses={projectStatuses(project, messages, translate)}
-                      taskBindings={taskBindings}
-                      labels={{
-                        noIssues: messages.noIssues,
-                        noPriority: translate("todo.priority_none", "无优先级"),
-                        search: messages.searchIssues,
-                        groupBy: messages.groupBy,
-                        groupStatus: messages.groupStatus,
-                        groupPriority: messages.groupPriority,
-                        groupAssignee: messages.groupAssignee,
-                        groupTag: messages.groupTag,
-                        unassigned: messages.unassigned,
-                        noTag: messages.noTag,
-                      }}
-                      onOpen={(issue) =>
-                        host.navigate({
-                          projectId: project.id,
-                          issueId: issue.id,
-                          view: "board",
-                        })
-                      }
-                      onMove={async (issue, mutation) => {
-                        await executeStandardCloudBoardMutation({
-                          item: issue,
-                          mutation,
-                          commands: {
-                            update: async (target, input) => {
-                              const updated = await commands.updateIssue(
-                                target.id,
-                                {
-                                  version: target.version,
-                                  position: input.position,
-                                  ...(input.status !== undefined
-                                    ? { status: input.status }
-                                    : {}),
-                                  ...(input.priority !== undefined
-                                    ? {
-                                        priority:
-                                          input.priority as CollaborationIssue["priority"],
-                                      }
-                                    : {}),
-                                  ...(input.tags !== undefined
-                                    ? { tags: input.tags }
-                                    : {}),
-                                  ...(input.assignee_user_id !== undefined
-                                    ? {
-                                        assigneeUserId: input.assignee_user_id,
-                                      }
-                                    : {}),
-                                  ...(input.assignee_agent_id !== undefined
-                                    ? {
-                                        assigneeAgentId:
-                                          input.assignee_agent_id,
-                                      }
-                                    : {}),
-                                  ...(input.assignee_team_id !== undefined
-                                    ? {
-                                        assigneeTeamId: input.assignee_team_id,
-                                      }
-                                    : {}),
+                          }
+                          filterAction={milestoneFilterControl}
+                          toolbarAction={host.renderBoardToolbarAction?.(
+                            project,
+                          )}
+                          onMarkRead={(issue) =>
+                            void commands.markIssueRead(issue)
+                          }
+                          runtime={api.runtime}
+                          previewDisabled={Boolean(selectedIssue)}
+                          translate={translate}
+                          agents={agents ?? []}
+                          boardError={error}
+                          project={project}
+                          issues={filteredIssues}
+                          allIssues={issues}
+                          milestones={boardMilestones.items}
+                          onOpenChildren={milestoneFilter.openChildren}
+                          onCurrentParentIdChange={milestoneFilter.changeParent}
+                          members={members ?? []}
+                          statuses={projectStatuses(
+                            project,
+                            messages,
+                            translate,
+                            issues,
+                          )}
+                          taskBindings={taskBindings}
+                          labels={{
+                            noIssues: messages.noIssues,
+                            noPriority: translate(
+                              "todo.priority_none",
+                              "无优先级",
+                            ),
+                            search: messages.searchIssues,
+                            groupBy: messages.groupBy,
+                            groupStatus: messages.groupStatus,
+                            groupPriority: messages.groupPriority,
+                            groupAssignee: messages.groupAssignee,
+                            groupTag: messages.groupTag,
+                            unassigned: messages.unassigned,
+                            noTag: messages.noTag,
+                          }}
+                          onOpen={(issue) => openIssue(issue, "board")}
+                          onMove={async (issue, mutation) => {
+                            await executeStandardCloudBoardMutation({
+                              item: issue,
+                              mutation,
+                              commands: {
+                                update: async (target, input) => {
+                                  const updated = await commands.updateIssue(
+                                    target.id,
+                                    {
+                                      version: target.version,
+                                      position: input.position,
+                                      ...(input.status !== undefined
+                                        ? { status: input.status }
+                                        : {}),
+                                      ...(input.priority !== undefined
+                                        ? {
+                                            priority:
+                                              input.priority as CollaborationIssue["priority"],
+                                          }
+                                        : {}),
+                                      ...(input.tags !== undefined
+                                        ? { tags: input.tags }
+                                        : {}),
+                                      ...(input.assignee_user_id !== undefined
+                                        ? {
+                                            assigneeUserId:
+                                              input.assignee_user_id,
+                                          }
+                                        : {}),
+                                      ...(input.assignee_agent_id !== undefined
+                                        ? {
+                                            assigneeAgentId:
+                                              input.assignee_agent_id,
+                                          }
+                                        : {}),
+                                      ...(input.assignee_team_id !== undefined
+                                        ? {
+                                            assigneeTeamId:
+                                              input.assignee_team_id,
+                                          }
+                                        : {}),
+                                    },
+                                    { throwOnError: true },
+                                  );
+                                  if (!updated)
+                                    throw new Error(messages.saveFailed);
+                                  return updated;
                                 },
-                                { throwOnError: true },
-                              );
-                              if (!updated)
-                                throw new Error(messages.saveFailed);
-                              return updated;
-                            },
-                            assign: async (target, assignment) => {
-                              const updated = await commands.assignIssue(
-                                String(project.id),
-                                target.id,
-                                {
-                                  version: target.version,
-                                  ...assignment,
+                                assign: async (target, assignment) => {
+                                  const updated = await commands.assignIssue(
+                                    String(project.id),
+                                    target.id,
+                                    {
+                                      version: target.version,
+                                      ...assignment,
+                                    },
+                                  );
+                                  if (!updated)
+                                    throw new Error(messages.saveFailed);
+                                  return updated;
                                 },
-                              );
-                              if (!updated)
-                                throw new Error(messages.saveFailed);
-                              return updated;
-                            },
-                            refreshOrder: async (target) => {
-                              await commands.loadProjectSnapshot(
-                                target.cloud_project_id,
-                                { invalidate: true, throwOnError: true },
-                              );
-                            },
+                                refreshOrder: async (target) => {
+                                  await commands.loadProjectSnapshot(
+                                    mutation.position
+                                      ?.classificationProjectId ??
+                                      target.cloud_project_id,
+                                    {
+                                      invalidate: true,
+                                      throwOnError: true,
+                                      refreshProjectMetadata: Boolean(
+                                        mutation.position
+                                          ?.classificationProjectId,
+                                      ),
+                                    },
+                                  );
+                                },
+                              },
+                            });
+                          }}
+                          onCreateIssue={requestIssueCreate}
+                          onCreateUnmatchedIssue={(defaults) => {
+                            setCreateIssueDefaults(defaults);
+                            setCreateIssueOpen(true);
+                          }}
+                          onDeleteIssue={
+                            issueArchiveAvailable
+                              ? requestIssueArchive
+                              : undefined
+                          }
+                          onArchiveCompleted={
+                            issueArchiveAvailable
+                              ? (completedIssues) => {
+                                  if (completedIssues.length === 0) return;
+                                  setArchiveIssueError(null);
+                                  setArchiveIssueTargets(completedIssues);
+                                }
+                              : undefined
+                          }
+                          onOpenArchive={
+                            issueArchiveAvailable
+                              ? openArchiveDrawer
+                              : undefined
+                          }
+                          onSaveViews={async (boardViews, settings) => {
+                            await saveProjectBoardViews({
+                              api: api.projects,
+                              projectId: project.id,
+                              version: project.version,
+                              config: boardViews,
+                              settings,
+                              accept: commands.replaceProject,
+                              translate,
+                            });
+                          }}
+                          renderIssueCard={
+                            renderBoardIssueCard
+                              ? (context) =>
+                                  renderBoardIssueCard({
+                                    ...context,
+                                    onMarkRead: async () => {
+                                      await commands.markIssueRead(
+                                        context.issue,
+                                      );
+                                    },
+                                  })
+                              : undefined
+                          }
+                        />
+                      </div>
+                    ),
+                    table: (
+                      <div className="collaboration-project-content">
+                        {renderIssueTable(filteredIssues, "table")}
+                      </div>
+                    ),
+                    files: (
+                      <div className="collaboration-project-content">
+                        <CollaborationFilesAdapter
+                          api={api}
+                          project={project}
+                          locale={locale}
+                        />
+                      </div>
+                    ),
+                    manage: (
+                      <ProjectSettingsShell
+                        ariaLabel={messages.settings}
+                        onSectionChange={(sectionId) => {
+                          const nextSectionId =
+                            sectionId as ProjectSettingsSectionId;
+                          setSettingsSectionId(nextSectionId);
+                          host.navigate({
+                            projectId: project.id,
+                            issueId: null,
+                            view: "manage",
+                            projectSettingsSection: nextSectionId,
+                          });
+                        }}
+                        selectedSectionId={settingsSectionId}
+                        sections={[
+                          {
+                            id: "project",
+                            label: messages.projectConfiguration,
+                            testId: "collaboration-project-settings-project",
+                            content: (
+                              <CollaborationSettings
+                                api={api}
+                                key={project.id}
+                                project={project}
+                                onChange={commands.replaceProject}
+                                onError={() =>
+                                  commands.reportError(messages.saveFailed)
+                                }
+                                translate={translate}
+                                section="overview"
+                              />
+                            ),
                           },
-                        });
-                      }}
-                      onCreateIssue={requestIssueCreate}
-                      onCreateUnmatchedIssue={(defaults) => {
-                        setCreateIssueDefaults(defaults);
-                        setCreateIssueOpen(true);
-                      }}
-                      onDeleteIssue={
-                        issueArchiveAvailable ? requestIssueArchive : undefined
-                      }
-                      onArchiveCompleted={
-                        issueArchiveAvailable
-                          ? (completedIssues) => {
-                              if (completedIssues.length === 0) return;
-                              setArchiveIssueError(null);
-                              setArchiveIssueTargets(completedIssues);
-                            }
-                          : undefined
-                      }
-                      onOpenArchive={
-                        issueArchiveAvailable ? openArchiveDrawer : undefined
-                      }
-                      onSaveViews={async (boardViews, settings) => {
-                        await saveProjectBoardViews({
-                          api: api.projects,
-                          projectId: project.id,
-                          version: project.version,
-                          config: boardViews,
-                          settings,
-                          accept: commands.replaceProject,
-                          translate,
-                        });
-                      }}
-                      renderIssueCard={
-                        renderBoardIssueCard
-                          ? (context) =>
-                              renderBoardIssueCard({
-                                ...context,
-                                onMarkRead: async () => {
-                                  await commands.markIssueRead(context.issue);
+                          ...(templateStore
+                            ? [
+                                {
+                                  id: "configuration-sharing",
+                                  label: templateMessages[locale].configuration,
+                                  testId:
+                                    "collaboration-project-settings-sharing",
+                                  content: (
+                                    <ProjectTemplateSettings
+                                      agentConfiguration={
+                                        host.projectAgentConfiguration
+                                      }
+                                      key={project.id}
+                                      onChange={commands.replaceProject}
+                                      api={api}
+                                      project={project}
+                                      locale={locale}
+                                      currentUserId={
+                                        templateStore.library.ownerId
+                                      }
+                                      canManage={
+                                        project.access_role === "Owner" ||
+                                        project.access_role === "Maintainer"
+                                      }
+                                    />
+                                  ),
                                 },
-                              })
-                          : undefined
-                      }
-                    />
-                  </div>
-                ),
-                table: (
-                  <div className="collaboration-project-content">
-                    {renderIssueTable(filteredIssues, "table")}
-                  </div>
-                ),
-                files: (
-                  <div className="collaboration-project-content">
-                    <CollaborationFilesAdapter
-                      api={api}
-                      project={project}
-                      locale={locale}
-                    />
-                  </div>
-                ),
-                manage: (
-                  <ProjectSettingsShell
-                    ariaLabel={messages.settings}
-                    onSectionChange={(sectionId) => {
-                      const nextSectionId =
-                        sectionId as ProjectSettingsSectionId;
-                      setSettingsSectionId(nextSectionId);
+                              ]
+                            : []),
+                          ...createProjectAiTeamSections({
+                            translate: translate,
+                            membersContent: (
+                              <CollaborationSettings
+                                api={api}
+                                embedded
+                                project={project}
+                                onChange={commands.replaceProject}
+                                onError={() =>
+                                  commands.reportError(messages.saveFailed)
+                                }
+                                translate={translate}
+                                section="members"
+                              />
+                            ),
+                            agentsContent: (
+                              <CollaborationSettings
+                                agentConfigurationHost={
+                                  host.projectAgentConfiguration
+                                }
+                                agentResourceContext={
+                                  host.projectAgentResourceContext
+                                }
+                                api={api}
+                                embedded
+                                project={project}
+                                onChange={commands.replaceProject}
+                                onError={() =>
+                                  commands.reportError(messages.saveFailed)
+                                }
+                                onAgentsChange={() =>
+                                  void commands.refreshProjectAgents(project.id)
+                                }
+                                translate={translate}
+                                section="agents"
+                              />
+                            ),
+                            groupsContent: api.projects
+                              .listCollaborationGroups ? (
+                              <ProjectCollaborationGroups
+                                agentConfiguration={
+                                  host.projectAgentConfiguration
+                                }
+                                agentResourceContext={
+                                  host.projectAgentResourceContext
+                                }
+                                location={
+                                  project.project_store === "local"
+                                    ? "local"
+                                    : "cloud"
+                                }
+                                onProjectChanged={commands.replaceProject}
+                                api={api}
+                                currentUserId={templateStore?.library.ownerId}
+                                projectId={project.id}
+                                workspaceId={project.workspace_id}
+                                locale={locale}
+                                members={members}
+                                agents={agents}
+                                canManage={
+                                  project.access_role === "Owner" ||
+                                  project.access_role === "Maintainer"
+                                }
+                              />
+                            ) : (
+                              <div
+                                className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
+                                data-testid="collaboration-project-groups-unavailable"
+                              >
+                                {translate(
+                                  "todo.collaboration_groups_unavailable_description",
+                                  "协作小组服务当前不可用。",
+                                )}
+                              </div>
+                            ),
+                            testIdPrefix: "collaboration-project-settings",
+                          }),
+                          {
+                            id: "environments",
+                            label: messages.projectEnvironments,
+                            testId:
+                              "collaboration-project-settings-environments",
+                            content: (
+                              <ProjectExecutionEnvironments
+                                api={api}
+                                onManageDevices={
+                                  host.manageResource
+                                    ? () =>
+                                        host.manageResource?.("environments")
+                                    : undefined
+                                }
+                                onProjectChange={(nextProject) => {
+                                  commands.replaceProject(nextProject);
+                                  onProjectChange?.(nextProject);
+                                }}
+                                project={project}
+                                translate={translate}
+                              />
+                            ),
+                          },
+                          ...(host.capabilities.automation && api.automations
+                            ? [
+                                {
+                                  id: "automatic-processing",
+                                  label: messages.automaticProcessing,
+                                  testId:
+                                    "collaboration-project-settings-automatic-processing",
+                                  content: (
+                                    <ProjectAutomaticProcessing
+                                      api={api}
+                                      project={project}
+                                      members={members}
+                                      agents={agents}
+                                      locale={locale}
+                                      translate={translate}
+                                    />
+                                  ),
+                                },
+                              ]
+                            : []),
+                        ]}
+                      />
+                    ),
+                  }}
+                />
+              )}
+              {createProjectOpen && (
+                <ProjectCreateDialog
+                  targets={[
+                    {
+                      location: "cloud",
+                      create: api.projects.create,
+                    },
+                  ]}
+                  defaultLocation="cloud"
+                  allowDingTalkAITable={host.capabilities.dingtalkAitable}
+                  labels={projectCreateLabels[locale]}
+                  testIds={{
+                    name: "collaboration-project-name-input",
+                    description: "collaboration-project-description-input",
+                    confirm: collaborationTestIds.createProjectConfirm,
+                  }}
+                  host={host.projectCreate}
+                  onClose={() => setCreateProjectOpen(false)}
+                  onCreated={(created) => {
+                    setCreateProjectOpen(false);
+                    host.navigate({
+                      projectId: created.id,
+                      issueId: null,
+                      view: "board",
+                    });
+                  }}
+                />
+              )}
+              {createIssueOpen && project && (
+                <IssueCreate
+                  renderHost={renderIssueCreate}
+                  defaults={createIssueDefaults}
+                  api={api}
+                  project={project}
+                  allIssues={issues}
+                  environmentNotice={environmentNotice}
+                  environmentReadiness={environmentReadiness.kind}
+                  messages={messages}
+                  translate={translate}
+                  onClose={() => setCreateIssueOpen(false)}
+                  onCreated={(created) => {
+                    commands.appendIssue(created);
+                    setCreateIssueOpen(false);
+                    if (created.group_id && host.openGroupThread) {
+                      host.openGroupThread(
+                        created.group_id,
+                        created.id,
+                        project.project_store,
+                      );
+                      return;
+                    }
+                    host.navigate({
+                      projectId: project.id,
+                      issueId: created.id,
+                      view: createIssueDefaults?.milestoneId
+                        ? "milestones"
+                        : "board",
+                    });
+                  }}
+                  onError={() => commands.reportError(messages.saveFailed)}
+                />
+              )}
+              {selectedIssue && project ? (
+                renderIssueDetail ? (
+                  renderIssueDetail({
+                    api,
+                    project,
+                    issue: selectedIssue,
+                    allIssues: issues,
+                    assignments,
+                    taskBindings: taskBindings.filter(
+                      (binding) => binding.issueId === selectedIssue.id,
+                    ),
+                    defaultAssistant: host.defaultAssistant,
+                    onClose: () => {
+                      commands.clearSelectedIssue();
                       host.navigate({
                         projectId: project.id,
                         issueId: null,
-                        view: "manage",
-                        projectSettingsSection: nextSectionId,
+                        view: host.location.view,
+                      });
+                    },
+                    onChange: commands.replaceIssue,
+                    onRead: commands.confirmIssueRead,
+                    onOpenRelatedIssue: (related) => {
+                      if (
+                        related.can_view_detail === false ||
+                        related.cloud_project_id !== project.id
+                      )
+                        return;
+                      host.navigate({
+                        projectId: project.id,
+                        issueId: related.id,
+                        view: host.location.view,
+                      });
+                    },
+                    onAddChild: canEditCollaborationIssue(selectedIssue)
+                      ? () => {
+                          setCreateIssueDefaults({
+                            status:
+                              projectStatuses(
+                                project,
+                                messages,
+                                translate,
+                                issues,
+                              )[0]?.id ?? "inbox",
+                            tags: [],
+                            draftScope: `child:${selectedIssue.id}`,
+                            parent: selectedIssue,
+                          });
+                          setCreateIssueOpen(true);
+                        }
+                      : undefined,
+                    onCreateTask: onCreateTask
+                      ? () => onCreateTask(project, selectedIssue)
+                      : undefined,
+                    onDelete:
+                      issueArchiveAvailable &&
+                      canEditCollaborationIssue(selectedIssue)
+                        ? () => requestIssueArchive(selectedIssue)
+                        : undefined,
+                  })
+                ) : (
+                  <IssueDetail
+                    api={api}
+                    project={project}
+                    issue={selectedIssue}
+                    allIssues={issues}
+                    comments={comments}
+                    assignments={assignments}
+                    executions={executions}
+                    members={members}
+                    agents={agents}
+                    defaultAssistant={host.defaultAssistant}
+                    messages={messages}
+                    translate={translate}
+                    onClose={() => {
+                      commands.clearSelectedIssue();
+                      host.navigate({
+                        projectId: project.id,
+                        issueId: null,
+                        view: host.location.view,
                       });
                     }}
-                    selectedSectionId={settingsSectionId}
-                    sections={[
-                      {
-                        id: "project",
-                        label: messages.projectConfiguration,
-                        testId: "collaboration-project-settings-project",
-                        content: (
-                          <CollaborationSettings
-                            api={api}
-                            key={project.id}
-                            project={project}
-                            onChange={commands.replaceProject}
-                            onError={() =>
-                              commands.reportError(messages.saveFailed)
-                            }
-                            translate={translate}
-                            section="overview"
-                          />
-                        ),
-                      },
-                      ...(templateStore
-                        ? [
-                            {
-                              id: "configuration-sharing",
-                              label: templateMessages[locale].configuration,
-                              testId: "collaboration-project-settings-sharing",
-                              content: (
-                                <ProjectTemplateSettings
-                                  agentConfiguration={
-                                    host.projectAgentConfiguration
-                                  }
-                                  key={project.id}
-                                  onChange={commands.replaceProject}
-                                  api={api}
-                                  project={project}
-                                  locale={locale}
-                                  currentUserId={templateStore.library.ownerId}
-                                  canManage={
-                                    project.access_role === "Owner" ||
-                                    project.access_role === "Maintainer"
-                                  }
-                                />
-                              ),
-                            },
-                          ]
-                        : []),
-                      ...createProjectAiTeamSections({
-                        translate: translate,
-                        membersContent: (
-                          <CollaborationSettings
-                            api={api}
-                            embedded
-                            project={project}
-                            onChange={commands.replaceProject}
-                            onError={() =>
-                              commands.reportError(messages.saveFailed)
-                            }
-                            translate={translate}
-                            section="members"
-                          />
-                        ),
-                        agentsContent: (
-                          <CollaborationSettings
-                            agentConfigurationHost={
-                              host.projectAgentConfiguration
-                            }
-                            agentResourceContext={
-                              host.projectAgentResourceContext
-                            }
-                            api={api}
-                            embedded
-                            project={project}
-                            onChange={commands.replaceProject}
-                            onError={() =>
-                              commands.reportError(messages.saveFailed)
-                            }
-                            onAgentsChange={() =>
-                              void commands.refreshProjectAgents(project.id)
-                            }
-                            translate={translate}
-                            section="agents"
-                          />
-                        ),
-                        groupsContent: api.projects.listCollaborationGroups ? (
-                          <ProjectCollaborationGroups
-                            agentConfiguration={host.projectAgentConfiguration}
-                            agentResourceContext={
-                              host.projectAgentResourceContext
-                            }
-                            location={
-                              project.project_store === "local"
-                                ? "local"
-                                : "cloud"
-                            }
-                            onProjectChanged={commands.replaceProject}
-                            api={api}
-                            currentUserId={templateStore?.library.ownerId}
-                            projectId={project.id}
-                            workspaceId={project.workspace_id}
-                            locale={locale}
-                            members={members}
-                            agents={agents}
-                            canManage={
-                              project.access_role === "Owner" ||
-                              project.access_role === "Maintainer"
-                            }
-                          />
-                        ) : (
-                          <div
-                            className="rounded-xl border border-border bg-surface-subtle px-5 py-4 text-sm text-text-muted"
-                            data-testid="collaboration-project-groups-unavailable"
-                          >
-                            {translate(
-                              "todo.collaboration_groups_unavailable_description",
-                              "协作小组服务当前不可用。",
-                            )}
-                          </div>
-                        ),
-                        testIdPrefix: "collaboration-project-settings",
-                      }),
-                      {
-                        id: "environments",
-                        label: messages.projectEnvironments,
-                        testId: "collaboration-project-settings-environments",
-                        content: (
-                          <ProjectExecutionEnvironments
-                            api={api}
-                            onManageDevices={
-                              host.manageResource
-                                ? () => host.manageResource?.("environments")
-                                : undefined
-                            }
-                            onProjectChange={(nextProject) => {
-                              commands.replaceProject(nextProject);
-                              onProjectChange?.(nextProject);
-                            }}
-                            project={project}
-                            translate={translate}
-                          />
-                        ),
-                      },
-                      ...(host.capabilities.automation && api.automations
-                        ? [
-                            {
-                              id: "automatic-processing",
-                              label: messages.automaticProcessing,
-                              testId:
-                                "collaboration-project-settings-automatic-processing",
-                              content: (
-                                <ProjectAutomaticProcessing
-                                  api={api}
-                                  project={project}
-                                  members={members}
-                                  agents={agents}
-                                  locale={locale}
-                                  translate={translate}
-                                />
-                              ),
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
-                ),
-              }}
-            />
-          )}
-          {createProjectOpen && (
-            <ProjectCreateDialog
-              targets={[
-                {
-                  location: "cloud",
-                  create: api.projects.create,
-                },
-              ]}
-              defaultLocation="cloud"
-              allowDingTalkAITable={host.capabilities.dingtalkAitable}
-              labels={projectCreateLabels[locale]}
-              testIds={{
-                name: "collaboration-project-name-input",
-                description: "collaboration-project-description-input",
-                confirm: collaborationTestIds.createProjectConfirm,
-              }}
-              host={host.projectCreate}
-              onClose={() => setCreateProjectOpen(false)}
-              onCreated={(created) => {
-                setCreateProjectOpen(false);
-                host.navigate({
-                  projectId: created.id,
-                  issueId: null,
-                  view: "board",
-                });
-              }}
-            />
-          )}
-          {createIssueOpen && project && (
-            <IssueCreate
-              defaults={createIssueDefaults}
-              api={api}
-              project={project}
-              allIssues={issues}
-              environmentNotice={environmentNotice}
-              environmentReadiness={environmentReadiness.kind}
-              messages={messages}
-              translate={translate}
-              onClose={() => setCreateIssueOpen(false)}
-              onCreated={(created) => {
-                commands.appendIssue(created);
-                setCreateIssueOpen(false);
-                host.navigate({
-                  projectId: project.id,
-                  issueId: created.id,
-                  view: createIssueDefaults?.milestoneId
-                    ? "milestones"
-                    : "board",
-                });
-              }}
-              onError={() => commands.reportError(messages.saveFailed)}
-            />
-          )}
-          {selectedIssue && project ? (
-            renderIssueDetail ? (
-              renderIssueDetail({
-                api,
-                project,
-                issue: selectedIssue,
-                allIssues: issues,
-                assignments,
-                taskBindings: taskBindings.filter(
-                  (binding) => binding.issueId === selectedIssue.id,
-                ),
-                defaultAssistant: host.defaultAssistant,
-                onClose: () => {
-                  commands.clearSelectedIssue();
-                  host.navigate({
-                    projectId: project.id,
-                    issueId: null,
-                    view: host.location.view,
-                  });
-                },
-                onChange: commands.replaceIssue,
-                onRead: commands.confirmIssueRead,
-                onOpenRelatedIssue: (related) => {
-                  if (
-                    related.can_view_detail === false ||
-                    related.cloud_project_id !== project.id
-                  )
-                    return;
-                  host.navigate({
-                    projectId: project.id,
-                    issueId: related.id,
-                    view: host.location.view,
-                  });
-                },
-                onAddChild: canEditCollaborationIssue(selectedIssue)
-                  ? () => {
-                      setCreateIssueDefaults({
-                        status:
-                          projectStatuses(project, messages, translate)[0]
-                            ?.id ?? "inbox",
-                        tags: [],
-                        draftScope: `child:${selectedIssue.id}`,
-                        parent: selectedIssue,
-                      });
-                      setCreateIssueOpen(true);
+                    onChange={commands.replaceIssue}
+                    onRead={commands.confirmIssueRead}
+                    onCommentsChange={(nextComments) =>
+                      commands.replaceComments(selectedIssue.id, nextComments)
                     }
-                  : undefined,
-                onCreateTask: onCreateTask
-                  ? () => onCreateTask(project, selectedIssue)
-                  : undefined,
-                onDelete:
-                  issueArchiveAvailable &&
-                  canEditCollaborationIssue(selectedIssue)
-                    ? () => requestIssueArchive(selectedIssue)
-                    : undefined,
-              })
-            ) : (
-              <IssueDetail
-                api={api}
-                project={project}
-                issue={selectedIssue}
-                allIssues={issues}
-                comments={comments}
-                assignments={assignments}
-                executions={executions}
-                members={members}
-                agents={agents}
-                defaultAssistant={host.defaultAssistant}
-                messages={messages}
-                translate={translate}
-                onClose={() => {
-                  commands.clearSelectedIssue();
-                  host.navigate({
-                    projectId: project.id,
-                    issueId: null,
-                    view: host.location.view,
-                  });
-                }}
-                onChange={commands.replaceIssue}
-                onRead={commands.confirmIssueRead}
-                onCommentsChange={(nextComments) =>
-                  commands.replaceComments(selectedIssue.id, nextComments)
-                }
-                onAssignmentsChange={(nextAssignments) => {
-                  commands.replaceAssignments(
-                    selectedIssue.id,
-                    nextAssignments,
-                  );
-                  replaceIssueAssignments(selectedIssue.id, nextAssignments);
-                }}
-                onCreateTask={
-                  onCreateTask
-                    ? () => onCreateTask(project, selectedIssue)
-                    : undefined
-                }
-                onDelete={
-                  issueArchiveAvailable &&
-                  canEditCollaborationIssue(selectedIssue)
-                    ? () => requestIssueArchive(selectedIssue)
-                    : undefined
-                }
-                onConflict={commands.refreshSelectedIssue}
-                onError={() => commands.reportError(messages.saveFailed)}
-              />
-            )
-          ) : null}
-          {archiveIssueTargets?.length ? (
-            <IssueArchiveDialog
-              busy={archiveIssueBusy}
-              count={archiveIssueTargets.length}
-              error={archiveIssueError}
-              hasChildren={issues.some(
-                (candidate) =>
-                  candidate.parent_id === archiveIssueTargets[0]?.id,
-              )}
-              onCancel={closeIssueArchive}
-              onConfirm={() => void confirmIssueArchive()}
-              title={archiveIssueTargets[0]?.title}
-              translate={translate}
-            />
-          ) : null}
-          {archiveDrawerOpen ? (
-            <IssueArchiveDrawer
-              busyId={restoringIssueId}
-              error={archiveDrawerError}
-              items={archivedIssues}
-              loading={archiveDrawerLoading}
-              nextCursor={archiveNextCursor}
-              onClose={closeArchiveDrawer}
-              onLoadMore={() => void loadArchivedIssues(archiveNextCursor)}
-              onRestore={(issue) => void restoreArchivedIssue(issue)}
-              translate={translate}
-            />
-          ) : null}
-        </section>
-      </BrowserTaskDrafts>
-    </RuntimeConfigurationProvider>
+                    onAssignmentsChange={(nextAssignments) => {
+                      commands.replaceAssignments(
+                        selectedIssue.id,
+                        nextAssignments,
+                      );
+                      replaceIssueAssignments(
+                        selectedIssue.id,
+                        nextAssignments,
+                      );
+                    }}
+                    onCreateTask={
+                      onCreateTask
+                        ? () => onCreateTask(project, selectedIssue)
+                        : undefined
+                    }
+                    onDelete={
+                      issueArchiveAvailable &&
+                      canEditCollaborationIssue(selectedIssue)
+                        ? () => requestIssueArchive(selectedIssue)
+                        : undefined
+                    }
+                    onConflict={commands.refreshSelectedIssue}
+                    onError={() => commands.reportError(messages.saveFailed)}
+                  />
+                )
+              ) : null}
+              {archiveIssueTargets?.length ? (
+                <IssueArchiveDialog
+                  busy={archiveIssueBusy}
+                  count={archiveIssueTargets.length}
+                  error={archiveIssueError}
+                  hasChildren={issues.some(
+                    (candidate) =>
+                      candidate.parent_id === archiveIssueTargets[0]?.id,
+                  )}
+                  onCancel={closeIssueArchive}
+                  onConfirm={() => void confirmIssueArchive()}
+                  title={archiveIssueTargets[0]?.title}
+                  translate={translate}
+                />
+              ) : null}
+              {archiveDrawerOpen ? (
+                <IssueArchiveDrawer
+                  busyId={restoringIssueId}
+                  error={archiveDrawerError}
+                  items={archivedIssues}
+                  loading={archiveDrawerLoading}
+                  nextCursor={archiveNextCursor}
+                  onClose={closeArchiveDrawer}
+                  onLoadMore={() => void loadArchivedIssues(archiveNextCursor)}
+                  onRestore={(issue) => void restoreArchivedIssue(issue)}
+                  translate={translate}
+                />
+              ) : null}
+            </section>
+          </BrowserTaskDrafts>
+        </RuntimeConfigurationProvider>
+      </div>
+    </>
   );
 }

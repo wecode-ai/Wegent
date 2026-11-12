@@ -55,6 +55,7 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  openGroupThread?: import("../types").CollaborationHostAdapter["openGroupThread"];
   /** Stable authentication and backend identity, independent of optional data readiness. */
   accountScope: string;
   projectTemplateRequest?: {
@@ -81,6 +82,7 @@ export interface CollaborationPlatformHostAdapter {
   renderIssueComposer?(
     props: import("./IssueHomeComposer").IssueHomeTaskComposerProps,
   ): ReactNode;
+  renderThreadHome?(props: { projects: CollaborationProject[] }): ReactNode;
   location: CollaborationPlatformLocation;
   capabilities: {
     automation: boolean;

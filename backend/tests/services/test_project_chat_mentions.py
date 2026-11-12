@@ -750,6 +750,7 @@ async def test_websocket_mentions_commit_once_and_skip_self(
         return fn(*args)
 
     monkeypatch.setattr(wework_runtime_namespace, "get_db_session", session)
+    monkeypatch.setattr("app.services.project_chat.audience.get_db_session", session)
     monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", run_inline)
     payload = request.model_dump(by_alias=True)
 

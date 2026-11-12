@@ -132,6 +132,7 @@ fn task(store: &LocalTaskStore, parent_id: Option<&str>) -> String {
         .create_task(
             DEFAULT_WORK_ITEM_PROJECT_ID,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Delivery target".to_owned(),
                 description: String::new(),

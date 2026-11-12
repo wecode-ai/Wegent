@@ -35,7 +35,7 @@ use super::{
         handle_request_with_context, CloudCollaborationRoundDispatcher, SpaceMcpRequestContext,
         WeworkMcpSurface, SPACE_MCP_SERVER_NAME,
     },
-    TaskRuntime,
+    LocalTaskStore, TaskRuntime,
 };
 
 const CONTEXT_HANDLE_HEADER: &str = "x-wework-mcp-context";
@@ -136,12 +136,37 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
     if let Some(endpoint) = active_endpoint() {
         return Ok(endpoint);
     }
-    let _guard = SPACE_MCP_START_LOCK.lock().await;
+    #[cfg(test)]
+    startup_tests::waiter_entered();
+    let guard = SPACE_MCP_START_LOCK.lock().await;
     if let Some(endpoint) = active_endpoint() {
         return Ok(endpoint);
     }
+    let database_path = LocalTaskStore::default_path();
+    tokio::task::spawn_blocking(move || {
+        // Cancellation must not release admission while initialization is still running.
+        let _guard = guard;
+        if let Some(endpoint) = active_endpoint() {
+            return Ok(endpoint);
+        }
+        start_space_mcp_http_endpoint(database_path)
+    })
+    .await
+    .map_err(|error| format!("project-space MCP initialization task failed: {error}"))?
+}
 
-    let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
+fn start_space_mcp_http_endpoint(
+    database_path: std::path::PathBuf,
+) -> Result<SpaceMcpEndpoint, String> {
+    #[cfg(test)]
+    startup_tests::cold_startup_entered(&database_path);
+    let started = Instant::now();
+    let store = LocalTaskStore::open(database_path).map_err(|error| error.to_string())?;
+    let runtime = TaskRuntime::new(store).map_err(|error| error.to_string())?;
+    log_executor_event(
+        "project-space MCP runtime initialized",
+        &[("elapsed_ms", started.elapsed().as_millis().to_string())],
+    );
     let listener = StdTcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("failed to bind project-space MCP endpoint: {error}"))?;
     listener
@@ -224,6 +249,7 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         shutdown_tx: Some(shutdown_tx),
         server_task: Some(server_task),
     };
+    let readiness_started = Instant::now();
     let readiness = match ready_rx.recv_timeout(Duration::from_secs(2)) {
         Ok(result) => {
             result.map_err(|error| format!("failed to start project-space MCP endpoint: {error}"))
@@ -239,7 +265,14 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         .map_err(|_| "project-space MCP endpoint state is poisoned".to_owned())? = Some(running);
     log_executor_event(
         "project-space MCP endpoint ready",
-        &[("url", endpoint.url.clone())],
+        &[
+            ("url", endpoint.url.clone()),
+            (
+                "readiness_ms",
+                readiness_started.elapsed().as_millis().to_string(),
+            ),
+            ("startup_ms", started.elapsed().as_millis().to_string()),
+        ],
     );
     Ok(endpoint)
 }
@@ -582,6 +615,10 @@ fn json_rpc_http_error(id: Value, code: i64, message: &str, status: StatusCode) 
 #[cfg(test)]
 #[path = "mcp_http_control_tests.rs"]
 mod control_tests;
+
+#[cfg(test)]
+#[path = "mcp_http_startup_tests.rs"]
+mod startup_tests;
 
 #[cfg(test)]
 mod tests {

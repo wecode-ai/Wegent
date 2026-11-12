@@ -318,7 +318,7 @@ describe('Milestones', () => {
     )
     await screen.findByText('100% · 1 Completed · 0 Remaining · 1 archived, included in progress')
     fireEvent.click(screen.getByTestId('milestone-open-ms-one'))
-    expect(screen.getByText('No unarchived linked Issues')).toBeTruthy()
+    expect(screen.getByText('No unarchived linked Threads')).toBeTruthy()
     fireEvent.click(screen.getByTestId('milestone-view-archive'))
     expect(openArchive).toHaveBeenCalledOnce()
   })

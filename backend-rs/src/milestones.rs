@@ -141,6 +141,7 @@ async fn list<M: Mysql>(
     mysql: &M,
     project: &str,
     visibility: &str,
+    user: i32,
 ) -> Result<Vec<Milestone>, FastApiError> {
     let sql = format!("SELECT m.id, m.cloud_project_id AS project_id, m.title, m.description, m.status AS state,
         CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(m.metadata, '$.due_on')), 'null') AS CHAR) AS due_on, m.version,
@@ -152,13 +153,26 @@ async fn list<M: Mysql>(
             SUM(CASE WHEN status = 'completed' THEN 0 ELSE 1 END) AS open_issues,
             SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS closed_issues,
             SUM(CASE WHEN deleted_at IS NOT NULL AND deleted_at NOT IN ('1970-01-01 00:00:00','1970-01-01 00:00:01') THEN 1 ELSE 0 END) AS archived_issues
-          FROM loop_items WHERE cloud_project_id = ? AND resource_type = 'task' {visibility}
+          FROM loop_items WHERE resource_type = 'task' AND (
+            (cloud_project_id = ? {visibility}) OR id IN (
+              SELECT l.loop_item_id FROM loop_items l
+              JOIN loop_items g ON g.id=loop_items.cloud_project_id
+              JOIN resource_members r ON r.resource_type='CollaborationChatGroup'
+                AND r.resource_id=CAST(g.id AS SIGNED) AND r.entity_type='user'
+                AND CAST(r.entity_id AS BINARY)=CAST('{user}' AS BINARY)
+                AND r.status='approved' AND r.role IN ('Owner','Maintainer','Developer','Viewer')
+              JOIN users actor ON actor.id={user} AND actor.is_active=1
+              WHERE l.resource_type='thread_project_link' AND l.parent_id=?
+                AND l.status='active' AND (l.deleted_at IS NULL OR l.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
+                AND g.resource_type='chat_group' AND g.status IN ('active','archived')
+                AND (g.deleted_at IS NULL OR g.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
+            ))
           GROUP BY JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.milestone_id'))
         ) c ON c.milestone_id = m.id
         WHERE m.cloud_project_id = ? AND m.resource_type = 'milestone' AND (m.deleted_at IS NULL OR m.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
         ORDER BY m.created_at DESC, m.id");
     mysql
-        .fetch_all(sql, (project, project))
+        .fetch_all(sql, (project, project, project))
         .await
         .map_err(internal)
 }
@@ -170,7 +184,13 @@ async fn list_milestones(
     #[auth] user: FlexibleUser,
 ) -> Result<Vec<Milestone>, FastApiError> {
     let access = authorize(&state.mysql, project_id, user.id, false).await?;
-    list(&state.mysql, &access.project_id, &access.visibility).await
+    list(
+        &state.mysql,
+        &access.project_id,
+        &access.visibility,
+        user.id,
+    )
+    .await
 }
 
 fn milestone_insert_sql(required: &std::collections::HashSet<String>) -> String {
@@ -253,7 +273,7 @@ async fn create_milestone(
         })
         .await
         .map_err(internal)?;
-    list(&state.mysql, project_id, "")
+    list(&state.mysql, project_id, "", user.id)
         .await?
         .into_iter()
         .find(|m| m.id == id)
@@ -283,7 +303,7 @@ async fn update_milestone(
             "Milestone changed; refresh and try again",
         ));
     }
-    list(&state.mysql, project_id, "")
+    list(&state.mysql, project_id, "", user.id)
         .await?
         .into_iter()
         .find(|m| m.id == milestone_id)
@@ -315,7 +335,7 @@ async fn delete_milestone(
     let changed = state.mysql.with_transaction(async |tx| {
         let result = tx.execute("UPDATE loop_items SET deleted_at=UTC_TIMESTAMP(),version=version+1 WHERE id=? AND cloud_project_id=? AND resource_type='milestone' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) AND version=?", (milestone_id, project_id, input.version)).await?;
         if result.rows_affected != 1 { return Ok(false); }
-        tx.execute("UPDATE loop_items SET metadata=JSON_REMOVE(metadata,'$.milestone_id'),version=version+1,updated_at=UTC_TIMESTAMP() WHERE cloud_project_id=? AND resource_type='task' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.milestone_id'))=?", (project_id, milestone_id)).await?;
+        tx.execute("UPDATE loop_items SET metadata=JSON_REMOVE(metadata,'$.milestone_id'),version=version+1,updated_at=UTC_TIMESTAMP() WHERE resource_type='task' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.milestone_id'))=? AND (cloud_project_id=? OR id IN (SELECT scope.loop_item_id FROM (SELECT loop_item_id FROM loop_items WHERE resource_type='thread_project_link' AND parent_id=? AND status='active' AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))) scope))", (milestone_id, project_id, project_id)).await?;
         Ok(true)
     }).await.map_err(internal)?;
     if !changed {
@@ -345,17 +365,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn counters_reuse_issue_visibility_and_bind_project_twice() {
+    async fn counters_reuse_issue_visibility_and_require_independent_group_grants() {
         let mysql = crate::sql_test_support::KindQueryCapture::default();
         let filter = crate::loop_tasks::loop_repository::visible_item_filter_sql(7, "related");
-        assert!(list(&mysql, "101", &filter).await.unwrap().is_empty());
+        assert!(list(&mysql, "101", &filter, 7).await.unwrap().is_empty());
         let queries = mysql.queries();
         assert_eq!(queries.len(), 1);
-        assert_eq!(queries[0].args, 2);
+        assert_eq!(queries[0].args, 3);
         assert!(queries[0].sql.contains("security_level"));
         assert!(queries[0].sql.contains("created_by_user_id = 7"));
         assert!(queries[0].sql.contains("resource_type = 'task'"));
         assert!(queries[0].sql.contains("1970-01-01 00:00:01"));
+        assert!(
+            queries[0]
+                .sql
+                .contains("r.resource_type='CollaborationChatGroup'")
+        );
+        assert!(queries[0].sql.contains("r.status='approved'"));
+        assert!(queries[0].sql.contains("actor.is_active=1"));
+        assert!(
+            queries[0]
+                .sql
+                .contains("CAST(r.entity_id AS BINARY)=CAST('7' AS BINARY)")
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, loop_datetime_is_unset
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import StandInPublicReply
@@ -14,16 +14,33 @@ from app.schemas.project_chat import ProjectChatMessageView
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
-from app.services.project_chat.service import project_chat_service
+from app.services.project_chat.service import (
+    chat_task_scope_filter,
+    project_chat_service,
+)
 from shared.telemetry.decorators import trace_sync
 
 
-def stand_in_reply_recipient(db: Session, message_id: str) -> dict | None:
-    row = (
+def stand_in_reply_recipient(
+    db: Session,
+    message_id: str,
+    *,
+    project_id: str,
+    task_id: str | None,
+    lock: bool = False,
+) -> dict | None:
+    query = (
         db.query(ProjectChatMessage)
         .filter_by(message_id=message_id, sender_type="agent")
-        .first()
+        .filter(
+            ProjectChatMessage.project_id == project_id,
+            chat_task_scope_filter(ProjectChatMessage.task_id, task_id),
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
     )
+    if lock:
+        query = query.with_for_update().populate_existing()
+    row = query.first()
     identity = (row.metadata_json or {}).get("stand_in") if row else None
     if not isinstance(identity, dict) or not isinstance(identity.get("user_id"), int):
         return None

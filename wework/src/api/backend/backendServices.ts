@@ -193,6 +193,7 @@ export function createBackendWorkbenchServices(
     deviceApi,
     deliveryApi,
     sharedWorkspaceApi,
+    chatGroupApis: { cloud: createChatGroupApi(client) },
     workspaceRuntimePort,
     feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
     projectSpaceApis: {
@@ -271,3 +272,4 @@ export function createBackendWorkbenchServices(
     chatStream: createChatStream(socketClient.socket),
   }
 }
+import { createChatGroupApi } from '@/api/chatGroups'

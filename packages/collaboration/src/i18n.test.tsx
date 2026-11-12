@@ -52,8 +52,8 @@ describe("collaboration i18n", () => {
       expect(zh(key)).not.toBe(key);
     }
     expect(en("todo.focus_view")).toBe("Focus view");
-    expect(en("todo.board_issue_unit_one")).toBe("issue");
-    expect(en("todo.board_issue_unit")).toBe("issues");
+    expect(en("todo.board_issue_unit_one")).toBe("Thread");
+    expect(en("todo.board_issue_unit")).toBe("Threads");
     expect(zh("todo.focus_view")).toBe("专注视图");
   });
 

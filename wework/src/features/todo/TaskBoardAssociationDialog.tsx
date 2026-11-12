@@ -43,6 +43,9 @@ export function TaskBoardAssociationDialog({
     '[data-testid="task-board-association-search"]'
   )
 
+  const nativeTarget =
+    project?.resource_type === 'chat_group' ||
+    ['local', 'backend'].includes(project?.task_provider ?? '')
   const moving =
     Boolean(currentProject && project) &&
     !sameProjectSpace(projectSpaceRef(currentProject!), projectSpaceRef(project!))
@@ -65,7 +68,16 @@ export function TaskBoardAssociationDialog({
     onSelect(choice.item)
   }
   const choose = (choice: AssociationChoice) => {
-    if (moving) {
+    const changesOwner =
+      choice.kind === 'existing' && choice.item.group_id
+        ? Boolean(
+            currentProject &&
+            (currentProject.id !== choice.item.group_id ||
+              currentProject.project_store !== project.project_store)
+          )
+        : moving
+    // The full native creation form confirms the final group and public content.
+    if (changesOwner && !(nativeTarget && choice.kind === 'create')) {
       setMoveChoice(choice)
       return
     }
@@ -93,14 +105,18 @@ export function TaskBoardAssociationDialog({
             <div className="flex items-center gap-2 pr-12 md:pr-9">
               <LayoutDashboard className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
               <h2 id="task-board-association-title" className="heading-sm min-w-0 truncate">
-                {t('workbench.task_board_association_title', { name: project.name })}
+                {nativeTarget
+                  ? t('collaboration:taskLinkTitle', { name: project.name })
+                  : t('workbench.task_board_association_title', { name: project.name })}
               </h2>
             </div>
             <p
               id="task-board-association-description"
               className="mt-2 pr-12 text-sm text-text-muted md:pr-9"
             >
-              {t('workbench.task_board_association_description')}
+              {nativeTarget
+                ? t('collaboration:taskLinkDescription')
+                : t('workbench.task_board_association_description')}
             </p>
             <Button
               type="button"
@@ -119,7 +135,9 @@ export function TaskBoardAssociationDialog({
           <div className="px-5 pb-3">
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-text-muted">
               <label htmlFor="task-board-association-search">
-                {t('workbench.task_board_association_existing', '关联已有看板任务')}
+                {nativeTarget
+                  ? t('collaboration:linkExistingThread')
+                  : t('workbench.task_board_association_existing', '关联已有看板任务')}
               </label>
               {!loading && <span className="tabular-nums">{candidates.length}</span>}
             </div>
@@ -200,7 +218,9 @@ export function TaskBoardAssociationDialog({
 
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-5 py-4">
             <p className="min-w-0 flex-1 text-xs text-text-muted">
-              {t('workbench.task_board_association_create_description')}
+              {nativeTarget
+                ? t('collaboration:taskNewThreadDescription')
+                : t('workbench.task_board_association_create_description')}
             </p>
             <Button
               type="button"
@@ -211,7 +231,9 @@ export function TaskBoardAssociationDialog({
               className="h-11 rounded-lg md:h-9"
             >
               <Plus aria-hidden="true" />
-              {t('workbench.task_board_association_create', '新建看板任务')}
+              {nativeTarget
+                ? t('collaboration:newThread')
+                : t('workbench.task_board_association_create', '新建看板任务')}
             </Button>
           </footer>
         </section>
@@ -220,10 +242,14 @@ export function TaskBoardAssociationDialog({
       <ConfirmDialog
         open={Boolean(moveChoice)}
         title={t('workbench.task_board_move_title', '移动任务关联')}
-        description={t('workbench.task_board_move_description', {
-          source: currentProject?.name ?? '',
-          target: project.name,
-        })}
+        description={
+          nativeTarget
+            ? t('collaboration:taskReplaceAssociation')
+            : t('workbench.task_board_move_description', {
+                source: currentProject?.name ?? '',
+                target: project.name,
+              })
+        }
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.task_board_move_confirm', '移动')}
         confirmTestId="task-board-move-confirm"

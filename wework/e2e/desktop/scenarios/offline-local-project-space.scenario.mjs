@@ -5,12 +5,14 @@ import { verifyCollaborationScheduleViews } from '../modules/collaboration-sched
 import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
+  enterProjectCollaborationView,
   inCollaborationSidebar,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
@@ -126,6 +128,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('waitFor', scoped('[data-testid="wework-collaboration-platform"]'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -249,30 +252,22 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         uiTimeoutMs
       )
       await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'board')
+      const issueId = await createCollaborationBoardIssue(control, ISSUE_NAME, 'inbox', uiTimeoutMs)
       await control.command(
         'clickWhenEnabled',
-        scoped('[data-testid="collaboration-issue-create"]')
-      )
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-title"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
-        value: ISSUE_NAME,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="cloud-todo-create-confirm"]'),
+        scoped(`[data-testid="cloud-todo-card-${issueId}"]`),
         {
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+      await control.command('waitFor', scoped('[data-testid="thread-room"]'), {
+        text: ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(
-        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        await control.command('getText', scoped('[data-testid="thread-room"] h1')),
         ISSUE_NAME,
-        'The newly created local Issue did not open in the shared Issue detail'
+        'The newly created local item did not open in its group discussion'
       )
       await verifyCollaborationScheduleViews({
         capture: (targetControl, name) =>

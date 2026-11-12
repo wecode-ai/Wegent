@@ -11,12 +11,34 @@ impl LocalTaskStore {
     ) -> Result<TaskBinding, TaskRuntimeError> {
         validate_name(&input.device_id, "device id")?;
         validate_name(&input.task_id, "task id")?;
-        self.get_project(project_id)?;
-        if let Some(item_id) = item_id {
-            self.get_task(project_id, item_id)?;
-        }
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (container, local_container_id) = match work_container_from(&transaction, project_id)? {
+            Some(container) => (container, Some(project_id)),
+            None => (
+                external_project_from_catalog(&transaction, project_id)?
+                    .ok_or(TaskRuntimeError::ProjectNotFound)?,
+                None,
+            ),
+        };
+        if let Some(item_id) = item_id {
+            let item = get_item_from(&transaction, item_id, "task")?
+                .ok_or(TaskRuntimeError::TaskNotFound)?;
+            if item.cloud_project_id.as_deref() != Some(project_id) {
+                return Err(TaskRuntimeError::TaskNotFound);
+            }
+        }
+        if container.resource_type == "chat_group" {
+            chat_groups::local_group(&transaction, project_id, true)?;
+            if external_item_id.is_some() {
+                return Err(TaskRuntimeError::Invalid(
+                    "External records require their owning project".into(),
+                ));
+            }
+            if let Some(item_id) = item_id {
+                chat_groups::require_participation(&transaction, project_id, item_id, true)?;
+            }
+        }
         let system_binding = project_id == DEFAULT_WORK_ITEM_PROJECT_ID;
         let active = get_binding_by_kind(
             &transaction,
@@ -43,14 +65,6 @@ impl LocalTaskStore {
             )?),
             _ => None,
         };
-        let local_project_id = transaction
-            .query_row(
-                "SELECT id FROM loop_items
-                 WHERE id = ?1 AND resource_type = 'project' AND deleted_at IS NULL",
-                [project_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
         let mut metadata = json!({
             "external_item_id": external_item_id,
             "project_id": project_id,
@@ -133,7 +147,7 @@ impl LocalTaskStore {
         }
         let id = insert_task_binding(
             &transaction,
-            local_project_id.as_deref(),
+            local_container_id,
             item_id,
             &input,
             &metadata,
@@ -311,14 +325,22 @@ impl LocalTaskStore {
         for item_id in candidate_tasks {
             let task = get_item_from(&transaction, &item_id, "task")?
                 .ok_or(TaskRuntimeError::TaskNotFound)?;
-            let project = get_item_from(
+            let project = work_container_from(
                 &transaction,
                 task.cloud_project_id
                     .as_deref()
                     .ok_or(TaskRuntimeError::ProjectNotFound)?,
-                "project",
             )?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            if project.resource_type == "chat_group" {
+                chat_groups::local_group(&transaction, &project.id, true)?;
+                if matches!(
+                    task.status.as_deref(),
+                    Some("completed" | "cancelled" | "archived")
+                ) {
+                    continue;
+                }
+            }
             let status = task.status.as_deref().map(|current| {
                 project_status::runtime_transition_status(&project.metadata, current, next_status)
             });

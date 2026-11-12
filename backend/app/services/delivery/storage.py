@@ -4,17 +4,57 @@
 
 """MinIO object storage boundary for immutable delivery snapshots."""
 
+import hashlib
 import io
 import json
+import logging
 from datetime import timedelta
+from time import monotonic
 from typing import Any, BinaryIO, Optional
 
-from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
 from urllib3 import PoolManager, Timeout
 
 from app.core.config import settings
+from app.services.delivery.conditional_copy import ConditionalCopyMinio
+
+logger = logging.getLogger(__name__)
+
+
+def _log_fingerprint_failure(
+    response: Any, phase: str, size: int, started: float, error: Exception
+) -> None:
+    """Report transport facts without object identifiers or exception messages."""
+    headers = response.headers if response is not None else {}
+    length = headers.get("Content-Length")
+    content_length = (
+        int(length)
+        if isinstance(length, str)
+        and len(length) <= 20
+        and length.isascii()
+        and length.isdecimal()
+        else None
+    )
+    connection = headers.get("Connection")
+    if isinstance(connection, str):
+        connection = connection.lower()
+    if connection not in ("close", "keep-alive"):
+        connection = "unspecified"
+    status = response.status if response is not None else None
+    if not isinstance(status, int):
+        status = None
+    logger.warning(
+        "Delivery fingerprint failed phase=%s bytes_read=%s content_length=%s "
+        "connection=%s response_status=%s elapsed_ms=%.1f error_type=%s",
+        phase,
+        size,
+        content_length,
+        connection,
+        status,
+        (monotonic() - started) * 1000,
+        type(error).__name__,
+    )
 
 
 class DeliveryStorageUnavailableError(RuntimeError):
@@ -29,14 +69,14 @@ class DeliveryStorage:
     """Store delivery objects in a dedicated private bucket."""
 
     def __init__(self) -> None:
-        self._client: Optional[Minio] = None
+        self._client: Optional[ConditionalCopyMinio] = None
 
     @property
     def bucket(self) -> str:
         return settings.DELIVERY_S3_BUCKET
 
     @property
-    def client(self) -> Minio:
+    def client(self) -> ConditionalCopyMinio:
         if self._client is None:
             endpoint = settings.ATTACHMENT_S3_ENDPOINT
             access_key = settings.ATTACHMENT_S3_ACCESS_KEY
@@ -45,7 +85,7 @@ class DeliveryStorage:
                 raise DeliveryStorageUnavailableError(
                     "Delivery object storage is not configured"
                 )
-            self._client = Minio(
+            self._client = ConditionalCopyMinio(
                 endpoint.replace("https://", "").replace("http://", ""),
                 access_key=access_key,
                 secret_key=secret_key,
@@ -126,6 +166,33 @@ class DeliveryStorage:
             expires=timedelta(seconds=expires_seconds),
         )
 
+    def fingerprint(self, object_key: str) -> tuple[int, str]:
+        """Verify stored bytes with bounded memory, including multipart objects."""
+        started = monotonic()
+        response = None
+        size = 0
+        phase = "response_headers"
+        try:
+            try:
+                response = self.client.get_object(self.bucket, object_key)
+            except S3Error as exc:
+                if exc.code == "NoSuchKey":
+                    raise DeliveryObjectNotFoundError(object_key) from exc
+                raise
+            digest = hashlib.sha256()
+            phase = "response_body"
+            try:
+                while chunk := response.read(1024 * 1024):
+                    size += len(chunk)
+                    digest.update(chunk)
+            finally:
+                response.close()
+                response.release_conn()
+        except Exception as exc:
+            _log_fingerprint_failure(response, phase, size, started, exc)
+            raise
+        return size, digest.hexdigest()
+
     def remove_objects(self, object_keys: list[str]) -> None:
         for object_key in object_keys:
             self.client.remove_object(self.bucket, object_key)
@@ -136,6 +203,9 @@ class DeliveryStorage:
             target_key,
             CopySource(self.bucket, source_key),
         )
+
+    def copy_object_if_absent(self, source_key: str, target_key: str) -> bool:
+        return self.client.copy_object_if_absent(self.bucket, source_key, target_key)
 
 
 delivery_storage = DeliveryStorage()

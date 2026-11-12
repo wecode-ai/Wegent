@@ -55,6 +55,26 @@ export function formatIssueTimestamp(value: string, timeZone?: string): string {
   return `${values.month}-${values.day} ${values.hour}:${values.minute}`;
 }
 
+export function formatIssueDate(
+  value: string | null | undefined,
+  timeZone?: string,
+): string | null {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = parseBackendTimestamp(value);
+  if (!date) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).formatToParts(date);
+  const fields = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${fields.year}-${fields.month}-${fields.day}`;
+}
+
 export function compareIssueTimestamps(left: string, right: string): number {
   const leftTime = parseBackendTimestamp(left)?.getTime();
   const rightTime = parseBackendTimestamp(right)?.getTime();

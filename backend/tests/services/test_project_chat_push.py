@@ -22,6 +22,11 @@ class _Manager:
 def test_project_chat_push_uses_cross_process_redis_manager(monkeypatch) -> None:
     manager = _Manager()
     monkeypatch.setattr(push, "_publish_manager", lambda: manager)
+    monkeypatch.setattr(
+        push,
+        "publication_rooms_for_message",
+        lambda _: [project_chat_room("project-1", "TASK-1")],
+    )
     message = {
         "messageId": "message-1",
         "projectId": "project-1",
@@ -46,6 +51,11 @@ def test_project_chat_push_is_best_effort(monkeypatch, caplog) -> None:
         raise RuntimeError("redis unavailable")
 
     monkeypatch.setattr(push, "_publish_manager", unavailable)
+    monkeypatch.setattr(
+        push,
+        "publication_rooms_for_message",
+        lambda _: [project_chat_room("project-1", None)],
+    )
 
     push.push_project_chat_message({"messageId": "message-1", "projectId": "project-1"})
 

@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ProjectChatClient, ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
+import type {
+  ProjectChatClient,
+  ProjectChatMention,
+  ProjectChatMessage,
+  ProjectChatSubscription,
+} from '@wegent/chat-core'
 import { generateMessageId } from '@wegent/chat-core'
 
 function runtimeSequence(message: ProjectChatMessage): bigint {
@@ -37,16 +42,34 @@ export function useIssueProjectChat(
   client: ProjectChatClient | undefined,
   projectId: string,
   issueId: string,
-  revision = 0
+  revision: number | string = 0,
+  focusMessageId?: string,
+  historyPage?: { beforeSequence?: number; afterSequence?: number },
+  containerKind?: 'project' | 'chat_group'
 ) {
+  const beforeSequence = focusMessageId ? undefined : historyPage?.beforeSequence
+  const afterSequence = focusMessageId ? undefined : historyPage?.afterSequence
+  const historyView = Boolean(focusMessageId || beforeSequence || afterSequence)
+  const historyKey =
+    (focusMessageId ? `focus:${focusMessageId}:${revision}` : undefined) ??
+    (beforeSequence
+      ? `before:${beforeSequence}`
+      : afterSequence
+        ? `after:${afterSequence}`
+        : undefined)
   // A revision refreshes the stream without changing its owner or mounted drafts.
-  const owner = useMemo(() => ({ client, projectId, issueId }), [client, projectId, issueId])
+  const owner = useMemo(
+    () => ({ client, projectId, issueId, containerKind }),
+    [client, projectId, issueId, containerKind]
+  )
   const empty = useMemo(
     () => ({
       owner,
       messages: [] as ProjectChatMessage[],
       loading: Boolean(client),
       currentUserId: undefined as string | undefined,
+      loadedHistoryKey: undefined as string | undefined,
+      history: undefined as ProjectChatSubscription['history'],
       error: null as string | null,
     }),
     [owner, client]
@@ -59,10 +82,23 @@ export function useIssueProjectChat(
     let unsubscribe: (() => void) | undefined
     let subscribing = false
     let reconnectDuringAttempt = false
+    let pendingMessages: ProjectChatMessage[] = []
+    const pendingChunkIds = new Set<string>()
+    let observedSequence = 0
     const receive = (message: ProjectChatMessage) => {
       if (!active) return
+      observedSequence = Math.max(observedSequence, message.sequenceNumber)
+      if (subscribing) pendingMessages = mergeIssueChatMessages(pendingMessages, [message])
       setSnapshot(previous => {
         const state = previous.owner === owner ? previous : empty
+        if (historyView)
+          return {
+            ...state,
+            history:
+              state.history && message.sequenceNumber > state.history.lastSequence
+                ? { ...state.history, hasNewer: true }
+                : state.history,
+          }
         return {
           ...state,
           messages: mergeIssueChatMessages(state.messages, [message]),
@@ -74,30 +110,48 @@ export function useIssueProjectChat(
       subscribing = true
       reconnectDuringAttempt = false
       void client
-        .subscribe(projectId, issueId, 0, receive, chunk => {
-          if (!active) return
-          setSnapshot(previous => {
-            const state = previous.owner === owner ? previous : empty
-            const message = state.messages.find(message => message.messageId === chunk.messageId)
-            if (
-              message &&
-              !acceptsMessage(message, chunk, chunk.metadata.contentMode !== 'snapshot')
-            )
-              return previous
-            return {
-              ...state,
-              messages: mergeIssueChatMessages(state.messages, [
+        .subscribe(
+          projectId,
+          issueId,
+          afterSequence ?? 0,
+          receive,
+          chunk => {
+            if (!active) return
+            observedSequence = Math.max(observedSequence, chunk.sequenceNumber)
+            if (subscribing) pendingChunkIds.add(chunk.messageId)
+            setSnapshot(previous => {
+              const state = previous.owner === owner ? previous : empty
+              if (historyView) return state
+              const message = state.messages.find(message => message.messageId === chunk.messageId)
+              if (
+                message &&
+                !acceptsMessage(message, chunk, chunk.metadata.contentMode !== 'snapshot')
+              )
+                return previous
+              const incoming = {
+                ...chunk,
+                content:
+                  chunk.metadata.contentMode === 'snapshot'
+                    ? chunk.content
+                    : `${message?.content ?? ''}${chunk.content}`,
+              }
+              return {
+                ...state,
+                messages: mergeIssueChatMessages(state.messages, [incoming]),
+              }
+            })
+          },
+          ...(historyView || containerKind
+            ? ([
                 {
-                  ...chunk,
-                  content:
-                    chunk.metadata.contentMode === 'snapshot'
-                      ? chunk.content
-                      : `${message?.content ?? ''}${chunk.content}`,
+                  ...(focusMessageId ? { focusMessageId } : {}),
+                  ...(beforeSequence ? { beforeSequence } : {}),
+                  ...(historyView ? { historyWindow: true } : {}),
+                  ...(containerKind ? { containerKind } : {}),
                 },
-              ]),
-            }
-          })
-        })
+              ] as const)
+            : ([] as const))
+        )
         .then(subscription => {
           if (!active) {
             subscription.unsubscribe()
@@ -111,7 +165,27 @@ export function useIssueProjectChat(
               loading: false,
               error: null,
               currentUserId: subscription.snapshot.currentUserId,
-              messages: mergeIssueChatMessages(state.messages, subscription.snapshot.messages),
+              loadedHistoryKey: historyKey,
+              history: subscription.snapshot.history
+                ? {
+                    ...subscription.snapshot.history,
+                    hasNewer:
+                      subscription.snapshot.history.hasNewer ||
+                      observedSequence > subscription.snapshot.history.lastSequence,
+                  }
+                : undefined,
+              messages: historyView
+                ? subscription.snapshot.messages
+                : mergeIssueChatMessages(
+                    state.loadedHistoryKey === historyKey ? state.messages : [],
+                    mergeIssueChatMessages(
+                      subscription.snapshot.messages,
+                      mergeIssueChatMessages(
+                        pendingMessages,
+                        state.messages.filter(message => pendingChunkIds.has(message.messageId))
+                      )
+                    )
+                  ),
             }
           })
         })
@@ -120,6 +194,7 @@ export function useIssueProjectChat(
             setSnapshot(previous => ({
               ...(previous.owner === owner ? previous : empty),
               loading: false,
+              loadedHistoryKey: historyKey,
               error: cause instanceof Error ? cause.message : String(cause),
             }))
         })
@@ -138,7 +213,20 @@ export function useIssueProjectChat(
       stopReconnect?.()
       unsubscribe?.()
     }
-  }, [client, projectId, issueId, revision, owner, empty])
+  }, [
+    client,
+    projectId,
+    issueId,
+    revision,
+    owner,
+    empty,
+    focusMessageId,
+    beforeSequence,
+    afterSequence,
+    historyView,
+    historyKey,
+    containerKind,
+  ])
   const merge = (incoming: ProjectChatMessage[]) =>
     setSnapshot(previous =>
       previous.owner === owner
@@ -149,11 +237,13 @@ export function useIssueProjectChat(
         : previous
     )
   const messages = useMemo(
-    () => current.messages.filter(message => message.taskId === issueId),
+    () => current.messages.filter(message => (message.taskId ?? '') === issueId),
     [current.messages, issueId]
   )
   return {
     ...current,
+    loading: current.loading || current.loadedHistoryKey !== historyKey,
+    historyView,
     messages,
     merge,
     async send(
@@ -163,6 +253,7 @@ export function useIssueProjectChat(
     ): Promise<ProjectChatMessage> {
       if (!client) throw new Error('Project chat is unavailable')
       const message = await client.send({
+        ...(containerKind ? { containerKind } : {}),
         projectId,
         taskId: issueId,
         clientMessageId: generateMessageId('user'),

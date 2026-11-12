@@ -26,6 +26,7 @@ export * from "./IssueActivityMarkdown";
 
 export * from "./IssueThreadReplyComposer";
 export * from "./IssueChatMessage";
+export * from "./useIssueProjectChat";
 export {
   compareIssueTimestamps,
   issueActivityTimestamp,
@@ -54,4 +55,12 @@ export * from "./IssueTaskConversationPanel";
 
 export { issueTaskSummaryForMessage } from "./issueTaskSummary";
 
-export { issueCommentBody } from "./useIssueCommentAttachments";
+export {
+  issueCommentBody,
+  useIssueCommentAttachments,
+} from "./useIssueCommentAttachments";
+
+export { useIssueFieldSaves } from "./useIssueFieldSaves";
+export { IssueHierarchySummary } from "./IssueHierarchySummary";
+export { IssueLinkedTasks, IssueDeliveries } from "./IssueExecutionLists";
+export { IssueDeliveryContent } from "./IssueDeliveryContent";

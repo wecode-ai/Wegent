@@ -66,6 +66,7 @@ export interface CollaborationScheduleViewConfig {
 
 export interface CollaborationProject {
   id: CollaborationProjectId;
+  resource_type?: "project" | "chat_group";
   workspace_access_role?: CollaborationWorkspaceRole | null;
   membership_mode?: "inherit" | "restricted";
   permission_sources?: CollaborationPermissionSource[];
@@ -124,6 +125,16 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  permissions?: {
+    edit_content: boolean;
+    assign: boolean;
+    comment: boolean;
+    execute: boolean;
+  };
+  group_id?: string | null;
+  group_name?: string | null;
+  joined?: boolean | null;
+  can_join?: boolean | null;
   human_requests?: import("./issueParticipation").IssueHumanRequest[];
   milestone_id?: string | null;
   id: string;
@@ -134,6 +145,7 @@ export interface CollaborationIssue {
   created_by_user_name?: string | null;
   assignee_user_id: number | null;
   assignee_group_id?: string | null;
+  assignee_group_source_id?: string | null;
   assignee_group_name?: string | null;
   assignee_name?: string | null;
   assignee_agent_id?: string | null;
@@ -142,7 +154,7 @@ export interface CollaborationIssue {
   assignee_team_name?: string | null;
   execution_id?: number | null;
   execution_state?: string | null;
-  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null;
+  processing_actor?: { kind: "agent" | "stand_in"; name: string } | null;
   execution_note?: string | null;
   can_approve?: boolean;
   human_task_binding?: {
@@ -333,9 +345,10 @@ export interface CollaborationGroupStage {
 
 export interface CollaborationGroup {
   id: string;
-  workspace_id: string;
-  owner_type: "workspace" | "project";
+  workspace_id: string | null;
+  owner_type: "workspace" | "project" | "chat_group";
   owner_id: string;
+  binding_owner_id?: string;
   name: string;
   description: string;
   instructions?: string;
@@ -550,6 +563,11 @@ export interface CollaborationLocation {
 }
 
 export interface CollaborationHostAdapter {
+  openGroupThread?(
+    groupId: string,
+    threadId: string,
+    store: "local" | "backend",
+  ): void;
   capabilities: CollaborationCapabilities;
   defaultAssistant?: CollaborationDefaultAssistant;
   location: CollaborationLocation;

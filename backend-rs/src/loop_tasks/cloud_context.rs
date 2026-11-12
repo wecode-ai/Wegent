@@ -13,6 +13,8 @@
 //! `CloudTaskContextBody` built from `binding.__dict__` plus the project
 //! (`cloud_project_service.access` role) and the loop item
 //! (`loop_item_service.response_values`).
+use super::loop_repository::CloudContextBindingRow;
+use crate::http_compat::FastApiError;
 use chrono::NaiveDateTime;
 use serde::Serialize;
 
@@ -32,7 +34,7 @@ async fn find_runtime_task_cloud_context(
     device_id: &str,
     task_id: &str,
     #[auth] current_user: SessionUser,
-) -> Result<CloudTaskContextBody, HttpError> {
+) -> Result<CloudTaskContextBody, FastApiError> {
     cloud_context(state, device_id, task_id, &current_user).await
 }
 
@@ -42,7 +44,7 @@ async fn cloud_context(
     device_id: &str,
     task_id: &str,
     current_user: &SessionUser,
-) -> Result<CloudTaskContextBody, HttpError> {
+) -> Result<CloudTaskContextBody, FastApiError> {
     let repository = LoopItemRepository::new(&state.mysql);
     let binding = repository
         .find_cloud_context_binding(current_user.id, device_id, task_id)
@@ -50,6 +52,74 @@ async fn cloud_context(
         .map_err(HttpError::internal)?
         .ok_or_else(HttpError::cloud_context_not_found)?;
 
+    let (project, loop_item) =
+        match super::cloud_context_group::resolve(state, &binding, current_user).await? {
+            Some((project, item)) => (
+                ProjectProjection::Group(project),
+                Some(LoopItemProjection::Group(item)),
+            ),
+            None => project_context(state, &repository, &binding, current_user).await?,
+        };
+
+    Ok(context_body(&binding, project, loop_item))
+}
+
+fn context_body(
+    binding: &CloudContextBindingRow,
+    project: ProjectProjection,
+    loop_item: Option<LoopItemProjection>,
+) -> CloudTaskContextBody {
+    let group_binding = matches!(&project, ProjectProjection::Group(_));
+    let metadata = binding
+        .metadata
+        .as_ref()
+        .and_then(|value| value.0.value.as_ref());
+    CloudTaskContextBody {
+        id: binding.id.clone(),
+        cloud_project_id: binding.cloud_project_id.clone(),
+        loop_item_id: normalize_empty_text(binding.loop_item_id.as_deref()),
+        task_user_id: binding.task_user_id,
+        device_id: binding.device_id.clone(),
+        task_id: binding.task_id.clone(),
+        task_title: normalize_empty_text(binding.task_title.as_deref()),
+        backend_task_id: normalize_backend_task_id(binding.backend_task_id),
+        model_selection: metadata
+            .filter(|_| group_binding)
+            .and_then(|value| value.model_selection.clone()),
+        execution_context: metadata
+            .filter(|_| group_binding)
+            .and_then(|value| value.execution_context.clone()),
+        workflow_node_id: binding.workflow_node_id(),
+        human_assignment_id: metadata
+            .filter(|_| group_binding)
+            .and_then(|value| value.human_assignment_id.clone()),
+        dispatch_id: metadata
+            .filter(|_| group_binding)
+            .and_then(|value| value.dispatch_id.clone()),
+        dispatch_round_id: metadata
+            .filter(|_| group_binding)
+            .and_then(|value| value.dispatch_round_id.clone()),
+        assignment_id: metadata
+            .filter(|_| group_binding)
+            .and_then(|value| value.assignment_id.clone()),
+        change_requests: Vec::new(),
+        linked_by_user_id: binding.linked_by_user_id,
+        linked_at: datetime_value(binding.linked_at),
+        unlinked_at: match binding.unlinked_at {
+            Some(value) if !datetime_is_unset(binding.unlinked_at) => datetime_value(Some(value)),
+            _ => None,
+        },
+        project,
+        loop_item,
+    }
+}
+
+async fn project_context(
+    state: &AppState,
+    repository: &LoopItemRepository<'_, impl brz_mysql::Mysql>,
+    binding: &CloudContextBindingRow,
+    current_user: &SessionUser,
+) -> Result<(ProjectProjection, Option<LoopItemProjection>), HttpError> {
     // `db.get(CloudProject, binding.cloud_project_id)` plus
     // `require_cloud_project_role(db, project.id, user_id, RestrictedAnalyst)`.
     let project = repository
@@ -89,40 +159,21 @@ async fn cloud_context(
         default_issue_security: project_default_issue_security(&project),
     };
     let loop_item = match item_row {
-        Some(item) => Some(response_values(state, &item, current_user, &facts, None).await?),
+        Some(item) => Some(LoopItemProjection::Project(Box::new(
+            response_values(state, &item, current_user, &facts, None).await?,
+        ))),
         None => None,
     };
 
-    Ok(CloudTaskContextBody {
-        id: binding.id.clone(),
-        cloud_project_id: binding.cloud_project_id.clone(),
-        loop_item_id: normalize_empty_text(binding.loop_item_id.as_deref()),
-        task_user_id: binding.task_user_id,
-        device_id: binding.device_id.clone(),
-        task_id: binding.task_id.clone(),
-        task_title: normalize_empty_text(binding.task_title.as_deref()),
-        backend_task_id: normalize_backend_task_id(binding.backend_task_id),
-        model_selection: None,
-        workflow_node_id: binding.workflow_node_id(),
-        human_assignment_id: None,
-        dispatch_id: None,
-        dispatch_round_id: None,
-        assignment_id: None,
-        change_requests: Vec::new(),
-        linked_by_user_id: binding.linked_by_user_id,
-        linked_at: datetime_value(binding.linked_at),
-        unlinked_at: match binding.unlinked_at {
-            Some(value) if !datetime_is_unset(binding.unlinked_at) => datetime_value(Some(value)),
-            _ => None,
-        },
-        project: ProjectProjection::from_body(cloud_projects::CloudProjectBody::from_project(
+    Ok((
+        ProjectProjection::from_body(cloud_projects::CloudProjectBody::from_project(
             &project,
             current_user.id,
             &current_user.user_name,
             &role,
         )),
         loop_item,
-    })
+    ))
 }
 
 /// `require_cloud_project_role(db, project_id, user_id, RestrictedAnalyst)`:
@@ -195,11 +246,13 @@ fn project_default_issue_security(project: &cloud_projects::ProjectListRow) -> &
 /// SQLAlchemy instance `__dict__` carries only mapped columns (keyed by
 /// attribute name, so the `metadata_json` column is ignored by the pydantic
 /// model) plus `workflow_node_id`, which the source injects explicitly from its
-/// property. Every other `LoopItemTaskBindingResponse` field therefore takes
+/// property. For original Project bindings, every other response field takes
 /// its pydantic default: `modelSelection`, `human_assignment_id`, `dispatch_id`,
 /// `dispatch_round_id`, and `assignment_id` are always `null`, and
 /// `change_requests` is always `[]` — even when the binding metadata defines
-/// them. Field declaration order follows the source pydantic model
+/// them. Group bindings retain the caller-owned model, session and dispatch
+/// metadata so a private task reopens its original runtime context. Field
+/// declaration order follows the source pydantic model
 /// (`LoopItemTaskBindingResponse` then the `CloudTaskContextResponse` extras).
 #[derive(Debug, Serialize)]
 struct CloudTaskContextBody {
@@ -213,6 +266,8 @@ struct CloudTaskContextBody {
     backend_task_id: Option<i64>,
     #[serde(rename = "modelSelection")]
     model_selection: Option<serde_json::Value>,
+    #[serde(rename = "executionContext", skip_serializing_if = "Option::is_none")]
+    execution_context: Option<serde_json::Value>,
     workflow_node_id: Option<String>,
     human_assignment_id: Option<String>,
     dispatch_id: Option<String>,
@@ -223,17 +278,28 @@ struct CloudTaskContextBody {
     linked_at: Option<String>,
     unlinked_at: Option<String>,
     project: ProjectProjection,
-    loop_item: Option<LoopItemResponse>,
+    loop_item: Option<LoopItemProjection>,
 }
 
 /// Reuse the shared typed cloud-project response.
 #[derive(Debug, Serialize)]
-struct ProjectProjection(cloud_projects::CloudProjectBody);
+#[serde(untagged)]
+enum ProjectProjection {
+    Project(Box<cloud_projects::CloudProjectBody>),
+    Group(serde_json::Value),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum LoopItemProjection {
+    Project(Box<LoopItemResponse>),
+    Group(serde_json::Value),
+}
 
 impl ProjectProjection {
     /// Build the projection from a cloud-projects renderer body.
     fn from_body(body: cloud_projects::CloudProjectBody) -> Self {
-        Self(body)
+        Self::Project(Box::new(body))
     }
 }
 
@@ -337,6 +403,7 @@ mod tests {
             task_title: None,
             backend_task_id: None,
             model_selection: None,
+            execution_context: None,
             workflow_node_id: Some("node-1".to_string()),
             human_assignment_id: None,
             dispatch_id: None,
@@ -366,5 +433,43 @@ mod tests {
             assert!(value.get(key).is_some(), "{key} must be present");
             assert!(value[key].is_null(), "{key} must be null");
         }
+    }
+    #[test]
+    fn group_binding_keeps_the_private_runtime_and_dispatch_identity() {
+        use brz_json::JsonProjection;
+        use brz_mysql::Json;
+        let metadata = serde_json::json!({
+            "model_selection":{"modelName":"own-model"},
+            "execution_context":{"runtime":"codex","threadId":"original-session","workspacePath":"/own/work"},
+            "human_assignment_id":"human", "dispatch_id":"dispatch",
+            "dispatch_round_id":"round", "assignment_id":"assignment"
+        });
+        let binding = CloudContextBindingRow {
+            id: "binding".into(),
+            cloud_project_id: "9001".into(),
+            loop_item_id: Some("9002".into()),
+            task_user_id: 7,
+            device_id: "device".into(),
+            task_id: "task".into(),
+            task_title: None,
+            backend_task_id: None,
+            linked_by_user_id: 7,
+            linked_at: None,
+            unlinked_at: None,
+            metadata: Some(Json(JsonProjection::from(metadata))),
+        };
+        let body = context_body(
+            &binding,
+            ProjectProjection::Group(serde_json::json!({"id":"9001","resource_type":"chat_group"})),
+            None,
+        );
+        let value = serde_json::to_value(body).unwrap();
+        assert_eq!(value["cloud_project_id"], "9001");
+        assert_eq!(value["modelSelection"]["modelName"], "own-model");
+        assert_eq!(value["executionContext"]["threadId"], "original-session");
+        assert_eq!(value["human_assignment_id"], "human");
+        assert_eq!(value["dispatch_id"], "dispatch");
+        assert_eq!(value["dispatch_round_id"], "round");
+        assert_eq!(value["assignment_id"], "assignment");
     }
 }

@@ -30,6 +30,7 @@ from app.models.delivery import (
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.issue_workflow import (
     ProjectWorkflowDefinition,
@@ -41,7 +42,10 @@ from app.schemas.runtime_work import (
     RuntimeTaskAddress,
 )
 from app.services import runtime_work_service
-from app.services.cloud_projects.service import cloud_project_service
+from app.services.collaboration_container_access import (
+    get_collaboration_container,
+    require_collaboration_container_access,
+)
 from app.services.device.identity import owned_device_aliases
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_item_status_history import project_status_transition
@@ -110,9 +114,12 @@ class ProjectAutomationExecution:
             return
         try:
             owner = db.get(User, rule.created_by_user_id)
-            project = db.get(CloudProject, rule.cloud_project_id)
+            project = get_collaboration_container(db, rule.cloud_project_id)
             if owner is None or project is None:
                 raise RuntimeError("Automation owner or project is unavailable")
+            require_collaboration_container_access(
+                db, project.id, owner.id, BaseRole.Developer, write=True
+            )
             run_metadata = metadata(run)
             if not text(run_metadata.get("task_origin")):
                 run_metadata["task_origin"] = (
@@ -220,6 +227,11 @@ class ProjectAutomationExecution:
         instruction: str,
     ) -> None:
         agent = project_agent(db, str(rule.cloud_project_id), agent_id)
+        from app.services.collaboration_permissions import (
+            require_project_agent_visibility,
+        )
+
+        require_project_agent_visibility(agent, owner.id)
         if not run.task_id:
             raise RuntimeError("Automation task carrier is unavailable")
         uses_workflow_snapshot = "workspace_binding" in context
@@ -466,6 +478,9 @@ class ProjectAutomationExecution:
         values = LoopItemAssign(
             assignee_type=assignee_type,
             assignee_id=assignee_id,
+            assignee_group_source_id=(
+                str(rule.cloud_project_id) if assignee_type == "group" else None
+            ),
             workflow_step=workflow_step,
             notify_assignee=True,
             version=1,
@@ -853,7 +868,7 @@ class ProjectAutomationProcessor:
         )
         if automation_id:
             query = query.filter(ProjectAutomationRule.id == automation_id)
-        project = db.get(CloudProject, event.project_id)
+        project = get_collaboration_container(db, event.project_id)
         if project is None:
             return []
         workflow = event.payload.get("workflow")
@@ -1283,7 +1298,7 @@ class ProjectAutomationProcessor:
                 }
             return {"kind": "continue_binding", "binding": resolution.binding}
         if target == "create_issue":
-            project = db.get(CloudProject, event.project_id)
+            project = get_collaboration_container(db, event.project_id)
             owner = db.get(User, rule.created_by_user_id)
             if project is None or owner is None:
                 return {

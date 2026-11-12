@@ -5,7 +5,10 @@
 import assert from 'node:assert/strict'
 import { dragBoardCard, waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
+import {
+  createCollaborationBoardIssue,
+  prepareGroupThreadCreation,
+} from '../modules/collaboration-board-issue.mjs'
 import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
@@ -93,10 +96,21 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     return ids
   }
 
-  async function createFromBacklog(control, backlog, title, expectedParentId = null) {
+  async function createFromBacklog(
+    control,
+    backlog,
+    title,
+    expectedParentId = null,
+    expectedGroupId = null
+  ) {
+    if (expectedParentId) assert.ok(expectedGroupId, 'A child must retain its actual parent group')
     await control.command('click', scoped('[data-testid="cloud-todo-column-add-' + backlog + '"]'))
-    const dialog = scoped('[data-testid="collaboration-issue-create-dialog"]')
-    await control.command('waitFor', dialog, { timeoutMs: uiTimeoutMs })
+    const dialog = await prepareGroupThreadCreation(control, {
+      groupId: expectedGroupId ?? undefined,
+      groupName: `${title} group`,
+      contentSelector: CONTENT,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('fill', dialog + ' [data-testid="cloud-todo-title"]', {
       value: title,
     })
@@ -105,11 +119,11 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       dialog + ' [data-testid="cloud-todo-create-confirm"]',
       { timeoutMs: uiTimeoutMs }
     )
-    await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
+    await control.command('waitFor', scoped('[data-testid="thread-room"]'), {
       text: title,
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('click', scoped('[data-testid="thread-back-to-board"]'))
     await control.command('waitFor', lane(backlog), {
       text: title,
       timeoutMs: uiTimeoutMs,
@@ -117,6 +131,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     const snapshot = await request('/api/v1/cloud-projects/' + project.id + '/board-snapshot')
     const created = snapshot.items.find(issue => issue.title === title)
     assert.ok(created)
+    assert.ok(created.group_id, 'Backlog creation must produce a real group-owned Thread')
+    assert.equal(created.cloud_project_id, created.group_id)
+    if (expectedGroupId) assert.equal(created.group_id, expectedGroupId)
     assert.deepEqual(created.tags, ['bug'])
     await expectCard(control, backlog, created.id)
     assert.equal(created.parent_id, expectedParentId)
@@ -241,14 +258,26 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
       await createFromBacklog(control, backlog, 'Filtered Backlog creation')
-      const issuePath = '/api/v1/cloud-projects/' + project.id + '/loop-items'
-      const parent = await request(issuePath, 'POST', { title: 'Backlog parent', tags: ['bug'] })
+      const { group: parentGroup } = await request('/api/v1/chat-groups', 'POST', {
+        name: `Backlog hierarchy ${process.pid}`,
+      })
+      const issuePath = '/api/v1/cloud-projects/' + parentGroup.id + '/loop-items'
+      const parent = await request(issuePath, 'POST', {
+        title: 'Backlog parent',
+        tags: ['bug'],
+        classification_project_id: String(project.id),
+      })
+      assert.equal(parent.group_id, parentGroup.id)
+      assert.equal(parent.cloud_project_id, parentGroup.id)
       const child = await request(issuePath, 'POST', {
         title: 'Existing Backlog child',
         parent_id: parent.id,
         tags: ['bug'],
+        classification_project_id: String(project.id),
       })
       assert.equal(child.parent_id, parent.id)
+      assert.equal(child.group_id, parentGroup.id)
+      assert.equal(child.cloud_project_id, parentGroup.id)
       const tree = await request('/api/v1/cloud-projects/' + project.id + '/board-snapshot')
       assert.ok(tree.items.some(issue => issue.id === child.id && issue.parent_id === parent.id))
       await reloadMainWindow(control, 'Backlog child fixtures did not reload')
@@ -261,7 +290,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: 'Existing Backlog child',
         timeoutMs: uiTimeoutMs,
       })
-      await createFromBacklog(control, backlog, 'Child Backlog creation', parent.id)
+      await createFromBacklog(control, backlog, 'Child Backlog creation', parent.id, parentGroup.id)
       await verifyLocal(control)
     },
     async cleanup() {

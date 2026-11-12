@@ -61,7 +61,7 @@ export function ProjectAgentConfiguration({
   onAgentsChange?(): void;
   openComposerRequestId?: number;
   onOpenComposerRequestConsumed?(requestId: number): void;
-  scope?: "project" | "workspace";
+  scope?: "project" | "workspace" | "group";
   translate: CollaborationTranslate;
 }) {
   const workspaceId = project.workspace_id;
@@ -71,7 +71,7 @@ export function ProjectAgentConfiguration({
   } | null>(null);
   const canBrowseSources =
     canManage &&
-    (scope === "workspace" ||
+    (scope !== "project" ||
       project.project_store === "local" ||
       Boolean(project.workspace_access_role) ||
       (project.workspace_access_role === undefined &&
@@ -139,7 +139,7 @@ export function ProjectAgentConfiguration({
   useEffect(() => {
     if (
       !canManage ||
-      scope === "workspace" ||
+      scope !== "project" ||
       project.project_store === "local" ||
       project.workspace_access_role !== undefined ||
       !workspaceId ||
@@ -201,7 +201,7 @@ export function ProjectAgentConfiguration({
     setLoading(true);
     void api.agents
       .list(project.id, {
-        includeArchived: canManage && scope === "project",
+        includeArchived: canManage && scope !== "workspace",
       })
       .then((nextAgents) => {
         if (!active || !isCurrentAgentRequest(request)) return;
@@ -412,7 +412,7 @@ export function ProjectAgentConfiguration({
     const request = ++agentRequest.current;
     try {
       const nextAgents = await api.agents.list(project.id, {
-        includeArchived: canManage && scope === "project",
+        includeArchived: canManage && scope !== "workspace",
       });
       if (!isCurrentAgentRequest(request)) return;
       setLoadError(null);
@@ -500,7 +500,7 @@ export function ProjectAgentConfiguration({
     try {
       // Project rows refresh their materialized Agent configuration after the
       // backing resource changes; workspace rows derive it on read.
-      if (scope === "project") {
+      if (scope !== "workspace") {
         await api.agents.update(project.id, agent.id, {
           version: agent.version,
           ...(saved.name ? { name: saved.name } : {}),
@@ -591,7 +591,7 @@ export function ProjectAgentConfiguration({
     name: project.name ?? "",
     namespace: project.namespace ?? "default",
   };
-  const agentProjectId = scope === "project" ? project.id : undefined;
+  const agentProjectId = scope !== "workspace" ? project.id : undefined;
 
   function renderCustomAgentCreator() {
     if (mode !== "create") return null;
@@ -607,7 +607,7 @@ export function ProjectAgentConfiguration({
       });
     }
     return host?.renderAgentCreator?.({
-      projectId: scope === "project" ? project.id : undefined,
+      projectId: scope !== "workspace" ? project.id : undefined,
       namespace: creatorContext.namespace,
       onClose,
       onCreated: createAndAddAgent,
@@ -760,7 +760,7 @@ export function ProjectAgentConfiguration({
                   ) : null}
                   {canManage ? (
                     <div className={styles.agentActions}>
-                      {scope === "project" && agent.status === "archived" ? (
+                      {scope !== "workspace" && agent.status === "archived" ? (
                         <button
                           type="button"
                           data-testid={`project-agent-reactivate-${agent.id}`}
@@ -895,7 +895,7 @@ export function ProjectAgentConfiguration({
                 host?.renderAgentEditor
               ? host.renderAgentEditor({
                   projectId:
-                    scope === "project" ? String(project.id) : undefined,
+                    scope !== "workspace" ? String(project.id) : undefined,
                   agent: { teamId: editingAgent.wegentTeamId },
                   namespace: creatorContext.namespace,
                   onClose: () => setEditingAgentId(null),

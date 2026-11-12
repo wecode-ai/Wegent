@@ -26,16 +26,15 @@ export async function resolveHumanTaskDispatch(
   client: ProjectChatClient | undefined,
   projectId: string | number,
   issueId: string,
-  userId: string | number
+  userId: string | number,
+  containerKind: 'project' | 'chat_group' = 'project'
 ): Promise<IssueTaskDispatchInput | undefined> {
   if (!client) return undefined
-  const subscription = await client.subscribe(
-    String(projectId),
-    issueId,
-    0,
-    () => {},
-    () => {}
-  )
+  const args = [String(projectId), issueId, 0, () => {}, () => {}] as const
+  const subscription =
+    containerKind === 'chat_group'
+      ? await client.subscribe(...args, { containerKind })
+      : await client.subscribe(...args)
   try {
     const identities = [userId, subscription.snapshot.currentUserId].filter(
       (id): id is string | number => id != null

@@ -25,6 +25,76 @@ neither host may duplicate shared business views.
 
 ## Objective
 
+### Independent groups and Threads
+
+A group is a persistent discussion container. A Thread is a child conversation
+with a lifecycle; project classification is optional. The following matrix
+separates executed acceptance from outstanding work. Passing a checkpoint does
+not establish complete release acceptance.
+Joining never elevates a group role. Discussion and execution below still require
+current write permission and the existing private resource authority.
+
+| User story                              | Observable result                                                                                                                                       | Verification and status                                                                                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Create a group on first use             | No project required; empty states offer group and Thread creation                                                                                       | `group-thread-collaboration`, passed in real Electron                                                                                                                                                                    |
+| Discover an unjoined Thread             | Group cards and lists open readable content; no sidebar entry                                                                                           | Same checkpoint, passed                                                                                                                                                                                                  |
+| Join or leave on demand                 | Joining enables discussion and sidebar presence; leaving preserves discovery without ongoing subscription                                               | Local/cloud Group checkpoints and permission tests, passed                                                                                                                                                               |
+| Complete and keep discussing            | Completion is in More; the Thread leaves the sidebar, the group stays active, joined members may discuss                                                | Local Group checkpoint and native store tests, passed                                                                                                                                                                    |
+| Reopen a Thread                         | Sidebar presence returns only for joined members                                                                                                        | Local Group checkpoint, passed                                                                                                                                                                                           |
+| Edit Thread metadata                    | Settings expose shared states, arbitrary tags, assignees and optional project classification                                                            | Local Group checkpoint and component tests, passed                                                                                                                                                                       |
+| Use the full group board                | Board, table, calendar, Gantt, milestones and saved views remain available; default view survives reload                                                | Local Group checkpoint and `collaboration-milestones`, passed                                                                                                                                                            |
+| Aggregate multiple groups in a project  | Actual group ownership remains; project membership grants no group read access; counts use current group grants                                         | Cloud Group checkpoint and milestone tests, passed                                                                                                                                                                       |
+| Archive, restore and delete milestones  | Archive aggregation filters readable items; deleted milestone references remain cleared after restoration                                               | Local/cloud Group checkpoints, passed                                                                                                                                                                                    |
+| Bind a real private task to a Thread    | Group and executor ownership survive reload; private execution responses stay out of group chat                                                         | Local Group checkpoint, passed; does not establish complete group Agent dispatch acceptance                                                                                                                              |
+| Execute after authority changes         | Current participation and lifecycle are rechecked; old bindings cannot authorize a new start or public reply                                            | Native store, cloud authorization and manual personal stand-in execution passed; the complete shared group-Agent resource dispatch chain remains unverified                                                              |
+| Migrate existing public items           | Preserve IDs, discussion, deliveries, private execution ownership and left/muted choices; exclude restricted items                                      | Real Electron migration and continuation of the original private session passed; real cloud database/object storage and CLI disconnect rollback/recovery passed; complete execution-resource mappings remain outstanding |
+| Receive a delayed pre-migration mention | Preserve the event and original source; the real Executor rejects old-source intake even while the actor remains project manager and target-group owner | Cloud Group checkpoint, passed                                                                                                                                                                                           |
+
+Use the existing unified runner:
+
+```bash
+pnpm --filter wework e2e:desktop --segment group-thread-collaboration
+pnpm --filter wework e2e:desktop --segment collaboration-milestones
+```
+
+### Source-board return and chat identity acceptance
+
+Use isolated real Electron and the existing local/cloud Group checkpoints, including the real two-person cloud accounts, storage and devices. Only model services are scripted. Keep screenshots and logs local; the unified runner cleans fixture data and processes.
+
+1. Keep the previously saved group review view as the shared default, temporarily select the built-in board, and confirm it is not the shared default. Choose a non-default status, one tag, and a search term, then open a matching Thread and return. Assert the original group, exact selected view ID and name, status option value and label, single checked tag, search term, and card inside the matching column. Capture the full board before opening and after returning.
+2. Preserve the project shared default and create a project return-review view through the UI without selecting Set as default. Confirm the selected ID differs from the shared default. Set an appropriate non-default status, tag, and search term, open a group-owned Thread, and return. Check every property above plus the source project, storage location, and Projects view. Clear temporary filters and restore the prior selected view afterward without changing the shared default; temporary filters need not survive reload. Direct chat/notification entries still return to the owning group, without joining or granting authority.
+3. Switching accounts immediately removes the old account’s content and retained board state. Inactive boards clean up effects/subscriptions and revalidate current permissions/data on restoration.
+4. Both people show names and avatars. Exact current-human identity decides sides, never matching display names or an agent ID. Compare real avatar coordinates: self on the right and the other member on the left. System lifecycle messages remain centered and Thread entry cards remain clickable.
+5. Continue checking history focus, mentions, attachments, leaving and discussion after completion. Retain first-use, two-person discussion and both source-board return screenshots for independent review.
+6. After drilling into children outside the selected milestone, hiding and restoring the same board preserves the temporary drilldown. A project or view change clears the temporary drilldown while retaining the base milestone selection. Component regression also covers the existing caller without a default grouping.
+
+Current result: component and state-retention tests passed. Freshly built real Electron verified retained search after returning to both group and project aggregation boards. Real two-person discussion in both the main group and a Thread passed name, avatar and left/right coordinate assertions. Seven key screenshots covering return paths, lifecycle, two-person discussion and the Bot reply passed independent review.
+
+The non-default view, status, tag, and search round-trip assertions now extend the same `group-thread-collaboration` checkpoint and pass syntax, formatting, and lint checks. They still require real Electron CI on the latest commit and review of the before/after filtered-board screenshots. Earlier screenshots proved retained search and do not substitute for this stronger acceptance.
+
+### Manual personal stand-in execution within a group
+
+This case verifies the existing personal stand-in path without deciding shared group-Agent policy. It reuses the cloud checkpoint's real Electron, Rust/Python Backend, MySQL, object storage, devices and Codex, scripting only model responses. Fixtures and cleanup remain isolated under the unified runner.
+
+1. Create an unclassified group and unassigned Thread. Save the actor's personal stand-in with automatic intake disabled and an explicit current-device Codex model.
+2. Leave the Thread and launch manually: reject for missing participation, without a model request or cloud private-task binding.
+3. Join and launch manually: create and complete a real native Codex conversation, showing its explicitly public final reply in the Thread.
+4. Verify the original executor/device binding, group ownership and unchanged human assignment; retain the actual screenshot. Explicit public stand-in replies are distinct from separately bound private task history, which must never be automatically synchronized.
+5. Another group Viewer reads an empty execution-binding list. Removing their group access makes the same request return 404.
+6. Reuse the same execution and Thread: the owner sees their execution summary and result on both group and linked-project boards. Switch through real desktop authorization to another Developer, whose readable boards show none of the owner's private bindings, summaries or results. Opening the Thread still shows the explicitly public stand-in reply. Switch back to the owner to verify preview restoration, then revoke the other member's group grant and verify binding reads return 404.
+
+Status: registered within the existing `group-thread-cloud` CI shard. The complete real cloud case passed: unjoined rejection, joined execution, original executor/device binding, no human assignment before or after execution, private-binding isolation from another Viewer, and 404 after access removal.
+
+Cross-user board result: the complete real two-account desktop case passed. Five independently reviewed screenshots show owner previews on group/project boards, absent private previews for another Developer on both boards, and the public reply remaining readable. The same run asserted owner preview restoration after switching back and 404 after access removal. Backend regression also protects archived binding reads and group revocation while retaining project authority.
+
+Scope limits: group settings currently manage group information and members. Shared group-Agent configuration, resource authority and the complete automatic dispatch chain remain unverified; the personal stand-in case does not substitute for them. Migration records assigned to old project Agents or collaboration groups still require explicit execution-resource mappings and never copy authority automatically.
+
+Cloud Group cases reuse the existing cloud checkpoint, real Rust/Python services,
+database and object storage. Do not replace internal services with mocks.
+Keep screenshots and logs local under `wework/test-results/`; do not commit them.
+Independent UI review examines the complete screenshot chain at key milestones.
+Execution authority, migration writes and asset copying require their own milestone review.
+
 ### Multiple comment assignment target types
 
 The comment assignment menu shares the Issue property candidates and persistence

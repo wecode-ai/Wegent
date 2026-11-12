@@ -334,6 +334,51 @@ def main() -> None:
                 == "READ-COMMITTED"
             )
         asyncio.run(verify_async_isolation())
+        from tests.integration.thread_group_permissions_mysql import (
+            verify_group_write_revocation,
+        )
+
+        verify_group_write_revocation(engine)
+        from tests.integration.thread_classification_mysql import (
+            verify_thread_classification,
+        )
+
+        verify_thread_classification(engine)
+        from tests.integration.group_crew_sharing_mysql import verify_group_crew_sharing
+
+        verify_group_crew_sharing(engine)
+        from tests.integration.group_resource_authority_mysql import (
+            run_group_resource_authority_cases,
+        )
+
+        run_group_resource_authority_cases(engine)
+        from tests.integration.group_runtime_profile_mysql import (
+            verify_runtime_profile_current_authority,
+        )
+
+        verify_runtime_profile_current_authority(engine)
+        from tests.integration.project_board_order_mysql import (
+            verify_project_board_order,
+        )
+
+        verify_project_board_order(engine)
+        from tests.integration.thread_binding_mysql import (
+            verify_group_conversation_binding,
+            verify_group_repeatable_read_revocation,
+        )
+
+        verify_group_conversation_binding(engine)
+        verify_group_repeatable_read_revocation(engine)
+        from tests.integration.thread_current_facts_mysql import (
+            verify_group_current_facts,
+        )
+
+        verify_group_current_facts(engine)
+        from tests.integration.thread_cross_group_mentions_mysql import (
+            verify_cross_group_mentions,
+        )
+
+        verify_cross_group_mentions(engine)
     finally:
         if engine is not None:
             engine.dispose()

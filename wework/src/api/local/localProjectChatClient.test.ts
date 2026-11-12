@@ -29,6 +29,35 @@ function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommen
 }
 
 describe('createLocalProjectChatClient', () => {
+  it('pages history without presenting a distant latest message as adjacent to the anchor', async () => {
+    request.mockResolvedValue(
+      Array.from({ length: 402 }, (_, index) =>
+        commentRecord({
+          id: index + 1,
+          message_id: `message-${index + 1}`,
+          sequence_number: index + 1,
+        })
+      )
+    )
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const anchored = await client.subscribe('p1', 't1', 0, vi.fn(), undefined, {
+      focusMessageId: 'message-1',
+      historyWindow: true,
+    })
+    expect(anchored.snapshot.messages.map(message => message.messageId)).toEqual(['message-1'])
+    expect(anchored.snapshot.history?.hasNewer).toBe(true)
+    anchored.unsubscribe()
+    const next = await client.subscribe('p1', 't1', 1, vi.fn(), undefined, { historyWindow: true })
+    expect(next.snapshot.messages).toHaveLength(200)
+    expect(next.snapshot.messages[0].messageId).toBe('message-2')
+    expect(next.snapshot.messages.at(-1)?.messageId).toBe('message-201')
+    expect(next.snapshot.history?.hasOlder).toBe(true)
+    expect(next.snapshot.history?.hasNewer).toBe(true)
+    next.unsubscribe()
+    client.dispose()
+  })
   beforeEach(() => {
     request.mockReset()
   })

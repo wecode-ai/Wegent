@@ -1,5 +1,7 @@
 import enModelConnections from './locales/en/modelConnections.json'
 import zhModelConnections from './locales/zh-CN/modelConnections.json'
+import enCollaboration from './locales/en/collaboration.json'
+import zhCollaboration from './locales/zh-CN/collaboration.json'
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
@@ -31,6 +33,7 @@ i18n
         sites: enSites,
         hooks: enHooks,
         modelConnections: enModelConnections,
+        collaboration: enCollaboration,
         ...(extensionI18nResources.en ?? {}),
       },
       'zh-CN': {
@@ -40,6 +43,7 @@ i18n
         sites: zhSites,
         hooks: zhHooks,
         modelConnections: zhModelConnections,
+        collaboration: zhCollaboration,
         ...(extensionI18nResources['zh-CN'] ?? {}),
       },
     },
@@ -54,6 +58,7 @@ i18n
       'sites',
       'hooks',
       'modelConnections',
+      'collaboration',
       ...extensionNamespaces,
     ],
     interpolation: { escapeValue: false },

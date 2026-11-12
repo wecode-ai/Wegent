@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ProjectBoardColumn } from './ProjectBoardBody'
 import {
   executeStandardCloudBoardMutation,
+  mergePersistedBoardMove,
   resolveStandardCloudBoardDrop,
   resolveStandardCloudBoardMutation,
   type StandardCloudBoardItem,
@@ -206,5 +207,92 @@ describe('board drag source and tag semantics', () => {
         manualSort: true,
       })
     ).toBeNull()
+  })
+})
+
+describe('Project aggregation ordering scope', () => {
+  it('keeps Project ranks until the authoritative Project snapshot replaces the Group response', () => {
+    const current = { ...baseItem, cloud_project_id: 'group-a', sort_order: 7, version: 1 }
+    const foreign = {
+      ...baseItem,
+      id: 'foreign',
+      cloud_project_id: 'group-b',
+      sort_order: 9,
+      version: 3,
+    }
+    const saved = { ...current, status: 'completed', sort_order: 0, version: 2 }
+    expect(
+      mergePersistedBoardMove([current, foreign], saved, {
+        beforeItemId: foreign.id,
+        classificationProjectId: 'project',
+      })
+    ).toEqual([{ ...saved, sort_order: 7 }, foreign])
+  })
+  it('moves state and manual position across Groups only in an explicit Project board', () => {
+    const moving = { ...baseItem, status: 'completed', cloud_project_id: 'group-a' }
+    const anchor = { ...baseItem, id: 'anchor', cloud_project_id: 'group-b' }
+    const input = {
+      activeItemId: moving.id,
+      beforeItemId: anchor.id,
+      columnDropKey: 'pending',
+      sourceColumnKey: 'completed',
+      columns: [column('completed'), column('pending')],
+      extensions: {},
+      groupBy: 'status' as const,
+      items: [moving, anchor],
+      classificationProjectId: 'project',
+    }
+    expect(resolveStandardCloudBoardDrop(input)).toMatchObject({
+      itemId: moving.id,
+      beforeItemId: anchor.id,
+    })
+    expect(
+      resolveStandardCloudBoardMutation({
+        item: moving,
+        items: input.items,
+        groupBy: 'status',
+        sourceColumn: column('completed'),
+        column: column('pending'),
+        beforeItemId: anchor.id,
+        manualSort: true,
+        classificationProjectId: 'project',
+      })
+    ).toMatchObject({
+      kind: 'status',
+      status: 'pending',
+      position: { beforeItemId: anchor.id, classificationProjectId: 'project' },
+    })
+    expect(
+      resolveStandardCloudBoardDrop({ ...input, classificationProjectId: undefined })
+    ).toBeNull()
+    expect(
+      resolveStandardCloudBoardDrop({
+        ...input,
+        items: [moving, { ...anchor, parent_id: 'foreign-parent' }],
+      })
+    ).toBeNull()
+  })
+
+  it('persists same-column Project order without changing Group ownership', () => {
+    const moving = { ...baseItem, cloud_project_id: 'group-a' }
+    const anchor = { ...baseItem, id: 'anchor', cloud_project_id: 'group-b' }
+    const mutation = resolveStandardCloudBoardMutation({
+      item: moving,
+      items: [anchor, moving],
+      groupBy: 'status',
+      sourceColumn: column('pending'),
+      column: column('pending'),
+      beforeItemId: anchor.id,
+      manualSort: true,
+      classificationProjectId: 'project',
+    })!
+    expect(mutation.position).toEqual({
+      beforeItemId: anchor.id,
+      classificationProjectId: 'project',
+    })
+    expect(mutation.optimisticItems.map(item => [item.id, item.cloud_project_id])).toEqual([
+      ['anchor', 'group-b'],
+      ['moving', 'group-a'],
+    ])
   })
 })

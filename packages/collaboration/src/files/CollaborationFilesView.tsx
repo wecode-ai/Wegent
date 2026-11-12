@@ -240,6 +240,7 @@ export function CollaborationFilesView({
           ),
         ),
       );
+      if (location.scope === "root") navigateTo({ scope: "shared", path: [] });
       refresh();
       telemetry?.completed("upload");
     } catch (cause) {
@@ -264,6 +265,7 @@ export function CollaborationFilesView({
       await api.createFolder(project.id, path);
       setFolderName("");
       setCreatingFolder(false);
+      if (location.scope === "root") navigateTo({ scope: "shared", path: [] });
       refresh();
       telemetry?.completed("create");
     } catch (cause) {

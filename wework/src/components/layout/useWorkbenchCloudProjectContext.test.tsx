@@ -16,6 +16,7 @@ import {
   loopItem,
   project,
   renderCloudContext,
+  threadOwner,
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
@@ -532,8 +533,11 @@ describe('useWorkbenchCloudProjectContext', () => {
 
   test('creates and binds a board item for an existing runtime task', async () => {
     const targetProject = project('space-target', 'local')
+    const { owner: group, groups } = threadOwner('independent-group')
     const createdItem = {
-      ...loopItem(targetProject.id),
+      ...loopItem(group.id),
+      group_id: group.id,
+      project_id: targetProject.id,
       status: 'pending' as const,
     }
     const currentRuntimeTask = {
@@ -552,8 +556,10 @@ describe('useWorkbenchCloudProjectContext', () => {
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
       trackProjectTask: vi.fn().mockResolvedValue({ item: createdItem }),
+      bindTask: vi.fn().mockResolvedValue(undefined),
     }
     const services = {
+      chatGroupApis: { local: groups },
       projectSpaceApis: {
         local: localApi,
         defaultLocation: 'local',
@@ -573,18 +579,21 @@ describe('useWorkbenchCloudProjectContext', () => {
       })
     )
 
-    await waitFor(() => expect(result.current.cloudProjects).toEqual([targetProject]))
+    await waitFor(() => expect(result.current.cloudProjects).toContainEqual(targetProject))
     act(() => result.current.handleSelectCloudProject(targetProject))
     await waitFor(() => expect(result.current.taskBoardAssociation?.loading).toBe(false))
 
     act(() => result.current.associateRuntimeTaskWithNewItem())
-
+    expect(result.current.taskOriginCreation?.target).toEqual(targetProject)
+    expect(localApi.trackProjectTask).not.toHaveBeenCalled()
+    expect(localApi.bindTask).not.toHaveBeenCalled()
+    await act(() => result.current.associateCreatedTaskOrigin(createdItem, group))
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(createdItem))
-    expect(localApi.trackProjectTask).toHaveBeenCalledWith(
-      targetProject.id,
+    expect(localApi.bindTask).toHaveBeenCalledExactlyOnceWith(
+      createdItem.id,
       currentRuntimeTask,
-      '已有任务',
-      '完成已有任务的看板关联'
+      '已有任务'
     )
+    expect(localApi.trackProjectTask).not.toHaveBeenCalled()
   })
 })

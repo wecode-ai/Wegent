@@ -18,9 +18,17 @@ from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
 from app.models.cloud_project import CloudProjectFile
-from app.models.delivery import Delivery, DeliveryAsset, LoopItem
+from app.models.delivery import (
+    CollaborationChatGroup,
+    Delivery,
+    DeliveryAsset,
+    LoopItem,
+    LoopNode,
+)
 from app.schemas.base_role import BaseRole
-from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.collaboration_container_access import (
+    require_collaboration_container_access,
+)
 from app.services.delivery.storage import (
     DeliveryStorage,
     DeliveryStorageUnavailableError,
@@ -46,6 +54,28 @@ def normalize_cloud_path(value: str) -> str:
     return path.as_posix()
 
 
+def require_storage_namespace(container: LoopNode) -> str:
+    prefix = container.storage_prefix
+    if not prefix or (
+        isinstance(container, CollaborationChatGroup)
+        and prefix != f"groups/{container.id}"
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Storage namespace is not initialized"
+        )
+    return prefix
+
+
+def validate_file_namespace(container: LoopNode, file: CloudProjectFile) -> None:
+    if file.object_key or file.kind == "file":
+        prefix = require_storage_namespace(container)
+        if not file.object_key or not file.object_key.startswith(f"{prefix}/shared/"):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "File storage namespace does not match its owner",
+            )
+
+
 class CloudFileService:
     def __init__(self, storage: DeliveryStorage = delivery_storage) -> None:
         self.storage = storage
@@ -57,7 +87,7 @@ class CloudFileService:
         user_id: int,
         prefix: str | None = None,
     ) -> list[CloudProjectFile]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
+        require_collaboration_container_access(db, cloud_project_id, user_id)
         query = db.query(CloudProjectFile).filter(
             CloudProjectFile.cloud_project_id == cloud_project_id
         )
@@ -72,7 +102,7 @@ class CloudFileService:
     def list_delivery_files(
         self, db: Session, cloud_project_id: int, user_id: int
     ) -> list[ProjectDeliveryFile]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
+        require_collaboration_container_access(db, cloud_project_id, user_id)
         asset = aliased(DeliveryAsset)
         delivery = aliased(Delivery)
         item = aliased(LoopItem)
@@ -135,7 +165,9 @@ class CloudFileService:
         path: str,
         description: str = "",
     ) -> CloudProjectFile:
-        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        require_collaboration_container_access(
+            db, cloud_project_id, user_id, BaseRole.Developer
+        )
         safe_path = normalize_cloud_path(path)
         folder = CloudProjectFile(
             cloud_project_id=cloud_project_id,
@@ -160,9 +192,10 @@ class CloudFileService:
         content_type: str,
         source: BinaryIO,
     ) -> CloudProjectFile:
-        access = require_cloud_project_role(
+        access = require_collaboration_container_access(
             db, cloud_project_id, user_id, BaseRole.Developer
         )
+        storage_prefix = require_storage_namespace(access.project)
         safe_path = normalize_cloud_path(path)
         existing = (
             db.query(CloudProjectFile)
@@ -188,7 +221,7 @@ class CloudFileService:
                         "Cloud workspace file is too large",
                     )
             staged.seek(0)
-            object_key = f"{access.project.storage_prefix}/shared/{safe_path}"
+            object_key = f"{storage_prefix}/shared/{safe_path}"
             try:
                 self.storage.put_stream(object_key, staged, length, content_type)
             except DeliveryStorageUnavailableError as exc:
@@ -223,7 +256,10 @@ class CloudFileService:
         file = db.get(CloudProjectFile, file_id)
         if file is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud file not found")
-        require_cloud_project_role(db, file.cloud_project_id, user_id)
+        access = require_collaboration_container_access(
+            db, file.cloud_project_id, user_id
+        )
+        validate_file_namespace(access.project, file)
         return file
 
     def access_url(self, db: Session, file_id: int, user_id: int) -> str:
@@ -253,7 +289,7 @@ class CloudFileService:
         version: int,
     ) -> CloudProjectFile:
         file = self.get(db, file_id, user_id)
-        access = require_cloud_project_role(
+        access = require_collaboration_container_access(
             db, file.cloud_project_id, user_id, BaseRole.Developer
         )
         if file.version != version:
@@ -272,6 +308,13 @@ class CloudFileService:
             else []
         )
         moving = [file, *descendants]
+        for entry in moving:
+            validate_file_namespace(access.project, entry)
+        storage_prefix = (
+            require_storage_namespace(access.project)
+            if any(entry.object_key for entry in moving)
+            else None
+        )
         target_paths = {
             entry.id: target_path + entry.path[len(file.path) :] for entry in moving
         }
@@ -293,9 +336,7 @@ class CloudFileService:
             for entry in moving:
                 if not entry.object_key:
                     continue
-                target_key = (
-                    f"{access.project.storage_prefix}/shared/{target_paths[entry.id]}"
-                )
+                target_key = f"{storage_prefix}/shared/{target_paths[entry.id]}"
                 self.storage.copy_object(entry.object_key, target_key)
                 copied.append((entry.object_key, target_key))
                 entry.object_key = target_key
@@ -327,7 +368,7 @@ class CloudFileService:
         self, db: Session, file_id: int, user_id: int, recursive: bool = False
     ) -> None:
         file = self.get(db, file_id, user_id)
-        require_cloud_project_role(
+        access = require_collaboration_container_access(
             db, file.cloud_project_id, user_id, BaseRole.Developer
         )
         if file.kind == "folder":
@@ -343,6 +384,8 @@ class CloudFileService:
                 raise HTTPException(status.HTTP_409_CONFLICT, "Folder is not empty")
         else:
             children = []
+        for entry in [file, *children]:
+            validate_file_namespace(access.project, entry)
         object_keys = [
             entry.object_key for entry in [file, *children] if entry.object_key
         ]

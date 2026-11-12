@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, ProjectChatAgent
+from app.models.delivery import CloudProject, CollaborationChatGroup, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -161,6 +161,10 @@ class WorkspaceCollaborationGroupService:
     def list_project_collaboration_groups(
         self, db: Session, project_id: int, user_id: int
     ) -> list[dict[str, object]]:
+        if db.get(CollaborationChatGroup, str(project_id)) is not None:
+            from app.services.chat_group_crews import ChatGroupCrewService
+
+            return ChatGroupCrewService(self).list(db, project_id, user_id)
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id)
@@ -198,6 +202,10 @@ class WorkspaceCollaborationGroupService:
         user_id: int,
         values: CollaborationGroupCreate,
     ) -> dict[str, object]:
+        if db.get(CollaborationChatGroup, str(project_id)) is not None:
+            from app.services.chat_group_crews import ChatGroupCrewService
+
+            return ChatGroupCrewService(self).create(db, project_id, user_id, values)
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
@@ -249,6 +257,10 @@ class WorkspaceCollaborationGroupService:
         group_id: int,
         user_id: int,
     ) -> dict[str, object]:
+        if db.get(CollaborationChatGroup, str(project_id)) is not None:
+            from app.services.chat_group_crews import ChatGroupCrewService
+
+            return ChatGroupCrewService(self).add(db, project_id, group_id, user_id)
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
@@ -282,6 +294,12 @@ class WorkspaceCollaborationGroupService:
         user_id: int,
         values: CollaborationGroupUpdate,
     ) -> dict[str, object]:
+        if db.get(CollaborationChatGroup, str(project_id)) is not None:
+            from app.services.chat_group_crews import ChatGroupCrewService
+
+            return ChatGroupCrewService(self).update(
+                db, project_id, group_id, user_id, values
+            )
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
@@ -306,6 +324,11 @@ class WorkspaceCollaborationGroupService:
         group_id: int,
         user_id: int,
     ) -> None:
+        if db.get(CollaborationChatGroup, str(project_id)) is not None:
+            from app.services.chat_group_crews import ChatGroupCrewService
+
+            ChatGroupCrewService(self).remove(db, project_id, group_id, user_id)
+            return
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
@@ -457,11 +480,12 @@ class WorkspaceCollaborationGroupService:
         self,
         db: Session,
         *,
-        workspace_id: int,
+        workspace_id: int | None,
         owner_type: str,
         owner_id: int,
         group: Kind,
         values: CollaborationGroupUpdate,
+        actor_user_id: int | None = None,
     ) -> dict[str, object]:
         current = _group_values(
             workspace_id,
@@ -508,6 +532,7 @@ class WorkspaceCollaborationGroupService:
             leader=leader,
             members=members,
             stages=stages,
+            actor_user_id=actor_user_id,
         )
         group.name = name
         group.json = _group_payload(
@@ -552,12 +577,13 @@ class WorkspaceCollaborationGroupService:
         self,
         db: Session,
         *,
-        workspace_id: int,
+        workspace_id: int | None,
         owner_type: str,
         owner_id: int,
         leader: CollaborationGroupMember,
         members: list[CollaborationGroupMember],
         stages: list[CollaborationGroupStage],
+        actor_user_id: int | None = None,
     ) -> None:
         identities = {(member.kind, member.id) for member in members}
         if len(identities) != len(members):
@@ -596,6 +622,7 @@ class WorkspaceCollaborationGroupService:
                     owner_type=owner_type,
                     owner_id=owner_id,
                     agent_id=member_id,
+                    actor_user_id=actor_user_id,
                 )
                 if member_kind == "agent"
                 else self._human_is_available(
@@ -610,18 +637,24 @@ class WorkspaceCollaborationGroupService:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     f"{member_kind.capitalize()} is not available in this "
-                    f"{owner_type.capitalize()}",
+                    f"{'group' if owner_type == 'chat_group' else owner_type.capitalize()}",
                 )
 
     @staticmethod
     def _human_is_available(
         db: Session,
         *,
-        workspace_id: int,
+        workspace_id: int | None,
         owner_type: str,
         owner_id: int,
         user_id: int,
     ) -> bool:
+        if owner_type == "chat_group":
+            from app.schemas.base_role import has_permission
+            from app.services.chat_group_access import chat_group_role
+
+            role = chat_group_role(db, str(owner_id), user_id)
+            return role is not None and has_permission(role, BaseRole.Developer)
         if owner_type == "project":
             from app.services.cloud_project_visibility import project_participant_ids
 
@@ -641,11 +674,26 @@ class WorkspaceCollaborationGroupService:
     def _agent_is_available(
         db: Session,
         *,
-        workspace_id: int,
+        workspace_id: int | None,
         owner_type: str,
         owner_id: int,
         agent_id: str,
+        actor_user_id: int | None = None,
     ) -> bool:
+        if owner_type == "chat_group":
+            from app.services.collaboration_permissions import (
+                collaboration_permission_service,
+            )
+
+            if actor_user_id is None:
+                return False
+            try:
+                collaboration_permission_service.require_project_agent(
+                    db, owner_id, agent_id, user_id=actor_user_id
+                )
+                return True
+            except HTTPException:
+                return False
         if agent_id.isdigit():
             workspace_grant = (
                 db.query(ResourceMember.id)
@@ -715,7 +763,7 @@ def _group_owner(group: Kind, *, project_id: int) -> tuple[str, int]:
 
 
 def _group_values(
-    workspace_id: int,
+    workspace_id: int | None,
     owner_type: str,
     owner_id: int,
     group: Kind,

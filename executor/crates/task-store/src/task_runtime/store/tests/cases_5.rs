@@ -493,6 +493,7 @@ fn creates_nested_tasks_and_rejects_cycles() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Parent".to_owned(),
                 description: String::new(),
@@ -515,6 +516,7 @@ fn creates_nested_tasks_and_rejects_cycles() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Child".to_owned(),
                 description: String::new(),
@@ -555,6 +557,7 @@ fn reorders_one_local_board_lane() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "First".to_owned(),
                 description: String::new(),
@@ -573,6 +576,7 @@ fn reorders_one_local_board_lane() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Second".to_owned(),
                 description: String::new(),
@@ -666,6 +670,7 @@ fn binds_and_unbinds_a_runtime_task() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Bound task".to_owned(),
                 description: String::new(),
@@ -749,6 +754,7 @@ fn projects_runtime_status_to_bound_issue_without_renderer_writeback() {
         .create_task(
             DEFAULT_WORK_ITEM_PROJECT_ID,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Runtime-owned status".to_owned(),
                 description: String::new(),

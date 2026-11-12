@@ -141,6 +141,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  classificationProjectId?: string;
   milestoneId?: string | null;
   title: string;
   description?: string;
@@ -154,13 +155,14 @@ export interface WorkspaceIssueCreateInput {
   localProjectName?: string | null;
   assigneeUserId?: number | null;
   assigneeGroupId?: string | null;
+  assigneeGroupSourceId?: string | null;
   assigneeAgentId?: string | null;
   notifyAssignee?: boolean;
 }
 
 export interface WorkspaceIssueUpdateInput {
   milestoneId?: string | null;
-  position?: { beforeItemId: string | null };
+  position?: { beforeItemId: string | null; classificationProjectId?: string };
   version: number;
   securityLevel?: "open" | "related";
   title?: string;
@@ -170,6 +172,7 @@ export interface WorkspaceIssueUpdateInput {
   parentId?: string | null;
   assigneeUserId?: number | null;
   assigneeGroupId?: string | null;
+  assigneeGroupSourceId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
   startAt?: string | null;
@@ -178,10 +181,11 @@ export interface WorkspaceIssueUpdateInput {
 }
 
 export interface WorkspaceIssueAssignmentInput {
-  position?: { beforeItemId: string | null };
+  position?: { beforeItemId: string | null; classificationProjectId?: string };
   version: number;
   assigneeType: "user" | "agent" | "team" | "group";
   assigneeId: string;
+  assigneeGroupSourceId?: string | null;
   notifyAssignee?: boolean;
 }
 
@@ -1076,6 +1080,7 @@ export interface WeworkWorkspaceRuntimePort {
     task: WorkspaceRuntimeTaskAddress,
     title: string,
     description: string,
+    classificationProjectId?: string,
   ): Promise<{ issue: CollaborationIssue }>;
   reportExecutionLifecycle(
     projectId: string,

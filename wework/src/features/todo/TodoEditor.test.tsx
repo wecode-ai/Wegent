@@ -440,7 +440,7 @@ describe('TodoEditor external item sync', () => {
       '让 AI 帮我处理'
     )
     expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
-      '基于当前 Issue 创建任务，并在当前电脑上运行'
+      '基于当前事项创建任务，并在当前电脑上运行'
     )
     await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()

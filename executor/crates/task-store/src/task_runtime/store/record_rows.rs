@@ -187,12 +187,11 @@ pub(super) fn move_runtime_comment_task_to_in_progress(
     origin_run_id: Option<&str>,
 ) -> Result<(), TaskRuntimeError> {
     let task = get_item_from(connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
-    let project = get_item_from(
+    let project = chat_groups::work_container_from(
         connection,
         task.cloud_project_id
             .as_deref()
             .ok_or(TaskRuntimeError::ProjectNotFound)?,
-        "project",
     )?
     .ok_or(TaskRuntimeError::ProjectNotFound)?;
     let next_status = task

@@ -33,6 +33,10 @@ from app.services.external_entity_resolver import (
     get_entity_resolver,
 )
 from app.services.group_member_helper import NAMESPACE_RESOURCE_TYPE
+from app.services.resource_authority_reads import (
+    authority_query,
+    current_authority_reads,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +57,19 @@ def _load_namespace_members(
     members: list[ResourceMember] = []
     while pending:
         visited.update(pending)
-        rows = (
-            db.query(ResourceMember)
-            .filter(
+        if current_authority_reads():
+            pending = {
+                row[0]
+                for row in authority_query(
+                    db.query(Namespace.id)
+                    .filter(Namespace.id.in_(pending), Namespace.is_active.is_(True))
+                    .order_by(Namespace.id)
+                ).all()
+            }
+            if not pending:
+                break
+        rows = authority_query(
+            db.query(ResourceMember).filter(
                 ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
                 ResourceMember.resource_id.in_(pending),
                 ResourceMember.status == MemberStatus.APPROVED.value,
@@ -64,8 +78,7 @@ def _load_namespace_members(
                     ResourceMember.entity_id == str(user_id),
                 ),
             )
-            .all()
-        )
+        ).all()
         members.extend(rows)
         pending = {
             namespace_id

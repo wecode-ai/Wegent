@@ -224,6 +224,7 @@ class LoopItemAssign(ProjectChatSchema):
     version: int = Field(ge=1)
     assignee_type: Literal["user", "agent", "team", "group"]
     assignee_id: str = Field(min_length=1, max_length=128)
+    assignee_group_source_id: str | None = Field(default=None, max_length=64)
     workflow_step: str | None = Field(default=None, max_length=128)
     trigger: Literal[
         "manual",
@@ -232,6 +233,12 @@ class LoopItemAssign(ProjectChatSchema):
         "automation",
         "mention",
     ] = "manual"
+
+    @model_validator(mode="after")
+    def validate_group_source(self):
+        if self.assignee_group_source_id is not None and self.assignee_type != "group":
+            raise ValueError("Collaboration group source requires a group assignee")
+        return self
 
 
 class LoopItemApproval(ProjectChatSchema):
@@ -432,10 +439,28 @@ class ProjectChatSend(ProjectChatSchema):
 
 
 class ProjectChatSubscribe(ProjectChatSchema):
+    history_window: bool = False
+    before_sequence: int = Field(default=0, ge=0)
+    focus_message_id: str | None = Field(default=None, min_length=1, max_length=64)
     project_id: str = Field(min_length=1, max_length=64)
     task_id: str | None = Field(default=None, max_length=64)
     after_sequence: int = Field(default=0, ge=0)
     limit: int = Field(default=200, ge=1, le=500)
+
+    @model_validator(mode="after")
+    def validate_history_cursor(self) -> "ProjectChatSubscribe":
+        if (
+            sum(
+                (
+                    bool(self.focus_message_id),
+                    self.before_sequence > 0,
+                    self.after_sequence > 0,
+                )
+            )
+            > 1
+        ):
+            raise ValueError("Choose a single history cursor")
+        return self
 
 
 class ProjectChatAgentStart(ProjectChatSchema):

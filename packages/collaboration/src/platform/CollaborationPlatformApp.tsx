@@ -12,7 +12,14 @@ import {
   validateTemplateAgentRouting,
 } from "../templates/agents";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Activity,
   AlertTriangle,
@@ -228,6 +235,7 @@ function CollaborationPlatformNavigation({
   onNewConversation,
   onArchiveProject,
   footer,
+  header,
 }: {
   domain: CollaborationDomain;
   host: CollaborationPlatformHostAdapter;
@@ -246,6 +254,7 @@ function CollaborationPlatformNavigation({
   onNewConversation(project: CollaborationProject): void;
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
+  header?: React.ReactNode;
 }) {
   const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
@@ -315,6 +324,7 @@ function CollaborationPlatformNavigation({
       className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}`}
       data-testid="collaboration-platform-sidebar"
     >
+      {header}
       {fullSidebar ? (
         <>
           <div className="collaboration-platform-brand">
@@ -1936,6 +1946,7 @@ function CollaborationPlatformAppContent({
   renderProject,
   renderShell,
   sidebarFooter,
+  sidebarHeader,
 }: {
   api: SharedWorkspaceApi;
   refreshKey?: string;
@@ -1954,6 +1965,7 @@ function CollaborationPlatformAppContent({
     sidebar: React.ReactNode;
   }): React.ReactNode;
   sidebarFooter?: React.ReactNode;
+  sidebarHeader?: React.ReactNode;
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
@@ -2484,7 +2496,10 @@ function CollaborationPlatformAppContent({
         (candidate) => candidate.id === resourceId,
       );
       if (group) {
-        if (group.owner_type === "project") {
+        if (
+          group.owner_type === "project" ||
+          group.owner_type === "chat_group"
+        ) {
           const project = state.navigationProjects.find(
             (candidate) => candidate.id === group.owner_id,
           );
@@ -2537,8 +2552,19 @@ function CollaborationPlatformAppContent({
       teamId: agent.team_id,
     });
   };
+  const workspaceContext = state.workspace ?? state.workspaceNavigationContext;
+  const selectedProject =
+    state.projects.find(
+      (project) => String(project.id) === host.location.projectId,
+    ) ?? null;
+  const hasCustomProject = Boolean(
+    host.location.projectId &&
+    workspaceContext &&
+    selectedProject &&
+    renderProject,
+  );
   let content: React.ReactNode;
-  if (state.loading && !ownsPageRequests) {
+  if (state.loading && !ownsPageRequests && !hasCustomProject) {
     content = (
       <ProjectLoadingSkeleton
         label={translate("common.loading", "正在加载…")}
@@ -2555,19 +2581,17 @@ function CollaborationPlatformAppContent({
         {state.error}
       </div>
     );
-  } else if (
-    host.location.projectId &&
-    (state.workspace || state.workspaceNavigationContext)
-  ) {
-    const workspaceContext =
-      state.workspace ?? state.workspaceNavigationContext;
-    const selectedProject =
-      state.projects.find(
-        (project) => String(project.id) === host.location.projectId,
-      ) ?? null;
+  } else if (host.location.projectId && workspaceContext) {
     content =
       selectedProject && renderProject && workspaceContext ? (
-        renderProject({ project: selectedProject, workspace: workspaceContext })
+        <Fragment
+          key={`${selectedProject.project_store}:${selectedProject.id}`}
+        >
+          {renderProject({
+            project: selectedProject,
+            workspace: workspaceContext,
+          })}
+        </Fragment>
       ) : (
         <CollaborationApp
           parentGroupingEnabled
@@ -2578,6 +2602,7 @@ function CollaborationPlatformAppContent({
           onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
+            openGroupThread: host.openGroupThread,
             capabilities: {
               automation: host.capabilities.automation,
               dingtalkAitable: host.capabilities.dingtalkAitable,
@@ -2731,7 +2756,10 @@ function CollaborationPlatformAppContent({
             await commands.reload();
           }}
           onDeleteTeam={async (group) => {
-            if (group.owner_type === "project") {
+            if (
+              group.owner_type === "project" ||
+              group.owner_type === "chat_group"
+            ) {
               if (!api.projects.removeCollaborationGroup) {
                 throw new Error(messages.deleteFailed);
               }
@@ -2740,7 +2768,7 @@ function CollaborationPlatformAppContent({
                 group.id,
               );
             } else {
-              if (!api.workspaces) {
+              if (!api.workspaces || !group.workspace_id) {
                 throw new Error(messages.deleteFailed);
               }
               await api.workspaces.removeCollaborationGroup(
@@ -2762,6 +2790,8 @@ function CollaborationPlatformAppContent({
           messages={messages}
           onOpenItem={openMyWorkItem}
         />
+      ) : host.renderThreadHome ? (
+        host.renderThreadHome({ projects: domainProjects })
       ) : (
         <div
           className={
@@ -3151,6 +3181,7 @@ function CollaborationPlatformAppContent({
 
   const sidebar = (
     <CollaborationPlatformNavigation
+      header={sidebarHeader}
       domain={collaborationDomain}
       host={host}
       messages={messages}

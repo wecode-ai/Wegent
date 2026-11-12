@@ -7,6 +7,7 @@ import {
 import { rendererCrashStore } from './rendererCrashStore'
 import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
+import { desktopControlClickDiagnostics } from './desktop-control-click-diagnostics'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
@@ -3453,6 +3454,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'clickWhenEnabled': {
       startConversationDiagnosticCapture()
       return waitForDesktopControlElement({ ...command, enabled: true }, element => {
+        if (element.dataset.testid === 'cloud-todo-personal-task-start') {
+          logRuntimeTaskCreateStage(
+            'desktop-control-personal-task-click-target',
+            {
+              commandId: command.id,
+              ...desktopControlClickDiagnostics(
+                element,
+                findDesktopControlElementsWithin(command.selector, command.target),
+                desktopControlElementVisible,
+                command.visible === true
+              ),
+            },
+            'debug'
+          )
+        }
         element.click()
         return element.textContent?.trim() ?? ''
       })

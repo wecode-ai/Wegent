@@ -10,6 +10,10 @@ pub(super) fn create_local_execution(
     priority: &str,
     mut payload: Value,
 ) -> Result<i64, TaskRuntimeError> {
+    if get_item_from(connection, project_id, "chat_group")?.is_some() {
+        chat_groups::require_participation(connection, project_id, item_id, true)?;
+        task_execution_agent(connection, project_id, item_id, agent_id, &payload)?;
+    }
     let metadata = &agent.metadata;
     if metadata
         .get("routing_configuration_required")
@@ -161,6 +165,7 @@ pub(super) fn create_execution_comment(
         "workflow_task_title": workflow_task_title,
         "automation_run_id": payload.get("automation_run_id"),
     });
+    project_execution_crew(connection, &execution, &mut metadata)?;
     if let (Some(device), Some(task)) = (&execution.runtime_device_id, &execution.runtime_task_id) {
         metadata["runtime_address"] = json!({"deviceId": device, "taskId": task});
     }
@@ -179,6 +184,49 @@ pub(super) fn create_execution_comment(
         },
         status,
     )
+}
+
+/// Historical provenance is derived from persisted executions, never the current assignment.
+pub(super) fn project_execution_crew(
+    connection: &Connection,
+    execution: &LocalExecution,
+    metadata: &mut Value,
+) -> Result<(), TaskRuntimeError> {
+    let payload = execution.execution_payload.as_ref().unwrap_or(&Value::Null);
+    let group = &payload["collaboration_group"];
+    if group["id"].as_str().is_none()
+        || group["binding_owner_id"].as_str().is_none()
+        || group["leader"]["kind"].as_str().is_none()
+        || group["leader"]["id"].as_str().is_none()
+    {
+        return Ok(());
+    }
+    let manager = match payload["dispatch_role"].as_str() {
+        Some("manager") => execution.agent_id.clone(),
+        Some("member") => {
+            let Some(id) = payload["coordination_manager_execution_id"].as_i64() else {
+                return Ok(());
+            };
+            let manager = execution_row(connection, id)?;
+            let manager_payload = manager.execution_payload.as_ref().unwrap_or(&Value::Null);
+            if manager.cloud_project_id != execution.cloud_project_id
+                || manager.loop_item_id != execution.loop_item_id
+                || manager_payload["dispatch_role"] != "manager"
+                || manager_payload["collaboration_group"] != *group
+            {
+                return Ok(());
+            }
+            manager.agent_id
+        }
+        _ => return Ok(()),
+    };
+    metadata["collaboration_group"] = json!({
+        "id": group["id"],
+        "binding_owner_id": group["binding_owner_id"],
+        "leader": group["leader"],
+    });
+    metadata["manager_agent_id"] = json!(manager);
+    Ok(())
 }
 
 pub(super) fn ensure_execution_binding(
@@ -391,12 +439,11 @@ impl LocalTaskStore {
                 if !matches!(dispatch_role.as_deref(), Some("manager" | "member")) {
                     let task = get_item_from(&transaction, &task_id, "task")?
                         .ok_or(TaskRuntimeError::TaskNotFound)?;
-                    let project = get_item_from(
+                    let project = work_container_from(
                         &transaction,
                         task.cloud_project_id
                             .as_deref()
                             .ok_or(TaskRuntimeError::ProjectNotFound)?,
-                        "project",
                     )?
                     .ok_or(TaskRuntimeError::ProjectNotFound)?;
                     let next_status = task.status.as_deref().map(|status| {
@@ -464,6 +511,21 @@ pub(super) fn comment_execution_payload(
     .map_err(|_| TaskRuntimeError::Invalid("Invalid thread execution metadata".into()))?;
     let task_id = if let Some(execution_id) = previous["execution_id"].as_i64() {
         let execution = execution_row(connection, execution_id)?;
+        if execution.cloud_project_id != trigger.project_id
+            || execution.loop_item_id != trigger.task_id
+            || execution.agent_id != agent_id
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Execution conversation owner changed".into(),
+            ));
+        }
+        resource_bindings::require_current_comment_crew(
+            connection,
+            &trigger.project_id,
+            &trigger.task_id,
+            agent_id,
+            execution.execution_payload.as_ref().unwrap_or(&Value::Null),
+        )?;
         let task_id = execution
             .runtime_task_id
             .as_deref()

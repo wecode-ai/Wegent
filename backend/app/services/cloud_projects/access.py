@@ -12,6 +12,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
+from app.models.delivery import CollaborationChatGroup
 from app.schemas.base_role import BaseRole, has_permission
 from app.services.cloud_project_visibility import (
     ROLES_BY_PRIORITY,
@@ -21,7 +22,7 @@ from app.services.cloud_project_visibility import (
 
 @dataclass(frozen=True)
 class CloudProjectAccess:
-    project: CloudProject
+    project: CloudProject | CollaborationChatGroup
     role: BaseRole
     sources: tuple[dict, ...] = ()
 
@@ -62,6 +63,7 @@ ISSUE_ASSIGNMENT_FIELDS = frozenset(
         "assignee_agent_id",
         "assignee_team_id",
         "assignee_group_id",
+        "assignee_group_source_id",
     }
 )
 

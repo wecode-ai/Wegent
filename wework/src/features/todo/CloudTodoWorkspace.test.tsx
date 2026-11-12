@@ -3574,12 +3574,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
       'Implement cloud MCP'
     )
-    expect(screen.getByTestId('cloud-board-toolbar')).toHaveClass(
-      'overflow-x-auto',
-      'scrollbar-none'
-    )
+    expect(screen.getByTestId('cloud-board-toolbar')).toHaveClass('flex-wrap')
     expect(screen.getByTestId('cloud-board-group-filter-label').parentElement).toHaveClass(
-      'shrink-0',
+      'min-w-0',
+      'max-w-full',
       'whitespace-nowrap'
     )
     await userEvent.selectOptions(screen.getByTestId('cloud-board-group-filter'), 'in_progress')

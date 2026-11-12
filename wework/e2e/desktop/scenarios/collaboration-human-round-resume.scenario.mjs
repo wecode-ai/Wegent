@@ -1,5 +1,6 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -327,6 +328,10 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
 async function createAndAssignIssue(control, request, projectId, uiTimeoutMs) {
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
+  await prepareGroupThreadCreation(control, {
+    groupName: `${ISSUE} discussion`,
+    timeoutMs: uiTimeoutMs,
+  })
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: ISSUE })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: `${MARKER}。负责人必须并发分配一个 AI 任务和一个人工任务，等待个人 Task 正式交付后继续。`,

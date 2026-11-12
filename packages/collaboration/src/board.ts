@@ -10,6 +10,18 @@ import {
 
 import type { CollaborationIssue, CollaborationProject, CollaborationStatus } from './types'
 
+export const THREAD_STATUS_IDS = [
+  'inbox',
+  'pending',
+  'in_progress',
+  'in_review',
+  'completed',
+] as const
+
+export function isThreadStatus(value: string): boolean {
+  return THREAD_STATUS_IDS.some(status => status === value)
+}
+
 export interface CollaborationBoardGroup {
   id: string
   label: string
@@ -99,20 +111,52 @@ export function groupBoardIssues(
 export function projectStatuses(
   project: CollaborationProject,
   messages: (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en'],
-  translate: CollaborationTranslate
+  translate: CollaborationTranslate,
+  issues: readonly CollaborationIssue[] = []
 ): CollaborationStatus[] {
   const statuses = project.board_config?.statuses
-  return statuses && statuses.length > 0
-    ? localizeStandardStatuses(statuses, translate)
-    : [
-        { id: 'inbox', name: messages.statusInbox, color: 'gray' },
-        { id: 'pending', name: messages.statusPending, color: 'blue' },
-        {
-          id: 'in_progress',
-          name: messages.statusInProgress,
-          color: 'orange',
-        },
-        { id: 'in_review', name: messages.statusInReview, color: 'purple' },
-        { id: 'completed', name: messages.statusCompleted, color: 'green' },
-      ]
+  const configured =
+    statuses && statuses.length > 0
+      ? localizeStandardStatuses(statuses, translate)
+      : threadStatuses(messages)
+  if (project.resource_type !== 'chat_group' && !issues.some(issue => issue.group_id))
+    return configured
+  const unified = threadStatuses(messages)
+  const ids = new Set(unified.map(status => status.id))
+  if (project.resource_type !== 'chat_group') {
+    for (const status of configured) {
+      if (!ids.has(status.id)) {
+        unified.push(status)
+        ids.add(status.id)
+      }
+    }
+  }
+  for (const issue of issues) {
+    if (ids.has(issue.status)) continue
+    unified.push(
+      configured.find(status => status.id === issue.status) ?? {
+        id: issue.status,
+        name: issue.status,
+        color: 'gray',
+      }
+    )
+    ids.add(issue.status)
+  }
+  return unified
+}
+
+export function threadStatuses(
+  messages: (typeof collaborationMessages)['zh-CN'] | (typeof collaborationMessages)['en']
+): CollaborationStatus[] {
+  return [
+    { id: 'inbox', name: messages.statusInbox, color: 'gray' },
+    { id: 'pending', name: messages.statusPending, color: 'blue' },
+    {
+      id: 'in_progress',
+      name: messages.statusInProgress,
+      color: 'orange',
+    },
+    { id: 'in_review', name: messages.statusInReview, color: 'purple' },
+    { id: 'completed', name: messages.statusCompleted, color: 'green' },
+  ]
 }

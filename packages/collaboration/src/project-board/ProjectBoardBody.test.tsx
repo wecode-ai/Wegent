@@ -453,6 +453,37 @@ describe('ProjectBoardBody', () => {
       nodes.find(node => node.props['data-testid'] === 'cloud-board-scroll')?.props.className
     ).not.toContain('[&>div]')
   })
+
+  it('measures responsive controls independently of the separate layout action', () => {
+    const nodes = descendants(
+      ProjectBoardBody({ ...props(), toolbarAction: <button>By parent</button> })
+    )
+    const controls = nodes.find(node => node.props['data-testid'] === 'cloud-board-toolbar')!
+    const wrapper = nodes.find(
+      node =>
+        typeof node.props.className === 'string' &&
+        node.props.className.split(' ').includes('project-board-toolbar')
+    )!
+
+    expect(controls.props.className.split(' ')).toContain('project-board-controls')
+    expect(controls.props.className.split(' ')).toContain('min-w-0')
+    expect(controls.props.className.split(' ')).toContain('flex-wrap')
+    expect(wrapper.props.className.split(' ')).toContain('project-board-toolbar')
+    expect(wrapper.props.className.split(' ')).not.toContain('project-board-controls')
+    expect(
+      descendants(wrapper).some(node => node.props['data-testid'] === 'cloud-board-toolbar')
+    ).toBe(true)
+    expect(
+      descendants(controls).some(
+        node => node.props['data-testid'] === 'project-board-toolbar-action'
+      )
+    ).toBe(false)
+    expect(
+      descendants(wrapper).some(
+        node => node.props['data-testid'] === 'project-board-toolbar-action'
+      )
+    ).toBe(true)
+  })
 })
 
 it('keeps project filters beside group filtering and before search and view actions', () => {

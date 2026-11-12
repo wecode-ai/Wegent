@@ -92,7 +92,7 @@ export function ResourceCatalogPage({
   ownerOptions: CollaborationPlatformHostAdapter["workspaceOwnerOptions"];
   messages: PlatformMessages;
   onAddToWorkspace(
-    workspaceId: string,
+    workspaceId: string | null,
     kind: ResourceCatalogKind,
     resourceId: string,
   ): Promise<void>;
@@ -140,7 +140,7 @@ export function ResourceCatalogPage({
   }, [api, kind, workspaces]);
   const participantName = (
     member: CollaborationGroup["leader"],
-    workspaceId: string,
+    workspaceId: string | null,
   ) => {
     if (member.kind === "agent") {
       const agent = agents.find(
@@ -152,7 +152,7 @@ export function ResourceCatalogPage({
       return agent?.name ?? messages.agent;
     }
     return (
-      workspaceMembers[workspaceId]?.find(
+      (workspaceId ? workspaceMembers[workspaceId] : undefined)?.find(
         (person) => String(person.user_id) === member.id,
       )?.user_name ?? messages.human
     );
@@ -373,20 +373,24 @@ export function ResourceCatalogPage({
       name: group.name,
       source:
         owningWorkspace?.location ??
-        workspaceLocations.get(group.workspace_id) ??
+        (group.workspace_id
+          ? workspaceLocations.get(group.workspace_id)
+          : undefined) ??
         ("cloud" as const),
       scope: "shared" as const,
       owner: owningProject?.name ?? owningWorkspace?.name ?? group.owner_id,
       ownership:
-        group.owner_type === "project"
-          ? messages.projectOwnership.replace(
-              "{{name}}",
-              owningProject?.name ?? group.owner_id,
-            )
-          : messages.workspaceOwnership.replace(
-              "{{name}}",
-              owningWorkspace?.name ?? group.owner_id,
-            ),
+        group.owner_type === "chat_group"
+          ? messages.groupOwnership.replace("{{name}}", group.owner_id)
+          : group.owner_type === "project"
+            ? messages.projectOwnership.replace(
+                "{{name}}",
+                owningProject?.name ?? group.owner_id,
+              )
+            : messages.workspaceOwnership.replace(
+                "{{name}}",
+                owningWorkspace?.name ?? group.owner_id,
+              ),
       detail: `${participants.length} ${messages.memberCount}`,
       access: messages.currentWorkspace,
       leader: participantName(group.leader, group.workspace_id),

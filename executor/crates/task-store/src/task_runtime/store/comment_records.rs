@@ -27,6 +27,7 @@ impl LocalTaskStore {
                 "Stand-in Issue conversation owner does not match".into(),
             ));
         }
+        chat_groups::require_participation(&transaction, project, issue_id, false)?;
         let sender = format!(
             "stand-in:{user}:{}",
             origin["standInId"].as_str().unwrap_or_default()
@@ -79,7 +80,7 @@ impl LocalTaskStore {
                     c.sender_type, c.sender_id, c.sender_name, c.message_type, c.content,
                     c.metadata, c.trigger_message_id, c.reply_to_message_id,
                     c.thread_root_message_id, c.status, c.sequence_number, c.created_at, c.updated_at,
-                    e.status, e.observed_state, e.sync_state
+                    e.status, e.observed_state, e.sync_state, e.id
              FROM loop_item_comments c
              LEFT JOIN loop_item_executions e
                ON e.id = json_extract(c.metadata, '$.execution_id')
@@ -97,11 +98,24 @@ impl LocalTaskStore {
                 comment.metadata["run_status"] =
                     json!(local_execution_display_state(&status, &observed, &sync));
             }
-            Ok(comment)
+            Ok((comment, row.get::<_, Option<i64>>(21)?))
         })?;
         let mut comments = Vec::new();
         for comment in rows {
-            comments.push(comment?);
+            let (mut comment, execution_id) = comment?;
+            if let Some(metadata) = comment.metadata.as_object_mut() {
+                metadata.remove("collaboration_group");
+                metadata.remove("manager_agent_id");
+            }
+            if let Some(id) = execution_id {
+                let execution = execution_row(&connection, id)?;
+                local_execution_activity::project_execution_crew(
+                    &connection,
+                    &execution,
+                    &mut comment.metadata,
+                )?;
+            }
+            comments.push(comment);
         }
         Ok(comments)
     }
@@ -112,6 +126,33 @@ impl LocalTaskStore {
     ) -> Result<LocalComment, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if [
+            "execution_id",
+            "collaboration_group",
+            "manager_agent_id",
+            "dispatch_role",
+        ]
+        .iter()
+        .any(|key| create.metadata.get(key).is_some())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Execution provenance is server-owned".into(),
+            ));
+        }
+        if !create.task_id.is_empty() {
+            chat_groups::require_participation(
+                &transaction,
+                &create.project_id,
+                &create.task_id,
+                false,
+            )?;
+        } else {
+            let owner = chat_groups::work_container_from(&transaction, &create.project_id)?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            if owner.resource_type == "chat_group" && owner.status.as_deref() != Some("active") {
+                return Err(TaskRuntimeError::Invalid("Chat group is archived".into()));
+            }
+        }
         let comment = insert_comment(&transaction, create, "completed")?;
         transaction.commit()?;
         Ok(comment)
@@ -133,6 +174,17 @@ impl LocalTaskStore {
         } = *input;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        chat_groups::require_participation(&transaction, project_id, task_id, true)?;
+        let group_agent = if get_item_from(&transaction, project_id, "chat_group")?.is_some() {
+            Some(task_resource_agent(
+                &transaction,
+                project_id,
+                task_id,
+                agent_id,
+            )?)
+        } else {
+            None
+        };
         if let Some((message_id, status)) = transaction
             .query_row(
                 "SELECT message_id, status FROM loop_item_comments
@@ -152,16 +204,25 @@ impl LocalTaskStore {
             )
             .optional()?
         {
+            let comment = comment_row(&transaction, &message_id)?;
+            if group_agent.is_some() && comment.sender_id != agent_id {
+                return Err(TaskRuntimeError::Invalid(
+                    "Runtime comment belongs to another Agent binding".into(),
+                ));
+            }
             if matches!(status.as_str(), "pending" | "streaming") {
                 move_runtime_comment_task_to_in_progress(&transaction, task_id, None)?;
             }
-            let comment = comment_row(&transaction, &message_id)?;
             transaction.commit()?;
             return Ok(comment);
         }
-        let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-            TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-        })?;
+        let agent = if let Some(agent) = group_agent {
+            agent
+        } else {
+            get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+            })?
+        };
         let comment = insert_comment(
             &transaction,
             &LocalCommentCreate {

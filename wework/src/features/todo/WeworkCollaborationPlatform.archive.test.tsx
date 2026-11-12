@@ -43,6 +43,8 @@ async function renderProject(projectStore: 'local' | 'backend') {
   await act(async () => {
     render(
       createElement(WeworkSharedProject, {
+        onOpenGroupThread: vi.fn(),
+        draftAccountScope: 'fixture:user-7',
         api: {
           projects: { list: vi.fn().mockResolvedValue([project]) },
           issues: {},

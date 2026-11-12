@@ -4,6 +4,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
+  enterProjectCollaborationView,
   reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -198,6 +199,7 @@ export function createDesktopScenario({
       }
       await reloadMainWindow(control, 'Load the Native-seeded project and Agent configuration')
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, CONTENT)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`
@@ -387,6 +389,7 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      await enterProjectCollaborationView(control, CONTENT)
       await control.command(
         'clickWhenEnabled',
         `[data-testid="collaboration-workspace-project-${project.id}"]`

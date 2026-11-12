@@ -1,8 +1,8 @@
-import { Bot, Check, Info, Plus, Search, SearchX } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
-import type { CollaborationTranslate } from '../i18n'
-import { Button } from '../markdown/Button'
-import type { CollaborationOwnedAgent } from '../types'
+import { Bot, Check, Info, Plus, Search, SearchX } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import type { CollaborationTranslate } from "../i18n";
+import { Button } from "../markdown/Button";
+import type { CollaborationOwnedAgent } from "../types";
 
 export function ProjectAgentPicker({
   agents,
@@ -20,24 +20,24 @@ export function ProjectAgentPicker({
   onClose,
   onAdd,
 }: {
-  agents: CollaborationOwnedAgent[]
-  addedTeamIds: Set<number>
-  selectedId: string
-  loading: boolean
-  loadError: string | null
-  error: string | null
-  busy: boolean
-  scope: 'project' | 'workspace'
-  translate: CollaborationTranslate
-  onSelect(id: string): void
-  onRetry(): void
-  onCreate?: () => void
-  onClose(): void
-  onAdd(): void
+  agents: CollaborationOwnedAgent[];
+  addedTeamIds: Set<number>;
+  selectedId: string;
+  loading: boolean;
+  loadError: string | null;
+  error: string | null;
+  busy: boolean;
+  scope: "project" | "workspace" | "group";
+  translate: CollaborationTranslate;
+  onSelect(id: string): void;
+  onRetry(): void;
+  onCreate?: () => void;
+  onClose(): void;
+  onAdd(): void;
 }) {
-  const [query, setQuery] = useState('')
-  const searchRef = useRef<HTMLInputElement>(null)
-  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleAgents = useMemo(
     () =>
       agents.filter((agent) =>
@@ -46,15 +46,15 @@ export function ProjectAgentPicker({
           .includes(normalizedQuery),
       ),
     [agents, normalizedQuery],
-  )
+  );
   const selected = agents.find(
     (agent) => String(agent.team_id ?? agent.id) === selectedId,
-  )
+  );
   const alreadyAdded = (agent: CollaborationOwnedAgent) =>
-    agent.team_id != null && addedTeamIds.has(agent.team_id)
+    agent.team_id != null && addedTeamIds.has(agent.team_id);
   const canAdd = Boolean(
     selected && !alreadyAdded(selected) && !loading && !loadError && !busy,
-  )
+  );
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -65,8 +65,8 @@ export function ProjectAgentPicker({
             ref={searchRef}
             type="search"
             data-testid="project-agent-search"
-            aria-label={t('todo.agent_picker_search', '搜索智能体')}
-            placeholder={t('todo.agent_picker_search', '搜索智能体')}
+            aria-label={t("todo.agent_picker_search", "搜索智能体")}
+            placeholder={t("todo.agent_picker_search", "搜索智能体")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             disabled={busy}
@@ -84,15 +84,15 @@ export function ProjectAgentPicker({
             className="h-11 shrink-0 gap-1.5 rounded-lg text-text-secondary disabled:opacity-40 md:h-9"
           >
             <Plus aria-hidden="true" className="h-4 w-4" />
-            {t('todo.create_agent', '新建智能体')}
+            {t("todo.create_agent", "新建智能体")}
           </Button>
         ) : null}
       </div>
       <div className="flex shrink-0 items-center justify-between px-5 pb-2 text-xs text-text-muted">
         <span>
           {loading
-            ? t('todo.agent_picker_loading', '正在加载智能体…')
-            : t('todo.agent_picker_list', '选择一个智能体')}
+            ? t("todo.agent_picker_loading", "正在加载智能体…")
+            : t("todo.agent_picker_list", "选择一个智能体")}
         </span>
         {!loading && !loadError ? <span>{visibleAgents.length}</span> : null}
       </div>
@@ -104,7 +104,7 @@ export function ProjectAgentPicker({
         {loading ? (
           <div role="status" data-testid="project-agent-candidates-loading">
             <span className="sr-only">
-              {t('todo.agent_picker_loading', '正在加载智能体…')}
+              {t("todo.agent_picker_loading", "正在加载智能体…")}
             </span>
             {Array.from({ length: 4 }, (_, index) => (
               <div
@@ -128,7 +128,7 @@ export function ProjectAgentPicker({
           >
             <Bot aria-hidden="true" className="mb-1 h-6 w-6 text-text-muted" />
             <p className="text-sm font-medium text-text-primary">
-              {t('todo.agent_picker_load_failed', '无法加载智能体')}
+              {t("todo.agent_picker_load_failed", "无法加载智能体")}
             </p>
             <p className="max-w-full break-words text-xs text-text-muted">
               {loadError}
@@ -139,29 +139,29 @@ export function ProjectAgentPicker({
               size="sm"
               data-testid="project-agent-candidates-retry"
               onClick={() => {
-                searchRef.current?.focus()
-                onRetry()
+                searchRef.current?.focus();
+                onRetry();
               }}
               className="mt-2 min-h-11 rounded-lg md:min-h-8"
             >
-              {t('common.retry', '重试')}
+              {t("common.retry", "重试")}
             </Button>
           </div>
         ) : visibleAgents.length ? (
           <div
             role="radiogroup"
-            aria-label={t('todo.agent_picker_list', '选择一个智能体')}
+            aria-label={t("todo.agent_picker_list", "选择一个智能体")}
             data-testid="project-agent-wegent-team"
             className="space-y-1"
           >
             {visibleAgents.map((agent) => {
-              const id = String(agent.team_id ?? agent.id)
-              const added = alreadyAdded(agent)
-              const checked = id === selectedId
+              const id = String(agent.team_id ?? agent.id);
+              const added = alreadyAdded(agent);
+              const checked = id === selectedId;
               return (
                 <label
                   key={id}
-                  className={`flex min-h-16 items-center gap-3 rounded-lg px-3 py-2.5 ${added || busy ? 'cursor-default' : 'cursor-pointer hover:bg-muted/60'} ${checked ? 'bg-muted' : ''} keyboard:focus-within:ring-2 keyboard:focus-within:ring-inset keyboard:focus-within:ring-focus/20`}
+                  className={`flex min-h-16 items-center gap-3 rounded-lg px-3 py-2.5 ${added || busy ? "cursor-default" : "cursor-pointer hover:bg-muted/60"} ${checked ? "bg-muted" : ""} keyboard:focus-within:ring-2 keyboard:focus-within:ring-inset keyboard:focus-within:ring-focus/20`}
                 >
                   <span
                     aria-hidden="true"
@@ -182,19 +182,19 @@ export function ProjectAgentPicker({
                       title={agent.owner_name}
                       className="mt-0.5 block truncate text-xs text-text-muted"
                     >
-                      {agent.owner_type === 'workspace'
-                        ? t('todo.agent_picker_shared', '空间共享')
-                        : t('todo.agent_picker_personal', '我的智能体')}
-                      {agent.owner_name ? ` · ${agent.owner_name}` : ''}
+                      {agent.owner_type === "workspace"
+                        ? t("todo.agent_picker_shared", "空间共享")
+                        : t("todo.agent_picker_personal", "我的智能体")}
+                      {agent.owner_name ? ` · ${agent.owner_name}` : ""}
                     </span>
                   </span>
                   {added ? (
                     <span className="text-xs text-text-muted">
-                      {t('todo.agent_picker_added', '已添加')}
+                      {t("todo.agent_picker_added", "已添加")}
                     </span>
                   ) : (
                     <span
-                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? 'border-text-primary bg-text-primary text-background' : 'border-border'}`}
+                      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${checked ? "border-text-primary bg-text-primary text-background" : "border-border"}`}
                     >
                       {checked ? (
                         <Check aria-hidden="true" className="h-3 w-3" />
@@ -213,7 +213,7 @@ export function ProjectAgentPicker({
                     onChange={() => onSelect(id)}
                   />
                 </label>
-              )
+              );
             })}
           </div>
         ) : (
@@ -234,23 +234,23 @@ export function ProjectAgentPicker({
             )}
             <p className="text-sm font-medium text-text-primary">
               {normalizedQuery
-                ? t('todo.agent_picker_no_match', '没有匹配的智能体')
-                : t('todo.agent_picker_empty', '还没有可添加的智能体')}
+                ? t("todo.agent_picker_no_match", "没有匹配的智能体")
+                : t("todo.agent_picker_empty", "还没有可添加的智能体")}
             </p>
             <p className="text-xs text-text-muted">
               {normalizedQuery
                 ? t(
-                    'todo.agent_picker_try_search',
-                    '试试其他名称，或清除搜索。',
+                    "todo.agent_picker_try_search",
+                    "试试其他名称，或清除搜索。",
                   )
                 : onCreate
                   ? t(
-                      'todo.agent_picker_create_hint',
-                      '新建一个智能体，让它协助处理任务。',
+                      "todo.agent_picker_create_hint",
+                      "新建一个智能体，让它协助处理任务。",
                     )
                   : t(
-                      'todo.agent_picker_share_hint',
-                      '请让空间管理员共享智能体后再添加。',
+                      "todo.agent_picker_share_hint",
+                      "请让空间管理员共享智能体后再添加。",
                     )}
             </p>
             {normalizedQuery ? (
@@ -260,12 +260,12 @@ export function ProjectAgentPicker({
                 size="sm"
                 data-testid="project-agent-search-clear"
                 onClick={() => {
-                  setQuery('')
-                  searchRef.current?.focus()
+                  setQuery("");
+                  searchRef.current?.focus();
                 }}
                 className="mt-2 min-h-11 rounded-lg md:min-h-8"
               >
-                {t('todo.agent_picker_clear_search', '清除搜索')}
+                {t("todo.agent_picker_clear_search", "清除搜索")}
               </Button>
             ) : null}
           </div>
@@ -284,14 +284,14 @@ export function ProjectAgentPicker({
         <p className="mb-4 flex items-start gap-2 text-xs leading-5 text-text-muted">
           <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            {scope === 'workspace'
+            {scope === "workspace"
               ? t(
-                  'todo.agent_picker_workspace_share',
-                  '添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。',
+                  "todo.agent_picker_workspace_share",
+                  "添加后空间内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
                 )
               : t(
-                  'todo.add_project_agent_description',
-                  '添加后会共享到父空间并向项目成员开放使用。原定义和私人凭据仍按原权限管理。',
+                  "todo.add_project_agent_description",
+                  "添加后会共享到父空间并向项目成员开放使用。原定义和私人凭据仍按原权限管理。",
                 )}
           </span>
         </p>
@@ -303,10 +303,10 @@ export function ProjectAgentPicker({
             data-testid="project-agent-selection-summary"
           >
             {selected
-              ? t('todo.agent_picker_selected', '已选择：{{name}}', {
+              ? t("todo.agent_picker_selected", "已选择：{{name}}", {
                   name: selected.name,
                 })
-              : t('todo.agent_picker_select_hint', '选择智能体后即可添加')}
+              : t("todo.agent_picker_select_hint", "选择智能体后即可添加")}
           </p>
           <Button
             type="button"
@@ -317,7 +317,7 @@ export function ProjectAgentPicker({
             onClick={onClose}
             className="h-11 shrink-0 rounded-lg text-text-secondary disabled:opacity-40 md:h-9"
           >
-            {t('common.cancel', '取消')}
+            {t("common.cancel", "取消")}
           </Button>
           <Button
             type="button"
@@ -329,19 +329,19 @@ export function ProjectAgentPicker({
             className="h-11 shrink-0 rounded-lg px-4 hover:opacity-90 disabled:opacity-40 md:h-9"
             style={{
               color:
-                'var(--collaboration-primary-foreground, rgb(var(--color-bg-base)))',
+                "var(--collaboration-primary-foreground, rgb(var(--color-bg-base)))",
               backgroundColor:
-                'var(--collaboration-primary-background, rgb(var(--color-text-primary)))',
+                "var(--collaboration-primary-background, rgb(var(--color-text-primary)))",
             }}
           >
             {busy
-              ? t('todo.agent_picker_adding', '添加中…')
-              : scope === 'workspace'
-                ? t('todo.add_to_workspace', '加入空间')
-                : t('todo.add_to_project', '加入项目')}
+              ? t("todo.agent_picker_adding", "添加中…")
+              : scope === "workspace"
+                ? t("todo.add_to_workspace", "加入空间")
+                : t("todo.add_to_project", "加入项目")}
           </Button>
         </div>
       </footer>
     </div>
-  )
+  );
 }

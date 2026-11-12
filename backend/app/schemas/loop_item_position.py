@@ -11,3 +11,7 @@ class LoopItemPosition(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     before_item_id: str | None = Field(alias="beforeItemId", max_length=64)
+
+    classification_project_id: str | None = Field(
+        default=None, alias="classificationProjectId", max_length=64
+    )

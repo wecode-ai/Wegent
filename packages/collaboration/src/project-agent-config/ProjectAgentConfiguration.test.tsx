@@ -239,6 +239,48 @@ describe("ProjectAgentConfiguration", () => {
     });
   }
 
+  it("adds an authorized personal agent directly to a group without requiring workspace membership", async () => {
+    const { api, create, list } = createApi({
+      resourceAgents: [
+        {
+          ...workspaceAgent,
+          id: "personal",
+          team_id: 23,
+          owner_type: "user",
+          owner_id: "1",
+        },
+      ],
+    });
+    const target = {
+      ...project,
+      id: "group",
+      workspace_id: null,
+      workspace_access_role: undefined,
+      resource_type: "chat_group" as const,
+    };
+    await act(async () =>
+      root.render(
+        <ProjectAgentConfiguration
+          api={api}
+          project={target}
+          scope="group"
+          onError={vi.fn()}
+          translate={(_key, fallback) => fallback ?? _key}
+        />,
+      ),
+    );
+    await click("project-agent-add");
+    expect(api.resources!.list).toHaveBeenCalledTimes(1);
+    expect(api.workspaces!.listAgents).not.toHaveBeenCalled();
+    await click("project-agent-option-23");
+    await click("project-agent-wegent-create");
+    expect(create).toHaveBeenCalledWith(
+      "group",
+      expect.objectContaining({ wegentTeamId: 23 }),
+    );
+    expect(list).toHaveBeenCalledWith("group", { includeArchived: true });
+  });
+
   it("shows a retryable list failure without claiming the catalog is empty", async () => {
     const { api, list } = createApi();
     list.mockRejectedValueOnce(new Error("Agent service unavailable"));

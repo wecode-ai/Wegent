@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.provider_credentials import decrypt_provider_token
+from app.db.timezone import database_datetime_as_utc
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
 from app.models.kind import Kind
@@ -949,9 +950,25 @@ class ExternalLoopItemProvider:
             if not response["parent_id"]
             or str(response["parent_id"]) not in archived_ids
         ]
+        from app.services.loop_items.service import loop_item_service
+
+        threads, _ = loop_item_service.list_deleted(
+            db, project_id, user_id, offset=0, limit=offset + limit + 1
+        )
+        roots.extend(
+            loop_item_service.response_values(db, thread, user_id)
+            | {
+                "archived_at": database_datetime_as_utc(
+                    db, thread.deleted_at
+                ).isoformat()
+            }
+            for thread in threads
+        )
         roots.sort(
             key=lambda response: (
-                str(response["archived_at"]),
+                datetime.fromisoformat(
+                    str(response["archived_at"]).replace("Z", "+00:00")
+                ).timestamp(),
                 str(response["id"]),
             ),
             reverse=True,

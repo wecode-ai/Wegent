@@ -4,6 +4,7 @@ import { createLocalCollaborationProject, reloadMainWindow } from '../modules/wo
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { dragBoardCard, waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { verifyGanttHierarchyAndDetailArchive } from '../modules/collaboration-gantt-hierarchy.mjs'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -11,6 +12,7 @@ const test = id => scoped(`[data-testid="${id}"]`)
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let project
+  let group
   const fixture = {}
   return {
     async verify(control) {
@@ -20,14 +22,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         control.command('waitFor', test(id), { text, timeoutMs: uiTimeoutMs })
       const capture = name => captureScreenshot(control, `parent-board-${name}.png`, 'body')
       const get = async id => {
-        const record = await rpc('todos.get', { project_id: project.id, task_id: id })
+        const record = await rpc('todos.get', { project_id: group.id, task_id: id })
+        assert.equal(record.group_id, group.id)
+        assert.equal(record.cloud_project_id, group.id)
         return { ...record, tags: record.metadata.tags }
       }
-      const create = (title, parent_id, tags, status = 'pending') =>
-        rpc('todos.create', {
-          project_id: project.id,
-          todo: { title, parent_id, tags, status },
+      const create = async (title, parent_id, tags, status = 'pending') => {
+        const item = await rpc('todos.create', {
+          project_id: group.id,
+          todo: { title, parent_id, tags, status, classification_project_id: project.id },
         })
+        assert.equal(item.group_id, group.id)
+        assert.equal(item.cloud_project_id, group.id)
+        return item
+      }
+      const openMetadata = async title => {
+        await wait('thread-title', title)
+        await click('thread-settings')
+        await wait('thread-settings-panel', '')
+      }
+      const showHierarchy = () => control.command('scrollIntoView', test('issue-hierarchy-summary'))
+      const returnToBoard = async () => {
+        await click('thread-settings-close')
+        await click('thread-back-to-board')
+        await wait('cloud-project-header-title', project.name)
+      }
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1728, height: 1080 }),
@@ -40,6 +59,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await createLocalCollaborationProject(control, CONTENT, name)
       project = (await rpc('projects.list', {})).find(p => p.name === name)
       assert.ok(project)
+      group = (await rpc('chat_groups.create', { name: `${name}协作群` })).group
+      assert.ok(group.id, 'The hierarchy fixture must use a real owning group')
       fixture.parent = await create('账号登录体验升级', null, [])
       fixture.other = await create('协作通知体验优化', null, [])
       fixture.standalone = await create('独立事项：排查启动日志', null, ['develop'])
@@ -145,15 +166,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(`cloud-todo-card-${fixture.front.id}`, fixture.front.title)
 
       await click(`cloud-todo-card-${fixture.front.id}`)
+      await openMetadata(fixture.front.title)
+      await showHierarchy()
       await wait('issue-parent-link', fixture.parent.title)
       await capture('03-child-detail')
       await click('issue-parent-link')
+      await openMetadata(fixture.parent.title)
+      await showHierarchy()
       await wait('issue-children-progress', '1/5 已完成')
       await wait(`issue-hierarchy-child-${fixture.front.id}`, fixture.front.title)
       await capture('04-parent-detail')
       await click(`issue-hierarchy-child-${fixture.front.id}`)
+      await openMetadata(fixture.front.title)
+      await showHierarchy()
       await wait('issue-parent-link', fixture.parent.title)
-      await click('cloud-todo-detail-close')
+      await returnToBoard()
 
       const cell = (parent, column) => test(`cloud-board-parent-cell-${parent}-${column}`)
       await dragBoardCard(
@@ -202,7 +229,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture('06-cross-parent-drop-rejected')
 
       await click(`cloud-todo-card-${fixture.front.id}`)
-      await control.command('select', test('cloud-todo-detail-status'), { value: 'completed' })
+      await openMetadata(fixture.front.title)
+      await control.command('select', test('thread-settings-status'), { value: 'completed' })
       await capture('06b-completion-selected')
       await waitForBoardValue(
         async () => (await get(fixture.front.id)).status,
@@ -211,10 +239,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         uiTimeoutMs
       )
       assert.equal((await get(fixture.back.id)).status, 'in_progress')
+      await control.command('waitFor', `${test('thread-settings-status')}:not([disabled])`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await showHierarchy()
       await click('issue-parent-link')
+      await openMetadata(fixture.parent.title)
+      await showHierarchy()
       await wait('issue-children-progress', '2/5 已完成')
       await capture('07-completion-rollup')
-      await click('cloud-todo-detail-close')
+      await returnToBoard()
 
       await click(`cloud-board-parent-enter-${fixture.parent.id}`)
       await wait(`cloud-board-parent-open-${fixture.front.id}`, fixture.front.title)
@@ -222,18 +256,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture('08-nested-hierarchy')
       await click(`cloud-todo-board-breadcrumb-${fixture.parent.id}`)
       await click(`cloud-board-parent-open-${fixture.front.id}`)
+      await openMetadata(fixture.front.title)
+      await control.command('scrollIntoView', test('thread-project-select'))
+      await control.command('waitFor', `${test('thread-project-select')}:not([disabled])`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(await control.command('getValue', test('thread-project-select')), project.id)
+      await showHierarchy()
       await click('issue-hierarchy-add-child')
+      await prepareGroupThreadCreation(control, { groupId: group.id, timeoutMs: uiTimeoutMs })
       await wait('cloud-todo-create-panel', '')
       await control.command('fill', test('cloud-todo-title'), { value: '新增子事项：会话过期反馈' })
       await click('cloud-todo-create-confirm')
-      await wait('collaboration-issue-detail', '新增子事项：会话过期反馈')
+      await openMetadata('新增子事项：会话过期反馈')
+      await showHierarchy()
       await wait('issue-parent-link', fixture.front.title)
       const storedChildren = await rpc('todos.list', { project_id: project.id })
       const created = storedChildren.find(issue => issue.title === '新增子事项：会话过期反馈')
       assert.ok(created, 'The UI-created child must exist in real local persistence')
       assert.equal(created.parent_id, fixture.front.id)
+      assert.equal(created.group_id, group.id)
+      assert.equal(created.cloud_project_id, group.id)
       await capture('09-created-child-linked')
-      await click('cloud-todo-detail-close')
+      await returnToBoard()
       for (let index = 1; index <= 8; index += 1) {
         await create(`会话恢复边界用例 ${index}`, fixture.front.id, ['test'])
       }
@@ -248,6 +293,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await capture('10-reload-persisted')
       await click(`cloud-todo-card-${fixture.front.id}`)
+      await openMetadata(fixture.front.title)
+      await showHierarchy()
       await wait('issue-children-progress', '0/10 已完成')
       const [childrenList] = JSON.parse(
         await control.command('getElementMetrics', test('issue-hierarchy-children-list'))
@@ -280,7 +327,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'The initially offscreen sub-issue must enter the list viewport'
       )
       await capture('10c-long-children-scrolled')
-      await click('cloud-todo-detail-close')
+      await returnToBoard()
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1024, height: 800 }),
       })
@@ -306,12 +353,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       await capture('13-return-to-ordinary-board')
-      await verifyGanttHierarchyAndDetailArchive(control, project, uiTimeoutMs)
+      await verifyGanttHierarchyAndDetailArchive(control, project, group, uiTimeoutMs)
       await capture('14-gantt-hierarchy-restored')
     },
     diagnostics() {
       return {
         projectId: project?.id,
+        groupId: group?.id,
         issueIds: Object.fromEntries(
           Object.entries(fixture).map(([key, value]) => [key, value.id])
         ),

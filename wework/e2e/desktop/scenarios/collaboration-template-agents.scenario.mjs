@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
@@ -364,6 +365,10 @@ export function createDesktopScenario({
       await captureScreenshot(control, 'template-agents-06-reapplied-with-stage-board.png', CONTENT)
       executionActive = true
       await control.command('clickWhenEnabled', selector('collaboration-issue-create'))
+      await prepareGroupThreadCreation(control, {
+        groupName: `${executionMarker} discussion`,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('fill', selector('cloud-todo-title'), { value: executionMarker })
       await control.command('fill', selector('cloud-todo-detail-description'), {
         value: `${executionMarker}。请确认已收到此需求并完成处理。`,

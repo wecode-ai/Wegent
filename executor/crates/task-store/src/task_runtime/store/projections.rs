@@ -173,6 +173,7 @@ pub(super) fn map_loop_item_fields(row: &Row<'_>) -> rusqlite::Result<LoopItem> 
         resource_type: row.get(1)?,
         project_space: row.get(2)?,
         cloud_project_id: row.get(3)?,
+        thread_context: None,
         parent_id: row.get(4)?,
         public_id: row.get(5)?,
         project_key: row.get(6)?,
