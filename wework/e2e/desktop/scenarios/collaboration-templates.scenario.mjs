@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow, selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationSpaces,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
@@ -317,6 +321,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, '00-account-available')
       await click(control, `template-details-${accountTemplate.id}`)
       // Singleton workspace routing requires the independently loaded local catalog.
+      await expandCollaborationSpaces(control, CONTENT)
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')

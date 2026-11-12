@@ -114,6 +114,28 @@ export async function selectCollaborationDomain(control, contentSelector, domain
     0,
     'The unified collaboration board still exposed a cloud selector'
   )
+  await expandCollaborationSpaces(control, contentSelector)
+}
+
+/** Open optional space management before interacting with workspace controls. */
+export async function expandCollaborationSpaces(
+  control,
+  contentSelector = '[data-workspace-tab-content][aria-hidden="false"]',
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const toggle = inCollaborationSidebar(
+    '[data-testid="collaboration-workspaces-section-toggle"]',
+    contentSelector
+  )
+  await control.command('waitFor', toggle, { visible: true, timeoutMs })
+  if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'true') {
+    return
+  }
+  await control.command('click', toggle)
+  await control.command('waitFor', `${toggle}[aria-expanded="true"]`, {
+    visible: true,
+    timeoutMs,
+  })
 }
 
 export async function expandCollaborationWorkspace(
@@ -121,6 +143,7 @@ export async function expandCollaborationWorkspace(
   toggleSelector,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
+  await expandCollaborationSpaces(control, undefined, timeoutMs)
   await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
   const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
   const expanded = await control.command('getAttribute', toggleSelector, {
@@ -501,6 +524,7 @@ async function waitForNativeCollaborationPlatform(
 
 export async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
+  await expandCollaborationSpaces(control, contentSelector)
   const localWorkspaceTree = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     contentSelector
