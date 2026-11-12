@@ -7,6 +7,7 @@ import {
   openDirectProjectCreation,
   openProjectAgentCreator,
   expandCollaborationWorkspace,
+  expandCollaborationSpaces,
   selectCollaborationIssueAgent,
   selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
@@ -151,7 +152,11 @@ test('leaves an already expanded workspace untouched', async () => {
   const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
   await expandCollaborationWorkspace(control, toggle)
   assert.equal(calls.filter(call => call.action === 'click').length, 0)
+  const section =
+    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspaces-section-toggle"]'
   assert.deepEqual(calls, [
+    { action: 'waitFor', selector: section, options: { visible: true, timeoutMs: 10000 } },
+    { action: 'getAttribute', selector: section, options: { value: 'aria-expanded' } },
     { action: 'waitFor', selector: toggle, options: { visible: true, timeoutMs: 10000 } },
     {
       action: 'getAttribute',
@@ -166,7 +171,8 @@ test('expands a collapsed workspace and verifies the result', async () => {
   const control = {
     async command(action, selector, options) {
       calls.push({ action, selector, options })
-      if (action === 'getAttribute') return 'false'
+      if (action === 'getAttribute')
+        return selector.includes('workspaces-section-toggle') ? 'true' : 'false'
     },
   }
   const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
@@ -185,7 +191,8 @@ test('fails when one click does not expand the selected workspace', async () => 
   const control = {
     async command(action, selector, options) {
       calls.push({ action, selector, options })
-      if (action === 'getAttribute') return 'false'
+      if (action === 'getAttribute')
+        return selector.includes('workspaces-section-toggle') ? 'true' : 'false'
       if (action === 'waitFor' && selector.endsWith('[aria-expanded="true"]')) throw failure
     },
   }
@@ -197,9 +204,10 @@ test('fails when one click does not expand the selected workspace', async () => 
 test('rejects a workspace toggle without a declared expanded state', async () => {
   const calls = []
   const control = {
-    async command(action) {
+    async command(action, selector) {
       calls.push(action)
-      if (action === 'getAttribute') return ''
+      if (action === 'getAttribute')
+        return selector.includes('workspaces-section-toggle') ? 'true' : ''
     },
   }
   await assert.rejects(
@@ -313,4 +321,39 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
   assert.equal(assigneeClickAction, 'clickWhenEnabled')
   assert.ok(selected)
   assert.ok(saved)
+})
+
+test('opens space management before expanding its workspace', async () => {
+  const clicks = []
+  const waits = []
+  const toggle = '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+  const section =
+    '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspaces-section-toggle"]'
+  const control = {
+    async command(action, selector) {
+      if (action === 'getAttribute') return 'false'
+      if (action === 'click') clicks.push(selector)
+      if (action === 'waitFor') waits.push(selector)
+    },
+  }
+  await expandCollaborationWorkspace(control, toggle)
+  assert.deepEqual(clicks, [section, toggle])
+  assert.deepEqual(waits, [
+    section,
+    section + '[aria-expanded="true"]',
+    toggle,
+    toggle + '[aria-expanded="true"]',
+  ])
+})
+
+test('does not click space management without a declared expanded state', async () => {
+  const clicks = []
+  const control = {
+    async command(action, selector) {
+      if (action === 'getAttribute') return ''
+      if (action === 'click') clicks.push(selector)
+    },
+  }
+  await assert.rejects(expandCollaborationSpaces(control), /must expose its expanded state/)
+  assert.deepEqual(clicks, [])
 })

@@ -127,15 +127,7 @@ export async function expandCollaborationSpaces(
     '[data-testid="collaboration-workspaces-section-toggle"]',
     contentSelector
   )
-  await control.command('waitFor', toggle, { visible: true, timeoutMs })
-  if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'true') {
-    return
-  }
-  await control.command('click', toggle)
-  await control.command('waitFor', `${toggle}[aria-expanded="true"]`, {
-    visible: true,
-    timeoutMs,
-  })
+  await expandCollaborationToggle(control, toggle, timeoutMs)
 }
 
 export async function expandCollaborationWorkspace(
@@ -144,6 +136,10 @@ export async function expandCollaborationWorkspace(
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
   await expandCollaborationSpaces(control, undefined, timeoutMs)
+  await expandCollaborationToggle(control, toggleSelector, timeoutMs)
+}
+
+async function expandCollaborationToggle(control, toggleSelector, timeoutMs) {
   await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
   const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
   const expanded = await control.command('getAttribute', toggleSelector, {
