@@ -13,6 +13,7 @@ const CHAT = `${CONTENT} [data-testid="project-space-chat-panel"]`
 const CHAT_COMPOSER = `${CHAT} [data-testid="chat-message-input"]`
 const CREATE_ISSUE = `${CONTENT} [data-testid="collaboration-issue-create"]`
 const CREATE_DIALOG = `${CONTENT} [data-testid="collaboration-issue-create-dialog"]`
+const CREATE_PANEL = `${CREATE_DIALOG} [data-testid="cloud-todo-create-panel"]`
 const CREATE_TITLE = `${CREATE_DIALOG} [data-testid="cloud-todo-title"]`
 const CREATE_DESCRIPTION = `${CREATE_DIALOG} [data-testid="cloud-todo-detail-description"]`
 const PROJECT_NAME = `Clipboard history images ${process.pid}`
@@ -112,7 +113,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       await control.command('waitFor', CHAT, { visible: false })
 
       await control.command('clickWhenEnabled', CREATE_ISSUE)
-      await control.command('waitFor', CREATE_DIALOG, { visible: true })
+      await control.command('waitFor', CREATE_PANEL, { visible: true })
       await control.command('fill', CREATE_TITLE, { value: ISSUE_TITLE })
 
       replaceClipboardWithText('Clipboard changed before the Issue screenshot paste')
