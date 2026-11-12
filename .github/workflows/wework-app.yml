@@ -634,7 +634,9 @@ jobs:
     needs: prepare-upgrade-inputs
     if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # Native Windows arm64 package startup and extraction are materially slower
+    # than x64; keep a bounded but larger deadline for that shard only.
+    timeout-minutes: ${{ matrix.platform == 'windows' && matrix.arch == 'arm64' && 30 || 15 }}
     defaults:
       run:
         shell: bash
