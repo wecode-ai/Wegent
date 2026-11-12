@@ -107,7 +107,10 @@ export async function setNativeCatalogOverride(control, slug, fields, timeoutMs)
   if (!unchanged) {
     await rpc('runtime.codex.catalog.overrides.write', { slug, entry })
   }
-  const restarted = await restartCodexWhenIdle(control, timeoutMs)
+  const restarted = await restartCodexWhenIdle(
+    () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
+    timeoutMs
+  )
   assert.equal(restarted.restarted, true, JSON.stringify(restarted))
   loaded.set(slug, structuredClone(entry))
 }

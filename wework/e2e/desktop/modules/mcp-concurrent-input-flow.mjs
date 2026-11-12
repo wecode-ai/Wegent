@@ -275,6 +275,11 @@ async function verifyConcurrentCases(control) {
 }
 
 export async function verifyConcurrentMcpUserInput(control) {
+  const restartWhenIdle = () =>
+    restartCodexWhenIdle(
+      async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+      DEFAULT_STEP_TIMEOUT_MS
+    )
   const { models } = await requestExecutor(
     control,
     'runtime.codex.catalog.overrides.read',
@@ -295,7 +300,7 @@ export async function verifyConcurrentMcpUserInput(control) {
     DEFAULT_STEP_TIMEOUT_MS
   )
   try {
-    await restartCodexWhenIdle(control, DEFAULT_STEP_TIMEOUT_MS)
+    await restartWhenIdle()
     await verifyConcurrentCases(control)
   } finally {
     await requestExecutor(
@@ -307,6 +312,6 @@ export async function verifyConcurrentMcpUserInput(control) {
       },
       DEFAULT_STEP_TIMEOUT_MS
     )
-    await restartCodexWhenIdle(control, DEFAULT_STEP_TIMEOUT_MS)
+    await restartWhenIdle()
   }
 }
