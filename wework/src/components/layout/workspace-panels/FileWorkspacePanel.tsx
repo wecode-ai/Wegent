@@ -39,6 +39,7 @@ import { useWorkspaceFileReveal } from './useWorkspaceFileReveal'
 import { useWorkspaceFileNavigation } from './useWorkspaceFileNavigation'
 import { useWorkspaceTextDocument } from './useWorkspaceTextDocument'
 import {
+  isHtmlFile,
   isLikelyTextContent,
   isPreviewableTextFile,
   mimeTypeForFileName,
@@ -345,7 +346,9 @@ export function FileWorkspacePanel({
           pendingNavigationRef.current = null
           setBinaryPreview(null)
           acceptRead(file, requestId)
-          setPreviewMode(options?.lineStart === undefined ? 'preview' : 'source')
+          setPreviewMode(
+            isHtmlFile(file.name) && options?.lineStart !== undefined ? 'source' : 'preview'
+          )
           setEditing(
             Boolean(file.editable && writeWorkspaceTextFile && !isPreviewableTextFile(file.name))
           )
