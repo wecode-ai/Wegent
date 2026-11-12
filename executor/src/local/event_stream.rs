@@ -303,7 +303,8 @@ impl ExecutorEventHub {
             .get(RAW_ACCOUNT)
             .and_then(Value::as_str)
             .map(str::to_owned);
-        if is_terminal(&raw) {
+        let terminal = is_terminal(&raw);
+        if terminal {
             if let Some(account) = &account {
                 // A late producer may belong to an account not yet connected
                 // in this process. Load its sequence boundary before allocation.
@@ -320,12 +321,14 @@ impl ExecutorEventHub {
         // Unowned local events remain available to local IPC subscribers;
         // a later login must never acquire them for cloud delivery.
         if let Some(account) = account {
-            let retained = self
-                .terminal_events
-                .lock()
-                .expect("terminal event journal lock")
-                .retain(&account, &backend_event);
-            self.report_terminal_storage(&account, retained.err());
+            if terminal {
+                let retained = self
+                    .terminal_events
+                    .lock()
+                    .expect("terminal event journal lock")
+                    .retain(&account, &backend_event);
+                self.report_terminal_storage(&account, retained.err());
+            }
             let _ = self.backend_tx.send(BackendEvent {
                 account,
                 value: backend_event,

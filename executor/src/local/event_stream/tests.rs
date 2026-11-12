@@ -21,6 +21,43 @@ fn event_hub() -> ExecutorEventHub {
     ExecutorEventHub::new(raw_tx)
 }
 
+#[tokio::test(start_paused = true)]
+async fn streaming_events_cannot_report_journal_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("journal");
+    std::fs::write(&directory, b"blocked").unwrap();
+    let (raw, _) = broadcast::channel(8);
+    let hub = ExecutorEventHub::new(raw.clone());
+    hub.enable_terminal_event_journal(directory);
+    let mut live = hub.subscribe_live();
+    hub.ensure_started();
+    raw.send(scoped(
+        json!({"event":"response.completed","payload":{"taskId":"task-a"}}),
+        "account-a",
+    ))
+    .unwrap();
+    assert_eq!(live.recv().await.unwrap()["event"], "response.completed");
+    assert_eq!(
+        live.recv().await.unwrap()["payload"]["reason"],
+        "terminal_journal_unavailable"
+    );
+    raw.send(scoped(
+        json!({"event":"response.output_text.delta","payload":{"taskId":"task-b","data":{"value":"stream"}}}),
+        "account-a",
+    ))
+    .unwrap();
+    assert_eq!(
+        live.recv().await.unwrap()["event"],
+        "response.output_text.delta"
+    );
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert!(matches!(
+        live.try_recv(),
+        Err(broadcast::error::TryRecvError::Empty)
+    ));
+}
+
 #[tokio::test]
 async fn terminal_storage_recovers_without_a_backend_connection() {
     let root = tempfile::tempdir().unwrap();
