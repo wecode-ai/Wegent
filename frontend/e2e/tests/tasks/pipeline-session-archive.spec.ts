@@ -306,6 +306,7 @@ test.describe('Pipeline native session archive and continuation', () => {
               headers,
               'sandbox'
             )
+            expect(new URL(sandboxRuntime.base_url).port).not.toBe(new URL(runtime.base_url).port)
             // SandboxManager restores the archive during real sandbox creation.
             expect(await snapshot(sandboxRuntime)).toEqual(before)
             restoreTargets.push(sandboxRuntime)
