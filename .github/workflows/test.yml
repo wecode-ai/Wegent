@@ -704,6 +704,19 @@ jobs:
         working-directory: ./knowledge_runtime
         run: uv run --no-sync pytest tests/ -v
 
+      - name: Verify converter locked dependencies and Redis compatibility
+        working-directory: ./knowledge_doc_converter
+        run: |
+          uv sync --dev --frozen
+          uv run --no-sync pytest tests/ -v
+          docker run -d --name converter-redis-check -p 127.0.0.1:16379:6379 redis:5-alpine
+          trap 'docker rm -f converter-redis-check' EXIT
+          for attempt in $(seq 1 30); do
+            if docker exec converter-redis-check redis-cli ping; then break; fi
+            sleep 1
+          done
+          uv run --no-sync python tests/redis_compatibility_probe.py --redis-url redis://127.0.0.1:16379/0
+
   test-frontend:
     name: Test Frontend
     needs: changes

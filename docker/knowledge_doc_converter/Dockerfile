@@ -8,19 +8,13 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
 
 WORKDIR /app
 
-# Copy and install shared module first
+# Preserve local package paths and install the complete locked dependency graph.
 COPY shared /app/shared
-RUN uv pip install --system --no-cache /app/shared
-
-# Copy and install knowledge_engine module (conversion needs no retrieval extra)
 COPY knowledge_engine /app/knowledge_engine
-RUN uv pip install --system --no-cache /app/knowledge_engine
-
-# Copy pyproject.toml and install dependencies
-# Remove [tool.uv.sources] section as dependencies are already installed
-COPY knowledge_doc_converter/pyproject.toml .
-RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
-    uv pip install --system --no-cache -r pyproject.toml
+COPY knowledge_doc_converter/pyproject.toml knowledge_doc_converter/uv.lock /app/knowledge_doc_converter/
+RUN cd /app/knowledge_doc_converter && \
+    uv export --locked --no-dev --no-emit-project --format requirements.txt -o /tmp/converter-requirements.txt > /dev/null && \
+    uv pip install --system --no-cache -r /tmp/converter-requirements.txt
 
 # Copy application code
 COPY knowledge_doc_converter/knowledge_doc_converter /app/knowledge_doc_converter

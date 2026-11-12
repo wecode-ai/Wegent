@@ -202,6 +202,9 @@ classify_path() {
       changed[knowledge_engine]=true
       changed[platform_e2e]=true
       ;;
+    knowledge_doc_converter/* | docker/knowledge_doc_converter/*)
+      changed[knowledge_engine]=true
+      ;;
     knowledge_runtime/*)
       changed[knowledge_engine]=true
       changed[platform_e2e]=true
