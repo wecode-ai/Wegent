@@ -88,6 +88,7 @@ export async function controlInlineVisualizationFrame(
     });
     const { action, selector, value } = ${JSON.stringify({ action, selector, value: value ?? '' })};
     const element = document.querySelector(selector);
+    if (action === 'text') return element?.textContent ?? null;
     if (!element) throw new Error('Inline visualization target not found');
     if (action === 'metrics' || action === 'wheel') {
       const rect = element.getBoundingClientRect();

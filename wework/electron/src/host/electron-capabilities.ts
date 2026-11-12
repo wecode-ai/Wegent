@@ -1059,25 +1059,7 @@ export function createElectronCapabilityRouter(
       return mcpAppDocuments.respond(new Request(url)).status
     }
     if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
-    const contents = e2eHost.captureTarget('main')
-    if (params.action === 'wheel' || params.action === 'metrics') {
-      return controlInlineVisualizationFrame(contents, params)
-    }
-    const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)
-    if (!frame) throw new Error('MCP App frame is not loaded')
-    const action = stringParam(params, 'action')
-    if (!['text', 'click', 'fill', 'attribute', 'value'].includes(action))
-      throw new Error('Unsupported MCP App test action')
-    return frame.executeJavaScript(`(() => {
-      const element = document.querySelector(${JSON.stringify(stringParam(params, 'selector'))});
-      if (!element) throw new Error('MCP App target not found');
-      const action = ${JSON.stringify(action)};
-      if (action === 'click') element.click();
-      if (action === 'fill') { element.value = ${JSON.stringify(optionalStringParam(params, 'value') ?? '')}; element.dispatchEvent(new Event('input', { bubbles: true })); }
-      if (action === 'attribute') return element.getAttribute(${JSON.stringify(optionalStringParam(params, 'value') ?? '')});
-      if (action === 'value') return element.value;
-      return element.textContent;
-    })()`)
+    return controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
   })
   router.register('filesystem.stat', async params => {
     const path = stringParam(params, 'path')

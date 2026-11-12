@@ -199,11 +199,32 @@ describe('inline visualization verification controls', () => {
     await control('fill', '#principal', literal)
     await expect(control('text', '#result')).resolves.toBe(literal)
     expect(Reflect.get(globalThis, 'injected')).toBeUndefined()
-    await expect(control('text', '#absent')).rejects.toThrow('target not found')
+    await expect(control('click', '#absent')).rejects.toThrow('target not found')
     await expect(control('fill', '#result', 'invalid')).rejects.toThrow('not an input')
     await control('click', '#reset')
     await expect(control('text', '#result')).resolves.toBe('reset')
   })
+
+  test.each(['codex-inline-visualization-frame', 'mcp-app-frame'])(
+    'observes a missing asynchronous result without swallowing action failures: %s',
+    async testId => {
+      const { contents, frame } = target()
+      document.body.innerHTML = `<iframe data-testid="${testId}" src="${url}"></iframe>`
+      const control = (action: string) =>
+        controlInlineVisualizationFrame(contents, request(action), environment)
+
+      await expect(control('text')).resolves.toBeNull()
+      await expect(control('fill')).rejects.toThrow('target not found')
+      await expect(control('click')).rejects.toThrow('target not found')
+
+      const result = document.createElement('output')
+      result.id = 'result'
+      result.textContent = 'Open conversation'
+      document.body.append(result)
+      await expect(control('text')).resolves.toBe('Open conversation')
+      expect(frame.executeJavaScript).toHaveBeenCalledTimes(4)
+    }
+  )
 
   test('reads fixed geometry and sends native wheel input at the visible frame target', async () => {
     const { contents, blank } = visibleWheelTarget()
