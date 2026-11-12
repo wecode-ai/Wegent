@@ -42,6 +42,7 @@ from app.schemas.external_wiki import (
     WikiProjectsResponse,
     WikiProjectSummary,
 )
+from app.services.external_entity_resolver import entity_resolution_scope
 from app.services.external_source_connections import external_source_connection_service
 from app.services.knowledge.external_document_identity import WIKI_PROVIDER_ID
 from app.services.knowledge.external_document_import import (
@@ -54,7 +55,7 @@ from app.services.knowledge.external_sync_providers import (
 )
 from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base,
-    resolve_knowledge_base_permission,
+    resolve_knowledge_permission_action,
 )
 from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
@@ -121,11 +122,14 @@ def _require_kb_read(db: Session, kb: Kind, user: User) -> None:
 
 
 def _require_kb_edit(db: Session, kb: Kind, user: User) -> None:
-    permission = resolve_knowledge_base_permission(db, kb, user.id)
-    if not can_manage_accessible_knowledge_base_documents(
-        has_access=permission.has_access,
-        role=permission.role,
-        is_creator=permission.is_creator,
+    if not resolve_knowledge_permission_action(
+        db,
+        kb.id,
+        user.id,
+        lambda permission: can_manage_accessible_knowledge_base_documents(
+            permission.has_access, permission.role, permission.is_creator
+        ),
+        kb=kb,
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -513,42 +517,43 @@ async def create_kb_binding(
     current_user: User = Depends(security.get_current_user),
 ):
     """Import selected Wiki pages as synchronized knowledge documents."""
-    kb = _load_kb(db, knowledge_base_id)
-    _require_kb_edit(db, kb, current_user)
-    try:
-        provider = get_external_sync_provider(WIKI_PROVIDER_ID)
-        if provider is None:
-            raise WikiApiError("bad_request", "Wiki 同步服务不可用")
-        resolved = await provider.resolve_selections(
-            db,
-            current_user,
-            body.connection_id,
-            body.page_ids,
-            project_path=body.project_path,
-            branch=body.branch,
+    with entity_resolution_scope(db):
+        kb = _load_kb(db, knowledge_base_id)
+        _require_kb_edit(db, kb, current_user)
+        try:
+            provider = get_external_sync_provider(WIKI_PROVIDER_ID)
+            if provider is None:
+                raise WikiApiError("bad_request", "Wiki 同步服务不可用")
+            resolved = await provider.resolve_selections(
+                db,
+                current_user,
+                body.connection_id,
+                body.page_ids,
+                project_path=body.project_path,
+                branch=body.branch,
+            )
+            result = external_document_import_service.import_resolved_documents(
+                db=db,
+                user=current_user,
+                knowledge_base_id=knowledge_base_id,
+                provider_id=WIKI_PROVIDER_ID,
+                resolved_documents=resolved,
+                folder_id=body.folder_id,
+            )
+            created = [*result.created, *result.updated, *result.processing]
+        except ExternalDocumentImportError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        except WikiApiError as exc:
+            raise _wiki_error(exc)
+        return WikiBindingCreateResponse(
+            documents=[_bound_document(document) for document in created],
+            duplicate_documents=[
+                _bound_document(document) for document in result.duplicates
+            ],
+            created_count=len(result.created),
+            updated_count=len(result.updated),
+            processing_count=len(result.processing),
         )
-        result = external_document_import_service.import_resolved_documents(
-            db=db,
-            user=current_user,
-            knowledge_base_id=knowledge_base_id,
-            provider_id=WIKI_PROVIDER_ID,
-            resolved_documents=resolved,
-            folder_id=body.folder_id,
-        )
-        created = [*result.created, *result.updated, *result.processing]
-    except ExternalDocumentImportError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    except WikiApiError as exc:
-        raise _wiki_error(exc)
-    return WikiBindingCreateResponse(
-        documents=[_bound_document(document) for document in created],
-        duplicate_documents=[
-            _bound_document(document) for document in result.duplicates
-        ],
-        created_count=len(result.created),
-        updated_count=len(result.updated),
-        processing_count=len(result.processing),
-    )
 
 
 @router.delete(
@@ -561,14 +566,15 @@ async def delete_kb_binding(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    kb = _load_kb(db, knowledge_base_id)
-    _require_kb_edit(db, kb, current_user)
-    try:
-        unbind_kb_wiki_document(
-            db, knowledge_base_id, document_id, user_id=current_user.id
-        )
-    except WikiApiError as exc:
-        raise _wiki_error(exc)
+    with entity_resolution_scope(db):
+        kb = _load_kb(db, knowledge_base_id)
+        _require_kb_edit(db, kb, current_user)
+        try:
+            unbind_kb_wiki_document(
+                db, knowledge_base_id, document_id, user_id=current_user.id
+            )
+        except WikiApiError as exc:
+            raise _wiki_error(exc)
 
 
 # ---------------------------------------------------------------------------

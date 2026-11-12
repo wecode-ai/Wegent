@@ -778,18 +778,13 @@ class ModelAggregationService:
                 ).to_full_dict()
 
         elif model_type == ModelType.GROUP:
-            from app.services.group_permission import get_user_groups
+            from app.services.capability_lookup import ExecutionCapabilityLookup
 
-            for namespace in get_user_groups(db, current_user.id):
-                resource = get_referenced_capability(
-                    db,
-                    kind="Model",
-                    name=name,
-                    user_id=current_user.id,
-                    namespace=namespace,
-                )
-                if resource is None:
-                    continue
+            selected = ExecutionCapabilityLookup(
+                db, current_user.id
+            ).referenced_group_model(name)
+            if selected:
+                resource, namespace = selected
                 model_data = kind_service._format_resource("Model", resource)
                 info = self._extract_model_info_from_crd(model_data)
                 return UnifiedModel(

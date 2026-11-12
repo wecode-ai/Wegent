@@ -59,20 +59,30 @@ def test_runner_requires_a_content_role_in_the_wiki_namespace(
     monkeypatch: pytest.MonkeyPatch,
     role: str | None,
 ) -> None:
-    from app.schemas.base_role import BaseRole
-    from app.services.knowledge import permission_policy
+    from app.models.namespace import Namespace
+    from app.models.resource_member import ResourceMember
     from app.services.knowledge.code_wiki import scheduled_update
 
     wiki = Kind(namespace="team", user_id=test_user.id, json={"spec": {}})
+    group = Namespace(name="team", owner_user_id=test_user.id, is_active=True)
+    test_db.add(group)
+    test_db.flush()
+    if role:
+        test_db.add(
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=group.id,
+                entity_type="user",
+                entity_id=str(test_user.id),
+                role=role,
+                status="approved",
+            )
+        )
+        test_db.flush()
     monkeypatch.setattr(
         scheduled_update,
         "validate_runner_for_source",
         lambda *args, **kwargs: test_user,
-    )
-    monkeypatch.setattr(
-        permission_policy,
-        "get_effective_role_in_group",
-        lambda *args: BaseRole(role) if role else None,
     )
     monkeypatch.setattr(scheduled_update, "source_of", lambda wiki: None)
     monkeypatch.setattr(

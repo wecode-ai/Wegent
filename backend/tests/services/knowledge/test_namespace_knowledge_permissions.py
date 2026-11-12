@@ -681,52 +681,44 @@ def test_share_info_remains_available_to_first_time_visitor(
 def test_paginated_lists_do_not_materialize_all_entity_authorized_kbs(
     test_db: Session,
 ) -> None:
+    from sqlalchemy import event
+
     user = _create_user(test_db, "permission-context-user")
-    collect_external_roles = (
-        knowledge_visibility_query.collect_external_entity_member_roles
+    outsider = _create_user(test_db, "unrelated-library-owner")
+    own_id = KnowledgeService.create_knowledge_base(
+        test_db, user.id, KnowledgeBaseCreate(name="own-library")
     )
-
-    with (
-        patch.object(
-            knowledge_visibility_query,
-            "collect_entity_authorized_kbs",
-        ) as collect_all,
-        patch.object(
-            knowledge_visibility_query,
-            "collect_external_entity_member_roles",
-            wraps=collect_external_roles,
-        ) as collect_external,
-    ):
-        KnowledgeService.list_knowledge_bases_paginated(
-            test_db,
-            user.id,
-            ResourceScope.ALL,
-            offset=0,
-            limit=50,
+    unrelated_ids = {
+        KnowledgeService.create_knowledge_base(
+            test_db, outsider.id, KnowledgeBaseCreate(name=f"unrelated-{index}")
         )
+        for index in range(20)
+    }
+    user_id = user.id
+    test_db.expunge_all()
+    loaded_ids = set()
 
-    collect_all.assert_not_called()
-    assert collect_external.call_count == 1
+    def record_load(_session, instance):
+        if isinstance(instance, Kind) and instance.kind == "KnowledgeBase":
+            loaded_ids.add(instance.id)
 
-    with (
-        patch.object(
-            knowledge_visibility_query,
-            "collect_entity_authorized_kbs",
-        ) as collect_all,
-        patch.object(
-            knowledge_visibility_query,
-            "collect_external_entity_member_roles",
-            wraps=collect_external_roles,
-        ) as collect_external,
-    ):
-        KnowledgeService.list_external_knowledge_bases(
+    event.listen(test_db, "loaded_as_persistent", record_load)
+    try:
+        rows, total = KnowledgeService.list_knowledge_bases_paginated(
+            test_db, user_id, ResourceScope.ALL, offset=0, limit=50
+        )
+        assert total == 1
+        assert [kb.id for kb in rows] == [own_id]
+        rows, total = KnowledgeService.list_external_knowledge_bases(
             test_db,
-            user_id=user.id,
+            user_id=user_id,
             filters=ExternalKnowledgeBaseListFilters(scope=ResourceScope.ALL),
         )
-
-    collect_all.assert_not_called()
-    assert collect_external.call_count == 1
+        assert total == 1
+        assert [kb.id for kb in rows] == [own_id]
+        assert not loaded_ids.intersection(unrelated_ids)
+    finally:
+        event.remove(test_db, "loaded_as_persistent", record_load)
 
 
 @pytest.mark.unit

@@ -75,10 +75,34 @@ def test_model_capability_reaches_catalog_and_details(
     )
     test_db.add(model)
     test_db.commit()
-    monkeypatch.setattr(
-        "app.services.group_permission.get_user_groups",
-        lambda db, user_id: ["capability-group"],
-    )
+    if model_type == ModelType.GROUP:
+        from app.models.namespace import Namespace
+        from app.models.resource_member import ResourceMember
+
+        group = Namespace(name=namespace, owner_user_id=test_user.id, is_active=True)
+        test_db.add(group)
+        test_db.flush()
+        test_db.add_all(
+            [
+                ResourceMember(
+                    resource_type="Namespace",
+                    resource_id=group.id,
+                    entity_type="user",
+                    entity_id=str(test_user.id),
+                    role="Reporter",
+                    status="approved",
+                ),
+                ResourceMember(
+                    resource_type="Model",
+                    resource_id=model.id,
+                    entity_type="namespace",
+                    entity_id=str(group.id),
+                    role="Reporter",
+                    status="approved",
+                ),
+            ]
+        )
+        test_db.commit()
 
     def get_test_resource(
         *, user_id: int, kind: str, namespace: str, name: str
@@ -92,10 +116,6 @@ def test_model_capability_reaches_catalog_and_details(
     monkeypatch.setattr(
         "app.services.model_aggregation_service.kind_service.get_resource",
         get_test_resource,
-    )
-    monkeypatch.setattr(
-        "app.services.model_aggregation_service.get_referenced_capability",
-        lambda db, **kwargs: get_test_resource(**kwargs),
     )
 
     catalog = model_aggregation_service.list_available_models(

@@ -19,9 +19,9 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.user import User
 from app.services import model_credential_service
+from app.services.capability_lookup import ExecutionCapabilityLookup
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.execution_permission_scope import execution_resource_scope
-from app.services.group_permission import get_user_groups
 from app.services.wework_model_config import (
     positive_token_limit,
     wework_model_config_options,
@@ -373,9 +373,10 @@ def _validate_model_access(
     elif model_type == "public":
         allowed = namespace == "default" and resource_user_id == 0
     elif model_type == "group":
-        allowed = namespace != "default" and namespace in get_user_groups(
+        allowed = namespace != "default" and ExecutionCapabilityLookup(
             db, current_user.id
-        )
+        ).is_group_member(namespace)
+
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

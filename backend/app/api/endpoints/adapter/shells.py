@@ -392,6 +392,34 @@ def create_shell(
     return _user_shell_to_unified(db_obj).model_dump()
 
 
+def _shell_for_mutation(
+    db: Session, shell_name: str, user_id: int, action: str
+) -> Kind:
+    from app.schemas.namespace import GroupRole
+    from app.services.capability_lookup import ExecutionCapabilityLookup
+    from app.services.external_entity_resolver import entity_resolution_scope
+    from app.services.group_permission import check_group_permission
+
+    with entity_resolution_scope(db):
+        lookup = ExecutionCapabilityLookup(db, user_id)
+        shell = lookup.personal("Shell", shell_name, "default")
+        if shell is None:
+            shell = lookup.native_group_shell(shell_name)
+        if shell is None:
+            raise HTTPException(status_code=404, detail="User shell not found")
+        if shell.namespace != "default" and not check_group_permission(
+            db, user_id, shell.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"You need at least Developer role in group '{shell.namespace}' "
+                    f"to {action} this shell"
+                ),
+            )
+        return shell
+
+
 @router.put("/{shell_name}", response_model=dict)
 def update_shell(
     shell_name: str,
@@ -405,61 +433,7 @@ def update_shell(
     Only user-defined shells can be updated. Public shells are read-only.
     For group shells, user must have Developer+ permission.
     """
-    from app.schemas.namespace import GroupRole
-
-    # Get user shell (try all accessible namespaces)
-    from app.services.group_permission import (
-        check_group_permission,
-        get_user_groups,
-    )
-
-    # Try personal namespace first
-    shell = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == current_user.id,
-            Kind.kind == "Shell",
-            Kind.name == shell_name,
-            Kind.namespace == "default",
-            Kind.is_active == True,  # noqa: E712
-        )
-        .first()
-    )
-
-    if not shell:
-        # Try group namespaces
-        user_groups = get_user_groups(db, current_user.id)
-        for group_name in user_groups:
-            shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.name == shell_name,
-                    Kind.namespace == group_name,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-            if shell:
-                break
-
-    if not shell:
-        raise HTTPException(status_code=404, detail="User shell not found")
-
-    # Check permissions
-    if shell.namespace != "default":
-        # Group shell - check permission
-        if not check_group_permission(
-            db, current_user.id, shell.namespace, GroupRole.Developer
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=f"You need at least Developer role in group '{shell.namespace}' to update this shell",
-            )
-    else:
-        # Personal shell - check ownership
-        if shell.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+    shell = _shell_for_mutation(db, shell_name, current_user.id, "update")
 
     # Parse existing CRD
     shell_crd = ShellCRD.model_validate(shell.json)
@@ -535,56 +509,7 @@ def delete_shell(
     Only user-defined shells can be deleted. Public shells cannot be deleted.
     For group shells, user must have Developer+ permission.
     """
-    from app.schemas.namespace import GroupRole
-    from app.services.group_permission import check_group_permission, get_user_groups
-
-    # Try personal namespace first
-    shell = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == current_user.id,
-            Kind.kind == "Shell",
-            Kind.name == shell_name,
-            Kind.namespace == "default",
-            Kind.is_active == True,  # noqa: E712
-        )
-        .first()
-    )
-
-    if not shell:
-        # Try group namespaces
-        user_groups = get_user_groups(db, current_user.id)
-        for group_name in user_groups:
-            shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.name == shell_name,
-                    Kind.namespace == group_name,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-            if shell:
-                break
-
-    if not shell:
-        raise HTTPException(status_code=404, detail="User shell not found")
-
-    # Check permissions
-    if shell.namespace != "default":
-        # Group shell - check permission
-        if not check_group_permission(
-            db, current_user.id, shell.namespace, GroupRole.Developer
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=f"You need at least Developer role in group '{shell.namespace}' to delete this shell",
-            )
-    else:
-        # Personal shell - check ownership
-        if shell.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
+    shell = _shell_for_mutation(db, shell_name, current_user.id, "delete")
 
     # Hard delete
     db.delete(shell)

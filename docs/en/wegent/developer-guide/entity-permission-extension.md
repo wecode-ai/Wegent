@@ -306,6 +306,20 @@ After registration:
 
 ### Custom Resolver Implementation Steps
 
+External membership lookups must distinguish confirmed non-membership from an
+unavailable fact. Raise `EntityMembershipUnavailable(unknown_ids, matched_ids)`
+on lookup failure, retaining confirmed matches. Derived namespace membership
+should map `dependencies` to underlying `EntityFact` identities so group, share
+and cross-library decisions use the same facts. Do not turn outages into empty lists.
+
+Use `entity_resolution_scope(db)` within one public operation; it clears facts
+on exit. Cached resolver instances must not retain permission results across users.
+Limit batch reads to candidate resources and relevant ancestor groups. An action
+whose result is identical in all possible membership states returns that result;
+otherwise it returns retryable HTTP 503. Precise roles and sources remain unknown
+until their required facts are available. Creator ownership applies only to the
+current resource and grants no Owner identity in sibling resources or its namespace.
+
 Implementing a custom resolver requires the following steps:
 
 **Step 1: Create the resolver class**

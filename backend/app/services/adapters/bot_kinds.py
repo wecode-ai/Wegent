@@ -175,46 +175,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not refs:
             return
 
-        inaccessible_refs = [
-            ref.name
-            for ref in refs
-            if not KnowledgeService.can_directly_access_knowledge_base(
-                db,
-                ref.id,
-                user_id,
-            )
-        ]
-        if inaccessible_refs:
-            raise HTTPException(
-                status_code=400,
-                detail="Default knowledge bases are not directly accessible",
-            )
-
-        if namespace == "default":
-            return
-
-        grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(
-            db=db,
-            user_id=user_id,
+        from app.services.knowledge.knowledge_access_policy import (
+            default_knowledge_base_binding_error,
         )
 
-        allowed_ids = {kb.id for kb in grouped_kbs.organization.knowledge_bases}
-        current_group = next(
-            (group for group in grouped_kbs.groups if group.group_name == namespace),
-            None,
+        error = default_knowledge_base_binding_error(
+            db, [ref.id for ref in refs], user_id, namespace
         )
-        if current_group is not None:
-            allowed_ids.update(kb.id for kb in current_group.knowledge_bases)
-
-        invalid_refs = [ref.name for ref in refs if ref.id not in allowed_ids]
-        if invalid_refs:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Group bots can only bind knowledge bases from the current "
-                    "group or the organization"
-                ),
-            )
+        if error is not None:
+            raise HTTPException(status_code=400, detail=error)
 
     def _encrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -233,7 +233,7 @@ def _resolve_manageable_skill(
     - System admin can manage any skill
     - Group Owner/Maintainer can manage any skill in their group namespace
     """
-    from app.services.group_permission import get_effective_role_in_group
+    from app.services.group_permission import check_group_permission
 
     skill_kind = (
         db.query(Kind)
@@ -255,10 +255,11 @@ def _resolve_manageable_skill(
         return skill_kind
 
     if skill_kind.namespace != "default":
-        user_role = get_effective_role_in_group(
-            db, current_user.id, skill_kind.namespace
-        )
-        if user_role and user_role.value in {"Owner", "Maintainer"}:
+        from app.schemas.namespace import GroupRole
+
+        if check_group_permission(
+            db, current_user.id, skill_kind.namespace, GroupRole.Maintainer
+        ):
             return skill_kind
 
     raise HTTPException(

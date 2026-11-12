@@ -306,6 +306,17 @@ register_entity_resolver("namespace", NamespaceEntityResolver)
 
 ### 自定义解析器实现步骤
 
+外部成员查询必须区分“确认不属于”和“暂时无法确认”。查询失败时抛出
+`EntityMembershipUnavailable(unknown_ids, matched_ids)`，保留已确认的命中；
+派生空间成员还应通过 `dependencies` 关联到底层 `EntityFact`，使同一事实在
+群组、分享和跨库判定中保持一致。不要把故障转换为空列表。
+
+一次公共操作使用 `entity_resolution_scope(db)` 复用成员事实，结束后自动清理；
+解析器实例缓存不能保存跨用户的判权结果。批量查询应限定候选资源及相关祖先群组。
+动作在所有可能成员事实下都允许或都拒绝时直接返回；否则返回可重试的 503。
+精确角色和权限来源仍须等待事实完整，不得从动作结果推断角色。
+创建者身份只属于当前资源，不授予同组其他资源或空间的 Owner 身份。
+
 实现自定义解析器需要以下步骤：
 
 **Step 1：创建解析器类**

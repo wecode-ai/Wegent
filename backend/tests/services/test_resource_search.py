@@ -236,7 +236,7 @@ def test_team_page_resolves_permissions_once_and_counts_only_when_needed(
 
     for index in range(size):
         make_team(test_db, test_user.id, f"agent-{index}")
-    roles = mocker.spy(group_permission, "get_user_group_roles")
+    roles = mocker.spy(group_permission, "get_user_groups")
     authorization = mocker.spy(
         team_kinds_service, "_get_accessible_authorization_namespace_ids"
     )
@@ -284,7 +284,7 @@ def test_team_page_refreshes_group_permissions_on_each_request(
     test_db.add(membership)
     for index in range(2):
         make_team(test_db, 999, f"group-agent-{index}", namespace=group.name)
-    roles = mocker.spy(group_permission, "get_user_group_roles")
+    roles = mocker.spy(group_permission, "get_user_groups")
     params = {"limit": 1, "scope": "all", "source_filter": "group"}
     before = team_page(test_db, test_user.id, **params)
     assert before["total"] == 2

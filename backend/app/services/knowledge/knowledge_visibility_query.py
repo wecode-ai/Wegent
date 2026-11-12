@@ -4,11 +4,11 @@
 
 """SQL projection of knowledge-base ACL and direct-access policies."""
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import and_, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import String, func, or_
+from sqlalchemy.orm import Query, Session
 
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -18,21 +18,21 @@ from app.models.resource_member import (
     ResourceMember,
 )
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import get_highest_role
 from app.schemas.knowledge import ResourceScope
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.external_entity_resolver import (
+    EntityMembershipUnavailable,
     get_all_entity_types,
     get_entity_resolver,
 )
 from app.services.group_permission import (
-    get_effective_role_in_group,
     get_effective_roles_in_groups,
-    get_user_groups,
 )
 
 if TYPE_CHECKING:
     from app.models.resource_member import ResourceMember as ResourceMemberModel
+    from app.services.knowledge.permission_context import KnowledgePermissionContext
 
 
 @dataclass(frozen=True)
@@ -56,90 +56,333 @@ class DirectAccessPermissionContext:
 
     user: User
     accessible_groups: frozenset[str]
-    organization_names: frozenset[str]
     group_roles: dict[str, GroupRole]
-    accessible_namespace_ids: frozenset[str]
-    external_member_role_map: dict[int, tuple[str, ...]]
+    listed_group_roles: dict[str, GroupRole | None]
     direct_members: tuple["ResourceMemberModel", ...] = ()
     entity_result: EntityAuthorizedKbsResult | None = None
+    allowed_ids: frozenset[int] | None = None
 
 
-def build_direct_access_query_context(
+def _potential_discovery_shares(
     db: Session,
     user_id: int,
-    *,
-    candidate_ids: list[int] | None = None,
-) -> DirectAccessPermissionContext:
-    """Load non-relational permission inputs for a direct-access query."""
-    user = _get_user_or_raise(db, user_id)
-    groups = get_user_groups(db, user_id)
-    organization_names = _get_organization_names(db)
-    group_roles = get_effective_roles_in_groups(
-        db,
-        user_id,
-        [name for name in groups if name not in organization_names],
+    namespace_ids: frozenset[str],
+    candidate_ids: list[int] | Query | None = None,
+):
+    """Use scalar binding identities to narrow candidates before loading libraries."""
+    from app.services.external_entity_resolver import EntityMembershipUnavailable
+
+    members = _approved_member_query(db)
+    conditions = [
+        members.filter(
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+        ).exists()
+    ]
+    if namespace_ids:
+        conditions.append(
+            members.filter(
+                ResourceMember.entity_type == "namespace",
+                ResourceMember.entity_id.in_(namespace_ids),
+            ).exists()
+        )
+    for entity_type in get_all_entity_types():
+        if entity_type in {"user", "namespace"}:
+            continue
+        resolver = get_entity_resolver(entity_type)
+        if resolver is None:
+            continue
+        identities_query = db.query(ResourceMember.entity_id).filter(
+            ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
+            ResourceMember.entity_type == entity_type,
+            ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
+        )
+        if candidate_ids is not None:
+            identities_query = identities_query.filter(
+                ResourceMember.resource_id.in_(candidate_ids)
+            )
+        identities = [row[0] for row in identities_query.distinct().all()]
+        if not identities:
+            continue
+        try:
+            possible = resolver.match_entity_bindings(
+                db, user_id, entity_type, identities
+            )
+        except EntityMembershipUnavailable as failure:
+            possible = list(set(failure.matched_ids) | set(failure.unknown_ids))
+        if possible:
+            conditions.append(
+                members.filter(
+                    ResourceMember.entity_type == entity_type,
+                    ResourceMember.entity_id.in_(possible),
+                ).exists()
+            )
+    return or_(*conditions)
+
+
+def _personal_discovery_decision(
+    db: Session,
+    kb: Kind,
+    user_id: int,
+    facts: "KnowledgePermissionContext",
+    memberships: list[tuple[str, str, str | None, str | None]],
+    allow_empty_requirement: bool = False,
+) -> bool:
+    """Evaluate personal scope and opening together under the same possible facts."""
+    from app.services.external_entity_resolver import EntityMembershipUnavailable
+    from app.services.knowledge.knowledge_access_policy import (
+        resolve_direct_access_decision,
     )
-    return DirectAccessPermissionContext(
-        user=user,
-        accessible_groups=frozenset(groups),
-        organization_names=organization_names,
-        group_roles=group_roles,
-        accessible_namespace_ids=_get_accessible_namespace_ids(db, groups),
-        external_member_role_map=collect_external_entity_member_roles(
+    from app.services.knowledge.permission_context import permission_scenarios
+
+    decisions = set()
+    for scenario in permission_scenarios(db, kb, facts, memberships=memberships):
+        shared = any(
+            (m.entity_type == "user" and m.entity_id == str(user_id))
+            or (
+                m.entity_type != "user"
+                and m.entity_id in scenario.matched_entities.get(m.entity_type, set())
+            )
+            for m in facts.members.get(kb.id, [])
+        )
+        in_scope = (kb.user_id == user_id and kb.namespace == "default") or shared
+        decisions.add(
+            in_scope
+            and resolve_direct_access_decision(
+                db,
+                kb,
+                user_id,
+                context=scenario,
+                allow_empty_requirement=allow_empty_requirement,
+            )
+        )
+    if len(decisions) != 1:
+        raise EntityMembershipUnavailable([], [])
+    return decisions.pop()
+
+
+def build_knowledge_discovery_query(
+    db: Session,
+    user_id: int,
+    candidate_ids: list[int] | Query | None = None,
+    *,
+    scope: ResourceScope = ResourceScope.ALL,
+    exclude_organizations: bool = False,
+    group_name: str | None = None,
+    raw_acl: bool = False,
+    allow_empty_requirement: bool = False,
+    include_inherited_groups: bool = True,
+    unavailable: dict[int, EntityMembershipUnavailable] | None = None,
+) -> tuple[Query, "KnowledgePermissionContext"]:
+    """Filter relevant SQL candidates before batched opening and scope decisions."""
+    from app.services.external_entity_resolver import entity_resolution_scope
+    from app.services.group_member_helper import iter_user_groups_with_roles
+    from app.services.knowledge.knowledge_access_policy import (
+        resolve_acl_access_decision,
+        resolve_direct_access_decision,
+    )
+    from app.services.knowledge.permission_context import (
+        build_knowledge_permission_context,
+    )
+
+    if scope == ResourceScope.GROUP and not group_name:
+        raise ValueError("group_name is required when scope is GROUP")
+    organizations = _get_organization_names(db)
+    query = db.query(Kind).filter(
+        Kind.kind == "KnowledgeBase",
+        Kind.is_active.is_(True),
+    )
+    if exclude_organizations:
+        query = query.filter(~Kind.namespace.in_(organizations))
+    if candidate_ids is not None:
+        query = query.filter(Kind.id.in_(candidate_ids))
+    membership_names = None
+    if candidate_ids is not None:
+        relevant = {name for (name,) in query.with_entities(Kind.namespace).all()}
+        relevant.update(
+            name
+            for (name,) in db.query(Namespace.name)
+            .join(
+                ResourceMember,
+                ResourceMember.entity_id == func.cast(Namespace.id, String),
+            )
+            .filter(
+                ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
+                ResourceMember.resource_id.in_(candidate_ids),
+                ResourceMember.entity_type == "namespace",
+                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
+                Namespace.is_active.is_(True),
+            )
+            .all()
+        )
+        membership_names = sorted(
+            {
+                "/".join(name.split("/")[:depth])
+                for name in relevant
+                if name != "default"
+                for depth in range(1, name.count("/") + 2)
+            }
+        )
+    with entity_resolution_scope(db):
+        unknown: list[tuple[str, str, str, str, EntityMembershipUnavailable]] = []
+        memberships = iter_user_groups_with_roles(
             db,
             user_id,
-            candidate_ids=candidate_ids,
-        ),
-    )
+            deduplicate=False,
+            group_names=membership_names,
+            unavailable_memberships=unknown,
+        )
+        roots = {row[0] for row in memberships} | {row[0] for row in unknown}
+        group_filter = or_(
+            False,
+            *[
+                or_(
+                    Namespace.name == name,
+                    (
+                        Namespace.name.startswith(name + "/", autoescape=True)
+                        if include_inherited_groups
+                        else False
+                    ),
+                )
+                for name in roots
+            ],
+        )
+        group_names = (
+            {
+                row[0]
+                for row in db.query(Namespace.name)
+                .filter(Namespace.is_active.is_(True), group_filter)
+                .all()
+            }
+            if roots
+            else set()
+        )
+        namespace_ids = _get_accessible_namespace_ids(db, list(group_names))
+        conditions = [
+            (Kind.user_id == user_id) & (Kind.namespace == "default"),
+            _potential_discovery_shares(db, user_id, namespace_ids, candidate_ids),
+        ]
+        if scope == ResourceScope.ALL:
+            if group_names:
+                conditions.append(Kind.namespace.in_(group_names))
+            if not exclude_organizations and organizations:
+                conditions.append(Kind.namespace.in_(organizations))
+        if scope == ResourceScope.GROUP:
+            query = query.filter(Kind.namespace == group_name)
+        elif scope == ResourceScope.ORGANIZATION:
+            query = query.filter(Kind.namespace.in_(organizations))
+        else:
+            query = query.filter(or_(*conditions))
+        libraries = query.all()
+        facts = build_knowledge_permission_context(
+            db, libraries, user_id, organizations
+        )
+        facts = replace(facts, memberships=tuple(memberships))
+        allowed = []
+        for kb in libraries:
+            try:
+                if scope == ResourceScope.GROUP:
+                    from app.services.knowledge.permission_context import (
+                        permission_scenarios,
+                    )
+
+                    outcomes = {
+                        bool(scenario.scope_group_roles.get(kb.namespace))
+                        and resolve_direct_access_decision(
+                            db,
+                            kb,
+                            user_id,
+                            context=scenario,
+                            allow_empty_requirement=allow_empty_requirement,
+                        )
+                        for scenario in permission_scenarios(
+                            db, kb, facts, memberships=memberships
+                        )
+                    }
+                    if len(outcomes) != 1:
+                        raise EntityMembershipUnavailable([], [])
+                    visible = outcomes.pop()
+                elif raw_acl:
+                    visible = resolve_acl_access_decision(
+                        db, kb, user_id, context=facts
+                    )
+                elif scope == ResourceScope.PERSONAL:
+                    visible = _personal_discovery_decision(
+                        db, kb, user_id, facts, memberships, allow_empty_requirement
+                    )
+                else:
+                    visible = resolve_direct_access_decision(
+                        db,
+                        kb,
+                        user_id,
+                        context=facts,
+                        allow_empty_requirement=allow_empty_requirement,
+                    )
+            except EntityMembershipUnavailable as failure:
+                if unavailable is None:
+                    raise
+                unavailable[cast(int, kb.id)] = failure
+                continue
+            if visible:
+                allowed.append(kb.id)
+    return query.filter(Kind.id.in_(allowed)), facts
 
 
 def build_direct_access_permission_context(
     db: Session,
     user_id: int,
-    accessible_groups: list[str] | None = None,
     candidate_ids: list[int] | None = None,
+    *,
+    include_inherited_groups: bool = True,
 ) -> DirectAccessPermissionContext:
     """Load full permission metadata for grouped knowledge list responses."""
-    user = _get_user_or_raise(db, user_id)
-    groups = (
-        accessible_groups
-        if accessible_groups is not None
-        else get_user_groups(db, user_id)
-    )
-    organization_names = _get_organization_names(db)
-    group_roles = get_effective_roles_in_groups(
+    query, facts = build_knowledge_discovery_query(
         db,
         user_id,
-        [name for name in groups if name not in organization_names],
+        candidate_ids,
+        allow_empty_requirement=True,
+        include_inherited_groups=include_inherited_groups,
     )
-    direct_member_query = db.query(ResourceMember).filter(
-        ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
-        ResourceMember.entity_type == "user",
-        ResourceMember.entity_id == str(user_id),
-        ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
+    libraries = query.all()
+    allowed_ids = frozenset(kb.id for kb in libraries)
+    names = [
+        row[0]
+        for row in db.query(Namespace.name).filter(Namespace.is_active.is_(True)).all()
+    ]
+    roles = get_effective_roles_in_groups(
+        db, user_id, names, memberships=list(facts.memberships)
     )
-    if candidate_ids is not None:
-        direct_member_query = direct_member_query.filter(
-            ResourceMember.resource_id.in_(candidate_ids)
+    listed_roles: dict[str, GroupRole | None] = {}
+    for name, role, _, _ in facts.memberships:
+        known_role = listed_roles.get(name)
+        listed_roles[name] = GroupRole(
+            get_highest_role([known_role, role]) if known_role is not None else role
         )
+    # Retaining a creator's native group does not establish a group role.
+    creator_groups: set[str] = set()
+    for kb in libraries:
+        if kb.user_id == user_id and kb.namespace in facts.group_failures:
+            creator_groups.add(kb.namespace)
+            listed_roles.setdefault(kb.namespace, None)
+    groups = sorted(set(roles) | creator_groups)
+    direct_members = tuple(
+        member
+        for kb_id, members in facts.members.items()
+        if kb_id in allowed_ids
+        for member in members
+        if member.entity_type == "user" and member.entity_id == str(user_id)
+    )
     entity_result = collect_entity_authorized_kbs(
-        db,
-        user_id,
-        groups,
-        candidate_ids=candidate_ids,
+        db, user_id, groups, list(allowed_ids), facts=facts
     )
     return DirectAccessPermissionContext(
-        user=user,
+        user=_get_user_or_raise(db, user_id),
         accessible_groups=frozenset(groups),
-        organization_names=organization_names,
-        group_roles=group_roles,
-        accessible_namespace_ids=_get_accessible_namespace_ids(db, groups),
-        external_member_role_map={
-            kb_id: tuple(roles)
-            for kb_id, roles in entity_result.member_role_map.items()
-        },
-        direct_members=tuple(direct_member_query.all()),
+        group_roles=roles,
+        listed_group_roles=listed_roles,
+        direct_members=direct_members,
         entity_result=entity_result,
+        allowed_ids=allowed_ids,
     )
 
 
@@ -152,76 +395,28 @@ def filter_directly_accessible_knowledge_bases(
     """Filter a bounded candidate set without per-KB permission queries."""
     if not knowledge_bases:
         return []
-    candidate_ids = [kb.id for kb in knowledge_bases]
-    context = permission_context or build_direct_access_query_context(
-        db,
-        user_id,
-        candidate_ids=candidate_ids,
+    if permission_context is not None and permission_context.allowed_ids is not None:
+        _validate_context_user(permission_context, user_id)
+        return [kb for kb in knowledge_bases if kb.id in permission_context.allowed_ids]
+    from app.services.external_entity_resolver import entity_resolution_scope
+    from app.services.knowledge.knowledge_access_policy import (
+        resolve_direct_access_decision,
     )
-    allowed_ids = {
-        row[0]
-        for row in apply_direct_access_filter(
-            db,
-            db.query(Kind.id).filter(Kind.id.in_(candidate_ids)),
-            user_id,
-            context,
-        ).all()
-    }
-    return [kb for kb in knowledge_bases if kb.id in allowed_ids]
+    from app.services.knowledge.permission_context import (
+        build_knowledge_permission_context,
+    )
 
-
-def collect_external_entity_member_roles(
-    db: Session,
-    user_id: int,
-    *,
-    candidate_ids: list[int] | None = None,
-) -> dict[int, tuple[str, ...]]:
-    """Collect roles from extension-defined entity resolvers only."""
-    candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
-    role_map: dict[int, list[str]] = {}
-    for entity_type in get_all_entity_types():
-        if entity_type in {"namespace", "user"}:
-            continue
-        resolver = get_entity_resolver(entity_type)
-        if resolver is None:
-            continue
-        resource_ids = resolver.get_resource_ids_by_entity(db, user_id, entity_type)
-        if candidate_id_set is not None:
-            resource_ids = [
-                resource_id
-                for resource_id in resource_ids
-                if resource_id in candidate_id_set
-            ]
-        if not resource_ids:
-            continue
-        rows = (
-            db.query(
-                ResourceMember.resource_id,
-                ResourceMember.entity_id,
-                ResourceMember.role,
-            )
-            .filter(
-                ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
-                ResourceMember.resource_id.in_(resource_ids),
-                ResourceMember.entity_type == entity_type,
-                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
-            )
-            .all()
+    with entity_resolution_scope(db):
+        facts = build_knowledge_permission_context(
+            db, knowledge_bases, user_id, _get_organization_names(db)
         )
-        matched_ids = set(
-            resolver.match_entity_bindings(
-                db,
-                user_id,
-                entity_type,
-                [row.entity_id for row in rows if row.entity_id],
+        return [
+            kb
+            for kb in knowledge_bases
+            if resolve_direct_access_decision(
+                db, kb, user_id, context=facts, allow_empty_requirement=True
             )
-        )
-        for resource_id, entity_id, role in rows:
-            if entity_id in matched_ids:
-                role_map.setdefault(resource_id, []).append(
-                    role or BaseRole.Reporter.value
-                )
-    return {kb_id: tuple(roles) for kb_id, roles in role_map.items()}
+        ]
 
 
 def collect_entity_authorized_kbs(
@@ -229,6 +424,8 @@ def collect_entity_authorized_kbs(
     user_id: int,
     accessible_groups: list[str],
     candidate_ids: list[int] | None = None,
+    *,
+    facts: "KnowledgePermissionContext",
 ) -> EntityAuthorizedKbsResult:
     """Collect KBs accessible via namespace and extension entity bindings."""
     kb_ids: set[int] = set()
@@ -237,80 +434,27 @@ def collect_entity_authorized_kbs(
     inviter_map: dict[int, set[int]] = {}
     type_map: dict[int, list[str]] = {}
     entity_id_map: dict[int, list[str]] = {}
-    candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
-
-    if accessible_groups:
-        namespaces = (
-            db.query(Namespace)
-            .filter(
-                Namespace.name.in_(accessible_groups),
-                Namespace.is_active.is_(True),
-            )
-            .all()
-        )
-        namespace_names = {namespace.id: namespace.name for namespace in namespaces}
-        if namespace_names:
-            query = db.query(ResourceMember).filter(
-                ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
-                ResourceMember.entity_type == "namespace",
-                ResourceMember.entity_id.in_(
-                    [str(namespace_id) for namespace_id in namespace_names]
-                ),
-                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
-            )
-            if candidate_ids is not None:
-                query = query.filter(ResourceMember.resource_id.in_(candidate_ids))
-            for member in query.all():
-                _append_entity_member_metadata(
-                    member,
-                    "namespace",
-                    namespace_names.get(int(member.entity_id or 0)),
-                    kb_ids,
-                    group_map,
-                    role_map,
-                    inviter_map,
-                    type_map,
-                    entity_id_map,
-                )
-
-    for entity_type in get_all_entity_types():
-        if entity_type in {"namespace", "user"}:
-            continue
-        resolver = get_entity_resolver(entity_type)
-        if resolver is None:
-            continue
-        resolved_ids = resolver.get_resource_ids_by_entity(db, user_id, entity_type)
-        if candidate_id_set is not None:
-            resolved_ids = [
-                kb_id for kb_id in resolved_ids if kb_id in candidate_id_set
-            ]
-        if not resolved_ids:
-            continue
-        members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
-                ResourceMember.entity_type == entity_type,
-                ResourceMember.resource_id.in_(resolved_ids),
-                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
-            )
-            .all()
-        )
-        matched_ids = set(
-            resolver.match_entity_bindings(
-                db,
-                user_id,
-                entity_type,
-                [member.entity_id for member in members if member.entity_id],
-            )
-        )
-        for member in members:
-            if member.entity_id not in matched_ids:
+    namespace_names = {
+        str(row.id): row.name
+        for row in db.query(Namespace)
+        .filter(Namespace.name.in_(accessible_groups), Namespace.is_active.is_(True))
+        .all()
+    }
+    for kb_id in candidate_ids or []:
+        for member in facts.members.get(kb_id, []):
+            entity_type = member.entity_type
+            if entity_type in {"user", "", None}:
+                continue
+            if member.entity_id not in facts.matched_entities.get(entity_type, set()):
                 continue
             _append_entity_member_metadata(
                 member,
                 entity_type,
-                None,
+                (
+                    namespace_names.get(member.entity_id)
+                    if entity_type == "namespace"
+                    else None
+                ),
                 kb_ids,
                 group_map,
                 role_map,
@@ -377,93 +521,6 @@ def _append_entity_member_metadata(
         inviter_map.setdefault(kb_id, set()).add(member.invited_by_user_id)
 
 
-def apply_direct_access_filter(
-    db: Session,
-    query,
-    user_id: int,
-    context: DirectAccessPermissionContext,
-):
-    """Apply the direct-access policy as SQL predicates."""
-    _validate_context_user(context, user_id)
-    editable_roles = (
-        BaseRole.Owner.value,
-        BaseRole.Maintainer.value,
-        BaseRole.Developer.value,
-    )
-    member_query = _approved_member_query(db)
-    direct_editable = member_query.filter(
-        ResourceMember.entity_type == "user",
-        ResourceMember.entity_id == str(user_id),
-        ResourceMember.role.in_(editable_roles),
-    ).exists()
-
-    edit_conditions = [Kind.user_id == user_id, direct_editable]
-    if context.accessible_namespace_ids:
-        edit_conditions.append(
-            member_query.filter(
-                ResourceMember.entity_type == "namespace",
-                ResourceMember.entity_id.in_(context.accessible_namespace_ids),
-                ResourceMember.role.in_(editable_roles),
-            ).exists()
-        )
-    external_editable_ids = {
-        kb_id
-        for kb_id, roles in context.external_member_role_map.items()
-        if any(has_permission(role, BaseRole.Developer) for role in roles)
-    }
-    if external_editable_ids:
-        edit_conditions.append(Kind.id.in_(external_editable_ids))
-
-    editable_group_names = [
-        group_name
-        for group_name, role in context.group_roles.items()
-        if has_permission(role, BaseRole.Developer)
-    ]
-    if editable_group_names:
-        edit_conditions.append(Kind.namespace.in_(editable_group_names))
-    if context.user.role == "admin" and context.organization_names:
-        edit_conditions.append(Kind.namespace.in_(context.organization_names))
-
-    requirement = knowledge_base_json_text(db, "$.spec.directAccessRequirement")
-    query = query.filter(
-        or_(
-            requirement == "",
-            requirement == "read",
-            and_(requirement == "edit", or_(*edit_conditions)),
-        )
-    )
-    return apply_acl_deny_filter(db, query, user_id, context)
-
-
-def apply_acl_deny_filter(
-    db: Session,
-    query,
-    user_id: int,
-    context: DirectAccessPermissionContext,
-):
-    """Apply explicit ACL denials shared by direct and agent access."""
-    _validate_context_user(context, user_id)
-    direct_restricted = (
-        _approved_member_query(db)
-        .filter(
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.role == BaseRole.RestrictedAnalyst.value,
-        )
-        .exists()
-    )
-    query = query.filter(~direct_restricted)
-
-    restricted_group_names = [
-        group_name
-        for group_name, role in context.group_roles.items()
-        if role == GroupRole.RestrictedAnalyst
-    ]
-    if restricted_group_names:
-        query = query.filter(Kind.namespace.notin_(restricted_group_names))
-    return query
-
-
 def get_directly_accessible_knowledge_base_ids(
     db: Session,
     *,
@@ -474,24 +531,10 @@ def get_directly_accessible_knowledge_base_ids(
     candidate_ids = list(dict.fromkeys(candidate_ids))
     if not candidate_ids:
         return set()
-    context = build_direct_access_query_context(
-        db,
-        user_id,
-        candidate_ids=candidate_ids,
+    query, _ = build_knowledge_discovery_query(
+        db, user_id, candidate_ids, allow_empty_requirement=True
     )
-    query = build_knowledge_base_visibility_query(
-        db,
-        user_id=user_id,
-        scope=ResourceScope.ALL,
-        permission_context=context,
-    ).filter(Kind.id.in_(candidate_ids))
-    query = apply_direct_access_filter(
-        db,
-        query.with_entities(Kind.id),
-        user_id,
-        context,
-    )
-    return {row[0] for row in query.all()}
+    return {row[0] for row in query.with_entities(Kind.id).all()}
 
 
 def get_acl_accessible_knowledge_base_ids(
@@ -518,59 +561,11 @@ def get_acl_accessible_knowledge_base_ids(
             )
         )
     else:
-        context = build_direct_access_query_context(
-            db,
-            user_id,
-            candidate_ids=candidate_ids,
+        query, _ = build_knowledge_discovery_query(
+            db, user_id, candidate_ids, raw_acl=True
         )
-        query = build_knowledge_base_visibility_query(
-            db,
-            user_id=user_id,
-            scope=ResourceScope.ALL,
-            permission_context=context,
-        ).filter(Kind.id.in_(candidate_ids))
-        query = apply_acl_deny_filter(
-            db,
-            query.with_entities(Kind.id),
-            user_id,
-            context,
-        )
+        query = query.with_entities(Kind.id)
     return {row[0] for row in query.all()}
-
-
-def build_knowledge_base_visibility_query(
-    db: Session,
-    *,
-    user_id: int,
-    scope: ResourceScope,
-    permission_context: DirectAccessPermissionContext,
-    group_name: str | None = None,
-):
-    """Build the base SQL query for knowledge bases visible to a user."""
-    _validate_context_user(permission_context, user_id)
-    base_query = db.query(Kind).filter(
-        Kind.kind == "KnowledgeBase",
-        Kind.is_active.is_(True),
-    )
-    if scope == ResourceScope.PERSONAL:
-        return _build_personal_query(
-            db,
-            base_query,
-            user_id,
-            permission_context,
-        )
-    if scope == ResourceScope.GROUP:
-        if not group_name:
-            raise ValueError("group_name is required when scope is GROUP")
-        if get_effective_role_in_group(db, user_id, group_name) is None:
-            return None
-        return base_query.filter(Kind.namespace == group_name)
-    if scope == ResourceScope.ORGANIZATION:
-        return base_query.join(Namespace, Kind.namespace == Namespace.name).filter(
-            Namespace.level == GroupLevel.organization.value,
-            Namespace.is_active.is_(True),
-        )
-    return _build_all_query(db, base_query, user_id, permission_context)
 
 
 def knowledge_base_json_text(db: Session, path: str):
@@ -580,59 +575,6 @@ def knowledge_base_json_text(db: Session, path: str):
     else:
         value = func.json_extract(Kind.json, path)
     return func.coalesce(value, "")
-
-
-def _build_personal_query(
-    db: Session,
-    base_query,
-    user_id: int,
-    context: DirectAccessPermissionContext,
-):
-    conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
-    shared_access = _shared_access_condition(db, context)
-    if shared_access is not None:
-        conditions.append(shared_access)
-    return base_query.filter(or_(*conditions))
-
-
-def _build_all_query(
-    db: Session,
-    base_query,
-    user_id: int,
-    context: DirectAccessPermissionContext,
-):
-    conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
-    if context.accessible_groups:
-        conditions.append(Kind.namespace.in_(context.accessible_groups))
-    if context.organization_names:
-        conditions.append(Kind.namespace.in_(context.organization_names))
-    shared_access = _shared_access_condition(db, context)
-    if shared_access is not None:
-        conditions.append(shared_access)
-    return base_query.filter(or_(*conditions))
-
-
-def _shared_access_condition(
-    db: Session,
-    context: DirectAccessPermissionContext,
-):
-    member_query = _approved_member_query(db)
-    conditions = [
-        member_query.filter(
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(context.user.id),
-        ).exists()
-    ]
-    if context.accessible_namespace_ids:
-        conditions.append(
-            member_query.filter(
-                ResourceMember.entity_type == "namespace",
-                ResourceMember.entity_id.in_(context.accessible_namespace_ids),
-            ).exists()
-        )
-    if context.external_member_role_map:
-        conditions.append(Kind.id.in_(tuple(context.external_member_role_map)))
-    return or_(*conditions)
 
 
 def _approved_member_query(db: Session):

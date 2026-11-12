@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.knowledge import ContentOrigin, KnowledgeDocument, KnowledgeFolder
-from app.schemas.base_role import BaseRole
 from app.schemas.knowledge import (
     BatchOperationResult,
     KnowledgeFolderCreate,
@@ -39,7 +38,7 @@ from app.services.knowledge.folder_policy import (
     validate_new_folder_depth,
 )
 from app.services.knowledge.knowledge_access_policy import (
-    get_user_knowledge_base_permission,
+    resolve_knowledge_permission_action,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.permission_policy import (
@@ -545,8 +544,10 @@ class KnowledgeFolderService:
         failed_id_set = set(requested_ids) - set(docs_by_id)
 
         kb_ids = {doc.kind_id for doc in docs}
-        kb_permissions = KnowledgeFolderService._bulk_resolve_document_permissions(
-            db, kb_ids, user_id
+        document_permissions = (
+            KnowledgeFolderService._bulk_document_management_decisions(
+                db, docs, user_id
+            )
         )
         folder_validation = KnowledgeFolderService._bulk_validate_target_folder(
             db, kb_ids, folder_id
@@ -557,18 +558,7 @@ class KnowledgeFolderService:
             if doc.origin != ContentOrigin.USER.value:
                 failed_id_set.add(doc.id)
                 continue
-            permission = kb_permissions.get(doc.kind_id)
-            if permission is None:
-                failed_id_set.add(doc.id)
-                continue
-            has_access, role, is_creator = permission
-            if not can_manage_accessible_knowledge_document(
-                has_access=has_access,
-                role=role,
-                is_creator=is_creator,
-                user_id=user_id,
-                document_owner_id=doc.user_id,
-            ):
+            if not document_permissions.get(doc.id, False):
                 failed_id_set.add(doc.id)
                 continue
             validated_folder_id = folder_validation.get(doc.kind_id)
@@ -692,21 +682,55 @@ class KnowledgeFolderService:
         return documents
 
     @staticmethod
-    def _bulk_resolve_document_permissions(
+    def _bulk_document_management_decisions(
         db: Session,
-        knowledge_base_ids: set[int],
+        documents: list[KnowledgeDocument],
         user_id: int,
-    ) -> dict[int, tuple[bool, BaseRole | None, bool]]:
-        """Resolve user permissions for all touched knowledge bases once."""
-        permissions: dict[int, tuple[bool, BaseRole | None, bool]] = {}
-        for kb_id in knowledge_base_ids:
-            permission = get_user_knowledge_base_permission(db, kb_id, user_id)
-            permissions[kb_id] = (
-                permission.has_access,
-                permission.role,
-                permission.is_creator,
+    ) -> dict[int, bool]:
+        """Load shared ACL facts once and project each movable document action."""
+        from app.services.external_entity_resolver import entity_resolution_scope
+        from app.services.knowledge.namespace_utils import load_active_namespace_map
+        from app.services.knowledge.permission_context import (
+            build_knowledge_permission_context,
+        )
+
+        movable = [doc for doc in documents if doc.origin == ContentOrigin.USER.value]
+        libraries = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_({doc.kind_id for doc in movable}),
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active.is_(True),
             )
-        return permissions
+            .all()
+        )
+        by_id = {kb.id: kb for kb in libraries}
+        namespaces = load_active_namespace_map(db, [kb.namespace for kb in libraries])
+        organizations = frozenset(
+            name for name, ns in namespaces.items() if ns.level == "organization"
+        )
+        with entity_resolution_scope(db):
+            facts = build_knowledge_permission_context(
+                db, libraries, user_id, organizations
+            )
+            return {
+                doc.id: doc.kind_id in by_id
+                and resolve_knowledge_permission_action(
+                    db,
+                    doc.kind_id,
+                    user_id,
+                    lambda permission: can_manage_accessible_knowledge_document(
+                        permission.has_access,
+                        permission.role,
+                        permission.is_creator,
+                        user_id,
+                        doc.user_id,
+                    ),
+                    kb=by_id.get(doc.kind_id),
+                    context=facts,
+                )
+                for doc in movable
+            }
 
     @staticmethod
     def _bulk_validate_target_folder(

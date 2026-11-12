@@ -43,7 +43,9 @@ SchemaMemberRole = BaseRole
 from app.services.knowledge.knowledge_access_policy import (
     get_user_knowledge_base_permission,
     meets_direct_access_requirement,
+    resolve_direct_access_decision,
     resolve_knowledge_base_permission,
+    resolve_knowledge_permission_action,
 )
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.share.base_service import UnifiedShareService
@@ -104,8 +106,7 @@ class KnowledgeShareService(UnifiedShareService):
             f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
         )
 
-        permission = resolve_knowledge_base_permission(db, kb, user_id)
-        if not meets_direct_access_requirement(kb=kb, permission=permission):
+        if not resolve_direct_access_decision(db, kb, user_id):
             logger.warning(
                 "[_get_resource] Access denied for KB %s and user %s",
                 resource_id,
@@ -307,21 +308,19 @@ class KnowledgeShareService(UnifiedShareService):
         required_role: SchemaMemberRole,
     ) -> bool:
         """Check permission using merged KB access semantics."""
-        permission = get_user_knowledge_base_permission(
+        return resolve_knowledge_permission_action(
             db,
             resource_id,
             user_id,
+            lambda permission: permission.has_access
+            and (
+                permission.is_creator
+                or (
+                    permission.role is not None
+                    and has_permission(permission.role, required_role)
+                )
+            ),
         )
-        if not permission.has_access:
-            return False
-
-        effective_role = (
-            SchemaMemberRole.Owner if permission.is_creator else permission.role
-        )
-        if effective_role is None:
-            return False
-
-        return has_permission(effective_role, required_role)
 
     def can_manage_permissions(
         self,
@@ -330,17 +329,16 @@ class KnowledgeShareService(UnifiedShareService):
         user_id: int,
     ) -> bool:
         """Check if user can manage permissions for a knowledge base."""
-        permission = get_user_knowledge_base_permission(
+        return resolve_knowledge_permission_action(
             db,
             knowledge_base_id,
             user_id,
-        )
-        if permission.is_creator:
-            return True
-        return (
-            permission.has_access
-            and permission.role is not None
-            and has_permission(permission.role, BaseRole.Maintainer)
+            lambda permission: permission.is_creator
+            or (
+                permission.has_access
+                and permission.role is not None
+                and has_permission(permission.role, BaseRole.Maintainer)
+            ),
         )
 
     def get_my_permission(

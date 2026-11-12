@@ -351,22 +351,10 @@ def _find_model_with_namespace(
     if referenced_model and referenced_model.json:
         return referenced_model, referenced_model.json.get("spec", {})
 
-    # Search group models
-    user_groups = lookup.groups
-    if user_groups:
-        group_model = lookup.group("Model", model_name, user_groups)
-
-        if group_model and group_model.json:
-            logger.info(
-                "Found model '%s' in group models (namespace: %s)",
-                model_name,
-                group_model.namespace,
-            )
-            return group_model, group_model.json.get("spec", {})
-        for group_name in user_groups:
-            referenced_model = lookup.referenced("Model", model_name, group_name)
-            if referenced_model and referenced_model.json:
-                return referenced_model, referenced_model.json.get("spec", {})
+    # Preserve native-before-reference selection using only matching candidates.
+    group_model = lookup.group_model(model_name)
+    if group_model and group_model.json:
+        return group_model, group_model.json.get("spec", {})
 
     # Search public models
     public_model = lookup.public("Model", model_name)

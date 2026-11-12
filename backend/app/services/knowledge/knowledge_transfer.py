@@ -23,7 +23,7 @@ from app.models.knowledge import (
 from app.models.user import User
 from app.schemas.knowledge import MAX_TRANSFER_RESOURCE_COUNT, TransferDocumentsResponse
 from app.schemas.namespace import GroupRole
-from app.services.group_permission import get_effective_role_in_group
+from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _get_rag_gateway,
@@ -144,8 +144,9 @@ class KnowledgeTransferService:
             )
 
         # Check if user has access to the target group
-        target_role = get_effective_role_in_group(db, user_id, target_group_name)
-        if target_role is None:
+        if not check_group_permission(
+            db, user_id, target_group_name, GroupRole.RestrictedAnalyst
+        ):
             raise CustomHTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"You don't have access to group '{target_group_name}'",
@@ -153,7 +154,9 @@ class KnowledgeTransferService:
             )
 
         # Check if user has Maintainer+ permission in target group
-        if target_role not in {GroupRole.Owner, GroupRole.Maintainer}:
+        if not check_group_permission(
+            db, user_id, target_group_name, GroupRole.Maintainer
+        ):
             raise CustomHTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You need Maintainer or Owner permission in the target group to migrate knowledge bases",

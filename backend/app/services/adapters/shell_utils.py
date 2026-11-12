@@ -83,34 +83,9 @@ def find_shell_json(
     if referenced_shell and isinstance(referenced_shell.json, dict):
         return referenced_shell.json
 
-    # Try group namespaces
-    from app.services.group_permission import get_user_groups
-
-    user_groups = get_user_groups(db, user_id)
-    for group_name in user_groups:
-        shell_row = (
-            db.query(Kind.json)
-            .filter(
-                Kind.kind == "Shell",
-                Kind.name == shell_name,
-                Kind.namespace == group_name,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .first()
-        )
-        if shell_row and isinstance(shell_row[0], dict):
-            return shell_row[0]
-        referenced_shell = get_referenced_capability(
-            db,
-            kind="Shell",
-            name=shell_name,
-            user_id=user_id,
-            namespace=group_name,
-        )
-        if referenced_shell and isinstance(referenced_shell.json, dict):
-            return referenced_shell.json
-
-    return None
+    # Restrict membership reads to shells that can satisfy this requested name.
+    shell = ExecutionCapabilityLookup(db, user_id).group_shell(shell_name)
+    return shell.json if shell and isinstance(shell.json, dict) else None
 
 
 def get_shell_by_name(
@@ -146,16 +121,12 @@ def get_shell_by_name(
     if referenced_shell:
         return referenced_shell
 
-    # Then, try to find in user's accessible groups (if namespace != 'default')
+    # A missing native candidate cannot affect the public fallback.
     if namespace != "default":
-        user_groups = lookup.groups
-        if namespace in user_groups:
-            group_shell = lookup.group("Shell", shell_name, [namespace])
-            if group_shell:
-                logger.debug(
-                    f"Found group shell '{shell_name}' in namespace '{namespace}'"
-                )
-                return group_shell
+        group_shell = lookup.group("Shell", shell_name, [namespace])
+        if group_shell and lookup.is_group_member(namespace):
+            logger.debug(f"Found group shell '{shell_name}' in namespace '{namespace}'")
+            return group_shell
 
     # Finally, try to find in public shells (user_id=0, namespace='default')
     public_shell = lookup.public("Shell", shell_name)
@@ -196,7 +167,6 @@ def get_shell_info_by_name(
     Raises:
         ValueError: If shell is not found
     """
-    from app.services.group_permission import get_user_groups
 
     # First, try to find in user's custom shells (namespace='default')
     user_shell = (
@@ -253,8 +223,11 @@ def get_shell_info_by_name(
     # Then, try to find in user's accessible groups
     # If namespace is specified and not 'default', only search that namespace
     # If namespace is 'default', search all user's groups
-    user_groups = get_user_groups(db, user_id)
-    namespaces_to_search = [namespace] if namespace != "default" else user_groups
+    if namespace != "default":
+        namespaces_to_search = [namespace]
+    else:
+        chosen = ExecutionCapabilityLookup(db, user_id).group_shell_scope(shell_name)
+        namespaces_to_search = [chosen[1]] if chosen else []
 
     for ns in namespaces_to_search:
         if ns == "default":
@@ -553,16 +526,15 @@ def get_shells_by_owners_batch(
     shell_map.update(_referenced_shells_by_keys(db, missing))
 
     missing = shell_keys - shell_map.keys()
-    group_owners = {
-        owner_id for owner_id, _, namespace in missing if namespace != "default"
-    }
-    authorized = set()
-    for owner_id in group_owners:
-        groups = ExecutionCapabilityLookup(db, owner_id).groups
-        authorized.update(
-            key for key in missing if key[0] == owner_id and key[2] in groups
+    candidates = _direct_shells_by_keys(
+        db, {key for key in missing if key[2] != "default"}, match_owner=False
+    )
+    for owner_id in {key[0] for key in candidates}:
+        keys = {key for key in candidates if key[0] == owner_id}
+        groups = ExecutionCapabilityLookup(db, owner_id).member_namespaces(
+            [namespace for _, _, namespace in keys]
         )
-    shell_map.update(_direct_shells_by_keys(db, authorized, match_owner=False))
+        shell_map.update({key: candidates[key] for key in keys if key[2] in groups})
 
     missing = shell_keys - shell_map.keys()
     public_by_name = {}

@@ -1067,20 +1067,33 @@ class TestModelAggregationService:
     def test_get_shell_support_model_with_group_shell(
         self, test_db: Session, test_user: User
     ):
-        """Test _get_shell_support_model with a group shell."""
-        from unittest.mock import patch
+        """Group shell lookup uses actual namespace membership."""
+        from app.models.namespace import Namespace
+        from app.models.resource_member import ResourceMember
 
-        with patch(
-            "app.services.group_permission.get_user_groups",
-            return_value=["test-group"],
-        ):
-            # Create a group shell
-            shell_crd = {
-                "apiVersion": "agent.wecode.io/v1",
-                "kind": "Shell",
+        group = Namespace(name="test-group", owner_user_id=test_user.id, is_active=True)
+        test_db.add(group)
+        test_db.flush()
+        test_db.add(
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=group.id,
+                entity_type="user",
+                entity_id=str(test_user.id),
+                role="Reporter",
+                status="approved",
+            )
+        )
+        shell = Kind(
+            user_id=999,
+            kind="Shell",
+            name="group-shell",
+            namespace=group.name,
+            is_active=True,
+            json={
                 "metadata": {
                     "name": "group-shell",
-                    "namespace": "test-group",
+                    "namespace": group.name,
                     "labels": {"type": "local_engine"},
                 },
                 "spec": {
@@ -1088,28 +1101,15 @@ class TestModelAggregationService:
                     "supportModel": ["claude", "openai"],
                     "baseImage": "test-image:latest",
                 },
-                "status": {"state": "Available"},
-            }
-            shell = Kind(
-                user_id=999,  # Different user
-                kind="Shell",
-                name="group-shell",
-                namespace="test-group",
-                json=shell_crd,
-                is_active=True,
-            )
-            test_db.add(shell)
-            test_db.commit()
-
-            # Get support_model and shell_type for group shell
-            support_model, shell_type = (
-                model_aggregation_service._get_shell_support_model(
-                    test_db, "group-shell", test_user
-                )
-            )
-
-            assert shell_type == "Agno"
-            assert set(support_model) == {"claude", "openai"}
+            },
+        )
+        test_db.add(shell)
+        test_db.commit()
+        support_model, shell_type = model_aggregation_service._get_shell_support_model(
+            test_db, "group-shell", test_user
+        )
+        assert shell_type == "Agno"
+        assert set(support_model) == {"claude", "openai"}
 
     def test_get_shell_support_model_public_shell_in_non_default_namespace(
         self, test_db: Session, test_user: User
