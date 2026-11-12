@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { WebContents } from 'electron'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { FakeWebContents } from '../../test-fixtures/embedded-browser.js'
 import { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 
@@ -88,6 +89,60 @@ test('returns a synchronous action result before navigation destroys promise cal
       })
     ).rejects.toThrow('Page closed before dispatch')
   } finally {
+    manager.close('browser')
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('a local preview link waits for its synchronous action response before replacing the document', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-browser-action-navigation-'))
+  const nested = join(directory, 'nested')
+  await mkdir(nested)
+  const contents = new FakeWebContents()
+  const manager = new EmbeddedBrowserManager(directory)
+  const reply = Promise.withResolvers<unknown>()
+  let actionPending = false
+  contents.loadURL.mockImplementation(async url => {
+    if (actionPending) reply.reject(new Error('Inspected target navigated or closed'))
+    contents.commitUrl(url)
+    contents.emit('did-navigate', {}, url)
+  })
+  manager.attach('browser', contents as unknown as WebContents)
+  try {
+    await manager.open({
+      label: 'browser',
+      url: pathToFileURL(directory).href,
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    const destination = `${pathToFileURL(nested).href}/`
+    const event = { preventDefault() {} }
+    contents.debugger.sendCommand.mockImplementation(() => {
+      actionPending = true
+      contents.emit('will-navigate', event, destination)
+      return reply.promise
+    })
+    const result = manager
+      .evaluate('browser', 'document.querySelector("a").click()', {
+        awaitPromise: false,
+      })
+      .then(
+        value => ({ value }),
+        error => ({ error: String(error) })
+      )
+    // The action remains pending throughout this negative observation window.
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(contents.loadURL).toHaveBeenCalledOnce()
+    actionPending = false
+    reply.resolve({ result: { value: { ok: true } } })
+    await expect(result).resolves.toEqual({ value: { ok: true } })
+    await vi.waitFor(() => {
+      expect(contents.loadURL).toHaveBeenCalledTimes(2)
+      expect(manager.state('browser').url).toBe(destination)
+    })
+  } finally {
+    reply.resolve({ result: { value: { ok: true } } })
     manager.close('browser')
     await rm(directory, { recursive: true, force: true })
   }
