@@ -64,6 +64,7 @@ async function createGroupTeam(
     is_active: true,
   })
   expect(botResponse.status, JSON.stringify(botResponse.data)).toBe(201)
+  expect((botResponse.data as { namespace: string }).namespace).toBe(botNamespace)
   const botId = (botResponse.data as { id: number }).id
 
   const teamName = `${prefix}-${suffix}-agent`
@@ -78,6 +79,7 @@ async function createGroupTeam(
     workflow: { mode: 'solo' },
   })
   expect(teamResponse.status, JSON.stringify(teamResponse.data)).toBe(201)
+  expect((teamResponse.data as TeamRecord).namespace).toBe(namespace)
   return { teamId: (teamResponse.data as TeamRecord).id, teamName, botId }
 }
 
@@ -156,6 +158,19 @@ async function createShareScopeFixture(
       namespace: groupName,
       name: groupTeam.teamName,
     })
+    const visibleTeams = await developerApi.get<{ items: TeamRecord[] }>(
+      `/api/teams?${new URLSearchParams({
+        scope: 'group',
+        group_name: groupName,
+        limit: '100',
+      })}`
+    )
+    expect(visibleTeams.status, JSON.stringify(visibleTeams.data)).toBe(200)
+    expect(visibleTeams.data?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: groupTeam.teamId, namespace: groupName }),
+      ])
+    )
 
     // The reporter owns this personal agent, so only the group list decides
     // which team targets they may pick.
