@@ -338,6 +338,17 @@ try {
     await fixture.remove()
   })
 
+  test('reads enabled state only for the requested bundle plugins', async () => {
+    const fixture = await createFixture()
+    try {
+      await expect(
+        fixture.manager().enabledStates(['dsh-alpha', 'plain-runtime-library', 'missing-plugin'])
+      ).resolves.toEqual(new Map([['dsh-alpha', true]]))
+    } finally {
+      await fixture.remove()
+    }
+  })
+
   test('rejects non-bundle packages and restores the profile manifest', async () => {
     const fixture = await createFixture({
       runCommand: async (_command, args) => {

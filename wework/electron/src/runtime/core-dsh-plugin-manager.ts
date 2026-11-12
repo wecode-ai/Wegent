@@ -130,6 +130,22 @@ export class CoreDshPluginManager {
     return this.serial(() => this.readInventory())
   }
 
+  enabledStates(names: readonly string[]): Promise<Map<string, boolean>> {
+    return this.serial(async () => {
+      const manifest = await this.readManifest()
+      const active = new Set(manifest.dsh?.profile?.bundles ?? [])
+      const states = new Map<string, boolean>()
+      await Promise.all(
+        names.map(async name => {
+          const installed = await this.readPackage(name)
+          if (!installed?.dsh?.bundle?.patch) return
+          states.set(name, active.has(name))
+        })
+      )
+      return states
+    })
+  }
+
   install(spec: string): Promise<CoreDshPlugin[]> {
     logPluginCommand(this.options.environment, { stage: 'install-requested' })
     return this.mutate(async () => {
@@ -265,7 +281,16 @@ export class CoreDshPluginManager {
 
   private async readInventory(): Promise<CoreDshPlugin[]> {
     const manifest = await this.readManifest()
-    const state = await this.readState(manifest)
+    const packageManifests = new Map<string, Promise<PackageManifest | null>>()
+    const readPackage = (name: string) => {
+      let manifest = packageManifests.get(name)
+      if (!manifest) {
+        manifest = this.readPackage(name)
+        packageManifests.set(name, manifest)
+      }
+      return manifest
+    }
+    const state = await this.readState(manifest, readPackage)
     const active = new Set(manifest.dsh?.profile?.bundles ?? [])
     const names = [
       ...new Set([
@@ -276,7 +301,7 @@ export class CoreDshPluginManager {
     ]
     const plugins = await Promise.all(
       names.map(async name => {
-        const installed = await this.readPackage(name)
+        const installed = await readPackage(name)
         if (!installed) return null
         const immutable = IMMUTABLE_CORE_DSH_PLUGINS.has(name)
         if (!immutable && !installed.dsh?.bundle?.patch) return null
@@ -305,9 +330,12 @@ export class CoreDshPluginManager {
       })
   }
 
-  private async readState(manifest: ProfileManifest): Promise<PluginState> {
+  private async readState(
+    manifest: ProfileManifest,
+    readPackage: (name: string) => Promise<PackageManifest | null> = name => this.readPackage(name)
+  ): Promise<PluginState> {
     const stored = await readJson(join(this.profileRoot, STATE_FILE))
-    const dependencies = await this.bundleDependencies(manifest)
+    const dependencies = await this.bundleDependencies(manifest, readPackage)
     const activeOrder = (manifest.dsh?.profile?.bundles ?? []).filter(
       name => !IMMUTABLE_CORE_DSH_PLUGINS.has(name)
     )
@@ -323,14 +351,17 @@ export class CoreDshPluginManager {
     return { version: 1, order, disabled }
   }
 
-  private async bundleDependencies(manifest: ProfileManifest): Promise<string[]> {
+  private async bundleDependencies(
+    manifest: ProfileManifest,
+    readPackage: (name: string) => Promise<PackageManifest | null>
+  ): Promise<string[]> {
     const names = Object.keys(manifest.dependencies ?? {}).filter(
       name => !IMMUTABLE_CORE_DSH_PLUGINS.has(name)
     )
     const inspected = await Promise.all(
       names.map(async name => ({
         name,
-        bundle: Boolean((await this.readPackage(name))?.dsh?.bundle?.patch),
+        bundle: Boolean((await readPackage(name))?.dsh?.bundle?.patch),
       }))
     )
     return inspected.filter(item => item.bundle).map(item => item.name)

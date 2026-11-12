@@ -395,11 +395,13 @@ export class DesktopRuntime {
           'WEWORK_HARNESS_RUNTIME_ROOT is required when DSH is not externally managed'
         )
       }
-      managedRuntime = await prepareCoreDshRuntime({
-        runtimeRoot: managedRoot,
-        dataDirectory: this.options.dataDirectory,
-        environment: this.options.environment,
-      })
+      managedRuntime = await this.runStartupStep('core-dsh-runtime-prepare', () =>
+        prepareCoreDshRuntime({
+          runtimeRoot: managedRoot,
+          dataDirectory: this.options.dataDirectory,
+          environment: this.options.environment,
+        })
+      )
       if (this.lifecycleGeneration !== generation) return null
       cwd = managedRuntime.cwd
       dshHome = managedRuntime.dshHome
@@ -412,10 +414,19 @@ export class DesktopRuntime {
         environment: managedRuntime.environment,
       })
       if (this.options.readWorkbenchMode) {
-        recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)
-        const mode = await this.options.readWorkbenchMode()
-        recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-start' }, true)
-        await applyWorkbenchModeToCorePlugins(mode, plugins)
+        const pluginManager = plugins
+        const readWorkbenchMode = this.options.readWorkbenchMode
+        if (!pluginManager || !readWorkbenchMode) {
+          throw new Error('Core DSH plugin state is unavailable')
+        }
+        const mode = await this.runStartupStep('core-dsh-mode-read', async () => {
+          recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)
+          return readWorkbenchMode()
+        })
+        await this.runStartupStep('core-dsh-mode-apply', async () => {
+          recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-start' }, true)
+          await applyWorkbenchModeToCorePlugins(mode, pluginManager)
+        })
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-apply-finish' }, true)
         if (this.lifecycleGeneration !== generation) return null
       }
