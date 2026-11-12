@@ -73,6 +73,14 @@ revision and desired state. Conflicts replay only database transactions, never
 already-executed device operations. Deferred acknowledgement persistence does not
 turn a committed installation into a failed account mutation.
 
+Local HTTP full reconciliations queue within the same journal scope and reload
+the journal after admission, so overlapping checks cannot invalidate each other's
+scan evidence. Waiting holds no short journal lease; installation, update,
+removal and targeted sync bypass this queue. Other journal scopes remain independent.
+Queued checks revalidate foreground admission before scanning or submitting recovery.
+The existing scan file lock still protects workers after cancellation, and
+external publication continues to invalidate stale evidence.
+
 ## Account authentication preference
 
 `ConnectorAuthPolicy/plugin-auth/account` remains the real account preference.

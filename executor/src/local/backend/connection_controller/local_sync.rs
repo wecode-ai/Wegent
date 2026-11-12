@@ -543,6 +543,21 @@ impl LocalBackendConnectionController {
             .as_u64()
             .filter(|_| selected.is_none() && params["full"] != true);
         let targeted = selected.is_some() || installed_plugin_id.is_some();
+        let _reconciliation = if targeted {
+            None
+        } else {
+            // Full checks share scan evidence. Queue them without holding the
+            // short journal lease; foreground plugin operations never join it.
+            drop(lease.take());
+            let guard = scanning::full_reconciliation_gate(path).lock_owned().await;
+            journal = self
+                .resume_local_sync_journal(connection, path, lease)
+                .await?;
+            if self.has_foreground_plugin_operation(path) {
+                return Err(error("plugin_local_sync_busy"));
+            }
+            Some(guard)
+        };
         if installed_plugin_id.is_some() {
             // Target-only refreshes also fence older full plans after cancellation.
             next_intent_order(&mut journal)?;

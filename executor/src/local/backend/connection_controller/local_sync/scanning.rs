@@ -1,6 +1,25 @@
 //! Scan outside foreground leases, then merge only still-current evidence.
 use super::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock, Weak};
+
+type ReconciliationGates = Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>;
+static RECONCILIATIONS: OnceLock<ReconciliationGates> = OnceLock::new();
+
+pub(super) fn full_reconciliation_gate(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let mut gates = RECONCILIATIONS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = gates.get(path).and_then(Weak::upgrade) {
+        return gate;
+    }
+    let gate = Arc::new(tokio::sync::Mutex::new(()));
+    gates.insert(path.to_owned(), Arc::downgrade(&gate));
+    gate
+}
 
 pub(super) struct LocalSyncLease {
     _file: std::fs::File,
