@@ -2592,7 +2592,14 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         testId.startsWith('project-menu-')
       )
     )
-    await createSingleRootLocalProject(control, secondaryProjectPath, 'secondary-project')
+    // Windows logs show the secondary project's sidebar registration can exceed
+    // the ordinary UI budget while project state is reconciled.
+    await createSingleRootLocalProject(
+      control,
+      secondaryProjectPath,
+      'secondary-project',
+      LOCAL_PROJECT_READY_TIMEOUT_MS
+    )
     const secondaryProjectSnapshot = await waitForSnapshot(
       control,
       snapshot =>

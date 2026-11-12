@@ -1494,7 +1494,7 @@ async function ensureModelOptionVisible(
   )
 }
 
-async function confirmLocalProjectName(control, name, timeoutMs = LOCAL_PROJECT_READY_TIMEOUT_MS) {
+async function confirmLocalProjectName(control, name, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
   await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
     timeoutMs,
   })
@@ -1516,22 +1516,21 @@ async function createSingleRootLocalProject(
   control,
   workspacePath,
   name,
-  timeoutMs = LOCAL_PROJECT_READY_TIMEOUT_MS
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  const effectiveTimeoutMs = Math.max(timeoutMs, LOCAL_PROJECT_READY_TIMEOUT_MS)
   const sidebarSnapshot = await waitForSnapshot(
     control,
     snapshot =>
       snapshot.testIds.includes('projects-empty-create-button') ||
       snapshot.testIds.includes('runtime-project-sortable-list'),
     'The project section did not settle into an empty or populated state',
-    effectiveTimeoutMs
+    timeoutMs
   )
   const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
     ? '[data-testid="projects-empty-create-button"]'
     : '[data-testid="projects-create-button"]'
   const createButtonText = await control.command('clickWhenEnabled', createButtonSelector, {
-    timeoutMs: effectiveTimeoutMs,
+    timeoutMs,
   })
   if (createButtonSelector.includes('projects-empty-create-button')) {
     assert.match(
@@ -1542,7 +1541,7 @@ async function createSingleRootLocalProject(
   }
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
-    timeoutMs: effectiveTimeoutMs,
+    timeoutMs,
   })
   await waitForFolderPickerInitialized(control)
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
@@ -1552,11 +1551,11 @@ async function createSingleRootLocalProject(
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: effectiveTimeoutMs,
+    timeoutMs,
   })
-  await confirmLocalProjectName(control, name, effectiveTimeoutMs)
+  await confirmLocalProjectName(control, name, timeoutMs)
   const startedAt = Date.now()
-  while (Date.now() - startedAt < effectiveTimeoutMs) {
+  while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot'))
     if (snapshot.workbench?.currentProject?.name === name) return
     await new Promise(resolve => setTimeout(resolve, 100))
