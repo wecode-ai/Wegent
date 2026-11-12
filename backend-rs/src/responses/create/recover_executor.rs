@@ -121,13 +121,13 @@ pub(crate) async fn recover_executor_if_needed(
     state: &AppState,
     request: &mut ExecutionRequest,
     device_id: Option<&str>,
-) -> Result<()> {
+) -> Result<bool> {
     if !shell_supports_recovery(&request_shell_type(request)) {
-        return Ok(());
+        return Ok(false);
     }
     let restore_fork_workspace = has_fork_workspace_archive(request.fork_runtime.as_ref());
     if device_id.is_some_and(|id| !id.is_empty()) && restore_fork_workspace {
-        return Ok(());
+        return Ok(false);
     }
     let Some(subtask) = read_subtask_with_contexts(
         &state.mysql,
@@ -137,7 +137,7 @@ pub(crate) async fn recover_executor_if_needed(
     .await
     .context("Could not read the executor binding")?
     else {
-        return Ok(());
+        return Ok(false);
     };
     ensure!(
         subtask.task_id == request.task_id,
@@ -145,18 +145,19 @@ pub(crate) async fn recover_executor_if_needed(
     );
     if !subtask.executor_deleted && !restore_fork_workspace {
         if !probes_executor_binding(&subtask.executor_name) {
-            return Ok(());
+            return Ok(false);
         }
         let payload = state
             .executor_manager
             .executor_address(subtask.executor_name.trim(), &subtask.executor_namespace)
             .await;
         if !payload.as_ref().is_some_and(payload_reports_missing) {
-            return Ok(());
+            return Ok(false);
         }
         mark_executor_missing(state, request.subtask_id, &subtask).await?;
     }
-    recover_executor(state, request, &subtask).await
+    recover_executor(state, request, &subtask).await?;
+    Ok(true)
 }
 
 async fn mark_executor_missing(
@@ -222,16 +223,7 @@ async fn recover_executor(
             restore_archive_for_executor(state, request, &task, &executor.executor_name, namespace)
                 .await
     {
-        let (deleted, _) = state
-            .executor_manager
-            .delete_sandbox(&request.task_id.to_string())
-            .await;
-        if !deleted {
-            tracing::warn!(
-                task_id = request.task_id,
-                "could not clean up prepared executor"
-            );
-        }
+        delete_prepared_executor(state, request.task_id, &executor.executor_name, namespace).await;
         return Err(error);
     }
 
@@ -245,6 +237,44 @@ async fn recover_executor(
         "recovered executor"
     );
     Ok(())
+}
+
+async fn delete_prepared_executor(
+    state: &AppState,
+    task_id: i64,
+    name: &str,
+    namespace: &str,
+) -> bool {
+    match state
+        .executor_manager
+        .delete_executor_task(name, namespace)
+        .await
+    {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(task_id, executor_name = name, %error, "could not clean up prepared executor");
+            false
+        }
+    }
+}
+
+pub(crate) async fn discard_recovered_executor(state: &AppState, request: &ExecutionRequest) {
+    let (Some(name), Some(namespace)) = (&request.executor_name, &request.executor_namespace)
+    else {
+        return;
+    };
+    if !delete_prepared_executor(state, request.task_id, name, namespace).await {
+        return;
+    }
+    let subtask = RecoverySubtask {
+        executor_deleted: false,
+        task_id: request.task_id,
+        executor_name: name.clone(),
+        executor_namespace: namespace.clone(),
+    };
+    if let Err(error) = mark_executor_missing(state, request.subtask_id, &subtask).await {
+        tracing::warn!(task_id = request.task_id, subtask_id = request.subtask_id, %error, "could not mark the discarded executor deleted");
+    }
 }
 
 async fn save_recovered_binding(

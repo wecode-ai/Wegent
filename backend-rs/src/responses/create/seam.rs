@@ -499,7 +499,27 @@ pub(crate) async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    completion::mark_subtask_running(&ctx, subtask_id).await;
+    completion::mark_subtask_running(&ctx, subtask_id, false).await;
+}
+
+pub(crate) async fn claim_executor_dispatch(state: &AppState, subtask_id: i64) -> bool {
+    let tables = crate::internal_callback::tables(state);
+    let Some(redis) = state.redis.as_ref() else {
+        return completion::claim_running_subtask(&state.mysql, tables, subtask_id)
+            .await
+            .inspect_err(
+                |error| tracing::warn!(subtask_id, %error, "executor dispatch claim failed"),
+            )
+            .unwrap_or(false);
+    };
+    let ctx = completion::Completion {
+        app: Some(state),
+        mysql: &state.mysql,
+        redis,
+        tables,
+        executor_manager: &state.executor_manager,
+    };
+    completion::mark_subtask_running(&ctx, subtask_id, true).await
 }
 
 /// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
@@ -705,11 +725,12 @@ pub(crate) async fn recover_before_dispatch(
     state: &AppState,
     request: &mut ExecutionRequest,
     device_id: Option<&str>,
-) -> Result<(), FastApiError> {
-    let Err(error) =
-        super::recover_executor::recover_executor_if_needed(state, request, device_id).await
-    else {
-        return Ok(());
+) -> Result<bool, FastApiError> {
+    let error = match super::recover_executor::recover_executor_if_needed(state, request, device_id)
+        .await
+    {
+        Ok(recovered) => return Ok(recovered),
+        Err(error) => error,
     };
     let message = error.to_string();
     tracing::warn!(

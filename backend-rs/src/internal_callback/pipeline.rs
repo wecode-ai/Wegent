@@ -135,7 +135,7 @@ async fn dispatch_execution(
             task_project_id: advance.project_id,
             executor_name: &advance.pair.executor.name,
             executor_namespace: &advance.pair.executor.namespace,
-            executor_deleted: false,
+            executor_deleted: advance.pair.executor.deleted_at != 0,
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
@@ -168,6 +168,11 @@ async fn dispatch_execution(
             .get("protocol")
             .and_then(Value::as_str),
     });
+    let recovered = if target.mode == routing::CommunicationMode::HttpCallback {
+        seam::recover_before_dispatch(state, &mut execution, None).await?
+    } else {
+        false
+    };
     let tables = state
         .task_store
         .message_edit_tables(advance.task_id)
@@ -180,7 +185,11 @@ async fn dispatch_execution(
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
         let current = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
-        if current.as_ref().and_then(|json| json.0.pointer("/spec/currentStage")) != advance.task_json.pointer("/spec/currentStage") { return Ok(false); }
+        let Some(current) = current else { return Ok(false); };
+        if current.0.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
+            || current.0.pointer("/status/status").and_then(Value::as_str) != Some("PENDING") {
+            return Ok(false);
+        }
         let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
         let changed = transaction.execute(
             format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
@@ -192,6 +201,9 @@ async fn dispatch_execution(
         Ok(true)
     }).await.map_err(dependency)?;
     if !running {
+        if recovered {
+            crate::responses::create::discard_recovered_executor(state, &execution).await;
+        }
         return Ok(());
     }
     if routing::supports_streaming(&target) || target.mode == routing::CommunicationMode::Inprocess

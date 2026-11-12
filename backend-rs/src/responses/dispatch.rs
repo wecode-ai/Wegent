@@ -403,13 +403,18 @@ where
                         );
                         return;
                     };
-                    if super::create::seam::recover_before_dispatch(&app, &mut request, None)
-                        .await
-                        .is_err()
-                    {
+                    let Ok(recovered) =
+                        super::create::seam::recover_before_dispatch(&app, &mut request, None)
+                            .await
+                    else {
+                        return;
+                    };
+                    if !super::create::seam::claim_executor_dispatch(&app, subtask_id).await {
+                        if recovered {
+                            super::create::discard_recovered_executor(&app, &request).await;
+                        }
                         return;
                     }
-                    super::create::seam::mark_subtask_running(&app, subtask_id).await;
                     let payload = super::create::dispatch::assemble(&request, false, true);
                     serde_json::to_value(payload).unwrap_or(Value::Null)
                 }
@@ -495,11 +500,14 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
         event::{EventType, ExecutionEvent},
     };
     let Some(redis) = consumer.redis.as_ref() else {
-        tracing::error!(
-            task_id,
+        completion::persist_executor_failure(
+            &consumer.mysql,
+            consumer.tables,
             subtask_id,
-            "executor failure cannot be finalized without Redis"
-        );
+            message,
+            code,
+        )
+        .await;
         return;
     };
     let app = consumer.app.upgrade();

@@ -173,7 +173,7 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
 #[tokio::test]
 async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_payload() {
     let (result, _, queries) = recover_missing_executor(false).await;
-    result.unwrap();
+    assert!(result.unwrap());
     let writes: Vec<&str> = queries
         .iter()
         .filter(|sql| sql.starts_with("UPDATE "))
@@ -203,7 +203,7 @@ async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_erro
 
 async fn recover_missing_executor(
     prepare_fails: bool,
-) -> (anyhow::Result<()>, ExecutionRequest, Vec<String>) {
+) -> (anyhow::Result<bool>, ExecutionRequest, Vec<String>) {
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;

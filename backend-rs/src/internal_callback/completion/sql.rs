@@ -82,6 +82,17 @@ pub(crate) fn update_subtask_running(tables: Tables) -> String {
     update_subtask_running_statement(tables.subtasks)
 }
 
+pub(crate) fn claim_running_subtask(tables: Tables) -> String {
+    format!(
+        "UPDATE {subtasks} AS s SET s.status = ?, s.updated_at = ? \
+         WHERE s.id = ? AND s.status IN ('PENDING', 'RUNNING') AND EXISTS (\
+         SELECT 1 FROM {tasks} AS t WHERE t.id = s.task_id AND t.is_active IN (1, 2) \
+         AND JSON_UNQUOTE(JSON_EXTRACT(t.json, '$.status.status')) IN ('PENDING', 'RUNNING'))",
+        subtasks = tables.subtasks,
+        tasks = tables.tasks,
+    )
+}
+
 /// `subtask_store.update_fields` flush for a terminal subtask update.
 ///
 /// `with_result` follows the source's `if result is not None` guard

@@ -36,7 +36,10 @@ use crate::executor_manager::ExecutorManager;
 
 pub(crate) use collect::collect_completed_result;
 pub(crate) use events::publish_task_completed_for_owner;
-pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
+pub(crate) use persist::{
+    claim_running_subtask, mark_subtask_running, persist_completed_result,
+    persist_executor_failure, update_task_status,
+};
 pub(crate) use sql::Tables;
 
 /// The deployment inputs one completion flow renders.

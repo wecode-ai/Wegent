@@ -2,17 +2,30 @@ import type { APIRequestContext, APIResponse } from '@playwright/test'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { EXECUTOR_USER, executorMockUrl, expect, test } from '../../fixtures/executor-test'
 import { createBackendRequestHeaders } from '../../utils/api-client'
-import {
-  type Roots,
-  type Runtime,
-  SESSION_FILES,
-  type Snapshot,
-  runtimeProcess,
-} from '../../utils/pipeline-archive-runtime'
+import { type Roots, type Runtime, runtimeProcess } from '../../utils/pipeline-archive-runtime'
 
 const API = process.env.E2E_API_URL || 'http://localhost:8000'
 const MANAGER = `${process.env.EXECUTOR_MANAGER_URL || 'http://localhost:8001'}/executor-manager`
 const IMAGE = process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
+
+const CLAUDE_SESSION = `
+const fs = require('node:fs')
+const path = require('node:path')
+const { roots, taskId, user, team } = JSON.parse(process.argv[1])
+const markerDir = path.join(roots.executor_home, 'sessions', String(taskId))
+const markers = fs.readdirSync(markerDir)
+  .filter(name => name === '.claude_session_id' || name.startsWith('.claude_session_id_'))
+if (markers.length !== 1) throw Error('Expected one Claude session marker, got ' + markers.length)
+const id = fs.readFileSync(path.join(markerDir, markers[0]), 'utf8').trim()
+if (!/^[A-Za-z0-9_-]+$/.test(id)) throw Error('Invalid Claude session ID')
+const projects = path.join(roots.workbench_home, 'agents', user, 'default', team, 'projects')
+const transcripts = fs.readdirSync(projects, { withFileTypes: true })
+  .filter(entry => entry.isDirectory())
+  .map(entry => path.join(projects, entry.name, id + '.jsonl'))
+  .filter(file => fs.existsSync(file))
+if (transcripts.length !== 1) throw Error('Expected one native transcript for session ' + id)
+console.log(JSON.stringify({ id, transcript: fs.readFileSync(transcripts[0], 'utf8') }))
+`
 
 const WORKSPACE_FILE = `
 const fs = require('node:fs')
@@ -28,6 +41,7 @@ type ExecutorAddress =
   | { status: 'success'; base_url: string }
   | { status: 'failed'; error_msg: string }
 type TaskWithSubtasks = TaskDetail & { subtasks: TaskDetailSubtask[] }
+type ClaudeSession = { id: string; transcript: string }
 
 test('Responses continues a ClaudeCode session on a replacement executor after workspace cleanup', async ({
   request,
@@ -123,20 +137,17 @@ test('Responses continues a ClaudeCode session on a replacement executor after w
       json<Roots>(
         request.post(`${runtime.base_url}/api/runtime/prepare`, { data: { task_id: taskId } })
       )
-    const snapshot = (runtime: Runtime, roots: Roots) =>
-      runtimeProcess<Snapshot>(request, runtime, SESSION_FILES, {
+    const readSession = (runtime: Runtime, roots: Roots) =>
+      runtimeProcess<ClaudeSession>(request, runtime, CLAUDE_SESSION, {
         roots,
         taskId,
         user: EXECUTOR_USER.username,
         team,
-        botIds: [botId],
-        action: 'snapshot',
       })
 
     const originalRoots = await rootsFor(original)
-    const before = await snapshot(original, originalRoots)
-    expect(Object.values(before.markers)).toHaveLength(1)
-    expect(before.transcripts).toHaveLength(1)
+    const before = await readSession(original, originalRoots)
+    expect(before.transcript).toContain(firstReply)
     await runtimeProcess(request, original, WORKSPACE_FILE, {
       workspace: originalRoots.workspace_path,
       contents: prefix,
@@ -162,14 +173,10 @@ test('Responses continues a ClaudeCode session on a replacement executor after w
     expect(second.executor_name).not.toBe(first.executor_name)
     const replacement = await runtimeFor(request, second)
     const restoredRoots = await rootsFor(replacement)
-    const after = await snapshot(replacement, restoredRoots)
-    expect(Object.values(after.markers)).toEqual(Object.values(before.markers))
-    const transcript = after.transcripts.find(file =>
-      [firstReply, secondReply].every(reply =>
-        Buffer.from(after.files[file], 'base64').toString().includes(reply)
-      )
-    )
-    expect(transcript, 'The restored native transcript contains both turns').toBeDefined()
+    const after = await readSession(replacement, restoredRoots)
+    expect(after.id).toBe(before.id)
+    expect(after.transcript).toContain(firstReply)
+    expect(after.transcript).toContain(secondReply)
     const restoredFile = await runtimeProcess<string>(request, replacement, WORKSPACE_FILE, {
       workspace: restoredRoots.workspace_path,
     })

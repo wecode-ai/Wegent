@@ -225,13 +225,37 @@ async fn update_subtask_status<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> Option<i64> {
-    let mysql = ctx
-        .mysql
-        .route(crate::task_routing::ByTaskId(subtask_id as u64));
-    let updated = mysql
+    let (owner_task_id, row, metrics_message) = write_terminal_subtask(
+        ctx.mysql,
+        ctx.tables,
+        subtask_id,
+        status,
+        result,
+        error,
+        executor_name,
+        executor_namespace,
+    )
+    .await?;
+    publish_task_run_metrics(ctx, &row, subtask_id, status, metrics_message).await;
+    Some(owner_task_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_terminal_subtask<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+) -> Option<(i64, MysqlRow, Option<String>)> {
+    mysql
+        .route(crate::task_routing::ByTaskId(subtask_id as u64))
         .with_transaction(async |transaction| {
             Ok(update_subtask_status_on(
-                ctx,
+                tables,
                 transaction,
                 subtask_id,
                 status,
@@ -244,10 +268,31 @@ async fn update_subtask_status<M: Mysql, R: Redis>(
         })
         .await
         .ok()
-        .flatten()?;
-    let (owner_task_id, row, metrics_message) = updated;
-    publish_task_run_metrics(ctx, &row, subtask_id, status, metrics_message).await;
-    Some(owner_task_id)
+        .flatten()
+}
+
+pub(crate) async fn persist_executor_failure<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    subtask_id: i64,
+    message: &str,
+    code: &str,
+) {
+    let result = Value::Object(super::collect::failure_details(message, code));
+    if let Some((task_id, _, _)) = write_terminal_subtask(
+        mysql,
+        tables,
+        subtask_id,
+        "FAILED",
+        Some(&result),
+        Some(message),
+        None,
+        None,
+    )
+    .await
+    {
+        write_task_status(mysql, tables, task_id, subtask_id).await;
+    }
 }
 
 /// `TaskRunMetricHooks._after_commit` (`app/services/task_run_metric_hooks.py:157-175`):
@@ -321,6 +366,22 @@ pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] 
     ]
 }
 
+/// Claim a queued turn only while its task and subtask can still run.
+pub(crate) async fn claim_running_subtask<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    subtask_id: i64,
+) -> brz_mysql::MysqlResult<bool> {
+    mysql
+        .route(crate::task_routing::ByTaskId(subtask_id as u64))
+        .execute(
+            sql::claim_running_subtask(tables),
+            ("RUNNING", local_datetime(), subtask_id),
+        )
+        .await
+        .map(|result| result.rows_affected != 0)
+}
+
 /// `ExecutionDispatcher._update_subtask_to_running`
 /// (`app/services/execution/dispatcher.py:335-355`, called before the mode
 /// branch at `:166`): `db_handler.update_subtask_status(subtask_id, "RUNNING")`
@@ -330,7 +391,8 @@ pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] 
 pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     subtask_id: i64,
-) {
+    claim: bool,
+) -> bool {
     let [read_subtask, read_contexts, update_running] = running_transition_statements(ctx.tables);
     let mysql = ctx
         .mysql
@@ -343,7 +405,7 @@ pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     // `_update_subtask_sync`'s `if not subtask: return None`: a vanished row
     // ends the transition without an error, a write, or after-commit metrics.
     let Some(row) = row else {
-        return;
+        return false;
     };
     // `SubtaskStore.get_by_id` eager-loads `Subtask.contexts`.
     let _contexts: Vec<MysqlRow> = mysql
@@ -351,21 +413,28 @@ pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
         .await
         .unwrap_or_default();
     let task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
-    let now = local_datetime();
-    // A single statement runs on the pooled connection's autocommit; no
-    // explicit transaction or COMMIT is needed.
-    if let Err(failure) = mysql
-        .execute(update_running, ("RUNNING", now.as_str(), subtask_id))
-        .await
-    {
-        tracing::warn!(%failure, "subtask running update failed");
-        return;
+    let updated = if claim {
+        claim_running_subtask(ctx.mysql, ctx.tables, subtask_id).await
+    } else {
+        mysql
+            .execute(update_running, ("RUNNING", local_datetime(), subtask_id))
+            .await
+            .map(|_| true)
+    };
+    match updated {
+        Ok(true) => {}
+        Ok(false) => return false,
+        Err(error) => {
+            tracing::warn!(subtask_id, %error, "subtask running update failed");
+            return false;
+        }
     }
     // `_before_flush` tracks the status change (`record_total=False`,
     // `sync_failure=True`) and `_after_commit` publishes it. A RUNNING subtask
     // carries no error message, so the failure reason is empty.
     publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
     update_task_status(ctx, task_id, subtask_id).await;
+    true
 }
 
 /// `_update_task_status_sync`: re-derive the task's status from its assistant
@@ -377,12 +446,19 @@ pub(crate) async fn update_task_status<M: Mysql, R: Redis>(
     task_id: i64,
     changed_subtask_id: i64,
 ) -> bool {
-    let mysql = ctx
-        .mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64));
+    write_task_status(ctx.mysql, ctx.tables, task_id, changed_subtask_id).await
+}
+
+async fn write_task_status<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    task_id: i64,
+    changed_subtask_id: i64,
+) -> bool {
     match mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
         .with_transaction(async |transaction| {
-            Ok(update_task_status_on(ctx, transaction, task_id, changed_subtask_id).await)
+            Ok(update_task_status_on(tables, transaction, task_id, changed_subtask_id).await)
         })
         .await
     {
@@ -406,8 +482,8 @@ struct CollaborationStatus {
 
 /// `CollaborationStrategyFactory.get_strategy_for_task` plus
 /// `get_task_status_on_subtask_complete` and `get_auto_advance_info`.
-async fn collaboration_status<M: Mysql, R: Redis, T: MysqlTransaction>(
-    ctx: &Completion<'_, M, R>,
+async fn collaboration_status<T: MysqlTransaction>(
+    tables: sql::Tables,
     mysql: &mut T,
     task_id: i64,
     payload: &Map<String, Value>,
@@ -418,7 +494,7 @@ async fn collaboration_status<M: Mysql, R: Redis, T: MysqlTransaction>(
     // outcome decides whether the factory reads the task's Team at all.
     let regular_task_found = mysql
         .fetch_optional::<_, _, MysqlRow>(
-            sql::regular_active_task_statement(ctx.tables.tasks),
+            sql::regular_active_task_statement(tables.tasks),
             (task_id,),
         )
         .await

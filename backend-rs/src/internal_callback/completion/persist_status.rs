@@ -5,14 +5,13 @@
 //! The task-status update `_update_task_status_sync` performs after a
 //! completion callback (`app/services/chat/storage/db.py`). Split from
 //! [`persist`](super) so the file stays within the source-size bound.
-use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
-use brz_redis::Redis;
+use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::{Value, json};
 
 use super::sql;
 use super::{
-    Completion, collaboration_status, complete_task_model, local_datetime, local_isoformat,
-    render_task_crd, subtask_column, task_column,
+    collaboration_status, complete_task_model, local_datetime, local_isoformat, render_task_crd,
+    subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
 
@@ -34,8 +33,8 @@ pub(crate) fn read_status<T>(
     }
 }
 
-pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransaction>(
-    ctx: &Completion<'_, M, R>,
+pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
+    tables: sql::Tables,
     mysql: &mut T,
     task_id: i64,
     changed_subtask_id: i64,
@@ -45,7 +44,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let task: Option<MysqlRow> = read_status(
         mysql
             .fetch_optional(
-                sql::active_task_projection_statement(ctx.tables.tasks),
+                sql::active_task_projection_statement(tables.tasks),
                 (task_id,),
             )
             .await,
@@ -65,7 +64,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let Some(_owner) = read_status::<Vec<MysqlRow>>(
         mysql
             .fetch_all(
-                sql::owner_matches_task_id_statement(ctx.tables.tasks),
+                sql::owner_matches_task_id_statement(tables.tasks),
                 (task_id, owner_user_id),
             )
             .await,
@@ -76,7 +75,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     };
     let Some(subtasks) = read_status(
         mysql
-            .fetch_all(sql::assistant_subtasks(ctx.tables), (task_id,))
+            .fetch_all(sql::assistant_subtasks(tables), (task_id,))
             .await
             .and_then(crate::task_store_listing::order_assistant_subtasks),
         task_id,
@@ -102,7 +101,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
         // rather than treating the failure as "no row".
         let Some(row) = read_status(
             mysql
-                .fetch_optional(sql::subtask_by_id(ctx.tables), (changed_subtask_id,))
+                .fetch_optional(sql::subtask_by_id(tables), (changed_subtask_id,))
                 .await,
             task_id,
             "changed_subtask",
@@ -124,7 +123,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
         return false;
     };
     let Some(decision) =
-        collaboration_status(ctx, mysql, task_id, &payload, last, &last_status).await
+        collaboration_status(tables, mysql, task_id, &payload, last, &last_status).await
     else {
         return false;
     };
@@ -158,7 +157,13 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     complete_task_model(&mut payload);
     let json_text = python_dumps(&Value::Object(render_task_crd(payload)));
     let row_updated_at = local_datetime();
-    let sql = sql::update_task_json_statement(ctx.tables.tasks);
+    let mut sql = sql::update_task_json_statement(tables.tasks);
+    if last_status == "RUNNING" {
+        // A concurrent cancel can persist its intent after the status read.
+        sql.push_str(
+            " AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) NOT IN ('CANCELLING', 'CANCELLED')",
+        );
+    }
     // A single statement runs on the pooled connection's autocommit; no
     // explicit transaction or COMMIT is needed. A failed write aborts the
     // source's `try/except` before it can hand back an advance intent.

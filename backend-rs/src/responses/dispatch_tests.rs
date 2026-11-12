@@ -809,3 +809,26 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
         assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
     }
 }
+
+#[tokio::test]
+async fn executor_failure_reaches_mysql_without_redis() {
+    let mysql = RecordingMysql::default();
+    let mut consumer = consumer(mysql.clone(), RecordingRedis::default());
+    consumer.redis = None;
+    finalize_executor_failure(
+        &consumer,
+        TASK_ID,
+        SUBTASK_ID,
+        7,
+        Some(2),
+        ("Executor preparation failed", "container_error"),
+    )
+    .await;
+    assert!(
+        mysql
+            .statements()
+            .iter()
+            .any(|sql| sql.contains("FROM subtasks_0424")),
+        "the terminal write must read the subtask even when Redis is unavailable"
+    );
+}
