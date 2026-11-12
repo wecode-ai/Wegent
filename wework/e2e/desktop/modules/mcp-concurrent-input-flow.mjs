@@ -200,9 +200,14 @@ async function verifyConcurrentCases(control) {
       assert.equal(ordinary.interactionStatus, 'pending')
       assert.equal(ordinary.response, undefined)
       await assertWaiting(control, taskId, true)
-      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
-      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
-      await assertWaiting(control, taskId, true)
+      if (!ordinaryFirst) {
+        // The ordinary-first lane reloads again after answering that request.
+        // Other lanes already cover reloading with both cards still pending, so
+        // avoid spending this lane's MCP form deadline on the duplicate reload.
+        await reloadMainWindow(control, 'Reload failed while both native questions were pending')
+        await visible(control, mcpOption)
+        await assertWaiting(control, taskId, true)
+      }
       await captureVerificationScreenshot(
         control,
         `permission-concurrent-${action}-both-pending.png`
