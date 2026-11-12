@@ -12,6 +12,11 @@ impl CodexAppServerClient {
         launch_config: Option<&'a CodexLaunchConfig>,
     ) -> BoxFuture<'a, Result<Value, String>> {
         Box::pin(async move {
+            if method == "thread/resume" {
+                if let Some(thread_id) = params["threadId"].as_str() {
+                    self.recover_mcp_startup(thread_id, launch_config).await?;
+                }
+            }
             let timeout_seconds = codex_rpc_timeout_seconds();
             with_thread_resume_barrier(method, &params, timeout_seconds, || async {
                 let (request_id, handle, response_rx) = self

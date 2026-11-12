@@ -283,6 +283,95 @@ impl Drop for Fixture {
     }
 }
 
+#[tokio::test]
+async fn resumes_reconcile_failed_mcp_once_without_replaying_turns() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"test/fail-mcp"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"failed"}}'
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"two","name":"mail","status":"failed"}}'
+      result='{}' ;;
+    *'"method":"mcpServerStatus/list"'*)
+      case "$line" in
+        *'"serverName":"calendar"'*) result='{"data":[{"name":"calendar","runtimeStatus":"failed"}]}' ;;
+        *) result='{"data":[{"name":"mail","runtimeStatus":"authenticationRequired"}]}' ;;
+      esac ;;
+    *'"method":"config/mcpServer/reload"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"starting"}}'
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"failed"}}'
+      result='{}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#,
+    );
+    fixture
+        .client
+        .request("test/fail-mcp", json!({}))
+        .await
+        .unwrap();
+    let (one, two) = tokio::join!(
+        fixture
+            .client
+            .request("thread/resume", json!({"threadId":"one"})),
+        fixture
+            .client
+            .request("thread/resume", json!({"threadId":"two"})),
+    );
+    one.unwrap();
+    two.unwrap();
+    fixture
+        .client
+        .request("thread/resume", json!({"threadId":"one"}))
+        .await
+        .unwrap();
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "config/mcpServer/reload")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "initialize")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "thread/resume")
+            .count(),
+        3
+    );
+    assert!(!requests
+        .iter()
+        .any(|r| r["method"] == "turn/start" || r["method"] == "mcpServer/tool/call"));
+    let reload = requests
+        .iter()
+        .position(|r| r["method"] == "config/mcpServer/reload")
+        .unwrap();
+    let resume = requests
+        .iter()
+        .position(|r| r["method"] == "thread/resume")
+        .unwrap();
+    assert!(reload < resume);
+    fixture.client.restart().await;
+}
+
 async fn pid(client: &CodexAppServerClient) -> u32 {
     client
         .state
