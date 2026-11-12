@@ -1,5 +1,16 @@
 import { readFile } from 'node:fs/promises'
 import { fetchLocalRuntime } from './runtime-request.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
+
+export async function restartCodexWhenIdle(control, timeoutMs) {
+  // A rejected idle-only restart has not interrupted or restarted any work.
+  return waitForValue(
+    async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+    result => result.restarted === true,
+    'The native app server did not become idle before loading the model catalog',
+    timeoutMs
+  )
+}
 
 export async function currentExecutorPid(control) {
   const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))

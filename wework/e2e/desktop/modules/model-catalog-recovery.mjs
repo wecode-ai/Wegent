@@ -2,7 +2,11 @@ import { requestExecutor } from './executor-rpc.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
+import {
+  currentExecutorPid,
+  restartCodexWhenIdle,
+  waitForRestartedExecutor,
+} from './executor-restart-readiness.mjs'
 import { waitForLogPattern } from './shared.mjs'
 
 /** Interrupt a real catalog restart, then reconcile without the failure cooldown. */
@@ -93,6 +97,6 @@ export async function setNativeCatalogOverride(control, slug, fields, timeoutMs)
     slug,
     entry: { ...model.effective, ...fields },
   })
-  const restarted = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
+  const restarted = await restartCodexWhenIdle(control, timeoutMs)
   assert.equal(restarted.restarted, true, JSON.stringify(restarted))
 }

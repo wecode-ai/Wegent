@@ -4,7 +4,7 @@
   "scenarioOnly": true,
   "paths": [
     "executor/src/agents/codex/mcp_recovery.rs",
-    "executor/src/agents/codex/thread_resume.rs",
+    "executor/src/agents/codex.rs",
     "wework/e2e/desktop/scenarios/mcp-resume-recovery.scenario.mjs"
   ],
   "ci": {

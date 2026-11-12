@@ -11,6 +11,31 @@ pub(super) struct McpRecovery {
     admission: Mutex<()>,
 }
 
+/// An interrupted status check has not attempted recovery and must not consume it.
+struct RecoveryClaim {
+    recovery: Arc<McpRecovery>,
+    failures: Vec<(String, String)>,
+    committed: bool,
+}
+
+impl Drop for RecoveryClaim {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let mut failures = self
+            .recovery
+            .failures
+            .lock()
+            .expect("MCP recovery registry poisoned");
+        for key in &self.failures {
+            if let Some(attempted) = failures.get_mut(key) {
+                *attempted = false;
+            }
+        }
+    }
+}
+
 impl McpRecovery {
     pub(super) fn observe(&self, message: &Value) {
         let method = message["method"].as_str().unwrap_or_default();
@@ -102,12 +127,27 @@ impl CodexAppServerClient {
             return Ok(());
         };
         let _admission = recovery.admission.lock().await;
+        if !self
+            .state
+            .lock()
+            .await
+            .process
+            .as_ref()
+            .is_some_and(|process| Arc::ptr_eq(&process.notifications.mcp_recovery, &recovery))
+        {
+            return Ok(());
+        }
         let failures = recovery.claim(thread_id);
         if failures.is_empty() {
             return Ok(());
         }
+        let mut claim = RecoveryClaim {
+            recovery: Arc::clone(&recovery),
+            failures,
+            committed: false,
+        };
         let mut unavailable = Vec::new();
-        for (thread, server) in failures {
+        for (thread, server) in &claim.failures {
             let status = self
                 .request_with_thread_admission(
                     "mcpServerStatus/list",
@@ -120,22 +160,24 @@ impl CodexAppServerClient {
                 .into_iter()
                 .flatten()
                 .any(|entry| {
-                    entry["name"] == server
+                    entry["name"] == *server
                         && matches!(
                             entry["runtimeStatus"].as_str(),
                             Some("failed" | "cancelled")
                         )
                 })
             {
-                unavailable.push(server);
+                unavailable.push(server.clone());
             }
         }
         if unavailable.is_empty() {
+            claim.committed = true;
             return Ok(());
         }
         // The native API reconciles all threads. Do not separately inspect a
         // peer thread that may close while this resume holds its own admission.
         recovery.claim_other_failures();
+        claim.committed = true;
         log_executor_event(
             "codex MCP startup recovery",
             &[
@@ -203,5 +245,26 @@ mod tests {
         old.mcp_recovery.observe(&status("one", "mail", "failed"));
         assert!(current.mcp_recovery.claim("one").is_empty());
         assert_eq!(old.mcp_recovery.claim("one").len(), 1);
+    }
+
+    #[test]
+    fn abandoned_status_checks_preserve_unattempted_recovery() {
+        let recovery = Arc::new(McpRecovery::default());
+        recovery.observe(&status("one", "mail", "failed"));
+        let claim = RecoveryClaim {
+            recovery: Arc::clone(&recovery),
+            failures: recovery.claim("one"),
+            committed: false,
+        };
+        assert!(recovery.claim("one").is_empty());
+        drop(claim);
+        assert_eq!(recovery.claim("one").len(), 1);
+        let claim = RecoveryClaim {
+            recovery: Arc::clone(&recovery),
+            failures: vec![("one".into(), "mail".into())],
+            committed: true,
+        };
+        drop(claim);
+        assert!(recovery.claim("one").is_empty());
     }
 }

@@ -2377,6 +2377,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
+        // Background reads and reply prediction also resume threads. Only a
+        // work execution may consume the bounded MCP recovery opportunity.
+        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            client.recover_mcp_startup(thread_id, Some(&launch_config)).await?;
+        }
         let thread_admission=client
             .prepare_thread_admission(&thread_plan, request, &launch_config)
             .await?;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, readFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
@@ -134,12 +134,14 @@ export function createDesktopScenario({
           new RegExp(`thread_id=${threadId} server_name=${name} status=failed`)
         )
 
-      for (const name of NAMES.slice(1, 3))
+      for (const name of NAMES.slice(1, 3)) {
         await copyFile(
           process.env.WEWORK_E2E_EXECUTOR_BIN,
-          executable(name),
+          `${executable(name)}.ready`,
           constants.COPYFILE_FICLONE
         )
+        await rename(`${executable(name)}.ready`, executable(name))
+      }
       await run(control, 'recovered')
       assert.equal(await processId(), pid, 'MCP recovery restarted the shared Codex process')
       assert.deepEqual(

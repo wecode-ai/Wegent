@@ -14,7 +14,7 @@ import {
   writeFile,
 } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
-import { waitForValue } from './workspace-agent-setup.mjs'
+import { restartCodexWhenIdle } from './executor-restart-readiness.mjs'
 import {
   CONCURRENT_CASES,
   CONCURRENT_SCENARIO,
@@ -274,16 +274,6 @@ async function verifyConcurrentCases(control) {
   }
 }
 
-async function restartCodexWhenIdle(control) {
-  // Background reads can defer an idle-only restart without throwing.
-  await waitForValue(
-    async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
-    result => result.restarted === true,
-    'The native app server did not become idle before loading the model catalog',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-}
-
 export async function verifyConcurrentMcpUserInput(control) {
   const { models } = await requestExecutor(
     control,
@@ -305,7 +295,7 @@ export async function verifyConcurrentMcpUserInput(control) {
     DEFAULT_STEP_TIMEOUT_MS
   )
   try {
-    await restartCodexWhenIdle(control)
+    await restartCodexWhenIdle(control, DEFAULT_STEP_TIMEOUT_MS)
     await verifyConcurrentCases(control)
   } finally {
     await requestExecutor(
@@ -317,6 +307,6 @@ export async function verifyConcurrentMcpUserInput(control) {
       },
       DEFAULT_STEP_TIMEOUT_MS
     )
-    await restartCodexWhenIdle(control)
+    await restartCodexWhenIdle(control, DEFAULT_STEP_TIMEOUT_MS)
   }
 }

@@ -170,6 +170,13 @@ done
 }
 
 impl Fixture {
+    async fn resume_work(&self, thread: &str) -> Result<Value, String> {
+        self.client.recover_mcp_startup(thread, None).await?;
+        self.client
+            .request("thread/resume", json!({"threadId":thread}))
+            .await
+    }
+
     fn new() -> Self {
         Self::with_script(
             r#"#!/bin/sh
@@ -316,21 +323,19 @@ done
         .request("test/fail-mcp", json!({}))
         .await
         .unwrap();
-    let (one, two) = tokio::join!(
-        fixture
-            .client
-            .request("thread/resume", json!({"threadId":"one"})),
-        fixture
-            .client
-            .request("thread/resume", json!({"threadId":"two"})),
-    );
-    one.unwrap();
-    two.unwrap();
+    // Reply prediction may resume the source thread before the next work turn.
     fixture
         .client
         .request("thread/resume", json!({"threadId":"one"}))
         .await
         .unwrap();
+    let passive = fs::read_to_string(fixture._directory.path().join("requests.jsonl")).unwrap();
+    assert!(!passive.contains("mcpServerStatus/list"));
+    assert!(!passive.contains("config/mcpServer/reload"));
+    let (one, two) = tokio::join!(fixture.resume_work("one"), fixture.resume_work("two"),);
+    one.unwrap();
+    two.unwrap();
+    fixture.resume_work("one").await.unwrap();
     let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
         .unwrap()
         .lines()
@@ -355,7 +360,7 @@ done
             .iter()
             .filter(|r| r["method"] == "thread/resume")
             .count(),
-        3
+        4
     );
     assert!(!requests
         .iter()
@@ -366,7 +371,10 @@ done
         .unwrap();
     let resume = requests
         .iter()
-        .position(|r| r["method"] == "thread/resume")
+        .enumerate()
+        .filter(|(_, r)| r["method"] == "thread/resume" && r["params"]["threadId"] == "one")
+        .nth(1)
+        .map(|(index, _)| index)
         .unwrap();
     assert!(reload < resume);
     fixture.client.restart().await;
@@ -397,11 +405,7 @@ done
         .await
         .unwrap();
     for _ in 0..2 {
-        fixture
-            .client
-            .request("thread/resume", json!({"threadId":"one"}))
-            .await
-            .unwrap();
+        fixture.resume_work("one").await.unwrap();
     }
     let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
         .unwrap()
