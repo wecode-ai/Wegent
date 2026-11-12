@@ -61,5 +61,65 @@ describe('stripConnectorAuthMarkers', () => {
     ].join('\n')
 
     expect(stripConnectorAuthMarkers(text)).toBe(text)
+    expect(connectorAuthSlug(text)).toBeNull()
+  })
+
+  test('uses the real marker instead of the slug in an earlier code example', () => {
+    const example = 'Example: `connector_auth_required connectorSlug=demo`.'
+    const text = `${example}\n\nconnector_auth_required connectorSlug=actual`
+    expect(connectorAuthSlug(text)).toBe('actual')
+    expect(stripConnectorAuthMarkers(text)).toBe(example)
+  })
+
+  test.each([
+    ['````text', '```'],
+    ['~~~text', '```'],
+    ['```text', '```not-a-closing-fence'],
+  ])('preserves code until the matching fence closes: %s', (opening, inner) => {
+    const code = `${opening}\n${inner}\nconnector_auth_required connectorSlug=demo`
+    expect(stripConnectorAuthMarkers(code)).toBe(code)
+    expect(connectorAuthSlug(code)).toBeNull()
+  })
+
+  test('preserves long inline code delimiters and indented code', () => {
+    const text = [
+      'Example: ``a ` connector_auth_required connectorSlug=demo``.',
+      '',
+      '    connector_auth_required connectorSlug=indented',
+    ].join('\n')
+    expect(stripConnectorAuthMarkers(text)).toBe(text)
+    expect(connectorAuthSlug(text)).toBeNull()
+  })
+
+  test('does not corrupt unrelated prose or code when a real marker is present', () => {
+    const prose = [
+      'The need_login flag is true.',
+      'The field connectorSlug: string names the connector.',
+      '```ts',
+      'connectorSlug: string',
+      '```',
+      '',
+      '',
+      'Keep  these spaces.',
+    ].join('\n')
+    const text = `${prose}\n\nconnector_auth_required connectorSlug=actual`
+    expect(stripConnectorAuthMarkers(text)).toBe(prose)
+    expect(connectorAuthSlug(text)).toBe('actual')
+  })
+
+  test('extracts the slug from bullet-wrapped protocol lines', () => {
+    const text = '需要授权。\n\n- `connector_auth_required`\n- `connectorSlug`: `actual`'
+    expect(connectorAuthSlug(text)).toBe('actual')
+    expect(stripConnectorAuthMarkers(text)).toBe('需要授权。')
+  })
+
+  test.each([
+    '> ```text\n> connector_auth_required connectorSlug=demo\n> ```',
+    '<pre>\n\nconnector_auth_required connectorSlug=demo\n\n</pre>',
+    '```\nconnector_auth_required connectorSlug=demo\n```',
+  ])('preserves literal examples followed by a real marker: %s', example => {
+    const text = `${example}\n\nconnector_auth_required connectorSlug=actual`
+    expect(stripConnectorAuthMarkers(text)).toBe(example)
+    expect(connectorAuthSlug(text)).toBe('actual')
   })
 })

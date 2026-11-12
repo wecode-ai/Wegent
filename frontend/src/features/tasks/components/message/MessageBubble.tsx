@@ -691,9 +691,7 @@ const MessageBubble = memo(
     }
 
     const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
-      const trimmed = (rawResult ?? '').trim()
-      const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/)
-      const rawMarkdownResult = fencedMatch ? fencedMatch[1] : trimmed
+      const rawMarkdownResult = (rawResult ?? '').trim()
 
       // Process [cite: X, Y, Z] patterns to clickable markdown links
       // Only process when annotations are available from Gemini Deep Research

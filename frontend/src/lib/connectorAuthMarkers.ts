@@ -2,106 +2,103 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Connector skills end a turn with `connector_auth_required` and the app slug
- * so desktop clients can open an authorization card. Those markers are an
- * internal protocol and must never be shown as part of the reply text.
- */
-const AUTH_MARKER = /connector_auth_required/
-const MARKER_HINT = /connector_auth_required|need_login|connectorSlug`?\s*[=:]|pluginKey`?\s*[=:]/
-const MARKER_TOKENS = new RegExp(
-  [
-    '`?connector_auth_required`?',
-    '`?need_login`?',
-    '`?connectorSlug`?\\s*[=:]\\s*`?[A-Za-z0-9_.:-]+`?',
-    '`?pluginKey`?\\s*[=:]\\s*`?[A-Za-z0-9_.:-]+`?',
-  ].join('|'),
+import { collectMarkdownLiteralRanges } from '@wegent/collaboration/markdown/composerReferenceMarkdown'
+
+const AUTH_MARKER = /\bconnector_auth_required\b/
+const FIELD = '`?(?:connectorSlug|pluginKey)`?\\s*[=:]\\s*`?[A-Za-z0-9_.:-]+`?'
+const TOKEN = `(?:\`?connector_auth_required\`?|\`?need_login\`?|${FIELD})`
+const PROTOCOL_LINE = new RegExp(`^[ \\t]*(?:[-*+>]\\s*)*${TOKEN}(?:[ \\t]+${TOKEN})*[ \\t]*$`)
+const INLINE_MARKER = new RegExp(
+  `\\bconnector_auth_required\\b(?:[ \\t]+(?:${FIELD}|need_login))*`,
   'g'
 )
-const LEFTOVER_ONLY = /^[\s>*\-–—:：`]*$/
+const SLUG = /connectorSlug`?\s*[=:]\s*`?([A-Za-z0-9_.:-]+)`?/
+const CODE_ATOM = /^`[A-Za-z0-9_.:=-]+`$/
 
-function isFence(line: string): boolean {
-  return /^\s{0,3}(```|~~~)/.test(line)
+interface MarkerLine {
+  original: string
+  visible: string
+  protocol: boolean
 }
 
-/** Split a line into inline-code and ordinary Markdown segments. */
-function splitInlineCode(line: string): Array<{ text: string; code: boolean }> {
-  const segments: Array<{ text: string; code: boolean }> = []
-  let cursor = 0
-  for (const match of line.matchAll(/`+[^`]*`+/g)) {
-    const start = match.index ?? 0
-    if (start > cursor) segments.push({ text: line.slice(cursor, start), code: false })
-    segments.push({ text: match[0], code: true })
-    cursor = start + match[0].length
-  }
-  if (cursor < line.length) segments.push({ text: line.slice(cursor), code: false })
-  return segments
+/** Use the renderer's Markdown parser, including nested and incomplete code. */
+function markerLines(text: string): MarkerLine[] {
+  const literals = collectMarkdownLiteralRanges(text)
+  let offset = 0
+  let literalIndex = 0
+  return text.split('\n').map(original => {
+    const start = offset
+    const end = start + original.length
+    offset = end + 1
+    while (literals[literalIndex]?.end <= start) literalIndex += 1
+    let visible = original
+    let wrappedAtoms = true
+    for (let index = literalIndex; literals[index]?.start < end; index += 1) {
+      const range = literals[index]
+      const from = Math.max(range.start, start) - start
+      const to = Math.min(range.end, end) - start
+      visible = visible.slice(0, from) + ' '.repeat(to - from) + visible.slice(to)
+      wrappedAtoms &&= CODE_ATOM.test(text.slice(range.start, range.end))
+    }
+    // Actual protocol output may wrap individual atoms in single backticks.
+    // A complete code example or a fenced/indented block is never protocol.
+    const protocol = wrappedAtoms && PROTOCOL_LINE.test(original)
+    return { original, visible: protocol ? original : visible, protocol }
+  })
 }
 
-function stripMarkerLine(line: string): string {
-  const segments = splitInlineCode(line)
-  const withoutCode = line.replace(/`/g, '').trim()
-  const protocolOnly = withoutCode.replace(/^(?:[-*+>]\s*)+/, '')
-  if (
-    /^(?:connector_auth_required|need_login)(?:\s+(?:connectorSlug|pluginKey)\s*[=:]\s*[A-Za-z0-9_.:-]+)*$/.test(
-      protocolOnly
-    )
-  ) {
-    return ''
+/** Classify display removal and authorization links through the same context. */
+function authorizationMarkers(text: string): { content: string; slug: string | null } {
+  if (!AUTH_MARKER.test(text)) return { content: text, slug: null }
+  const lines = markerLines(text)
+  const removed = new Set<number>()
+  const replacements = new Map<number, string>()
+  let slug: string | null = null
+  const captureSlug = (marker: string) => {
+    slug ??= marker.match(SLUG)?.[1] ?? null
   }
-  const slugOnly = withoutCode.replace(/^(?:[-*+>]\s*)+/, '')
-  if (/^(?:connectorSlug|pluginKey)\s*[=:]\s*[A-Za-z0-9_.:-]+$/.test(slugOnly)) return ''
-  const fullyClean = segments
-    .map(segment => segment.text.replace(MARKER_TOKENS, ''))
-    .join('')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trimEnd()
-  // A standalone marker may be wrapped in code spans for display; the whole
-  // line is protocol noise. Inline code inside prose stays untouched.
-  if (LEFTOVER_ONLY.test(fullyClean)) return fullyClean
-  return segments
-    .map(segment =>
-      segment.code && !/^`+(?:connector_auth_required|need_login)$/.test(segment.text)
-        ? segment.text
-        : segment.text.replace(MARKER_TOKENS, '')
-    )
-    .join('')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trimEnd()
+  for (const [index, line] of lines.entries()) {
+    if (!AUTH_MARKER.test(line.visible)) continue
+    if (line.protocol) {
+      removed.add(index)
+      captureSlug(line.visible)
+    } else {
+      let cleaned = line.original
+      const matches = [...line.visible.matchAll(INLINE_MARKER)]
+      matches.forEach(match => captureSlug(match[0]))
+      for (const match of matches.reverse()) {
+        const start = match.index ?? 0
+        const left = cleaned.slice(0, start).trimEnd()
+        const right = cleaned.slice(start + match[0].length).trimStart()
+        cleaned = left + (left && right ? ' ' : '') + right
+      }
+      replacements.set(index, cleaned)
+    }
+    // Only adjacent standalone protocol fields belong to a preceding marker.
+    // Unrelated prose, code examples and other paragraphs remain byte-exact.
+    for (let next = index + 1; next < lines.length; next += 1) {
+      const following = lines[next]
+      if (!following.original.trim()) continue
+      if (!following.protocol) break
+      removed.add(next)
+      captureSlug(following.visible)
+    }
+  }
+  if (!removed.size && !replacements.size) return { content: text, slug: null }
+  const kept = lines.flatMap((line, index) =>
+    removed.has(index) ? [] : [replacements.get(index) ?? line.original]
+  )
+  if (removed.has(lines.length - 1)) {
+    while (kept.at(-1)?.trim() === '') kept.pop()
+  }
+  return { content: kept.join('\n'), slug }
 }
 
 export function stripConnectorAuthMarkers(text: string): string {
-  if (!text || !AUTH_MARKER.test(text)) return text
-
-  const kept: string[] = []
-  let inFence = false
-  const lines = text.split('\n')
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    if (isFence(line)) {
-      inFence = !inFence
-      kept.push(line)
-      continue
-    }
-    if (inFence || !MARKER_HINT.test(line)) {
-      kept.push(line)
-      continue
-    }
-    const cleaned = stripMarkerLine(line)
-    if (!LEFTOVER_ONLY.test(cleaned)) {
-      kept.push(cleaned)
-    }
-  }
-
-  return kept
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  return authorizationMarkers(text).content
 }
 
-/** Return the connector slug carried by an authorization marker, if any. */
+/** Return only a slug belonging to an actual authorization marker. */
 export function connectorAuthSlug(text: string): string | null {
-  if (!text || !AUTH_MARKER.test(text)) return null
-  const match = text.match(/connectorSlug`?\s*[=:]\s*`?([A-Za-z0-9_.:-]+)`?/)
-  return match?.[1] ?? null
+  return authorizationMarkers(text).slug
 }

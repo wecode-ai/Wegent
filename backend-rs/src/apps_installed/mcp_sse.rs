@@ -24,11 +24,10 @@ use super::mcp::{
     initialize_body, initialized_notification_body, status_error,
 };
 
-/// Source `sse_client` read window; the session is long-lived, so the bound
-/// applies to each read rather than to the whole exchange.
+/// Bound each handshake or JSON-RPC request, including keep-alive traffic.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Bound one incomplete event so a server cannot grow the parser indefinitely.
+/// Bound one event, including its terminator, before parsing its payload.
 pub(super) const MAX_EVENT_BYTES: usize = 1024 * 1024;
 
 /// One open HTTP+SSE MCP session: the subscribed stream plus the message
@@ -50,7 +49,9 @@ impl SseSession {
             .read_timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|error| McpError::Transport(error.to_string()))?;
-        let mut reader = open_stream(&client, url, headers).await?;
+        let mut reader = timeout_at(deadline, open_stream(&client, url, headers))
+            .await
+            .map_err(|_| McpError::Transport("SSE connection timed out".to_string()))??;
         let message_url = wait_for_endpoint(&mut reader, url, deadline).await?;
 
         timeout_at(
@@ -185,8 +186,7 @@ async fn open_stream(
     }
     Ok(SseReader {
         response,
-        buffer: Vec::new(),
-        scan_start: 0,
+        buffer: SseBuffer::default(),
         eof: false,
     })
 }
@@ -312,34 +312,15 @@ pub(super) struct SseEvent {
 /// Incremental reader over the server's `text/event-stream` body.
 struct SseReader {
     response: HttpResponse,
-    buffer: Vec<u8>,
-    scan_start: usize,
+    buffer: SseBuffer,
     eof: bool,
 }
 
 impl SseReader {
-    fn parse_available(&mut self, chunk: &[u8]) -> Result<Option<SseEvent>, McpError> {
-        let scan_start = self.scan_start.min(self.buffer.len().saturating_sub(3));
-        self.buffer.extend_from_slice(chunk);
-        if let Some((end, separator_len)) = find_event_end_from(&self.buffer, scan_start) {
-            let raw = self.buffer[..end].to_vec();
-            self.buffer.drain(..end + separator_len);
-            self.scan_start = 0;
-            return Ok(Some(parse_event(&raw)));
-        }
-        self.scan_start = scan_start;
-        Ok(None)
-    }
-
     async fn next_event(&mut self) -> Result<Option<SseEvent>, McpError> {
         loop {
-            if let Some(event) = take_event(&mut self.buffer) {
+            if let Some(event) = self.buffer.next_event()? {
                 return Ok(Some(event));
-            }
-            if self.buffer.len() > MAX_EVENT_BYTES {
-                return Err(McpError::Transport(format!(
-                    "SSE event exceeded {MAX_EVENT_BYTES} bytes"
-                )));
             }
             if self.eof {
                 return Ok(None);
@@ -350,23 +331,50 @@ impl SseReader {
                 .await
                 .map_err(|error| McpError::Transport(error.to_string()))?
             {
-                Some(chunk) => {
-                    if let Some(event) = self.parse_available(&chunk)? {
-                        return Ok(Some(event));
-                    }
-                }
+                Some(chunk) => self.buffer.push(&chunk),
                 None => self.eof = true,
             }
         }
     }
 }
 
-/// Remove the first complete event from `buffer`.
-pub(super) fn take_event(buffer: &mut Vec<u8>) -> Option<SseEvent> {
-    let (end, separator_len) = find_event_end_from(buffer, 0)?;
-    let raw = buffer[..end].to_vec();
-    buffer.drain(..end + separator_len);
-    Some(parse_event(&raw))
+/// Shared bounded parser for legacy SSE and streamable-HTTP event bodies.
+#[derive(Default)]
+pub(super) struct SseBuffer {
+    bytes: Vec<u8>,
+    event_start: usize,
+    scan_start: usize,
+}
+
+impl SseBuffer {
+    pub(super) fn push(&mut self, chunk: &[u8]) {
+        // Compact once per chunk, not once per queued event.
+        if self.event_start > 0 {
+            self.bytes.drain(..self.event_start);
+            self.scan_start -= self.event_start;
+            self.event_start = 0;
+        }
+        self.bytes.extend_from_slice(chunk);
+    }
+
+    pub(super) fn next_event(&mut self) -> Result<Option<SseEvent>, McpError> {
+        let limit = self.event_start.saturating_add(MAX_EVENT_BYTES);
+        let bounded = &self.bytes[..self.bytes.len().min(limit)];
+        if let Some((end, separator_len)) = find_event_end_from(bounded, self.scan_start) {
+            let event = parse_event(&self.bytes[self.event_start..end]);
+            self.event_start = end + separator_len;
+            self.scan_start = self.event_start;
+            return Ok(Some(event));
+        }
+        if self.bytes.len() > limit {
+            return Err(McpError::Transport(format!(
+                "SSE event exceeded {MAX_EVENT_BYTES} bytes"
+            )));
+        }
+        // Revisit only the suffix where a CRLF terminator could be split.
+        self.scan_start = self.bytes.len().saturating_sub(3).max(self.event_start);
+        Ok(None)
+    }
 }
 
 /// Byte index of the end of the first event and the length of its terminator.
@@ -462,29 +470,34 @@ mod tests {
 
     #[test]
     fn events_split_on_both_terminator_styles() {
-        let mut buffer = b"event: endpoint\ndata: /a\n\ndata: {}\n\n".to_vec();
-        assert_eq!(take_event(&mut buffer).map(|e| e.data), Some("/a".into()));
-        assert_eq!(take_event(&mut buffer).map(|e| e.data), Some("{}".into()));
-        assert!(take_event(&mut buffer).is_none());
+        let mut buffer = SseBuffer::default();
+        buffer.push(b"event: endpoint\ndata: /a\n\ndata: {}\n\n");
+        assert_eq!(
+            buffer.next_event().unwrap().map(|e| e.data),
+            Some("/a".into())
+        );
+        assert_eq!(
+            buffer.next_event().unwrap().map(|e| e.data),
+            Some("{}".into())
+        );
+        assert!(buffer.next_event().unwrap().is_none());
 
-        let mut crlf = b"event: endpoint\r\ndata: /b\r\n\r\n".to_vec();
-        assert_eq!(take_event(&mut crlf).map(|e| e.data), Some("/b".into()));
-        assert!(crlf.is_empty());
+        buffer.push(b"event: endpoint\r\ndata: /b\r\n\r\n");
+        assert_eq!(
+            buffer.next_event().unwrap().map(|e| e.data),
+            Some("/b".into())
+        );
+        assert!(buffer.next_event().unwrap().is_none());
     }
 
     #[test]
     fn event_terminators_split_across_chunks_are_detected_incrementally() {
-        let mut buffer = b"event: message\ndata: {}\r\n\r".to_vec();
-        let scan_start = buffer.len().saturating_sub(3);
-        buffer.extend_from_slice(b"\n");
-
-        let (end, separator_len) =
-            find_event_end_from(&buffer, scan_start).expect("split terminator");
-        let raw = buffer[..end].to_vec();
-        buffer.drain(..end + separator_len);
-
-        assert_eq!(parse_event(&raw).data, "{}");
-        assert!(buffer.is_empty());
+        let mut buffer = SseBuffer::default();
+        buffer.push(b"event: message\ndata: {}\r\n\r");
+        assert!(buffer.next_event().unwrap().is_none());
+        buffer.push(b"\n");
+        assert_eq!(buffer.next_event().unwrap().unwrap().data, "{}");
+        assert!(buffer.next_event().unwrap().is_none());
     }
 
     #[tokio::test]
@@ -494,14 +507,97 @@ mod tests {
         let response = client.endpoint(&url).unwrap().get().send().await.unwrap();
         let mut stream = SseReader {
             response,
-            buffer: vec![b'x'; MAX_EVENT_BYTES + 1],
-            scan_start: 0,
+            buffer: SseBuffer {
+                bytes: vec![b'x'; MAX_EVENT_BYTES + 1],
+                ..Default::default()
+            },
             eof: false,
         };
 
         let error = stream.next_event().await.unwrap_err();
         assert!(matches!(error, McpError::Transport(_)));
         assert!(error.to_string().contains("exceeded"));
+    }
+
+    #[tokio::test]
+    async fn next_event_rejects_an_oversized_complete_event() {
+        let url = serve(Mode::ClosedStream).await;
+        let client = HttpClient::builder().build().unwrap();
+        let response = client.endpoint(&url).unwrap().get().send().await.unwrap();
+        let mut buffer = vec![b'x'; MAX_EVENT_BYTES + 1];
+        buffer.extend_from_slice(b"\n\n");
+        let mut stream = SseReader {
+            response,
+            buffer: SseBuffer {
+                bytes: buffer,
+                ..Default::default()
+            },
+            eof: false,
+        };
+
+        let error = stream.next_event().await.unwrap_err();
+        assert!(error.to_string().contains("exceeded"));
+    }
+
+    #[tokio::test]
+    async fn incomplete_events_advance_the_scan_cursor() {
+        let url = serve(Mode::ClosedStream).await;
+        let client = HttpClient::builder().build().unwrap();
+        let response = client.endpoint(&url).unwrap().get().send().await.unwrap();
+        let mut stream = SseReader {
+            response,
+            buffer: SseBuffer::default(),
+            eof: false,
+        };
+
+        stream.buffer.push(&vec![b'x'; 4096]);
+        assert!(stream.buffer.next_event().unwrap().is_none());
+        assert_eq!(stream.buffer.scan_start, 4093);
+        stream.buffer.push(b"\r\n\r");
+        assert!(stream.buffer.next_event().unwrap().is_none());
+        assert_eq!(stream.buffer.scan_start, 4096);
+        stream.buffer.push(b"\n");
+        assert!(stream.buffer.next_event().unwrap().is_some());
+    }
+
+    #[test]
+    fn event_cap_is_per_event_not_per_chunk() {
+        let mut buffer = SseBuffer::default();
+        let mut event = b"data: ".to_vec();
+        event.resize(MAX_EVENT_BYTES - 2, b'x');
+        event.extend_from_slice(b"\n\n");
+        let mut chunk = event.clone();
+        chunk.extend_from_slice(&event);
+        chunk.extend_from_slice(b"data: tail\r\n\r");
+        buffer.push(&chunk);
+
+        assert!(buffer.next_event().unwrap().is_some());
+        assert!(buffer.next_event().unwrap().is_some());
+        assert!(buffer.next_event().unwrap().is_none());
+        buffer.push(b"\n");
+        assert_eq!(buffer.bytes, b"data: tail\r\n\r\n");
+        assert_eq!(buffer.next_event().unwrap().unwrap().data, "tail");
+    }
+
+    #[tokio::test]
+    async fn reply_wait_has_a_deadline_after_unmatched_ids_and_keep_alives() {
+        let url = serve(Mode::EndpointKeepAlive).await;
+        let client = HttpClient::builder().build().unwrap();
+        let mut stream = open_stream(&client, &url, &[]).await.unwrap();
+        stream.buffer.push(b"data: {\"id\":7,\"result\":{}}\n\n");
+
+        let result = wait_for_result::<Value>(
+            &mut stream,
+            &json!(8),
+            Instant::now() + Duration::from_millis(50),
+        )
+        .await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("JSON-RPC reply timed out")
+        );
     }
 
     #[test]

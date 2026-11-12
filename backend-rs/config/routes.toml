@@ -618,8 +618,8 @@ methods = ["POST"]
 path = "/api/connector-runtime/token"
 
 # `POST /api/connector-apps/{slug}/connection/refresh` — renew an expired grant
-# and probe the upstream (`app/api/endpoints/connector_apps.py`). The Python
-# function is retained only for its HTTP contract test.
+# and probe the upstream (`apps_installed::refresh_endpoint`). The handler and
+# its HTTP contract coverage are Rust-owned; there is no Python copy.
 [[routes]]
 methods = ["POST"]
 path = "/api/connector-apps/:slug/connection/refresh"

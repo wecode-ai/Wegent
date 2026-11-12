@@ -418,9 +418,9 @@ async fn decode_sse_stream<T>(
 where
     T: for<'de> Deserialize<'de>,
 {
-    let mut buffer = Vec::new();
+    let mut buffer = super::mcp_sse::SseBuffer::default();
     loop {
-        while let Some(event) = super::mcp_sse::take_event(&mut buffer) {
+        while let Some(event) = buffer.next_event()? {
             if event.event != "message" {
                 continue;
             }
@@ -442,15 +442,7 @@ where
             .await
             .map_err(|error| McpError::Transport(error.to_string()))?
         {
-            Some(chunk) => {
-                buffer.extend_from_slice(&chunk);
-                if buffer.len() > super::mcp_sse::MAX_EVENT_BYTES {
-                    return Err(McpError::Transport(format!(
-                        "MCP event exceeded {} bytes",
-                        super::mcp_sse::MAX_EVENT_BYTES
-                    )));
-                }
-            }
+            Some(chunk) => buffer.push(&chunk),
             None => {
                 return Err(McpError::Transport(
                     "MCP event stream ended before the JSON-RPC reply".to_string(),
