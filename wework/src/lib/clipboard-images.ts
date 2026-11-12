@@ -12,9 +12,23 @@ const UNSUPPORTED_CLIPBOARD_IMAGE_TYPES = new Set([
 ])
 const UNSUPPORTED_CLIPBOARD_IMAGE_EXTENSION = /\.(?:heic|heif|tif|tiff)$/i
 
-async function readNativeClipboardImage(): Promise<string | null> {
+function encodeBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  const chunks: string[] = []
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + chunkSize)))
+  }
+  return btoa(chunks.join(''))
+}
+
+async function convertNativeClipboardImage(file: File): Promise<string | null> {
   if (!isElectronRuntime()) return null
-  const result = await invokeDesktopHost<unknown>('clipboard.readImage', {})
+  const result = await invokeDesktopHost<unknown>('clipboard.convertImageToPng', {
+    dataBase64: encodeBase64(await file.arrayBuffer()),
+    fileName: file.name,
+    mimeType: file.type,
+  })
   return typeof result === 'string' ? result : null
 }
 
@@ -55,21 +69,17 @@ export function pngFileFromDataUrl(dataUrl: string, source: File): File | null {
 /** Converts clipboard-history bitmap formats that Chromium cannot render into a PNG File. */
 export async function normalizeClipboardImageFiles(
   files: File[],
-  readClipboardImage: () => Promise<string | null> = readNativeClipboardImage
+  convertClipboardImage: (file: File) => Promise<string | null> = convertNativeClipboardImage
 ): Promise<File[]> {
-  const unsupported = files.filter(isUnsupportedClipboardImage)
-  if (unsupported.length !== 1) return files
-
-  let dataUrl: string | null
-  try {
-    dataUrl = await readClipboardImage()
-  } catch {
-    return files
-  }
-  if (!dataUrl) return files
-
-  const source = unsupported[0]
-  const normalized = pngFileFromDataUrl(dataUrl, source)
-  if (!normalized) return files
-  return files.map(file => (file === source ? normalized : file))
+  return Promise.all(
+    files.map(async file => {
+      if (!isUnsupportedClipboardImage(file)) return file
+      try {
+        const dataUrl = await convertClipboardImage(file)
+        return (dataUrl && pngFileFromDataUrl(dataUrl, file)) || file
+      } catch {
+        return file
+      }
+    })
+  )
 }

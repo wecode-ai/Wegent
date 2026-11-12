@@ -1,0 +1,14 @@
+{
+  "order": 193500,
+  "scenario": "./scenarios/clipboard-history-image.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 141500, "shard": 2, "position": 7500 } },
+  "paths": [
+    "wework/src/lib/clipboard-images.*",
+    "wework/src/features/todo/TaskDescriptionEditor.*",
+    "wework/src/components/chat/composer/desktopComposerServices.*",
+    "wework/electron/src/host/clipboard-image-conversion.*",
+    "wework/e2e/desktop/fixtures/clipboard-history-image.json",
+    "wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs"
+  ]
+}

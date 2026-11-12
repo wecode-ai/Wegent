@@ -19,8 +19,8 @@ test('keeps Chromium-renderable images without reading the native clipboard', as
   expect(invokeDesktopHost).not.toHaveBeenCalled()
 })
 
-test('converts a clipboard-history TIFF into a PNG file', async () => {
-  const screenshot = new File(['tiff'], '2026-11-06_17-46-02.tiff', {
+test('converts the exact pasted TIFF bytes into a PNG file', async () => {
+  const screenshot = new File(['tiff bytes'], '2026-11-06_17-46-02.tiff', {
     type: 'image/tiff',
     lastModified: 1_791_280_418_000,
   })
@@ -28,7 +28,11 @@ test('converts a clipboard-history TIFF into a PNG file', async () => {
 
   const [normalized] = await normalizeClipboardImageFiles([screenshot])
 
-  expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('clipboard.readImage', {})
+  expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('clipboard.convertImageToPng', {
+    dataBase64: 'dGlmZiBieXRlcw==',
+    fileName: '2026-11-06_17-46-02.tiff',
+    mimeType: 'image/tiff',
+  })
   expect(normalized).toMatchObject({
     name: '2026-11-06_17-46-02.png',
     type: 'image/png',
@@ -37,15 +41,49 @@ test('converts a clipboard-history TIFF into a PNG file', async () => {
   })
 })
 
-test('keeps the original file when the native clipboard has no image', async () => {
+test('keeps the original file when conversion does not produce a PNG', async () => {
   const screenshot = new File(['tiff'], 'screenshot.tiff', { type: 'image/tiff' })
 
   await expect(normalizeClipboardImageFiles([screenshot])).resolves.toEqual([screenshot])
 
-  expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('clipboard.readImage', {})
+  expect(invokeDesktopHost).toHaveBeenCalledExactlyOnceWith('clipboard.convertImageToPng', {
+    dataBase64: 'dGlmZg==',
+    fileName: 'screenshot.tiff',
+    mimeType: 'image/tiff',
+  })
 })
 
-test('does not inspect the native clipboard outside Electron', async () => {
+test('converts each unsupported pasted image from its own bytes', async () => {
+  const files = [
+    new File(['first'], 'first.tiff', { type: 'image/tiff' }),
+    new File(['second'], 'second.heic', { type: 'image/heic' }),
+  ]
+  vi.mocked(invokeDesktopHost).mockResolvedValue('data:image/png;base64,AQID')
+
+  const normalized = await normalizeClipboardImageFiles(files)
+
+  expect(normalized.map(file => file.name)).toEqual(['first.png', 'second.png'])
+  expect(vi.mocked(invokeDesktopHost).mock.calls).toEqual([
+    [
+      'clipboard.convertImageToPng',
+      {
+        dataBase64: 'Zmlyc3Q=',
+        fileName: 'first.tiff',
+        mimeType: 'image/tiff',
+      },
+    ],
+    [
+      'clipboard.convertImageToPng',
+      {
+        dataBase64: 'c2Vjb25k',
+        fileName: 'second.heic',
+        mimeType: 'image/heic',
+      },
+    ],
+  ])
+})
+
+test('does not invoke the desktop converter outside Electron', async () => {
   const screenshot = new File(['tiff'], 'screenshot.tiff', { type: 'image/tiff' })
   vi.mocked(isElectronRuntime).mockReturnValue(false)
 

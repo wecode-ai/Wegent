@@ -372,7 +372,7 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
       .mockReturnValue('blob:normalized-issue-image-preview')
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
     const electronRuntime = vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
-    const readClipboardImage = vi
+    const convertClipboardImage = vi
       .spyOn(desktopHost, 'invokeDesktopHost')
       .mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
 
@@ -394,12 +394,16 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
         name: '2026-11-12_14-07-58.png',
         type: 'image/png',
       })
-      expect(readClipboardImage).toHaveBeenCalledWith('clipboard.readImage', {})
+      expect(convertClipboardImage).toHaveBeenCalledWith('clipboard.convertImageToPng', {
+        dataBase64: 'dGlmZg==',
+        fileName: '2026-11-12_14-07-58.tiff',
+        mimeType: 'image/tiff',
+      })
     } finally {
       createObjectUrl.mockRestore()
       revokeObjectUrl.mockRestore()
       electronRuntime.mockRestore()
-      readClipboardImage.mockRestore()
+      convertClipboardImage.mockRestore()
     }
   })
 

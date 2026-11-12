@@ -1283,7 +1283,11 @@ describe('ChatInput', () => {
       name: '2026-11-12_14-07-58.png',
       type: 'image/png',
     })
-    expect(desktopHost.invokeDesktopHost).toHaveBeenCalledWith('clipboard.readImage', {})
+    expect(desktopHost.invokeDesktopHost).toHaveBeenCalledWith('clipboard.convertImageToPng', {
+      dataBase64: 'dGlmZg==',
+      fileName: '2026-11-12_14-07-58.tiff',
+      mimeType: 'image/tiff',
+    })
   })
 
   test.each(['drop'] as const)(

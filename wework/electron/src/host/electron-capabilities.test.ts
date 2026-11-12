@@ -40,10 +40,6 @@ const electronMocks = vi.hoisted(() => ({
   appGetPath: vi.fn(() => '/tmp'),
   appGetVersion: vi.fn(() => '0.0.0-test'),
   clipboardAvailableFormats: vi.fn(() => [] as string[]),
-  clipboardReadImage: vi.fn(() => ({
-    isEmpty: () => true,
-    toDataURL: () => '',
-  })),
   clipboardReadBuffer: vi.fn(() => Buffer.alloc(0)),
   clipboardReadText: vi.fn(() => 'native text'),
   clipboardWriteText: vi.fn(),
@@ -59,6 +55,12 @@ const electronMocks = vi.hoisted(() => ({
   shellShowItemInFolder: vi.fn(),
 }))
 
+const clipboardImageMocks = vi.hoisted(() => ({
+  clipboardImageToPngDataUrl: vi.fn(),
+}))
+
+vi.mock('./clipboard-image-conversion.js', () => clipboardImageMocks)
+
 vi.mock('electron', () => ({
   protocol: { handle: vi.fn(), unhandle: vi.fn() },
   app: {
@@ -69,7 +71,6 @@ vi.mock('electron', () => ({
   BrowserWindow: class BrowserWindow {},
   clipboard: {
     availableFormats: electronMocks.clipboardAvailableFormats,
-    readImage: electronMocks.clipboardReadImage,
     readBuffer: electronMocks.clipboardReadBuffer,
     readText: electronMocks.clipboardReadText,
     writeText: electronMocks.clipboardWriteText,
@@ -1351,22 +1352,28 @@ describe('registerDesktopServiceCapabilities', () => {
 })
 
 describe('isolated surface clipboard capabilities', () => {
-  test('reads a native clipboard image as PNG for renderer preview normalization', async () => {
-    const { router } = createIsolatedClipboardRouter()
-    electronMocks.clipboardReadImage.mockReturnValueOnce({
-      isEmpty: () => false,
-      toDataURL: () => 'data:image/png;base64,AQID',
-    })
-
-    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readImage', {})).resolves.toBe(
-      'data:image/png;base64,AQID'
-    )
+  beforeEach(() => {
+    clipboardImageMocks.clipboardImageToPngDataUrl.mockReset().mockResolvedValue(null)
   })
 
-  test('reports an empty native clipboard image as unavailable', async () => {
+  test('converts the exact pasted image bytes instead of rereading the clipboard', async () => {
     const { router } = createIsolatedClipboardRouter()
+    clipboardImageMocks.clipboardImageToPngDataUrl.mockResolvedValueOnce(
+      'data:image/png;base64,AQID'
+    )
 
-    await expect(router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.readImage', {})).resolves.toBeNull()
+    await expect(
+      router.invoke(WEWORK_APP_PRINCIPAL, 'clipboard.convertImageToPng', {
+        dataBase64: 'AQID',
+        fileName: 'screenshot.tiff',
+        mimeType: 'image/tiff',
+      })
+    ).resolves.toBe('data:image/png;base64,AQID')
+    expect(clipboardImageMocks.clipboardImageToPngDataUrl).toHaveBeenCalledExactlyOnceWith(
+      'AQID',
+      'screenshot.tiff',
+      'image/tiff'
+    )
   })
 
   test('inspects supplied workspace paths when the native clipboard is unavailable', async () => {
@@ -1385,7 +1392,6 @@ describe('isolated surface clipboard capabilities', () => {
   })
 
   beforeEach(() => {
-    electronMocks.clipboardReadImage.mockClear()
     electronMocks.clipboardReadText.mockClear()
     electronMocks.clipboardWriteText.mockClear()
   })
