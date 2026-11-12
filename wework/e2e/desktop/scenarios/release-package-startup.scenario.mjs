@@ -434,10 +434,10 @@ export async function createDesktopScenario({
 
       for (const name of ['cleanInstall', 'warmRestart']) {
         const metrics = startupScenarios[name]
-        assert.equal(
-          typeof metrics.phaseDurationsMs['component-weworkCorePlugins-verify'],
-          'number'
-        )
+        const corePluginResolution =
+          metrics.phaseDurationsMs['component-weworkCorePlugins-verify'] ??
+          metrics.phaseDurationsMs['component-weworkCorePlugins-materialize']
+        assert.equal(typeof corePluginResolution, 'number')
         assert.equal(typeof metrics.phaseDurationsMs['core-dsh-profile-reuse'], 'number')
       }
       assert.equal(
