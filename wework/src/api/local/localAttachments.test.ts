@@ -147,6 +147,23 @@ describe('local attachment API', () => {
     })
   })
 
+  test('uses the negotiated chunk size to stage a generated file in fewer host calls', async () => {
+    const chunkSize = 2 * 1024 * 1024
+    const file = new File([new Uint8Array(chunkSize + 1)], 'generated.bin')
+    desktopMocks.invoke
+      .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize })
+      .mockResolvedValueOnce(chunkSize)
+      .mockResolvedValueOnce(file.size)
+      .mockResolvedValueOnce('/draft/generated.bin')
+
+    const attachment = await createLocalAttachmentApi().uploadAttachment(file)
+
+    const appends = desktopMocks.invoke.mock.calls.filter(([name]) => name === 'attachment.append')
+    expect(appends.map(([, params]) => params.offset)).toEqual([0, chunkSize])
+    expect(appends.map(([, params]) => atob(params.chunkBase64).length)).toEqual([chunkSize, 1])
+    expect(attachment).toMatchObject({ status: 'ready', file_size: file.size })
+  })
+
   test('reports staging totals once without changing repeated progress or logging file data', async () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     let clock = 0

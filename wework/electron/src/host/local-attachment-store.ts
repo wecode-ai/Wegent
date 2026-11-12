@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-export const MAX_LOCAL_ATTACHMENT_CHUNK_BYTES = 384 * 1024
+export const MAX_LOCAL_ATTACHMENT_CHUNK_BYTES = 2 * 1024 * 1024
 
 interface AttachmentUpload {
   directory: string

@@ -9,6 +9,7 @@ export interface LocalAttachmentApi {
 
 let localAttachmentIdSeed = 0
 const FALLBACK_ATTACHMENT_CHUNK_BYTES = 384 * 1024
+const MAX_ATTACHMENT_CHUNK_BYTES = 2 * 1024 * 1024
 
 function nextLocalAttachmentId(): number {
   localAttachmentIdSeed += 1
@@ -113,7 +114,7 @@ async function saveElectronAttachment(
     })
     const chunkSize =
       Number.isSafeInteger(started.chunkSize) && started.chunkSize > 0
-        ? Math.min(started.chunkSize, FALLBACK_ATTACHMENT_CHUNK_BYTES)
+        ? Math.min(started.chunkSize, MAX_ATTACHMENT_CHUNK_BYTES)
         : FALLBACK_ATTACHMENT_CHUNK_BYTES
     let offset = 0
     try {

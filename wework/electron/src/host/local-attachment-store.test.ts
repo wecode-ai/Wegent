@@ -83,6 +83,21 @@ describe('LocalAttachmentStore', () => {
     await expect(store.finish(started.uploadId)).rejects.toThrow('Attachment upload was not found')
   })
 
+  test('writes a full negotiated chunk and a final byte', async () => {
+    const store = new LocalAttachmentStore(await temporaryDirectory())
+    const size = MAX_LOCAL_ATTACHMENT_CHUNK_BYTES + 1
+    const started = await store.begin('large.bin', size)
+    const data = Buffer.alloc(started.chunkSize, 42)
+
+    const offset = await store.append(started.uploadId, 0, data.toString('base64'))
+    await expect(store.append(started.uploadId, offset, 'YQ==')).resolves.toBe(size)
+    const path = await store.finish(started.uploadId)
+    const saved = await readFile(path)
+    expect(saved.length).toBe(size)
+    expect(saved.subarray(0, offset).equals(data)).toBe(true)
+    expect(saved.at(-1)).toBe(97)
+  })
+
   test('rejects invalid declared sizes and malformed base64', async () => {
     const root = await temporaryDirectory()
     const store = new LocalAttachmentStore(root)
