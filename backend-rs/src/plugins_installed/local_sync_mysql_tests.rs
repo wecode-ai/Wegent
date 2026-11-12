@@ -18,7 +18,7 @@ async fn http_without_device_reuses_account_state_without_ledgers() -> anyhow::R
 
 async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     crate::migrations::upgrade(mysql).await?;
-    for id in [81001, 81002] {
+    for id in [81001, 81002, 81003] {
         mysql.execute("INSERT INTO users (id,user_name,password_hash,email,is_active,role,auth_source,preferences,git_info,created_at,updated_at) VALUES (?,?,'unused','',1,'user','password','{}','{}',NOW(),NOW())",(id,format!("local-sync-{id}"))).await?;
     }
     let mut state = crate::build_app_state().await?;
@@ -102,11 +102,17 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','target',?,1,NOW(),NOW())",(json!({"metadata":{"name":"target","namespace":"default"},"spec":{"revision":1,"installState":"installed","version":"1.0","enabled":true,"source":{"pluginKey":"target"}}}),)).await?;
     let target:StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='InstalledPlugin' AND name='target'",()).await?;
     let slot = json!({"operationId":"target-operation","requestHash":"hash","installedId":target.id,"installedRevision":1,"intentOrder":7,"action":"install"});
-    let mut account:StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
+    mysql.execute("INSERT INTO plugin_states (user_id,plugin_key,installed_kind_id,json) VALUES (81001,'target',?,?)", (target.id,crate::plugins_installed::state_store::initial_document("target"))).await?;
+    let mut account: StoredKind = mysql
+        .fetch_one(
+            "SELECT id,json FROM plugin_states WHERE user_id=81001 AND plugin_key='target'",
+            (),
+        )
+        .await?;
     account.json["spec"]["localIntents"] = json!({"native":{target.id.to_string():slot}});
     mysql
         .execute(
-            "UPDATE kinds SET json=? WHERE id=?",
+            "UPDATE plugin_states SET json=? WHERE id=?",
             (account.json, account.id),
         )
         .await?;
@@ -147,7 +153,72 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     );
     assert_eq!(removed["payload"]["plugins"], json!([]));
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync' OR kind='Device'",()).await?.n,0);
-    assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
+    assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM plugin_states WHERE user_id=81001 AND plugin_key='@legacy-v2'",()).await?.n,1);
+    let scoped=post(81001,"/api/plugins/local-sync",json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"native","targeted":true,"installedPluginId":target.id})).await.json::<Value>().await?;
+    assert_eq!(scoped["payload"]["plugin_sync"]["version"], 3);
+    assert_eq!(scoped["payload"]["plugin_sync"]["complete"], false);
+    assert_eq!(
+        scoped["payload"]["plugin_sync"]["intentRevisions"][target.id.to_string()],
+        2
+    );
+    assert!(
+        scoped["payload"]["plugin_sync"]["revisions"][target.id.to_string()]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
+    let unknown = post(
+        81002,
+        "/api/plugins/local-sync",
+        json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"scoped-only"}),
+    )
+    .await
+    .json::<Value>()
+    .await?;
+    assert_eq!(unknown["payload"]["plugin_sync"]["version"], 3);
+    mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (81003,'InstalledPlugin','scoped-only','default',?,0,NOW(),NOW())",(json!({"spec":{"revision":2,"source":{"pluginKey":"scoped-only"}}}),)).await?;
+    let fresh = post(
+        81003,
+        "/api/plugins/local-sync",
+        json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"scoped-only"}),
+    )
+    .await
+    .json::<Value>()
+    .await?;
+    assert_eq!(
+        fresh["payload"]["removed_plugins"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM plugin_states WHERE user_id=81003 AND plugin_key='@legacy-v2'",()).await?.n,0);
+    let tombstone = fresh["payload"]["removed_plugins"][0].clone();
+    let old_generation = fresh["payload"]["plugin_sync"]["revisions"]
+        [tombstone["installed_plugin_id"].to_string()]
+    .as_i64()
+    .unwrap();
+    mysql
+        .execute(
+            "DELETE FROM kinds WHERE user_id=81003 AND kind='InstalledPlugin'",
+            (),
+        )
+        .await?;
+    let orphan = post(
+        81003,
+        "/api/plugins/local-sync",
+        json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"scoped-only"}),
+    )
+    .await
+    .json::<Value>()
+    .await?;
+    assert_eq!(orphan["payload"]["removed_plugins"], json!([tombstone]));
+    assert!(
+        orphan["payload"]["plugin_sync"]["revisions"][tombstone["installed_plugin_id"].to_string()]
+            .as_i64()
+            .unwrap()
+            > old_generation
+    );
     stop.send(()).unwrap();
     task.await??;
     Ok(())

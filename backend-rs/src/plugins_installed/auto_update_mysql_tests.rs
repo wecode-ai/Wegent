@@ -97,6 +97,17 @@ async fn writer_batch_preserves_rollback_and_rejects_stale_updates() {
     for sql in SCHEMA {
         mysql.execute(*sql, ()).await.unwrap();
     }
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../../migrations/schema.json")).unwrap();
+    let table = schema["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["table"] == "plugin_states")
+        .unwrap();
+    for sql in table["statements"].as_array().unwrap() {
+        mysql.execute(sql.as_str().unwrap(), ()).await.unwrap();
+    }
     mysql.execute("INSERT INTO kinds (id,user_id,kind,name,namespace,is_active,json) VALUES (1,7,'InstalledPlugin','example','default',1,?)", (serde_json::to_string(&serde_json::json!({"spec":{"pluginId":1,"releaseId":1,"updatePolicy":"auto","enabled":false,"componentStates":{"skills/example":false},"source":{"type":"marketplace"}}})).unwrap(),)).await.unwrap();
     mysql.execute("INSERT INTO plugins (id,owner_user_id,latest_release_id,status,visibility,catalog_namespace,name,slug,source_type) VALUES (1,99,2,'published','public','enterprise','example','example','marketplace')", ()).await.unwrap();
     for id in [1_i64, 2] {

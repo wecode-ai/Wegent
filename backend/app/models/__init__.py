@@ -54,6 +54,7 @@ from app.models.plugin_publication import (
     PluginPublicationRevision,
     PluginReleaseIdempotency,
 )
+from app.models.plugin_state import PluginState
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -137,6 +138,7 @@ __all__ = [
     "PluginUpstream",
     "PluginSubmission",
     "PluginDeviceInstallation",
+    "PluginState",
     "PluginPublicationRequest",
     "PluginPublicationRevision",
     "PluginPublicationCheck",

@@ -1,5 +1,5 @@
 {
-  "revision": "f3a7c9e1b2d4",
+  "revision": "a5b6c7d8e9f0",
   "tables": [
     {
       "table": "background_executions",
@@ -465,6 +465,12 @@
         "CREATE INDEX ix_wiki_contents_generation_id ON wiki_contents (generation_id)",
         "CREATE INDEX ix_wiki_contents_id ON wiki_contents (id)",
         "CREATE INDEX ix_wiki_contents_type ON wiki_contents (type)"
+      ]
+    },
+    {
+      "table": "plugin_states",
+      "statements": [
+        "CREATE TABLE plugin_states (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tuser_id BIGINT NOT NULL, \n\tplugin_key VARCHAR(100) NOT NULL, \n\tinstalled_kind_id INTEGER NOT NULL DEFAULT '0', \n\tjson JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL DEFAULT now(), \n\tupdated_at DATETIME NOT NULL DEFAULT now(), \n\tPRIMARY KEY (id), \n\tCONSTRAINT uniq_plugin_states_identity UNIQUE (user_id, plugin_key)\n)COMMENT='Plugin-scoped synchronization identities and transaction fences' ENGINE=InnoDB CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
       ]
     }
   ]

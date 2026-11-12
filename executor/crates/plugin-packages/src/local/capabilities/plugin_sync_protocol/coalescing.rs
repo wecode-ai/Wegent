@@ -49,6 +49,17 @@ fn matching_intent<'a>(
     let (collection, key) = intent_identity(spec, removing);
     let record = &manifest["plugin_sync"][collection][key];
     let generation = record["generation"].as_u64()?;
+    if manifest["plugin_sync"]["entries"]
+        .as_object()
+        .into_iter()
+        .flat_map(|entries| entries.values())
+        .any(|entry| {
+            entry["installed_plugin_id"].as_i64() == spec.installed_plugin_id
+                && entry["generation"].as_u64().unwrap_or(0) > generation
+        })
+    {
+        return None;
+    }
     if record["target"].as_str()? != target_fingerprint(spec, removing)
         || generation < complete_generation(manifest)
     {

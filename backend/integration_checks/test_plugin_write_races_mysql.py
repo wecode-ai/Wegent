@@ -34,6 +34,7 @@ from app.services.plugin_auth_automation import PluginAuthAutomationService
 from app.services.plugin_auth_local_lifecycle import PluginAuthLocalLifecycleService
 from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_credential_cipher import PluginCredentialCipher
+from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_write_coordination import (
     PluginWriteError,
     acquire_plugin_write_lock,
@@ -332,6 +333,75 @@ def test_real_redis_ttl_expiry_rejects_the_old_transaction_and_allows_recovery(c
         assert context.accounts.list_connections(db, user_id=context.user_id) == [
             recovered
         ]
+    assert not client.exists(lock_key(context))
+
+
+def test_combined_parent_cas_fences_a_successor_while_commit_outlives_redis(context):
+    """An existing row remains protected after the last lease check, during COMMIT."""
+    from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
+
+    with context.sessions.begin() as db:
+        lock_plugin_sync_state(db, context.user_id)
+    committing, finish_commit, successor_read = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+
+    def paused_commit():
+        with context.sessions() as db:
+            acquire_plugin_write_lock(
+                db, context.user_id, installed_id=context.plugin_id
+            )
+            parent = db.get(Kind, context.plugin_id)
+            payload = deepcopy(parent.json)
+            payload["spec"]["enabled"] = False
+            replace_installed_kind(db, parent, payload)
+            connection = db.connection()
+
+            def pause(_connection):
+                committing.set()
+                assert finish_commit.wait(5), "COMMIT was not released"
+
+            event.listen(connection, "commit", pause)
+            try:
+                db.commit()
+            finally:
+                event.remove(connection, "commit", pause)
+
+    def write_successor():
+        with context.sessions() as db:
+            acquire_plugin_write_lock(
+                db, context.user_id, installed_id=context.plugin_id
+            )
+            parent = db.get(Kind, context.plugin_id)
+            assert parent.json["spec"].get("writeRevision", 0) == 0
+            payload = deepcopy(parent.json)
+            payload["spec"]["enabled"] = True
+            successor_read.set()
+            replace_installed_kind(db, parent, payload)
+            db.commit()
+
+    client = coordination._redis_client()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        old = pool.submit(paused_commit)
+        try:
+            assert committing.wait(5), "Writer did not reach the real COMMIT boundary"
+            assert client.pexpire(lock_key(context), 100)
+            successor = pool.submit(write_successor)
+            assert successor_read.wait(
+                5
+            ), "Successor did not read the old committed row"
+        finally:
+            finish_commit.set()
+        old.result(timeout=5)
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+            successor.result(timeout=5)
+
+    with context.sessions() as db:
+        parent = db.get(Kind, context.plugin_id)
+        assert parent.json["spec"]["enabled"] is False
+        assert parent.json["spec"]["writeRevision"] == 1
     assert not client.exists(lock_key(context))
 
 
@@ -659,7 +729,7 @@ def test_stale_ack_merge_preserves_newer_dispatch_counters_on_real_mysql(context
             device_id="device.with.dot",
             payload={
                 "plugins": [{"installed_plugin_id": context.plugin_id}],
-                "plugin_sync": {"generation": 9, "complete": True},
+                "plugin_sync": {"version": 2, "generation": 9, "complete": True},
             },
         )
         acknowledgement.commit()
@@ -787,7 +857,7 @@ def test_real_mysql_rejects_ack_device_writes_after_a_newer_dispatch(context):
             device_id="ack-fence",
             payload={
                 "plugins": [{"installed_plugin_id": context.plugin_id}],
-                "plugin_sync": {"generation": 8, "complete": False},
+                "plugin_sync": {"version": 2, "generation": 8, "complete": False},
             },
         )
         advance_plugin_snapshot_watermark(
@@ -809,3 +879,83 @@ def test_real_mysql_rejects_ack_device_writes_after_a_newer_dispatch(context):
         assert row.attempt_count == 2
         db.delete(row)
         db.commit()
+
+
+def test_first_plugin_state_commit_outlives_redis_without_duplicate_or_cross_plugin_block(
+    context, monkeypatch
+):
+    """Pause the real unique-key INSERT's COMMIT, then expire its real Redis lease."""
+    from app.models.plugin_state import PluginState
+    from app.services import plugin_state_store as store
+    from app.services.plugin_write_resources import policy_engine
+
+    owner = context.user_id
+    key = f"bootstrap-{uuid.uuid4().hex}"
+    other_key = f"{key}-other"
+    client = coordination._redis_client()
+    bootstrap = policy_engine(context.sessions.kw["bind"])
+    committing, release, successor_entered = (threading.Event() for _ in range(3))
+    first_thread = None
+    original_claim = store.claim_plugin_identity
+
+    def claim(db, user_id, plugin_key, installed_kind_id=0):
+        if user_id == owner and plugin_key == key:
+            if threading.get_ident() == first_thread:
+                original_claim(db, user_id, plugin_key, installed_kind_id)
+                db.connection().info["pause_plugin_state_commit"] = True
+                return
+            successor_entered.set()
+        original_claim(db, user_id, plugin_key, installed_kind_id)
+
+    def pause(connection):
+        if connection.info.pop("pause_plugin_state_commit", False):
+            committing.set()
+            assert release.wait(5), "Plugin state COMMIT gate was not released"
+
+    def initialize(name, first=False):
+        nonlocal first_thread
+        if first:
+            first_thread = threading.get_ident()
+        with context.sessions() as db:
+            acquire_plugin_write_lock(db, owner, name=name)
+            state = (
+                db.query(PluginState).filter_by(user_id=owner, plugin_key=name).one()
+            )
+            identity = state.id
+            db.commit()
+            return identity
+
+    monkeypatch.setattr(store, "claim_plugin_identity", claim)
+    event.listen(bootstrap, "commit", pause)
+    try:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            old = pool.submit(initialize, key, True)
+            try:
+                assert committing.wait(5), "First initializer did not reach COMMIT"
+                redis_key = f"wegent:plugin-write:{owner}:{key}"
+                assert client.pexpire(redis_key, 100)
+                successor = pool.submit(initialize, key)
+                assert successor_entered.wait(
+                    3
+                ), "Successor did not acquire expired lease"
+                assert (
+                    not successor.done()
+                ), "Unique-key insert did not fence uncertain COMMIT"
+                independent = pool.submit(initialize, other_key).result(timeout=2)
+                assert independent > 0 and not release.is_set()
+            finally:
+                release.set()
+            with pytest.raises(PluginWriteError, match="plugin_write_lease_lost"):
+                old.result(timeout=5)
+            winner = successor.result(timeout=5)
+        with context.sessions() as db:
+            rows = db.query(PluginState).filter_by(user_id=owner, plugin_key=key).all()
+            assert len(rows) == 1 and rows[0].id == winner
+            assert (
+                not db.query(PluginState)
+                .filter_by(user_id=owner, plugin_key="@legacy-v2")
+                .count()
+            )
+    finally:
+        release.set()
+        event.remove(bootstrap, "commit", pause)

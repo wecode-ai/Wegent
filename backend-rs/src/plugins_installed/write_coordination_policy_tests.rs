@@ -101,7 +101,7 @@ async fn policy_readiness_wait_is_inside_the_operation_deadline() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn uncertain_policy_commit_retains_the_bootstrap_lease_until_expiry() {
+async fn uncertain_policy_commit_never_acquires_an_account_redis_lease() {
     let redis = LeaseRedis::default();
     let lease = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["example".into()])
         .await
@@ -115,15 +115,14 @@ async fn uncertain_policy_commit_retains_the_bootstrap_lease_until_expiry() {
     assert_eq!(plugin_write_error_code(&error), Some("plugin_write_busy"));
     assert_eq!(start.elapsed(), ACQUIRE_WAIT);
     assert!(
-        redis
+        !redis
             .owners
             .lock()
             .unwrap()
             .contains_key("wegent:plugin-write:23:@account-policy")
     );
-    let error = PluginWriteLease::acquire(Some(&redis), 23)
+    let other = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["another".into()])
         .await
-        .err()
         .unwrap();
-    assert_eq!(plugin_write_error_code(&error), Some("plugin_write_busy"));
+    other.release().await;
 }

@@ -25,7 +25,9 @@ use crate::state::AppState;
 use super::desired_capabilities::{
     build_desired_capabilities_for_registration, capability_snapshot,
 };
-use super::online_route::{OnlineRouteResolution, resolve_online_route, supports_plugin_delta};
+use super::online_route::{
+    OnlineRouteResolution, negotiated_plugin_sync_version, resolve_online_route,
+};
 use super::record_sync_result::SyncResult;
 use super::sync_device::{DESIRED_STATE_SYNC_ATTEMPTS, ack_argument, log_build_error};
 
@@ -53,8 +55,6 @@ pub(crate) async fn prepare_plugins_for_registered_device(
     // Catalog repair and pending device rows share the selected installation
     // leases and commit their parent revisions in one short transaction.
     let lease = match async {
-        super::plugin_sync_protocol::ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
-            .await?;
         super::write_coordination::PluginWriteLease::acquire_installed(
             &state.mysql,
             state.redis.as_ref(),
@@ -104,7 +104,12 @@ pub(crate) async fn prepare_plugins_for_registered_device(
                 )
                 .await?;
                 if changed > 0 {
-                    super::plugin_sync_protocol::touch_desired_state(&mut session, user_id).await?;
+                    super::plugin_sync_protocol::touch_desired_state(
+                        &mut session,
+                        user_id,
+                        lease.installation_ids().unwrap_or_default(),
+                    )
+                    .await?;
                 }
                 lease
                     .commit_plugin_revisions(&mut *session, revisions)
@@ -183,8 +188,6 @@ async fn persist_registration_result(
     // stay writable while this one waits for a foreground writer. Each retry
     // revalidates current state without replaying the executed device RPC.
     let lease = async {
-        super::plugin_sync_protocol::ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
-            .await?;
         super::write_coordination::PluginWriteLease::acquire_installed(
             &state.mysql,
             state.redis.as_ref(),
@@ -266,14 +269,24 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
     // `sync_current_device_capabilities`: the route is resolved once before
     // the build to negotiate the plugin protocol; the result selects the
     // versioned loader for every build and reload in this round trip.
-    let versioned = include_plugins && supports_plugin_delta(state, user_id, device_id).await;
-    let mut payload =
-        match build_registration_payload(state, user_id, device_id, include_plugins, versioned)
-            .await
-        {
-            Ok(payload) => payload,
-            Err(()) => return None,
-        };
+    let protocol_version = if include_plugins {
+        negotiated_plugin_sync_version(state, user_id, device_id).await
+    } else {
+        None
+    };
+    let versioned = protocol_version.is_some();
+    let mut payload = match build_registration_payload(
+        state,
+        user_id,
+        device_id,
+        include_plugins,
+        protocol_version,
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(()) => return None,
+    };
     let mut last: Option<SyncResult> = None;
     for _attempt in 1..=DESIRED_STATE_SYNC_ATTEMPTS {
         let route = match resolve_online_route(state, user_id, device_id).await {
@@ -287,8 +300,9 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
             }
         };
         if versioned
-            && !super::plugin_sync_protocol::supports_plugin_sync_v2(
+            && !super::plugin_sync_protocol::supports_snapshot(
                 route.online.get("runtime_features"),
+                &payload,
             )
         {
             return Some(snapshot_failure(
@@ -353,13 +367,18 @@ pub(crate) async fn sync_registration_capabilities<D: CapabilityDispatch>(
         if !result.acknowledged {
             return Some(result);
         }
-        let latest =
-            match build_registration_payload(state, user_id, device_id, include_plugins, versioned)
-                .await
-            {
-                Ok(payload) => payload,
-                Err(()) => return None,
-            };
+        let latest = match build_registration_payload(
+            state,
+            user_id,
+            device_id,
+            include_plugins,
+            protocol_version,
+        )
+        .await
+        {
+            Ok(payload) => payload,
+            Err(()) => return None,
+        };
         if capability_snapshot(&latest) == capability_snapshot(&payload) {
             return Some(result);
         }
@@ -394,15 +413,16 @@ async fn build_registration_payload(
     user_id: i64,
     device_id: &str,
     include_plugins: bool,
-    versioned: bool,
+    protocol_version: Option<i64>,
 ) -> Result<Value, ()> {
-    let built = if versioned {
+    let built = if let Some(version) = protocol_version {
         super::plugin_sync_protocol::load_versioned_registration_payload(
             state,
             user_id,
             device_id,
             include_plugins,
             true,
+            version,
         )
         .await
     } else {

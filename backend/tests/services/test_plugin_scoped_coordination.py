@@ -8,9 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
+from app.models.plugin_state import PluginState
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.services.device import plugin_sync_recording
-from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
+from app.services.device.plugin_sync_protocol import (
+    lock_installed_plugin_state,
+    lock_plugin_sync_state,
+)
 from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
 )
@@ -23,6 +27,7 @@ from app.services.plugin_write_errors import PluginWriteError
 def scoped_db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'scoped-plugin.db'}")
     Kind.__table__.create(engine)
+    PluginState.__table__.create(engine)
     with Session(engine) as db:
         yield db
     engine.dispose()
@@ -70,7 +75,7 @@ def test_ack_merges_metadata_without_retry_or_losing_another_device(
         attempts.append(device_id)
         if len(attempts) == 1:
             with Session(bind) as other:
-                row = other.get(Kind, state_id)
+                row = other.get(PluginState, state_id)
                 document = deepcopy(row.json)
                 document["spec"].update(
                     revision=document["spec"].get("revision", 0) + 1,
@@ -108,7 +113,7 @@ def test_ack_merges_metadata_without_retry_or_losing_another_device(
     parent = scoped_db.get(Kind, installed_id)
     assert parent.is_active is False
     assert parent.json["spec"]["writeRevision"] == 1
-    devices = scoped_db.get(Kind, state_id).json["spec"]["devices"]
+    devices = scoped_db.get(PluginState, state_id).json["spec"]["devices"]
     assert devices["peer"]["complete_generation"] == 11
     assert devices["device"]["plugins"][str(installed_id)] == 7
     assert not plugin_write_backend.values
@@ -161,6 +166,77 @@ def test_authentication_advances_only_its_installation_fence(scoped_db):
         .count()
         == 0
     )
+
+    assert (
+        scoped_db.query(Kind)
+        .filter_by(
+            user_id=913,
+            kind="PluginSyncState",
+            namespace="plugin-sync",
+            name="account",
+        )
+        .count()
+        == 0
+    )
+
+
+def test_savepoint_rollback_restores_parent_fence_for_auth_only_commit(scoped_db):
+    installed_id = installation(scoped_db, "rollback-parent")
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=installed_id)
+    parent = scoped_db.get(Kind, installed_id)
+    nested = scoped_db.begin_nested()
+    replace_installed_kind(scoped_db, parent, {"spec": {"enabled": False}})
+    nested.rollback()
+    scoped_db.add(
+        Kind(
+            user_id=913,
+            kind="ConnectorConnection",
+            namespace="plugin-auth",
+            name="after-rollback",
+            json={"spec": {"installedPluginId": installed_id}},
+        )
+    )
+    scoped_db.commit()
+
+    scoped_db.refresh(parent)
+    assert parent.json["spec"] == {
+        "revision": 7,
+        "enabled": True,
+        "writeRevision": 1,
+    }
+
+
+def test_rolled_back_sync_write_cannot_replace_desired_state_fence(scoped_db):
+    installed_id = installation(scoped_db, "rollback-sync")
+    state = lock_installed_plugin_state(scoped_db, 913, installed_id)
+    scoped_db.commit()
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=installed_id)
+    nested = scoped_db.begin_nested()
+    state = lock_installed_plugin_state(scoped_db, 913, installed_id, merge=True)
+    state.json = {**state.json, "rolledBack": True}
+    scoped_db.flush()
+    nested.rollback()
+    parent = scoped_db.get(Kind, installed_id)
+    replace_installed_kind(scoped_db, parent, {"spec": {"enabled": False}})
+    scoped_db.commit()
+
+    scoped_db.refresh(state)
+    assert state.json["spec"]["revision"] == 1
+    assert "rolledBack" not in state.json
+
+
+def test_lease_loss_after_combined_content_cas_still_rolls_back(scoped_db):
+    installed_id = installation(scoped_db, "lost-after-write")
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=installed_id)
+    parent = scoped_db.get(Kind, installed_id)
+    replace_installed_kind(scoped_db, parent, {"spec": {"enabled": False}})
+    scoped_db.info["plugin_write_leases"][(913, parent.name)].lost.set()
+    with pytest.raises(PluginWriteError, match="plugin_write_lease_lost"):
+        scoped_db.commit()
+    scoped_db.rollback()
+
+    scoped_db.refresh(parent)
+    assert parent.json["spec"] == {"revision": 7, "enabled": True}
     assert (
         scoped_db.query(Kind)
         .filter_by(
@@ -255,13 +331,13 @@ def test_independent_intents_merge_without_losing_each_others_paths(scoped_db):
 def test_desired_mutation_invalidates_an_older_snapshot_generation(scoped_db):
     installed_id = installation(scoped_db, "snapshot-parent")
     with Session(scoped_db.get_bind()) as setup:
-        lock_plugin_sync_state(setup, 913)
+        lock_installed_plugin_state(setup, 913, installed_id)
         setup.commit()
     with (
         Session(scoped_db.get_bind()) as snapshot,
         Session(scoped_db.get_bind()) as writer,
     ):
-        old_state = lock_plugin_sync_state(snapshot, 913)
+        old_state = lock_installed_plugin_state(snapshot, 913, installed_id)
         old_content = snapshot.get(Kind, installed_id).json
         acquire_plugin_write_lock(writer, 913, installed_id=installed_id)
         parent = writer.get(Kind, installed_id)
@@ -278,7 +354,7 @@ def test_desired_mutation_invalidates_an_older_snapshot_generation(scoped_db):
             snapshot.commit()
         snapshot.rollback()
     with Session(scoped_db.get_bind()) as fresh:
-        state = lock_plugin_sync_state(fresh, 913)
+        state = lock_installed_plugin_state(fresh, 913, installed_id)
         assert state.json["spec"]["generation"] == 0
         assert fresh.get(Kind, installed_id).json["spec"]["version"] == "new"
 
@@ -286,7 +362,7 @@ def test_desired_mutation_invalidates_an_older_snapshot_generation(scoped_db):
 def test_expired_first_creator_cannot_restore_a_successors_uninstall(
     scoped_db, plugin_write_backend
 ):
-    lock_plugin_sync_state(scoped_db, 913)
+    lock_plugin_sync_state(scoped_db, 913, plugin_key="first-create")
     scoped_db.commit()
     bind = scoped_db.get_bind()
     with Session(bind) as expired, Session(bind) as successor:
@@ -341,7 +417,8 @@ def test_expired_first_creator_cannot_restore_a_successors_uninstall(
 
 
 def test_independent_first_creators_compare_only_their_own_slot(scoped_db):
-    lock_plugin_sync_state(scoped_db, 913)
+    for name in ("new-a", "new-b"):
+        lock_plugin_sync_state(scoped_db, 913, plugin_key=name)
     scoped_db.commit()
     bind = scoped_db.get_bind()
     with Session(bind) as first, Session(bind) as second:
@@ -360,8 +437,9 @@ def test_independent_first_creators_compare_only_their_own_slot(scoped_db):
             )
             db.commit()
     with Session(bind) as fresh:
-        state = lock_plugin_sync_state(fresh, 913)
-        assert state.json["spec"]["creationRevisions"] == {"new-a": 1, "new-b": 1}
+        for name in ("new-a", "new-b"):
+            state = lock_plugin_sync_state(fresh, 913, plugin_key=name)
+            assert state.json["spec"]["creationRevisions"] == {name: 1}
 
 
 @pytest.mark.parametrize("complete", [False, True])
@@ -405,7 +483,7 @@ def test_new_dispatch_before_commit_rejects_an_obsolete_failed_ack(
         attempts.append(device_id)
         if len(attempts) == 1:
             with Session(bind) as dispatch:
-                row = dispatch.get(Kind, state_id)
+                row = dispatch.get(PluginState, state_id)
                 document = deepcopy(row.json)
                 device = (
                     {"complete_generation": 8}
@@ -452,3 +530,87 @@ def test_new_dispatch_before_commit_rejects_an_obsolete_failed_ack(
     assert row.state == "installed"
     assert row.actual_release_id == 2
     assert not plugin_write_backend.values
+
+
+def test_catalog_rename_invalidates_a_paused_first_creator(
+    scoped_db, plugin_write_backend, monkeypatch
+):
+    installed_id = installation(scoped_db, "old-name")
+    lock_installed_plugin_state(scoped_db, 913, installed_id)
+    lock_plugin_sync_state(scoped_db, 913, plugin_key="canonical")
+    scoped_db.commit()
+    with Session(scoped_db.get_bind()) as expired:
+        acquire_plugin_write_lock(expired, 913, name="canonical")
+        for lease in expired.info["plugin_write_leases"].values():
+            monkeypatch.setattr(lease, "check", lambda: None)
+        plugin_write_backend.values.clear()
+        acquire_plugin_write_lock(scoped_db, 913, installed_id=installed_id)
+        parent = scoped_db.get(Kind, installed_id)
+        replace_installed_kind(scoped_db, parent, parent.json, name="canonical")
+        scoped_db.commit()
+        expired.add(
+            Kind(
+                user_id=913,
+                kind="InstalledPlugin",
+                namespace="default",
+                name="canonical",
+                json={"spec": {}},
+                is_active=True,
+            )
+        )
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+            expired.commit()
+        expired.rollback()
+    scoped_db.expire_all()
+    assert scoped_db.query(Kind).filter_by(kind="InstalledPlugin").count() == 1
+    state = scoped_db.query(PluginState).filter_by(plugin_key="canonical").one()
+    assert state.installed_kind_id == installed_id
+
+
+def test_plugin_mutation_does_not_write_an_existing_legacy_aggregate(scoped_db):
+    installed_id = installation(scoped_db, "independent")
+    legacy = lock_plugin_sync_state(scoped_db, 913)
+    scoped_db.commit()
+    original = deepcopy(legacy.json)
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=installed_id)
+    parent = scoped_db.get(Kind, installed_id)
+    replace_installed_kind(scoped_db, parent, {"spec": {"enabled": False}})
+    scoped_db.commit()
+    scoped_db.refresh(legacy)
+    assert legacy.json == original
+
+
+def test_catalog_rename_keeps_retired_receipts_and_the_live_identity(scoped_db):
+    old_id = installation(scoped_db, "old-alias")
+    retired_id = installation(scoped_db, "canonical")
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=retired_id)
+    parent = scoped_db.get(Kind, retired_id)
+    replace_installed_kind(scoped_db, parent, parent.json, is_active=False)
+    state = lock_installed_plugin_state(scoped_db, 913, retired_id)
+    document = deepcopy(state.json)
+    document["spec"].update(
+        generation=50,
+        localIntents={
+            "native": {
+                str(retired_id): {"operationId": "old-request", "intentOrder": 9}
+            }
+        },
+    )
+    state.json = document
+    scoped_db.commit()
+    acquire_plugin_write_lock(scoped_db, 913, installed_id=old_id)
+    parent = scoped_db.get(Kind, old_id)
+    replace_installed_kind(scoped_db, parent, parent.json, name="canonical")
+    scoped_db.commit()
+    states = {
+        state.installed_kind_id: state for state in scoped_db.query(PluginState).all()
+    }
+    assert states[old_id].plugin_key == "canonical"
+    assert states[old_id].json["spec"]["generation"] == 50
+    assert states[retired_id].plugin_key.startswith("@retired:")
+    assert (
+        states[retired_id].json["spec"]["localIntents"]["native"][str(retired_id)][
+            "operationId"
+        ]
+        == "old-request"
+    )

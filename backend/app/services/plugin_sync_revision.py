@@ -1,23 +1,15 @@
-"""Optimistic writes for the existing account synchronization document.
-
-Every desired-state mutation touches this revision in its transaction. Snapshot
-builders read it before loading plugins, then CAS it with their generation so a
-later generation cannot describe an earlier committed installation state.
-"""
+"""CAS independent plugin documents and merge device-specific watermarks."""
 
 import json
-import logging
 from copy import deepcopy
 
-from redis.exceptions import RedisError
 from sqlalchemy import BigInteger, cast, func, select
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.distributed_lock import DistributedLockUnavailableError
-from app.models.kind import Kind
+from app.models.plugin_state import PluginState
+from app.services.plugin_state_store import LEGACY_SYNC_KEY
 from app.services.plugin_write_errors import PluginWriteError
 
 _EXPECTED = "plugin_sync_expected_revisions"
@@ -25,15 +17,32 @@ _DOCUMENTS = "plugin_sync_original_documents"
 _MERGE = "plugin_sync_merge_rows"
 _STRICT = "plugin_sync_strict_rows"
 _ACK_FENCES = "plugin_sync_ack_fences"
-logger = logging.getLogger(__name__)
+_WRITTEN = "plugin_sync_written_scopes"
 
 
-def remember_sync_revision(db: Session, row: Kind, *, merge: bool = False) -> None:
+def remember_sync_write(
+    db: Session, user_id: int, plugin_key: str = LEGACY_SYNC_KEY
+) -> None:
+    """A revision written in this transaction already fences desired changes."""
+    db.info.setdefault(_WRITTEN, set()).add((user_id, plugin_key))
+
+
+def sync_revision_written(
+    db: Session, user_id: int, plugin_key: str = LEGACY_SYNC_KEY
+) -> bool:
+    return (user_id, plugin_key) in db.info.get(_WRITTEN, set())
+
+
+def remember_sync_revision(
+    db: Session, row: PluginState, *, merge: bool = False
+) -> None:
     revision = row.json.get("spec", {}).get("revision", 0)
     if type(revision) is not int or not 0 <= revision < 2**63 - 1:
         raise PluginWriteError("plugin_write_conflict")
     expected = db.info.setdefault(_EXPECTED, {})
     documents = db.info.setdefault(_DOCUMENTS, {})
+    if row in db.dirty and row.id in expected:
+        return
     if merge and row.id not in db.info.get(_STRICT, set()):
         expected[row.id] = revision
         documents[row.id] = deepcopy(row.json)
@@ -43,14 +52,14 @@ def remember_sync_revision(db: Session, row: Kind, *, merge: bool = False) -> No
         documents.setdefault(row.id, deepcopy(row.json))
 
 
-def require_snapshot_revision(db: Session, row: Kind) -> None:
+def require_snapshot_revision(db: Session, row: PluginState) -> None:
     """Keep a complete reconciliation's read fence through its final commit."""
     db.info.setdefault(_STRICT, set()).add(row.id)
     db.info.get(_MERGE, set()).discard(row.id)
 
 
 def remember_ack_watermark(
-    db: Session, row: Kind, device_id: str, installed_id: int, generation: int
+    db: Session, row: PluginState, device_id: str, installed_id: int, generation: int
 ) -> None:
     """Reject a superseded acknowledgement before any device writes commit."""
     path = f"$.spec.devices.{json.dumps(device_id)}"
@@ -75,7 +84,7 @@ def _merge_patch(before: dict, after: dict) -> dict:
     return patch
 
 
-def flush_sync_revision(db: Session, row: Kind) -> None:
+def flush_sync_revision(db: Session, row: PluginState) -> None:
     expected = db.info.get(_EXPECTED, {}).get(row.id)
     if expected is None:
         raise PluginWriteError("plugin_write_conflict")
@@ -85,16 +94,30 @@ def flush_sync_revision(db: Session, row: Kind) -> None:
     document = deepcopy(row.json)
     document.setdefault("spec", {})["revision"] = expected + 1
     updated = (
-        db.query(Kind)
+        db.query(PluginState)
         .filter(
-            Kind.id == row.id,
-            Kind.user_id == row.user_id,
-            Kind.kind == "PluginSyncState",
-            Kind.namespace == "plugin-sync",
-            Kind.name == "account",
-            func.coalesce(Kind.json["spec"]["revision"].as_integer(), 0) == expected,
+            PluginState.id == row.id,
+            PluginState.user_id == row.user_id,
+            PluginState.plugin_key == row.plugin_key,
+            PluginState.installed_kind_id.in_(
+                {
+                    0,
+                    row.installed_kind_id,
+                    db.info.get("plugin_state_rebindings", {}).get(
+                        row.id, row.installed_kind_id
+                    ),
+                }
+            ),
+            func.coalesce(PluginState.json["spec"]["revision"].as_integer(), 0)
+            == expected,
         )
-        .update({Kind.json: document}, synchronize_session=False)
+        .update(
+            {
+                PluginState.json: document,
+                PluginState.installed_kind_id: row.installed_kind_id,
+            },
+            synchronize_session=False,
+        )
     )
     if updated != 1:
         raise PluginWriteError("plugin_write_conflict")
@@ -102,9 +125,11 @@ def flush_sync_revision(db: Session, row: Kind) -> None:
     db.info[_DOCUMENTS][row.id] = deepcopy(document)
     db.info.get(_ACK_FENCES, {}).pop(row.id, None)
     set_committed_value(row, "json", document)
+    set_committed_value(row, "installed_kind_id", row.installed_kind_id)
+    remember_sync_write(db, row.user_id, row.plugin_key)
 
 
-def _flush_merge(db: Session, row: Kind) -> None:
+def _flush_merge(db: Session, row: PluginState) -> None:
     """Merge independent intent paths without retrying other plugins' writes."""
     original = db.info[_DOCUMENTS][row.id]
     changes = _merge_patch(original, row.json)
@@ -115,22 +140,28 @@ def _flush_merge(db: Session, row: Kind) -> None:
         if db.get_bind().dialect.name == "mysql"
         else func.json_patch
     )
-    revision = func.coalesce(Kind.json["spec"]["revision"].as_integer(), 0)
+    revision = func.coalesce(PluginState.json["spec"]["revision"].as_integer(), 0)
     maximum = func.greatest if db.get_bind().dialect.name == "mysql" else func.max
     assignments = ["$.spec.revision", revision + 1]
     for path, value in watermarks.items():
         current = _counter_value(path)
         assignments.extend((path, maximum(current, value)))
     identity = (
-        Kind.id == row.id,
-        Kind.user_id == row.user_id,
-        Kind.kind == "PluginSyncState",
-        Kind.namespace == "plugin-sync",
-        Kind.name == "account",
-        Kind.is_active.is_(True),
+        PluginState.id == row.id,
+        PluginState.user_id == row.user_id,
+        PluginState.plugin_key == row.plugin_key,
+        PluginState.installed_kind_id.in_(
+            {
+                0,
+                row.installed_kind_id,
+                db.info.get("plugin_state_rebindings", {}).get(
+                    row.id, row.installed_kind_id
+                ),
+            }
+        ),
     )
     updated = (
-        db.query(Kind)
+        db.query(PluginState)
         .filter(
             *identity,
             *(
@@ -141,21 +172,28 @@ def _flush_merge(db: Session, row: Kind) -> None:
             ),
         )
         .update(
-            {Kind.json: func.json_set(merge(Kind.json, patch), *assignments)},
+            {
+                PluginState.json: func.json_set(
+                    merge(PluginState.json, patch), *assignments
+                ),
+                PluginState.installed_kind_id: row.installed_kind_id,
+            },
             synchronize_session=False,
         )
     )
     if updated != 1:
         raise PluginWriteError("plugin_write_conflict")
-    document = db.execute(select(Kind.json).where(*identity)).scalar_one()
+    document = db.execute(select(PluginState.json).where(*identity)).scalar_one()
     db.info[_EXPECTED][row.id] = document["spec"]["revision"]
     db.info[_DOCUMENTS][row.id] = deepcopy(document)
     db.info.get(_ACK_FENCES, {}).pop(row.id, None)
     set_committed_value(row, "json", document)
+    set_committed_value(row, "installed_kind_id", row.installed_kind_id)
+    remember_sync_write(db, row.user_id, row.plugin_key)
 
 
 def _counter_value(path: str) -> ColumnElement[int]:
-    return func.coalesce(cast(func.json_extract(Kind.json, path), BigInteger), 0)
+    return func.coalesce(cast(func.json_extract(PluginState.json, path), BigInteger), 0)
 
 
 def _pop_watermarks(changes: dict) -> dict[str, int]:
@@ -182,70 +220,10 @@ def _pop_watermarks(changes: dict) -> dict[str, int]:
 
 
 def clear_sync_revisions(db: Session) -> None:
+    db.info.pop("plugin_state_rebindings", None)
+    db.info.pop(_WRITTEN, None)
     db.info.pop(_EXPECTED, None)
     db.info.pop(_DOCUMENTS, None)
     db.info.pop(_MERGE, None)
     db.info.pop(_STRICT, None)
     db.info.pop(_ACK_FENCES, None)
-
-
-def materialize_sync_state(db: Session, user_id: int, document: dict) -> None:
-    """Bootstrap once under a short metadata lease, never the plugin write lease."""
-    values = dict(
-        user_id=user_id,
-        kind="PluginSyncState",
-        namespace="plugin-sync",
-        name="account",
-        json=document,
-        is_active=True,
-    )
-    bind = db.get_bind()
-    if bind.dialect.name != "mysql" and (
-        db.info.get("plugin_write_leases")
-        or isinstance(bind, Connection)
-        or bind.url.database in {None, ":memory:"}
-    ):
-        db.add(Kind(**values))
-        db.flush()
-        return
-
-    from app.core.distributed_lock import distributed_lock
-    from app.services.plugin_write_resources import policy_engine, redis_client
-
-    try:
-        lock = distributed_lock.owned_lock(
-            f"wegent:plugin-write:{user_id}:@sync-init",
-            expire_seconds=30,
-            blocking_timeout=3,
-            redis_client=redis_client(),
-        )
-        if not lock.acquire():
-            raise PluginWriteError("plugin_write_busy")
-    except (RedisError, DistributedLockUnavailableError):
-        raise PluginWriteError("plugin_write_unavailable") from None
-    try:
-        engine = bind.engine if isinstance(bind, Connection) else bind
-        initial_engine = (
-            policy_engine(engine) if bind.dialect.name == "mysql" else engine
-        )
-        with Session(initial_engine) as initial, initial.begin():
-            existing = (
-                initial.query(Kind.id)
-                .filter_by(
-                    user_id=user_id,
-                    kind="PluginSyncState",
-                    namespace="plugin-sync",
-                    name="account",
-                    is_active=True,
-                )
-                .first()
-            )
-            if existing is None:
-                initial.add(Kind(**values))
-    finally:
-        try:
-            lock.release()
-        except RedisError:
-            logger.warning(
-                "Plugin sync initialization lease release failed user_id=%s", user_id
-            )

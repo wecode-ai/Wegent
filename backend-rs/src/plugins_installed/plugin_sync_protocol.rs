@@ -2,29 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Versioned (`protocolVersion = 2`) plugin snapshot negotiation and fencing.
+//! Negotiate legacy aggregate V2 and independent per-plugin V3 snapshots.
 //!
 //! Source: `app/services/device/plugin_sync_protocol.py` and
 //! `app/services/device/plugin_change_sync.py::validate_ack`.
 //!
-//! A device that advertises the versioned protocol receives a
-//! `plugin_sync` metadata block on every capability snapshot. The account's
-//! `PluginSyncState` Kind carries the monotonic generation: a snapshot's
-//! desired state is read and committed together with generation + 1, and every
-//! dispatch first advances the per-device watermark so older acknowledgements
-//! cannot materialize newer state.
+//! V3 publishers CAS plugin_states independently. V2 retains its legacy
+//! activated aggregate stream; normal V3 writes never activate that stream.
 
 use brz_mysql::{Mysql, MysqlIsolationLevel, MysqlResult, MysqlTransactionOptions};
 use serde_json::{Map, Value};
 
 use crate::device_identity::plugin_device_id_on;
 use crate::json_compat::{python_json_value, python_str};
-use crate::plugins_marketplace::db::{InstalledKindRow, KIND_COLUMNS};
 use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
+use brz_mysql::FromMysqlRow;
 
 use super::desired_capabilities::{BuildError, build_desired_capabilities_for_registration_on};
-use super::write_coordination::{PluginWriteLease, coordination_error};
+use super::write_coordination::coordination_error;
 
 /// `PLUGIN_SYNC_VERSION`.
 pub(crate) const PLUGIN_SYNC_VERSION: i64 = 2;
@@ -74,33 +70,52 @@ where
 
 /// `_sync_state`'s optimistic read over one active account state row.
 fn sync_state_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
-         'PluginSyncState' AND kinds.namespace = 'plugin-sync' AND kinds.name = 'account' \
-         AND kinds.is_active IS true"
-    )
+    "SELECT id,json FROM plugin_states WHERE user_id=? AND plugin_key='@legacy-v2'".into()
 }
 
-/// `db.add(Kind(...))` for a missing account state row.
-const INSERT_SYNC_STATE_QUERY: &str = "INSERT INTO kinds (user_id, kind, name, namespace, json, \
-     is_active, created_at, updated_at) VALUES (?, 'PluginSyncState', 'account', 'plugin-sync', ?, \
-     true, now(), now())";
+const INSERT_SYNC_STATE_QUERY: &str =
+    "INSERT INTO plugin_states (user_id,plugin_key,json) VALUES (?,'@legacy-v2',?)";
+const UPDATE_SYNC_STATE_QUERY: &str = "UPDATE plugin_states SET json=?,updated_at=NOW() WHERE id=? AND user_id=? AND plugin_key='@legacy-v2' AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)=?";
 
-/// `UPDATE kinds SET json=..., updated_at=now() WHERE kinds.id = ...`.
-const UPDATE_SYNC_STATE_QUERY: &str = "UPDATE kinds SET json=?, updated_at=now() WHERE kinds.id=? AND user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)=?";
+#[derive(FromMysqlRow)]
+struct StoredSyncState {
+    id: i64,
+    json: Value,
+}
 
 /// `supports_plugin_sync_v2`: only an explicit integer `protocolVersion = 2`
 /// advertisement selects the versioned payload.
-pub(crate) fn supports_plugin_sync_v2(runtime_features: Option<&Value>) -> bool {
-    let Some(features) = runtime_features.and_then(Value::as_object) else {
-        return false;
-    };
-    let Some(advertisement) = features.get("pluginSync").and_then(Value::as_object) else {
-        return false;
-    };
+#[cfg(test)]
+fn supports_plugin_sync_v2(runtime_features: Option<&Value>) -> bool {
+    plugin_sync_version(runtime_features).is_some()
+}
+
+pub(crate) fn plugin_sync_version(runtime_features: Option<&Value>) -> Option<i64> {
+    let features = runtime_features.and_then(Value::as_object)?;
+    let advertisement = features.get("pluginSync").and_then(Value::as_object)?;
     // `type(version) is int and version == 2`: floats, booleans and strings do
     // not advertise the protocol.
-    advertisement.get("protocolVersion").and_then(Value::as_i64) == Some(PLUGIN_SYNC_VERSION)
+    if advertisement
+        .get("supportedVersions")
+        .and_then(Value::as_array)
+        .is_some_and(|versions| versions.iter().any(|v| v.as_i64() == Some(3)))
+    {
+        return Some(3);
+    }
+    advertisement
+        .get("protocolVersion")
+        .and_then(Value::as_i64)
+        .filter(|v| matches!(v, 2 | 3))
+}
+
+pub(crate) fn supports_snapshot(features: Option<&Value>, payload: &Value) -> bool {
+    let version = payload["plugin_sync"]["version"].as_i64();
+    match (plugin_sync_version(features), version) {
+        (Some(selected), Some(requested)) => {
+            selected == requested || (selected == 3 && requested == 2)
+        }
+        _ => false,
+    }
 }
 
 /// One account `PluginSyncState` row (`_sync_state`).
@@ -111,42 +126,15 @@ pub(crate) struct PluginSyncState {
     pub json: Value,
 }
 
-pub(crate) async fn ensure_sync_state<M: Mysql, R: brz_redis::Redis>(
-    mysql: &M,
-    redis: Option<&R>,
-    user_id: i64,
-) -> MysqlResult<()> {
-    let exists = mysql
-        .with_transaction(async |tx| {
-            let mut query = &mut *tx;
-            Ok(lock_plugin_sync_state(&mut query, user_id)
-                .await?
-                .id
-                .is_some())
-        })
-        .await?;
-    if exists {
-        return Ok(());
-    }
-    let lease = PluginWriteLease::acquire_names(redis, user_id, vec!["@sync-init".into()]).await?;
-    let result = mysql
-        .with_transaction(async |tx| {
-            let mut query = &mut *tx;
-            let state = lock_plugin_sync_state(&mut query, user_id).await?;
-            if state.id.is_none() {
-                lease.verify_owned().await?;
-                write_sync_state(&mut query, user_id, &state, &state.json).await?;
-            }
-            Ok(())
-        })
-        .await;
-    if matches!(
-        &result,
-        Ok(_) | Err(brz_mysql::MysqlError::InvalidQuery { .. })
-    ) {
-        lease.release().await;
-    }
-    result
+pub(crate) async fn ensure_sync_state<M: Mysql>(mysql: &M, user_id: i64) -> MysqlResult<()> {
+    mysql.with_transaction(async |tx| {
+        let mut query = &mut *tx;
+        query.execute(
+            "INSERT INTO plugin_states (user_id,plugin_key,json) VALUES (?,'@legacy-v2',?) ON DUPLICATE KEY UPDATE plugin_key=plugin_states.plugin_key",
+            (user_id,crate::json_compat::python_json_value(&PluginSyncState::default_document())),
+        ).await?;
+        Ok(())
+    }).await
 }
 
 impl PluginSyncState {
@@ -163,6 +151,7 @@ impl PluginSyncState {
         );
         let mut spec = Map::new();
         spec.insert("generation".to_string(), Value::from(0));
+        spec.insert("revision".to_string(), Value::from(0));
         let mut document = Map::new();
         document.insert(
             "apiVersion".to_string(),
@@ -187,7 +176,7 @@ pub(crate) async fn lock_plugin_sync_state<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
 ) -> MysqlResult<PluginSyncState> {
-    let rows: Vec<InstalledKindRow> = query.fetch_all(sync_state_statement(), (user_id,)).await?;
+    let rows: Vec<StoredSyncState> = query.fetch_all(sync_state_statement(), (user_id,)).await?;
     let mut rows = rows;
     match rows.len() {
         0 => Ok(PluginSyncState {
@@ -198,7 +187,7 @@ pub(crate) async fn lock_plugin_sync_state<Q: PluginQuery>(
             let row = rows.swap_remove(0);
             Ok(PluginSyncState {
                 id: Some(row.id),
-                json: row.json.0.to_value(),
+                json: row.json,
             })
         }
         _ => Err(coordination_error("plugin_write_conflict")),
@@ -365,13 +354,9 @@ pub(crate) async fn write_sync_state_document<Q: PluginQuery>(
 pub(crate) async fn touch_desired_state<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
+    installed_ids: &[i64],
 ) -> MysqlResult<()> {
-    let updated = query.execute(
-        "UPDATE kinds SET json=JSON_SET(json,'$.spec.revision',COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)+1),updated_at=NOW() WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1", (user_id,),
-    ).await?;
-    if updated.rows_affected != 1 {
-        return Err(coordination_error("plugin_write_conflict"));
-    }
+    super::state_store::touch_installations(query, user_id, installed_ids).await?;
     Ok(())
 }
 
@@ -396,9 +381,11 @@ pub(crate) async fn build_versioned_snapshot<Q: PluginQuery>(
 ) -> Result<VersionedSnapshot, BuildError> {
     let snapshot_state = lock_plugin_sync_state(query, user_id).await?;
     let generation = next_generation(&snapshot_state.json);
+    let fences = super::state_store::snapshot_fences(query, user_id, None).await?;
     let payload =
         build_desired_capabilities_for_registration_on(query, user_id, device_id, include_plugins)
             .await?;
+    super::state_store::fence_legacy_snapshot(query, &payload, fences).await?;
     let mut document = snapshot_state.json.clone();
     set_generation(&mut document, generation);
     if let Some(guard) = guard {
@@ -422,11 +409,12 @@ pub(crate) async fn load_versioned_registration_payload(
     device_id: &str,
     include_plugins: bool,
     complete: bool,
+    protocol_version: i64,
 ) -> Result<Value, BuildError> {
     with_sync_write_budget(async {
-        ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
+        if protocol_version == 2 { ensure_sync_state(&state.mysql, user_id)
             .await
-            .map_err(BuildError::Mysql)?;
+            .map_err(BuildError::Mysql)?; }
         for attempt in 0..SNAPSHOT_WRITE_ATTEMPTS {
             let mut build_error = None;
             let mut generation = 0;
@@ -437,14 +425,16 @@ pub(crate) async fn load_versioned_registration_payload(
                         .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
                     async |tx| {
                         let mut query = &mut *tx;
-                        let snapshot = build_versioned_snapshot(
+                        let snapshot = if protocol_version == 3 {
+                            build_scoped_registration_snapshot(&mut query,user_id,device_id,include_plugins).await
+                        } else { build_versioned_snapshot(
                             &mut query,
                             user_id,
                             device_id,
                             include_plugins,
                             None,
                         )
-                        .await
+                        .await }
                         .map_err(|error| match error {
                             BuildError::Mysql(error) => error,
                             error => {
@@ -466,7 +456,7 @@ pub(crate) async fn load_versioned_registration_payload(
                 return Err(error);
             }
             let mut payload = outcome.map_err(BuildError::Mysql)?;
-            payload["plugin_sync"] = plugin_sync_metadata(generation, complete);
+            if protocol_version == 2 { payload["plugin_sync"] = plugin_sync_metadata(generation, complete); }
             return Ok(payload);
         }
         Err(BuildError::Mysql(coordination_error(
@@ -474,6 +464,27 @@ pub(crate) async fn load_versioned_registration_payload(
         )))
     })
     .await
+}
+
+async fn build_scoped_registration_snapshot<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    include_plugins: bool,
+) -> Result<VersionedSnapshot, BuildError> {
+    let fences = super::state_store::snapshot_fences(query, user_id, None).await?;
+    let capabilities = super::state_store::ensure(query, user_id, "@capabilities", 0).await?;
+    let mut payload =
+        build_desired_capabilities_for_registration_on(query, user_id, device_id, include_plugins)
+            .await?;
+    super::state_store::add_tombstones(&mut payload, &fences);
+    let generation =
+        super::state_store::publish_snapshot(query, &mut payload, fences, Some(capabilities))
+            .await?;
+    Ok(VersionedSnapshot {
+        payload,
+        generation,
+    })
 }
 
 /// `document.setdefault("spec", {})["generation"] = generation`.
@@ -513,7 +524,25 @@ pub(crate) async fn register_plugin_snapshot_intent(
         let generation = generation_value(metadata.get("generation"));
         let complete = metadata.get("complete") == Some(&Value::Bool(true));
         let installed_plugin_ids = payload_plugin_ids(payload);
-        ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id).await?;
+        if metadata["version"].as_i64()==Some(3) {
+            return retry_sync_write(SNAPSHOT_WRITE_ATTEMPTS, || async {
+                state.mysql.with_transaction_options(MysqlTransactionOptions::default().with_isolation_level(MysqlIsolationLevel::ReadCommitted),async |tx| {
+                    let mut query=&mut *tx;
+                    let canonical=plugin_device_id_on(&mut query,user_id,device_id).await?;
+                    let mut ids=installed_plugin_ids.clone(); ids.sort_unstable(); ids.dedup();
+                    for id in ids {
+                        let fences=super::state_store::snapshot_fences(&mut query,user_id,Some(id)).await?;
+                        let row=&fences[0].state;
+                        let mut document=row.json.clone();
+                        let generation=metadata["revisions"][id.to_string()].as_i64().filter(|v| *v>0).ok_or_else(||coordination_error("plugin_write_conflict"))?;
+                        advance_plugin_snapshot_watermark(&mut document,&canonical,generation,false,&[id]);
+                        super::state_store::replace(&mut query,row,document).await?;
+                    }
+                    Ok(())
+                }).await
+            }).await;
+        }
+        ensure_sync_state(&state.mysql, user_id).await?;
         for attempt in 0..SNAPSHOT_WRITE_ATTEMPTS {
             let outcome = state
                 .mysql
@@ -631,8 +660,13 @@ pub(crate) fn validate_plugin_ack(payload: &Value, response: &Value) -> Option<&
         }
         seen.push(identity.clone());
         let item_generation = item.get("generation");
+        let expected_generation = if metadata["version"].as_i64() == Some(3) {
+            metadata["revisions"][&identity].as_i64()
+        } else {
+            Some(generation)
+        };
         if !item_generation.is_some_and(is_integer)
-            || item_generation.and_then(Value::as_i64) != Some(generation)
+            || item_generation.and_then(Value::as_i64) != expected_generation
         {
             return Some("Device returned an obsolete plugin acknowledgement");
         }
@@ -674,281 +708,5 @@ fn is_integer(value: &Value) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    #[tokio::test(start_paused = true)]
-    async fn snapshot_and_intent_work_share_the_same_bounded_budget() {
-        let start = tokio::time::Instant::now();
-        let result =
-            super::with_sync_write_budget(std::future::pending::<brz_mysql::MysqlResult<()>>())
-                .await;
-        assert_eq!(
-            super::super::write_coordination::plugin_write_error_code(&result.unwrap_err()),
-            Some("plugin_write_busy")
-        );
-        assert_eq!(start.elapsed(), std::time::Duration::from_secs(20));
-        let result =
-            super::with_sync_write_budget(std::future::pending::<Result<(), super::BuildError>>())
-                .await;
-        let super::BuildError::Mysql(error) = result.unwrap_err() else {
-            panic!("snapshot timeout must retain the coordination error");
-        };
-        assert_eq!(
-            super::super::write_coordination::plugin_write_error_code(&error),
-            Some("plugin_write_busy")
-        );
-        assert_eq!(start.elapsed(), std::time::Duration::from_secs(40));
-    }
-
-    #[tokio::test]
-    async fn local_snapshot_survives_more_than_two_concurrent_metadata_writers() {
-        let mut attempts = 0;
-        let result = super::retry_sync_write(super::SNAPSHOT_WRITE_ATTEMPTS, || {
-            attempts += 1;
-            std::future::ready(if attempts <= 3 {
-                Err(super::coordination_error("plugin_write_conflict"))
-            } else {
-                Ok(17)
-            })
-        })
-        .await
-        .unwrap();
-        assert_eq!(attempts, 4);
-        assert_eq!(result, 17);
-    }
-
-    use std::sync::{Arc, Mutex};
-
-    use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
-    use serde_json::json;
-
-    use super::*;
-
-    /// Record one transaction's statements in call order.
-    #[derive(Clone, Default)]
-    struct RecordingTransaction {
-        statements: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl RecordingTransaction {
-        fn statements(&self) -> Vec<String> {
-            self.statements.lock().unwrap().clone()
-        }
-
-        fn record(&self, sql: &str) {
-            self.statements
-                .lock()
-                .unwrap()
-                .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-        }
-    }
-
-    impl MysqlTransaction for RecordingTransaction {
-        async fn execute<S, A>(&mut self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-        {
-            self.record(sql.as_ref());
-            Ok(MysqlExecution {
-                rows_affected: 1,
-                last_insert_id: 2460258,
-            })
-        }
-
-        async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-            T: FromMysqlRow + Send,
-        {
-            self.record(sql.as_ref());
-            Ok(None)
-        }
-
-        async fn fetch_one<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<T>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-            T: FromMysqlRow + Send,
-        {
-            self.record(sql.as_ref());
-            panic!("the versioned build reads no single row")
-        }
-
-        fn fetch<'transaction, S, A, T>(
-            &'transaction mut self,
-            _: S,
-            _: A,
-        ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'transaction
-        where
-            S: AsRef<str> + Send + 'transaction,
-            A: MysqlArgs + Send + 'transaction,
-            T: FromMysqlRow + Send + 'transaction,
-        {
-            futures_util::stream::empty()
-        }
-
-        async fn fetch_all<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Vec<T>>
-        where
-            S: AsRef<str> + Send,
-            A: MysqlArgs + Send,
-            T: FromMysqlRow + Send,
-        {
-            self.record(sql.as_ref());
-            Ok(Vec::new())
-        }
-    }
-
-    #[tokio::test]
-    async fn the_versioned_build_reads_plugin_sync_state_before_the_installed_skill() {
-        let mut transaction = RecordingTransaction::default();
-        let mut query = &mut transaction;
-        let snapshot = build_versioned_snapshot(&mut query, 203, "app-record-273921", true, None)
-            .await
-            .expect("the versioned snapshot builds");
-        assert_eq!(snapshot.generation, 1);
-        assert!(snapshot.payload.get("plugin_sync").is_none());
-        let statements = transaction.statements();
-        assert_eq!(statements.len(), 5, "{statements:#?}");
-        assert!(
-            statements[0].contains("kinds.kind = 'PluginSyncState'"),
-            "{statements:#?}"
-        );
-        assert!(
-            statements[1].contains("kinds.kind = 'InstalledSkill'"),
-            "{statements:#?}"
-        );
-        assert!(
-            statements[2].contains("kinds.kind = 'InstalledPlugin'"),
-            "{statements:#?}"
-        );
-        assert!(
-            statements[3].contains("kinds.kind = 'InstalledMCP'"),
-            "{statements:#?}"
-        );
-        assert!(
-            statements[4].starts_with("INSERT INTO kinds"),
-            "{statements:#?}"
-        );
-    }
-
-    #[test]
-    fn only_an_integer_protocol_version_selects_the_versioned_protocol() {
-        assert!(supports_plugin_sync_v2(Some(
-            &json!({"pluginSync": {"protocolVersion": 2}})
-        )));
-        assert!(!supports_plugin_sync_v2(Some(
-            &json!({"pluginSync": {"protocolVersion": 1}})
-        )));
-        assert!(!supports_plugin_sync_v2(Some(
-            &json!({"pluginSync": {"protocolVersion": 2.0}})
-        )));
-        assert!(!supports_plugin_sync_v2(Some(
-            &json!({"pluginSync": {"protocolVersion": "2"}})
-        )));
-        assert!(!supports_plugin_sync_v2(Some(&json!({}))));
-        assert!(!supports_plugin_sync_v2(None));
-    }
-
-    #[test]
-    fn generations_follow_the_source_integer_rules() {
-        assert_eq!(next_generation(&json!({"spec": {"generation": 162}})), 163);
-        assert_eq!(next_generation(&json!({"spec": {}})), 1);
-        assert_eq!(next_generation(&json!({})), 1);
-        assert_eq!(next_generation(&json!({"spec": {"generation": -4}})), 1);
-        assert_eq!(next_generation(&json!({"spec": {"generation": 2.0}})), 1);
-    }
-
-    #[test]
-    fn the_watermark_keeps_the_highest_complete_or_per_plugin_generation() {
-        let mut document = json!({"spec": {"generation": 163}});
-        advance_plugin_snapshot_watermark(&mut document, "app-record-1", 163, true, &[]);
-        assert_eq!(document["spec"]["generation"], json!(163));
-        assert_eq!(
-            document["spec"]["devices"]["app-record-1"]["complete_generation"],
-            json!(163)
-        );
-        assert_eq!(plugin_snapshot_watermark(&document, "app-record-1", 7), 163);
-        advance_plugin_snapshot_watermark(&mut document, "app-record-1", 164, false, &[7]);
-        assert_eq!(document["spec"]["generation"], json!(164));
-        assert_eq!(
-            document["spec"]["devices"]["app-record-1"]["plugins"]["7"],
-            json!(164)
-        );
-        assert_eq!(plugin_snapshot_watermark(&document, "app-record-1", 7), 164);
-        assert_eq!(plugin_snapshot_watermark(&document, "app-record-2", 7), 0);
-    }
-
-    #[test]
-    fn the_sync_metadata_matches_the_source_shape() {
-        assert_eq!(
-            plugin_sync_metadata(163, true),
-            json!({"version": 2, "generation": 163, "complete": true})
-        );
-    }
-
-    #[test]
-    fn ack_validation_accepts_the_recorded_generation() {
-        let payload = json!({
-            "mode": "replace",
-            "skills": [],
-            "mcps": [],
-            "plugins": [],
-            "plugin_sync": {"version": 2, "generation": 163, "complete": true},
-        });
-        let ack = json!({
-            "success": true,
-            "changed": false,
-            "requires_restart": false,
-            "scope": "all",
-            "skills": [],
-            "plugins": [],
-            "plugin_sync": {"version": 2, "generation": 163, "complete": true},
-        });
-        assert_eq!(validate_plugin_ack(&payload, &ack), None);
-    }
-
-    #[test]
-    fn ack_validation_rejects_mismatched_or_obsolete_acknowledgements() {
-        let payload = json!({
-            "plugin_sync": {"version": 2, "generation": 163, "complete": true},
-            "plugins": [{"installed_plugin_id": 7, "version": "1.0.0", "checksum": "sha256:a"}],
-        });
-        let base = json!({
-            "success": true,
-            "scope": "all",
-            "plugin_sync": {"version": 2, "generation": 163, "complete": true},
-            "plugins": [{"id": 7, "operation": "upsert", "status": "synced", "generation": 163,
-                         "version": "1.0.0", "checksum": "sha256:a"}],
-        });
-        assert_eq!(validate_plugin_ack(&payload, &base), None);
-
-        let mut obsolete = base.clone();
-        obsolete["plugins"][0]["generation"] = json!(162);
-        assert_eq!(
-            validate_plugin_ack(&payload, &obsolete),
-            Some("Device returned an obsolete plugin acknowledgement")
-        );
-
-        let mut missing = base.clone();
-        missing["plugins"] = json!([]);
-        assert_eq!(
-            validate_plugin_ack(&payload, &missing),
-            Some("Device did not acknowledge every requested plugin")
-        );
-
-        let mut mismatched = base.clone();
-        mismatched["plugin_sync"]["generation"] = json!(164);
-        assert_eq!(
-            validate_plugin_ack(&payload, &mismatched),
-            Some("Device returned a mismatched plugin snapshot acknowledgement")
-        );
-
-        let mut bad_operation = base;
-        bad_operation["plugins"][0]["operation"] = json!("remove");
-        assert_eq!(
-            validate_plugin_ack(&payload, &bad_operation),
-            Some("Device returned a mismatched plugin operation")
-        );
-    }
-}
+#[path = "plugin_sync_protocol_tests.rs"]
+mod tests;

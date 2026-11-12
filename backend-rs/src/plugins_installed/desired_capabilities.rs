@@ -228,15 +228,19 @@ pub(super) async fn restrict_local_plugin<Q: PluginQuery>(
     }
     let mut removed = Vec::new();
     if plugins.is_empty() {
-        let document = row.json.0.to_value();
-        let spec = object_or_empty(document.get("spec"));
-        let source = object_or_empty(spec.get("source"));
-        removed.push(serde_json::json!({"installed_plugin_id":installed_id,"name":plugin_payload_name(&row,&document,&spec,&source),"marketplace":spec.get("marketplace").or_else(||source.get("marketplace"))}));
+        removed.push(removed_plugin_payload(&row));
     }
     payload["scope"] = Value::String("plugin_delta".into());
     payload["plugins"] = Value::Array(plugins);
     payload["removed_plugins"] = Value::Array(removed);
     Ok(())
+}
+
+pub(super) fn removed_plugin_payload(row: &InstalledKindRow) -> Value {
+    let document = row.json.0.to_value();
+    let spec = object_or_empty(document.get("spec"));
+    let source = object_or_empty(spec.get("source"));
+    serde_json::json!({"installed_plugin_id":row.id,"name":plugin_payload_name(row,&document,&spec,&source),"marketplace":spec.get("marketplace").or_else(||source.get("marketplace"))})
 }
 
 /// Source `capability_snapshot`: the stable desired state represented by a

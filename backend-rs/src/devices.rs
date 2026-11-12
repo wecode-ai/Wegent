@@ -226,6 +226,8 @@ pub struct RuntimeProjectEditingFeatures {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimePluginSyncFeatures {
     pub protocol_version: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_versions: Option<Vec<i64>>,
 }
 
 impl RuntimePluginSyncFeatures {
@@ -235,7 +237,18 @@ impl RuntimePluginSyncFeatures {
             .get("protocolVersion")?
             .as_i64()
             .filter(|version| *version >= 1)
-            .map(|protocol_version| Self { protocol_version })
+            .map(|protocol_version| Self {
+                protocol_version,
+                supported_versions: value
+                    .get("supportedVersions")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|versions| {
+                        versions
+                            .iter()
+                            .map(|version| version.as_i64().filter(|v| *v > 0))
+                            .collect()
+                    }),
+            })
     }
 }
 

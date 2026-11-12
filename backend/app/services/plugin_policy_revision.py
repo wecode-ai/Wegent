@@ -1,20 +1,18 @@
 """Optimistic transaction versions on the existing account-auth policy.
 
 This revision protects authentication decisions against actual policy edits.
-Installation writes use their own parent fences. Initialization is briefly leased.
+Installation writes use their own parent fences. A unique identity fences bootstrap.
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Any
 
-from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection, Row
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.distributed_lock import DistributedLockUnavailableError
 from app.models.kind import Kind
 from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_resources import policy_engine
@@ -101,35 +99,9 @@ def _materialize_default(db: Session, user_id: int) -> None:
         _initialize_default(db, user_id)
         return
     engine = bind.engine if isinstance(bind, Connection) else bind
-    from app.core.distributed_lock import distributed_lock
-    from app.services.plugin_write_resources import redis_client
-
-    existing = db.info.get("plugin_write_leases", {}).get((user_id, "@account-policy"))
-    lock = None
-    if existing is None:
-        try:
-            lock = distributed_lock.owned_lock(
-                f"wegent:plugin-write:{user_id}:@account-policy",
-                expire_seconds=30,
-                blocking_timeout=3,
-                redis_client=redis_client(),
-            )
-            if not lock.acquire():
-                raise PluginWriteError("plugin_write_busy")
-        except (RedisError, DistributedLockUnavailableError):
-            raise PluginWriteError("plugin_write_unavailable") from None
-    try:
-        with Session(policy_engine(engine)) as initial, initial.begin():
-            _initialize_default(initial, user_id)
-    finally:
-        if lock is not None:
-            try:
-                lock.release()
-            except RedisError:
-                logger.warning(
-                    "Plugin policy initialization lease release failed user_id=%s",
-                    user_id,
-                )
+    with Session(policy_engine(engine)) as initial, initial.begin():
+        initial.connection(execution_options={"isolation_level": "READ COMMITTED"})
+        _initialize_default(initial, user_id)
 
 
 def validate_policy_revision(db: Session, expected: PolicyRevision) -> None:
@@ -159,7 +131,10 @@ def validate_policy_revision(db: Session, expected: PolicyRevision) -> None:
 
 
 def _initialize_default(db: Session, user_id: int) -> None:
-    """Recheck and insert in a short transaction under the caller's Redis lease."""
+    """The unique bootstrap identity and policy insert share the SQL transaction."""
+    from app.services.plugin_state_store import claim_plugin_identity
+
+    claim_plugin_identity(db, user_id, "@account-policy")
     if _load(db, user_id) is not None:
         return
     values = {

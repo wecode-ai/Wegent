@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
+from app.models.plugin_state import PluginState
 from app.models.user import User
 from app.services.device.capability_sync_service import DeviceCapabilitySyncService
 from app.services.device.plugin_sync_protocol import (
@@ -35,6 +36,7 @@ def snapshot_sessions(tmp_path):
     )
     User.__table__.create(engine)
     Kind.__table__.create(engine)
+    PluginState.__table__.create(engine)
     PluginDeviceInstallation.__table__.create(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory() as db:
@@ -52,7 +54,7 @@ def _load_empty(_db):
 @pytest.mark.parametrize(
     "features",
     [None, {}, [], {"pluginSync": None}, {"pluginSync": "2"}]
-    + [{"pluginSync": {"protocolVersion": value}} for value in (None, True, "2", 1, 3)],
+    + [{"pluginSync": {"protocolVersion": value}} for value in (None, True, "2", 1, 4)],
 )
 def test_legacy_and_malformed_features_never_enable_new_wire_protocol(features):
     assert supports_plugin_sync_v2(features) is False
@@ -76,7 +78,9 @@ def test_concurrent_snapshot_generations_are_durable_and_unique(snapshot_session
 
     assert sorted(generations) == list(range(1, 9))
     with snapshot_sessions() as db:
-        states = db.query(Kind).filter(Kind.kind == "PluginSyncState").all()
+        states = (
+            db.query(PluginState).filter(PluginState.plugin_key == "@legacy-v2").all()
+        )
         assert len(states) == 1
         assert states[0].json["spec"]["generation"] == 8
     response = load_versioned_plugin_payload(
@@ -175,7 +179,9 @@ def test_failed_coordination_rolls_back_generation_and_watermark(
     )
 
     def invalidate_coordination(db):
-        state = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+        state = (
+            db.query(PluginState).filter_by(plugin_key="@legacy-v2", user_id=1).one()
+        )
         advance_plugin_snapshot_watermark(
             state,
             "device",
@@ -187,11 +193,11 @@ def test_failed_coordination_rolls_back_generation_and_watermark(
         from sqlalchemy import text
 
         if failure == "deleted_state":
-            db.execute(text("DELETE FROM kinds WHERE id=:id"), {"id": state.id})
+            db.execute(text("DELETE FROM plugin_states WHERE id=:id"), {"id": state.id})
         else:
             db.execute(
                 text(
-                    "UPDATE kinds SET json=json_set(json,'$.spec.revision',99) WHERE id=:id"
+                    "UPDATE plugin_states SET json=json_set(json,'$.spec.revision',99) WHERE id=:id"
                 ),
                 {"id": state.id},
             )
@@ -208,7 +214,9 @@ def test_failed_coordination_rolls_back_generation_and_watermark(
 
     assert not plugin_write_backend.values
     with snapshot_sessions() as db:
-        state = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+        state = (
+            db.query(PluginState).filter_by(plugin_key="@legacy-v2", user_id=1).one()
+        )
         assert state.json["spec"]["generation"] == 7
         assert plugin_snapshot_watermark(state, "device", 123) == 7
         assert plugin_snapshot_watermark(state, "device", 456) == 0
@@ -462,7 +470,9 @@ async def test_intent_coordination_failure_propagates_before_executor_rpc(
     register.assert_called_once()
     call.assert_not_awaited()
     with snapshot_sessions() as db:
-        state = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+        state = (
+            db.query(PluginState).filter_by(plugin_key="@legacy-v2", user_id=1).one()
+        )
         assert plugin_snapshot_watermark(state, "device", target) == 0
 
 
@@ -482,7 +492,7 @@ async def test_real_dispatch_preserves_old_wire_and_commits_new_intent_before_rp
         assert kwargs["to"] == "socket-device"
         if versioned:
             with snapshot_sessions() as db:
-                state = db.query(Kind).filter_by(kind="PluginSyncState").one()
+                state = db.query(PluginState).filter_by(plugin_key="@legacy-v2").one()
                 assert plugin_snapshot_watermark(state, "device", target) == (
                     payload["plugin_sync"]["generation"]
                 )

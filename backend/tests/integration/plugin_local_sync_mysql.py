@@ -1,4 +1,4 @@
-"""Verify recovery using only existing Kind tables and an unchanged migration head."""
+"""Real MySQL migration, rollback and plugin-scoped recovery; invoked by CI."""
 
 import os
 import uuid
@@ -14,22 +14,17 @@ from alembic import command
 from alembic.config import Config
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.plugin_state import PluginState
 from app.models.user import User
-from app.services.device.plugin_sync_protocol import (
-    load_versioned_plugin_payload,
-    lock_plugin_sync_state,
-)
+from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
 from app.services.plugin_local_sync import _guard_intent_order
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 from app.services.plugin_write_coordination import configure_plugin_session
 
+PARENT = "f3a7c9e1b2d4"
+
 
 def verify_ordering(engine):
-    owner = int(uuid.uuid4().hex[:7], 16) + 100000
-    with Session(engine) as db:
-        db.add(User(id=owner, user_name=f"local-order-{owner}", password_hash="unused"))
-        db.commit()
-
     @contextmanager
     def session():
         with Session(engine) as db:
@@ -37,84 +32,114 @@ def verify_ordering(engine):
             yield db
 
     with session() as db:
-        _guard_intent_order(db, owner, "native", 17, 9)
+        _guard_intent_order(db, 1, "native", 17, 9)
         db.commit()
     payload = load_versioned_plugin_payload(
         session,
-        user_id=owner,
-        load_payload=lambda db: {"mode": "merge", "scope": "plugins", "plugins": []},
+        user_id=1,
+        protocol_version=3,
         complete=True,
+        load_payload=lambda db: {"mode": "merge", "scope": "plugins", "plugins": []},
     )
-    assert payload["plugin_sync"]["generation"] == 1
+    assert payload["plugin_sync"]["complete"] is False
+    assert set(payload["plugin_sync"]["revisions"]) == {"17", "18"}
     with session() as db:
         try:
-            _guard_intent_order(db, owner, "native", 17, 8)
+            _guard_intent_order(db, 1, "native", 17, 8)
         except HTTPException as error:
             assert error.detail == "INTENT_SUPERSEDED"
             db.rollback()
         else:
             raise AssertionError("A late first-arrival intent advanced the watermark")
-        _guard_intent_order(db, owner, "native", 18, 1)
+        _guard_intent_order(db, 1, "native", 18, 1)
         db.commit()
-        _guard_intent_order(db, owner, "other-native", 17, 1)
+        _guard_intent_order(db, 1, "other-native", 17, 1)
         db.commit()
-        state = (
-            db.query(Kind)
-            .filter_by(
-                user_id=owner,
-                kind="PluginSyncState",
-                namespace="plugin-sync",
-                name="account",
-            )
-            .one()
-        )
-        assert state.json["spec"]["localIntentOrders"]["native"]["17"] == 9
-    print(
-        "MySQL/Redis: intent ordering survives generation writes and isolates plugin/instance scopes"
-    )
+        states = {
+            row.installed_kind_id: row
+            for row in db.query(PluginState)
+            .filter(PluginState.installed_kind_id > 0)
+            .all()
+        }
+        assert states[17].json["spec"]["localIntentOrders"]["native"]["17"] == 9
+        assert states[18].json["spec"]["localIntentOrders"]["native"]["18"] == 1
+        assert "18" not in states[17].json["spec"]["localIntentOrders"]["native"]
 
 
 def verify(engine, url):
     config = Config("alembic.ini")
+    original = {
+        "operationId": "uncertain-operation",
+        "intentOrder": 7,
+        "installedId": 17,
+        "requestHash": "original-hash",
+        "installedRevision": 1,
+        "action": "install",
+    }
+    User.__table__.create(engine)
+    Kind.__table__.create(engine)
+    with Session(engine) as db, db.begin():
+        db.add_all(
+            [
+                User(id=owner, user_name=f"local-sync-{owner}", password_hash="unused")
+                for owner in (1, 2)
+            ]
+        )
+        for identity in (17, 18):
+            db.add(
+                Kind(
+                    id=identity,
+                    user_id=1,
+                    kind="InstalledPlugin",
+                    namespace="default",
+                    name=f"plugin-{identity}",
+                    is_active=False,
+                    json={"spec": {"revision": 1}},
+                )
+            )
+        db.add(
+            Kind(
+                user_id=1,
+                kind="PluginSyncState",
+                namespace="plugin-sync",
+                name="account",
+                is_active=True,
+                json={
+                    "spec": {
+                        "revision": 3,
+                        "generation": 9,
+                        "localIntents": {"native": {"17": original}},
+                        "localIntentOrders": {"native": {"17": 7}},
+                    }
+                },
+            )
+        )
+    before = set(inspect(engine).get_table_names()) | {"alembic_version"}
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Model a preexisting deployment with the unchanged migration head.
-        User.__table__.create(engine)
-        Kind.__table__.create(engine)
-        command.stamp(config, "f3a7c9e1b2d4")
-        tables = set(inspect(engine).get_table_names())
+        command.stamp(config, PARENT)
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == tables
-        assert "plugin_local_sync_operations" not in tables
-        assert "plugin_sync_outbox" not in tables
-        verify_ordering(engine)
-        original = {
-            "operationId": "uncertain-operation",
-            "intentOrder": 7,
-            "installedId": 17,
-            "requestHash": "original-hash",
-            "installedRevision": 1,
-            "action": "install",
-        }
-        with Session(engine) as db:
-            configure_plugin_session(db)
-            state = lock_plugin_sync_state(db, 1)
-            state.json = {
-                "spec": {"generation": 0, "localIntents": {"native": {"17": original}}}
-            }
-            db.commit()
-        command.upgrade(config, "head")
+        assert set(inspect(engine).get_table_names()) == before | {"plugin_states"}
         with Session(engine) as db:
             assert lookup_operation(db, 1, "native", "uncertain-operation") == original
             assert lookup_operation(db, 2, "native", "uncertain-operation") is None
             assert (
                 lookup_operation(db, 1, "other-native", "uncertain-operation") is None
             )
-            assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
-        assert set(inspect(engine).get_table_names()) == tables
+            assert db.query(Kind).filter_by(kind="PluginSyncState").count() == 0
+        verify_ordering(engine)
+        command.downgrade(config, PARENT)
+        assert set(inspect(engine).get_table_names()) == before
+        with Session(engine) as db:
+            restored = db.query(Kind).filter_by(kind="PluginSyncState", user_id=1).one()
+            assert restored.json["spec"]["localIntentOrders"]["native"]["17"] == 9
+            assert restored.json["spec"]["localIntents"]["native"]["17"] == original
+        command.upgrade(config, "head")
+        with Session(engine) as db:
+            assert lookup_operation(db, 1, "native", "uncertain-operation") == original
     print(
-        "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
+        "MySQL: one new table, migration/rollback, durable receipts and independent plugin ordering passed"
     )
 
 

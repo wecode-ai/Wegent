@@ -101,3 +101,41 @@ def test_versioned_sync_ack_retains_snapshot_and_materialized_identity():
             "operation": "upsert",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "payload_type", [DeviceRegisterPayload, DeviceHeartbeatPayload]
+)
+def test_plugin_scoped_protocol_survives_device_projection(payload_type):
+    payload = payload_type.model_validate(
+        {
+            "device_id": "scoped-client",
+            "name": "Client",
+            "executor_version": "test",
+            "runtime_features": {
+                "schemaVersion": 4,
+                "pluginSync": {"protocolVersion": 2, "supportedVersions": [2, 3]},
+            },
+        }
+    )
+    advertisement = payload.runtime_features.model_dump(by_alias=True)["pluginSync"]
+    assert advertisement == {"protocolVersion": 2, "supportedVersions": [2, 3]}
+    from app.services.device.plugin_sync_protocol import plugin_sync_version
+
+    assert plugin_sync_version({"pluginSync": advertisement}) == 3
+
+
+@pytest.mark.parametrize("versions", [True, "3", [True, 3], [0, 3], ["2", 3]])
+def test_malformed_optional_versions_preserve_the_explicit_legacy_protocol(versions):
+    features = RuntimeFeatures.model_validate(
+        {
+            "schemaVersion": 4,
+            "pluginSync": {
+                "protocolVersion": 2,
+                "supportedVersions": versions,
+            },
+        }
+    )
+    assert features.model_dump(by_alias=True, exclude_none=True)["pluginSync"] == {
+        "protocolVersion": 2,
+    }

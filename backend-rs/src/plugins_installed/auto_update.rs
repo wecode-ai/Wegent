@@ -289,7 +289,6 @@ where
     if pending.is_empty() {
         return Ok(PluginAutoUpdateBatchResponse::empty());
     }
-    super::plugin_sync_protocol::ensure_sync_state(mysql, redis, user_id).await?;
     let total = pending.len();
     let mut lease: Option<PluginWriteLease<'_, R>> = None;
     let mut selected = Vec::new();
@@ -340,7 +339,16 @@ where
             let mut response = apply_auto_update_batch(tx, &catalog, &current, user_id).await?;
             if response.updated_count > 0 {
                 let mut query = &mut *tx;
-                super::plugin_sync_protocol::touch_desired_state(&mut query, user_id).await?;
+                super::plugin_sync_protocol::touch_desired_state(
+                    &mut query,
+                    user_id,
+                    &response
+                        .updated
+                        .iter()
+                        .map(|item| item.installed_plugin_id)
+                        .collect::<Vec<_>>(),
+                )
+                .await?;
             }
             lease.commit_plugin_revisions(tx, revisions).await?;
             response.remaining_count = total.saturating_sub(response.updated.len());

@@ -30,7 +30,8 @@ from app.services.device.capability_payloads import (
 from app.services.device.capability_sync_rpc import call_capability_sync
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
-    supports_plugin_sync_v2,
+    plugin_sync_version,
+    supports_snapshot,
 )
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
@@ -242,7 +243,7 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
     ) -> DeviceCapabilitySyncResult:
         """Sync a fresh snapshot and correct changes made during the round trip."""
 
-        versioned = include_plugins and await self.supports_plugin_delta(
+        versioned = include_plugins and await self.plugin_sync_version(
             user_id, device_id
         )
 
@@ -262,6 +263,8 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                     user_id=user_id,
                     load_payload=build,
                     complete=True,
+                    protocol_version=versioned,
+                    all_capabilities=True,
                 )
             with self._session_factory() as snapshot_db:
                 return build(snapshot_db)
@@ -274,13 +277,16 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
         )
 
     async def supports_plugin_delta(self, user_id: int, device_id: str) -> bool:
+        return await self.plugin_sync_version(user_id, device_id) is not None
+
+    async def plugin_sync_version(self, user_id: int, device_id: str) -> int | None:
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id, submitted_device_id=device_id
             )
         except RuntimeRouteError:
-            return False
-        return supports_plugin_sync_v2(route.online_info.get("runtime_features"))
+            return None
+        return plugin_sync_version(route.online_info.get("runtime_features"))
 
     async def sync_plugin_change(
         self, *, user_id: int, device_id: str, installed_plugin_ids: list[int]
@@ -533,8 +539,8 @@ class DeviceCapabilitySyncService(CapabilityPayloadResolver):
                 ),
             )
 
-        if payload.get("plugin_sync") and not supports_plugin_sync_v2(
-            route.online_info.get("runtime_features")
+        if payload.get("plugin_sync") and not supports_snapshot(
+            route.online_info.get("runtime_features"), payload
         ):
             return DeviceCapabilitySyncResult(
                 device_id=device_id,

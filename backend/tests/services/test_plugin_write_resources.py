@@ -88,29 +88,27 @@ def test_redis_close_failure_still_disposes_every_policy_pool(monkeypatch):
 
 
 @pytest.mark.parametrize("scope", ["policy", "sync"])
-def test_metadata_bootstrap_redis_failure_keeps_the_coordination_contract(
-    monkeypatch, scope
+def test_metadata_bootstrap_uses_database_identity_without_redis(
+    monkeypatch, scope, test_db, test_user
 ):
-    from types import SimpleNamespace
-
-    from redis.exceptions import ConnectionError
-
     from app.core.distributed_lock import distributed_lock
+    from app.models.plugin_state import PluginState
     from app.services.plugin_policy_revision import _materialize_default
-    from app.services.plugin_sync_revision import materialize_sync_state
-    from app.services.plugin_write_errors import PluginWriteError
+    from app.services.plugin_state_store import ensure_plugin_state
 
-    db = SimpleNamespace(
-        info={},
-        get_bind=lambda: SimpleNamespace(
-            dialect=SimpleNamespace(name="mysql"),
-        ),
+    acquire = Mock(side_effect=AssertionError("Bootstrap must not require Redis"))
+    monkeypatch.setattr(distributed_lock, "owned_lock", acquire)
+    if scope == "policy":
+        _materialize_default(test_db, test_user.id)
+        key = "@account-policy"
+    else:
+        ensure_plugin_state(test_db, test_user.id, "gitlab")
+        key = "gitlab"
+    test_db.commit()
+    assert (
+        test_db.query(PluginState)
+        .filter_by(user_id=test_user.id, plugin_key=key)
+        .count()
+        == 1
     )
-    monkeypatch.setattr(
-        distributed_lock, "owned_lock", Mock(side_effect=ConnectionError("fixture"))
-    )
-    with pytest.raises(PluginWriteError, match="plugin_write_unavailable"):
-        if scope == "policy":
-            _materialize_default(db, 913)
-        else:
-            materialize_sync_state(db, 913, {"spec": {"generation": 0}})
+    acquire.assert_not_called()

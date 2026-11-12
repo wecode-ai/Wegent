@@ -292,22 +292,40 @@ async fn submit(
 }
 
 fn valid_snapshot(snapshot: &Value) -> bool {
+    let payload = &snapshot["payload"];
+    let metadata = &payload["plugin_sync"];
+    let version = metadata["version"].as_u64();
+    let scope = payload["scope"].as_str();
+    let valid_scope =
+        matches!(
+            (metadata["complete"].as_bool(), scope),
+            (Some(true), Some("plugins")) | (Some(false), Some("plugin_delta"))
+        ) || (version == Some(3) && metadata["complete"] == false && scope == Some("plugins"));
+    let valid_revisions = version != Some(3)
+        || metadata["revisions"].as_object().is_some_and(|revisions| {
+            ["plugins", "removed_plugins"]
+                .into_iter()
+                .flat_map(|field| payload[field].as_array().into_iter().flatten())
+                .all(|item| {
+                    item["installed_plugin_id"].as_i64().is_some_and(|id| {
+                        revisions
+                            .get(&id.to_string())
+                            .and_then(Value::as_u64)
+                            .is_some_and(|value| value > 0)
+                    })
+                })
+        });
     snapshot["protocolVersion"] == 1
         && snapshot["generation"].as_u64().is_some_and(|g| g > 0)
         && snapshot["revision"].as_str().is_some_and(|revision| {
             revision.len() == 64 && revision.bytes().all(|c| c.is_ascii_hexdigit())
         })
-        && snapshot["payload"]["plugin_sync"]["version"] == 2
-        && snapshot["payload"]["plugin_sync"]["generation"] == snapshot["generation"]
-        && matches!(
-            (
-                snapshot["payload"]["plugin_sync"]["complete"].as_bool(),
-                snapshot["payload"]["scope"].as_str()
-            ),
-            (Some(true), Some("plugins")) | (Some(false), Some("plugin_delta"))
-        )
-        && snapshot["payload"]["mode"] == "merge"
-        && snapshot["payload"]["plugins"].is_array()
+        && matches!(version, Some(2 | 3))
+        && metadata["generation"] == snapshot["generation"]
+        && valid_scope
+        && valid_revisions
+        && payload["mode"] == "merge"
+        && payload["plugins"].is_array()
 }
 
 fn select_pending(pending: &[Value], params: &Value) -> Option<Value> {
@@ -330,7 +348,7 @@ fn local_result(payload: &Value, result: Value) -> Value {
     let mut items = Vec::new();
     for (field, operation) in [("plugins", "upsert"), ("removed_plugins", "remove")] {
         for target in payload[field].as_array().into_iter().flatten() {
-            items.push(json!({"id":target["installed_plugin_id"],"operation":operation,"status":"failed","generation":payload["plugin_sync"]["generation"],"error_code":"APPLY_REQUEST_REJECTED"}));
+            items.push(json!({"id":target["installed_plugin_id"],"operation":operation,"status":"failed","generation":if payload["plugin_sync"]["version"]==3 { payload["plugin_sync"]["revisions"][target["installed_plugin_id"].as_i64().unwrap_or(0).to_string()].clone() } else {payload["plugin_sync"]["generation"].clone()},"error_code":"APPLY_REQUEST_REJECTED"}));
         }
     }
     json!({"success":false,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":items,"error":result["error"]})
@@ -573,7 +591,26 @@ impl LocalBackendConnectionController {
             return Err(error("plugin_local_sync_busy"));
         }
         let plan_order = journal["nextIntentOrder"].clone();
-        let plan_request = json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id});
+        let mut plan_request = json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id});
+        if capabilities["pluginSyncVersions"]
+            .as_array()
+            .is_some_and(|versions| versions.contains(&json!(3)))
+        {
+            plan_request["pluginSyncVersion"] = json!(3);
+        }
+        crate::logging::log_executor_event(
+            "plugin_local_sync_plan",
+            &[
+                (
+                    "protocol_version",
+                    plan_request["pluginSyncVersion"]
+                        .as_u64()
+                        .unwrap_or(2)
+                        .to_string(),
+                ),
+                ("targeted", targeted.to_string()),
+            ],
+        );
         drop(lease.take());
         let snapshot = post(connection, "/api/plugins/local-sync", &plan_request).await?;
         journal = self

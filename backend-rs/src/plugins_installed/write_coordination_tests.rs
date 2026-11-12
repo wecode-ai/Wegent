@@ -308,7 +308,9 @@ impl MysqlTransaction for RevisionTransaction {
         let first_argument = args
             .first_route_value()
             .and_then(|value| value.as_i64().ok());
-        if sql.as_ref().starts_with("INSERT INTO kinds") {
+        if sql.as_ref().starts_with("INSERT INTO plugin_states") {
+            assert_eq!(args.len(), 2);
+        } else if sql.as_ref().starts_with("INSERT INTO kinds") {
             assert_eq!(args.len(), 1);
             self.inserted_user = first_argument;
         } else {
@@ -757,16 +759,16 @@ async fn an_existing_active_policy_needs_no_write() {
 async fn first_policy_creation_reads_the_real_parent_before_inserting() {
     let mut transaction = RevisionTransaction::default();
     ensure_policy_in(&mut transaction, 23).await.unwrap();
-    assert_eq!(transaction.statements.len(), 2);
-    assert_eq!(transaction.statements[0], POLICY_QUERY);
-    assert!(transaction.statements[1].starts_with("INSERT INTO kinds"));
-    assert!(transaction.statements[1].contains("'ConnectorAuthPolicy', 'plugin-auth', 'account'"));
-    assert!(transaction.statements[1].contains("{\"spec\":{\"enabled\":true,\"revision\":0}}"));
+    assert_eq!(transaction.statements.len(), 3);
+    assert!(transaction.statements[0].starts_with("INSERT INTO plugin_states"));
+    assert!(transaction.statements[0].contains("ON DUPLICATE KEY UPDATE"));
+    assert_eq!(transaction.statements[1], POLICY_QUERY);
+    assert!(transaction.statements[2].starts_with("INSERT INTO kinds"));
+    assert!(transaction.statements[2].contains("'ConnectorAuthPolicy', 'plugin-auth', 'account'"));
     assert_eq!(transaction.inserted_user, Some(23));
     assert_eq!(transaction.next_revision, None);
     for sql in transaction.statements {
         assert!(!sql.contains("FOR UPDATE"));
-        assert!(!sql.contains("ON DUPLICATE KEY"));
     }
 }
 

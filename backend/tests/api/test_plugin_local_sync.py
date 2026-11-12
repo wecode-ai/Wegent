@@ -8,28 +8,25 @@ from fastapi import HTTPException
 from sqlalchemy import event
 
 from app.models.kind import Kind
+from app.models.plugin_state import PluginState
 from app.services import plugin_device_sync
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 
 
 def markers(db, user):
-    row = (
-        db.query(Kind)
-        .filter_by(
-            user_id=user,
-            kind="PluginSyncState",
-            namespace="plugin-sync",
-            name="account",
-        )
-        .one_or_none()
-    )
+    rows = db.query(PluginState).filter_by(user_id=user).all()
     assert (
         db.query(Kind).filter_by(user_id=user, namespace="plugin-local-sync").count()
         == 0
     )
-    return (row.json.get("spec", {}).get("localIntents", {}) if row else {}).get(
-        "local:one", {}
-    )
+    return {
+        key: receipt
+        for row in rows
+        for key, receipt in row.json.get("spec", {})
+        .get("localIntents", {})
+        .get("local:one", {})
+        .items()
+    }
 
 
 from app.services.plugin_marketplace_service import plugin_marketplace_service
@@ -183,10 +180,7 @@ def test_operation_failure_rolls_back_account_and_intent(local_context):
     original_commit = plugin_local_sync.Session.commit
 
     def fail_commit(db):
-        if any(
-            isinstance(row, Kind) and row.namespace == "plugin-sync"
-            for row in db.new | db.dirty
-        ):
+        if any(isinstance(row, PluginState) for row in db.new | db.dirty):
             raise RuntimeError("operation storage failed")
         return original_commit(db)
 
@@ -392,13 +386,8 @@ def test_first_arrival_old_remove_cannot_reverse_a_newer_update(local_context):
     with c.sessions.begin() as db:
         # The ordering watermark must survive operation retention/archival.
         state = (
-            db.query(Kind)
-            .filter_by(
-                user_id=c.user_id,
-                kind="PluginSyncState",
-                namespace="plugin-sync",
-                name="account",
-            )
+            db.query(PluginState)
+            .filter_by(user_id=c.user_id, installed_kind_id=c.installed_id)
             .one()
         )
         from copy import deepcopy

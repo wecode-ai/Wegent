@@ -361,7 +361,7 @@ async fn a_versioned_record_checks_the_lease_at_each_source_boundary() {
     assert_eq!(guard.calls(), 3, "reconcile, second lock, before-flush");
     let queries = capture.queries();
     assert!(
-        queries[0].sql.contains("PluginSyncState"),
+        queries[0].sql.contains("plugin_states"),
         "the first state read precedes reconciliation: {queries:#?}"
     );
     assert!(

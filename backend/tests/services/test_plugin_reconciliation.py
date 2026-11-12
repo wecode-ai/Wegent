@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
+from app.models.plugin_state import PluginState
 from app.schemas.device import DeviceCapabilitySyncResult
 from app.services import plugin_write_operations
 from app.services.device import plugin_reconciliation as module
@@ -28,8 +29,8 @@ def legacy_plugin_runtime(monkeypatch):
     """Exercise the legacy reconciliation contract without external routing."""
     monkeypatch.setattr(
         module.device_capability_sync_service,
-        "supports_plugin_delta",
-        AsyncMock(return_value=False),
+        "plugin_sync_version",
+        AsyncMock(return_value=None),
     )
 
 
@@ -37,8 +38,8 @@ def legacy_plugin_runtime(monkeypatch):
 def reconciliation(monkeypatch):
     monkeypatch.setattr(
         module.device_capability_sync_service,
-        "supports_plugin_delta",
-        AsyncMock(return_value=False),
+        "plugin_sync_version",
+        AsyncMock(return_value=None),
     )
 
     @contextmanager
@@ -92,7 +93,7 @@ async def test_reconciliation_rereads_desired_state_after_concurrent_uninstall(
         "plugins": [{"installed_plugin_id": 12}],
     }
     removed = {"scope": "plugins", "mode": "merge", "plugins": []}
-    desired.side_effect = [installed, removed, removed]
+    desired.side_effect = [installed, removed, removed, removed]
     result = await module.reconcile_device_plugins(7, "device")
     assert result.reconciled
     assert dispatch.await_count == 2
@@ -321,6 +322,9 @@ async def test_reconciliation_waits_leave_loop_responsive_and_sessions_in_worker
             self.touch()
 
         def rollback(self):
+            self.touch()
+
+        def expire_all(self):
             self.touch()
 
     @contextmanager
@@ -574,6 +578,7 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
             ),
         )
     observed = []
+    post_commit_reads = []
     original_build = module.device_capability_sync_service.build_desired_plugins
     original_record = (
         module.plugin_device_installation_service._record_device_sync_result
@@ -591,6 +596,10 @@ async def test_final_snapshot_and_ack_share_one_owned_lease_until_commit(
         observed.append((operation, db, lease, threading.get_ident()))
 
     def build(db, **kwargs):
+        if not db.info.get("plugin_write_leases"):
+            assert observed[-1][0] == "commit"
+            post_commit_reads.append(db)
+            return original_build(db, **kwargs)
         observe_lease("snapshot", db)
         event.listen(
             db,
@@ -685,7 +694,14 @@ def committed_reconciliation(tmp_path, monkeypatch, plugin_write_backend):
     from app.models.user import User
 
     engine = create_engine(f"sqlite:///{tmp_path / 'reconciliation.db'}")
-    for model in (User, Kind, Plugin, PluginRelease, PluginDeviceInstallation):
+    for model in (
+        User,
+        Kind,
+        PluginState,
+        Plugin,
+        PluginRelease,
+        PluginDeviceInstallation,
+    ):
         model.__table__.create(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     with sessions() as db:

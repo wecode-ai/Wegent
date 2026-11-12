@@ -1,0 +1,7 @@
+{
+  "revision": "a5b6c7d8e9f0",
+  "parents": ["f3a7c9e1b2d4"],
+  "source": "20261113_a5b6c7d8e9f0_add_plugin_states.py",
+  "upgrade": null,
+  "downgrade": null
+}

@@ -92,14 +92,16 @@ pub(super) async fn resolve_online_route(
 /// A device that advertises `runtime_features.pluginSync.protocolVersion = 2`
 /// receives the versioned snapshot; every other device keeps the legacy
 /// desired-state payload.
-pub(super) async fn supports_plugin_delta(state: &AppState, user_id: i64, device_id: &str) -> bool {
+pub(super) async fn negotiated_plugin_sync_version(
+    state: &AppState,
+    user_id: i64,
+    device_id: &str,
+) -> Option<i64> {
     match resolve_online_route(state, user_id, device_id).await {
         Ok(OnlineRouteResolution::Ready(route)) => {
-            super::plugin_sync_protocol::supports_plugin_sync_v2(
-                route.online.get("runtime_features"),
-            )
+            super::plugin_sync_protocol::plugin_sync_version(route.online.get("runtime_features"))
         }
-        Ok(OnlineRouteResolution::Unavailable(_)) | Err(_) => false,
+        Ok(OnlineRouteResolution::Unavailable(_)) | Err(_) => None,
     }
 }
 

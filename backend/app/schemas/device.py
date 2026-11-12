@@ -135,6 +135,18 @@ class RuntimePluginSyncFeatures(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     protocol_version: StrictInt = Field(..., ge=1, alias="protocolVersion")
+    supported_versions: list[StrictInt] | None = Field(
+        default=None, alias="supportedVersions"
+    )
+
+    @field_validator("supported_versions", mode="before")
+    @classmethod
+    def normalize_supported_versions(cls, value: Any) -> list[int] | None:
+        if isinstance(value, list) and all(
+            type(version) is int and version > 0 for version in value
+        ):
+            return value
+        return None
 
 
 _runtime_feature_normalizers: dict[str, Callable[[Any], Any | None]] = {}
