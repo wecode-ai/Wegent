@@ -32,6 +32,7 @@ pub(super) fn json(block: &str) -> Option<Value> {
 
 pub(super) fn blocks(mut input: &str) -> impl Iterator<Item = &str> {
     std::iter::from_fn(move || {
+        input = input.trim_start_matches(['\r', '\n']);
         if input.is_empty() {
             return None;
         }
@@ -47,10 +48,6 @@ fn frame_end(input: &str) -> Option<(usize, usize)> {
     let mut line_start = 0;
     let mut previous_end = 0;
     while let Some((end, next)) = line_end(input, line_start) {
-        // Wait for the next chunk before deciding whether a final CR belongs to CRLF.
-        if input.as_bytes()[end] == b'\r' && next == input.len() && next == end + 1 {
-            return None;
-        }
         if end == line_start {
             return Some((previous_end, next));
         }
@@ -79,6 +76,10 @@ fn event_lines(mut input: &str) -> impl Iterator<Item = &str> {
 }
 
 pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
+    // Empty frames carry no data. This also consumes a split CRLF's trailing LF
+    // after its CR has already dispatched the preceding event.
+    let leading = buffer.len() - buffer.trim_start_matches(['\r', '\n']).len();
+    buffer.drain(..leading);
     let (end, consumed) = frame_end(buffer)?;
     let block = buffer[..end].to_owned();
     buffer.drain(..consumed);
@@ -169,11 +170,20 @@ mod tests {
     }
 
     #[test]
+    fn cr_terminated_frame_is_ready_without_another_chunk_or_eof() {
+        let mut input = "data: 1\r\r".to_owned();
+        assert_eq!(take_sse_block(&mut input).as_deref(), Some("data: 1"));
+        assert!(input.is_empty());
+    }
+
+    #[test]
     fn split_crlf_terminator_is_consumed_as_one_line_ending() {
         let mut input = "data: 1\r\n\r".to_owned();
-        assert!(take_sse_block(&mut input).is_none());
-        input.push_str("\ndata: 2\n\n");
         assert_eq!(take_sse_block(&mut input).as_deref(), Some("data: 1"));
+        input.push('\n');
+        assert!(take_sse_block(&mut input).is_none());
+        assert!(input.is_empty());
+        input.push_str("data: 2\n\n");
         assert_eq!(take_sse_block(&mut input).as_deref(), Some("data: 2"));
         assert!(input.is_empty());
     }

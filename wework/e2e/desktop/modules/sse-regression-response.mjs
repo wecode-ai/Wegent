@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 
 // Reuse the model oracle's protocol events, varying only their SSE transport.
-export async function writeSseRegressionResponse(response, write, protocol) {
+export async function writeSseRegressionResponse(
+  response,
+  write,
+  protocol,
+  { endStream = true } = {}
+) {
   let headers
   let source
   write({
@@ -46,5 +51,6 @@ export async function writeSseRegressionResponse(response, write, protocol) {
   const split = chinese >= 0 ? chinese + 1 : Math.max(1, Math.floor(rest.length / 2))
   response.write(rest.subarray(0, split))
   await setImmediate()
-  response.end(rest.subarray(split))
+  response.write(rest.subarray(split))
+  if (endStream) response.end()
 }

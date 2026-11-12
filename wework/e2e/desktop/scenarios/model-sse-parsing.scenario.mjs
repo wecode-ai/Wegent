@@ -49,7 +49,12 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
   let modelControl
   const observed = []
   const completed = new Set()
+  const pendingStreams = new Map()
   return {
+    close() {
+      for (const response of pendingStreams.values()) if (!response.destroyed) response.end()
+      pendingStreams.clear()
+    },
     async prepareApp() {
       const directory = join(electronUserDataDirectory, 'model-connections')
       await mkdir(directory, { recursive: true })
@@ -115,9 +120,14 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         )
         completed.add(model.id)
         succeeded = true
+        const previous = pendingStreams.get(model.id)
+        if (previous && !previous.destroyed) previous.end()
+        pendingStreams.delete(model.id)
       }
       observed.push({ id: model.id, succeeded })
       await writeFile(join(resultDir, 'model-sse-parsing.json'), JSON.stringify(observed, null, 2))
+      const endStream = model.protocol !== 'responses' || succeeded
+      if (!endStream) pendingStreams.set(model.id, response)
       await writeSseRegressionResponse(
         response,
         sink => {
@@ -153,7 +163,8 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
               exec[0].name
             )
         },
-        model.protocol
+        model.protocol,
+        { endStream }
       )
       return true
     },
@@ -183,6 +194,11 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         observed.length,
         CASES.length * 2,
         'Each case must execute exactly one successful tool call'
+      )
+      assert.equal(
+        pendingStreams.size,
+        0,
+        'Tool results must arrive before the model closes its stream'
       )
     },
     diagnostics() {
