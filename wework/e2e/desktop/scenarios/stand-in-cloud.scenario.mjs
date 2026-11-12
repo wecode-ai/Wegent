@@ -15,6 +15,7 @@ import {
 } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  revealCollaborationSidebarElement,
   reloadMainWindow,
   selectCollaborationDomain,
   configureFirstProjectExecutionEnvironment,
@@ -176,13 +177,10 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await selectCollaborationDomain(control, CONTENT, 'cloud')
-        const toggle = `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
-        await control.command('waitFor', toggle)
-        if (
-          (await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true'
-        ) {
-          await control.command('click', toggle)
-        }
+        await revealCollaborationSidebarElement(
+          control,
+          `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+        )
         await control.command(
           'click',
           `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
