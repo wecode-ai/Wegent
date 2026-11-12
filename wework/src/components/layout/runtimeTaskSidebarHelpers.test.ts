@@ -176,18 +176,14 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(visibleQueuedItems).toHaveLength(items.length)
     expect(hasHiddenRuntimeSidebarTaskItems(queuedItems, visibleQueuedItems)).toBe(false)
 
-    const runningItems = items.map(item => ({
-      ...item,
-      task: { ...item.task, running: true, status: 'running' },
-    }))
-    const visibleRunningItems = getVisibleRuntimeSidebarTaskItems(
-      runningItems,
+    const visibleAlwaysVisibleItems = getVisibleRuntimeSidebarTaskItems(
+      items,
       RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
       undefined,
-      item => item.task.running === true
+      () => true
     )
-    expect(visibleRunningItems).toHaveLength(items.length)
-    expect(hasHiddenRuntimeSidebarTaskItems(runningItems, visibleRunningItems)).toBe(false)
+    expect(visibleAlwaysVisibleItems).toHaveLength(items.length)
+    expect(hasHiddenRuntimeSidebarTaskItems(items, visibleAlwaysVisibleItems)).toBe(false)
 
     const visibleItemsWithCurrentTask = getVisibleRuntimeSidebarTaskItems(
       items,
