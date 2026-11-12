@@ -295,6 +295,10 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
     15_000
   )
   await control.command('click', linkedTask)
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="work-item-task-chat-panel"][aria-busy="false"]')
+  )
   await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
     text: HOME_TASK_RESULT,
   })

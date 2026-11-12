@@ -84,7 +84,12 @@ function setup() {
     localProjects: [],
     locale: 'en',
     location: { projectId: null, projectView: 'board', issueId: null },
-    services: { standInApi: { readTask: vi.fn().mockResolvedValue({ success: true }) } },
+    services: {
+      standInApi: {
+        deviceIdentity: vi.fn().mockResolvedValue({ backendDeviceId: 'device' }),
+        readTask: vi.fn().mockResolvedValue({ success: true }),
+      },
+    },
     userId: 7,
     workspace: { id: 'w1', name: 'Workspace' },
     setLocation,
@@ -110,6 +115,7 @@ it('uses the board availability and ownership checks before opening a bound task
     'existing'
   )
   expect(props.services.standInApi?.readTask).toHaveBeenCalledWith('device', 'existing')
+  expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalledWith('device')
   expect(setLocation).not.toHaveBeenCalled()
 })
 
@@ -127,5 +133,6 @@ it('opens an explicitly created task in the new Issue using the existing availab
   const pane = await screen.findByTestId('shared-board-conversation')
   expect(pane).toHaveAttribute('data-task', 'existing')
   expect(props.services.standInApi?.readTask).toHaveBeenCalledWith('device', 'existing')
+  expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalledWith('device')
   expect(setLocation).not.toHaveBeenCalled()
 })

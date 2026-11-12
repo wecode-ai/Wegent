@@ -165,7 +165,7 @@ export function IssueLinkedTasks({
             ref={createTaskRef}
             type="button"
             data-testid="cloud-todo-create-task"
-            onClick={onCreateTask}
+            onClick={() => onCreateTask()}
             className="task-detail-workspace-ghost-action"
           >
             <Plus aria-hidden="true" className="h-3.5 w-3.5" />

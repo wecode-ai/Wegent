@@ -350,7 +350,10 @@ function Project({
       services={
         {
           teamApi: { listTeams: vi.fn(async () => []) },
-          standInApi: { readTask: vi.fn(async () => ({ success: true })) },
+          standInApi: {
+            deviceIdentity: vi.fn(async () => ({ backendDeviceId: 'device' })),
+            readTask: vi.fn(async () => ({ success: true })),
+          },
         } as never
       }
       runtimeWork={runtimeWork}
