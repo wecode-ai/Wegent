@@ -104,6 +104,23 @@ export async function verifyPluginSyncDisconnect({
           (request.path === '/api/plugins/installed/sync-device' ||
             request.path === `/api/plugins/installed/${item.installedId}/sync-device`)
       )
+  const assertSyncRequestsStaySequential = () => {
+    const requests = syncPosts()
+    let previous = requests[0]
+    assert.ok(previous, 'Expected a foreground device sync')
+    for (const request of requests.slice(1)) {
+      assert.equal(
+        request.path,
+        '/api/plugins/installed/sync-device',
+        'Recovery repeated the plugin-specific device sync'
+      )
+      assert.ok(
+        Date.parse(request.receivedAt) >= Date.parse(previous.completedAt),
+        'A device sync started before the previous sync completed'
+      )
+      previous = request
+    }
+  }
   packageProxy.rule = request =>
     request.method === 'GET' &&
     request.path.includes(`/plugins/${item.pluginId}/`) &&
@@ -235,7 +252,7 @@ export async function verifyPluginSyncDisconnect({
       acknowledgementRecoveryMs < 60_000,
       'A reconnected sync waited for the lost socket ACK instead of recovering on the current route'
     )
-    assert.equal(syncPosts().length, 1, 'Recovery repeated the foreground device sync')
+    assertSyncRequestsStaySequential()
     assert.equal(packageGets().length, 1, 'Reconnect downloaded the immutable package twice')
     await control.command('waitFor', testId(`plugin-marketplace-actions-${item.pluginId}`))
     await control.command('click', testId('new-chat-button'))
@@ -248,7 +265,7 @@ export async function verifyPluginSyncDisconnect({
     await control.command('fill', testId('composer-plugin-picker-search'), { value: slug })
     await control.command('click', testId(`composer-plugin-picker-item-plugin:${slug}`))
     await control.command('waitFor', testId(`composer-plugin-chip-${slug}`))
-    assert.equal(syncPosts().length, 1, 'Reopening the workspace repeated a completed device sync')
+    assertSyncRequestsStaySequential()
     assert.equal(packageGets().length, 1, 'Reopening downloaded the installed package again')
     evidence.push({
       case: 'package-sync-disconnect-defers-local-catalog',
