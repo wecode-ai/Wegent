@@ -466,7 +466,7 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
         !snapshot.testIds.includes('uploading-attachment-badge') &&
         !snapshot.testIds.includes('attachment-error-badge'),
       'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
-      60_000,
+      120_000,
       ACTIVE_WORKBENCH_SELECTOR
     )
     const droppedFinish = await transportGates.wait(finishGateId)

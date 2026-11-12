@@ -78,6 +78,30 @@ describe('desktop host events', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  test('times out a stalled attachment request as a transport failure', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    vi.spyOn(console, 'debug').mockImplementation(() => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url, init: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'))
+          })
+        })
+      })
+    )
+    const { invokeDesktopHost } = await import('./desktopHost')
+    const request = expect(
+      invokeDesktopHost('attachment.append', { uploadId: 'upload-1', offset: 0 })
+    ).rejects.toMatchObject({ name: 'DesktopHostTransportError' })
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await request
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   test.each(['true', 'false'])(
     'records attachment chunk timing without its payload only in E2E: %s',
     async e2e => {

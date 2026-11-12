@@ -491,13 +491,18 @@ export function createElectronCapabilityRouter(
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
-    attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
+    attachments.begin(
+      stringParam(params, 'filename'),
+      requiredIntegerParam(params, 'size'),
+      optionalStringParam(params, 'uploadId')
+    )
   )
   router.register('attachment.append', params =>
     attachments.append(
       stringParam(params, 'uploadId'),
       requiredIntegerParam(params, 'offset'),
-      stringParam(params, 'chunkBase64')
+      stringParam(params, 'chunkBase64'),
+      optionalStringParam(params, 'appendId')
     )
   )
   router.register('attachment.finish', params =>

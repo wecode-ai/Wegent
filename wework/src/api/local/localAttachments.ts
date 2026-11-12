@@ -9,7 +9,7 @@ export interface LocalAttachmentApi {
 
 let localAttachmentIdSeed = 0
 const FALLBACK_ATTACHMENT_CHUNK_BYTES = 384 * 1024
-const FINISH_RETRY_DELAYS_MS = [100, 250, 500]
+const ATTACHMENT_RETRY_DELAYS_MS = [100, 250, 500, 1_000]
 
 function nextLocalAttachmentId(): number {
   localAttachmentIdSeed += 1
@@ -36,6 +36,24 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function isTransientDesktopHostTransportError(error: unknown): boolean {
   return error instanceof Error && error.name === 'DesktopHostTransportError'
+}
+
+async function invokeAttachmentWithRetry<Result>(
+  diagnostic: ReturnType<typeof createAttachmentStagingDiagnostic>,
+  capability: string,
+  params: Record<string, unknown>
+): Promise<Result> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await diagnostic.invoke<Result>(capability, params)
+    } catch (error) {
+      const retryDelay = ATTACHMENT_RETRY_DELAYS_MS[attempt]
+      if (!isTransientDesktopHostTransportError(error) || retryDelay === undefined) {
+        throw error
+      }
+      await new Promise(resolve => window.setTimeout(resolve, retryDelay))
+    }
+  }
 }
 
 function createAttachmentStagingDiagnostic() {
@@ -109,10 +127,11 @@ async function saveElectronAttachment(
   const diagnostic = createAttachmentStagingDiagnostic()
   let completed = false
   try {
-    const started = await diagnostic.invoke<{
+    const started = await invokeAttachmentWithRetry<{
       uploadId: string
       chunkSize: number
-    }>('attachment.begin', {
+    }>(diagnostic, 'attachment.begin', {
+      uploadId: crypto.randomUUID(),
       filename: file.name,
       size: file.size,
     })
@@ -124,29 +143,19 @@ async function saveElectronAttachment(
     try {
       while (offset < file.size) {
         const chunk = new Uint8Array(await diagnostic.read(file, offset, chunkSize))
-        offset = await diagnostic.invoke<number>('attachment.append', {
+        offset = await invokeAttachmentWithRetry<number>(diagnostic, 'attachment.append', {
           uploadId: started.uploadId,
           offset,
+          appendId: crypto.randomUUID(),
           chunkBase64: diagnostic.encode(chunk),
         })
         const progress = Math.round((offset / file.size) * 100)
         diagnostic.progress(progress)
         onProgress?.(progress)
       }
-      let path: string | null = null
-      for (let attempt = 0; path === null; attempt += 1) {
-        try {
-          path = await diagnostic.invoke<string>('attachment.finish', {
-            uploadId: started.uploadId,
-          })
-        } catch (error) {
-          const retryDelay = FINISH_RETRY_DELAYS_MS[attempt]
-          if (!isTransientDesktopHostTransportError(error) || retryDelay === undefined) {
-            throw error
-          }
-          await new Promise(resolve => window.setTimeout(resolve, retryDelay))
-        }
-      }
+      const path = await invokeAttachmentWithRetry<string>(diagnostic, 'attachment.finish', {
+        uploadId: started.uploadId,
+      })
       completed = true
       return path
     } catch (error) {
