@@ -4,9 +4,26 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import or_
 from sqlalchemy.engine import make_url
+
+
+def build_shared_resource(name: str, kind: str) -> dict[str, Any]:
+    """Build the resource document persisted by the share regression fixture."""
+    resource: dict[str, Any] = {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": kind,
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": {"name": name, "members": []},
+    }
+    if kind == "Team":
+        from app.schemas.kind import Team
+
+        resource["spec"]["collaborationModel"] = "solo"
+        Team.model_validate(resource)
+    return resource
 
 
 def main() -> None:
@@ -52,15 +69,7 @@ def main() -> None:
                     name=f"{prefix}-{kind}",
                     namespace="default",
                     is_active=True,
-                    json={
-                        "apiVersion": "agent.wecode.io/v1",
-                        "kind": kind,
-                        "metadata": {
-                            "name": f"{prefix}-{kind}",
-                            "namespace": "default",
-                        },
-                        "spec": {"name": f"{prefix}-{kind}", "members": []},
-                    },
+                    json=build_shared_resource(f"{prefix}-{kind}", kind),
                 )
                 for kind in ("Team", "KnowledgeBase")
             ]

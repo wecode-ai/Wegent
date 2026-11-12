@@ -385,3 +385,30 @@ def test_share_link_commit_error_does_not_log_bearer(
     assert token not in "".join(traceback.format_exception(error.value))
     assert token not in caplog.text
     assert "RuntimeError" in caplog.text
+
+
+@pytest.mark.unit
+def test_share_fixture_team_does_not_break_bot_reference_scans(test_db: Session):
+    from app.services.adapters.bot_kinds import bot_kinds_service
+    from tests.e2e.legacy_share_state import build_shared_resource
+
+    owner = _add_user(test_db, "fixture-team-owner")
+    name = "e2e-legacy-share-fixture-Team"
+    test_db.add(
+        Kind(
+            user_id=owner.id,
+            kind="Team",
+            name=name,
+            namespace="default",
+            is_active=True,
+            json=build_shared_resource(name, "Team"),
+        )
+    )
+    test_db.commit()
+
+    assert (
+        bot_kinds_service._get_teams_using_bot(
+            test_db, "unrelated-bot", "default", owner.id
+        )
+        == []
+    )
