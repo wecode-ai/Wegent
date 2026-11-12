@@ -266,21 +266,10 @@ impl<S> ChatStreamState<S> {
     }
 
     fn handle_block(&mut self, block: &str, strict: bool) {
-        let mut event_name = None;
-        let mut data_lines = Vec::new();
-        for raw_line in block.lines() {
-            let line = raw_line.trim_start_matches('\u{feff}').trim_start();
-            if let Some(value) = line.strip_prefix("event:") {
-                event_name = Some(value.trim());
-            } else if let Some(value) = line.strip_prefix("data:") {
-                data_lines.push(value.trim_start());
-            }
-        }
-        if data_lines.is_empty() {
+        let Some(event) = super::sse::Event::parse(block) else {
             return;
-        }
-        let data = data_lines.join("\n");
-        let data = data.trim();
+        };
+        let data = event.data.trim();
         if data == "[DONE]" {
             self.saw_done = true;
             self.finish();
@@ -297,7 +286,10 @@ impl<S> ChatStreamState<S> {
                 return;
             }
         };
-        if event_name.is_some_and(|value| value.eq_ignore_ascii_case("error")) {
+        if event
+            .name
+            .is_some_and(|value| value.eq_ignore_ascii_case("error"))
+        {
             let message = meaningful_error_message(chunk.get("error").unwrap_or(&chunk))
                 .unwrap_or_else(|| "upstream error event in SSE stream".to_owned());
             self.emit(self.failed_event(message));

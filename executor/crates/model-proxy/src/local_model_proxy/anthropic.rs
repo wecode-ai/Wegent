@@ -14,7 +14,7 @@ use crate::logging::log_executor_event;
 
 use super::{
     chat::{self, ToolContext},
-    vision, DEFAULT_MAX_OUTPUT_TOKENS,
+    take_sse_block, vision, DEFAULT_MAX_OUTPUT_TOKENS,
 };
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
@@ -208,7 +208,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     let state = AnthropicStreamState {
-        stream: Box::pin(stream),
+        stream: Box::pin(stream.fuse()),
         pending: String::new(),
         pending_utf8: Vec::new(),
         output: VecDeque::new(),
@@ -220,7 +220,7 @@ where
         output_tokens: 0,
         output_observed: false,
     };
-    chat::chat_sse_to_responses(anthropic_to_chat_stream(state).fuse(), context)
+    chat::chat_sse_to_responses(anthropic_to_chat_stream(state), context)
 }
 
 pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
@@ -337,7 +337,11 @@ where
                     if let Err(error) = super::finish_stream_utf8(&state.pending_utf8) {
                         return Some((Err(error), state));
                     }
-                    return None;
+                    if state.pending.trim().is_empty() {
+                        return None;
+                    }
+                    let trailing = std::mem::take(&mut state.pending);
+                    state.handle_block(&trailing);
                 }
             }
         }
@@ -346,10 +350,7 @@ where
 
 impl<S> AnthropicStreamState<S> {
     fn handle_block(&mut self, block: &str) {
-        for data in block.lines().filter_map(|line| line.strip_prefix("data:")) {
-            let Ok(event) = serde_json::from_str::<Value>(data.trim()) else {
-                continue;
-            };
+        if let Some(event) = super::sse::json(block) {
             self.handle_event(&event);
         }
     }
@@ -512,18 +513,6 @@ fn anthropic_finish_reason(value: &str) -> &str {
         "tool_use" => "tool_calls",
         _ => "stop",
     }
-}
-
-fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let index = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"))?;
-    let delimiter = if buffer[index..].starts_with("\r\n\r\n") {
-        4
-    } else {
-        2
-    };
-    let block = buffer[..index].to_owned();
-    buffer.drain(..index + delimiter);
-    Some(block)
 }
 
 #[cfg(test)]

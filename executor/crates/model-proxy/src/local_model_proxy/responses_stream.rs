@@ -199,43 +199,16 @@ pub(super) fn responses_event_diagnostics(event: &str) -> Vec<ResponsesEventDiag
 }
 
 pub(super) fn responses_event_values(event: &str) -> Vec<Value> {
-    event
-        .lines()
-        .filter_map(|line| line.trim_start().strip_prefix("data:"))
-        .map(str::trim_start)
-        .filter(|data| *data != "[DONE]")
-        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
-        .collect()
+    sse::blocks(event).filter_map(sse::json).collect()
 }
 
 pub(crate) fn is_responses_terminal_event(event: &str) -> bool {
-    let mut event_name = None;
-    let mut data_lines = Vec::new();
-    for line in event.lines() {
-        let line = line.trim_start_matches('\u{feff}').trim_start();
-        if let Some(value) = line.strip_prefix("event:") {
-            event_name = Some(value.trim());
-        } else if let Some(value) = line.strip_prefix("data:") {
-            data_lines.push(value.trim_start());
-        }
-    }
-    if event_name.is_some_and(|value| {
+    sse::json(event).is_some_and(|value| {
         matches!(
-            value,
-            "response.completed" | "response.failed" | "response.incomplete"
+            value.get("type").and_then(Value::as_str),
+            Some("response.completed" | "response.failed" | "response.incomplete")
         )
-    }) {
-        return true;
-    }
-    serde_json::from_str::<Value>(&data_lines.join("\n"))
-        .ok()
-        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
-        .is_some_and(|event_type| {
-            matches!(
-                event_type.as_str(),
-                "response.completed" | "response.failed" | "response.incomplete"
-            )
-        })
+    })
 }
 
 pub(crate) fn responses_failed_event(message: &str) -> Bytes {
@@ -254,123 +227,33 @@ pub(crate) fn responses_failed_event(message: &str) -> Bytes {
     ))
 }
 
-pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let (index, delimiter_len) = buffer
-        .find("\r\n\r\n")
-        .map(|index| (index, 4))
-        .or_else(|| buffer.find("\n\n").map(|index| (index, 2)))?;
-    let block = buffer[..index].to_owned();
-    buffer.drain(..index + delimiter_len);
-    Some(block)
-}
-
-pub(crate) fn append_stream_utf8(
-    buffer: &mut String,
-    pending_utf8: &mut Vec<u8>,
-    chunk: &[u8],
-) -> Result<(), std::io::Error> {
-    pending_utf8.extend_from_slice(chunk);
-    match std::str::from_utf8(pending_utf8) {
-        Ok(text) => {
-            buffer.push_str(text);
-            pending_utf8.clear();
-            Ok(())
-        }
-        Err(error) => {
-            let valid_up_to = error.valid_up_to();
-            let error_len = error.error_len();
-            if valid_up_to > 0 {
-                let valid = std::str::from_utf8(&pending_utf8[..valid_up_to])
-                    .expect("UTF-8 validator should identify a valid prefix");
-                buffer.push_str(valid);
-                pending_utf8.drain(..valid_up_to);
-            }
-            if error_len.is_some() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Upstream stream contains invalid UTF-8",
-                ));
-            }
-            Ok(())
-        }
-    }
-}
-
-pub(crate) fn finish_stream_utf8(pending_utf8: &[u8]) -> Result<(), std::io::Error> {
-    if pending_utf8.is_empty() {
-        return Ok(());
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::UnexpectedEof,
-        "Upstream stream ended with an incomplete UTF-8 sequence",
-    ))
-}
-
 pub(super) fn normalize_responses_event(event: &str) -> String {
-    if !event.contains("response.completed") && !event.contains("response.failed") {
+    let Some(mut value) = sse::json(event) else {
         return event.to_owned();
+    };
+    let completed = value.get("type").and_then(Value::as_str) == Some("response.completed");
+    normalize_completed_usage(&mut value);
+    let overload_error_normalized = normalize_retryable_overload_error(&mut value);
+    if completed || overload_error_normalized {
+        sse::rewrite_data(event, &value)
+    } else {
+        event.to_owned()
     }
-    event
-        .lines()
-        .map(|line| {
-            let Some(data) = line.strip_prefix("data:") else {
-                return line.to_owned();
-            };
-            let data = data.trim_start();
-            let Ok(mut value) = serde_json::from_str::<Value>(data) else {
-                return line.to_owned();
-            };
-            let completed = value.get("type").and_then(Value::as_str) == Some("response.completed");
-            normalize_completed_usage(&mut value);
-            let overload_error_normalized = normalize_retryable_overload_error(&mut value);
-            if !completed && !overload_error_normalized {
-                return line.to_owned();
-            }
-            format!(
-                "data: {}",
-                serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 pub(super) fn rewrite_responses_event(event: &str, expanded: &HashSet<String>) -> String {
     if expanded.is_empty() {
         return event.to_owned();
     }
-    let mut changed = false;
-    let lines = event
-        .lines()
-        .map(|line| {
-            let Some(data) = line.strip_prefix("data:") else {
-                return line.to_owned();
-            };
-            let data = data.trim_start();
-            if data == "[DONE]" {
-                return line.to_owned();
-            }
-            let Ok(mut value) = serde_json::from_str::<Value>(data) else {
-                return line.to_owned();
-            };
-            let original = value.clone();
-            codex_responses_proxy_transform::rewrite_wework_browser_function_calls(
-                &mut value, expanded,
-            );
-            if value == original {
-                return line.to_owned();
-            }
-            changed = true;
-            format!(
-                "data: {}",
-                serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
-            )
-        })
-        .collect::<Vec<_>>();
-    if changed {
-        lines.join("\n")
-    } else {
+    let Some(mut value) = sse::json(event) else {
+        return event.to_owned();
+    };
+    let original = value.clone();
+    codex_responses_proxy_transform::rewrite_wework_browser_function_calls(&mut value, expanded);
+    if value == original {
         event.to_owned()
+    } else {
+        sse::rewrite_data(event, &value)
     }
 }
 
