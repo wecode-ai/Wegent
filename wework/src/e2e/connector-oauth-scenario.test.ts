@@ -9,18 +9,13 @@ const completion = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
 const callId = 'connector-oauth-real-echo'
 const url = new URL('http://model.test/v1/responses')
 const execDeclaration = {
-  type: 'additional_tools',
+  type: 'namespace',
+  name: 'functions',
   tools: [
     {
-      type: 'namespace',
-      name: 'functions',
-      tools: [
-        {
-          type: 'custom',
-          name: 'exec',
-          description: 'Run Code Mode.',
-        },
-      ],
+      type: 'custom',
+      name: 'exec',
+      description: 'Run Code Mode.',
     },
   ],
 }
@@ -49,7 +44,6 @@ function itemWithType(events: Array<{ type?: string; item?: { type?: string } }>
 function codeModeBody(input: string, output: string, callId: string, includeExec = true) {
   return {
     input: [
-      ...(includeExec ? [execDeclaration] : []),
       { role: 'user', content: prompt },
       {
         type: 'custom_tool_call_output',
@@ -60,7 +54,7 @@ function codeModeBody(input: string, output: string, callId: string, includeExec
         ],
       },
     ],
-    tools: [],
+    tools: includeExec ? [execDeclaration] : [],
   }
 }
 
@@ -70,8 +64,8 @@ test('the first connector tool request emits native discovery instead of falling
   expect(
     await scenario.handleHttp(
       request({
-        tools: [],
-        input: [execDeclaration, { role: 'user', content: prompt }],
+        tools: [execDeclaration],
+        input: [{ role: 'user', content: prompt }],
       }),
       modelResponse,
       url
@@ -82,6 +76,33 @@ test('the first connector tool request emits native discovery instead of falling
   expect(discovery).toMatchObject({ call_id: `${callId}-search`, name: 'exec' })
   expect(discovery?.input).toContain('ALL_TOOLS')
   expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
+  expect(events(modelResponse).at(-1)?.response?.output).toEqual([discovery])
+})
+
+test('Lite incremental Code Mode discovery remains in the completed response', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+
+  expect(
+    await scenario.handleHttp(
+      request({
+        input: [
+          { type: 'additional_tools', tools: [execDeclaration] },
+          { role: 'user', content: prompt },
+        ],
+      }),
+      modelResponse,
+      url
+    )
+  ).toBe(true)
+
+  const discovery = itemWithType(events(modelResponse), 'custom_tool_call')
+  expect(discovery).toMatchObject({
+    call_id: `${callId}-search`,
+    namespace: 'functions',
+    name: 'exec',
+  })
+  expect(discovery?.input).toContain('ALL_TOOLS')
   expect(events(modelResponse).at(-1)?.response?.output).toEqual([discovery])
 })
 
