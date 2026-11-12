@@ -39,8 +39,10 @@ def summary_checkpoint_predicate(db: Session, model: Any) -> Any:
         path = "CONCAT('$.messages_chain[', marker_index - 1, '].additional_kwargs"
         kwargs = f"JSON_EXTRACT({result}, {path}'))"
         marker = f"JSON_EXTRACT({result}, {path}.summary_compacted'))"
+        # A scalar lookup prevents MySQL from flattening JSON_TABLE into a
+        # semijoin that sorts full result payloads or loses correlated markers.
         predicate = text(
-            f"EXISTS (SELECT 1 FROM JSON_TABLE("
+            f"(SELECT 1 FROM JSON_TABLE("
             f"CASE WHEN JSON_TYPE({result}) = 'OBJECT' "
             f"AND JSON_TYPE(JSON_EXTRACT({result}, '$.messages_chain')) "
             f"= 'ARRAY' THEN {result} ELSE JSON_OBJECT('messages_chain', JSON_ARRAY()) "
@@ -48,7 +50,7 @@ def summary_checkpoint_predicate(db: Session, model: Any) -> Any:
             f"AS checkpoint_markers WHERE JSON_TYPE({message}) = 'OBJECT' "
             f"AND JSON_TYPE({kwargs}) = 'OBJECT' "
             f"AND JSON_TYPE({marker}) = 'BOOLEAN' "
-            f"AND JSON_UNQUOTE({marker}) = 'true')"
+            f"AND JSON_UNQUOTE({marker}) = 'true' LIMIT 1) = 1"
         )
     return and_(
         model.role == SubtaskRole.ASSISTANT,

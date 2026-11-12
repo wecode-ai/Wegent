@@ -29,6 +29,8 @@ pub fn history_ids_statement(table: &str, window: SubtaskHistoryWindow) -> Strin
 }
 
 fn summary_checkpoint_predicate(table: &str) -> String {
+    // A scalar lookup keeps JSON_TABLE out of MySQL's semijoin rewrite:
+    // that rewrite can sort full payloads or lose correlated summary markers.
     let result = format!("{table}.result");
     let message =
         format!("JSON_EXTRACT({result}, CONCAT('$.messages_chain[', marker_index - 1, ']'))");
@@ -42,14 +44,14 @@ fn summary_checkpoint_predicate(table: &str) -> String {
     );
     format!(
         " AND role = 'ASSISTANT' AND status = 'COMPLETED' \
-         AND EXISTS (SELECT 1 FROM JSON_TABLE(\
+         AND (SELECT 1 FROM JSON_TABLE(\
          CASE WHEN JSON_TYPE({result}) = 'OBJECT' \
          AND JSON_TYPE(JSON_EXTRACT({result}, '$.messages_chain')) = 'ARRAY' \
          THEN {result} ELSE JSON_OBJECT('messages_chain', JSON_ARRAY()) END, \
          '$.messages_chain[*]' COLUMNS(marker_index FOR ORDINALITY)) AS checkpoint_markers \
          WHERE JSON_TYPE({message}) = 'OBJECT' AND JSON_TYPE({kwargs}) = 'OBJECT' \
          AND JSON_TYPE({marker}) = 'BOOLEAN' \
-         AND JSON_UNQUOTE({marker}) = 'true')"
+         AND JSON_UNQUOTE({marker}) = 'true' LIMIT 1) = 1"
     )
 }
 
@@ -114,6 +116,8 @@ mod tests {
         let queries = mysql.queries();
         assert!(queries[1].sql.contains("JSON_TYPE"));
         assert!(queries[1].sql.contains("= 'BOOLEAN'"));
+        assert!(queries[1].sql.contains("'true' LIMIT 1) = 1"));
+        assert!(!queries[1].sql.contains("EXISTS"));
     }
 
     #[tokio::test]

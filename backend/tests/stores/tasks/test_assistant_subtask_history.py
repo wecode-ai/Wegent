@@ -4,9 +4,11 @@
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, Literal, Optional
+from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -212,3 +214,25 @@ def test_checkpoint_database_filter_matches_exact_marker_contract(
     assert [row.id for row in selected] == expected
     _assert_id_sort_projection(history_statements)
     assert "LIMIT" in next(sql for sql in history_statements if "ORDER BY" in sql)
+
+
+def test_mysql_checkpoint_lookup_cannot_flatten_into_a_payload_sort() -> None:
+    from app.stores.tasks.history_checkpoint import summary_checkpoint_predicate
+
+    db = Mock(spec=Session)
+    db.get_bind.return_value.dialect.name = "mysql"
+    query = (
+        select(Subtask.id)
+        .where(summary_checkpoint_predicate(db, Subtask))
+        .order_by(
+            Subtask.message_id.desc(), Subtask.created_at.desc(), Subtask.id.desc()
+        )
+        .limit(1)
+    )
+
+    statement = str(query.compile(dialect=mysql.dialect()))
+
+    assert "(SELECT 1 FROM JSON_TABLE(" in statement
+    assert "'true' LIMIT 1) = 1" in statement
+    assert "EXISTS" not in statement
+    assert "subtasks.result" not in statement.split("FROM", 1)[0]
