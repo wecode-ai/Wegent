@@ -1,3 +1,4 @@
+import { useWorkbenchServiceConnections } from '@/features/workbench/workbenchServiceConnections'
 import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
@@ -613,6 +614,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       runtimeServiceUser,
     ]
   )
+  useWorkbenchServiceConnections(services)
 
   useEffect(() => {
     if (!isElectronRuntime()) return

@@ -6,6 +6,7 @@ use super::*;
 /// Native work can outlive the local request that originally admitted it.
 #[derive(Default)]
 pub(super) struct CodexNativeActivity {
+    loaded_threads: HashSet<String>,
     turns: HashMap<String, HashSet<String>>,
     settled_turns: HashMap<String, HashSet<String>>,
     goals: HashMap<String, GoalActivity>,
@@ -32,12 +33,12 @@ impl GoalActivity {
         self.active && self.native_work
     }
 
-    fn observe_native(&mut self, active: bool) -> bool {
+    fn observe_native(&mut self, active: bool, loaded: bool) -> bool {
         let was_busy = self.is_busy();
         self.observation += 1;
         self.response = None;
         self.active = active;
-        self.native_work = active;
+        self.native_work = active && loaded;
         was_busy != self.is_busy()
     }
 
@@ -79,6 +80,7 @@ impl CodexNativeActivity {
             self.turns.clear();
             self.settled_turns.clear();
             self.goals.clear();
+            self.loaded_threads.clear();
             return changed;
         }
         let params = message_params(message);
@@ -86,6 +88,23 @@ impl CodexNativeActivity {
             return false;
         };
         match method {
+            "thread/started" => {
+                self.loaded_threads.insert(thread_id);
+                false
+            }
+            "thread/status/changed" => {
+                match params.pointer("/status/type").and_then(Value::as_str) {
+                    Some("notLoaded") => {
+                        self.loaded_threads.remove(&thread_id);
+                        return self.observe_goal(&thread_id, false);
+                    }
+                    Some("idle" | "active" | "systemError") => {
+                        self.loaded_threads.insert(thread_id);
+                    }
+                    _ => {}
+                }
+                false
+            }
             "turn/started" => turn_start_response_id(params)
                 .is_some_and(|turn_id| self.start_turn(thread_id, turn_id)),
             "turn/completed" => self.complete_turn(&thread_id, params),
@@ -97,6 +116,7 @@ impl CodexNativeActivity {
             },
             "thread/goal/cleared" => self.observe_goal(&thread_id, false),
             "thread/closed" => {
+                self.loaded_threads.remove(&thread_id);
                 let turns = self.turns.remove(&thread_id).is_some();
                 self.settled_turns.remove(&thread_id);
                 self.observe_goal(&thread_id, false) || turns
@@ -149,6 +169,7 @@ impl CodexNativeActivity {
             .or_default()
             .insert(turn_id);
         if started {
+            self.loaded_threads.insert(thread_id.clone());
             self.goals.entry(thread_id).or_default().native_work = true;
         }
         started
@@ -160,6 +181,12 @@ impl CodexNativeActivity {
         response: &Value,
     ) -> bool {
         match request {
+            CodexNativeRequest::LoadThread => {
+                if let Some(thread_id) = stream_thread_id(response) {
+                    self.loaded_threads.insert(thread_id);
+                }
+                false
+            }
             CodexNativeRequest::Turn(thread_id) => turn_start_response_id(response)
                 .is_some_and(|turn_id| self.start_turn(thread_id.clone(), turn_id)),
             CodexNativeRequest::Goal {
@@ -214,10 +241,11 @@ impl CodexNativeActivity {
     }
 
     fn observe_goal(&mut self, thread_id: &str, active: bool) -> bool {
+        let loaded = self.loaded_threads.contains(thread_id);
         self.goals
             .entry(thread_id.to_owned())
             .or_default()
-            .observe_native(active)
+            .observe_native(active, loaded)
     }
 
     fn goal_observation(&self, thread_id: &str) -> u64 {
@@ -233,15 +261,20 @@ impl CodexNativeActivity {
         method: &str,
         params: &Value,
     ) -> Option<CodexNativeRequest> {
+        if matches!(method, "thread/start" | "thread/resume" | "thread/fork") {
+            return Some(CodexNativeRequest::LoadThread);
+        }
         let thread_id = stream_thread_id(params)?;
         let observation = self.goal_observation(&thread_id);
         match method {
             "turn/start" => Some(CodexNativeRequest::Turn(thread_id)),
             "thread/goal/set" | "thread/goal/get" => Some(CodexNativeRequest::Goal {
-                thread_id,
                 observation,
                 request_id,
-                starts_work: method == "thread/goal/set",
+                // A cold Goal mutation persists metadata without loading the session.
+                starts_work: method == "thread/goal/set"
+                    && self.loaded_threads.contains(&thread_id),
+                thread_id,
             }),
             "thread/goal/clear" => Some(CodexNativeRequest::ClearGoal {
                 thread_id,
@@ -274,6 +307,7 @@ impl CodexNativeActivity {
 }
 
 pub(super) enum CodexNativeRequest {
+    LoadThread,
     Turn(String),
     Goal {
         thread_id: String,

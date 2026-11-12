@@ -55,6 +55,7 @@ impl RuntimeWorkRpcHandler {
                         | "origin"
                         | "changeRequests"
                         | "queuePosition"
+                        | "modelProviderRouting"
                 )
             });
             // The serializer originally adds this authoritative identity after

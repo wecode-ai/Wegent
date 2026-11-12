@@ -9,6 +9,35 @@ import {
 } from './runtimeModelSelection'
 
 describe('runtimeModelSelection', () => {
+  test.each(['openai', 'company', '~'])(
+    'keeps the native conversation across providers when runtime supports thread routing (%s)',
+    provider => {
+      for (const target of [
+        {
+          name: 'official',
+          type: 'runtime',
+          provider: 'local',
+          config: { weworkModelKind: 'codex-official' },
+        },
+        { name: 'cloud', type: 'public', provider: 'cloud' },
+      ] as UnifiedModel[]) {
+        expect(
+          requiresNewConversationForModelSwitch(
+            null,
+            target,
+            {
+              modelName: 'retired-model',
+              modelType: 'runtime',
+              options: { runnerModelProvider: provider },
+            },
+            provider,
+            true
+          )
+        ).toBe(false)
+      }
+    }
+  )
+
   test('uses native thread provider metadata even when the same-name catalog entry has changed', () => {
     const replacement: UnifiedModel = {
       name: 'same-model',

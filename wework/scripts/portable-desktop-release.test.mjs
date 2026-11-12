@@ -21,6 +21,7 @@ test('publishes the packaged data compatibility without inferring older readable
         sourceSha: 'a'.repeat(40),
         dataSchema: 2,
         readableDataSchemas: [2],
+        afterStopPreparation: 1,
       })
     )
     const release = await portableDesktopRelease({
@@ -31,6 +32,7 @@ test('publishes the packaged data compatibility without inferring older readable
       output: join(root, process.platform === 'win32' ? 'output' : 'local:output'),
     })
     assert.equal(release.dataSchema, 2)
+    assert.equal(release.afterStopPreparation, 1)
     assert.deepEqual(release.readableDataSchemas, [2])
     assert.match(release.sha256, /^[a-f0-9]{64}$/)
     // GNU tar unquotes backslashes in -C operands, including Windows \\results.
@@ -53,6 +55,11 @@ test('publishes the packaged data compatibility without inferring older readable
         extracted,
       ])
     await extract(release.path)
+    assert.equal(
+      JSON.parse(await readFile(join(extracted, 'wework-release.json'), 'utf8'))
+        .afterStopPreparation,
+      1
+    )
     assert.equal(
       await readFile(join(extracted, 'application', 'WeWork.exe'), 'utf8'),
       'unit fixture'

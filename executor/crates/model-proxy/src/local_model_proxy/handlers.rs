@@ -311,7 +311,7 @@ pub(super) async fn handle_for_token(
         ("body_bytes", request_body.len().to_string()),
         (
             "convert_custom_tools",
-            tool_capabilities.convert_custom_tools.to_string(),
+            tool_capabilities.custom_tools.enabled().to_string(),
         ),
         (
             "native_tool_search",
