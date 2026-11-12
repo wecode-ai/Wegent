@@ -173,15 +173,20 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
 #[tokio::test]
 async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_payload() {
     let (result, _, queries) = recover_missing_executor(false).await;
-    assert!(result.unwrap());
+    result.unwrap();
     let writes: Vec<&str> = queries
         .iter()
-        .filter(|sql| sql.starts_with("UPDATE "))
+        .filter(|sql| sql.starts_with("UPDATE ") && sql.contains("executor_deleted_at"))
         .map(String::as_str)
         .collect();
     assert_eq!(writes.len(), 2);
     assert!(writes[0].contains("executor_deleted_at = true"));
     assert!(writes[1].contains("executor_deleted_at = false"));
+    assert!(
+        queries
+            .iter()
+            .any(|sql| sql.contains("s.status IN ('PENDING', 'RUNNING')"))
+    );
 }
 
 #[tokio::test]
@@ -203,7 +208,7 @@ async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_erro
 
 async fn recover_missing_executor(
     prepare_fails: bool,
-) -> (anyhow::Result<bool>, ExecutionRequest, Vec<String>) {
+) -> (anyhow::Result<()>, ExecutionRequest, Vec<String>) {
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
@@ -299,7 +304,9 @@ async fn recover_missing_executor(
     };
     tokio::time::timeout(Duration::from_secs(10), async {
         let result = if prepare_fails {
-            recover_executor_if_needed(&app, &mut request, None).await
+            recover_executor_if_needed(&app, &mut request, None)
+                .await
+                .map(|_| ())
         } else {
             crate::responses::create::seam::enqueue_executor_dispatch(
                 &app,
