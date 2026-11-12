@@ -49,6 +49,8 @@ class TaskForkHistoryResolver:
         after_message_id: Optional[int] = None,
         limit: Optional[int] = None,
         current_task: Optional[TaskResource] = None,
+        statuses: Optional[tuple[Any, ...]] = None,
+        roles: Optional[tuple[Any, ...]] = None,
     ) -> list[ForkHistoryItem]:
         if limit is not None and limit <= 0:
             return []
@@ -75,6 +77,8 @@ class TaskForkHistoryResolver:
                     or before_message_id is not None
                     else limit
                 ),
+                statuses=statuses,
+                roles=roles,
             )
             for subtask in subtasks:
                 if (

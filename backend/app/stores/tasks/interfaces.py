@@ -887,6 +887,8 @@ class SubtaskStore(Protocol):
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
         recent_limit: Optional[int] = None,
+        statuses: Optional[Sequence[SubtaskStatus]] = None,
+        roles: Optional[Sequence[SubtaskRole]] = None,
     ) -> list[Subtask]: ...
 
     def list_recent_by_task_ids(

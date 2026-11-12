@@ -829,6 +829,8 @@ class SqlAlchemySubtaskStore:
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
         recent_limit: Optional[int] = None,
+        statuses: Optional[Sequence[SubtaskStatus]] = None,
+        roles: Optional[Sequence[SubtaskRole]] = None,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
@@ -840,6 +842,14 @@ class SqlAlchemySubtaskStore:
             query = query.filter(Subtask.id.notin_(exclude_subtask_ids))
         if exclude_deleted:
             query = query.filter(Subtask.status != SubtaskStatus.DELETE)
+        if statuses is not None:
+            if not statuses:
+                return []
+            query = query.filter(Subtask.status.in_(statuses))
+        if roles is not None:
+            if not roles:
+                return []
+            query = query.filter(Subtask.role.in_(roles))
         if order_by == "id":
             query = query.order_by(Subtask.id.asc())
         elif order_by == "created_at":

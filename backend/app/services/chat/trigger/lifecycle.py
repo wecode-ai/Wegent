@@ -363,18 +363,18 @@ def prepare_execution_session(
         )
     ]
     if resolved_task_params.history_window is not None:
-        memory_candidates = task_fork_history_resolver.resolve_for_task(
-            db,
-            task_id=task.id,
-            user_id=subtask_user_id,
-            current_task=task,
-        )
         memory_history = [
             item.subtask
-            for item in memory_candidates
-            if item.subtask.status == SubtaskStatus.COMPLETED
-            and item.subtask.role in (SubtaskRole.USER, SubtaskRole.ASSISTANT)
-        ][-settings.MEMORY_CONTEXT_MESSAGES + 1 :]
+            for item in task_fork_history_resolver.resolve_for_task(
+                db,
+                task_id=task.id,
+                user_id=subtask_user_id,
+                current_task=task,
+                limit=settings.MEMORY_CONTEXT_MESSAGES - 1,
+                statuses=(SubtaskStatus.COMPLETED,),
+                roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
+            )
+        ]
     else:
         memory_history = existing_subtasks
     next_message_id = task_fork_history_resolver.get_next_message_id(
