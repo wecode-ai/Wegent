@@ -334,7 +334,7 @@ def test_reference_inherits_fork_history_up_to_cutoff(
     ]
     monkeypatch.setattr(
         "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, owner_user_id=None, recent_limit=None: (
+        lambda db, task_id, owner_user_id=None, recent_limit=None, **kwargs: (
             inherited if task_id == parent.id else []
         ),
     )
