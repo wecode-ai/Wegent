@@ -69,6 +69,7 @@ fn chat_agent_crud_and_task_assignment_create_execution() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Do the thing".to_owned(),
                 description: String::new(),
@@ -88,6 +89,7 @@ fn chat_agent_crud_and_task_assignment_create_execution() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -143,6 +145,7 @@ fn task_create_atomically_dispatches_to_agent() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Run immediately".to_owned(),
                 description: "Do not require a second assignment update.".to_owned(),
@@ -206,6 +209,7 @@ fn task_create_accepts_human_led_group_without_starting_manager_agent() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Coordinate manually".to_owned(),
                 description: "The human leader decides the next dispatch.".to_owned(),
@@ -282,6 +286,7 @@ fn collaboration_group_resolves_agents_by_wegent_team_id() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Resolve manager".to_owned(),
                 description: String::new(),
@@ -399,6 +404,7 @@ fn local_comment_thread_and_enqueue_writeback() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Comment run".to_owned(),
                 description: String::new(),
@@ -483,6 +489,7 @@ fn local_comment_thread_and_enqueue_writeback() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -598,6 +605,7 @@ fn collaboration_runtime_comment_does_not_move_parent_issue_to_review() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Coordinate work".to_owned(),
                 description: String::new(),
@@ -662,6 +670,7 @@ fn runtime_comment_keeps_issue_in_progress_while_followup_is_pending() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Continue work".to_owned(),
                 description: String::new(),
@@ -739,6 +748,7 @@ fn local_assignment_execution_writeback_stamps_runtime_address() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Assigned run".to_owned(),
                 description: String::new(),
@@ -758,6 +768,7 @@ fn local_assignment_execution_writeback_stamps_runtime_address() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,

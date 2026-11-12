@@ -1805,6 +1805,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Created issue".to_owned(),
                     description: "Description".to_owned(),
@@ -1912,6 +1913,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "GitLab created".to_owned(),
                     description: "GitLab body".to_owned(),

@@ -124,6 +124,7 @@ fn tracks_additional_context_for_default_runtime_issues() {
         .create_task(
             DEFAULT_WORK_ITEM_PROJECT_ID,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Temporary child context".to_owned(),
                 description: String::new(),
@@ -184,6 +185,7 @@ fn lists_task_bindings_for_multiple_items_in_one_query() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "First bound task".to_owned(),
                 description: String::new(),
@@ -202,6 +204,7 @@ fn lists_task_bindings_for_multiple_items_in_one_query() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Second bound task".to_owned(),
                 description: String::new(),
@@ -262,6 +265,7 @@ fn keeps_one_system_binding_alongside_the_current_user_binding() {
         .create_task(
             DEFAULT_WORK_ITEM_PROJECT_ID,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "System task".to_owned(),
                 description: String::new(),
@@ -280,6 +284,7 @@ fn keeps_one_system_binding_alongside_the_current_user_binding() {
         .create_task(
             &user_project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "User issue".to_owned(),
                 description: String::new(),
@@ -371,6 +376,7 @@ fn stores_project_content_without_persisting_external_issues() {
         .create_task(
             &local_project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Persisted".to_owned(),
                 description: String::new(),
@@ -547,6 +553,7 @@ fn finalized_delivery_is_bound_to_the_source_workflow_node() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Workflow delivery".to_owned(),
                 description: String::new(),

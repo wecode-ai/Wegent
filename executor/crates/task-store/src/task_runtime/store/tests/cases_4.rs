@@ -8,6 +8,7 @@ fn local_recovery_requeues_expired_runs() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Recover me".to_owned(),
                 description: String::new(),
@@ -75,6 +76,7 @@ fn local_reconciliation_uses_runtime_turn_truth() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Reconcile me".to_owned(),
                 description: String::new(),
@@ -202,6 +204,7 @@ fn local_cancel_terminalizes_only_before_runtime_delivery() {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: title.to_owned(),
                     description: String::new(),
@@ -291,6 +294,7 @@ fn local_recovery_terminalizes_missing_runtime_and_unblocks_agent_queue() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Reconcile me".to_owned(),
                 description: String::new(),
@@ -318,6 +322,7 @@ fn local_recovery_terminalizes_missing_runtime_and_unblocks_agent_queue() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Run after recovery".to_owned(),
                 description: String::new(),
@@ -407,6 +412,7 @@ fn local_recovery_retries_a_delivered_run_missing_from_runtime() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Retry missing runtime task".to_owned(),
                 description: String::new(),
@@ -495,6 +501,7 @@ fn local_runtime_failure_creates_a_new_attempt_with_a_new_identity() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Retry me".to_owned(),
                 description: String::new(),
@@ -719,6 +726,7 @@ fn migrates_legacy_schema_without_assignee_agent_id() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "After migration".to_owned(),
                 description: String::new(),
@@ -738,6 +746,7 @@ fn migrates_legacy_schema_without_assignee_agent_id() {
             &project.id,
             &task.id,
             TaskUpdate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 position: None,
                 assignee_group_id: None,
@@ -770,6 +779,7 @@ fn local_task_status_history_records_creation_and_all_status_updates() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Track status".to_owned(),
                 description: String::new(),
@@ -840,6 +850,7 @@ fn local_task_status_history_records_creation_and_all_status_updates() {
         .create_task(
             &project.id,
             TaskCreate {
+                assignee_group_source_id: None,
                 milestone_id: None,
                 title: "Workflow status".to_owned(),
                 description: String::new(),

@@ -99,6 +99,8 @@ pub struct TaskCreate {
     #[serde(default)]
     pub assignee_group_id: Option<String>,
     #[serde(default)]
+    pub assignee_group_source_id: Option<String>,
+    #[serde(default)]
     pub workflow: Option<Value>,
 }
 
@@ -119,6 +121,8 @@ pub struct TaskUpdate {
     pub assignee_user_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "deserialize_optional_group_id")]
     pub assignee_group_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_optional_group_id")]
+    pub assignee_group_source_id: Option<Option<String>>,
     pub execution_payload: Option<Value>,
     pub workflow: Option<Option<Value>>,
 }

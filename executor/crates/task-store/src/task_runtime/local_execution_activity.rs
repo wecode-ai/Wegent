@@ -10,6 +10,10 @@ pub(super) fn create_local_execution(
     priority: &str,
     mut payload: Value,
 ) -> Result<i64, TaskRuntimeError> {
+    if get_item_from(connection, project_id, "chat_group")?.is_some() {
+        chat_groups::require_participation(connection, project_id, item_id, true)?;
+        task_execution_agent(connection, project_id, item_id, agent_id, &payload)?;
+    }
     let metadata = &agent.metadata;
     if metadata
         .get("routing_configuration_required")

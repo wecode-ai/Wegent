@@ -228,7 +228,7 @@ pub(super) fn require_participation(
     Ok(())
 }
 fn view(group: LoopItem) -> Value {
-    json!({"id":group.id,"project_key":group.project_key,"name":group.name,"description":group.description,"status":group.status,"version":group.version,"role":"Owner","created_by_user_id":0,"created_at":group.created_at,"updated_at":group.updated_at,"configuration":{"board_config":group.metadata["board_config"],"board_views":group.metadata["board_views"],"card_display":group.metadata["card_display"],"tags":group.metadata["tags"]}})
+    json!({"id":group.id,"project_key":group.project_key,"name":group.name,"description":group.description,"status":group.status,"version":group.version,"role":"Owner","created_by_user_id":0,"created_at":group.created_at,"updated_at":group.updated_at,"configuration":{"board_config":group.metadata["board_config"],"board_views":group.metadata["board_views"],"card_display":group.metadata["card_display"],"tags":group.metadata["tags"],"collaboration_groups":group.metadata.get("collaboration_groups").cloned().unwrap_or(json!([])),"automatic_processing_rules":group.metadata.get("automatic_processing_rules").cloned().unwrap_or(json!([])),"execution_environment":group.metadata.get("execution_environment").cloned().unwrap_or(json!({}))}})
 }
 fn ids(
     connection: &Connection,
@@ -378,37 +378,7 @@ impl LocalTaskStore {
                 let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
                 let mut group = local_group(&tx, id, false)?;
                 if let Some(configuration) = input.get("configuration") {
-                    let configuration = configuration.as_object().ok_or_else(|| {
-                        TaskRuntimeError::Invalid("Invalid group configuration".into())
-                    })?;
-                    for (key, value) in configuration {
-                        if !matches!(
-                            key.as_str(),
-                            "board_config" | "board_views" | "card_display" | "tags"
-                        ) {
-                            return Err(TaskRuntimeError::Invalid(
-                                "Invalid group configuration".into(),
-                            ));
-                        }
-                        if key == "board_views" {
-                            crate::task_runtime::board_views::validate_update(
-                                &group.metadata[key],
-                                value,
-                            )?;
-                        }
-                        if key == "board_config" {
-                            group.metadata[key] = project_status::group_board_config(value)?;
-                            continue;
-                        }
-                        if key == "tags" {
-                            let tags: Vec<String> =
-                                serde_json::from_value(value.clone()).map_err(|_| {
-                                    TaskRuntimeError::Invalid("Invalid group tags".into())
-                                })?;
-                            crate::task_runtime::tagging::validate_tags(&tags)?;
-                        }
-                        group.metadata[key] = value.clone();
-                    }
+                    group_configuration::apply(&tx, &mut group, configuration)?;
                 }
                 if status=="archived"&&tx.query_row("SELECT COUNT(*) FROM loop_item_executions WHERE cloud_project_id=?1 AND status NOT IN ('completed','failed','cancelled')",[id],|r|r.get::<_,i64>(0))?>0{return Err(TaskRuntimeError::Invalid("Stop active executions before archiving the group".into()))}
                 let changed=tx.execute("UPDATE loop_items SET name=?1,description=?2,status=?3,version=version+1,updated_at=?4,metadata=?7 WHERE id=?5 AND resource_type='chat_group' AND version=?6",params![name,input["description"].as_str().unwrap_or_default(),status,now(),id,input["version"].as_i64().unwrap_or(0),group.metadata.to_string()])?;

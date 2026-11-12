@@ -149,6 +149,16 @@ impl LocalTaskStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         chat_groups::require_participation(&transaction, project_id, task_id, true)?;
+        let group_agent = if get_item_from(&transaction, project_id, "chat_group")?.is_some() {
+            Some(task_resource_agent(
+                &transaction,
+                project_id,
+                task_id,
+                agent_id,
+            )?)
+        } else {
+            None
+        };
         if let Some((message_id, status)) = transaction
             .query_row(
                 "SELECT message_id, status FROM loop_item_comments
@@ -168,16 +178,25 @@ impl LocalTaskStore {
             )
             .optional()?
         {
+            let comment = comment_row(&transaction, &message_id)?;
+            if group_agent.is_some() && comment.sender_id != agent_id {
+                return Err(TaskRuntimeError::Invalid(
+                    "Runtime comment belongs to another Agent binding".into(),
+                ));
+            }
             if matches!(status.as_str(), "pending" | "streaming") {
                 move_runtime_comment_task_to_in_progress(&transaction, task_id, None)?;
             }
-            let comment = comment_row(&transaction, &message_id)?;
             transaction.commit()?;
             return Ok(comment);
         }
-        let agent = get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
-            TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-        })?;
+        let agent = if let Some(agent) = group_agent {
+            agent
+        } else {
+            get_item_from(&transaction, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+            })?
+        };
         let comment = insert_comment(
             &transaction,
             &LocalCommentCreate {

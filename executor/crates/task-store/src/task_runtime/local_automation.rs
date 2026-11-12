@@ -360,10 +360,15 @@ fn dispatch(
             false
         }
         "agent" => {
-            let agent = get_item_from(connection, target_id, "chat_agent")?.ok_or_else(|| {
-                TaskRuntimeError::Invalid("automation Agent was not found".into())
-            })?;
-            if agent.cloud_project_id.as_deref() != Some(&project.id)
+            let agent = if project.resource_type == "chat_group" {
+                task_resource_agent(connection, &project.id, task_id, target_id)?
+            } else {
+                get_item_from(connection, target_id, "chat_agent")?.ok_or_else(|| {
+                    TaskRuntimeError::Invalid("automation Agent was not found".into())
+                })?
+            };
+            if (project.resource_type != "chat_group"
+                && agent.cloud_project_id.as_deref() != Some(&project.id))
                 || agent.status.as_deref() != Some("active")
             {
                 return Err(TaskRuntimeError::Invalid(
@@ -538,7 +543,16 @@ impl LocalTaskStore {
     }
 
     pub fn tick_project_automations(&self) -> Result<(), TaskRuntimeError> {
-        let projects = self.list_projects()?;
+        let mut projects = self.list_projects()?;
+        let group_ids = {
+            let connection = self.connection()?;
+            let mut statement = connection.prepare("SELECT id FROM loop_items WHERE resource_type='chat_group' AND status='active' AND deleted_at IS NULL")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for id in group_ids {
+            projects.push(self.get_work_container(&id)?);
+        }
         for project in projects {
             if project.metadata["project_store"] == "backend" {
                 continue;
@@ -552,8 +566,12 @@ impl LocalTaskStore {
             let mut connection = self.connection()?;
             let transaction =
                 connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let mut project = get_item_from(&transaction, &project.id, "project")?
+            let mut project = work_container_from(&transaction, &project.id)?
                 .ok_or(TaskRuntimeError::ProjectNotFound)?;
+            if project.resource_type == "chat_group" && project.status.as_deref() != Some("active")
+            {
+                continue;
+            }
             let mut changed = false;
             for rule in rules(&project) {
                 if rule["enabled"] == false || text(&rule, "triggerType") != "schedule" {
@@ -602,8 +620,11 @@ impl LocalTaskStore {
     ) -> Result<Value, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let project = get_item_from(&transaction, project_id, "project")?
+        let project = work_container_from(&transaction, project_id)?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        if project.resource_type == "chat_group" {
+            chat_groups::local_group(&transaction, project_id, true)?;
+        }
         let rule = rules(&project)
             .into_iter()
             .find(|rule| text(rule, "id") == rule_id)

@@ -184,13 +184,37 @@ impl LocalTaskStore {
         let assigned_agent = input
             .assignee_agent_id
             .as_deref()
-            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .map(|agent_id| {
+                if project.resource_type == "chat_group" {
+                    group_resource_agent(
+                        &transaction,
+                        project_id,
+                        classification_project_id.as_deref(),
+                        agent_id,
+                    )
+                } else {
+                    collaboration_agent(&transaction, project_id, agent_id)
+                }
+            })
             .transpose()?;
         let assigned_group = input
             .assignee_group_id
             .as_deref()
-            .map(|group_id| collaboration_group(&project, group_id))
+            .map(|group_id| {
+                scope_resource_group(
+                    &transaction,
+                    project_id,
+                    classification_project_id.as_deref(),
+                    group_id,
+                    input.assignee_group_source_id.as_deref(),
+                )
+            })
             .transpose()?;
+        if input.assignee_group_source_id.is_some() && input.assignee_group_id.is_none() {
+            return Err(TaskRuntimeError::Invalid(
+                "A collaboration group source requires a group target".into(),
+            ));
+        }
         if let Some(parent_id) = input.parent_id.as_deref() {
             require_parent(&transaction, project_id, parent_id, None)?;
         }
@@ -290,6 +314,10 @@ impl LocalTaskStore {
                 input.assignee_user_id,
             ],
         )?;
+        chat_groups::initialize_thread(&transaction, &project, &id)?;
+        if let Some(target) = classification_project_id.as_deref() {
+            thread_project_links::create_link(&transaction, &id, target)?;
+        }
         assignment_receipts::sync_assignment_receipt(&transaction, project_id, &id, &metadata)?;
         if let Some(group) = assigned_group.as_ref() {
             dispatch_collaboration_group_assignment(
@@ -326,10 +354,6 @@ impl LocalTaskStore {
             &id,
             local_automation::AutomationEvent::Created,
         )?;
-        chat_groups::initialize_thread(&transaction, &project, &id)?;
-        if let Some(target) = classification_project_id.as_deref() {
-            thread_project_links::create_link(&transaction, &id, target)?;
-        }
         transaction.commit()?;
         drop(connection);
         self.get_task(project_id, &id)
@@ -356,6 +380,23 @@ impl LocalTaskStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current =
             get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let mut input = input;
+        if input
+            .assignee_group_source_id
+            .as_ref()
+            .is_some_and(Option::is_some)
+            && input.assignee_group_id.is_none()
+        {
+            let target = current.metadata["collaboration_group"]["id"]
+                .as_str()
+                .map(ToOwned::to_owned);
+            if target.is_none() && input.assignee_group_source_id.as_ref().unwrap().is_some() {
+                return Err(TaskRuntimeError::Invalid(
+                    "A collaboration group source requires a group target".into(),
+                ));
+            }
+            input.assignee_group_id = Some(target);
+        }
         if current.cloud_project_id.as_deref() != Some(project_id) {
             return Err(TaskRuntimeError::TaskNotFound);
         }
@@ -383,7 +424,7 @@ impl LocalTaskStore {
             .assignee_agent_id
             .as_ref()
             .and_then(|agent_id| agent_id.as_deref())
-            .map(|agent_id| collaboration_agent(&transaction, project_id, agent_id))
+            .map(|agent_id| task_resource_agent(&transaction, project_id, task_id, agent_id))
             .transpose()?;
         if let Some(Some(parent_id)) = input.parent_id.as_ref() {
             require_parent(&transaction, project_id, parent_id, Some(task_id))?;
@@ -415,16 +456,30 @@ impl LocalTaskStore {
             .as_str()
             .map(ToOwned::to_owned);
         let requested_group_id = input.assignee_group_id.as_ref().cloned().flatten();
-        let collaboration_group_changed = input.assignee_group_id.is_some()
-            && previous_group_id.as_deref() != requested_group_id.as_deref();
         let selected_collaboration_group =
             if let Some(Some(group_id)) = input.assignee_group_id.as_ref() {
-                let project = work_container_from(&transaction, project_id)?
-                    .ok_or(TaskRuntimeError::ProjectNotFound)?;
-                Some(collaboration_group(&project, group_id)?)
+                Some(task_resource_group(
+                    &transaction,
+                    project_id,
+                    task_id,
+                    group_id,
+                    input
+                        .assignee_group_source_id
+                        .as_ref()
+                        .and_then(|source| source.as_deref()),
+                )?)
             } else {
                 None
             };
+        let previous_source = current.metadata["collaboration_group"]["binding_owner_id"]
+            .as_str()
+            .unwrap_or(project_id);
+        let selected_source = selected_collaboration_group
+            .as_ref()
+            .and_then(|group| group["binding_owner_id"].as_str());
+        let collaboration_group_changed = input.assignee_group_id.is_some()
+            && (previous_group_id.as_deref() != requested_group_id.as_deref()
+                || (requested_group_id.is_some() && selected_source != Some(previous_source)));
         let mut metadata = current.metadata;
         if let Some(milestone_id) = input.milestone_id {
             let linked_project = if get_item_from(&transaction, project_id, "chat_group")?.is_some()

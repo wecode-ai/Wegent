@@ -4,8 +4,11 @@ pub(super) fn dispatch_collaboration_group_assignment(
     connection: &Connection,
     input: CollaborationGroupExecutionInput<'_>,
 ) -> Result<Option<i64>, TaskRuntimeError> {
-    let project = get_item_from(connection, input.project_id, "project")?
-        .ok_or(TaskRuntimeError::ProjectNotFound)?;
+    let binding_owner = input.group["binding_owner_id"]
+        .as_str()
+        .unwrap_or(input.project_id);
+    let project =
+        work_container_from(connection, binding_owner)?.ok_or(TaskRuntimeError::ProjectNotFound)?;
     let leader = input.group.get("leader").ok_or_else(|| {
         TaskRuntimeError::Invalid("Collaboration team leader is missing".to_owned())
     })?;
@@ -27,11 +30,18 @@ pub(super) fn dispatch_collaboration_group_assignment(
             "Collaboration team leader kind is invalid".to_owned(),
         ));
     }
-    let leader_agent = collaboration_agent(connection, input.project_id, leader_id)?;
+    let resource_payload = json!({"collaboration_group":input.group});
+    let leader_agent = task_execution_agent(
+        connection,
+        input.project_id,
+        input.item_id,
+        leader_id,
+        &resource_payload,
+    )?;
     let mut execution_payload = input.payload.as_object().cloned().unwrap_or_default();
     runner_dispatch::add_group_profiles(
         connection,
-        input.project_id,
+        binding_owner,
         input.group,
         &mut execution_payload,
     )?;
@@ -146,6 +156,9 @@ pub(super) fn collaboration_agent(
     project_id: &str,
     agent_id: &str,
 ) -> Result<LoopItem, TaskRuntimeError> {
+    if get_item_from(connection, project_id, "chat_group")?.is_some() {
+        return group_resource_agent(connection, project_id, None, agent_id);
+    }
     let mut statement = connection.prepare(
         "SELECT id, resource_type, project_space, cloud_project_id, parent_id,
                 public_id, project_key, name, title, description, sequence_number,

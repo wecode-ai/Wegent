@@ -366,6 +366,8 @@ mod validation;
 mod record_rows;
 
 mod collaboration;
+mod group_configuration;
+mod resource_bindings;
 
 mod execution_payload;
 use binding_rows::get_binding_by_kind;
@@ -407,6 +409,10 @@ use record_rows::map_chat_agent;
 use record_rows::map_comment;
 use record_rows::map_execution;
 use record_rows::move_runtime_comment_task_to_in_progress;
+use resource_bindings::{
+    group_resource_agent, scope_resource_group, task_execution_agent, task_resource_agent,
+    task_resource_group,
+};
 use schema::migrate;
 use schema::unused_project_key;
 use validation::validate_chat_agent_runtime;

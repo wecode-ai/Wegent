@@ -5048,6 +5048,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Investigate load".to_owned(),
                     description: String::new(),
@@ -5231,6 +5232,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Fix OAuth callback".to_owned(),
                     description: "Login fails after redirect".to_owned(),
@@ -5249,6 +5251,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Write deployment guide".to_owned(),
                     description: String::new(),
@@ -5313,6 +5316,7 @@ mod tests {
                 .create_task(
                     project_id,
                     TaskCreate {
+                        assignee_group_source_id: None,
                         milestone_id: None,
                         title: title.to_owned(),
                         description: String::new(),
@@ -5360,6 +5364,7 @@ mod tests {
             .create_task(
                 &project.id,
                 TaskCreate {
+                    assignee_group_source_id: None,
                     milestone_id: None,
                     title: "Inspect attachment".to_owned(),
                     description: String::new(),

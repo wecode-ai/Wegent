@@ -315,12 +315,17 @@ impl LocalTaskStore {
     ) -> Result<LocalExecution, TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
-            TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
-        })?;
+        let group_owned = get_item_from(&connection, project_id, "chat_group")?.is_some();
+        let agent = if group_owned {
+            task_resource_agent(&connection, project_id, task_id, agent_id)?
+        } else {
+            get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+                TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+            })?
+        };
         let task =
             get_item_from(&connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
-        if agent.cloud_project_id.as_deref() != Some(project_id)
+        if (!group_owned && agent.cloud_project_id.as_deref() != Some(project_id))
             || agent.status.as_deref() != Some("active")
             || task.cloud_project_id.as_deref() != Some(project_id)
         {

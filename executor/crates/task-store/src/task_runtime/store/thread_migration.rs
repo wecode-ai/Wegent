@@ -182,7 +182,13 @@ fn inventory(
                 .get("collaboration_group")
                 .is_some_and(|value| !value.is_null())
         {
-            blockers.push("execution_resource_mapping_required".into());
+            match require_original_resources(connection, source, &id) {
+                Ok(()) => {}
+                Err(TaskRuntimeError::Invalid(_)) => {
+                    blockers.push("execution_resource_mapping_required".into())
+                }
+                Err(error) => return Err(error),
+            }
         }
         let author = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM loop_item_comments WHERE project_id=?1
@@ -299,6 +305,9 @@ fn move_entry(
     retain: bool,
 ) -> Result<(), TaskRuntimeError> {
     let mut metadata = raw_metadata(connection, &entry.id)?;
+    if retain && metadata["collaboration_group"].is_object() {
+        metadata["collaboration_group"]["binding_owner_id"] = json!(report.source_project_id);
+    }
     if !retain {
         metadata.as_object_mut().unwrap().remove("milestone_id");
     }
@@ -327,6 +336,68 @@ fn require_idle(connection: &Connection, thread: &str) -> Result<(), TaskRuntime
     )?;
     if active {
         return Err(invalid("Finish active Thread execution before migration"));
+    }
+    Ok(())
+}
+
+struct HistoricalAssignment {
+    agent: Option<String>,
+    metadata: Value,
+}
+
+impl HistoricalAssignment {
+    fn has_resources(&self) -> bool {
+        self.agent.as_deref().is_some_and(|id| !id.is_empty())
+            || self
+                .metadata
+                .get("collaboration_group")
+                .is_some_and(|group| !group.is_null())
+    }
+}
+
+fn historical_assignment(
+    connection: &Connection,
+    source: &str,
+    thread: &str,
+) -> Result<HistoricalAssignment, TaskRuntimeError> {
+    let agent = connection.query_row(
+        "SELECT assignee_agent_id FROM loop_items WHERE id=?1 AND resource_type='task' AND cloud_project_id=?2",
+        params![thread,source], |row| row.get::<_,Option<String>>(0)).optional()?
+        .ok_or(TaskRuntimeError::TaskNotFound)?;
+    Ok(HistoricalAssignment {
+        agent,
+        metadata: raw_metadata(connection, thread)?,
+    })
+}
+
+fn require_original_resources(
+    connection: &Connection,
+    source: &str,
+    thread: &str,
+) -> Result<(), TaskRuntimeError> {
+    let task = historical_assignment(connection, source, thread)?;
+    if let Some(agent) = task.agent.as_deref().filter(|id| !id.is_empty()) {
+        let binding = collaboration_agent(connection, source, agent)?;
+        if binding.status.as_deref() != Some("active") {
+            return Err(invalid("Historical Agent is unavailable"));
+        }
+    }
+    if !task.metadata["collaboration_group"].is_null() {
+        let snapshot = &task.metadata["collaboration_group"];
+        if snapshot["binding_owner_id"]
+            .as_str()
+            .is_some_and(|owner| owner != source)
+        {
+            return Err(invalid(
+                "Historical crew binding belongs to another container",
+            ));
+        }
+        let id = snapshot["id"]
+            .as_str()
+            .ok_or_else(|| invalid("Historical crew identity is missing"))?;
+        let project = thread_project_links::require_target(connection, source)?;
+        let group = collaboration_group(&project, id)?;
+        runner_dispatch::group_agents(connection, source, &group)?;
     }
     Ok(())
 }
@@ -372,13 +443,22 @@ impl LocalTaskStore {
                 status: row.get(4)?,
             }),
         ).optional()?;
-        let marker = json!({"inventory_id":checkpoint,"thread_ids":report.entries.iter().map(|entry|&entry.id).collect::<Vec<_>>(),"retain_source_project":retain});
-        let marker = marker.to_string();
+        let mut marker = json!({"inventory_id":checkpoint,"thread_ids":report.entries.iter().map(|entry|&entry.id).collect::<Vec<_>>(),"retain_source_project":retain});
         if let Some(existing) = existing {
+            let mut identity: Value =
+                serde_json::from_str(existing.metadata.as_deref().unwrap_or("null"))
+                    .map_err(|_| invalid("Migration checkpoint identity collision"))?;
+            let origin = identity
+                .as_object_mut()
+                .ok_or_else(|| invalid("Migration checkpoint identity collision"))?
+                .remove("retained_agent_bindings");
+            if origin.is_some_and(|value| !value.is_object()) {
+                return Err(invalid("Migration checkpoint identity collision"));
+            }
             if existing.kind != "thread_migration"
                 || existing.parent.as_deref() != Some(&report.target_group_id)
                 || existing.source.as_deref() != Some(&report.source_project_id)
-                || existing.metadata.as_deref() != Some(marker.as_str())
+                || identity != marker
                 || existing.status.as_deref() != Some("completed")
             {
                 return Err(invalid("Migration checkpoint identity collision"));
@@ -413,8 +493,24 @@ impl LocalTaskStore {
                 "Migration inventory changed or has unresolved blockers",
             ));
         }
+        let mut retained_agents = BTreeMap::new();
         for entry in &report.entries {
             require_idle(&tx, &entry.id)?;
+            let task = historical_assignment(&tx, &report.source_project_id, &entry.id)?;
+            if task.has_resources() {
+                if !retain {
+                    return Err(invalid(
+                        "Retain the source project or explicitly map its execution resources",
+                    ));
+                }
+                require_original_resources(&tx, &report.source_project_id, &entry.id)?;
+                if let Some(agent) = task.agent.as_ref().filter(|id| !id.is_empty()) {
+                    retained_agents.insert(entry.id.clone(), agent.clone());
+                }
+            }
+        }
+        if retain {
+            marker["retained_agent_bindings"] = json!(retained_agents);
         }
         let end_number = report
             .next_number

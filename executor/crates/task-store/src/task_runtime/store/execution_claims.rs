@@ -13,6 +13,13 @@ fn require_execution_authority(
     }
     if owner.resource_type == "chat_group" {
         chat_groups::require_participation(connection, &owner.id, &item.id, true)?;
+        task_execution_agent(
+            connection,
+            &owner.id,
+            &item.id,
+            &execution.agent_id,
+            execution.execution_payload.as_ref().unwrap_or(&Value::Null),
+        )?;
     }
     Ok(())
 }
