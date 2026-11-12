@@ -1383,20 +1383,27 @@ class TestModelAggregationService:
         assert "user-model" in names
 
 
-def _wework_model(test_user: User, name: str, *, available: bool) -> Kind:
+def _wework_model(
+    test_user: User,
+    name: str,
+    *,
+    available: bool,
+    namespace: str = "default",
+    category: str = "llm",
+) -> Kind:
     return Kind(
         user_id=test_user.id,
         kind="Model",
         name=name,
-        namespace="default",
+        namespace=namespace,
         is_active=True,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Model",
-            "metadata": {"name": name, "namespace": "default"},
+            "metadata": {"name": name, "namespace": namespace},
             "spec": {
                 "isWeworkAvailable": available,
-                "modelType": "llm",
+                "modelType": category,
                 "modelConfig": {
                     "env": {"model": "openai", "model_id": f"{name}-upstream"}
                 },
@@ -1434,3 +1441,75 @@ def test_single_model_lookup_applies_wework_availability(
         )
         is not None
     )
+
+
+def test_single_model_lookup_enforces_model_category(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+):
+    llm = _wework_model(test_user, "chat-model", available=True)
+    embedding = _wework_model(
+        test_user, "embedding-model", available=True, category="embedding"
+    )
+    by_name = {llm.name: llm, embedding.name: embedding}
+    monkeypatch.setattr(
+        "app.services.model_aggregation_service.kind_service.get_resource",
+        lambda user_id, kind, namespace, name: by_name.get(name),
+    )
+
+    assert (
+        model_aggregation_service.resolve_model(
+            test_db, test_user, "embedding-model", "user"
+        )
+        is not None
+    )
+    assert (
+        model_aggregation_service.resolve_model(
+            test_db,
+            test_user,
+            "embedding-model",
+            "user",
+            model_category_type="llm",
+        )
+        is None
+    )
+    assert (
+        model_aggregation_service.resolve_model(
+            test_db,
+            test_user,
+            "chat-model",
+            "user",
+            model_category_type="llm",
+        )
+        is not None
+    )
+
+
+def test_group_lookup_continues_after_a_wework_unavailable_group(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+):
+    unavailable = _wework_model(
+        test_user, "shared-group-model", available=False, namespace="team-a"
+    )
+    available = _wework_model(
+        test_user, "shared-group-model", available=True, namespace="team-b"
+    )
+    by_namespace = {unavailable.namespace: unavailable, available.namespace: available}
+    monkeypatch.setattr(
+        "app.services.group_permission.get_user_groups",
+        lambda db, user_id: ["team-a", "team-b"],
+    )
+    monkeypatch.setattr(
+        "app.services.model_aggregation_service.get_referenced_capability",
+        lambda db, kind, name, user_id, namespace: by_namespace.get(namespace),
+    )
+
+    result = model_aggregation_service.get_model_by_name_and_type(
+        test_db,
+        test_user,
+        "shared-group-model",
+        ModelType.GROUP,
+        client_origin="wework",
+    )
+
+    assert result is not None
+    assert result["namespace"] == "team-b"

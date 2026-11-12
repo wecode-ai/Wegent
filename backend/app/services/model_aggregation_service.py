@@ -729,6 +729,7 @@ class ModelAggregationService:
         name: str,
         model_type: ModelType,
         client_origin: Optional[str] = None,
+        model_category_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Get a specific model by name and type.
@@ -743,6 +744,8 @@ class ModelAggregationService:
             model_type: Model type ('public' or 'user')
             client_origin: Optional client surface; 'wework' applies the same
                 availability filter as the Wework catalog.
+            model_category_type: Optional model category to require, such as
+                'llm'.
 
         Returns:
             Model data dictionary with 'type' field, or None if not found
@@ -763,10 +766,14 @@ class ModelAggregationService:
             if resource:
                 model_data = kind_service._format_resource("Model", resource)
                 info = self._extract_model_info_from_crd(model_data)
-                # The list endpoints apply this filter for Wework; a direct
-                # single-model read must not bypass it.
-                if client_origin == CLIENT_ORIGIN_WEWORK and not info.get(
-                    "is_wework_available", False
+                # The list endpoints apply these filters for Wework; a direct
+                # single-model read must not bypass them.
+                if (
+                    client_origin == CLIENT_ORIGIN_WEWORK
+                    and not info.get("is_wework_available", False)
+                ) or (
+                    model_category_type
+                    and info.get("model_category_type", "llm") != model_category_type
                 ):
                     return None
 
@@ -805,10 +812,15 @@ class ModelAggregationService:
                     continue
                 model_data = kind_service._format_resource("Model", resource)
                 info = self._extract_model_info_from_crd(model_data)
-                if client_origin == CLIENT_ORIGIN_WEWORK and not info.get(
-                    "is_wework_available", False
+                if (
+                    client_origin == CLIENT_ORIGIN_WEWORK
+                    and not info.get("is_wework_available", False)
+                ) or (
+                    model_category_type
+                    and info.get("model_category_type", "llm") != model_category_type
                 ):
-                    return None
+                    # Another group can expose a different model with this name.
+                    continue
                 return UnifiedModel(
                     name=resource.name,
                     model_type=ModelType.GROUP,
@@ -841,8 +853,13 @@ class ModelAggregationService:
                         status_code=403,
                         detail=f"Model '{name}' is restricted to whitelisted users",
                     )
-                if client_origin == CLIENT_ORIGIN_WEWORK and not model_dict.get(
-                    "is_wework_available", False
+                if (
+                    client_origin == CLIENT_ORIGIN_WEWORK
+                    and not model_dict.get("is_wework_available", False)
+                ) or (
+                    model_category_type
+                    and model_dict.get("model_category_type", "llm")
+                    != model_category_type
                 ):
                     return None
                 return UnifiedModel(
@@ -884,6 +901,7 @@ class ModelAggregationService:
         name: str,
         model_type: Optional[str] = None,
         client_origin: Optional[str] = None,
+        model_category_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Resolve a model by name, optionally with type hint.
@@ -900,6 +918,8 @@ class ModelAggregationService:
             model_type: Optional model type hint ('public', 'user', 'group', or 'runtime')
             client_origin: Optional client surface; 'wework' applies the same
                 availability filter as the Wework catalog.
+            model_category_type: Optional model category to require, such as
+                'llm'.
 
         Returns:
             Model data dictionary with 'type' field, or None if not found
@@ -908,21 +928,36 @@ class ModelAggregationService:
             try:
                 mt = ModelType(model_type)
                 return self.get_model_by_name_and_type(
-                    db, current_user, name, mt, client_origin
+                    db,
+                    current_user,
+                    name,
+                    mt,
+                    client_origin,
+                    model_category_type,
                 )
             except ValueError:
                 logger.warning(f"Invalid model type: {model_type}")
 
         # Try user models first
         result = self.get_model_by_name_and_type(
-            db, current_user, name, ModelType.USER, client_origin
+            db,
+            current_user,
+            name,
+            ModelType.USER,
+            client_origin,
+            model_category_type,
         )
         if result:
             return result
 
         # Then try public models
         return self.get_model_by_name_and_type(
-            db, current_user, name, ModelType.PUBLIC, client_origin
+            db,
+            current_user,
+            name,
+            ModelType.PUBLIC,
+            client_origin,
+            model_category_type,
         )
 
 

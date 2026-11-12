@@ -80,6 +80,9 @@ def get_unified_model(
     client_origin: Optional[str] = Query(
         None, description="Client surface; 'wework' applies Wework availability"
     ),
+    model_category_type: Optional[str] = Query(
+        None, description="Required model category, such as 'llm'"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -114,6 +117,7 @@ def get_unified_model(
         name=model_name,
         model_type=model_type,
         client_origin=client_origin,
+        model_category_type=model_category_type,
     )
 
     if not result:
