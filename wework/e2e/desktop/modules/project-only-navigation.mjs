@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { expandCollaborationWorkspace } from './workspace-flows.mjs'
+import { expandCollaborationSpaces, expandCollaborationWorkspace } from './workspace-flows.mjs'
 import { selectCollaborationProjectView } from './collaboration-project-navigation.mjs'
 import { verifyBoardPreferenceIsolation } from './collaboration-board-preferences.mjs'
 import {
@@ -165,6 +165,7 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
       )
       const tree = scoped(`[data-testid="collaboration-workspace-tree-${workspace.id}"]`)
       const assertParent = async () => {
+        await expandCollaborationSpaces(control, scoped('').trim(), uiTimeoutMs)
         await control.command('waitFor', tree, { visible: true, timeoutMs: uiTimeoutMs })
         assert.equal(
           Number(

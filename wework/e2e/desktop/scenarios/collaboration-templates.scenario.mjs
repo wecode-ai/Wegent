@@ -311,6 +311,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await wait(control, 'collaboration-platform-root')
+      await expandCollaborationSpaces(control, CONTENT)
       await click(control, 'collaboration-primary-templates')
       await click(control, 'template-tab-available')
       await wait(
@@ -321,7 +322,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await capture(control, '00-account-available')
       await click(control, `template-details-${accountTemplate.id}`)
       // Singleton workspace routing requires the independently loaded local catalog.
-      await expandCollaborationSpaces(control, CONTENT)
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')

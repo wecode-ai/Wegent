@@ -7,6 +7,7 @@ import {
   createLocalCollaborationProject,
   inCollaborationSidebar,
   reloadMainWindow,
+  expandCollaborationSpaces,
 } from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
@@ -100,6 +101,7 @@ export async function verifyCollaborationLocalProjectImport(
     const cloudProject = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
     )
+    await expandCollaborationSpaces(control, scoped('').trim())
     await control.command('waitFor', toggle)
     await control.command('waitFor', cloudWorkspace)
     await control.command('waitFor', cloudToggle)
