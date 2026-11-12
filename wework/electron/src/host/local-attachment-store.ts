@@ -21,6 +21,7 @@ export interface AttachmentUploadStarted {
 export class LocalAttachmentStore {
   private readonly stagingRoot: string
   private readonly uploads = new Map<string, AttachmentUpload>()
+  private readonly finishingUploads = new Map<string, Promise<string>>()
   private readonly completedUploads = new Map<string, string>()
   private initialized: Promise<void> | null = null
 
@@ -72,6 +73,20 @@ export class LocalAttachmentStore {
   async finish(uploadId: string): Promise<string> {
     const completedPath = this.completedUploads.get(uploadId)
     if (completedPath) return completedPath
+    const finishingUpload = this.finishingUploads.get(uploadId)
+    if (finishingUpload) return finishingUpload
+    const request = (async () => {
+      try {
+        return await this.finishUpload(uploadId)
+      } finally {
+        this.finishingUploads.delete(uploadId)
+      }
+    })()
+    this.finishingUploads.set(uploadId, request)
+    return request
+  }
+
+  private async finishUpload(uploadId: string): Promise<string> {
     const upload = this.requireUpload(uploadId)
     if (upload.offset !== upload.expectedSize) {
       throw new Error('Attachment upload is incomplete')

@@ -75,6 +75,21 @@ describe('LocalAttachmentStore', () => {
     await expect(readFile(retriedPath, 'utf8')).resolves.toBe('a')
   })
 
+  test('shares an in-flight finish across concurrent retries', async () => {
+    const root = await temporaryDirectory()
+    const store = new LocalAttachmentStore(root)
+    const started = await store.begin('concurrent.txt', 1)
+    await store.append(started.uploadId, 0, 'YQ==')
+
+    const [firstPath, retriedPath] = await Promise.all([
+      store.finish(started.uploadId),
+      store.finish(started.uploadId),
+    ])
+
+    expect(retriedPath).toBe(firstPath)
+    await expect(readFile(firstPath, 'utf8')).resolves.toBe('a')
+  })
+
   test('rejects offsets, oversized chunks and incomplete uploads', async () => {
     const root = await temporaryDirectory()
     const store = new LocalAttachmentStore(root)

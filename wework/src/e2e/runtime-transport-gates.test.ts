@@ -62,6 +62,32 @@ test('holding an actual response leaves live events independent and preserves it
   expect(await pending).toBe(result)
 })
 
+test('drops one completed response as a transport loss and forwards the retry', async () => {
+  vi.stubEnv('VITE_WEWORK_E2E', 'true')
+  armRuntimeTransportGate({
+    id: 'finish',
+    kind: 'response',
+    name: 'attachment.finish',
+    drop: true,
+  })
+  const result = '/draft/attachment.bin'
+  const transportError = Object.assign(new Error('response lost'), {
+    name: 'DesktopHostTransportError',
+  })
+
+  await expect(
+    gateRuntimeResponse('attachment.finish', { uploadId: 'upload-1' }, result, () => transportError)
+  ).rejects.toBe(transportError)
+  expect(readRuntimeTransportGate('finish')).toMatchObject({
+    deliveries: 0,
+    dropped: true,
+    value: { params: { uploadId: 'upload-1' }, result },
+  })
+  await expect(
+    gateRuntimeResponse('attachment.finish', { uploadId: 'upload-1' }, result, () => transportError)
+  ).resolves.toBe(result)
+})
+
 test('replaying an observed event preserves the real payload and reset releases pending readers', async () => {
   vi.stubEnv('VITE_WEWORK_E2E', 'true')
   armRuntimeTransportGate({ id: 'goal', kind: 'event', name: 'runtime.goal.updated', hold: false })

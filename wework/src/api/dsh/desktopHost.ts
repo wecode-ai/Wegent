@@ -114,7 +114,14 @@ export async function invokeDesktopHost<Result>(
     }
     const result = body.result as Result
     // E2E barriers delay delivery only after the real Electron operation completes.
-    return e2e ? gateRuntimeResponse(capability, params, result) : result
+    return e2e
+      ? gateRuntimeResponse(
+          capability,
+          params,
+          result,
+          () => new DesktopHostTransportError('Electron host response was interrupted')
+        )
+      : result
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
   }
