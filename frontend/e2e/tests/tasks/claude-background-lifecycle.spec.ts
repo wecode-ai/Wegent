@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { APIRequestContext } from '@playwright/test'
 import { test, expect, EXECUTOR_USER, executorMockUrl } from '../../fixtures/executor-test'
 import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
@@ -413,6 +414,14 @@ test('cloud Claude registers downloadable artifacts before new and reused turns 
       })
       expect(released.ok(), await released.text()).toBe(true)
       await waitForTaskTerminal(token, id, /^COMPLETED$/)
+
+      const artifact = page.getByTestId(`remote-workspace-artifact-download-${artifactId}`)
+      await expect(artifact).toBeEnabled()
+      const [download] = await Promise.all([page.waitForEvent('download'), artifact.click()])
+      expect(download.suggestedFilename()).toBe(name)
+      expect(await download.failure()).toBeNull()
+      expect(await readFile(await download.path())).toEqual(Buffer.from(content))
+
       await clearToolScenario(request, prompt)
       const removed = await request.delete(`${MOCK_URL}/stream-rules`, {
         params: { matchText: marker },

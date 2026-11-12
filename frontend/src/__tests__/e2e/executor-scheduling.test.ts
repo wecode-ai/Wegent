@@ -118,6 +118,11 @@ describe('Executor scheduling boundaries', () => {
         'tasks/claude-background-lifecycle.spec.ts:ClaudeCode persists a child message above 1 MiB and completes after a real background notification'
       )
     ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/claude-background-lifecycle.spec.ts:cloud Claude registers downloadable artifacts before new and reused turns finish'
+      )
+    ).toBe(true)
     expect(counts).toEqual(expectedCounts)
   })
 })
