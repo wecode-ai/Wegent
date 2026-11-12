@@ -424,6 +424,8 @@ Open **Settings → Personal → Context**:
 | Computer use → Accessibility access / Screen recording access | Open the matching OS settings, authorize and return                                 | Changing chat permission mode cannot replace OS authorization           |
 | Computer use → Action approval                                | Read the confirmation policy for write operations                                   | A policy display, not a bypass switch                                   |
 
+After enabling computer use and granting OS permissions, continue the original conversation. Computer tools load when a conversation starts or resumes, without waiting for other tasks to finish or restarting the shared Codex process. Disabling the feature stops the bridge and revokes access immediately; after re-enabling, existing computer tools use the new bridge authorization on their next call. An active turn does not acquire new tools midway through execution.
+
 ## Narrow-window settings
 
 <!-- ui-source: src/components/settings/MobileSettingsPage.tsx -->
