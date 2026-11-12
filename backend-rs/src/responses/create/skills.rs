@@ -38,8 +38,8 @@ fn dependency(error: brz_mysql::MysqlError) -> FastApiError {
 #[path = "skills_requested.rs"]
 mod requested;
 pub(super) use requested::{
-    append_coding_mcp, append_requested_skills, is_coding_shell, late_bot_reads,
-    resolve_request_preload_skills,
+    append_coding_mcp, append_requested_skills, extend_resolved_skills_from_bot_configs,
+    is_coding_shell, late_bot_reads, resolve_request_preload_skills, sync_bot_skill_refs,
 };
 
 /// `SKILL_BINDING_KIND` / `SKILL_BINDING_NAMESPACE`.

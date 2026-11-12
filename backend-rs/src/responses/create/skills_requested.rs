@@ -419,7 +419,11 @@ pub(crate) async fn resolve_request_preload_skills<
     if coding_coordinate(request) {
         extend_resolved_skills_from_bot_configs(
             mysql,
-            request,
+            request
+                .bot
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
             &mut skills,
             user_preferences,
             tokens,
@@ -526,7 +530,7 @@ pub(crate) async fn resolve_request_preload_skills<
 /// whose filtered string skill names are empty is skipped entirely, preserving
 /// its `skill_refs` field presence; otherwise each of its skills receives the
 /// resolved ref unless a truthy stored ref disagrees on `skill_id`/`namespace`.
-fn sync_bot_skill_refs(bot: &mut Value, resolved: &serde_json::Map<String, Value>) {
+pub(crate) fn sync_bot_skill_refs(bot: &mut Value, resolved: &serde_json::Map<String, Value>) {
     let bot_skills: Vec<String> = bot
         .get("skills")
         .and_then(Value::as_array)
@@ -601,10 +605,10 @@ fn coding_coordinate(request: &crate::responses::create::dispatch::ExecutionRequ
 
 /// `_extend_resolved_skills_from_bot_configs` (`request_builder.py:2746-2787`):
 /// resolve every skill a member bot config declares but the resolution has not
-/// produced yet, through the shared attached/public Skill read.
-async fn extend_resolved_skills_from_bot_configs<M: Mysql, T: UserMcpAccessTokens>(
+/// produced yet, through the shared attached or public Skill read.
+pub(crate) async fn extend_resolved_skills_from_bot_configs<M: Mysql, T: UserMcpAccessTokens>(
     mysql: &M,
-    request: &crate::responses::create::dispatch::ExecutionRequest,
+    bot_configs: &[Value],
     skills: &mut BotSkills,
     user_preferences: Option<&str>,
     tokens: &T,
@@ -619,8 +623,7 @@ async fn extend_resolved_skills_from_bot_configs<M: Mysql, T: UserMcpAccessToken
                 .map(str::to_string)
         })
         .collect();
-    let bot_configs: Vec<Value> = request.bot.as_array().cloned().unwrap_or_default();
-    for bot in &bot_configs {
+    for bot in bot_configs {
         let Some(names) = bot.get("skills").and_then(Value::as_array) else {
             continue;
         };
