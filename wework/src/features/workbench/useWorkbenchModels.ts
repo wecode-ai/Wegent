@@ -292,7 +292,11 @@ export function useWorkbenchModels({
         // because an admin hid it. The single-model endpoint still resolves it;
         // a deleted or restricted model keeps the existing replacement flow.
         try {
-          model = await api.getModel(nextSelectionConfig.modelName, nextSelectionConfig.modelType)
+          model = await api.getModel(
+            nextSelectionConfig.modelName,
+            nextSelectionConfig.modelType,
+            'wework'
+          )
           if (
             !model ||
             (nextSelectionConfig.modelType && model.type !== nextSelectionConfig.modelType) ||

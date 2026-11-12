@@ -280,6 +280,7 @@ def _resolve_routing(
     agent_id: str | None = None,
     session_environment_id: str | None = None,
     group_recovery: bool = False,
+    allow_hidden_models: bool = False,
 ) -> ResolvedRouting:
     if not config.get("model_policy"):
         raise routing_error(
@@ -344,13 +345,14 @@ def _resolve_routing(
     if model.source == "cloud":
         from app.services.runner_cloud_models import require_cloud_model
 
-        # A fixed agent model is a persisted choice: it stays callable after
-        # an admin hides the model from new selections.
+        # A fixed agent model and a saved execution selection are persisted
+        # choices: they stay callable after an admin hides the model from new
+        # selections. New selections are validated before they are persisted.
         require_cloud_model(
             db,
             user_id,
             model,
-            allow_hidden=model_policy.mode == "fixed",
+            allow_hidden=allow_hidden_models or model_policy.mode == "fixed",
         )
     elif model.source == "native" and config["execution_policy"]["mode"] != "fixed":
         raise routing_error(
@@ -787,6 +789,7 @@ def resolve_group_routing(
     selection: dict | None,
     automatic: bool = False,
     session_environment_id: str | None = None,
+    allow_hidden_models: bool = False,
 ) -> dict:
     """A collaboration group shares one Issue runner but keeps member models."""
     from app.models.delivery import ProjectChatAgent
@@ -844,6 +847,7 @@ def resolve_group_routing(
                 automatic=automatic,
                 session_environment_id=session_environment_id,
                 group_recovery=True,
+                allow_hidden_models=allow_hidden_models,
             )
         except HTTPException as error:
             if isinstance(error.detail, dict):

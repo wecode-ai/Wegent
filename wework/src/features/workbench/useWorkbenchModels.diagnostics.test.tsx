@@ -143,7 +143,7 @@ test('keeps a hidden cloud task model when the single-model endpoint resolves it
   expect(hook.result.current.isSelectionReady).toBe(true)
   expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
   expect(hook.result.current.selectedModelAvailable).toBe(true)
-  expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public')
+  expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public', 'wework')
 })
 
 test('keeps the replacement flow when the persisted cloud model no longer resolves', async () => {
@@ -166,7 +166,7 @@ test('keeps the replacement flow when the persisted cloud model no longer resolv
   await waitFor(() => expect(hook.result.current.isConfiguredModelUnavailable).toBe(true))
   expect(hook.result.current.selectedModel).toBeNull()
   expect(hook.result.current.isSelectionReady).toBe(false)
-  expect(api.getModel).toHaveBeenCalledWith('deleted-model', 'public')
+  expect(api.getModel).toHaveBeenCalledWith('deleted-model', 'public', 'wework')
 })
 
 test('does not replace a persisted cloud model on a transient lookup failure', async () => {
@@ -218,7 +218,7 @@ test('does not restore an unrelated selection when the configured model changed 
   expect(hook.result.current.isSelectionReady).toBe(true)
 
   hook.rerender({ selectionConfig: transientConfig })
-  await waitFor(() => expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public'))
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public', 'wework'))
   await waitFor(() => expect(hook.result.current.selectedModel).toBeNull())
   expect(hook.result.current.isSelectionReady).toBe(false)
   expect(hook.result.current.isConfiguredModelUnavailable).toBe(false)
@@ -263,7 +263,7 @@ test('does not clear a newer selection when a cancelled lookup fails', async () 
       }),
     { initialProps: { selectionConfig: hiddenConfig } }
   )
-  await waitFor(() => expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public'))
+  await waitFor(() => expect(api.getModel).toHaveBeenCalledWith('hidden-model', 'public', 'wework'))
 
   hook.rerender({ selectionConfig: taskA })
   await waitFor(() => expect(hook.result.current.selectedModel?.name).toBe('model-a'))

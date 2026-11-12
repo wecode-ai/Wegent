@@ -77,6 +77,9 @@ def get_unified_model(
     model_type: Optional[str] = Query(
         None, description="Model type ('public', 'user', 'group', or 'runtime')"
     ),
+    client_origin: Optional[str] = Query(
+        None, description="Client surface; 'wework' applies Wework availability"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -106,7 +109,11 @@ def get_unified_model(
     from fastapi import HTTPException
 
     result = model_aggregation_service.resolve_model(
-        db=db, current_user=current_user, name=model_name, model_type=model_type
+        db=db,
+        current_user=current_user,
+        name=model_name,
+        model_type=model_type,
+        client_origin=client_origin,
     )
 
     if not result:

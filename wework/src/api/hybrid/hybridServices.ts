@@ -389,7 +389,7 @@ export function createHybridWorkbenchServices(
   const localProjectServices = createLocalAppServices({
     cloudModelGateway,
     listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
-    resolveCloudModel: (name, type) => cloudServices.modelApi.getModel!(name, type),
+    resolveCloudModel: (name, type) => cloudServices.modelApi.getModel!(name, type, 'wework'),
     user: options.user,
   })
   const connectionDependencyProfile = { apiBaseUrl: options.apiBaseUrl, token: options.token }
@@ -419,7 +419,7 @@ export function createHybridWorkbenchServices(
         .then(response => response.items),
     cloudModelGateway,
     listCloudModels: () => cloudServices.agentResourceApi!.listModels(),
-    resolveCloudModel: (name, type) => cloudServices.modelApi.getModel!(name, type),
+    resolveCloudModel: (name, type) => cloudServices.modelApi.getModel!(name, type, 'wework'),
     user: options.user,
     materializeRuntimeTask: async request => {
       try {
