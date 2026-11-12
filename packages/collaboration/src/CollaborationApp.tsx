@@ -112,6 +112,7 @@ interface CollaborationAppProps {
   showProjectBack?: boolean;
   /** Enables Issue archive actions and the project archive box. */
   issueArchiveEnabled?: boolean;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
   onProjectChange?(project: CollaborationProject): void;
   /**
    * Host work that must succeed before the Issue is archived, such as stopping
@@ -144,6 +145,7 @@ export function CollaborationApp({
   refreshProjectRequestKey = 0,
   showProjectBack = true,
   issueArchiveEnabled = false,
+  normalizePastedFiles,
   onProjectChange,
   onCreateTask,
   onPrepareIssueArchive,
@@ -1332,6 +1334,7 @@ export function CollaborationApp({
                 });
               }}
               onError={() => commands.reportError(messages.saveFailed)}
+              normalizePastedFiles={normalizePastedFiles}
             />
           )}
           {selectedIssue && project ? (
@@ -1404,6 +1407,7 @@ export function CollaborationApp({
                 defaultAssistant={host.defaultAssistant}
                 messages={messages}
                 translate={translate}
+                normalizePastedFiles={normalizePastedFiles}
                 onClose={() => {
                   commands.clearSelectedIssue();
                   host.navigate({

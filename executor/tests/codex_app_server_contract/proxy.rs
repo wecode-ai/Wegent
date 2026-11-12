@@ -67,7 +67,9 @@ fn client(root: &tempfile::TempDir, marker: &Path) -> CodexAppServerClient {
     let script = root.path().join("codex");
     fs::write(
         &script,
-        SERVER.replace("__REQUEST_MARKER__", &shell_quote(marker)),
+        wegent_executor_test_support::with_codex_bundled_catalog(
+            &SERVER.replace("__REQUEST_MARKER__", &shell_quote(marker)),
+        ),
     )
     .unwrap();
     let mut permissions = fs::metadata(&script).unwrap().permissions();

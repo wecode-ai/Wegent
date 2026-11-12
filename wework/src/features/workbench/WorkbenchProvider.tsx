@@ -1,3 +1,4 @@
+import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -88,6 +89,7 @@ import {
   settleRuntimeConversationGuidance,
   settleRuntimeConversationSubagents,
   syncRuntimeConversationDeviceAliases,
+  unmarkRuntimeConversationArchived,
 } from './runtimeConversationCache'
 import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
@@ -125,7 +127,6 @@ import {
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
 import {
-  useContinueInNewConversation,
   useHandleBlockedModelSelect,
   useHandleBlockedModelSelection,
   useHandleModelSelectorOpenChange,
@@ -173,7 +174,10 @@ import type {
   WorkbenchPaneContextValue,
   WorkbenchProviderProps,
 } from './workbenchContextTypes'
-import { createRuntimeWorkRefreshQueue } from './workbenchDataRefreshHelpers'
+import {
+  createRuntimeWorkRefreshQueue,
+  mergeRuntimeTaskAddresses,
+} from './workbenchDataRefreshHelpers'
 import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   findFirstSelectableProject,
@@ -503,26 +507,7 @@ function OwnedWorkbenchProvider({
       window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, stableConsumeQueuedPluginTrial)
     }
   }, [consumePluginTrials, stableConsumeQueuedPluginTrial])
-  useEffect(() => {
-    const socketClient = resolvedServices.socketClient
-    if (!socketClient) return undefined
-
-    let isMounted = true
-    void socketClient.ensureConnected().catch(error => {
-      if (isMounted) {
-        console.error('[Workbench] Failed to connect chat socket', error)
-      }
-    })
-
-    return () => {
-      isMounted = false
-      socketClient.dispose()
-    }
-  }, [resolvedServices.socketClient])
-  useEffect(() => {
-    const projectChatClient = resolvedServices.projectChatClient
-    return () => projectChatClient?.dispose()
-  }, [resolvedServices.projectChatClient])
+  useWorkbenchServiceConnections(resolvedServices)
 
   const persistProjectWorkPreference = usePersistProjectWorkPreference({
     projectWorkPreferenceScope,
@@ -638,23 +623,6 @@ function OwnedWorkbenchProvider({
     modelSelectionConfig,
     state.currentRuntimeTask,
   ])
-  const selectModelAndOptions = modelSelection.setSelectedModelAndOptions
-  const selectModelForScope = modelSelection.setSelectionForScope
-  const continueInNewConversation = useContinueInNewConversation({
-    state,
-    selectModelAndOptions,
-    currentUser,
-    resolveRuntimeTaskSummary,
-    draftInputByScope,
-    projectChatScopeKey,
-    t,
-    selectModelForScope,
-    projectModelSelection,
-    setDraftInputForScope,
-    ownershipKey,
-    dispatch,
-    workspaceTabId,
-  })
   const {
     resolveRuntimeTaskModelSelection,
     setRuntimeTaskSelectedModel,
@@ -1219,9 +1187,15 @@ function OwnedWorkbenchProvider({
     })
   }, [stableRefreshWorkLists, workspaceTabRevealRevision])
   useEffect(() => {
-    const queue = createRuntimeWorkRefreshQueue(() =>
-      stableRefreshWorkLists({ refreshDevices: false })
-    )
+    let unarchivedTasks: RuntimeTaskAddress[] = []
+    const queue = createRuntimeWorkRefreshQueue(() => {
+      const restored = unarchivedTasks
+      unarchivedTasks = []
+      return stableRefreshWorkLists({
+        refreshDevices: false,
+        ...(restored.length ? { unarchivedTasks: restored } : {}),
+      })
+    })
     const refreshChangedWork = () => queue.refresh()
     const unsubscribe = resolvedServices.chatStream.subscribe({
       onRuntimeWorkChanged: payload => {
@@ -1231,6 +1205,11 @@ function OwnedWorkbenchProvider({
             `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
             t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
           )
+        }
+        if (payload.archived === false && payload.deviceId) {
+          const restored = { deviceId: payload.deviceId, taskId: payload.taskId }
+          unmarkRuntimeConversationArchived(restored)
+          unarchivedTasks = mergeRuntimeTaskAddresses(unarchivedTasks, [restored])
         }
         void refreshChangedWork().catch(error => {
           console.warn('[Wework] Failed to refresh changed runtime work', error)
@@ -1698,6 +1677,10 @@ function OwnedWorkbenchProvider({
       state.user,
     ]
   )
+  const supportsModelProviderSwitch = Boolean(
+    state.currentRuntimeTask &&
+    resolveRuntimeTaskModelSelection(state.currentRuntimeTask).supportsModelProviderSwitch
+  )
   const projectChatValue = useMemo(
     () => ({
       scopeKey: projectChatScopeKey,
@@ -1709,6 +1692,7 @@ function OwnedWorkbenchProvider({
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
       activeModel,
+      supportsModelProviderSwitch,
       selectedModelOptions: modelSelection.selectedModelOptions,
       modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
@@ -1734,7 +1718,6 @@ function OwnedWorkbenchProvider({
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
       setSelectedModelAndOptions: modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
@@ -1805,12 +1788,12 @@ function OwnedWorkbenchProvider({
       handleModelSelectorOpenChange,
       conversationModels,
       activeModel,
+      supportsModelProviderSwitch,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
-      continueInNewConversation,
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,

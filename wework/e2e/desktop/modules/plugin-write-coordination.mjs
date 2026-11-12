@@ -70,6 +70,7 @@ export async function verifyPluginWriteCoordination({
   await verifyCanonicalNameReactivation({
     cloud,
     control,
+    apiProxy,
     executorHome,
     refreshSurfaces,
     evidence,
@@ -290,6 +291,7 @@ async function seedStaleInstallation({ cloud, item, staleIdentity }) {
 async function verifyCanonicalNameReactivation({
   cloud,
   control,
+  apiProxy,
   executorHome,
   refreshSurfaces,
   evidence,
@@ -313,6 +315,18 @@ async function verifyCanonicalNameReactivation({
     await control.command('clickWhenEnabled', testId(`plugin-marketplace-install-${item.pluginId}`))
     await control.command('waitFor', testId('install-plugin-dialog-confirm'))
     await control.command('clickWhenEnabled', testId('install-plugin-dialog-confirm'))
+    const response = await until(
+      () =>
+        apiProxy.requests.find(
+          request =>
+            request.method === 'POST' &&
+            request.path === `/api/plugins/marketplace/${item.pluginId}/install`
+        ),
+      request => request?.responseCompleted === true,
+      `${staleIdentity} marketplace install request did not complete`,
+      timeoutMs
+    )
+    assert.equal(response.status, 200)
     const installed = await until(
       () => accountPlugin(cloud, slug),
       Boolean,

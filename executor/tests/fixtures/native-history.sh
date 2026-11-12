@@ -1,5 +1,9 @@
 #!/bin/sh
 directory=$(dirname -- "$0")
+if [ "$1" = debug ]; then
+  cat "$directory/bundled_models.json"
+  exit $?
+fi
 cd / || exit 1
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$directory/requests.jsonl"

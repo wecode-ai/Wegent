@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -71,7 +72,11 @@ test("dependency keys follow build inputs and survive application-only changes",
       const source = join(directory, input);
       const original = readFileSync(source, "utf8");
       writeFileSync(source, `${original}\nChanged embedded build input\n`);
-      assert.notEqual(key(), executor, `${input} must invalidate compiled libraries`);
+      assert.notEqual(
+        key(),
+        executor,
+        `${input} must invalidate compiled libraries`,
+      );
       assert.equal(key("backend-rs-deps"), backend);
       writeFileSync(source, original);
     }
@@ -502,6 +507,175 @@ test("native CI promotion uses the existing publisher on Linux without rebuildin
   }
 });
 
+test("Linux native probes restore verified Electron downloads before the official installer", () => {
+  const result = spawnSync(
+    "ruby",
+    [
+      "-ryaml",
+      "-rjson",
+      "-e",
+      "puts JSON.generate({core: YAML.load_file(ARGV[0])['jobs']['wework-desktop-core-e2e']['steps'], unit: YAML.load_file(ARGV[1])['jobs']['test-wework']['steps'], action: YAML.load_file(ARGV[2])['runs']['steps']})",
+      ".github/workflows/wework-e2e.yml",
+      ".github/workflows/test.yml",
+      ".github/actions/prepare-electron-installer-cache/action.yml",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const { core: steps, unit, action } = JSON.parse(result.stdout);
+  const primeIndex = steps.findIndex(
+    (step) => step.name === "Restore verified Electron installer cache",
+  );
+  const installIndex = steps.findIndex(
+    (step) =>
+      step.name ===
+      "Install Electron for native startup and schema verification",
+  );
+  assert(primeIndex >= 0 && primeIndex < installIndex);
+  const prime = steps[primeIndex];
+  assert.equal(prime.if, steps[installIndex].if);
+  assert.equal(
+    prime.uses,
+    "./.github/actions/prepare-electron-installer-cache",
+  );
+  const unitPrime = unit.find((step) => step.name === prime.name);
+  assert.equal(unitPrime.uses, prime.uses);
+  assert.equal(unitPrime.if, "matrix.shard == 1");
+  assert(
+    unit.indexOf(unitPrime) <
+      unit.findIndex(
+        (step) => step.name === "Prepare Wework Electron dependencies",
+      ),
+  );
+  const commands = action.map((step) => step.run).join("\n");
+  assert(commands.includes(".github/scripts/restore-ci-downloads.sh"));
+  const restore = readFileSync(
+    ".github/scripts/restore-ci-downloads.sh",
+    "utf8",
+  );
+  assert(restore.includes("install_missing_apt_packages skopeo"));
+  assert(
+    restore.indexOf("skopeo inspect") <
+      restore.indexOf("install_missing_apt_packages umoci"),
+  );
+  assert(
+    commands.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert(
+    commands.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  const moduleInstall = action.find((step) =>
+    step.run?.includes("pnpm --dir wework/electron install --frozen-lockfile"),
+  );
+  assert.equal(moduleInstall.env.ELECTRON_SKIP_BINARY_DOWNLOAD, "1");
+  const installerPrime = action.find((step) =>
+    step.run?.includes(
+      "node .github/scripts/prime-ci-electron-installer-cache.mjs",
+    ),
+  );
+  assert.equal(installerPrime.env.GH_TOKEN, "${{ github.token }}");
+  assert.equal(
+    steps[installIndex].env.WEWORK_ELECTRON_DEPENDENCIES_READY,
+    "true",
+  );
+  assert(
+    steps[installIndex].run.includes("pnpm --dir wework prepare:electron"),
+  );
+});
+
+for (const published of [false, true]) {
+  test(`download cache preparation defers extraction tools (published=${published})`, () => {
+    const parsed = spawnSync(
+      "ruby",
+      [
+        "-ryaml",
+        "-rjson",
+        "-e",
+        "puts JSON.generate(YAML.load_file(ARGV[0])['runs']['steps'])",
+        ".github/actions/prepare-electron-installer-cache/action.yml",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(parsed.status, 0, parsed.stderr);
+    const steps = JSON.parse(parsed.stdout);
+    const install = steps.findIndex(
+      (step) => step.name === "Install locked Electron package dependencies",
+    );
+    assert(install > 0);
+    const temporary = mkdtempSync(join(tmpdir(), "unused-oci-tools-"));
+    const bin = join(temporary, "bin");
+    mkdirSync(bin);
+    const tools = spawnSync(
+      "bash",
+      ["-c", "command -v bash; command -v dirname; command -v grep"],
+      { encoding: "utf8" },
+    );
+    assert.equal(tools.status, 0, tools.stderr);
+    const paths = tools.stdout.trim().split("\n");
+    for (const [index, name] of ["bash", "dirname", "grep"].entries()) {
+      symlinkSync(paths[index], join(bin, name));
+    }
+    const commands = {
+      node: 'if [[ "$1" == -p ]]; then echo ghcr.io/example/downloads:missing; else echo \'{"restoreImage":"ghcr.io/example/downloads:missing"}\'; fi',
+      "dpkg-query": '[[ "${@: -1}" == skopeo ]] && printf "ii "',
+      skopeo: `exit ${published ? 0 : 1}`,
+      "apt-get": 'echo "$*" >> "$APT_CALL_LOG"; exit 31',
+      sudo: 'exec "$@"',
+    };
+    try {
+      for (const [name, command] of Object.entries(commands)) {
+        const file = join(bin, name);
+        writeFileSync(file, `#!/usr/bin/env bash\n${command}\n`);
+        chmodSync(file, 0o755);
+      }
+      const log = join(temporary, "apt.log");
+      const result = spawnSync(
+        "bash",
+        [
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          steps
+            .slice(0, install)
+            .map((step) => step.run)
+            .join("\n"),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: bin,
+            GITHUB_REPOSITORY_OWNER: "example",
+            WEWORK_CI_DOWNLOAD_CACHE_DIR: join(temporary, "cache"),
+            RUNNER_TEMP: temporary,
+            APT_CALL_LOG: log,
+          },
+        },
+      );
+      if (published) {
+        assert.equal(result.status, 31, result.stderr);
+        assert.equal(
+          readFileSync(log, "utf8"),
+          "-o APT::Update::Error-Mode=any update\n",
+        );
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /No published CI downloads/);
+        assert.equal(
+          existsSync(log),
+          false,
+          "An absent cache must not require an OCI unpacker",
+        );
+      }
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+}
+
 test("download bundles are restored once and reject unexpected archive paths", () => {
   const directory = mkdtempSync(join(tmpdir(), "wegent-ci-downloads-"));
   try {
@@ -518,6 +692,7 @@ test("download bundles are restored once and reject unexpected archive paths", (
       ".github/scripts/ci-prebuilt-images.mjs",
       ".github/scripts/resolve-ci-image.mjs",
       ".github/scripts/restore-ci-downloads.sh",
+      ".github/scripts/lib/apt-packages.sh",
       ".github/runtime-images/ci-downloads.Dockerfile",
       "wework/electron/package.json",
       "wework/electron/pnpm-lock.yaml",
@@ -550,6 +725,7 @@ test("download bundles are restored once and reject unexpected archive paths", (
       "minio",
     ]);
     executable(join(bin, "skopeo"), 'test "$TEST_IMAGE_EXISTS" = true');
+    executable(join(bin, "umoci"), "exit 0");
     executable(
       join(bin, "tar"),
       'if [[ "$1" == -tzf && "$TEST_UNSAFE" == true ]]; then echo ../unsafe; else exec /usr/bin/tar "$@"; fi',
