@@ -24,6 +24,11 @@ export async function verifyGroupFileDownload({
   await control.command('click', scoped('thread-back-to-group'), { visible: true })
   await control.command('waitFor', scoped('group-room'), { visible: true, timeoutMs })
   await control.command('click', scoped('group-tab-files'), { visible: true })
+  await control.command(
+    'clickWhenEnabled',
+    `${scoped('cloud-file-browser-entry-root:shared')} button`,
+    { visible: true, timeoutMs }
+  )
   const download = scoped(`cloud-file-download-${fileId}`)
   await control.command('waitFor', download, { visible: true, timeoutMs })
   await control.command('clickWhenEnabled', download, { visible: true, timeoutMs })
