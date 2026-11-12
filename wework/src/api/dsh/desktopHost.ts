@@ -18,6 +18,13 @@ export class DesktopHostError extends Error {
   }
 }
 
+export class DesktopHostTransportError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'DesktopHostTransportError'
+  }
+}
+
 export interface DesktopHostEvent {
   sequence: number
   type: string
@@ -63,15 +70,31 @@ export async function invokeDesktopHost<Result>(
   }
   const pendingDiagnostic = e2e ? setTimeout(() => diagnostic('pending'), 1_000) : undefined
   try {
-    const response = await fetch('/wework/electron-host/v1/invoke', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ capability, params }),
-    })
-    const body = (await response.json()) as {
+    let response: Response
+    try {
+      response = await fetch('/wework/electron-host/v1/invoke', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ capability, params }),
+      })
+    } catch (error) {
+      throw new DesktopHostTransportError(
+        error instanceof Error ? error.message : 'Electron host request failed',
+        { cause: error }
+      )
+    }
+    let body: {
       ok?: boolean
       result?: Result
       error?: DesktopHostErrorPayload
+    }
+    try {
+      body = (await response.json()) as typeof body
+    } catch (error) {
+      throw new DesktopHostTransportError(
+        error instanceof Error ? error.message : 'Electron host response was interrupted',
+        { cause: error }
+      )
     }
     if (e2e && (capability.startsWith('attachment.') || performance.now() - startedAt >= 1_000)) {
       diagnostic('completed', {
@@ -91,7 +114,14 @@ export async function invokeDesktopHost<Result>(
     }
     const result = body.result as Result
     // E2E barriers delay delivery only after the real Electron operation completes.
-    return e2e ? gateRuntimeResponse(capability, params, result) : result
+    return e2e
+      ? gateRuntimeResponse(
+          capability,
+          params,
+          result,
+          () => new DesktopHostTransportError('Electron host response was interrupted')
+        )
+      : result
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
   }

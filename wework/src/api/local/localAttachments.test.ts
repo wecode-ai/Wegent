@@ -17,6 +17,7 @@ describe('local attachment API', () => {
 
   afterEach(() => {
     delete window.weworkElectronFiles
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
   })
@@ -145,6 +146,36 @@ describe('local attachment API', () => {
     expect(desktopMocks.invoke).toHaveBeenLastCalledWith('attachment.abort', {
       uploadId: 'upload-1',
     })
+  })
+
+  test('retries attachment.finish when the host response is lost in transport', async () => {
+    vi.useFakeTimers()
+    const transportError = Object.assign(new Error('Electron host response was interrupted'), {
+      name: 'DesktopHostTransportError',
+    })
+    desktopMocks.invoke.mockImplementation(async (capability: string) => {
+      if (capability === 'attachment.begin') {
+        return { uploadId: 'upload-1', chunkSize: 2 }
+      }
+      if (capability === 'attachment.append') return 1
+      if (capability === 'attachment.finish') {
+        if (desktopMocks.invoke.mock.calls.filter(([name]) => name === capability).length === 1) {
+          throw transportError
+        }
+        return '/draft/recovered.bin'
+      }
+      throw new Error(`Unexpected capability: ${capability}`)
+    })
+
+    const upload = createLocalAttachmentApi().uploadAttachment(
+      new File([new Uint8Array([1])], 'recovered.bin')
+    )
+    await vi.advanceTimersByTimeAsync(100)
+
+    await expect(upload).resolves.toMatchObject({ local_path: '/draft/recovered.bin' })
+    expect(
+      desktopMocks.invoke.mock.calls.filter(([name]) => name === 'attachment.finish')
+    ).toHaveLength(2)
   })
 
   test('reports staging totals once without changing repeated progress or logging file data', async () => {

@@ -64,7 +64,10 @@ describe('desktop host events', () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
     const { invokeDesktopHost } = await import('./desktopHost')
     const pending = invokeDesktopHost('secureStorage.get', { key: 'private-key' })
-    const failed = expect(pending).rejects.toThrow('transport closed')
+    const failed = expect(pending).rejects.toMatchObject({
+      name: 'DesktopHostTransportError',
+      message: 'transport closed',
+    })
     await vi.advanceTimersByTimeAsync(1_000)
     expect(debug).toHaveBeenCalledExactlyOnceWith(
       '[Wework] Electron host diagnostic ' +
@@ -148,6 +151,32 @@ describe('desktop host events', () => {
     } finally {
       gates.resetRuntimeTransportGates()
       await pending
+    }
+  })
+
+  test('E2E can drop a completed real host response as a transport failure', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const gates = await import('@/e2e/runtime-transport-gates')
+    gates.armRuntimeTransportGate({
+      id: 'finish-drop',
+      kind: 'response',
+      name: 'attachment.finish',
+      drop: true,
+    })
+    const json = vi.fn().mockResolvedValue({ ok: true, result: '/draft/recovered.bin' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json }))
+    const { invokeDesktopHost } = await import('./desktopHost')
+    try {
+      await expect(
+        invokeDesktopHost('attachment.finish', { uploadId: 'upload-1' })
+      ).rejects.toMatchObject({ name: 'DesktopHostTransportError' })
+      expect(json).toHaveBeenCalledOnce()
+      expect(gates.readRuntimeTransportGate('finish-drop')).toMatchObject({
+        deliveries: 0,
+        dropped: true,
+      })
+    } finally {
+      gates.resetRuntimeTransportGates()
     }
   })
 

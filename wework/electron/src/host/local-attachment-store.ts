@@ -3,6 +3,7 @@ import { appendFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises
 import { basename, join } from 'node:path'
 
 export const MAX_LOCAL_ATTACHMENT_CHUNK_BYTES = 384 * 1024
+const MAX_COMPLETED_ATTACHMENT_UPLOADS = 256
 
 interface AttachmentUpload {
   directory: string
@@ -20,6 +21,8 @@ export interface AttachmentUploadStarted {
 export class LocalAttachmentStore {
   private readonly stagingRoot: string
   private readonly uploads = new Map<string, AttachmentUpload>()
+  private readonly finishingUploads = new Map<string, Promise<string>>()
+  private readonly completedUploads = new Map<string, string>()
   private initialized: Promise<void> | null = null
 
   constructor(private readonly root: string) {
@@ -68,6 +71,22 @@ export class LocalAttachmentStore {
   }
 
   async finish(uploadId: string): Promise<string> {
+    const completedPath = this.completedUploads.get(uploadId)
+    if (completedPath) return completedPath
+    const finishingUpload = this.finishingUploads.get(uploadId)
+    if (finishingUpload) return finishingUpload
+    const request = (async () => {
+      try {
+        return await this.finishUpload(uploadId)
+      } finally {
+        this.finishingUploads.delete(uploadId)
+      }
+    })()
+    this.finishingUploads.set(uploadId, request)
+    return request
+  }
+
+  private async finishUpload(uploadId: string): Promise<string> {
     const upload = this.requireUpload(uploadId)
     if (upload.offset !== upload.expectedSize) {
       throw new Error('Attachment upload is incomplete')
@@ -79,7 +98,13 @@ export class LocalAttachmentStore {
     const finalDirectory = await this.allocateFinalDirectory()
     await rename(upload.directory, finalDirectory)
     this.uploads.delete(uploadId)
-    return join(finalDirectory, upload.filename)
+    const path = join(finalDirectory, upload.filename)
+    this.completedUploads.set(uploadId, path)
+    if (this.completedUploads.size > MAX_COMPLETED_ATTACHMENT_UPLOADS) {
+      const oldestUploadId = this.completedUploads.keys().next().value
+      if (oldestUploadId) this.completedUploads.delete(oldestUploadId)
+    }
+    return path
   }
 
   async abort(uploadId: string): Promise<void> {
