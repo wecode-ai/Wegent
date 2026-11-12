@@ -10,12 +10,16 @@
 
 use super::*;
 use brz_mysql::{MysqlError, MysqlService, MysqlTransaction};
-use brz_redis::RedisService;
+use brz_redis::{RedisService, RedisServiceOptions};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::oneshot;
 
 #[path = "auto_update_replica_mysql_tests.rs"]
 mod replica;
+
+fn redis_fixture_options() -> RedisServiceOptions {
+    RedisServiceOptions::default().with_timeout(Duration::from_secs(5))
+}
 
 const SCHEMA: &[&str] = &[
     r#"CREATE TABLE kinds (`id` BIGINT NOT NULL AUTO_INCREMENT, `user_id` BIGINT NOT NULL DEFAULT 0, `kind` VARCHAR(1000) NOT NULL DEFAULT '', `name` VARCHAR(1000) NOT NULL DEFAULT '', `namespace` VARCHAR(1000) NOT NULL DEFAULT '', `json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `is_active` BOOLEAN NOT NULL DEFAULT 0, `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
@@ -47,7 +51,7 @@ async fn writer_batch_preserves_rollback_and_rejects_stale_updates() {
     let redis = RedisService::noshard_with_options(
         redis_address.clone(),
         [redis_address],
-        brz_redis::RedisServiceOptions::default().with_timeout(Duration::from_secs(5)),
+        redis_fixture_options(),
     )
     .await
     .unwrap();
