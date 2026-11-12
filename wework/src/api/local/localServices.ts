@@ -493,6 +493,9 @@ async function reconcilePendingLocalModelCatalog(
   tracker.inFlight = reconciliation
   try {
     await reconciliation
+    // Busy native work defers activation; only failures need the retry backoff.
+    // Recheck on the next owner request, including catalogs loaded by another restart.
+    tracker.key = ''
   } catch (error) {
     // A transport interruption must not suppress synchronization after recovery.
     if (error instanceof DshExecutorTransportError && error.retryable) tracker.key = ''

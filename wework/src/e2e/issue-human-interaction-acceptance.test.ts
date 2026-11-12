@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { verifyHumanInteractionIssueAccepted } from '../../e2e/desktop/modules/human-interaction-issue.mjs'
 import { readProjectChatMessages } from '../../e2e/desktop/modules/project-chat-snapshot.mjs'
-import { interactionTranscriptIdentities } from '../../e2e/desktop/modules/human-interaction-identity-diagnostics.mjs'
+import {
+  interactionTranscriptIdentities,
+  readInteractionInboxIdentities,
+} from '../../e2e/desktop/modules/human-interaction-identity-diagnostics.mjs'
 
 vi.mock('../../e2e/desktop/modules/project-chat-snapshot.mjs', () => ({
   readProjectChatMessages: vi.fn(),
@@ -42,6 +45,31 @@ function api(item = question) {
 }
 
 describe('Issue acceptance E2E precondition', () => {
+  it('captures row identity and kind together while pending rows can disappear', async () => {
+    let present = true
+    const control = {
+      command: vi.fn(async (action: string, selector: string, options: { value: string }) => {
+        expect(action).toBe('getElementMetrics')
+        const { attributeNames } = JSON.parse(options.value)
+        if (selector.includes('workspace-tab-select')) {
+          return JSON.stringify([{ attributes: { 'data-pending-question-count': '0' } }])
+        }
+        if (!selector.includes('interaction-source-group-project') || !present) return '[]'
+        expect(attributeNames).toEqual(['data-interaction-id', 'data-project-issue'])
+        present = false
+        return JSON.stringify([
+          {
+            attributes: { 'data-interaction-id': 'issue-a', 'data-project-issue': 'true' },
+          },
+        ])
+      }),
+    }
+    const snapshot = await readInteractionInboxIdentities(control, 'body')
+    expect(present).toBe(false)
+    expect(snapshot.rows).toEqual([{ source: 'project', id: 'issue-a', projectItem: 'true' }])
+    expect(snapshot.counts).toEqual({ 'data-pending-question-count': '0' })
+    expect(control.command).toHaveBeenCalledTimes(4)
+  })
   it('records actual task origin field types and native IDs without transcript content', () => {
     const result = interactionTranscriptIdentities(
       {

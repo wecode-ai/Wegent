@@ -58,6 +58,7 @@ export function createStreamingScrollChecks({
   modelResponseTimeoutMs,
   uiTimeoutMs,
   capture,
+  releaseTimerTool,
   releaseTimerFinalCompletion,
   requestReceived,
   getTargetRequest,
@@ -126,6 +127,7 @@ export function createStreamingScrollChecks({
       `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
     )
     await capture(control, 'streaming-text-07-running-tool-restored.png')
+    await releaseTimerTool()
     let elapsedDuringFinalText
     try {
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {

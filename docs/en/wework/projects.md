@@ -211,7 +211,11 @@ After creating or adding an agent under **Project settings → AI team → Agent
 
 Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
 
+<a id="agent-capabilities"></a>
+
 ### Agent capabilities and disabled state
+
+Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. The Edit action requires permission to edit the Agent definition; shared use permission does not grant editing permission. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 

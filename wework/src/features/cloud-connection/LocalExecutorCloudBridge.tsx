@@ -4,6 +4,7 @@ import {
   listWegentInstalledConnectorApps,
 } from '@/api/cloud/connectorApps'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
+import { configurePluginNativeAuthorization } from '@/features/plugins/pluginNativeAuthorization'
 import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import {
   applyLocalExecutorCloudConnection,
@@ -65,6 +66,8 @@ export function LocalExecutorCloudBridge({
     let applyingConnection = false
     let retryScheduled = false
     let needsConnectorResync = false
+    let pluginAuthorizationRefreshAt: number | null = null
+    let refreshingPluginAuthorization = false
     const isCurrentConnectionAttempt = () =>
       !cancelled && connectionGenerationRef.current === generation
 
@@ -87,6 +90,28 @@ export function LocalExecutorCloudBridge({
       }, 30_000)
     }
 
+    const schedulePluginAuthorization = (
+      auth: Awaited<ReturnType<typeof configurePluginNativeAuthorization>>
+    ) => {
+      if (!isCurrentConnectionAttempt()) return
+      pluginAuthorizationRefreshAt = !auth.ready
+        ? Date.now() + 30_000
+        : auth.expiresIn
+          ? Date.now() + runtimeAuthRefreshDelayMs(auth.expiresIn)
+          : null
+    }
+
+    const refreshPluginAuthorization = async () => {
+      if (!apiBaseUrl || !authToken || refreshingPluginAuthorization) return
+      refreshingPluginAuthorization = true
+      pluginAuthorizationRefreshAt = null
+      try {
+        schedulePluginAuthorization(await configurePluginNativeAuthorization(apiBaseUrl, authToken))
+      } finally {
+        refreshingPluginAuthorization = false
+      }
+    }
+
     const refreshConnectionStatus = async () => {
       if (!isCurrentConnectionAttempt() || !connected || !apiBaseUrl) return
       const status = await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
@@ -96,6 +121,11 @@ export function LocalExecutorCloudBridge({
         // disconnections alone remain owned by its existing reconnect loop.
         needsConnectorResync = true
         await applyConnection()
+      }
+      // Reuse the existing health tick without reconfiguring the device,
+      // rotating unrelated Runtime tokens, or postponing their renewal.
+      if (pluginAuthorizationRefreshAt !== null && pluginAuthorizationRefreshAt <= Date.now()) {
+        void refreshPluginAuthorization()
       }
       if (isCurrentConnectionAttempt()) {
         statusTimer = setTimeout(() => void refreshConnectionStatus(), 1_000)
@@ -124,6 +154,11 @@ export function LocalExecutorCloudBridge({
           result.runtimeAuthTokenExpiresIn > 0
         ) {
           scheduleRefresh(result.runtimeAuthTokenExpiresIn)
+        }
+        // Provision in parallel: a slow plugin endpoint cannot delay unrelated
+        // cloud setup. Its lifetime is checked by the existing health tick.
+        if (result.connected && result.pluginAuthorization) {
+          void result.pluginAuthorization.then(schedulePluginAuthorization)
         }
         if (!result.connected) {
           setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })

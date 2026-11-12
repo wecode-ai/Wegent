@@ -76,6 +76,22 @@ pub(super) fn adapt_messages_request(
     model_id: Option<&str>,
 ) -> Result<Vec<u8>, HttpError> {
     let request = decode_messages_request(body)?;
+    if std::env::var("WEGENT_HARNESS_PROTOCOL_DIAGNOSTICS").as_deref() == Ok("1") {
+        let order: Vec<_> = request.raw_messages_request["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|message| message["content"].as_array().into_iter().flatten())
+            .filter(|block| block["type"] == "tool_result")
+            .filter_map(|block| block["tool_use_id"].as_str())
+            .collect();
+        if !order.is_empty() {
+            crate::logging::log_executor_event(
+                "harness protocol input tool results",
+                &[("tool_result_order", json!(order).to_string())],
+            );
+        }
+    }
     let adapted = match upstream_format {
         "anthropic-messages" => encode_messages_request(&request, model_id),
         "openai-chat-completions" => encode_chat_request(&request, model_id),

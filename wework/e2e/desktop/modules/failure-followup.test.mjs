@@ -202,6 +202,105 @@ test('recovers the enabled predicate of wait-like click actions without replayin
     ),
     { selector: valueSelector, action: 'getValueWhenReady', text: '3', visible: true }
   )
+  // select became wait-like when the renderer refactor (#4417) routed it
+  // through waitForDesktopControlElement with an enforced enabled predicate;
+  // its option-choosing side effect must not be replayed either.
+  const statusSelector = '[data-testid="project-task-status-select"]'
+  assert.deepEqual(
+    failedWaitCondition(
+      new Error(`Timed out waiting for selector "${statusSelector}"; matches=[]`),
+      [{ action: 'select', selector: statusSelector, value: 'Done' }]
+    ),
+    { selector: statusSelector, action: 'select', enabled: true }
+  )
+  // getElementMetrics with waitForMatch (#4453) waits with exactly the
+  // delivered options; its on-match snapshot is a pure metrics read.
+  const metricsSelector = '[data-testid="pending-interaction-row"]'
+  assert.deepEqual(
+    failedWaitCondition(
+      new Error(`Timed out waiting for selector "${metricsSelector}" containing "2"; matches=[]`),
+      [
+        {
+          action: 'getElementMetrics',
+          selector: metricsSelector,
+          text: '2',
+          value: '{"waitForMatch":true}',
+        },
+      ]
+    ),
+    { selector: metricsSelector, action: 'getElementMetrics', text: '2' }
+  )
+})
+
+test('a synchronous getElementMetrics timeout is not a wait failure', () => {
+  // The synchronous metrics read (no waitForMatch) is the dominant runner
+  // usage; when the renderer stops answering, it hits the server result
+  // timeout with the same running shape as a wait. It has no wait condition,
+  // so recovery must decline instead of fabricating an observation outcome.
+  const selector = '[data-testid="bottom-workspace-panel"]'
+  const syncMessage = `Timed out running UI action getElementMetrics for ${selector}`
+  assert.equal(
+    failedWaitCondition(new Error(syncMessage), [{ action: 'getElementMetrics', selector }]),
+    null
+  )
+  // A stale earlier waitFor must not be adopted for it either.
+  assert.equal(
+    failedWaitCondition(new Error(syncMessage), [
+      { action: 'waitFor', selector: '[data-testid="earlier-step"]' },
+      { action: 'getElementMetrics', selector },
+    ]),
+    null
+  )
+  // A malformed value never counts as a waiting metrics read.
+  assert.equal(
+    failedWaitCondition(new Error(syncMessage), [
+      { action: 'getElementMetrics', selector, value: 'not-json' },
+    ]),
+    null
+  )
+  // The failed command is the LAST wait-like entry: a synchronous read must
+  // not be attributed to an earlier waiting metrics entry that happens to
+  // share the same action and selector (CodeRabbit regression case).
+  const waitingEntry = {
+    action: 'getElementMetrics',
+    selector,
+    text: '2',
+    value: '{"waitForMatch":true}',
+  }
+  assert.equal(
+    failedWaitCondition(new Error(syncMessage), [
+      waitingEntry,
+      { action: 'getElementMetrics', selector },
+    ]),
+    null
+  )
+  // Order matters the other way too: the later waiting entry is the failed one.
+  assert.deepEqual(
+    failedWaitCondition(new Error(syncMessage), [
+      { action: 'getElementMetrics', selector },
+      waitingEntry,
+    ]),
+    { selector, action: 'getElementMetrics', text: '2' }
+  )
+  // The waiting variant still recovers from both message shapes.
+  const waitEntry = {
+    action: 'getElementMetrics',
+    selector,
+    text: '2',
+    value: '{"includeText":true,"waitForMatch":true}',
+  }
+  assert.deepEqual(failedWaitCondition(new Error(syncMessage), [waitEntry]), {
+    selector,
+    action: 'getElementMetrics',
+    text: '2',
+  })
+  assert.deepEqual(
+    failedWaitCondition(
+      new Error(`Timed out waiting for selector "${selector}" containing "2"; matches=[]`),
+      [waitEntry]
+    ),
+    { selector, action: 'getElementMetrics', text: '2' }
+  )
 })
 
 test('declines observation when the history cannot account for the failed wait', () => {
@@ -401,28 +500,30 @@ test('a disconnected failed-window client degrades to an active-window state cap
   }
 })
 
-test('small budgets keep a meaningful observation window and record it', async () => {
+test('small budgets keep a meaningful observation window and record it', async t => {
   const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_700_000_000_000 })
   try {
     // The capture reserve never exceeds half the budget: a 3s budget must
-    // still observe for ~1.5s rather than the 1ms floor the fixed 5.5s
-    // reserve produced.
+    // still observe for its full 1.5s window rather than the 1ms floor the
+    // fixed 5.5s reserve produced.
     const control = controlReturning({ waitForBehavior: 'never-settle' })
-    const startedAt = Date.now()
-    const followup = await captureFailureFollowup(control, resultDir, {
+    const pending = captureFailureFollowup(control, resultDir, {
       condition: { selector: '[data-testid="missing"]' },
       failedAt: Date.now(),
       budgetMs: 3_000,
     })
-    const elapsed = Date.now() - startedAt
+    await new Promise(setImmediate)
+    t.mock.timers.tick(1_500)
+    const followup = await pending
     assert.equal(followup.observationBudgetMs, 1_500)
     assert.equal(followup.outcome, 'condition-unsettled-within-budget')
-    assert.ok(elapsed >= 1_400, `observation should use its window, elapsed ${elapsed}ms`)
-    assert.ok(elapsed < 3_000, `the budget still bounds everything, elapsed ${elapsed}ms`)
+    assert.equal(followup.observedForMs, 1_500)
     const stored = JSON.parse(await readFile(join(resultDir, 'failure-followup.json'), 'utf8'))
     assert.equal(stored.observationBudgetMs, 1_500)
-    assert.ok(stored.observedForMs >= 1_400)
+    assert.equal(stored.observedForMs, 1_500)
   } finally {
+    t.mock.timers.reset()
     await rm(resultDir, { recursive: true, force: true })
   }
 })
@@ -457,19 +558,29 @@ test('records the measured convergence time when the failed condition settles', 
   }
 })
 
-test('records condition-unsettled-within-budget when the condition never settles', async () => {
+test('records condition-unsettled-within-budget when the condition never settles', async t => {
   const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  // Controlled clock: the small capture reserve must not depend on real timer
+  // punctuality (CodeRabbit review) — every millisecond here is ticked.
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_700_000_000_000 })
   try {
     const control = controlReturning({ waitForBehavior: 'never-settle' })
-    const followup = await captureFailureFollowup(control, resultDir, {
+    const pending = captureFailureFollowup(control, resultDir, {
       condition: { selector: '[data-testid="missing"]' },
       failedAt: Date.now(),
       budgetMs: 50,
     })
+    await new Promise(setImmediate)
+    // Observation window: 50 - min(5500, floor(50 / 2)) = 25ms.
+    t.mock.timers.tick(25)
+    const followup = await pending
     assert.equal(followup.outcome, 'condition-unsettled-within-budget')
+    assert.equal(followup.observationBudgetMs, 25)
+    assert.equal(followup.observedForMs, 25)
     assert.equal(followup.settledAfterFailureMs, undefined)
     assert.equal(followup.condition.selector, '[data-testid="missing"]')
   } finally {
+    t.mock.timers.reset()
     await rm(resultDir, { recursive: true, force: true })
   }
 })
@@ -515,32 +626,36 @@ test('an immediately throwing control rejects so callers keep the original error
   }
 })
 
-test('a hanging wait command does not prevent the state capture from finishing', async () => {
+test('a hanging wait command does not prevent the state capture from finishing', async t => {
   const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_700_000_000_000 })
   try {
     const control = controlReturning({ waitForBehavior: 'hang' })
-    const startedAt = Date.now()
-    // The observation wait hangs until its deadline, then the follow-up still
-    // captures the snapshot and records condition-unsettled-within-budget.
-    const followup = await captureFailureFollowup(control, resultDir, {
+    const pending = captureFailureFollowup(control, resultDir, {
       condition: { selector: '[data-testid="x"]' },
       failedAt: Date.now(),
       budgetMs: 100,
     })
-    const elapsed = Date.now() - startedAt
-    assert.ok(elapsed < 2_000, `The follow-up must stay bounded, took ${elapsed}ms`)
+    await new Promise(setImmediate)
+    // The observation wait hangs until its 50ms window expires, then the
+    // follow-up still captures the snapshot and records the unsettled outcome.
+    t.mock.timers.tick(50)
+    const followup = await pending
     assert.equal(followup.outcome, 'condition-unsettled-within-budget')
+    assert.equal(followup.observedForMs, 50)
     assert.deepEqual(
       control.commands.map(command => command.action),
       ['waitFor', 'snapshot', 'getWorkbenchDebugSnapshot']
     )
   } finally {
+    t.mock.timers.reset()
     await rm(resultDir, { recursive: true, force: true })
   }
 })
 
-test('a hanging state capture is still bounded by the overall budget', async () => {
+test('a hanging state capture is still bounded by the overall budget', async t => {
   const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_700_000_000_000 })
   try {
     const control = {
       command: async action => {
@@ -548,18 +663,18 @@ test('a hanging state capture is still bounded by the overall budget', async () 
         return new Promise(() => {})
       },
     }
-    const startedAt = Date.now()
-    await assert.rejects(
-      captureFailureFollowup(control, resultDir, {
-        condition: { selector: '[data-testid="x"]' },
-        failedAt: Date.now(),
-        budgetMs: 100,
-      }),
-      /exceeded its overall deadline/
-    )
-    const elapsed = Date.now() - startedAt
-    assert.ok(elapsed < 2_000, `The follow-up must stay bounded, took ${elapsed}ms`)
+    const pending = captureFailureFollowup(control, resultDir, {
+      condition: { selector: '[data-testid="x"]' },
+      failedAt: Date.now(),
+      budgetMs: 100,
+    })
+    // Let the instant observation settle and the capture arm its deadline
+    // timer, then fire it deterministically.
+    await new Promise(setImmediate)
+    t.mock.timers.tick(100)
+    await assert.rejects(pending, /exceeded its overall deadline/)
   } finally {
+    t.mock.timers.reset()
     await rm(resultDir, { recursive: true, force: true })
   }
 })

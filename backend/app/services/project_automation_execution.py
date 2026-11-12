@@ -1176,9 +1176,19 @@ class ProjectAutomationProcessor:
             len(runs),
         )
         if runs:
-            from app.tasks.robot_queue_tasks import consume_queues_background
+            from app.tasks.robot_queue_tasks import wake_executions
 
-            await consume_queues_background()
+            executions = [
+                execution
+                for run in runs
+                if (
+                    execution := project_automation_execution._execution_for_run(
+                        db, str(run.id)
+                    )
+                )
+                is not None
+            ]
+            wake_executions(db, executions)
         return runs
 
     @staticmethod

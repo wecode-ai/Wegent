@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
@@ -38,16 +40,25 @@ async function waitForValue(load, predicate, message, timeoutMs) {
   assert.fail(`${message}: ${JSON.stringify(latest)}`)
 }
 
-export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTimeoutMs }) {
+export function createDesktopScenario({
+  modelResponseTimeoutMs,
+  workbenchReadyTimeoutMs,
+  resultDir,
+}) {
   let cloud
   let environment
   let app
   let project
   let issue
   const modelRequests = []
+  const wireRequests = []
+  let replyReleasedAt
   let releaseReply
   const replyReleased = new Promise(resolve => {
-    releaseReply = resolve
+    releaseReply = () => {
+      replyReleasedAt ??= new Date().toISOString()
+      resolve()
+    }
   })
   async function request(path, values) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
@@ -74,12 +85,37 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
     )
   }
 
+  async function captureRunningPreview(control) {
+    try {
+      const item = await request(`/api/v1/loop-items/${issue.id}`)
+      await writeFile(
+        join(resultDir, 'app-queue-running-preview-diagnostics.json'),
+        JSON.stringify({
+          item: {
+            status: item.status,
+            executionState: item.execution_state,
+            executionId: item.execution_id,
+            eventSequence: item.execution_last_event_seq,
+          },
+          addresses: bindingAddresses(await bindings()),
+          debug: JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+        })
+      )
+    } catch (error) {
+      console.error('[app-queue-identity] Failed to capture running preview diagnostics', error)
+    }
+  }
+
   async function singlePreview(control, testId, text) {
     const card = scoped(`[data-testid="cloud-todo-card-drop-${issue.id}"]`)
     const preview = `${card} [data-testid="cloud-todo-card-${testId}-${issue.id}"]`
     // The board can finish moving the card into its new column after the
     // backend reports completion, so allow the full response window here.
-    await control.command('waitFor', preview, { text, timeoutMs: modelResponseTimeoutMs })
+    try {
+      await control.command('waitFor', preview, { text, timeoutMs: modelResponseTimeoutMs })
+    } finally {
+      if (testId === 'process') await captureRunningPreview(control)
+    }
     await control.command('scrollIntoView', preview)
     await control.command('waitFor', preview, {
       text,
@@ -118,6 +154,7 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
         !['prewarm', 'compaction'].includes(kind) && JSON.stringify(body).includes(RESULT)
       if (isAssignment) modelRequests.push(body)
       const isReply = isAssignment && JSON.stringify(body).includes(REPLY)
+      wireRequests.push({ at: new Date().toISOString(), kind, isAssignment, isReply })
       const id = `app-queue-identity-${Date.now()}`
       const final = assistantMessage(isReply ? REPLY_RESULT : RESULT)
       const progress = streamingTextEvents(id, PROGRESS, 'commentary')
@@ -150,6 +187,11 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
       return true
     },
     async verify(control) {
+      for (const key of ['wework:debug-runtime-chat-stream', 'wework:debug-runtime']) {
+        await control.command('setLocalStorageItem', 'body', {
+          value: JSON.stringify({ key, value: '1' }),
+        })
+      }
       app = await environment.startDuplicateAppDeviceIdentity()
       const workspace = await request('/api/v1/workspaces', { name: TITLE })
       project = await request('/api/v1/cloud-projects', {
@@ -292,6 +334,8 @@ export function createDesktopScenario({ modelResponseTimeoutMs, workbenchReadyTi
         projectId: project?.id,
         issueId: issue?.id,
         modelRequests: modelRequests.length,
+        wireRequests,
+        replyReleasedAt,
       }
     },
   }

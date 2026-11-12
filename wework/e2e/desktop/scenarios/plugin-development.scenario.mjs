@@ -48,7 +48,7 @@ async function waitForStatus(control, expected, timeoutMs) {
   assert.ok(status.includes(expected), `Unexpected plugin development status: ${status}`)
 }
 
-export async function openPluginDevelopmentPanel(control, timeoutMs = 10_000) {
+export async function openPluginDevelopmentPanel(control) {
   const panel = '[data-testid="wework-plugin-development-sidebar"]'
   const visible = async selector =>
     Number(await control.command('getElementCount', selector, { visible: true })) > 0
@@ -61,24 +61,16 @@ export async function openPluginDevelopmentPanel(control, timeoutMs = 10_000) {
   await control.command('waitFor', `${shell}[aria-hidden="false"]`)
   const tab = '[data-testid="right-workspace-extension-tab-wework-plugin-developer.debug"]'
   const option = '[data-testid="right-workspace-extension-option-wework-plugin-developer.debug"]'
-  const addButton = '[data-testid="right-workspace-new-tab-button"]'
-  // Opening the panel can render its launcher before the pane becomes visible.
-  const settleDeadline = Date.now() + Math.min(timeoutMs, 2_000)
-  while (Date.now() < settleDeadline) {
-    if (await visible(tab)) {
-      await control.command('clickWhenEnabled', tab)
-      await control.command('waitFor', panel, { visible: true })
-      return
+  const newTab = '[data-testid="right-workspace-new-tab-button"]'
+  await control.command('waitFor', `${tab}, ${option}, ${newTab}`, { visible: true })
+  if (await visible(tab)) {
+    await control.command('clickWhenEnabled', tab)
+  } else {
+    if (!(await visible(option))) {
+      await control.command('clickWhenEnabled', newTab)
     }
-    if (await visible(option)) {
-      await control.command('clickWhenEnabled', option)
-      await control.command('waitFor', panel, { visible: true })
-      return
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
+    await control.command('clickWhenEnabled', option)
   }
-  await control.command('clickWhenEnabled', addButton)
-  await control.command('clickWhenEnabled', option)
   await control.command('waitFor', panel, { visible: true })
 }
 

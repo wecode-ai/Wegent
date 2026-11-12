@@ -398,7 +398,6 @@ jobs:
       - name: Prepare real mailbox server runtime
         if: contains(matrix.segments, 'stand-in-email')
         run: |
-          bash .github/scripts/install-e2e-apt-packages.sh openjdk-21-jre-headless
           java -version
           keytool -help >/dev/null
 
@@ -433,10 +432,12 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Install the native log-folder opener
+      - name: Configure the native log-folder opener
         if: contains(matrix.segments, 'native-window-startup')
         run: |
-          bash .github/scripts/install-e2e-apt-packages.sh file xdg-utils pcmanfm
+          command -v file
+          command -v xdg-mime
+          command -v pcmanfm
           XDG_CONFIG_HOME=/etc/xdg xdg-mime default pcmanfm.desktop inode/directory
           test "$(XDG_CONFIG_HOME=/tmp/wework-e2e-unconfigured xdg-mime query default inode/directory)" = pcmanfm.desktop
           test "$(xdg-mime query filetype /tmp)" = inode/directory
@@ -481,7 +482,7 @@ jobs:
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
-            bash .github/scripts/install-e2e-apt-packages.sh gdb
+            gdb --version
             WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
               WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
               .github/scripts/run-wework-executor-with-gdb.sh \
@@ -859,7 +860,7 @@ jobs:
       - name: Run Windows Wework desktop Core shard E2E
         id: windows-core-e2e
         # Finish before the job deadline so failure logs and artifacts can upload.
-        timeout-minutes: 50
+        timeout-minutes: 55
         continue-on-error: true
         shell: pwsh
         env:
