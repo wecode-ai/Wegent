@@ -596,7 +596,11 @@ export class ComponentUpdateManager {
         this.resourcesRoot,
         join(this.bundledRoot, 'packaged', id),
         component.archive,
-        component.sha256
+        component.sha256,
+        {
+          onStage: this.onStage,
+          stagePrefix: `component-${id}-archive`,
+        }
       )
     const path = join(this.resourcesRoot, component.path)
     await stat(path)
