@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   enterProjectCollaborationView,
@@ -233,6 +234,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
 
       // Creating an Issue does not require an initialized execution environment.
       await control.command('click', scoped('[data-testid="collaboration-issue-create"]'))
+      await prepareGroupThreadCreation(control, {
+        groupName: `${PROJECT_NAME} 事项群`,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', scoped('[data-testid="collaboration-issue-create-dialog"]'))
       assert.equal(
         Number(

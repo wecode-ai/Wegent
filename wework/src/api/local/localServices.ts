@@ -1,5 +1,7 @@
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createLocalChatGroupApi } from '@/api/chatGroups'
+import { groupWorkContainer } from '@/api/groupWorkContainer'
+import { loadLocalAssignmentContext, localAssignmentAgent } from './localAssignmentContext'
 import { createStandInExecutorApi } from '@/api/standIn'
 import { modelInterfaceRuntimeConfig } from '../../../electron/src/host/model-interface-runtime'
 import type { McpAppRequest } from '@/api/mcpApps'
@@ -139,11 +141,7 @@ import type {
   User,
 } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
-import {
-  DEFAULT_WORK_ITEM_PROJECT_ID,
-  type CloudLoopItem,
-  type CloudProject,
-} from '@/api/deliveries'
+import { type CloudLoopItem, type CloudProject } from '@/api/deliveries'
 import type {
   Automation,
   AutomationListResponse,
@@ -4079,15 +4077,31 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   // Local project-space identity is the local session user, not the connected
   // cloud account. The approval/creator checks compare against LOCAL_USER, so
   // robots created with the cloud user id would never be approvable locally.
-  const listRunnerEnvironments = async (projectId?: string): Promise<RunnerEnvironment[]> => {
+  const localChatGroups = createLocalChatGroupApi(request)
+  const localResourceContainer = async (ownerId: string, knownContainer?: CloudProject) => {
+    if (knownContainer) {
+      if (String(knownContainer.id) !== ownerId)
+        throw new Error(i18n.t('collaboration:executionContextUnavailable'))
+      return knownContainer
+    }
+    const project = (await deliveryApi.listCloudProjects()).items.find(
+      item => String(item.id) === ownerId
+    )
+    if (project) return project
+    const { group } = await localChatGroups.get(ownerId)
+    return groupWorkContainer(group, 'local')
+  }
+  const listRunnerEnvironments = async (
+    projectId?: string,
+    knownContainer?: CloudProject
+  ): Promise<RunnerEnvironment[]> => {
     const device = localDeviceFromStatus(await bootstrapStatus())
     const catalog = await request<{
       models: RunnerModel[]
       runtimes: RunnerEnvironment['runtimes']
       errors?: string[]
     }>('runtime.runner.catalog')
-    const projects = projectId ? await deliveryApi.listCloudProjects() : null
-    const project = projects?.items.find(item => String(item.id) === projectId)
+    const project = projectId ? await localResourceContainer(projectId, knownContainer) : null
     return [
       {
         id: device.device_id,
@@ -4108,11 +4122,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     LOCAL_USER.id,
     listRunnerEnvironments,
     deps.listCloudModels,
-    async projectId => {
+    async (projectId, knownContainer) => {
       const device = localDeviceFromStatus(await bootstrapStatus())
-      const project = projectId
-        ? (await deliveryApi.listCloudProjects()).items.find(item => String(item.id) === projectId)
-        : null
+      const project = projectId ? await localResourceContainer(projectId, knownContainer) : null
       return [
         {
           id: device.device_id,
@@ -4163,9 +4175,12 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     task: CloudLoopItem,
     group?: NonNullable<CloudProject['collaboration_groups']>[number],
     selectedModel = assignmentModels(agent)[0],
-    runnerSelection?: RunnerSelection
+    runnerSelection?: RunnerSelection,
+    resourceProject = project
   ) => {
-    const environments = agent.executionPolicy ? await listRunnerEnvironments(projectId) : []
+    const environments = agent.executionPolicy
+      ? await listRunnerEnvironments(String(resourceProject.id), resourceProject)
+      : []
     const cloudModels =
       agent.executionPolicy && requiresCloudModelCatalog(agent.modelPolicy, runnerSelection)
         ? await (deps.listCloudModels?.() ?? Promise.resolve([]))
@@ -4204,7 +4219,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         routing = resolveRunnerSelection({ ...input, selection })
       }
     }
-    const preparedEnvironments = Object.entries(project.execution_environment?.devices ?? {})
+    const preparedEnvironments = Object.entries(
+      resourceProject.execution_environment?.devices ?? {}
+    )
       .flatMap(([deviceId, state]) => {
         const workspacePath = state.workspace_path?.trim()
         return state.status === 'ready' && workspacePath
@@ -4336,32 +4353,27 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       itemId,
       assigneeType,
       assigneeId,
+      assigneeGroupSourceId,
       runnerSelection,
     }) {
-      const [projects, task] = await Promise.all([
-        deliveryApi.listCloudProjects(),
-        deliveryApi.getLoopItem(itemId),
-      ])
-      const projectAgents = await localProjectChatAgentApi.list(String(projectId), {
-        forceRefresh: true,
-      })
-      const workspaceAgents =
-        String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
-          ? []
-          : await localProjectChatAgentApi.list(DEFAULT_WORK_ITEM_PROJECT_ID, {
-              forceRefresh: true,
-            })
-      const agents = [
-        ...projectAgents,
-        ...workspaceAgents.filter(
-          workspaceAgent =>
-            !projectAgents.some(projectAgent => projectAgent.id === workspaceAgent.id)
-        ),
-      ]
-      const project = projects.items.find(candidate => String(candidate.id) === String(projectId))
-      if (!project) throw new Error(`Local project '${projectId}' is unavailable`)
+      const {
+        task,
+        work: project,
+        resource,
+        agents,
+        crew: group,
+        references: agentReferences,
+      } = await loadLocalAssignmentContext(
+        { projectId, itemId, assigneeType, assigneeId, assigneeGroupSourceId },
+        {
+          getTask: id => deliveryApi.getLoopItem(id),
+          listProjects: () => deliveryApi.listCloudProjects(),
+          groups: localChatGroups,
+          resolveResources: input => localProjectChatAgentApi.resolveForTask(input),
+        }
+      )
       if (assigneeType === 'agent') {
-        const agent = agents.find(candidate => candidate.id === assigneeId)
+        const agent = localAssignmentAgent({ agents, references: agentReferences }, assigneeId)
         if (!agent || agent.status !== 'active') {
           throw new Error(`Local agent '${assigneeId}' is unavailable`)
         }
@@ -4374,17 +4386,15 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           task,
           undefined,
           undefined,
-          runnerSelection
+          runnerSelection,
+          resource
         )
       }
-      const group = (project.collaboration_groups ?? []).find(
-        candidate => candidate.id === assigneeId
-      )
       if (!group) throw new Error(`Collaboration group '${assigneeId}' is unavailable`)
       const references = [group.leader, ...group.members].filter(member => member.kind === 'agent')
       const memberRuntimeProfiles = await Promise.all(
         Array.from(new Set(references.map(member => member.id))).map(async memberId => {
-          const agent = agents.find(candidate => candidate.id === memberId)
+          const agent = localAssignmentAgent({ agents, references: agentReferences }, memberId)
           if (!agent || agent.status !== 'active') {
             throw new Error(`Collaboration member '${memberId}' is unavailable`)
           }
@@ -4398,7 +4408,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
                 task,
                 group,
                 undefined,
-                runnerSelection
+                runnerSelection,
+                resource
               )
             : null
           const modelRuntimeProfiles = routedPayload
@@ -4414,7 +4425,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
                     project,
                     task,
                     group,
-                    selectedModel
+                    selectedModel,
+                    undefined,
+                    resource
                   ),
                 }))
               )
@@ -4430,7 +4443,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       const managerRuntimeRequest =
         group.leader.kind === 'agent'
           ? await (async () => {
-              const manager = agents.find(candidate => candidate.id === group.leader.id)
+              const manager = localAssignmentAgent(
+                { agents, references: agentReferences },
+                group.leader.id
+              )
               if (!manager || manager.status !== 'active') {
                 throw new Error(`Collaboration manager '${group.leader.id}' is unavailable`)
               }
@@ -4443,7 +4459,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
                 task,
                 group,
                 undefined,
-                runnerSelection
+                runnerSelection,
+                resource
               )
             })()
           : null
@@ -4460,14 +4477,23 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: localParticipationIdentity.currentUser,
     async prepareExecution({ projectId, taskId, agentId, text, runnerSelection }) {
-      const [projects, task, agents] = await Promise.all([
-        deliveryApi.listCloudProjects(),
-        deliveryApi.getLoopItem(taskId),
-        localProjectChatAgentApi.list(projectId),
-      ])
-      const project = projects.items.find(item => String(item.id) === projectId)
-      const agent = agents.find(item => item.id === agentId && item.status === 'active')
-      if (!project || !agent) throw new Error('Project or agent is unavailable')
+      const {
+        task,
+        work: project,
+        resource,
+        agents,
+        references: agentReferences,
+      } = await loadLocalAssignmentContext(
+        { projectId, itemId: taskId, assigneeType: 'agent', assigneeId: agentId },
+        {
+          getTask: id => deliveryApi.getLoopItem(id),
+          listProjects: () => deliveryApi.listCloudProjects(),
+          groups: localChatGroups,
+          resolveResources: input => localProjectChatAgentApi.resolveForTask(input),
+        }
+      )
+      const agent = localAssignmentAgent({ agents, references: agentReferences }, agentId)
+      if (!agent) throw new Error(i18n.t('collaboration:executionResourceUnavailable'))
       const payload = await assignmentRuntimePayload(
         projectId,
         taskId,
@@ -4477,7 +4503,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         task,
         undefined,
         undefined,
-        runnerSelection as RunnerSelection | undefined
+        runnerSelection as RunnerSelection | undefined,
+        resource
       )
       return { ...payload, message: text }
     },
@@ -4710,7 +4737,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
 
   return {
     teamApi,
-    chatGroupApis: { local: createLocalChatGroupApi(request) },
+    chatGroupApis: { local: localChatGroups },
     localParticipationIdentity,
     localIssueHumanRequestsApi: createLocalIssueHumanRequestsApi(
       request,

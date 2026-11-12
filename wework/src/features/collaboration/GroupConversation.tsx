@@ -31,12 +31,16 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ThreadSettings } from './ThreadSettings'
 import { GroupMessageComposer } from './GroupMessageComposer'
 import { GroupChatMessage } from './GroupChatMessage'
+import { ThreadExecutionActivity } from './ThreadExecutionActivity'
 import { createGroupReplyTarget, type GroupReplyTarget } from './groupReply'
 import { ThreadHierarchySection } from './ThreadHierarchySection'
 import { threadLifecycleLabel } from './threadLifecycle'
 import type { ThreadActionContext } from './threadActions'
 import { useFocusedComment } from '@/features/todo/useFocusedComment'
 import { useThreadContentRead } from './useThreadContentRead'
+import { useThreadAgentCandidates } from './useThreadAgentCandidates'
+import { useThreadCommentExecution } from './useThreadCommentExecution'
+import { threadCommentRequestsExecution } from './threadCommentExecution'
 
 export function GroupConversation({
   group,
@@ -203,7 +207,7 @@ export function GroupConversation({
   }, [groups, currentThreadId, item])
   useEffect(() => {
     if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight
-  }, [stream.messages, stream.loading])
+  }, [stream.messages, stream.loading, item?.version])
   const run = async (operation: () => Promise<unknown>) => {
     if (busy) return
     setBusy(true)
@@ -258,6 +262,37 @@ export function GroupConversation({
   const self = participation?.participants.find(
     person => person.user_id === participation.current_user_id
   )
+  const executionContext: ThreadActionContext | null =
+    item && participation && accountScope
+      ? {
+          group,
+          project,
+          item,
+          api,
+          participation,
+          accountScope,
+          sourceStore: project.project_store === 'local' ? 'local' : 'cloud',
+          requestLeave: requestWorkAction,
+        }
+      : null
+  const candidates = useThreadAgentCandidates({
+    api: catalog.agents,
+    groups,
+    groupId: group.id,
+    threadId: item?.id ?? null,
+    accountScope,
+    enabled: canSend && item?.permissions?.execute === true,
+    ownerRevision: group,
+    threadRevision: item?.version,
+  })
+  const commentExecution = useThreadCommentExecution({
+    context: executionContext,
+    groups,
+    chat,
+    active: active && canSend && item?.permissions?.execute === true,
+    unavailable: t('executionContextUnavailable'),
+    onMessages: stream.merge,
+  })
   return (
     <section
       className="flex h-full min-h-0 flex-col"
@@ -465,70 +500,127 @@ export function GroupConversation({
                 {t(item ? 'emptyThreadChat' : 'emptyChat')}
               </p>
             ) : null}
-            {stream.messages.map(message => {
-              const parentMessage = stream.messages.find(
-                parent => parent.messageId === message.replyToMessageId
-              )
-              const threadId = message.metadata.thread_id
-              const lifecycleActor =
-                project.project_store === 'local' && message.sender.id === '0'
-                  ? t('you')
-                  : message.sender.name
-              const lifecycle = threadLifecycleLabel(message.metadata, locale)
-              if (!item && typeof threadId === 'string' && message.sender.type === 'system')
-                return (
-                  <button
-                    key={message.messageId}
-                    type="button"
-                    data-testid={`group-thread-event-${message.messageId}`}
-                    data-message-id={message.messageId}
-                    data-focused={focused === message.messageId || undefined}
-                    data-flash={focused === message.messageId || undefined}
-                    onClick={() => onOpenThread(threadId)}
-                    className="mx-auto flex w-full max-w-xl items-start gap-3 rounded-lg border border-border p-3 text-left hover:bg-hover"
-                  >
-                    <Hash className="mt-1 h-4 w-4 shrink-0 text-text-muted" />
-                    <span className="min-w-0">
-                      <span className="block text-xs text-text-muted">
-                        {t(
-                          lifecycle.key,
-                          lifecycle.status ? { status: lifecycle.status } : undefined
-                        )}
-                      </span>
-                      <span className="mt-1 block truncate text-sm font-medium text-text-primary">
-                        {message.content}
-                      </span>
-                      <span className="mt-1 block text-xs text-text-muted">
-                        {lifecycleActor ? `${lifecycleActor} · ` : ''}
-                        <time dateTime={message.createdAt}>
-                          {formatIssueTimestamp(message.createdAt)}
-                        </time>
-                      </span>
-                    </span>
-                  </button>
-                )
-              return (
-                <GroupChatMessage
-                  key={message.messageId}
-                  message={message}
-                  currentUserId={stream.currentUserId}
-                  focused={focused === message.messageId}
-                  scopeKey={conversationScope}
-                  replyTo={
-                    parentMessage ? createGroupReplyTarget(conversationScope, parentMessage) : null
-                  }
-                  onReply={
-                    canSend
-                      ? target => setReplyTarget(createGroupReplyTarget(conversationScope, target))
-                      : undefined
-                  }
-                />
-              )
-            })}
+            <ThreadExecutionActivity
+              context={executionContext}
+              groups={groups}
+              chat={chat}
+              messages={stream.messages}
+              members={members}
+              locale={locale}
+              focused={focused}
+              active={active}
+              onReply={
+                canSend
+                  ? message => setReplyTarget(createGroupReplyTarget(conversationScope, message))
+                  : undefined
+              }
+              onConfigure={() => setEditing(true)}
+              onChanged={onChanged}
+            >
+              {({ renderMessage }) =>
+                stream.messages.map(message => {
+                  const execution = renderMessage(message)
+                  if (execution) return execution
+                  const parentMessage = stream.messages.find(
+                    parent => parent.messageId === message.replyToMessageId
+                  )
+                  const threadId = message.metadata.thread_id
+                  const lifecycleActor =
+                    project.project_store === 'local' && message.sender.id === '0'
+                      ? t('you')
+                      : message.sender.name
+                  const lifecycle = threadLifecycleLabel(message.metadata, locale)
+                  if (!item && typeof threadId === 'string' && message.sender.type === 'system')
+                    return (
+                      <button
+                        key={message.messageId}
+                        type="button"
+                        data-testid={`group-thread-event-${message.messageId}`}
+                        data-message-id={message.messageId}
+                        data-focused={focused === message.messageId || undefined}
+                        data-flash={focused === message.messageId || undefined}
+                        onClick={() => onOpenThread(threadId)}
+                        className="mx-auto flex w-full max-w-xl items-start gap-3 rounded-lg border border-border p-3 text-left hover:bg-hover"
+                      >
+                        <Hash className="mt-1 h-4 w-4 shrink-0 text-text-muted" />
+                        <span className="min-w-0">
+                          <span className="block text-xs text-text-muted">
+                            {t(
+                              lifecycle.key,
+                              lifecycle.status ? { status: lifecycle.status } : undefined
+                            )}
+                          </span>
+                          <span className="mt-1 block truncate text-sm font-medium text-text-primary">
+                            {message.content}
+                          </span>
+                          <span className="mt-1 block text-xs text-text-muted">
+                            {lifecycleActor ? `${lifecycleActor} · ` : ''}
+                            <time dateTime={message.createdAt}>
+                              {formatIssueTimestamp(message.createdAt)}
+                            </time>
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  return (
+                    <GroupChatMessage
+                      key={message.messageId}
+                      message={message}
+                      currentUserId={stream.currentUserId}
+                      focused={focused === message.messageId}
+                      scopeKey={conversationScope}
+                      replyTo={
+                        parentMessage
+                          ? createGroupReplyTarget(conversationScope, parentMessage)
+                          : null
+                      }
+                      onReply={
+                        canSend
+                          ? target =>
+                              setReplyTarget(createGroupReplyTarget(conversationScope, target))
+                          : undefined
+                      }
+                    />
+                  )
+                })
+              }
+            </ThreadExecutionActivity>
           </div>
         </div>
         <footer className="shrink-0 px-6 pb-5 pt-2">
           <div className="mx-auto max-w-3xl">
+            {canSend && candidates.pending && (
+              <p role="status" className="mb-2 text-xs text-text-muted">
+                {t('loadingAgents')}
+              </p>
+            )}
+            {canSend && candidates.failed && (
+              <div role="alert" className="mb-2 flex items-center gap-2 text-xs text-text-muted">
+                <span>{t('agentLoadFailed')}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="group-message-agents-retry"
+                  onClick={candidates.retry}
+                >
+                  {t('retry')}
+                </Button>
+              </div>
+            )}
+            {canSend && commentExecution.error && (
+              <div role="alert" className="mb-2 flex items-center gap-2 text-sm text-destructive">
+                <span>{commentExecution.error}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid="thread-comment-execution-retry"
+                  disabled={commentExecution.busy}
+                  onClick={() => void commentExecution.retry()}
+                >
+                  {t('retry')}
+                </Button>
+              </div>
+            )}
             {item && !participation ? (
               !error && (
                 <p
@@ -565,11 +657,19 @@ export function GroupConversation({
                 }
                 threadId={item?.id ?? null}
                 members={members}
+                agents={candidates.agents}
                 api={api}
                 currentUserId={stream.currentUserId}
                 translate={translate}
                 onSend={async (text, replyToMessageId, mentions) => {
-                  await stream.send(text, replyToMessageId, mentions)
+                  const message = await stream.send(text, replyToMessageId, mentions)
+                  if (
+                    item &&
+                    item.permissions?.execute === true &&
+                    threadCommentRequestsExecution(message, stream.messages)
+                  ) {
+                    await commentExecution.execute(message)
+                  }
                   if (stream.historyView) latest()
                   else follow.current = true
                 }}

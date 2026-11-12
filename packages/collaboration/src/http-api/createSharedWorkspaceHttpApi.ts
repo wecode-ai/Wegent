@@ -146,6 +146,16 @@ function mapWorkspaceMemberDto(input: unknown): CollaborationWorkspaceMember {
 
 function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
   const row = record(input);
+  const ownerType = row.owner_type ?? row.ownerType;
+  if (
+    ownerType !== "workspace" &&
+    ownerType !== "project" &&
+    ownerType !== "chat_group"
+  ) {
+    throw new Error("Collaboration group owner type is invalid");
+  }
+  const workspaceId = row.workspace_id ?? row.workspaceId;
+  const bindingOwnerId = row.binding_owner_id ?? row.bindingOwnerId;
   const members = Array.isArray(row.members) ? row.members : [];
   const stages = Array.isArray(row.stages) ? row.stages : [];
   const executionRequirements = record(
@@ -176,10 +186,12 @@ function mapCollaborationGroupDto(input: unknown): CollaborationGroup {
   };
   return {
     id: String(row.id),
-    workspace_id: String(row.workspace_id ?? row.workspaceId),
-    owner_type:
-      (row.owner_type ?? row.ownerType) === "project" ? "project" : "workspace",
+    workspace_id: workspaceId == null ? null : String(workspaceId),
+    owner_type: ownerType,
     owner_id: String(row.owner_id ?? row.ownerId),
+    ...(bindingOwnerId == null
+      ? {}
+      : { binding_owner_id: String(bindingOwnerId) }),
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     instructions: String(row.instructions ?? ""),

@@ -34,6 +34,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStandInPanelNavigation } from '@/features/todo/useStandInPanelNavigation'
 import { ThreadParticipants } from './ThreadParticipants'
+import { ThreadAssigneeField } from './ThreadAssigneeField'
 import type { ThreadHierarchyRenderContext } from './threadHierarchy'
 
 const field =
@@ -93,6 +94,14 @@ export function ThreadSettings({
   } | null>(null)
   const [selectedMilestone, setSelectedMilestone] = useState<{ value: string } | null>(null)
   const editable = group.status === 'active' && group.role !== 'Viewer'
+  const canExecute =
+    editable && participation?.joined === true && current.permissions?.execute === true
+  const executionHint = !participation?.joined
+    ? t('joinBeforeAiAssignment')
+    : ['completed', 'cancelled', 'archived'].includes(current.status)
+      ? t('reopenBeforeAiAssignment')
+      : t('aiAssignmentPermissionRequired')
+
   const projectId = link?.project?.id ?? null
   const milestones = milestoneResult?.projectId === projectId ? milestoneResult.items : []
   const milestoneFailure = milestoneResult?.projectId === projectId ? milestoneResult.error : null
@@ -208,16 +217,31 @@ export function ThreadSettings({
             sourceInputValue: dueDateTimeLocalFromSource(current.due_at),
           }) || null,
       })
-    } else if (key === 'assigneeTarget') {
-      const assignment = parseIssueAssigneeTarget(value as IssueDetailDraftValue['assigneeTarget'])
-      void saveProperties(key, {
-        assignee_user_id: assignment.assigneeUserId,
-        assignee_agent_id: assignment.assigneeAgentId,
-        assignee_team_id: assignment.assigneeTeamId,
-      })
     } else {
       void saveProperties(key, { [key === 'parentId' ? 'parent_id' : key]: value || null })
     }
+  }
+  const chooseAssignee = (
+    value: IssueDetailDraftValue['assigneeTarget'],
+    sourceId?: string | null
+  ) => {
+    if (!editable || saving) return
+    const assignment = parseIssueAssigneeTarget(value)
+    if (
+      !canExecute &&
+      (assignment.assigneeAgentId || assignment.assigneeGroupId || assignment.assigneeTeamId)
+    )
+      return
+    const source = assignment.assigneeGroupId ? (sourceId ?? null) : null
+    setField('assigneeTarget', value)
+    setField('assigneeGroupSourceId', source)
+    void saveProperties('assigneeTarget', {
+      assignee_user_id: assignment.assigneeUserId,
+      assignee_agent_id: assignment.assigneeAgentId,
+      assignee_team_id: assignment.assigneeTeamId,
+      assignee_group_id: assignment.assigneeGroupId ?? null,
+      assignee_group_source_id: source,
+    })
   }
   const saveDescription = async () => {
     if (!canSaveDescription) return
@@ -349,38 +373,28 @@ export function ThreadSettings({
                   onChange={value => changeProperty('priority', value)}
                 />
               </label>
-              <label className="space-y-2 text-sm text-text-primary">
-                <span>{t('assignee')}</span>
-                <select
-                  data-testid="thread-settings-assignee"
-                  className={field}
-                  disabled={!editable || saving}
-                  value={draft.assigneeTarget}
-                  onChange={event =>
-                    changeProperty(
-                      'assigneeTarget',
-                      event.target.value as typeof draft.assigneeTarget
-                    )
-                  }
-                >
-                  <option value="">{t('unassigned')}</option>
-                  {members
-                    .filter(member => member.role !== 'Viewer')
-                    .map(member => (
-                      <option key={member.user_id} value={`user:${member.user_id}`}>
-                        {member.user_id === 0 ? t('you') : member.name}
-                      </option>
-                    ))}
-                  {draft.assigneeTarget && !draft.assigneeTarget.startsWith('user:') && (
-                    <option value={draft.assigneeTarget}>
-                      {item.assignee_agent_name ??
-                        item.assignee_group_name ??
-                        item.assignee_team_name ??
-                        t('assignedAgent')}
-                    </option>
-                  )}
-                </select>
-              </label>
+              <ThreadAssigneeField
+                api={catalog.agents}
+                crews={catalog.projects}
+                groupCrews={api.projects}
+                canExecute={canExecute}
+                executionHint={executionHint}
+                sourceId={draft.assigneeGroupSourceId}
+                groupId={group.id}
+                project={link?.project ?? null}
+                members={members}
+                disabled={!editable || saving}
+                value={draft.assigneeTarget}
+                assignedName={
+                  item.assignee_agent_name ??
+                  item.assignee_group_name ??
+                  item.assignee_team_name ??
+                  item.assignee_name
+                }
+                onChange={(value, source) =>
+                  chooseAssignee(value as typeof draft.assigneeTarget, source)
+                }
+              />
               <label className="space-y-2 text-sm text-text-primary">
                 <span>{t('parentThread')}</span>
                 <select

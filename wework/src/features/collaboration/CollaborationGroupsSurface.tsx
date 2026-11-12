@@ -65,8 +65,14 @@ export function CollaborationGroupsSurface({
   onThreadActionContext,
   onPrepareThreadArchive,
   changeRequestApi,
+  renderGroupResources,
 }: {
   sources: GroupSource[]
+  renderGroupResources?(context: {
+    group: ChatGroup
+    source: GroupSource
+    onChanged(): void
+  }): ReactNode
   search: string
   locale: 'zh-CN' | 'en'
   footer?: ReactNode
@@ -690,12 +696,17 @@ export function CollaborationGroupsSurface({
                   )}
                   {tab === 'settings' && (
                     <GroupSettings
-                      key={`${owner}:${current.group.version}`}
+                      key={`${owner}:settings`}
                       group={current.group}
                       members={current.members}
                       groups={source.groups}
                       directory={source.workspace.members}
                       shared={source.store === 'cloud'}
+                      resources={renderGroupResources?.({
+                        group: current.group,
+                        source,
+                        onChanged: refresh,
+                      })}
                       onChanged={refresh}
                     />
                   )}

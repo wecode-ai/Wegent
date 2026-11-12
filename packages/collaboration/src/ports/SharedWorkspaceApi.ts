@@ -155,6 +155,7 @@ export interface WorkspaceIssueCreateInput {
   localProjectName?: string | null;
   assigneeUserId?: number | null;
   assigneeGroupId?: string | null;
+  assigneeGroupSourceId?: string | null;
   assigneeAgentId?: string | null;
   notifyAssignee?: boolean;
 }
@@ -171,6 +172,7 @@ export interface WorkspaceIssueUpdateInput {
   parentId?: string | null;
   assigneeUserId?: number | null;
   assigneeGroupId?: string | null;
+  assigneeGroupSourceId?: string | null;
   assigneeAgentId?: string | null;
   assigneeTeamId?: number | null;
   startAt?: string | null;
@@ -183,6 +185,7 @@ export interface WorkspaceIssueAssignmentInput {
   version: number;
   assigneeType: "user" | "agent" | "team" | "group";
   assigneeId: string;
+  assigneeGroupSourceId?: string | null;
   notifyAssignee?: boolean;
 }
 

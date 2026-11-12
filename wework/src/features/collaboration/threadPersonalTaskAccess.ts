@@ -1,5 +1,4 @@
-import type { CollaborationAssignment, CollaborationIssue } from '@wegent/collaboration'
-import { isPersonalTaskAssignee } from '@/features/todo/issuePersonalTaskEligibility'
+import type { CollaborationIssue } from '@wegent/collaboration'
 import type { ThreadActionContext } from './threadActions'
 
 const closedStates = new Set(['completed', 'cancelled', 'archived'])
@@ -39,15 +38,9 @@ export function canStartThreadPersonalTask(context: ThreadActionContext): boolea
     ['Owner', 'Maintainer', 'Developer'].includes(context.group.role) &&
     context.participation?.joined === true &&
     context.participation.can_comment &&
+    context.item.permissions?.execute === true &&
     !closedStates.has(context.item.status)
   )
-}
-
-export function currentPersonalAssignment(items: CollaborationAssignment[]) {
-  return items
-    .filter(item => item.status === 'active')
-    .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
-    .at(-1)
 }
 
 export async function requireThreadPersonalTaskStart(
@@ -55,11 +48,7 @@ export async function requireThreadPersonalTaskStart(
   unavailable: string
 ): Promise<CollaborationIssue> {
   if (!canStartThreadPersonalTask(context)) throw new Error(unavailable)
-  const actor = context.participation!.current_user_id
-  const [item, assignments] = await Promise.all([
-    context.api.issues.get(context.item.id),
-    context.api.assignments?.list(context.item.id) ?? Promise.resolve([]),
-  ])
+  const item = await context.api.issues.get(context.item.id)
   const facts = item as CollaborationIssue & {
     group_status?: string
     permissions?: { execute?: boolean }
@@ -70,9 +59,8 @@ export async function requireThreadPersonalTaskStart(
     String(item.cloud_project_id) !== context.group.id ||
     item.joined !== true ||
     (facts.group_status !== undefined && facts.group_status !== 'active') ||
-    facts.permissions?.execute === false ||
-    closedStates.has(item.status) ||
-    !isPersonalTaskAssignee(item, actor, currentPersonalAssignment(assignments))
+    facts.permissions?.execute !== true ||
+    closedStates.has(item.status)
   )
     throw new Error(unavailable)
   return item

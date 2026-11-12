@@ -35,6 +35,7 @@ export interface IssueDetailDraftSource<TWorkflow = unknown> {
   assignee_agent_id?: string | null;
   assignee_team_id?: number | null;
   assignee_group_id?: string | null;
+  assignee_group_source_id?: string | null;
   workflow?: TWorkflow | null;
 }
 
@@ -48,6 +49,7 @@ export interface IssueDetailDraftValue<TWorkflow = unknown> {
   dueDate: string;
   tags: string[];
   assigneeTarget: IssueAssigneeTarget;
+  assigneeGroupSourceId: string | null;
   workflow: TWorkflow | null;
 }
 
@@ -133,6 +135,7 @@ function draftFromSource<TWorkflow>(
     dueDate: dueDateFromSource(source.due_at),
     tags: source.tags ?? [],
     assigneeTarget: issueAssigneeTarget(source),
+    assigneeGroupSourceId: source.assignee_group_source_id ?? null,
     workflow: source.workflow ?? null,
   };
 }
@@ -155,6 +158,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
     dueDate: initial.dueDate ?? "",
     tags: initial.tags ?? [],
     assigneeTarget: initial.assigneeTarget ?? "",
+    assigneeGroupSourceId: initial.assigneeGroupSourceId ?? null,
     workflow: initial.workflow ?? null,
   };
   const [draft, setDraft] = useState<IssueDetailDraftValue<TWorkflow>>(() =>
@@ -245,6 +249,12 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       workflow: merge("workflow", current.workflow === previousDraft?.workflow)
         ? nextDraft.workflow
         : current.workflow,
+      assigneeGroupSourceId: merge(
+        "assigneeGroupSourceId",
+        current.assigneeGroupSourceId === previousDraft?.assigneeGroupSourceId,
+      )
+        ? nextDraft.assigneeGroupSourceId
+        : current.assigneeGroupSourceId,
     }));
     syncedSourceRef.current = source;
   }, [
@@ -273,6 +283,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       draft.dueDate !== sourceDraft.dueDate ||
       !equalTags(draft.tags, sourceDraft.tags) ||
       draft.assigneeTarget !== sourceDraft.assigneeTarget ||
+      draft.assigneeGroupSourceId !== sourceDraft.assigneeGroupSourceId ||
       JSON.stringify(draft.workflow) !== JSON.stringify(sourceDraft.workflow)
     : false;
 

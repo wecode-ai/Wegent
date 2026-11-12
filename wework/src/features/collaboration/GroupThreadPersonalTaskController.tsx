@@ -29,10 +29,12 @@ import type { ThreadActionContext } from './threadActions'
 import {
   canStartThreadPersonalTask,
   hasThreadWorkOwner,
-  requireThreadPersonalTaskStart,
   threadActionOwner,
 } from './threadPersonalTaskAccess'
 import { ThreadWorkMetadata } from './ThreadWorkMetadata'
+import { requireThreadHumanTaskStart } from './threadHumanTaskStart'
+import { openThreadExecution } from './threadExecutionNavigation'
+import type { ProjectChatMessage } from '@wegent/chat-core'
 
 interface PersonalTaskIntent {
   owner: string
@@ -44,7 +46,11 @@ interface PersonalTaskIntent {
 interface RuntimeProps {
   services: Pick<
     WorkbenchServices,
-    'standInApi' | 'projectSpaceApis' | 'workspaceRuntimePort' | 'projectSpaceDetailServices'
+    | 'standInApi'
+    | 'projectSpaceApis'
+    | 'workspaceRuntimePort'
+    | 'projectSpaceDetailServices'
+    | 'chatGroupApis'
   >
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
@@ -54,7 +60,13 @@ interface RuntimeProps {
 
 export function GroupThreadSurface(props: ComponentProps<typeof CollaborationGroupsSurface>) {
   const actions = useGroupThreadActions()
-  return <CollaborationGroupsSurface {...props} {...actions} />
+  return (
+    <CollaborationGroupsSurface
+      {...props}
+      renderThreadActions={actions?.renderThreadActions ?? props.renderThreadActions}
+      onThreadActionContext={actions?.onThreadActionContext ?? props.onThreadActionContext}
+    />
+  )
 }
 
 /** Keep the private conversation alive independently of the metadata sheet. */
@@ -72,6 +84,7 @@ export function GroupThreadPersonalTaskController({
   deviceNamesById?: Readonly<Record<string, string>>
   children: ReactNode
 }) {
+  const { t } = useTranslation('common')
   const [intent, setIntent] = useState<PersonalTaskIntent | null>(null)
   const [visibleContext, setVisibleContext] = useState<ThreadActionContext | null>(null)
   const [notice, setNotice] = useState<{
@@ -86,6 +99,10 @@ export function GroupThreadPersonalTaskController({
     setVisibleContext(null)
     setNotice(null)
   }
+  const currentActivity = useRef(active)
+  useLayoutEffect(() => {
+    currentActivity.current = active
+  }, [active])
   const currentOwner = useRef<string | null>(owner)
   useLayoutEffect(() => {
     currentOwner.current = owner
@@ -167,6 +184,22 @@ export function GroupThreadPersonalTaskController({
       answer: action => request(visibleContext, undefined, action),
     })
   }, [active, owner, request, visibleContext])
+  const openExecution = useCallback(
+    async (context: ThreadActionContext, message: ProjectChatMessage) => {
+      if (!runtime.onOpenRuntimeTask) throw new Error(t('todo.linked_task_unavailable'))
+      await openThreadExecution({
+        context,
+        message,
+        open: runtime.onOpenRuntimeTask,
+        unavailable: t('todo.linked_task_unavailable'),
+        isCurrent: () =>
+          currentOwner.current === owner &&
+          currentActivity.current &&
+          threadActionOwner(context) === owner,
+      })
+    },
+    [runtime.onOpenRuntimeTask, owner, t]
+  )
   const renderThreadActions = useCallback(
     (context: ThreadActionContext) =>
       threadActionOwner(context) === owner ? (
@@ -184,7 +217,13 @@ export function GroupThreadPersonalTaskController({
   )
   return (
     <>
-      <ThreadActionsContext value={{ renderThreadActions, onThreadActionContext }}>
+      <ThreadActionsContext
+        value={{
+          renderThreadActions,
+          onThreadActionContext,
+          ...(runtime.onOpenRuntimeTask ? { openExecution } : {}),
+        }}
+      >
         {children}
       </ThreadActionsContext>
       {intent?.owner === owner && (
@@ -226,6 +265,7 @@ function ThreadPersonalTaskPanel({
   onClosed(): void
 }) {
   const { t } = useTranslation('common')
+  const { t: collaboration } = useTranslation('collaboration')
   const context = intent.context
   const actor = context.participation!.current_user_id
   const project = useRef(context.project)
@@ -234,9 +274,29 @@ function ThreadPersonalTaskPanel({
     () => issueRuntimeBindingPort(services, context.project.project_store),
     [services, context.project.project_store]
   )
+  const requireStart = useCallback(
+    () =>
+      requireThreadHumanTaskStart({
+        context,
+        dispatch: intent.dispatch,
+        groups: services.chatGroupApis?.[context.sourceStore],
+        chat: services.projectSpaceDetailServices?.[context.sourceStore]?.projectChatClient,
+        unavailable: collaboration('executionContextUnavailable'),
+        isCurrent: () => active && state.active.current,
+      }),
+    [
+      context,
+      intent.dispatch,
+      services.chatGroupApis,
+      services.projectSpaceDetailServices,
+      active,
+      state.active,
+      collaboration,
+    ]
+  )
   const beforeStart = useCallback(async () => {
-    await requireThreadPersonalTaskStart(context, t('todo.linked_task_unavailable'))
-  }, [context, t])
+    await requireStart()
+  }, [requireStart])
   const onOpenIssue = useCallback(() => {}, [])
   const onChanged = useCallback(() => {}, [])
   const controller = useIssuePersonalTaskConversation({
@@ -258,6 +318,7 @@ function ThreadPersonalTaskPanel({
     clearNotice,
     onChanged,
     beforeStart,
+    purpose: intent.dispatch ? 'assigned_work' : 'personal_assistance',
     embedded: false,
     open: active,
     onClosed,
@@ -277,10 +338,7 @@ function ThreadPersonalTaskPanel({
           )
         )
       } else {
-        const item = await requireThreadPersonalTaskStart(
-          context,
-          t('todo.linked_task_unavailable')
-        )
+        const item = await requireStart()
         if (!isCurrent()) return
         if (intent.dispatch) await controller.answerIssueDispatch(intent.dispatch)
         else await controller.openNewTaskConversation(item)

@@ -499,6 +499,7 @@
     "task_activity_execution_settings": "执行设置",
     "task_activity_inline_placeholder": "回复此讨论（继续原执行任务）…",
     "task_activity_reply_start_new_task": "回复并创建新任务",
+    "task_activity_start_assigned_work": "处理我的分工…",
     "task_activity_reply_discussion": "回复",
     "task_activity_replying_to_human": "正在回复 {{name}} · 打开新的个人任务",
     "task_activity_reply_action": "回复并继续此任务",

@@ -2,7 +2,13 @@
   "order": 23011,
   "scenario": "./scenarios/group-thread-cloud.scenario.mjs",
   "scenarioOnly": true,
-  "ci": { "core": { "order": 23011, "shard": 8, "position": 14200 } },
+  "ci": {
+    "core": {
+      "order": 23011,
+      "shard": 8,
+      "position": 14200
+    }
+  },
   "paths": [
     "backend-rs/src/chat_groups/*",
     "backend-rs/src/loop_tasks/handler.rs",
@@ -20,6 +26,7 @@
     "wework/e2e/desktop/modules/collaboration-board-personal-view.mjs",
     "wework/e2e/desktop/modules/group-thread-file-download.mjs",
     "wework/electron/src/host/e2e-browser-downloads.ts",
-    "wework/src/features/collaboration/*"
+    "wework/src/features/collaboration/*",
+    "wework/e2e/desktop/modules/group-thread-cloud-agent-resources.mjs"
   ]
 }

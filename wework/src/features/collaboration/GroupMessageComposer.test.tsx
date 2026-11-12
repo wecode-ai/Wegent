@@ -6,6 +6,7 @@ import { createCollaborationTranslator, type SharedWorkspaceApi } from '@wegent/
 import type { ComposerInputHandle } from '@wegent/collaboration/composer'
 import { GroupMessageComposer, type GroupMessageComposerProps } from './GroupMessageComposer'
 import type { GroupReplyTarget } from './groupReply'
+import type { ThreadAgentCandidate } from './useThreadAgentCandidates'
 
 const owner = 'account/group/thread'
 const target: GroupReplyTarget = {
@@ -23,6 +24,7 @@ function Harness({
   api,
   send,
   cancel,
+  agents = [],
 }: {
   scopeKey: string
   initialReply: boolean
@@ -30,6 +32,7 @@ function Harness({
   api: SharedWorkspaceApi
   send: GroupMessageComposerProps['onSend']
   cancel(target: GroupReplyTarget): void
+  agents?: ThreadAgentCandidate[]
 }) {
   const [reply, setReply] = useState(initialReply ? target : null)
   return (
@@ -41,6 +44,7 @@ function Harness({
         scopeKey={scopeKey}
         threadId="thread"
         members={[{ user_id: 8, name: '成员八', role: 'Developer' }]}
+        agents={agents}
         currentUserId="7"
         api={api}
         inputRef={input}
@@ -56,7 +60,11 @@ function Harness({
   )
 }
 
-function setup(reply = false, send = vi.fn().mockResolvedValue(undefined)) {
+function setup(
+  reply = false,
+  send = vi.fn().mockResolvedValue(undefined),
+  agents: ThreadAgentCandidate[] = []
+) {
   const input = createRef<ComposerInputHandle>()
   const cancel = vi.fn()
   const upload = vi.fn().mockResolvedValue({
@@ -66,7 +74,7 @@ function setup(reply = false, send = vi.fn().mockResolvedValue(undefined)) {
   })
   const remove = vi.fn().mockResolvedValue(undefined)
   const api = { attachments: { upload, remove } } as unknown as SharedWorkspaceApi
-  const props = { input, api, send, cancel, initialReply: reply }
+  const props = { input, api, send, cancel, agents, initialReply: reply }
   const view = render(<Harness {...props} scopeKey={owner} />)
   const write = async (value: string) => {
     await act(async () => {
@@ -115,6 +123,32 @@ describe('Group reply composer with the real shared editor', () => {
         expect(cancel).toHaveBeenCalledWith(target)
         expect(screen.queryByTestId('group-reply-context')).not.toBeInTheDocument()
       } else expect(cancel).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['group', 'project'] as const)(
+    'sends the exact %s Agent binding with a source-labelled mention',
+    async source => {
+      const send = vi.fn().mockResolvedValue(undefined)
+      const agents: ThreadAgentCandidate[] = [
+        { id: 'group-agent', name: '同名智能体', source: { kind: 'group' } },
+        { id: 'project-agent', name: '同名智能体', source: { kind: 'project', name: 'Plan' } },
+      ]
+      const { write } = setup(false, send, agents)
+      await write('@')
+      expect(
+        await screen.findByTestId('collaboration-issue-mention-agent-group-agent')
+      ).toHaveTextContent('来自本群')
+      expect(
+        screen.getByTestId('collaboration-issue-mention-agent-project-agent')
+      ).toHaveTextContent('来自项目：Plan')
+      fireEvent.click(screen.getByTestId(`collaboration-issue-mention-agent-${source}-agent`))
+      fireEvent.click(screen.getByTestId('group-message-send'))
+      await waitFor(() =>
+        expect(send).toHaveBeenCalledWith('@同名智能体', undefined, [
+          { type: 'agent', id: `${source}-agent`, label: '同名智能体' },
+        ])
+      )
     }
   )
 

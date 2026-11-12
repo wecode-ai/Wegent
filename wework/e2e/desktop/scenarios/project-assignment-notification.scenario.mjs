@@ -1,5 +1,6 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 
 import { verifySilentIssueSaves } from '../modules/issue-save-notification-flows.mjs'
 import { verifyLinkedTasksScrolling } from '../modules/issue-linked-tasks.mjs'
@@ -262,6 +263,10 @@ async function createIssue(
   })
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
+  await prepareGroupThreadCreation(control, {
+    groupName: `${title} discussion`,
+    timeoutMs: uiTimeoutMs,
+  })
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: title })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value:

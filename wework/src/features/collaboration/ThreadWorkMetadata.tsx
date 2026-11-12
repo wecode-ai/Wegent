@@ -11,9 +11,8 @@ import {
 } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TodoPersonalTaskAction } from '@/features/todo/TodoPersonalTaskAction'
-import { isPersonalTaskAssignee } from '@/features/todo/issuePersonalTaskEligibility'
 import type { ThreadActionContext } from './threadActions'
-import { canStartThreadPersonalTask, currentPersonalAssignment } from './threadPersonalTaskAccess'
+import { canStartThreadPersonalTask } from './threadPersonalTaskAccess'
 import { useThreadWorkRecords } from './useThreadWorkRecords'
 import {
   issueTaskExecutionStates,
@@ -67,16 +66,7 @@ export function ThreadWorkMetadata({
   } | null>(null)
   const [detailError, setDetailError] = useState<object | null>(null)
   const currentDelivery = selected?.scope === records.scope ? selected.delivery : null
-  const canCreate =
-    records.actor !== undefined &&
-    !records.assignments.loading &&
-    !records.assignments.error &&
-    canStartThreadPersonalTask(context) &&
-    isPersonalTaskAssignee(
-      context.item,
-      records.actor,
-      currentPersonalAssignment(records.assignments.items)
-    )
+  const canCreate = records.actor !== undefined && canStartThreadPersonalTask(context)
   const creationAction = canCreate ? (
     <TodoPersonalTaskAction onCreateTask={() => onCreate(context)} />
   ) : null
@@ -91,10 +81,10 @@ export function ThreadWorkMetadata({
       if (scope.current === records.scope) setDetailError(records.scope)
     }
   }
-  const error = records.bindings.error || records.assignments.error || records.deliveries.error
+  const error = records.bindings.error || records.deliveries.error
   return (
     <section className="space-y-6 border-t border-border pt-6" data-testid="thread-work-metadata">
-      {(records.bindings.loading || records.assignments.loading || records.deliveries.loading) && (
+      {(records.bindings.loading || records.deliveries.loading) && (
         <p role="status" className="text-sm text-text-muted">
           {t('loading')}
         </p>

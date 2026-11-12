@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyCloudGroupAgent } from '../modules/group-thread-cloud-agent-resources.mjs'
 import { createRequire } from 'node:module'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -924,6 +925,18 @@ export async function createDesktopScenario({
         memberToken,
         cloud,
         classificationProject: migration.project,
+      })
+      await verifyCloudGroupAgent({
+        control,
+        request,
+        member,
+        memberToken,
+        marker: GROUP_MANUAL_MARKER,
+        completion: GROUP_MANUAL_RESULT,
+        modelRequests: () => manualModelRequests,
+        timeoutMs: uiTimeoutMs,
+        executionTimeoutMs: modelResponseTimeoutMs,
+        captureScreenshot,
       })
     },
   }

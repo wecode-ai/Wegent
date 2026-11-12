@@ -2496,7 +2496,10 @@ function CollaborationPlatformAppContent({
         (candidate) => candidate.id === resourceId,
       );
       if (group) {
-        if (group.owner_type === "project") {
+        if (
+          group.owner_type === "project" ||
+          group.owner_type === "chat_group"
+        ) {
           const project = state.navigationProjects.find(
             (candidate) => candidate.id === group.owner_id,
           );
@@ -2753,7 +2756,10 @@ function CollaborationPlatformAppContent({
             await commands.reload();
           }}
           onDeleteTeam={async (group) => {
-            if (group.owner_type === "project") {
+            if (
+              group.owner_type === "project" ||
+              group.owner_type === "chat_group"
+            ) {
               if (!api.projects.removeCollaborationGroup) {
                 throw new Error(messages.deleteFailed);
               }
@@ -2762,7 +2768,7 @@ function CollaborationPlatformAppContent({
                 group.id,
               );
             } else {
-              if (!api.workspaces) {
+              if (!api.workspaces || !group.workspace_id) {
                 throw new Error(messages.deleteFailed);
               }
               await api.workspaces.removeCollaborationGroup(

@@ -77,6 +77,7 @@ function context(): ThreadActionContext {
     cloud_project_id: 'group',
     joined: true,
     status: 'pending',
+    permissions: { execute: true, edit_content: true, assign: true, comment: true },
     title: 'Task',
     assignee_user_id: null,
     assignee_agent_id: null,

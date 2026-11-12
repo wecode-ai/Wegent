@@ -76,11 +76,20 @@ type LocalRequest = <T>(
   deviceId?: string
 ) => Promise<T>
 
+export interface LocalTaskAgentResources {
+  workOwnerId: string
+  resourceOwnerId: string
+  agents: LocalProjectChatAgent[]
+  references: Record<string, string>
+  collaborationGroup: import('@wegent/collaboration').CollaborationGroup | null
+}
+
 export interface LocalAssignmentExecutionPayloadInput {
   projectId: CloudProjectId
   itemId: string
   assigneeType: 'agent' | 'group'
   assigneeId: string
+  assigneeGroupSourceId?: string | null
   runnerSelection?: RunnerSelection
 }
 
@@ -592,11 +601,17 @@ export function projectChatAgentFromRecord(record: LocalAgentRecord): LocalProje
 export function createLocalProjectChatAgentApi(
   request: LocalRequest,
   currentUserId?: number,
-  listRunnerEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
+  listRunnerEnvironments: (
+    projectId?: string,
+    knownContainer?: CloudProject
+  ) => Promise<RunnerEnvironment[]> = async () => {
     throw new Error('Runner catalog is unavailable')
   },
   listModels: () => Promise<UnifiedModel[]> = async () => [],
-  listEnvironments: (projectId?: string) => Promise<RunnerEnvironment[]> = async () => {
+  listEnvironments: (
+    projectId?: string,
+    knownContainer?: CloudProject
+  ) => Promise<RunnerEnvironment[]> = async () => {
     throw new Error('Runner inventory is unavailable')
   },
   listNativeModels: (
@@ -634,9 +649,37 @@ export function createLocalProjectChatAgentApi(
   })
   const cache = createRequestCache()
   return {
+    async resolveForTask(
+      input: LocalAssignmentExecutionPayloadInput
+    ): Promise<LocalTaskAgentResources> {
+      const result = await request<{
+        work_owner_id: string
+        resource_owner_id: string
+        agents: LocalAgentRecord[]
+        references: Record<string, string>
+        collaboration_group: import('@wegent/collaboration').CollaborationGroup | null
+      }>('chat_agents.resolve_for_task', {
+        project_id: String(input.projectId),
+        task_id: input.itemId,
+        assignee_type: input.assigneeType,
+        assignee_id: input.assigneeId,
+        ...(input.assigneeGroupSourceId !== undefined
+          ? { assignee_group_source_id: input.assigneeGroupSourceId }
+          : {}),
+      })
+      return {
+        workOwnerId: result.work_owner_id,
+        resourceOwnerId: result.resource_owner_id,
+        agents: result.agents.map(projectChatAgentFromRecord),
+        references: result.references,
+        collaborationGroup: result.collaboration_group,
+      }
+    },
     listRunnerEnvironments,
-    listEnvironments: (projectId?: string) =>
-      cache.get(`environments:${projectId ?? ''}`, () => listEnvironments(projectId)),
+    listEnvironments: (projectId?: string, knownContainer?: CloudProject) =>
+      knownContainer
+        ? listEnvironments(projectId, knownContainer)
+        : cache.get(`environments:${projectId ?? ''}`, () => listEnvironments(projectId)),
     listNativeModels: (environment: RunnerEnvironment, projectId?: string) =>
       cache.get(`native:${projectId ?? ''}:${environment.id}`, () =>
         listNativeModels(environment, projectId)
@@ -937,6 +980,11 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     assignee_group_name:
       typeof (record.metadata.collaboration_group as { name?: unknown } | null)?.name === 'string'
         ? (record.metadata.collaboration_group as { name: string }).name
+        : null,
+    assignee_group_source_id:
+      typeof (record.metadata.collaboration_group as { binding_owner_id?: unknown } | null)
+        ?.binding_owner_id === 'string'
+        ? (record.metadata.collaboration_group as { binding_owner_id: string }).binding_owner_id
         : null,
     assignee_agent_id: record.assignee_agent_id ?? null,
     execution_id: record.execution_id ?? null,
@@ -1354,6 +1402,7 @@ export function createLocalDeliveryApi(
         automation_rule_id?: string | null
         assignee_user_id?: number | null
         assignee_group_id?: string | null
+        assignee_group_source_id?: string | null
         assignee_agent_id?: string | null
         notify_assignee?: boolean
       }
@@ -1387,6 +1436,9 @@ export function createLocalDeliveryApi(
             : {}),
           ...(data.assignee_group_id !== undefined
             ? { assignee_group_id: data.assignee_group_id }
+            : {}),
+          ...(data.assignee_group_source_id !== undefined
+            ? { assignee_group_source_id: data.assignee_group_source_id }
             : {}),
           ...(data.assignee_agent_id !== undefined
             ? { assignee_agent_id: data.assignee_agent_id }
@@ -1425,6 +1477,9 @@ export function createLocalDeliveryApi(
           itemId,
           assigneeType: assignedGroupId ? 'group' : 'agent',
           assigneeId: assignedGroupId ?? assignedAgentId!,
+          ...(assignedGroupId && data.assignee_group_source_id !== undefined
+            ? { assigneeGroupSourceId: data.assignee_group_source_id as string | null }
+            : {}),
         })
         if (executionPayload) todo = { ...todo, execution_payload: executionPayload }
       }
@@ -1443,6 +1498,7 @@ export function createLocalDeliveryApi(
         version: number
         assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
+        assigneeGroupSourceId?: string | null
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
         position?: { beforeItemId: string | null; classificationProjectId?: string }
@@ -1455,7 +1511,12 @@ export function createLocalDeliveryApi(
             ? { assignee_agent_id: data.assigneeId }
             : data.assigneeType === 'team'
               ? { assignee_team_id: Number(data.assigneeId) }
-              : { assignee_group_id: data.assigneeId }
+              : {
+                  assignee_group_id: data.assigneeId,
+                  ...(data.assigneeGroupSourceId !== undefined
+                    ? { assignee_group_source_id: data.assigneeGroupSourceId }
+                    : {}),
+                }
       const executionPayload =
         data.assigneeType === 'agent' || data.assigneeType === 'group'
           ? await options.prepareAssignmentExecutionPayload?.({
@@ -1463,6 +1524,9 @@ export function createLocalDeliveryApi(
               itemId,
               assigneeType: data.assigneeType,
               assigneeId: data.assigneeId,
+              ...(data.assigneeGroupSourceId !== undefined
+                ? { assigneeGroupSourceId: data.assigneeGroupSourceId }
+                : {}),
               runnerSelection: data.runnerSelection,
             })
           : null

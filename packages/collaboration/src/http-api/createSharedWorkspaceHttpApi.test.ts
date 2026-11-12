@@ -31,6 +31,48 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("keeps group crew definition ownership and binding ownership separate without inventing a workspace", async () => {
+    const { transport, get } = createTransport();
+    get.mockResolvedValue({
+      items: [
+        {
+          id: "same",
+          name: "Review",
+          workspace_id: null,
+          owner_type: "chat_group",
+          owner_id: "source-group",
+          binding_owner_id: "target-group",
+          leader: { kind: "human", id: "7" },
+          members: [],
+          stages: [],
+        },
+      ],
+    });
+    const [crew] =
+      await createSharedWorkspaceHttpApi(transport).projects
+        .listCollaborationGroups!("target-group");
+    expect(crew).toMatchObject({
+      id: "same",
+      workspace_id: null,
+      owner_type: "chat_group",
+      owner_id: "source-group",
+      binding_owner_id: "target-group",
+    });
+    expect(get).toHaveBeenCalledWith(
+      "/v1/cloud-projects/target-group/collaboration-groups",
+    );
+  });
+
+  it("rejects unknown crew ownership instead of coercing it to workspace ownership", async () => {
+    const { transport, get } = createTransport();
+    get.mockResolvedValue({ items: [{ id: "crew", owner_type: "unknown" }] });
+    await expect(
+      createSharedWorkspaceHttpApi(transport).projects.listCollaborationGroups!(
+        "group",
+      ),
+    ).rejects.toThrow("owner type");
+  });
+
   it("round-trips opaque MCP server names and options through project Agent editing", async () => {
     const { transport, get, patch } = createTransport();
     const mcpServers = {

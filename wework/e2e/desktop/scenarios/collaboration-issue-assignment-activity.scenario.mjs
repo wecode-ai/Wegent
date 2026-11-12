@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
 import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
 import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
@@ -131,6 +132,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     await createLocalCollaborationProject(control, CONTENT, LOCAL_PROJECT)
     await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
+    await prepareGroupThreadCreation(control, {
+      groupName: `${LOCAL_ISSUE} discussion`,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
       value: LOCAL_ISSUE,
     })

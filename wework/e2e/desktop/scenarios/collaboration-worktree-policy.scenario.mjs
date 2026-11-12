@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { createHash } from 'node:crypto'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -77,6 +78,9 @@ async function configurePolicy(control, policy) {
 async function createIssue(control, label) {
   await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
+  await prepareGroupThreadCreation(control, {
+    groupName: `${label} discussion`,
+  })
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), { value: label })
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-description"]'), {
     value: MARKER,

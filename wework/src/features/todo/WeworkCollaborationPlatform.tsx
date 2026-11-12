@@ -13,6 +13,7 @@ import {
 } from './useIssuePersonalTaskConversation'
 import { workspaceExecutionAddress, issueExecutionAddress } from './collaborationTaskAddress'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { GroupResourceSettings } from '@/features/collaboration/GroupResourceSettings'
 import { type GroupSource } from '@/features/collaboration/CollaborationGroupsSurface'
 import { CollaborationViewSwitcher } from '@/features/collaboration/CollaborationViewSwitcher'
 import { ThreadCreateDialog } from '@/features/collaboration/ThreadCreateDialog'
@@ -1246,6 +1247,14 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
             accountScope={draftAccountScope}
             changeRequestApi={props.services.deviceApi}
             sources={sources}
+            renderGroupResources={context => (
+              <GroupResourceSettings
+                {...context}
+                services={props.services}
+                locale={locale}
+                currentUserId={props.user.id}
+              />
+            )}
             search={search}
             locale={locale}
             renderBoardIssueCard={(project, context) => (

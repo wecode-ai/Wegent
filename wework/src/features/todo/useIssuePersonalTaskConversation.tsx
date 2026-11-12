@@ -1,6 +1,14 @@
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 import type {
   CollaborationIssue,
   CollaborationProject,
@@ -48,6 +56,7 @@ export interface IssuePersonalTaskComposer {
 }
 
 export function useIssuePersonalTaskState() {
+  const ownerInstance = useId()
   const [taskComposer, setTaskComposer] = useState<IssuePersonalTaskComposer | null>(null)
   const taskComposerSequenceRef = useRef(0)
   const active = useRef(true)
@@ -58,12 +67,23 @@ export function useIssuePersonalTaskState() {
   }, [])
   useLayoutEffect(() => {
     active.current = true
+    logRuntimeTaskCreateStage(
+      'issue-personal-task-owner',
+      { ownerInstance, phase: 'connected' },
+      'debug'
+    )
     return () => {
       active.current = false
       taskComposerSequenceRef.current += 1
+      logRuntimeTaskCreateStage(
+        'issue-personal-task-owner',
+        { ownerInstance, phase: 'disconnected' },
+        'debug'
+      )
     }
-  }, [])
+  }, [ownerInstance])
   return {
+    ownerInstance,
     taskComposer,
     setTaskComposer,
     taskComposerSequenceRef,
@@ -92,6 +112,7 @@ export function useIssuePersonalTaskConversation({
   clearNotice,
   onChanged,
   beforeStart,
+  purpose = 'assigned_work',
   embedded = true,
   open = true,
   onClosed,
@@ -114,14 +135,15 @@ export function useIssuePersonalTaskConversation({
   clearNotice(): void
   onChanged(): void
   beforeStart?(issue: CollaborationIssue): Promise<void>
+  purpose?: 'personal_assistance' | 'assigned_work'
   embedded?: boolean
   open?: boolean
   onClosed?(): void
 }) {
   const { t } = useTranslation('common')
   const scope = useMemo(
-    () => ({ api: scopedApi, owner: `${project.project_store}:${project.id}:${userId}` }),
-    [scopedApi, project.project_store, project.id, userId]
+    () => ({ api: scopedApi, owner: `${project.project_store}:${project.id}:${userId}`, purpose }),
+    [scopedApi, project.project_store, project.id, userId, purpose]
   )
   const currentScope = useRef<typeof scope | null>(scope)
   useLayoutEffect(() => {
@@ -146,6 +168,7 @@ export function useIssuePersonalTaskConversation({
           {
             phase,
             reason,
+            ownerInstance: state.ownerInstance,
             containerKind: project.resource_type ?? 'project',
             store: project.project_store,
             active: active.current,
@@ -164,15 +187,20 @@ export function useIssuePersonalTaskConversation({
       }
       const requestSequence = ++taskComposerSequenceRef.current
       try {
-        report('dispatch-read-started')
-        dispatch ??= await resolveHumanTaskDispatch(
-          detailServices?.projectChatClient,
-          project.id,
-          issue.id,
-          userId,
-          project.resource_type === 'chat_group' ? 'chat_group' : 'project'
-        )
-        report('dispatch-read-finished')
+        if (purpose === 'personal_assistance' && dispatch) {
+          throw new Error(t('todo.linked_task_unavailable'))
+        }
+        if (purpose === 'assigned_work') {
+          report('dispatch-read-started')
+          dispatch ??= await resolveHumanTaskDispatch(
+            detailServices?.projectChatClient,
+            project.id,
+            issue.id,
+            userId,
+            project.resource_type === 'chat_group' ? 'chat_group' : 'project'
+          )
+          report('dispatch-read-finished')
+        }
       } catch (cause) {
         report('dispatch-read-failed', cause instanceof Error ? cause.name : 'unknown_error')
         if (requestSequence !== taskComposerSequenceRef.current || currentScope.current !== scope) {
@@ -195,7 +223,8 @@ export function useIssuePersonalTaskConversation({
         return
       }
       clearNotice()
-      const humanTaskBinding = issue.human_task_binding ?? null
+      const humanTaskBinding =
+        purpose === 'assigned_work' ? (issue.human_task_binding ?? null) : null
       const currentProject = latestProjectRef.current
       setTaskComposer({
         issue,
@@ -323,10 +352,12 @@ export function useIssuePersonalTaskConversation({
 
   const composerPresent = Boolean(taskComposer)
   const bindingPortAvailable = Boolean(runtimePort)
+  const ownerInstance = state.ownerInstance
   useLayoutEffect(() => {
     logRuntimeTaskCreateStage(
       'issue-personal-task-composer',
       {
+        ownerInstance,
         present: composerPresent,
         bindingPortAvailable,
         store: project.project_store,
@@ -334,7 +365,13 @@ export function useIssuePersonalTaskConversation({
       },
       'debug'
     )
-  }, [composerPresent, bindingPortAvailable, project.project_store, project.resource_type])
+  }, [
+    composerPresent,
+    bindingPortAvailable,
+    ownerInstance,
+    project.project_store,
+    project.resource_type,
+  ])
 
   const codeWorkspacePreference = loadProjectSpaceCodeWorkspacePreference(userId, {
     projectStore: project.project_store,
@@ -428,10 +465,10 @@ export function useIssuePersonalTaskConversation({
             ensureActive()
           }
           // Finish UI-owned writes before the runtime can mutate the same Issue version.
-          const statusUpdateError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id
-          )
+          const statusUpdateError =
+            purpose === 'assigned_work'
+              ? await updateIssueWhenPersonalTaskStarts(scopedApi.issues, taskComposer.issue.id)
+              : null
           if (statusUpdateError !== null) {
             notify(statusUpdateError || t('task_board_status_update_failed'), 'error')
           }

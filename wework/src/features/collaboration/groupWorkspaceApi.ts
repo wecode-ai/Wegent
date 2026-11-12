@@ -1,4 +1,7 @@
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { localGroupAutomations } from './localGroupAutomations'
+import { localGroupCrews } from './localGroupCrews'
+import { localGroupExecutionDevices } from './localGroupExecutionDevices'
 import type { ChatGroupApi } from '@/api/chatGroups'
 
 export { groupWorkContainer as groupBoardContext } from '@/api/groupWorkContainer'
@@ -30,7 +33,10 @@ export function createGroupWorkspaceApi(
   return {
     ...base,
     workspaces: undefined,
-    automations: undefined,
+    automations:
+      store === 'local'
+        ? localGroupAutomations(groups, groupId, base, onMutation)
+        : base.automations,
     incomingHooks: undefined,
     milestones: undefined,
     issues: {
@@ -44,6 +50,8 @@ export function createGroupWorkspaceApi(
     },
     projects: {
       ...base.projects,
+      ...(store === 'local' ? localGroupCrews(groups, groupId, onMutation) : {}),
+      ...(store === 'local' ? localGroupExecutionDevices(groups, groupId, base, onMutation) : {}),
       list: async () => [await get()],
       get,
       async update(_id, input) {
@@ -53,6 +61,29 @@ export function createGroupWorkspaceApi(
           ...(input.boardViews ? { board_views: input.boardViews } : {}),
           ...(input.cardDisplay ? { card_display: input.cardDisplay } : {}),
           ...(input.tags ? { tags: input.tags } : {}),
+          ...(store === 'local'
+            ? {
+                ...(input.collaborationGroups !== undefined
+                  ? { collaboration_groups: input.collaborationGroups }
+                  : {}),
+                ...(input.automaticProcessingRules !== undefined
+                  ? { automatic_processing_rules: input.automaticProcessingRules }
+                  : {}),
+                ...(input.executionEnvironment !== undefined
+                  ? {
+                      execution_environment: {
+                        repositories: input.executionEnvironment.repositories,
+                        workspace_policy:
+                          input.executionEnvironment.workspacePolicy ?? 'git_worktree',
+                        setup_steps: input.executionEnvironment.setupSteps.map(step => ({
+                          command: step.command,
+                          working_directory: step.workingDirectory,
+                        })),
+                      },
+                    }
+                  : {}),
+              }
+            : {}),
         }
         const updated = await groups.update(groupId, {
           name: input.name ?? group.name,
@@ -72,7 +103,6 @@ export function createGroupWorkspaceApi(
           version,
         })
       },
-      listExecutionEnvironments: async () => [],
     },
     members: {
       ...base.members,

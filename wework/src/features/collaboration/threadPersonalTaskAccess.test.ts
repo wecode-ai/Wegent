@@ -10,7 +10,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ThreadActionContext } from './threadActions'
 import {
   canStartThreadPersonalTask,
-  currentPersonalAssignment,
   hasThreadWorkOwner,
   requireThreadPersonalTaskStart,
   threadActionOwner,
@@ -22,6 +21,7 @@ const item: CollaborationIssue = {
   group_id: 'group',
   cloud_project_id: 'group',
   joined: true,
+  permissions: { execute: true, edit_content: true, assign: true, comment: true },
   sequence_number: 1,
   parent_id: null,
   created_by_user_id: 0,
@@ -103,7 +103,7 @@ describe('Thread personal-task access uses the exact owning group and fresh auth
     const { context, get, list } = setup(fresh)
     await expect(requireThreadPersonalTaskStart(context, 'Unavailable')).resolves.toBe(fresh)
     expect(get).toHaveBeenCalledExactlyOnceWith('thread')
-    expect(list).toHaveBeenCalledExactlyOnceWith('thread')
+    expect(list).not.toHaveBeenCalled()
   })
 
   it('keeps account, store, group and Thread identities distinct', () => {
@@ -221,13 +221,10 @@ describe('Thread personal-task access uses the exact owning group and fresh auth
     { joined: false },
     { group_status: 'archived' },
     { permissions: { execute: false } },
+    { permissions: undefined },
     { status: 'completed' },
     { status: 'cancelled' },
     { status: 'archived' },
-    { assignee_user_id: 8 },
-    { assignee_agent_id: 'agent' },
-    { assignee_group_id: 'crew' },
-    { assignee_team_id: 3 },
   ])('rejects fresh revoked authority or changed assignment %j', async patch => {
     const { context, get, list } = setup({ ...item, ...patch })
     expect(canStartThreadPersonalTask(context)).toBe(true)
@@ -235,26 +232,19 @@ describe('Thread personal-task access uses the exact owning group and fresh auth
       'Unavailable'
     )
     expect(get).toHaveBeenCalledOnce()
-    expect(list).toHaveBeenCalledOnce()
+    expect(list).not.toHaveBeenCalled()
   })
 
-  it('uses the newest active assignment and does not alias 00 to canonical zero', async () => {
-    const old = assignment('8', '2026-11-11T01:00:00Z')
-    const latest = assignment('0', '2026-11-11T02:00:00Z')
-    const inactive = assignment('8', '2026-11-11T03:00:00Z', 'completed')
-    const entries = [latest, inactive, old]
-    expect(currentPersonalAssignment(entries)).toBe(latest)
-    expect(entries).toEqual([latest, inactive, old])
-    const allowed = setup(item, entries)
-    await expect(requireThreadPersonalTaskStart(allowed.context, 'Unavailable')).resolves.toBe(item)
-    const denied = setup(item, [assignment('00', latest.updated_at)])
-    await expect(requireThreadPersonalTaskStart(denied.context, 'Unavailable')).rejects.toThrow(
-      'Unavailable'
-    )
-    const agent = setup(item, [{ ...latest, target_type: 'agent' }])
-    await expect(requireThreadPersonalTaskStart(agent.context, 'Unavailable')).rejects.toThrow(
-      'Unavailable'
-    )
+  it.each([
+    { assignee_user_id: 8 },
+    { assignee_agent_id: 'agent' },
+    { assignee_group_id: 'crew' },
+    { assignee_team_id: 3 },
+  ])('keeps private assistance independent of shared assignee %j', async assignee => {
+    const fresh = { ...item, ...assignee }
+    const { context, list } = setup(fresh, [assignment('8', '2026-11-11T03:00:00Z')])
+    await expect(requireThreadPersonalTaskStart(context, 'Unavailable')).resolves.toBe(fresh)
+    expect(list).not.toHaveBeenCalled()
   })
 
   it('propagates a fresh authorization read failure without starting from stale UI facts', async () => {

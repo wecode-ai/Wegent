@@ -49,7 +49,7 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
-function setup() {
+function setup(purpose: 'personal_assistance' | 'assigned_work' = 'assigned_work') {
   const get = vi.fn().mockResolvedValue(item)
   const update = vi.fn()
   const list = vi.fn().mockResolvedValue([])
@@ -81,6 +81,7 @@ function setup() {
         clearNotice: vi.fn(),
         onChanged,
         beforeStart,
+        purpose,
         embedded: false,
         open,
       })
@@ -92,6 +93,7 @@ function setup() {
     ...hook,
     api,
     get,
+    update,
     list,
     bindTask,
     unbindTask,
@@ -124,6 +126,43 @@ describe('personal conversation ownership and preparation', () => {
     act(() => hook.result.current.state.closeTaskConversation())
     expect(hook.result.current.state.taskComposer).toBeNull()
   })
+
+  it.each(['agent', 'crew', 'human'] as const)(
+    'private assistance does not claim %s work or modify shared state',
+    async assignee => {
+      const hook = setup('personal_assistance')
+      const source = {
+        ...item,
+        assignee_user_id: assignee === 'human' ? 9 : null,
+        assignee_agent_id: assignee === 'agent' ? 'agent' : null,
+        assignee_group_id: assignee === 'crew' ? 'crew' : null,
+        human_task_binding: {
+          humanAssignmentId: 'someone-else',
+          dispatchId: 'dispatch',
+          dispatchRoundId: 'round',
+          assignmentId: 'assignment',
+        },
+      }
+      await act(() => hook.result.current.openNewTaskConversation(source))
+      expect(resolveHumanTaskDispatch).not.toHaveBeenCalled()
+      expect(hook.result.current.state.taskComposer?.humanTaskBinding).toBeNull()
+      expect(hook.result.current.state.taskComposer?.taskRequest?.origin).toBeUndefined()
+      const { render } = await import('@testing-library/react')
+      const view = render(hook.result.current.conversationPanel)
+      const rollback = await modal.current!.prepareTask!(address)
+      expect(hook.beforeStart).toHaveBeenCalledOnce()
+      expect(hook.bindTask).toHaveBeenCalledWith(
+        'thread',
+        expect.objectContaining(address),
+        'Personal task',
+        null
+      )
+      expect(hook.update).not.toHaveBeenCalled()
+      expect(hook.get).not.toHaveBeenCalled()
+      await rollback!()
+      view.unmount()
+    }
+  )
 
   it('does not open a private pane after its source was replaced during a binding read', async () => {
     const hook = setup()

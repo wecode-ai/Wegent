@@ -476,6 +476,49 @@ describe('local delivery API', () => {
     })
   })
 
+  test('preserves a crew raw ID and exact source in group execution preparation and persistence', async () => {
+    const prepareAssignmentExecutionPayload = vi
+      .fn()
+      .mockResolvedValue({ dispatchKind: 'collaboration_group' })
+    const request = vi.fn(async (method: string) => {
+      if (method === 'todos.owner') return 'group'
+      if (method === 'todos.update')
+        return {
+          ...taskRecord,
+          cloud_project_id: 'group',
+          group_id: 'group',
+          metadata: { collaboration_group: { id: 'same', binding_owner_id: 'project' } },
+        }
+      throw new Error(`Unexpected method ${method}`)
+    })
+    const result = await createLocalDeliveryApi(request, {
+      prepareAssignmentExecutionPayload,
+    }).updateLoopItem('LOCAL-1', {
+      version: 1,
+      assignee_group_id: 'same',
+      assignee_group_source_id: 'project',
+    })
+    expect(prepareAssignmentExecutionPayload).toHaveBeenCalledWith({
+      projectId: 'group',
+      itemId: 'LOCAL-1',
+      assigneeType: 'group',
+      assigneeId: 'same',
+      assigneeGroupSourceId: 'project',
+    })
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'group',
+      task_id: 'LOCAL-1',
+      todo: {
+        version: 1,
+        assignee_group_id: 'same',
+        assignee_group_source_id: 'project',
+        execution_payload: { dispatchKind: 'collaboration_group' },
+      },
+    })
+    expect(result.assignee_group_id).toBe('same')
+    expect(result.assignee_group_source_id).toBe('project')
+  })
+
   test('maps the executor-owned Issue context marker', async () => {
     const request = vi.fn(async (method: string) => {
       if (method === 'todos.list') {
@@ -1472,4 +1515,47 @@ test('forwards explicit Project presentation scope while retaining the actual Gr
       },
     },
   })
+})
+
+test('resolves task resources through one fresh Native authority operation without listing global agents', async () => {
+  const request = vi.fn().mockResolvedValue({
+    work_owner_id: 'group',
+    resource_owner_id: 'project',
+    agents: [
+      {
+        id: 'canonical',
+        project_id: 'default-work-items',
+        name: 'Retained',
+        status: 'active',
+        runtime: 'codex',
+      },
+    ],
+    references: { 'legacy-team': 'canonical' },
+    collaboration_group: { id: 'same', binding_owner_id: 'project' },
+  })
+  const api = createLocalProjectChatAgentApi(request)
+  const input = {
+    projectId: 'group',
+    itemId: 'thread',
+    assigneeType: 'group' as const,
+    assigneeId: 'same',
+    assigneeGroupSourceId: 'project',
+  }
+  const result = await api.resolveForTask(input)
+  expect(request).toHaveBeenCalledExactlyOnceWith('chat_agents.resolve_for_task', {
+    project_id: 'group',
+    task_id: 'thread',
+    assignee_type: 'group',
+    assignee_id: 'same',
+    assignee_group_source_id: 'project',
+  })
+  expect(result).toMatchObject({
+    workOwnerId: 'group',
+    resourceOwnerId: 'project',
+    references: { 'legacy-team': 'canonical' },
+    agents: [{ id: 'canonical', projectId: 'default-work-items' }],
+  })
+  request.mockRejectedValueOnce(new Error('Resource authorization revoked'))
+  await expect(api.resolveForTask(input)).rejects.toThrow('authorization revoked')
+  expect(request).toHaveBeenCalledTimes(2)
 })

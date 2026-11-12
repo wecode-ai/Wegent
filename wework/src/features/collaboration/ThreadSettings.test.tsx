@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { CollaborationIssue, SharedWorkspaceApi } from '@wegent/collaboration'
@@ -29,6 +29,7 @@ const item: CollaborationIssue = {
   priority: 'none',
   parent_id: null,
   assignee_user_id: null,
+  permissions: { edit_content: true, assign: true, comment: true, execute: true },
   created_by_user_id: 7,
   tags: [],
   due_at: null,
@@ -50,6 +51,10 @@ const participation: ThreadParticipation = {
 function setup(
   options: {
     linked?: boolean
+    crewCatalog?: SharedWorkspaceApi['projects']['listCollaborationGroups']
+    groupCrewCatalog?: SharedWorkspaceApi['projects']['listCollaborationGroups']
+    execute?: boolean
+    agentCatalog?: SharedWorkspaceApi['agents']['list']
     restricted?: boolean
     saveError?: Error
     linkError?: Error
@@ -60,7 +65,11 @@ function setup(
   } = {}
 ) {
   const project = { ...groupBoardContext(group, 'cloud'), id: 'project', name: 'Plan' }
-  let stored = item
+  const initialItem =
+    options.execute === false
+      ? { ...item, permissions: { ...item.permissions!, execute: false } }
+      : item
+  let stored = initialItem
   const update = options.saveError
     ? vi.fn().mockRejectedValue(options.saveError)
     : vi.fn().mockImplementation(async (_id, input) => {
@@ -72,6 +81,17 @@ function setup(
           ...changes,
           version: stored.version + 1,
           ...(input.milestoneId !== undefined ? { milestone_id: input.milestoneId } : {}),
+          ...(input.assigneeUserId !== undefined ? { assignee_user_id: input.assigneeUserId } : {}),
+          ...(input.assigneeAgentId !== undefined
+            ? { assignee_agent_id: input.assigneeAgentId }
+            : {}),
+          ...(input.assigneeTeamId !== undefined ? { assignee_team_id: input.assigneeTeamId } : {}),
+          ...(input.assigneeGroupId !== undefined
+            ? { assignee_group_id: input.assigneeGroupId }
+            : {}),
+          ...(input.assigneeGroupSourceId !== undefined
+            ? { assignee_group_source_id: input.assigneeGroupSourceId }
+            : {}),
           ...(input.startAt !== undefined ? { start_at: input.startAt } : {}),
           ...(input.dueAt !== undefined ? { due_at: input.dueAt } : {}),
         }
@@ -81,16 +101,25 @@ function setup(
     get: vi
       .fn()
       .mockResolvedValue(
-        options.saveError ? { ...item, title: 'Other user title', version: 2 } : item
+        options.saveError ? { ...item, title: 'Other user title', version: 2 } : initialItem
       ),
     update,
   }
-  const api = { issues } as unknown as SharedWorkspaceApi
+  const groupCrews =
+    options.groupCrewCatalog ?? options.crewCatalog ?? vi.fn().mockResolvedValue([])
+  const api = {
+    issues,
+    projects: { listCollaborationGroups: groupCrews },
+  } as unknown as SharedWorkspaceApi
   const milestoneList = vi
     .fn()
     .mockResolvedValue([{ id: 'milestone', title: 'Release', project_id: 'project' }])
   const catalog = {
-    projects: { list: vi.fn().mockResolvedValue(options.projectCatalog ?? [project]) },
+    agents: { list: options.agentCatalog ?? vi.fn().mockResolvedValue([]) },
+    projects: {
+      list: vi.fn().mockResolvedValue(options.projectCatalog ?? [project]),
+      listCollaborationGroups: options.crewCatalog ?? vi.fn().mockResolvedValue([]),
+    },
     milestones: { list: milestoneList },
   } as unknown as SharedWorkspaceApi
   const projectLink = vi.fn().mockResolvedValue({
@@ -118,7 +147,7 @@ function setup(
     <ThreadSettings
       group={{ ...group, role: options.role ?? group.role }}
       project={groupBoardContext(group, 'cloud')}
-      item={item}
+      item={initialItem}
       items={[item]}
       members={[
         { user_id: 7, name: 'Owner', role: 'Owner' },
@@ -160,6 +189,86 @@ function setup(
 }
 
 describe('Thread settings domain boundaries', () => {
+  it('reads native group crews from the actual group port without using the project crew catalog', async () => {
+    const groupCrewCatalog = vi
+      .fn()
+      .mockResolvedValue([{ id: 'group-crew', name: 'Group delivery' }])
+    const projectCrewCatalog = vi.fn().mockRejectedValue(new Error('Project catalog unavailable'))
+    const view = setup({ groupCrewCatalog, crewCatalog: projectCrewCatalog })
+    const option = await screen.findByRole('option', { name: '小组：Group delivery' })
+    expect(groupCrewCatalog).toHaveBeenCalledWith('group')
+    expect(projectCrewCatalog).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByTestId('thread-settings-assignee'), {
+      target: { value: option.getAttribute('value') },
+    })
+    await waitFor(() =>
+      expect(view.update).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ assigneeGroupId: 'group-crew', assigneeGroupSourceId: 'group' })
+      )
+    )
+  })
+
+  it('prevents execution assignments when execute permission is false while retaining human assignment', async () => {
+    const view = setup({
+      execute: false,
+      agentCatalog: vi
+        .fn()
+        .mockResolvedValue([{ id: 'agent', name: 'Reviewer', status: 'active' }]),
+      groupCrewCatalog: vi.fn().mockResolvedValue([{ id: 'crew', name: 'Delivery' }]),
+    })
+    expect(await screen.findByRole('option', { name: 'Reviewer' })).toBeDisabled()
+    const crew = screen.getByRole('option', { name: '小组：Delivery' })
+    expect(crew).toBeDisabled()
+    fireEvent.change(screen.getByTestId('thread-settings-assignee'), {
+      target: { value: 'agent:agent' },
+    })
+    fireEvent.change(screen.getByTestId('thread-settings-assignee'), {
+      target: { value: crew.getAttribute('value') },
+    })
+    expect(view.update).not.toHaveBeenCalled()
+    expect(
+      within(screen.getByTestId('thread-settings-assignee')).getByRole('option', { name: 'Member' })
+    ).not.toBeDisabled()
+    fireEvent.change(screen.getByTestId('thread-settings-assignee'), {
+      target: { value: 'user:8' },
+    })
+    await waitFor(() =>
+      expect(view.update).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ assigneeUserId: 8 })
+      )
+    )
+  })
+
+  it('saves the selected crew ID and source atomically and clears both on human reassignment', async () => {
+    const crewCatalog = vi.fn().mockResolvedValue([{ id: 'same', name: 'Delivery' }])
+    const view = setup({ linked: true, crewCatalog })
+    await screen.findAllByRole('option', { name: '小组：Delivery' })
+    fireEvent.change(screen.getByTestId('thread-settings-assignee'), {
+      target: { value: `crew:${JSON.stringify(['project', 'same'])}` },
+    })
+    await waitFor(() =>
+      expect(view.update).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ assigneeGroupId: 'same', assigneeGroupSourceId: 'project' })
+      )
+    )
+    fireEvent.change(screen.getByTestId('thread-settings-assignee'), {
+      target: { value: 'user:8' },
+    })
+    await waitFor(() =>
+      expect(view.update).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({
+          assigneeUserId: 8,
+          assigneeGroupId: null,
+          assigneeGroupSourceId: null,
+        })
+      )
+    )
+  })
+
   it('keeps the authorized current project visible while the editable catalog is loading', async () => {
     let resolveCatalog!: (projects: import('@wegent/collaboration').CollaborationProject[]) => void
     const projectCatalog = new Promise<import('@wegent/collaboration').CollaborationProject[]>(

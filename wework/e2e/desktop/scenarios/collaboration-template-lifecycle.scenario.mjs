@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -367,6 +368,10 @@ export function createDesktopScenario({
       await capture('05-board', '默认看板按六个阶段标签分列')
       active = true
       await control.command('clickWhenEnabled', selector('collaboration-issue-create'), {
+        timeoutMs: uiTimeoutMs,
+      })
+      await prepareGroupThreadCreation(control, {
+        groupName: `${ISSUE} discussion`,
         timeoutMs: uiTimeoutMs,
       })
       await control.command('fill', selector('cloud-todo-title'), { value: ISSUE })

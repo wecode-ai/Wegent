@@ -31,7 +31,6 @@ function binding(id: string, patch: Partial<WorkspaceTaskBinding> = {}): Workspa
 function records(name: string, group = 'group', thread = 'thread') {
   return {
     bindings: [binding(name, { projectId: group, issueId: thread })],
-    assignments: [{ id: name, issue_id: thread }],
     deliveries: [
       {
         id: name,
@@ -48,7 +47,6 @@ function records(name: string, group = 'group', thread = 'thread') {
 
 function setup(value = records('record')) {
   const bindings = vi.fn().mockResolvedValue(value.bindings)
-  const assignments = vi.fn().mockResolvedValue(value.assignments)
   const deliveries = vi.fn().mockResolvedValue(value.deliveries)
   const api = {
     issues: {},
@@ -57,7 +55,6 @@ function setup(value = records('record')) {
     members: {},
     agents: {},
     taskBindings: { list: bindings },
-    assignments: { list: assignments },
     deliveries: { list: deliveries },
   } as unknown as SharedWorkspaceApi
   const context: ThreadActionContext = {
@@ -99,9 +96,8 @@ function setup(value = records('record')) {
   return {
     context,
     bindings,
-    assignments,
     deliveries,
-    methods: [bindings, assignments, deliveries],
+    methods: [bindings, deliveries],
   }
 }
 
@@ -115,7 +111,7 @@ function deferred<T>() {
 
 type WorkRecords = ReturnType<typeof useThreadWorkRecords>
 function all(result: WorkRecords) {
-  return [result.bindings, result.assignments, result.deliveries]
+  return [result.bindings, result.deliveries]
 }
 async function expectRecords(current: () => WorkRecords, name: string) {
   await waitFor(() => {
@@ -142,7 +138,6 @@ describe('Thread work records use the real hook and shared Issue detail adapter'
     expect(result.current.actor).toBe(0)
     expect(result.current.bindings.items.map(item => item.id)).toEqual(['own-zero'])
     expect(source.bindings).toHaveBeenCalledExactlyOnceWith('thread', 'group')
-    expect(source.assignments).toHaveBeenCalledExactlyOnceWith('thread')
     expect(source.deliveries).toHaveBeenCalledExactlyOnceWith('thread')
   })
 
@@ -168,14 +163,9 @@ describe('Thread work records use the real hook and shared Issue detail adapter'
     async dimension => {
       const source = setup()
       const old = records('old-private')
-      const pending = [
-        deferred<typeof old.bindings>(),
-        deferred<typeof old.assignments>(),
-        deferred<typeof old.deliveries>(),
-      ] as const
+      const pending = [deferred<typeof old.bindings>(), deferred<typeof old.deliveries>()] as const
       source.bindings.mockReturnValueOnce(pending[0].promise)
-      source.assignments.mockReturnValueOnce(pending[1].promise)
-      source.deliveries.mockReturnValueOnce(pending[2].promise)
+      source.deliveries.mockReturnValueOnce(pending[1].promise)
       const next: ThreadActionContext = { ...source.context }
       if (dimension === 'account') next.accountScope = 'other-account'
       if (dimension === 'store') next.sourceStore = 'cloud'
@@ -184,7 +174,6 @@ describe('Thread work records use the real hook and shared Issue detail adapter'
       const fresh = records('current', next.group.id, next.item.id)
       const currentSource = dimension === 'api' ? setup(fresh) : source
       currentSource.bindings.mockResolvedValue(fresh.bindings)
-      currentSource.assignments.mockResolvedValue(fresh.assignments)
       currentSource.deliveries.mockResolvedValue(fresh.deliveries)
       next.api = currentSource.context.api
       const view = renderHook(({ context }) => useThreadWorkRecords(context), {
@@ -198,8 +187,7 @@ describe('Thread work records use the real hook and shared Issue detail adapter'
       await expectRecords(() => view.result.current, 'current')
       await act(async () => {
         pending[0].resolve(old.bindings)
-        pending[1].resolve(old.assignments)
-        pending[2].resolve(old.deliveries)
+        pending[1].resolve(old.deliveries)
       })
       await expectRecords(() => view.result.current, 'current')
     }

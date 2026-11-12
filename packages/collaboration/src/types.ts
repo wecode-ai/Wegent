@@ -125,6 +125,12 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  permissions?: {
+    edit_content: boolean;
+    assign: boolean;
+    comment: boolean;
+    execute: boolean;
+  };
   group_id?: string | null;
   group_name?: string | null;
   joined?: boolean | null;
@@ -139,6 +145,7 @@ export interface CollaborationIssue {
   created_by_user_name?: string | null;
   assignee_user_id: number | null;
   assignee_group_id?: string | null;
+  assignee_group_source_id?: string | null;
   assignee_group_name?: string | null;
   assignee_name?: string | null;
   assignee_agent_id?: string | null;
@@ -338,9 +345,10 @@ export interface CollaborationGroupStage {
 
 export interface CollaborationGroup {
   id: string;
-  workspace_id: string;
-  owner_type: "workspace" | "project";
+  workspace_id: string | null;
+  owner_type: "workspace" | "project" | "chat_group";
   owner_id: string;
+  binding_owner_id?: string;
   name: string;
   description: string;
   instructions?: string;

@@ -3,7 +3,13 @@ import type { CollaborationProject } from '@wegent/collaboration'
 
 export type GroupConfiguration = Pick<
   CollaborationProject,
-  'board_config' | 'board_views' | 'card_display' | 'tags'
+  | 'board_config'
+  | 'board_views'
+  | 'card_display'
+  | 'tags'
+  | 'collaboration_groups'
+  | 'automatic_processing_rules'
+  | 'execution_environment'
 >
 
 export interface ChatGroupMember {

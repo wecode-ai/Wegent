@@ -533,6 +533,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               local_project_name: input.localProjectName,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,
+              assignee_group_source_id: input.assigneeGroupSourceId,
               assignee_agent_id: input.assigneeAgentId,
               notify_assignee: input.notifyAssignee,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
@@ -553,6 +554,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               parent_id: input.parentId,
               assignee_user_id: input.assigneeUserId,
               assignee_group_id: input.assigneeGroupId,
+              assignee_group_source_id: input.assigneeGroupSourceId,
               assignee_agent_id: input.assigneeAgentId,
               assignee_team_id: input.assigneeTeamId,
               start_at: input.startAt,

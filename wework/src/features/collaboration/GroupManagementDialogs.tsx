@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { TemplateDialog } from '@wegent/collaboration/templates'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import type { ChatGroup, ChatGroupApi, ChatGroupMember } from '@/api/chatGroups'
@@ -148,6 +148,7 @@ export function GroupSettings({
   groups,
   directory,
   shared,
+  resources,
   onChanged,
 }: {
   group: ChatGroup
@@ -155,11 +156,19 @@ export function GroupSettings({
   groups: ChatGroupApi
   directory: SharedWorkspaceApi['members']
   shared: boolean
+  resources?: ReactNode
   onChanged(): void
 }) {
   const { t } = useTranslation('collaboration')
   const [name, setName] = useState(group.name)
   const [description, setDescription] = useState(group.description)
+  const previous = useRef(group)
+  useEffect(() => {
+    const source = previous.current
+    setName(value => (value === source.name ? group.name : value))
+    setDescription(value => (value === source.description ? group.description : value))
+    previous.current = group
+  }, [group])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const manage = group.role === 'Owner' || group.role === 'Maintainer'
@@ -226,6 +235,7 @@ export function GroupSettings({
           </Button>
         )}
       </form>
+      {resources && <div className="mt-8 max-w-4xl border-t border-border pt-6">{resources}</div>}
       <div className="mt-8 max-w-xl border-t border-border pt-6">
         <GroupMembersSettings
           group={group}

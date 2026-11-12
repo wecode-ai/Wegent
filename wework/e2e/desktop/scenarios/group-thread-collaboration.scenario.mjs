@@ -1,4 +1,6 @@
+import { verifyProjectlessThreadCreation } from '../modules/group-thread-projectless-create.mjs'
 import assert from 'node:assert/strict'
+import { verifyStandaloneGroupAgent } from '../modules/group-thread-agent-resources.mjs'
 import { URL } from 'node:url'
 
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
@@ -930,38 +932,14 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
-      await click(control, 'collaboration-primary-home')
-      await wait(control, 'thread-creation-home')
-      assert.equal(await control.command('getValue', scoped('thread-home-project')), '')
-      await capture(control, 'group-thread-create-home.png')
-      await click(control, 'thread-home-create')
-      await control.command('waitFor', '[data-testid="thread-create-group-select"]', {
-        timeoutMs: uiTimeoutMs,
+      await verifyProjectlessThreadCreation({
+        control,
+        content: CONTENT,
+        groupId,
+        uiTimeoutMs,
+        captureScreenshot,
+        capture,
       })
-      await control.command('select', '[data-testid="thread-create-group-select"]', {
-        value: groupId,
-      })
-      await control.command('click', '[data-testid="thread-create-group-next"]')
-      await control.command('waitFor', '[data-testid="thread-create-context"]', {
-        timeoutMs: uiTimeoutMs,
-        text: '未关联项目',
-      })
-      const standaloneTitle = `无需项目的事项-${process.pid}`
-      await control.command('fill', '[data-testid="cloud-todo-title"]', { value: standaloneTitle })
-      assert.equal(
-        await control.command('getAttribute', '[data-testid="cloud-todo-detail-description"]', {
-          value: 'placeholder',
-        }),
-        '目标与验收标准'
-      )
-      await captureScreenshot(control, 'group-thread-create-without-project.png', 'body')
-      await control.command('click', '[data-testid="cloud-todo-create-confirm"]')
-      await wait(control, 'thread-room', { text: standaloneTitle })
-      await click(control, 'thread-settings')
-      await wait(control, 'thread-project-select')
-      assert.equal(await control.command('getValue', scoped('thread-project-select')), '')
-      await capture(control, 'group-thread-created-without-project.png')
-      await click(control, 'thread-settings-close')
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/local/retired-project/issues/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(messageId)}`,
       })
@@ -993,6 +971,13 @@ export function createDesktopScenario({
       await wait(control, 'thread-link-retry', { visible: false })
       await capture(control, 'group-thread-retained-link-recovered.png')
       await verifyLegacyMigration(control, groupId, address.taskId)
+      await verifyStandaloneGroupAgent({
+        control,
+        timeoutMs: uiTimeoutMs,
+        executionTimeoutMs: modelResponseTimeoutMs,
+        completion: PRIVATE_RESULT,
+        captureScreenshot,
+      })
     },
   }
 }

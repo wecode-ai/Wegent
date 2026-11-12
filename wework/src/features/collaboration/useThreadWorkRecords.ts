@@ -90,17 +90,12 @@ export function useThreadWorkRecords(context: ThreadActionContext) {
       ),
     [port, context.item.id, context.group.id, actor]
   )
-  const loadAssignments = useCallback(
-    () => context.api.assignments?.list(context.item.id) ?? Promise.resolve([]),
-    [context.api.assignments, context.item.id]
-  )
   const loadDeliveries = useCallback(
     () => port.deliveries.list(context.item.id),
     [port, context.item.id]
   )
   const enabled = actor !== undefined
   const bindings = useThreadRecord(scope, request, loadBindings, enabled)
-  const assignments = useThreadRecord(scope, request, loadAssignments, enabled)
   const deliveries = useThreadRecord(scope, request, loadDeliveries, enabled)
-  return { actor, scope, port, bindings, assignments, deliveries, refresh }
+  return { actor, scope, port, bindings, deliveries, refresh }
 }

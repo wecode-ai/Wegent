@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareGroupThreadCreation } from '../modules/collaboration-board-issue.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
@@ -128,6 +129,10 @@ async function createGroup(control, timeoutMs) {
 async function createIssueAndAssignGroup(control, timeoutMs) {
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
+  await prepareGroupThreadCreation(control, {
+    groupName: `${ISSUE} discussion`,
+    timeoutMs,
+  })
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,
   })

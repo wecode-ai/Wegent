@@ -121,6 +121,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  permissions?: CollaborationIssue['permissions']
   group_id?: string | null
   group_name?: string | null
   joined?: boolean | null
@@ -130,6 +131,7 @@ export interface CloudLoopItem {
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
   assignee_group_id?: string | null
+  assignee_group_source_id?: string | null
   assignee_group_name?: string | null
   id: string
   cloud_project_id: CloudProjectId
@@ -999,6 +1001,7 @@ export function createDeliveryApi(client: HttpClient) {
         automation_rule_id?: string | null
         assignee_user_id?: number | null
         assignee_group_id?: string | null
+        assignee_group_source_id?: string | null
         assignee_agent_id?: string | null
         notify_assignee?: boolean
       }
@@ -1018,6 +1021,8 @@ export function createDeliveryApi(client: HttpClient) {
           | 'assignee_user_id'
           | 'assignee_agent_id'
           | 'assignee_team_id'
+          | 'assignee_group_id'
+          | 'assignee_group_source_id'
           | 'start_at'
           | 'due_at'
           | 'tags'
@@ -1039,6 +1044,7 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         assigneeType: 'user' | 'agent' | 'team' | 'group'
         assigneeId: string
+        assigneeGroupSourceId?: string | null
         runnerSelection?: RunnerSelection
         notifyAssignee?: boolean
         position?: { beforeItemId: string | null; classificationProjectId?: string }

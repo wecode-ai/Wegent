@@ -12,11 +12,13 @@ import type { ChatGroupMember } from '@/api/chatGroups'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ComposerInputHandle } from '@wegent/collaboration/composer'
 import type { GroupReplyTarget } from './groupReply'
+import type { ThreadAgentCandidate } from './useThreadAgentCandidates'
 
 export interface GroupMessageComposerProps {
   scopeKey: string
   threadId: string | null
   members: ChatGroupMember[]
+  agents?: ThreadAgentCandidate[]
   api: SharedWorkspaceApi
   translate: CollaborationTranslate
   onSend(
@@ -39,6 +41,7 @@ function ScopedGroupMessageComposer({
   scopeKey,
   threadId,
   members,
+  agents = [],
   api,
   translate,
   onSend,
@@ -69,7 +72,18 @@ function ScopedGroupMessageComposer({
       })),
     [members, currentUserId, t]
   )
-  const mentions = useIssueMentionCandidates(people, [], translate)
+  const targets = useIssueMentionCandidates(people, agents, translate)
+  const mentions = targets.map(target => {
+    if (target.type !== 'agent') return target
+    const agent = agents.find(agent => agent.id === target.id)
+    return {
+      ...target,
+      metaLabel:
+        agent?.source.kind === 'project'
+          ? t('projectAgents', { name: agent.source.name })
+          : t('groupAgents'),
+    }
+  })
   return (
     <div className="space-y-2">
       {reply && (
