@@ -422,6 +422,7 @@ impl RuntimeWorkRpcHandler {
         force_start: bool,
         queue_only: bool,
     ) -> Result<bool, AppIpcError> {
+        self.capture_runtime_event_account(&mut turn.request);
         turn.bind_task_kind(&self.store);
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();

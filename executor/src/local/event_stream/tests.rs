@@ -9,6 +9,13 @@ use super::{
 use serde_json::json;
 use tokio::sync::broadcast;
 
+mod accounts;
+
+fn scoped(mut event: serde_json::Value, account: &str) -> serde_json::Value {
+    event[super::RAW_ACCOUNT] = json!(account);
+    event
+}
+
 fn event_hub() -> ExecutorEventHub {
     let (raw_tx, _) = broadcast::channel(8);
     ExecutorEventHub::new(raw_tx)
@@ -17,21 +24,21 @@ fn event_hub() -> ExecutorEventHub {
 #[test]
 fn oversized_completions_remain_deliverable_without_expanding_ui_history() {
     let hub = event_hub();
-    let mut backend = hub.subscribe_backend(0);
+    let mut backend = hub.subscribe_backend("account-a", 0);
     let content = "x".repeat(EVENT_ENVELOPE_MAX_BYTES + 1);
-    hub.publish(json!({"event":"response.completed","payload":{"taskId":"a","data":{"turnId":"turn-a","value":content}}}));
-    let live = backend.receiver.try_recv().unwrap();
+    hub.publish(scoped(json!({"event":"response.completed","payload":{"taskId":"a","data":{"turnId":"turn-a","value":content}}}), "account-a"));
+    let live = backend.receiver.try_recv().unwrap().value;
     assert_eq!(live["event"], "response.completed");
     assert_eq!(live["payload"]["data"]["value"], content);
     assert_eq!(
         hub.subscribe_after(0).replay[0]["event"],
         "executor.event_lagged"
     );
-    let replay = hub.pending_backend_terminals().unwrap();
+    let replay = hub.pending_backend_terminals("account-a").unwrap();
     assert!(replay.contains(&live));
-    hub.acknowledge_backend(&live).unwrap();
+    hub.acknowledge_backend("account-a", &live).unwrap();
     assert!(hub
-        .pending_backend_terminals()
+        .pending_backend_terminals("account-a")
         .unwrap()
         .iter()
         .all(|event| event["event"] != "response.completed"));
@@ -40,10 +47,14 @@ fn oversized_completions_remain_deliverable_without_expanding_ui_history() {
 #[test]
 fn backend_completions_survive_history_overflow_and_runner_replacement() {
     let hub = event_hub();
-    hub.publish(
+    hub.publish(scoped(
         json!({"event":"response.completed","payload":{"taskId":"task-1","subtaskId":"turn-1"}}),
-    );
-    let terminal = hub.pending_backend_terminals().unwrap().remove(0);
+        "account-a",
+    ));
+    let terminal = hub
+        .pending_backend_terminals("account-a")
+        .unwrap()
+        .remove(0);
     let sequence = event_sequence(&terminal).unwrap();
     for _ in 0..EVENT_JOURNAL_MAX_EVENTS + 1 {
         hub.publish(json!({"event":"response.output_text.delta","payload":{"delta":"x"}}));
@@ -53,11 +64,11 @@ fn backend_completions_survive_history_overflow_and_runner_replacement() {
         .replay
         .iter()
         .all(|event| event["event"] != "response.completed"));
-    let replay = hub.pending_backend_terminals().unwrap();
+    let replay = hub.pending_backend_terminals("account-a").unwrap();
     assert!(replay.contains(&terminal));
-    hub.acknowledge_backend(&terminal).unwrap();
+    hub.acknowledge_backend("account-a", &terminal).unwrap();
     assert!(hub
-        .pending_backend_terminals()
+        .pending_backend_terminals("account-a")
         .unwrap()
         .iter()
         .all(|event| event["event"] != "response.completed"));

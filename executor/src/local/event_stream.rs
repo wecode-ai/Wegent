@@ -18,6 +18,7 @@ use tokio::{
     time::{self, Duration, MissedTickBehavior},
 };
 
+use super::event_scope::RAW_ACCOUNT;
 use super::terminal_event_journal::{is_terminal, TerminalEventJournal};
 use super::RUNTIME_EVENT_BUFFER_CAPACITY;
 
@@ -32,7 +33,7 @@ const EVENT_METADATA_MAX_CHARS: usize = 256;
 pub(crate) struct ExecutorEventHub {
     raw_tx: broadcast::Sender<Value>,
     event_tx: broadcast::Sender<Value>,
-    backend_tx: broadcast::Sender<Value>,
+    backend_tx: broadcast::Sender<BackendEvent>,
     state: Arc<Mutex<EventJournal>>,
     started: Arc<AtomicBool>,
     terminal_events: Arc<Mutex<TerminalEventJournal>>,
@@ -44,7 +45,20 @@ pub(crate) struct ExecutorEventSubscription {
     pub resume_after: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct BackendEvent {
+    pub account: String,
+    pub value: Value,
+}
+
+pub(crate) struct BackendEventSubscription {
+    pub replay: Vec<Value>,
+    pub receiver: broadcast::Receiver<BackendEvent>,
+    pub resume_after: u64,
+}
+
 struct JournalEvent {
+    account: Option<String>,
     sequence: u64,
     bytes: usize,
     value: Value,
@@ -85,36 +99,52 @@ impl ExecutorEventHub {
             .enable(directory);
     }
 
-    pub fn subscribe_backend(&self, after: u64) -> ExecutorEventSubscription {
+    pub fn subscribe_backend(&self, account: &str, after: u64) -> BackendEventSubscription {
+        let mut state = self.state.lock().expect("executor event journal lock");
         let receiver = self.backend_tx.subscribe();
-        let mut subscription = self.subscribe_after(after);
-        subscription.receiver = receiver;
-        // Terminal delivery has its own durable queue and acknowledgement
-        // lifecycle, independent of the streaming replay cursor.
-        subscription.replay.retain(|event| !is_terminal(event));
-        subscription
+        let latest = state.latest_sequence();
+        let history_lost = after > 0 && (after < state.dropped_through || after > latest);
+        let replay = if history_lost {
+            vec![state.recovery_event(after)]
+        } else {
+            state
+                .events
+                .iter()
+                .filter(|event| {
+                    event.sequence > after
+                        && event.account.as_deref() == Some(account)
+                        && !is_terminal(&event.value)
+                })
+                .map(|event| event.value.clone())
+                .collect()
+        };
+        BackendEventSubscription {
+            replay,
+            receiver,
+            resume_after: state.latest_sequence(),
+        }
     }
 
-    pub fn pending_backend_terminals(&self) -> Result<Vec<Value>, String> {
+    pub fn pending_backend_terminals(&self, account: &str) -> Result<Vec<Value>, String> {
         self.terminal_events
             .lock()
             .expect("terminal event journal lock")
-            .pending()
+            .pending(account)
     }
 
-    pub fn acknowledge_backend(&self, event: &Value) -> Result<(), String> {
+    pub fn acknowledge_backend(&self, account: &str, event: &Value) -> Result<(), String> {
         self.terminal_events
             .lock()
             .expect("terminal event journal lock")
-            .acknowledge(event)
+            .acknowledge(account, event)
     }
 
-    pub fn bind_backend_journal(&self, scope: String) {
+    pub fn bind_backend_journal(&self, account: &str) {
         let loaded = self
             .terminal_events
             .lock()
             .expect("terminal event journal lock")
-            .bind(scope);
+            .bind(account);
         match loaded {
             Ok(last) => {
                 let mut state = self.state.lock().expect("executor event journal lock");
@@ -247,6 +277,17 @@ impl ExecutorEventHub {
     }
 
     fn publish(&self, raw: Value) {
+        let account = raw
+            .get(RAW_ACCOUNT)
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if is_terminal(&raw) {
+            if let Some(account) = &account {
+                // A late producer may belong to an account not yet connected
+                // in this process. Load its sequence boundary before allocation.
+                self.bind_backend_journal(account);
+            }
+        }
         let (event, backend_event) = {
             let mut state = self
                 .state
@@ -254,16 +295,23 @@ impl ExecutorEventHub {
                 .expect("executor event journal should not be poisoned");
             state.append(raw)
         };
-        if let Err(error) = self
-            .terminal_events
-            .lock()
-            .expect("terminal event journal lock")
-            .retain(&backend_event)
-        {
-            crate::logging::write_executor_error_line(&error);
+        // Unowned local events remain available to local IPC subscribers;
+        // a later login must never acquire them for cloud delivery.
+        if let Some(account) = account {
+            if let Err(error) = self
+                .terminal_events
+                .lock()
+                .expect("terminal event journal lock")
+                .retain(&account, &backend_event)
+            {
+                crate::logging::write_executor_error_line(&error);
+            }
+            let _ = self.backend_tx.send(BackendEvent {
+                account,
+                value: backend_event,
+            });
         }
         let _ = self.event_tx.send(event);
-        let _ = self.backend_tx.send(backend_event);
     }
 
     fn flush_pending(&self, pending: &mut VecDeque<(String, Value)>, task_id: Option<&str>) {
@@ -297,6 +345,10 @@ impl EventJournal {
     }
 
     fn append(&mut self, raw: Value) -> (Value, Value) {
+        let account = raw
+            .get(RAW_ACCOUNT)
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let sequence = self.take_sequence();
         let envelope = event_envelope(raw, sequence);
         // Construct metadata once for every consumer, retaining the full
@@ -307,6 +359,7 @@ impl EventJournal {
         let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
 
         self.events.push_back(JournalEvent {
+            account,
             sequence,
             bytes,
             value: event.clone(),
@@ -392,7 +445,13 @@ fn coalescing_key(event: &Value) -> Option<String> {
         })
         .and_then(Value::as_str)
         .unwrap_or_default();
-    Some(format!("{event_name}\0{task_id}\0{subtask_id}\0{block_id}"))
+    let account = event
+        .get(RAW_ACCOUNT)
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(format!(
+        "{account}\0{event_name}\0{task_id}\0{subtask_id}\0{block_id}"
+    ))
 }
 
 fn merge_coalesced_event(pending: &mut Value, next: &Value) -> bool {

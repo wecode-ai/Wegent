@@ -98,6 +98,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
+        self.capture_runtime_event_account(&mut request);
         request.use_ephemeral_codex_thread();
         let local_task_id = request.task_id.clone();
         let stream_request = request.clone();

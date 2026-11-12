@@ -15,12 +15,14 @@ use super::event_stream::event_sequence;
 
 #[derive(Default)]
 pub(super) struct TerminalEventJournal {
-    pending: BTreeMap<u64, Value>,
-    suspended: BTreeMap<String, BTreeMap<u64, Value>>,
-    persisted: BTreeSet<u64>,
+    accounts: BTreeMap<String, AccountJournal>,
     root: Option<PathBuf>,
-    directory: Option<PathBuf>,
-    scope: Option<String>,
+}
+
+#[derive(Default)]
+struct AccountJournal {
+    pending: BTreeMap<u64, Value>,
+    persisted: BTreeSet<u64>,
     loaded: bool,
 }
 
@@ -36,63 +38,64 @@ impl TerminalEventJournal {
         self.root = Some(directory);
     }
 
-    pub fn bind(&mut self, scope: String) -> Result<u64, String> {
-        let Some(root) = &self.root else { return Ok(0) };
-        if self.scope.as_ref() != Some(&scope) {
-            if let Some(previous) = &self.scope {
-                // Preserve even events whose disk writes failed, without
-                // exposing them to the account that is connecting next.
-                self.suspended
-                    .insert(previous.clone(), std::mem::take(&mut self.pending));
-                self.pending = self.suspended.remove(&scope).unwrap_or_default();
-            }
-            self.persisted.clear();
-            self.directory = Some(root.join(&scope));
-            self.scope = Some(scope);
-            self.loaded = false;
-        }
-        self.flush()?;
-        Ok(self.pending.keys().next_back().copied().unwrap_or_default())
+    pub fn bind(&mut self, account: &str) -> Result<u64, String> {
+        let journal = self.flush(account)?;
+        Ok(journal
+            .pending
+            .keys()
+            .next_back()
+            .copied()
+            .unwrap_or_default())
     }
 
-    pub fn retain(&mut self, event: &Value) -> Result<(), String> {
+    pub fn retain(&mut self, account: &str, event: &Value) -> Result<(), String> {
         if is_terminal(event) {
             let sequence = event_sequence(event).ok_or("Terminal event has no sequence")?;
-            self.pending.insert(sequence, event.clone());
-            self.flush()?;
+            self.accounts
+                .entry(account.to_owned())
+                .or_default()
+                .pending
+                .insert(sequence, event.clone());
+            self.flush(account)?;
         }
         Ok(())
     }
 
-    pub fn pending(&mut self) -> Result<Vec<Value>, String> {
-        self.flush()?;
-        Ok(self.pending.values().cloned().collect())
+    pub fn pending(&mut self, account: &str) -> Result<Vec<Value>, String> {
+        Ok(self.flush(account)?.pending.values().cloned().collect())
     }
 
-    pub fn acknowledge(&mut self, event: &Value) -> Result<(), String> {
+    pub fn acknowledge(&mut self, account: &str, event: &Value) -> Result<(), String> {
         if !is_terminal(event) {
             return Ok(());
         }
         let sequence = event_sequence(event).ok_or("Terminal event has no sequence")?;
-        if let Some(directory) = &self.directory {
+        let journal = self.accounts.entry(account.to_owned()).or_default();
+        if journal.pending.get(&sequence) != Some(event) {
+            return Err("Terminal acknowledgement does not match its account and event".to_owned());
+        }
+        if let Some(root) = &self.root {
+            let directory = root.join(account);
             match fs::remove_file(directory.join(format!("{sequence}.json"))) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(format!("Cannot acknowledge terminal event: {error}")),
             }
         }
-        self.pending.remove(&sequence);
-        self.persisted.remove(&sequence);
+        journal.pending.remove(&sequence);
+        journal.persisted.remove(&sequence);
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), String> {
-        let Some(directory) = &self.directory else {
-            return Ok(());
+    fn flush(&mut self, account: &str) -> Result<&mut AccountJournal, String> {
+        let journal = self.accounts.entry(account.to_owned()).or_default();
+        let Some(root) = &self.root else {
+            return Ok(journal);
         };
-        fs::create_dir_all(directory).map_err(storage_error)?;
-        if !self.loaded {
-            for entry in fs::read_dir(directory).map_err(storage_error)? {
+        let directory = root.join(account);
+        fs::create_dir_all(&directory).map_err(storage_error)?;
+        if !journal.loaded {
+            for entry in fs::read_dir(&directory).map_err(storage_error)? {
                 let entry = entry.map_err(storage_error)?;
                 let path = entry.path();
                 if path.extension().and_then(|value| value.to_str()) != Some("json") {
@@ -107,21 +110,21 @@ impl TerminalEventJournal {
                 {
                     return Err("Invalid terminal event journal filename".to_owned());
                 }
-                self.pending.entry(sequence).or_insert(event);
-                self.persisted.insert(sequence);
+                journal.pending.entry(sequence).or_insert(event);
+                journal.persisted.insert(sequence);
             }
-            self.loaded = true;
+            journal.loaded = true;
         }
-        for (sequence, event) in &self.pending {
+        for (sequence, event) in &journal.pending {
             let path = directory.join(format!("{sequence}.json"));
-            if !self.persisted.contains(sequence) {
+            if !journal.persisted.contains(sequence) {
                 let bytes = serde_json::to_vec(event).map_err(|error| error.to_string())?;
                 crate::runtime_work::store::atomic_write_file(&path, &bytes)
                     .map_err(storage_error)?;
-                self.persisted.insert(*sequence);
+                journal.persisted.insert(*sequence);
             }
         }
-        Ok(())
+        Ok(journal)
     }
 }
 
@@ -140,21 +143,21 @@ mod tests {
         let event = json!({"event":"response.completed","sequence":41,"payload":{"taskId":"a"}});
         let mut journal = TerminalEventJournal::default();
         journal.enable(root.path().to_owned());
-        journal.bind("account-a".to_owned()).unwrap();
-        journal.retain(&event).unwrap();
+        journal.bind("account-a").unwrap();
+        journal.retain("account-a", &event).unwrap();
         drop(journal);
 
         let mut reopened = TerminalEventJournal::default();
         reopened.enable(root.path().to_owned());
-        reopened.bind("account-a".to_owned()).unwrap();
-        assert_eq!(reopened.pending().unwrap(), vec![event.clone()]);
-        reopened.acknowledge(&event).unwrap();
+        reopened.bind("account-a").unwrap();
+        assert_eq!(reopened.pending("account-a").unwrap(), vec![event.clone()]);
+        reopened.acknowledge("account-a", &event).unwrap();
         drop(reopened);
 
         let mut reopened = TerminalEventJournal::default();
         reopened.enable(root.path().to_owned());
-        reopened.bind("account-a".to_owned()).unwrap();
-        assert!(reopened.pending().unwrap().is_empty());
+        reopened.bind("account-a").unwrap();
+        assert!(reopened.pending("account-a").unwrap().is_empty());
     }
 
     #[test]
@@ -164,15 +167,15 @@ mod tests {
         let second = json!({"event":"response.completed","sequence":11});
         let mut journal = TerminalEventJournal::default();
         journal.enable(root.path().to_owned());
-        journal.bind("account-a".to_owned()).unwrap();
-        journal.retain(&first).unwrap();
-        assert_eq!(journal.bind("account-b".to_owned()).unwrap(), 0);
-        assert!(journal.pending().unwrap().is_empty());
-        journal.retain(&second).unwrap();
-        assert_eq!(journal.bind("account-a".to_owned()).unwrap(), 10);
-        assert_eq!(journal.pending().unwrap(), vec![first]);
-        assert_eq!(journal.bind("account-b".to_owned()).unwrap(), 11);
-        assert_eq!(journal.pending().unwrap(), vec![second]);
+        journal.bind("account-a").unwrap();
+        journal.retain("account-a", &first).unwrap();
+        assert_eq!(journal.bind("account-b").unwrap(), 0);
+        assert!(journal.pending("account-b").unwrap().is_empty());
+        journal.retain("account-b", &second).unwrap();
+        assert_eq!(journal.bind("account-a").unwrap(), 10);
+        assert_eq!(journal.pending("account-a").unwrap(), vec![first]);
+        assert_eq!(journal.bind("account-b").unwrap(), 11);
+        assert_eq!(journal.pending("account-b").unwrap(), vec![second]);
     }
 
     #[test]
@@ -183,11 +186,11 @@ mod tests {
         let event = json!({"event":"response.failed","sequence":42});
         let mut journal = TerminalEventJournal::default();
         journal.enable(directory.clone());
-        assert!(journal.bind("account-a".to_owned()).is_err());
-        assert!(journal.retain(&event).is_err());
-        assert!(journal.pending().is_err());
+        assert!(journal.bind("account-a").is_err());
+        assert!(journal.retain("account-a", &event).is_err());
+        assert!(journal.pending("account-a").is_err());
         fs::remove_file(&directory).unwrap();
-        assert_eq!(journal.pending().unwrap(), vec![event]);
+        assert_eq!(journal.pending("account-a").unwrap(), vec![event]);
     }
 
     #[test]
@@ -199,21 +202,42 @@ mod tests {
         let second = json!({"event":"response.completed","sequence":42});
         let mut journal = TerminalEventJournal::default();
         journal.enable(root.path().to_owned());
-        assert!(journal.bind("account-a".to_owned()).is_err());
-        assert!(journal.retain(&first).is_err());
-        journal.bind("account-b".to_owned()).unwrap();
-        assert!(journal.pending().unwrap().is_empty());
-        journal.retain(&second).unwrap();
+        assert!(journal.bind("account-a").is_err());
+        assert!(journal.retain("account-a", &first).is_err());
+        journal.bind("account-b").unwrap();
+        assert!(journal.pending("account-b").unwrap().is_empty());
+        journal.retain("account-b", &second).unwrap();
         fs::remove_file(blocked).unwrap();
-        journal.bind("account-a".to_owned()).unwrap();
-        assert_eq!(journal.pending().unwrap(), vec![first.clone()]);
+        journal.bind("account-a").unwrap();
+        assert_eq!(journal.pending("account-a").unwrap(), vec![first.clone()]);
         drop(journal);
 
         let mut reopened = TerminalEventJournal::default();
         reopened.enable(root.path().to_owned());
-        reopened.bind("account-a".to_owned()).unwrap();
-        assert_eq!(reopened.pending().unwrap(), vec![first]);
-        reopened.bind("account-b".to_owned()).unwrap();
-        assert_eq!(reopened.pending().unwrap(), vec![second]);
+        reopened.bind("account-a").unwrap();
+        assert_eq!(reopened.pending("account-a").unwrap(), vec![first]);
+        reopened.bind("account-b").unwrap();
+        assert_eq!(reopened.pending("account-b").unwrap(), vec![second]);
+    }
+
+    #[test]
+    fn late_events_and_acknowledgements_keep_their_account_after_a_switch() {
+        let root = tempfile::tempdir().unwrap();
+        let first = json!({"event":"response.completed","sequence":41,"payload":{"taskId":"a"}});
+        let second = json!({"event":"response.completed","sequence":41,"payload":{"taskId":"b"}});
+        let mut journal = TerminalEventJournal::default();
+        journal.enable(root.path().to_owned());
+        journal.bind("account-a").unwrap();
+        journal.bind("account-b").unwrap();
+        journal.retain("account-a", &first).unwrap();
+        journal.retain("account-b", &second).unwrap();
+        assert!(journal.acknowledge("account-b", &first).is_err());
+        journal.acknowledge("account-a", &first).unwrap();
+        assert_eq!(journal.pending("account-b").unwrap(), vec![second.clone()]);
+        drop(journal);
+        let mut reopened = TerminalEventJournal::default();
+        reopened.enable(root.path().to_owned());
+        assert!(reopened.pending("account-a").unwrap().is_empty());
+        assert_eq!(reopened.pending("account-b").unwrap(), vec![second]);
     }
 }

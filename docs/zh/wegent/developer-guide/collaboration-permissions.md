@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
+Runtime 事件在回合受理时固定本地账号归属，队列持久化保留该归属；云端历史重放、实时转发和终态确认显式匹配连接账号。切换登录不能将原账号的迟到事件投递到新账号，ACK 也不能删除其他账号的同序号记录。归属只用于本地隔离，不替代后端账号、设备、Issue 与当前执行权限校验；CP01–CP20 不变。`local_turn_event_ownership_survives_account_switch_and_saved_request_recovery`、`switched_connections_never_send_another_accounts_replay_or_late_events` 和日志重启回归覆盖请求入口、历史、晚到事件与确认边界。
+
 人工回答的精确接收确认可能晚于执行完成。Rust Socket.IO 原投影事务仅在设备归属、持久回答 ID、原执行、项目、Issue 及已完成活动的 Runtime 轮次全部匹配时结算原问题；依次锁定 Issue、执行和活动，提交后发布问题变化，不重复完成通知。执行状态、版本和事件序号不变，不重发输入。已有后续执行也不丢失原回答确认；旧消息、错误轮次与其他所有者不能结算。回归复用现有隔离 MySQL 迁移验收，覆盖乱序、重复确认、身份拒绝及重试轮次边界；该迟到确认行为仅由 Rust 事件主路径负责。CP01–CP20 不变。
 
 云端手动启动继续复用持久派发队列，临时失败和执行器重启不能丢失已接收的请求。恢复手动请求不要求指派、项目订阅或接收开关，但仍验证当前账号、角色和 Issue 权限；已启动或已删除的工作不因恢复而重复执行。自动派发继续验证当前指派及自动接收策略。`manual_issue_startup_intent_survives_restart_without_assignment_or_intake` 和既有真实数据库故障与重启 E2E 覆盖恢复事务，CP 不变量不变。

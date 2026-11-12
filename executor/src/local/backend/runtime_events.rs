@@ -20,18 +20,19 @@ struct TerminalDeliveries {
 }
 
 pub(super) fn bind_journal(hub: &ExecutorEventHub, config: &LocalBackendConfig) {
-    use sha2::{Digest, Sha256};
+    if let Some(account) = event_account(config) {
+        hub.bind_backend_journal(&account);
+    }
+}
+
+fn event_account(config: &LocalBackendConfig) -> Option<String> {
     let connection = crate::config::device::ConnectionConfig {
         backend_url: config.backend_url.clone(),
         socket_url: config.socket_url.clone(),
         auth_token: config.auth_token.clone(),
         runtime_auth_token: config.runtime_auth_token.clone(),
     };
-    let account = crate::plugin_account_auth::local_http::account_scope(&connection);
-    hub.bind_backend_journal(format!(
-        "{:x}",
-        Sha256::digest(format!("{account}:{}", config.device_id))
-    ));
+    crate::local::event_scope::account(&connection)
 }
 
 pub(super) async fn forward<T: LocalBackendTransport>(
@@ -74,7 +75,8 @@ async fn relay_subscription<T: LocalBackendTransport>(
     connected: &AtomicBool,
     delivered: &mut u64,
 ) -> Result<bool, String> {
-    let mut subscription = hub.subscribe_backend(*delivered);
+    let account = event_account(&client.config).ok_or("Runtime event connection has no account")?;
+    let mut subscription = hub.subscribe_backend(&account, *delivered);
     for event in subscription.replay {
         if !connected.load(Ordering::Acquire) {
             return Ok(false);
@@ -86,6 +88,10 @@ async fn relay_subscription<T: LocalBackendTransport>(
         tokio::select! {
             result = subscription.receiver.recv() => match result {
                 Ok(event) => {
+                    if event.account != account {
+                        continue;
+                    }
+                    let event = event.value;
                     let sequence = event_sequence(&event).unwrap_or_default();
                     if sequence > *delivered && !is_terminal(&event) {
                         relay_stream(client, event, delivered, connected).await?;
@@ -158,7 +164,9 @@ impl TerminalDeliveries {
         if self.attempts.len() >= MAX_PENDING_ACKS {
             return Ok(());
         }
-        let mut pending = hub.pending_backend_terminals()?;
+        let account =
+            event_account(&client.config).ok_or("Runtime event connection has no account")?;
+        let mut pending = hub.pending_backend_terminals(&account)?;
         // Unattempted events precede retries, then retry deadlines ensure a
         // rejected event cannot monopolize the bounded acknowledgement pool.
         pending.sort_by_key(|event| {
@@ -198,7 +206,8 @@ async fn acknowledge_terminal<T: LocalBackendTransport>(
         .call_raw_event(RUNTIME_EVENT_EVENT, event.clone(), ACK_TIMEOUT)
         .await
         .map_err(|error| error.to_string())?;
-    hub.acknowledge_backend(&event)
+    let account = event_account(&client.config).ok_or("Runtime event connection has no account")?;
+    hub.acknowledge_backend(&account, &event)
 }
 
 fn log_retry(error: String) {

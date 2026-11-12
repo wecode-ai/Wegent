@@ -580,6 +580,7 @@ impl RuntimeWorkRpcHandler {
                 payload["payload"]["taskTitle"] = Value::String(title);
             }
         }
+        crate::local::event_scope::stamp(&mut payload, request);
         let _ = event_tx.send(payload);
     }
 

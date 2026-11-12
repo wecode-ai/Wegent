@@ -10,6 +10,7 @@ pub mod codex_home;
 pub mod codex_provider_migration;
 pub mod command;
 pub mod environment_prepare;
+pub(crate) mod event_scope;
 mod event_stream;
 pub(crate) mod git_access;
 pub mod git_commands;
