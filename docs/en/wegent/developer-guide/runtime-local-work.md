@@ -355,7 +355,8 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
 - The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
 - Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
-- Executor persists unacknowledged terminal events per Backend account and device, deleting them only after a Backend business ACK. Closing the desktop UI, streaming history overflow, reconnects, and process restarts must not discard these events. UI history remains bounded while terminal notification delivery retains the complete payload.
+- Executor retains complete unacknowledged terminals per Backend account and device. Once either its local journal or Backend confirms durable acceptance, closing the UI, history overflow, reconnects and restarts preserve the notification. A Backend business ACK removes local records. UI history remains bounded.
+- Terminal journals use `0700` directories and `0600` files, repair existing permissions on load, and reject symlinks. The shared atomic writer syncs file contents before the journal directory. Disk failures still permit Backend acceptance of retained terminals; local persistence retries independently every second and exposes failure/recovery through local `executor.event_lagged` reasons. When both stores are unavailable, events remain unaccepted; abrupt process loss can lose memory-only events.
 - Turn admission captures the event account, which survives queue recovery and late publication. Account keys prefer the stable user ID, so credential refreshes and username changes retain pending deliveries. Backend replay, live relay, terminal journals, and ACK deletion explicitly match the connection account. Switching accounts cannot adopt another account's events or work created without a login. Queued and recovered requests cannot borrow the new account's Backend credentials. Local IPC retains local events; cloud forwarding excludes local events with no account ownership. Submitted requests cannot choose their own event account.
 - Custom shared Runtime event producers capture `RuntimeEventSource` when accepting work and reuse it to stamp later events. Relaying must never fill in missing identity from the current login.
 - Nested collaboration requests, member profiles and model variants capture their account at the same ingress; restored legacy queues without account metadata remain unowned. Model gateways and credentials bind from the checked connection snapshot. Oversized terminals retain their original classification when bounded into UI lag markers and cannot enter ordinary Backend stream replay.
@@ -377,6 +378,8 @@ sequenceDiagram
     participant W as Notification worker
     participant I as IM provider
     T->>E: Original account event (including late events after switching)
+    E->>E: Private atomic journal; retry storage independently on failure
+    E-->>U: Local storage failure and recovery status
     Note over T,E: One checked connection snapshot; unknown legacy accounts remain unowned
     E->>B: Stable event matching connection account (retained and replayed on failure)
     Note over E,B: Relay streams independently; acknowledge terminals concurrently and retry individually

@@ -21,6 +21,51 @@ fn event_hub() -> ExecutorEventHub {
     ExecutorEventHub::new(raw_tx)
 }
 
+#[tokio::test]
+async fn terminal_storage_recovers_without_a_backend_connection() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("journal");
+    std::fs::write(&directory, b"blocked").unwrap();
+    let (raw, _) = broadcast::channel(8);
+    let hub = ExecutorEventHub::new(raw.clone());
+    hub.enable_terminal_event_journal(directory.clone());
+    let mut live = hub.subscribe_live();
+    hub.ensure_started();
+    raw.send(scoped(
+        json!({"event":"response.completed","payload":{"taskId":"task-a"}}),
+        "account-a",
+    ))
+    .unwrap();
+    let terminal = live.recv().await.unwrap();
+    assert_eq!(terminal["event"], "response.completed");
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if live.recv().await.unwrap()["payload"]["reason"] == "terminal_journal_unavailable" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    std::fs::remove_file(&directory).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if live.recv().await.unwrap()["payload"]["reason"] == "terminal_journal_recovered" {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let (sender, _) = broadcast::channel(8);
+    let reopened = ExecutorEventHub::new(sender);
+    reopened.enable_terminal_event_journal(directory);
+    assert_eq!(
+        reopened.pending_backend_terminals("account-a").unwrap(),
+        vec![terminal]
+    );
+}
+
 #[test]
 fn oversized_completions_remain_deliverable_without_expanding_ui_history() {
     let hub = event_hub();

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -37,6 +37,8 @@ pub(crate) struct ExecutorEventHub {
     state: Arc<Mutex<EventJournal>>,
     started: Arc<AtomicBool>,
     terminal_events: Arc<Mutex<TerminalEventJournal>>,
+    terminal_storage_status: Arc<Mutex<BTreeMap<String, Option<String>>>>,
+    terminal_storage_notices: Arc<Mutex<VecDeque<Value>>>,
 }
 
 pub(crate) struct ExecutorEventSubscription {
@@ -83,6 +85,8 @@ impl ExecutorEventHub {
             state: Arc::new(Mutex::new(EventJournal::new())),
             started: Arc::new(AtomicBool::new(false)),
             terminal_events: Arc::new(Mutex::new(TerminalEventJournal::default())),
+            terminal_storage_status: Arc::new(Mutex::new(BTreeMap::new())),
+            terminal_storage_notices: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -127,10 +131,13 @@ impl ExecutorEventHub {
     }
 
     pub fn pending_backend_terminals(&self, account: &str) -> Result<Vec<Value>, String> {
-        self.terminal_events
+        let pending = self
+            .terminal_events
             .lock()
-            .expect("terminal event journal lock")
-            .pending(account)
+            .map_err(|_| "Terminal event journal lock is unavailable".to_owned())?
+            .pending(account);
+        self.report_terminal_storage(account, pending.persistence_error);
+        Ok(pending.events)
     }
 
     pub fn acknowledge_backend(&self, account: &str, event: &Value) -> Result<(), String> {
@@ -151,7 +158,7 @@ impl ExecutorEventHub {
                 let mut state = self.state.lock().expect("executor event journal lock");
                 state.next_sequence = state.next_sequence.max(last.saturating_add(1));
             }
-            Err(error) => crate::logging::write_executor_error_line(&error),
+            Err(error) => self.report_terminal_storage(account, Some(error)),
         }
     }
 
@@ -172,10 +179,24 @@ impl ExecutorEventHub {
         tokio::spawn(async move {
             let mut pending = VecDeque::<(String, Value)>::new();
             let mut flush = time::interval(EVENT_COALESCE_INTERVAL);
+            let mut storage_retry = time::interval(Duration::from_secs(1));
+            storage_retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
             flush.set_missed_tick_behavior(MissedTickBehavior::Skip);
             flush.tick().await;
             loop {
                 tokio::select! {
+                    _ = storage_retry.tick() => {
+                        let statuses = hub.terminal_events.lock()
+                            .expect("terminal event journal lock").retry_storage();
+                        for (account, error) in statuses {
+                            hub.report_terminal_storage(&account, error);
+                        }
+                        let notices = std::mem::take(&mut *hub.terminal_storage_notices.lock()
+                            .expect("terminal storage notice lock"));
+                        for notice in notices {
+                            hub.publish(notice);
+                        }
+                    }
                     _ = flush.tick(), if !pending.is_empty() => {
                         hub.flush_pending(&mut pending, None);
                     }
@@ -299,20 +320,39 @@ impl ExecutorEventHub {
         // Unowned local events remain available to local IPC subscribers;
         // a later login must never acquire them for cloud delivery.
         if let Some(account) = account {
-            if let Err(error) = self
+            let retained = self
                 .terminal_events
                 .lock()
                 .expect("terminal event journal lock")
-                .retain(&account, &backend_event)
-            {
-                crate::logging::write_executor_error_line(&error);
-            }
+                .retain(&account, &backend_event);
+            self.report_terminal_storage(&account, retained.err());
             let _ = self.backend_tx.send(BackendEvent {
                 account,
                 value: backend_event,
             });
         }
         let _ = self.event_tx.send(event);
+    }
+
+    fn report_terminal_storage(&self, account: &str, error: Option<String>) {
+        let previous = self
+            .terminal_storage_status
+            .lock()
+            .expect("terminal storage status lock")
+            .insert(account.to_owned(), error.clone());
+        if previous.as_ref() == Some(&error) || (previous.is_none() && error.is_none()) {
+            return;
+        }
+        if let Some(error) = &error {
+            crate::logging::write_executor_error_line(error);
+        }
+        self.terminal_storage_notices.lock().expect("terminal storage notice lock").push_back(json!({
+            "event":"executor.event_lagged",
+            "payload":{
+                "reason":if error.is_some() { "terminal_journal_unavailable" } else { "terminal_journal_recovered" },
+                "retryable":true
+            }
+        }));
     }
 
     fn flush_pending(&self, pending: &mut VecDeque<(String, Value)>, task_id: Option<&str>) {

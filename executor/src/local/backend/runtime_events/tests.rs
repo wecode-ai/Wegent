@@ -98,6 +98,44 @@ fn attempt(
 }
 
 #[tokio::test]
+async fn backend_acceptance_remains_available_when_terminal_storage_fails() {
+    let (hub, terminal, _raw) = fixture().await;
+    let root = tempfile::tempdir().unwrap();
+    let blocked = root.path().join("journal");
+    std::fs::write(&blocked, b"blocked").unwrap();
+    hub.enable_terminal_event_journal(blocked);
+    let (client, mut calls, _emitted) = client();
+    let runner = tokio::spawn(forward_terminals(
+        client,
+        hub.clone(),
+        Arc::new(AtomicBool::new(true)),
+    ));
+    let (event, ack) = tokio::time::timeout(Duration::from_secs(1), calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event, terminal);
+    assert_eq!(
+        hub.pending_backend_terminals(&account()).unwrap(),
+        vec![terminal]
+    );
+    ack.send(Ok(json!({"success":true}))).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !hub
+            .pending_backend_terminals(&account())
+            .unwrap()
+            .is_empty()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    runner.abort();
+    let _ = runner.await;
+}
+
+#[tokio::test]
 async fn terminal_event_waits_for_business_ack_and_replays_the_same_event() {
     let (hub, terminal, _raw) = fixture().await;
     let (client, mut calls, _emits) = client();
