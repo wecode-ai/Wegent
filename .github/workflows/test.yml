@@ -808,6 +808,12 @@ jobs:
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
         run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages gdb)
+          if ((${#missing[@]})); then
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
+          fi
+          sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
           dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
