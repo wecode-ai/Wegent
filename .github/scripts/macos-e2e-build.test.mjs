@@ -239,6 +239,32 @@ const requiredSteps = [
   'Archive verified complete macOS E2E build',
   'Upload verified complete macOS E2E build',
 ]
+
+test('Inspector failures archive bounded evidence before cleanup can stall', () => {
+  const workflow = readFileSync(
+    new URL('../workflows/wework-e2e.yml', import.meta.url),
+    'utf8',
+  )
+  const job = workflow.slice(workflow.indexOf('  wework-desktop-memory-e2e:'))
+  const inspector = job.indexOf('- name: Run Wework desktop macOS Inspector E2E')
+  const evidence = job.indexOf('- name: Upload macOS Inspector failure evidence before cleanup')
+  const cleanup = job.indexOf('- name: Prune transient Wework desktop E2E caches')
+  assert.ok(inspector >= 0 && evidence > inspector && cleanup > evidence)
+  const step = job.slice(evidence, job.indexOf('      - name:', evidence + 1))
+  assert.match(step, /if: always\(\) && failure\(\)/)
+  const paths = step.split('\n').map(line => line.trim()).filter(line =>
+    line.startsWith('wework/test-results/'),
+  )
+  assert.deepEqual(paths, [
+    'wework/test-results/desktop-e2e/*/failure.txt',
+    'wework/test-results/desktop-e2e/*/scenario-state.json',
+    'wework/test-results/desktop-e2e/*/model-requests.json',
+    'wework/test-results/desktop-e2e/*/*.log',
+    'wework/test-results/desktop-e2e/*/*.png',
+    'wework/test-results/desktop-e2e/*/*.png.conversation-diagnostics.json',
+  ])
+})
+
 function producer() {
   const run = {
     id: 123,
