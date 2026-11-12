@@ -118,10 +118,10 @@ describe('desktop host events', () => {
     gates.armRuntimeTransportGate({
       id: 'handoff',
       kind: 'response',
-      name: 'smartApps.storeAdditionalProxyTokens',
+      name: 'smartApps.open',
       where: [{ path: 'params.installationId', equals: 'app-1' }],
     })
-    const result = { stored: true }
+    const result = { id: 'app-1', state: 'running' }
     const response = {
       ok: true,
       status: 200,
@@ -131,9 +131,8 @@ describe('desktop host events', () => {
     vi.stubGlobal('fetch', fetchMock)
     const { invokeDesktopHost } = await import('./desktopHost')
     let delivered = false
-    const pending = invokeDesktopHost('smartApps.storeAdditionalProxyTokens', {
+    const pending = invokeDesktopHost('smartApps.open', {
       installationId: 'app-1',
-      tokens: ['test-token'],
     }).then(value => {
       delivered = true
       return value

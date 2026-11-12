@@ -1,7 +1,7 @@
 import { ChevronDown, FolderOpen, Loader2, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { SmartAppTemplate } from '@/api/local/harnessApps'
+import type { SmartAppTemplate, WorkbenchFlavor } from '@/api/local/harnessApps'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,6 +19,7 @@ export interface SmartAppDevelopmentInput {
   displayName: string
   description: string
   template: SmartAppTemplate
+  flavor: WorkbenchFlavor
 }
 
 const SMART_APP_TEMPLATES: Array<{
@@ -88,6 +89,7 @@ export function SmartAppDevelopmentDialog({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [description, setDescription] = useState('')
   const [parentPath, setParentPath] = useState('')
+  const [flavor, setFlavor] = useState<WorkbenchFlavor>('lightweight')
   const [template, setTemplate] = useState<SmartAppTemplate>('web')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -138,6 +140,7 @@ export function SmartAppDevelopmentDialog({
       displayName: displayName.trim(),
       description: description.trim(),
       template,
+      flavor,
     }
     try {
       await onSubmit(input)
@@ -152,7 +155,7 @@ export function SmartAppDevelopmentDialog({
             )
           : getSmartAppErrorMessage(
               value,
-              t('workbench.smart_apps_development_failed', '创建智能工作台失败。'),
+              t('workbench.smart_apps_development_failed', '创建工作台失败。'),
               t
             )
       const errorCode =
@@ -233,6 +236,32 @@ export function SmartAppDevelopmentDialog({
         </div>
 
         <div className="mt-5 grid gap-4">
+          {mode === 'create' ? (
+            <label className="grid gap-1.5 text-sm text-text-secondary">
+              <span>{t('workbench.workbench_flavor', '工作台类型')}</span>
+              <select
+                data-testid="smart-app-development-flavor"
+                value={flavor}
+                disabled={submitting}
+                onChange={event => setFlavor(event.target.value as WorkbenchFlavor)}
+                className="h-9 rounded-lg border border-border/50 bg-background px-3 text-text-primary"
+              >
+                <option className="bg-background text-text-primary" value="lightweight">
+                  {t('workbench.workbench_flavor_lightweight', '轻量型')}
+                </option>
+                <option className="bg-background text-text-primary" value="extended">
+                  {t('workbench.workbench_flavor_extended', '扩展型')}
+                </option>
+              </select>
+              <span className="text-xs">
+                {t(
+                  'workbench.workbench_flavor_hint',
+                  '轻量型适合工具与单页界面；扩展型适合包含本地逻辑与更多插件的工作台。两者使用相同运行环境。'
+                )}
+              </span>
+            </label>
+          ) : null}
+
           <label className="grid gap-1.5 text-sm text-text-secondary">
             <span>{t('workbench.smart_apps_display_name', '工作台名称')}</span>
             <input
@@ -344,44 +373,48 @@ export function SmartAppDevelopmentDialog({
                 {advancedOpen ? (
                   <>
                     {directoryNameField}
-                    <fieldset className="grid gap-2">
-                      <legend className="text-sm text-text-secondary">
-                        {t('workbench.smart_apps_template', '能力模板')}
-                      </legend>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {SMART_APP_TEMPLATES.map(option => {
-                          const selected = template === option.value
-                          return (
-                            <button
-                              key={option.value}
-                              type="button"
-                              aria-pressed={selected}
-                              data-testid={`smart-app-development-template-${option.value}`}
-                              disabled={submitting}
-                              onClick={() => setTemplate(option.value)}
-                              className={`min-h-11 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 ${
-                                selected
-                                  ? 'border-text-primary bg-muted text-text-primary'
-                                  : 'border-border/50 text-text-secondary hover:bg-muted/50'
-                              }`}
-                            >
-                              <span className="block text-sm font-medium">
-                                {t(option.labelKey, option.label)}
-                              </span>
-                              <span className="mt-0.5 block text-xs">
-                                {t(option.descriptionKey, option.description)}
-                              </span>
-                            </button>
-                          )
-                        })}
+                    {flavor === 'extended' ? (
+                      <fieldset className="grid gap-2">
+                        <legend className="text-sm text-text-secondary">
+                          {t('workbench.smart_apps_template', '能力模板')}
+                        </legend>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {SMART_APP_TEMPLATES.map(option => {
+                            const selected = template === option.value
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                aria-pressed={selected}
+                                data-testid={`smart-app-development-template-${option.value}`}
+                                disabled={submitting}
+                                onClick={() => setTemplate(option.value)}
+                                className={`min-h-11 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 ${
+                                  selected
+                                    ? 'border-text-primary bg-muted text-text-primary'
+                                    : 'border-border/50 text-text-secondary hover:bg-muted/50'
+                                }`}
+                              >
+                                <span className="block text-sm font-medium">
+                                  {t(option.labelKey, option.label)}
+                                </span>
+                                <span className="mt-0.5 block text-xs">
+                                  {t(option.descriptionKey, option.description)}
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </fieldset>
+                    ) : null}
+                    {flavor === 'extended' ? (
+                      <div className="rounded-lg border border-border/50 bg-surface/30 px-3 py-2 text-xs text-text-secondary">
+                        {t(
+                          'workbench.smart_apps_template_hint',
+                          '模板只声明起步所需能力；后续可按实际需求调整代码与验证契约。'
+                        )}
                       </div>
-                    </fieldset>
-                    <div className="rounded-lg border border-border/50 bg-surface/30 px-3 py-2 text-xs text-text-secondary">
-                      {t(
-                        'workbench.smart_apps_template_hint',
-                        '模板只声明起步所需能力；后续可按实际需求调整代码与验证契约。'
-                      )}
-                    </div>
+                    ) : null}
                   </>
                 ) : null}
               </div>

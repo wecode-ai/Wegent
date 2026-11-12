@@ -31,8 +31,7 @@ export function HarnessAppInstallDialog({
   const { t } = useTranslation('common')
   const packageName = preview.archivePath.split(/[\\/]/).pop() ?? preview.archivePath
   const manifest = preview.manifest
-  const canInstall =
-    preview.valid && Boolean(manifest) && Boolean(modelKey) && !busy && !installDisabled
+  const canInstall = preview.valid && Boolean(manifest) && !busy && !installDisabled
 
   return (
     <div
@@ -57,12 +56,12 @@ export function HarnessAppInstallDialog({
             </div>
             <div className="min-w-0">
               <h2 id="harness-app-install-title" className="heading-subsection">
-                {t('workbench.harness_apps_install_title', '安装智能工作台')}
+                {t('workbench.harness_apps_install_title', '安装工作台')}
               </h2>
               <p className="mt-1 text-sm text-text-secondary">
                 {t(
                   'workbench.harness_apps_install_description',
-                  '检查智能工作台信息，并选择它运行时使用的 Wework 模型。'
+                  '检查工作台信息，可按需选择它使用的 Wework 模型。'
                 )}
               </p>
             </div>
@@ -137,7 +136,7 @@ export function HarnessAppInstallDialog({
                 <span className="mt-1 block text-xs leading-5 text-text-muted">
                   {t(
                     'workbench.harness_apps_model_hint',
-                    '智能工作台启动后通过 Wework 的模型连接发起请求，不同智能工作台可以分别绑定。'
+                    '工作台启动后通过 Wework 的模型连接发起请求，不同工作台可以分别绑定。'
                   )}
                 </span>
                 <span className="relative mt-2 block">
@@ -147,7 +146,9 @@ export function HarnessAppInstallDialog({
                     value={modelKey}
                     onChange={event => onModelChange(event.target.value)}
                   >
-                    <option value="">{t('workbench.harness_apps_model_choose')}</option>
+                    <option value="">
+                      {t('workbench.workbench_model_optional', '暂不绑定模型')}
+                    </option>
                     {modelOptions.map(option => (
                       <option key={option.key} value={option.key}>
                         {option.label}
@@ -164,7 +165,7 @@ export function HarnessAppInstallDialog({
                   <span>
                     {t(
                       'workbench.harness_apps_no_models',
-                      '当前没有可用的 Wework 模型，请先在模型设置中完成配置。'
+                      '当前没有可用的 Wework 模型；可以先安装，需要模型能力时再配置。'
                     )}
                   </span>
                 </div>
@@ -176,14 +177,14 @@ export function HarnessAppInstallDialog({
                 <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive wework:text-red-600" />
                 <div>
                   <h3 className="text-sm font-medium text-destructive wework:text-red-600">
-                    {t('workbench.harness_apps_invalid_title', '无法安装这个智能工作台')}
+                    {t('workbench.harness_apps_invalid_title', '无法安装这个工作台')}
                   </h3>
                   <p className="mt-1 text-sm leading-5 text-text-secondary">
                     {preview.issues
                       .map(issue =>
                         localizeSmartAppIssue(
                           issue,
-                          t('workbench.harness_apps_preview_failed', '无法读取智能工作台发布包。'),
+                          t('workbench.harness_apps_preview_failed', '无法读取工作台发布包。'),
                           t
                         )
                       )

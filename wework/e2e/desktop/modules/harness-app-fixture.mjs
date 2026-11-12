@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile, readdir, stat, rm, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fetchLocalRuntime } from './runtime-request.mjs'
 import {
   extractZipFixture,
   createZipFixture,
@@ -17,6 +18,61 @@ export const MODEL_LABEL = 'Desktop E2E Chat'
 export const RECIPIENT_NAME = 'smart-app-e2e-recipient'
 export const STRANGER_NAME = 'smart-app-e2e-stranger'
 export const USER_PASSWORD = 'smart-app-e2e-password'
+
+export async function confirmHarnessInstallation(control, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  do {
+    const prompt = JSON.parse(
+      await control.command('workbenchApp', 'body', {
+        value: JSON.stringify({ action: 'installation' }),
+      })
+    )
+    if (prompt.visible && prompt.ready) {
+      const result = JSON.parse(
+        await control.command('workbenchApp', 'body', {
+          value: JSON.stringify({ action: 'installation', choice: 'accept' }),
+        })
+      )
+      assert.deepEqual(result, { clicked: true })
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < deadline)
+  assert.fail('The native workbench installation confirmation did not become ready')
+}
+
+export async function invokeHarnessHost(control, capability, params) {
+  const origin = await control.command('getLocationOrigin', 'body')
+  const response = await fetchLocalRuntime(
+    control,
+    new URL('/wework/electron-host/v1/invoke', origin),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ capability, params }),
+      timeoutMs: 60_000,
+    }
+  )
+  const payload = await response.json()
+  assert.equal(response.ok, true, `Host ${capability} returned HTTP ${response.status}`)
+  assert.equal(payload.ok, true, JSON.stringify(payload.error))
+  return payload.result
+}
+
+export async function waitForHarnessAppView(control, installationId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let state
+  do {
+    state = JSON.parse(
+      await control.command('workbenchApp', 'body', {
+        value: JSON.stringify({ action: 'snapshot', id: installationId }),
+      })
+    )
+    if (state.running && state.visible && state.contentsId) return state
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < deadline)
+  assert.fail(`The Host-owned DSH surface did not become visible: ${JSON.stringify(state)}`)
+}
 export const SMART_APP_ICON_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 export const SMART_APP_ALT_ICON_DATA_URL =
@@ -72,6 +128,50 @@ export async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
       timeoutMs: uiTimeoutMs,
     }
   )
+}
+
+export async function verifyWorkbenchEntriesWithoutExperimentalFeatures(
+  control,
+  { uiTimeoutMs, captureScreenshot, activeWorkspaceContentSelector }
+) {
+  const applicationsPage = `${activeWorkspaceContentSelector} [data-testid="sites-workspace"]`
+  const applicationsEntry = `${activeWorkspaceContentSelector} [data-testid="applications-tab-smart-app"]`
+  const menuEntry = '[data-testid="workspace-tab-add-smart-app"]'
+  await setExperimentalFeatures(control, false, uiTimeoutMs)
+  await control.command('navigate', 'body', { value: '/sites' })
+  await control.command('waitFor', applicationsPage, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', applicationsEntry, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', applicationsEntry, { visible: true })),
+    1,
+    'Workbenches disappeared from Applications after experimental features were disabled'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="workspace-tab-add"]', { visible: true })
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', menuEntry, {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  assert.equal(
+    Number(await control.command('getElementCount', menuEntry, { visible: true })),
+    1,
+    'Workbenches disappeared after experimental features were disabled'
+  )
+  await captureScreenshot(control, 'harness-apps-16-experimental-disabled.png', 'body')
 }
 
 export async function waitForElementCount(control, selector, expected, timeoutMs, message) {

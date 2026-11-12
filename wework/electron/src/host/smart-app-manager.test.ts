@@ -10,6 +10,7 @@ import * as workbenchDshRuntime from '../runtime/workbench-dsh-runtime.js'
 import { WorkbenchRuntimeManager } from '../runtime/workbench-runtime.js'
 import { testNodeRuntime } from '../runtime/test-helpers.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
+import { validateSmartAppPackageDirectory } from './smart-app-package-validator.js'
 import {
   createManager,
   createSmartAppArchive,
@@ -36,6 +37,66 @@ afterEach(async () => {
 })
 
 describe('SmartAppManager', () => {
+  test('new linked projects require native confirmation and cannot change execution flavor after approval', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-linked-consent-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+    const manager = createManager(root)
+    const linked = await manager.createDirectory({
+      parentPath: parent,
+      name: 'linked-consent',
+      displayName: 'Linked',
+      description: '',
+      template: 'web',
+      flavor: 'lightweight',
+    })
+    expect(linked.authorized).toBe(false)
+    await expect(manager.start({ installationId: linked.id })).rejects.toThrow(
+      'native installation confirmation'
+    )
+    await manager.grantNativeCapabilities(linked.id, [])
+    expect((await manager.get(linked.id)).authorized).toBe(true)
+    const manifest = { ...linked.manifest, flavor: 'extended' }
+    await writeFile(join(linked.packagePath, 'plugin-manifest.json'), JSON.stringify(manifest))
+    await expect(manager.start({ installationId: linked.id })).rejects.toThrow('type changed')
+  })
+  test('installs packaged npm archives into a validated materialized DSH package', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-release-materialization-'))
+    roots.push(root)
+    const manager = createManager(root)
+    const archivePath = await createSmartAppReleaseArchive(root, validManifest())
+    const preview = await manager.preview(archivePath)
+    const installed = await manager.install({ archivePath, expectedSha256: preview.sha256 })
+    expect((await validateSmartAppPackageDirectory(installed.packagePath)).manifest.name).toBe(
+      'fixture-app'
+    )
+    expect((await stat(join(installed.packagePath, 'app', 'package.json'))).isFile()).toBe(true)
+  })
+  test('reinstalling different bytes at the same version selects the new immutable package', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-package-identity-'))
+    roots.push(root)
+    const manager = createManager(root)
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const firstPreview = await manager.preview(archivePath)
+    const first = await manager.install({ archivePath, expectedSha256: firstPreview.sha256 })
+    const nextManifest = { ...validManifest(), displayName: 'Updated title' }
+    const nextArchive = await createSmartAppArchive(root, nextManifest)
+    const nextPreview = await manager.preview(nextArchive)
+    const next = await manager.install({
+      archivePath: nextArchive,
+      expectedSha256: nextPreview.sha256,
+    })
+    expect(next.packagePath).not.toBe(first.packagePath)
+    expect(
+      JSON.parse(await readFile(join(next.packagePath, 'plugin-manifest.json'), 'utf8')).displayName
+    ).toBe('Updated title')
+    expect(
+      JSON.parse(await readFile(join(first.packagePath, 'plugin-manifest.json'), 'utf8'))
+        .displayName
+    ).toBe(first.manifest.displayName)
+  })
+
   test('starts on an OS-assigned port and persists the runtime listening URL', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-dynamic-port-'))
     roots.push(root)
@@ -560,7 +621,7 @@ describe('SmartAppManager', () => {
       smartAppId: 42,
       releaseId: 1,
     })
-    expect(silent.grantedCapabilities).toEqual({ decisionModel: false })
+    expect(silent.grantedCapabilities).toEqual({ decisionModel: false, native: [] })
   })
 
   test('refuses a decision route when the manifest never requested the capability', async () => {
@@ -575,7 +636,7 @@ describe('SmartAppManager', () => {
       smartAppId: 42,
       releaseId: 1,
     })
-    expect(installation.grantedCapabilities).toEqual({ decisionModel: false })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: false, native: [] })
 
     await expect(
       manager.start({
@@ -601,7 +662,7 @@ describe('SmartAppManager', () => {
       smartAppId: 42,
       releaseId: 1,
     })
-    expect(installation.grantedCapabilities).toEqual({ decisionModel: true })
+    expect(installation.grantedCapabilities).toEqual({ decisionModel: true, native: [] })
 
     const rejected = [
       `https://127.0.0.1:9500/v1/decision-router/${DECISION_ROUTE_TOKEN}`,
@@ -768,47 +829,6 @@ describe('SmartAppManager', () => {
     expect(failure).not.toMatch(/decision router/i)
   })
 
-  test('keeps decision route tokens separate from the generic routes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-decision-token-'))
-    roots.push(root)
-    const manager = createManager(root)
-    manager.storeProxyToken('app-1', 'proxy-token')
-    manager.storeAdditionalProxyTokens('app-1', ['second-token'])
-    manager.storeContextToken('app-1', 'context-token')
-    manager.storeDecisionToken('app-1', 'decision-token')
-
-    expect(manager.takeDecisionToken('app-1')).toBe('decision-token')
-    expect(manager.takeDecisionToken('app-1')).toBeNull()
-    // Taking the decision route must not consume the generic model routes.
-    expect(manager.takeProxyToken('app-1')).toBe('proxy-token')
-    expect(manager.takeAdditionalProxyTokens('app-1')).toEqual(['second-token'])
-    expect(manager.takeAdditionalProxyTokens('app-1')).toEqual([])
-    expect(manager.takeContextToken('app-1')).toBe('context-token')
-  })
-
-  test('drops cached route tokens when an installation is deleted', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-token-cleanup-'))
-    roots.push(root)
-    const archivePath = await createSmartAppArchive(root, validManifest())
-    const manager = createManager(root)
-    const preview = await manager.preview(archivePath)
-    const installation = await manager.install({
-      archivePath,
-      expectedSha256: preview.sha256,
-    })
-    manager.storeProxyToken(installation.id, 'proxy-token')
-    manager.storeAdditionalProxyTokens(installation.id, ['second-token'])
-    manager.storeContextToken(installation.id, 'context-token')
-    manager.storeDecisionToken(installation.id, 'decision-token')
-
-    await manager.delete(installation.id, false)
-
-    expect(manager.takeProxyToken(installation.id)).toBeNull()
-    expect(manager.takeAdditionalProxyTokens(installation.id)).toEqual([])
-    expect(manager.takeContextToken(installation.id)).toBeNull()
-    expect(manager.takeDecisionToken(installation.id)).toBeNull()
-  })
-
   test('rejects unknown scaffold templates before creating a destination', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-template-'))
     roots.push(root)
@@ -827,7 +847,7 @@ describe('SmartAppManager', () => {
     await expect(stat(join(parent, 'invalid-template'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  test('exposes verification only for linked development projects', async () => {
+  test('keeps installation-ID verification limited to linked development projects', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-verification-manager-'))
     roots.push(root)
     const parent = join(root, 'projects')
@@ -855,18 +875,8 @@ describe('SmartAppManager', () => {
 
     await expect(manager.verify(linked.id)).resolves.toBe(report)
     await expect(manager.inspectVerification(linked.id)).resolves.toBe(report)
-    await expect(manager.verifyProject(linked.packagePath)).resolves.toBe(report)
-    await expect(manager.inspectProject(linked.packagePath)).resolves.toBe(report)
     expect(verificationService.verify).toHaveBeenCalledWith(linked.packagePath)
     expect(verificationService.inspect).toHaveBeenCalledWith(linked.packagePath)
-
-    await expect(manager.packProject(linked.packagePath, '/workspace/direct.zip')).resolves.toEqual(
-      expect.objectContaining({ archivePath: '/verified.zip' })
-    )
-    expect(verificationService.pack).toHaveBeenCalledWith(
-      linked.packagePath,
-      '/workspace/direct.zip'
-    )
 
     await expect(manager.export(linked.id)).resolves.toMatchObject({
       archivePath: '/verified.zip',
@@ -890,10 +900,7 @@ describe('SmartAppManager', () => {
     await expect(manager.export(managed.id)).resolves.toMatchObject({
       manifest: { name: 'fixture-app' },
     })
-    expect(verificationService.pack).toHaveBeenCalledTimes(2)
-    await expect(manager.inspectProject(parent)).rejects.toThrow(
-      'Smart app project is not a linked project root'
-    )
+    expect(verificationService.pack).toHaveBeenCalledTimes(1)
   })
 
   test('rejects and removes an oversized release archive', async () => {

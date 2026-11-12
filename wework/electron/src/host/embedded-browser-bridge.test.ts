@@ -734,6 +734,10 @@ function fakeBrowser() {
     goBack: vi.fn(),
     goForward: vi.fn(),
     evaluate,
+    createConditionEvaluator: vi.fn(() => async (expression: string) => ({
+      kind: 'value',
+      value: await evaluate('workspace-browser', expression, { awaitPromise: false }),
+    })),
     clickAt,
     isAgentControlPaused: vi.fn(() => false),
     registerAgentApproval: vi.fn(() => null),

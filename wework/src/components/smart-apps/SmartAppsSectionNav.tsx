@@ -16,7 +16,7 @@ const sections: Array<{
 }> = [
   {
     id: 'marketplace',
-    path: '/sites?app_type=smart_app',
+    path: '/sites?app_type=smart_app&view=marketplace',
     testId: 'smart-apps-section-marketplace',
   },
   {

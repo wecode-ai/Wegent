@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { DesktopHostError } from '@/api/dsh/desktopHost'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   getSmartAppErrorMessage,
   isOutdatedSmartAppCreationHost,
@@ -11,6 +11,27 @@ import {
 const t = (_key: string, fallback?: string) => fallback ?? _key
 
 describe('getSmartAppErrorMessage', () => {
+  test.each([
+    ['Stop the workbench before installing a new version', '工作台安装失败，原版本已保留'],
+    ['Stop the workbench before installing a new version', '工作台导入失败'],
+    ['Stop the Smart app before installing a new version', '工作台安装失败，原版本已保留'],
+    ['Stop the Smart app before installing a new version', '工作台导入失败'],
+  ])('localizes the active installation guard %s instead of %s', (message, fallback) => {
+    const translate = vi.fn(t)
+
+    expect(
+      getSmartAppErrorMessage(
+        new DesktopHostError('capability_failed', message),
+        fallback,
+        translate
+      )
+    ).toBe('请先停止工作台，再安装新版本。')
+    expect(translate).toHaveBeenCalledExactlyOnceWith(
+      'workbench.smart_apps_install_stop_first',
+      '请先停止工作台，再安装新版本。'
+    )
+  })
+
   test('does not leak unknown Smart App host errors into the Chinese UI', () => {
     expect(
       getSmartAppErrorMessage(

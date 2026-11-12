@@ -112,7 +112,7 @@ describe('SmartAppManager installation runtime ownership', () => {
           packageBefore
         )
         await expect(
-          stat(join(dirname(installed.packagePath), nextManifest.version))
+          stat(join(dirname(installed.packagePath), nextPreview.sha256))
         ).rejects.toMatchObject({
           code: 'ENOENT',
         })
@@ -122,18 +122,19 @@ describe('SmartAppManager installation runtime ownership', () => {
         await manager.stop(installed.id)
         expect(close).toHaveBeenCalledExactlyOnceWith(runtimeId)
         expect(runtimes.get(runtimeId)).toBeNull()
-        await expect(manager.install(nextInput)).resolves.toMatchObject({
+        const replacement = await manager.install(nextInput)
+        expect(replacement).toMatchObject({
           id: installed.id,
           manifest: nextManifest,
           modelKey: 'replacement-model',
           state: 'installed',
           webUrl: null,
         })
+        expect(replacement.packagePath).toBe(
+          join(dirname(installed.packagePath), nextPreview.sha256)
+        )
         const replacementManifest = JSON.parse(
-          await readFile(
-            join(dirname(installed.packagePath), '1.1.0', 'plugin-manifest.json'),
-            'utf8'
-          )
+          await readFile(join(replacement.packagePath, 'plugin-manifest.json'), 'utf8')
         )
         expect(replacementManifest).toEqual(nextManifest)
       } finally {

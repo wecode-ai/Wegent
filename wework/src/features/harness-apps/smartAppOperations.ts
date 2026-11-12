@@ -88,8 +88,8 @@ export async function prepareMarketplaceSmartApp(
 
 export async function installMarketplaceSmartApp(
   preparation: MarketplaceSmartAppPreparation,
-  modelKey: string
-): Promise<HarnessAppInstallation> {
+  modelKey: string | null
+): Promise<HarnessAppInstallation | null> {
   const attempt = beginOperation(operationKey(preparation.intent))
   try {
     assertValidPreview(preparation.preview)
@@ -98,7 +98,7 @@ export async function installMarketplaceSmartApp(
     throw error
   }
 
-  let installation: HarnessAppInstallation
+  let installation: HarnessAppInstallation | null
   try {
     installation = await harnessAppsApi.install(preparation.preview, modelKey, {
       releaseId: preparation.item.latestReleaseId,
@@ -107,6 +107,11 @@ export async function installMarketplaceSmartApp(
   } catch (error) {
     attempt.fail('install')
     throw error
+  }
+
+  if (!installation) {
+    attempt.cancel()
+    return null
   }
 
   const details = { context: { smartApp: smartAppContext(installation) } }
@@ -125,7 +130,7 @@ export async function installMarketplaceSmartApp(
   return installation
 }
 
-export async function importSmartAppPackage(path: string): Promise<HarnessAppInstallation> {
+export async function importSmartAppPackage(path: string): Promise<HarnessAppInstallation | null> {
   const attempt = beginOperation('smart_app.zip_import')
   let preview: HarnessAppPreview
   try {
@@ -142,12 +147,17 @@ export async function importSmartAppPackage(path: string): Promise<HarnessAppIns
     throw error
   }
 
-  let installation: HarnessAppInstallation
+  let installation: HarnessAppInstallation | null
   try {
     installation = await harnessAppsApi.install(preview, null)
   } catch (error) {
     attempt.fail('install')
     throw error
+  }
+
+  if (!installation) {
+    attempt.cancel()
+    return null
   }
 
   try {

@@ -453,4 +453,146 @@ describe('WeworkDesktopControlBridge', () => {
 
     await bridge.stop()
   })
+
+  test('routes authenticated workbench lifecycle operations without requiring a workbench window', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-workbench-'))
+    directories.push(registryDirectory)
+    const app = { id: 'todo', manifest: { displayName: 'Todo' }, state: 'running', visible: true }
+    const workbenches = {
+      list: vi.fn().mockResolvedValue([app]),
+      scaffold: vi.fn().mockResolvedValue({ projectPath: '/workspace/todo' }),
+      install: vi.fn().mockResolvedValue(app),
+      createTodo: vi.fn().mockResolvedValue(app),
+      open: vi.fn().mockResolvedValue(app),
+      hide: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      createShortcut: vi.fn().mockResolvedValue('/Desktop/Todo.webloc'),
+      setShortcut: vi.fn().mockResolvedValue(undefined),
+      configure: vi.fn().mockResolvedValue(app),
+    }
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'main',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+      workbenches: () => workbenches,
+    })
+    await bridge.start()
+    try {
+      const [filename] = await readdir(registryDirectory)
+      const record = JSON.parse(await readFile(join(registryDirectory, filename), 'utf8'))
+      const post = (body: unknown, token = record.token) =>
+        fetch(`http://${record.address}/workbench`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      expect(
+        (await post({ action: 'install', projectPath: '/workspace/todo' }, 'wrong')).status
+      ).toBe(401)
+      expect(workbenches.install).not.toHaveBeenCalled()
+      expect(await (await post({ action: 'list' })).json()).toEqual({ ok: true, data: [app] })
+      expect(
+        await (
+          await post({
+            action: 'create',
+            projectPath: '/workspace/todo',
+            name: 'todo',
+            displayName: 'Todo',
+            flavor: 'lightweight',
+          })
+        ).json()
+      ).toEqual({ ok: true, data: { projectPath: '/workspace/todo' } })
+      expect(workbenches.scaffold).toHaveBeenCalledWith({
+        projectPath: '/workspace/todo',
+        name: 'todo',
+        displayName: 'Todo',
+        flavor: 'lightweight',
+      })
+      expect(workbenches.install).not.toHaveBeenCalled()
+      expect(
+        await (await post({ action: 'install', projectPath: '/workspace/todo' })).json()
+      ).toEqual({ ok: true, data: app })
+      expect(workbenches.install).toHaveBeenCalledWith('/workspace/todo')
+      workbenches.install.mockResolvedValueOnce(null)
+      expect(
+        await (await post({ action: 'install', projectPath: '/workspace/todo' })).json()
+      ).toEqual({ ok: true, data: null })
+      expect(await (await post({ action: 'create-todo' })).json()).toEqual({ ok: true, data: app })
+      expect(workbenches.createTodo).toHaveBeenCalledOnce()
+      expect(await (await post({ action: 'launch', id: 'todo' })).json()).toEqual({
+        ok: true,
+        data: app,
+      })
+      expect(workbenches.open).toHaveBeenCalledWith('todo', undefined)
+      expect(
+        await (await post({ action: 'launch', id: 'todo', presentation: 'tab' })).json()
+      ).toEqual({ ok: true, data: app })
+      expect(workbenches.open).toHaveBeenLastCalledWith('todo', 'tab')
+      expect(
+        await (
+          await post({ action: 'configure', id: 'todo', presentation: 'window', resident: false })
+        ).json()
+      ).toEqual({ ok: true, data: app })
+      expect(workbenches.configure).toHaveBeenCalledWith('todo', {
+        presentation: 'window',
+        resident: false,
+      })
+      expect(
+        await (await post({ action: 'configure', id: 'todo', background: true })).json()
+      ).toEqual({ ok: true, data: app })
+      expect(workbenches.configure).toHaveBeenCalledWith('todo', { background: true })
+      for (const action of ['hide', 'stop', 'remove'] as const) {
+        expect(await (await post({ action, id: 'todo' })).json()).toEqual({
+          ok: true,
+          data: { id: 'todo' },
+        })
+        expect(workbenches[action]).toHaveBeenCalledWith('todo')
+      }
+      expect(await (await post({ action: 'shortcut', id: 'todo' })).json()).toEqual({
+        ok: true,
+        data: '/Desktop/Todo.webloc',
+      })
+      expect(workbenches.createShortcut).toHaveBeenCalledWith('todo')
+      for (const accelerator of ['CommandOrControl+Shift+T', null]) {
+        expect(
+          await (await post({ action: 'set-shortcut', id: 'todo', accelerator })).json()
+        ).toMatchObject({ ok: true })
+        expect(workbenches.setShortcut).toHaveBeenLastCalledWith('todo', accelerator)
+      }
+      for (const body of [
+        { action: 'run', command: 'node' },
+        { action: 'install', projectPath: 'relative' },
+        { action: 'install', projectPath: '/workspace/todo', approved: true },
+        { action: 'hide', id: '../todo' },
+        { action: 'list', id: 'todo' },
+        { action: 'set-shortcut', id: 'todo' },
+        { action: 'set-shortcut', id: 'todo', accelerator: '' },
+        { action: 'launch', id: 'todo', presentation: 'popup' },
+        { action: 'configure', id: 'todo', resident: 'false' },
+        { action: 'configure', id: 'todo', background: 'false' },
+        { action: 'configure', id: 'todo' },
+        {
+          action: 'create',
+          projectPath: '/workspace/todo',
+          name: 'todo',
+          displayName: 'Todo',
+          flavor: 'other',
+        },
+      ]) {
+        expect(await (await post(body)).json()).toMatchObject({
+          ok: false,
+          error: expect.any(String),
+        })
+      }
+      expect(workbenches.install).toHaveBeenCalledTimes(2)
+      expect(workbenches.hide).toHaveBeenCalledOnce()
+      expect(workbenches.setShortcut).toHaveBeenCalledTimes(2)
+    } finally {
+      await bridge.stop()
+    }
+  })
 })

@@ -71,6 +71,33 @@ function installNativeModelOwner() {
 }
 
 describe('Electron desktop E2E automation', () => {
+  test('routes independent light-app window actions through the real host boundary', async () => {
+    const snapshot = { running: true, visible: false, sdkAvailable: true }
+    const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(snapshot as never)
+    const results: unknown[] = []
+    let polls = 0
+    vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+      if (url.includes('/commands?')) {
+        if (++polls > 1) return new Response(null, { status: 410 })
+        return new Response(
+          JSON.stringify({
+            id: 'light-app-window',
+            action: 'workbenchApp',
+            selector: 'body',
+            value: JSON.stringify({ action: 'snapshot', id: 'todo-note' }),
+          })
+        )
+      }
+      if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+      return new Response('{}')
+    })
+    await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+    expect(native).toHaveBeenCalledWith('e2e.workbenchApp', { action: 'snapshot', id: 'todo-note' })
+    expect(results).toContainEqual(
+      expect.objectContaining({ ok: true, value: JSON.stringify(snapshot) })
+    )
+  })
+
   test.each([undefined, false, true])(
     'preserves window maximization through the host command (%s)',
     async maximized => {

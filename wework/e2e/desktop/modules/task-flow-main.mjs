@@ -77,7 +77,10 @@ import { DesktopE2EServer } from './desktop-server.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
-import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+import {
+  resolveDesktopLaunchCommand,
+  resolveElectronLaunchArguments,
+} from './electron-launch-arguments.mjs'
 
 import {
   clearDesktopE2EResultActive,
@@ -1522,21 +1525,26 @@ async function main() {
       await nativeCloudLogin.authorize()
     }
     await desktopScenario?.prepareUserDataLaunch?.()
+    const scenarioLaunchArguments = [
+      ...(process.platform === 'win32'
+        ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
+        : []),
+      ...(desktopScenario?.electronLaunchArguments ?? []),
+    ]
     const electronLaunchArguments = resolveElectronLaunchArguments({
-      extraArguments: [
-        ...(process.platform === 'win32'
-          ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
-          : []),
-        ...(desktopScenario?.electronLaunchArguments ?? []),
-      ],
+      extraArguments: scenarioLaunchArguments,
     })
     const launchWorkingDirectory = desktopScenario?.launchWorkingDirectory ?? weworkDir
     if (desktopScenario?.launchWorkingDirectory) {
       await mkdir(launchWorkingDirectory, { recursive: true })
     }
     let activeAppEnvironment = appEnvironment
-    const startDesktopAppProcess = async () => {
-      const child = spawn(appBinary, electronLaunchArguments, {
+    const startDesktopAppProcess = async (
+      launchArguments = electronLaunchArguments,
+      launchCommand
+    ) => {
+      const command = resolveDesktopLaunchCommand(appBinary, launchArguments, launchCommand)
+      const child = spawn(command.command, command.args, {
         cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1591,6 +1599,18 @@ async function main() {
     }
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
+      assert.ok(
+        !options?.launchCommand || !options.startupUrls?.length,
+        'A shortcut launch must carry its own startup URL'
+      )
+      const launchArguments = resolveElectronLaunchArguments({
+        extraArguments: scenarioLaunchArguments,
+        startupUrls: options?.startupUrls ?? [],
+      })
+      assert.ok(
+        options?.waitForStartup === undefined || typeof options.waitForStartup === 'function',
+        'Custom desktop startup readiness must be a function'
+      )
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
       const previousUserDataDirectory =
         activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory
@@ -1632,11 +1652,16 @@ async function main() {
           profile,
         })
       }
-      app = await startDesktopAppProcess()
+      app = await startDesktopAppProcess(launchArguments, options?.launchCommand)
+      // Utility-only launches observe native readiness without a workbench renderer.
       await withTimeout(
-        control.awaitReadyAfter(readyCountBeforeRestart),
+        options?.waitForStartup
+          ? options.waitForStartup({ app, environment: activeAppEnvironment })
+          : control.awaitReadyAfter(readyCountBeforeRestart),
         WORKBENCH_READY_TIMEOUT_MS,
-        'The restarted Wework application did not reconnect to the desktop controller'
+        options?.waitForStartup
+          ? 'The restarted Wework application did not reach its requested startup state'
+          : 'The restarted Wework application did not reconnect to the desktop controller'
       )
       const nextUserDataDirectory =
         activeAppEnvironment.WEWORK_USER_DATA_DIR || electronUserDataDirectory

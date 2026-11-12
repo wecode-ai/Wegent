@@ -2183,6 +2183,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'workbenchApp':
+      return JSON.stringify(
+        await invokeDesktopHost('e2e.workbenchApp', JSON.parse(command.value || '{}'))
+      )
     case 'crashRenderer':
       rendererCrashStore.trigger()
       return 'Renderer crash requested'

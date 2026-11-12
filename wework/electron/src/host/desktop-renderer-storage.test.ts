@@ -22,13 +22,17 @@ async function fixture({ enabled = true, shuttingDown = false } = {}) {
   const developmentResume = vi.fn(async () => undefined)
   const python = vi.fn(() => Promise.resolve({ resumeAfterLogin: resume }))
   const development = vi.fn(() => ({ resumePythonAfterLogin: developmentResume }))
+  const cloudConnectionChanged = vi.fn<(value: string | null) => Promise<void>>(
+    async () => undefined
+  )
   const storage = createDesktopRendererStorage(directory, {
     enabled,
     isShuttingDown: () => shuttingDown,
     python,
     development,
+    cloudConnectionChanged,
   })
-  return { storage, resume, developmentResume, python, development }
+  return { storage, resume, developmentResume, python, development, cloudConnectionChanged }
 }
 
 test.each([
@@ -100,4 +104,27 @@ test('recovery can read committed login state without blocking the storage queue
   })
   await current.storage.update({ clear: false, changes: { 'wework.cloudConnection': connection } })
   expect((await observed.promise)['wework.cloudConnection']).toBe(connection)
+})
+
+test('cloud lifecycle observes login, logout and full clear independently of Python demand', async () => {
+  const current = await fixture({ enabled: false })
+  await current.storage.update({ clear: false, changes: { 'wework.cloudConnection': connection } })
+  await current.storage.update({ clear: false, changes: { 'wework.cloudConnection': null } })
+  await current.storage.clear()
+  expect(current.cloudConnectionChanged.mock.calls).toEqual([[connection], [null], [null]])
+  expect(current.python).not.toHaveBeenCalled()
+  expect(current.development).not.toHaveBeenCalled()
+})
+
+test('an unrelated change does not revoke cloud routes and observer failure cannot roll back committed logout', async () => {
+  const current = await fixture()
+  await current.storage.update({ clear: false, changes: { appearance: 'light' } })
+  expect(current.cloudConnectionChanged).not.toHaveBeenCalled()
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  current.cloudConnectionChanged.mockRejectedValueOnce(new Error('Route cleanup failed'))
+  await current.storage.update({ clear: false, changes: { 'wework.cloudConnection': null } })
+  await vi.waitFor(() =>
+    expect(console.warn).toHaveBeenCalledWith('[workbenches] Cloud connection observer failed')
+  )
+  expect((await current.storage.read())['wework.cloudConnection']).toBeUndefined()
 })

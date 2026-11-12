@@ -115,7 +115,10 @@ export class RendererStorageStore {
   }
 
   clear(): Promise<void> {
-    return this.serial(() => this.writeFile({ version: 1, entries: {} }))
+    return this.serial(async () => {
+      await this.writeFile({ version: 1, entries: {} })
+      this.notifyUpdate({ clear: true, changes: {} })
+    })
   }
 
   private notifyUpdate(update: RendererStorageUpdate): void {

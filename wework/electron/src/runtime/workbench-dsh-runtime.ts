@@ -7,6 +7,7 @@ import { isSeq, parseDocument } from 'yaml'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
+import type { WorkbenchNativeCapability } from '../host/workbench-app-capabilities.js'
 import {
   selectBundledDshRuntimeMatching,
   type BundledDshRuntime,
@@ -26,6 +27,8 @@ export interface WorkbenchAppManifest {
   displayName: string
   version: string
   type: 'deepseek-harness-plugin-bundle'
+  flavor?: 'lightweight' | 'extended'
+  window?: { width: number; height: number; alwaysOnTop: boolean }
   description: string
   packages?: Array<{ name: string; role: string; path: string }>
   entry: {
@@ -46,6 +49,7 @@ export interface WorkbenchAppManifest {
    */
   capabilities?: {
     decisionModel?: boolean
+    native?: WorkbenchNativeCapability[]
   }
 }
 

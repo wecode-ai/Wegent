@@ -11,6 +11,8 @@ import semver from 'semver'
 import * as yauzl from 'yauzl'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationIssue } from './smart-app-verification-types.js'
+import { WORKBENCH_NATIVE_CAPABILITIES } from './workbench-app-capabilities.js'
+import { validateLightweightWorkbenchPackage } from './lightweight-workbench-package.js'
 
 export const MAX_SMART_APP_ARCHIVE_BYTES = 50 * 1024 * 1024
 export const MAX_SMART_APP_EXTRACTED_BYTES = 250 * 1024 * 1024
@@ -62,6 +64,7 @@ export async function validateSmartAppPackageDirectory(
   validateSmartAppManifest(manifest)
   await validateDeclaredPaths(path, manifest)
   const files = await packageFiles(path, options.developmentSource === true)
+  await validateLightweightWorkbenchPackage(path, manifest, options.developmentSource === true)
   const maxBytes = options.maxExtractedBytes ?? MAX_SMART_APP_EXTRACTED_BYTES
   const hash = createHash('sha256')
   let totalBytes = 0
@@ -94,6 +97,33 @@ export function validateSmartAppManifest(value: unknown): WorkbenchAppManifest {
   validatePackageDeclarations(manifest)
   validatePluginDeclarations(manifest)
   validateCapabilityDeclarations(manifest)
+  if (manifest.flavor !== undefined && !['lightweight', 'extended'].includes(manifest.flavor)) {
+    throw validationError('SA-MANIFEST-FLAVOR', 'Unknown workbench flavor')
+  }
+  if (manifest.window !== undefined) {
+    const window = manifest.window
+    if (
+      !window ||
+      !Number.isInteger(window.width) ||
+      window.width < 240 ||
+      window.width > 1920 ||
+      !Number.isInteger(window.height) ||
+      window.height < 180 ||
+      window.height > 1440 ||
+      typeof window.alwaysOnTop !== 'boolean'
+    ) {
+      throw validationError('SA-MANIFEST-WINDOW', 'Invalid workbench window configuration')
+    }
+  }
+  if (
+    manifest.flavor === 'lightweight' &&
+    ((manifest.plugins?.length ?? 0) !== 0 || manifest.capabilities?.decisionModel)
+  ) {
+    throw validationError(
+      'SA-MANIFEST-LIGHTWEIGHT',
+      'Lightweight workbenches cannot load Host plugins or decision-model services'
+    )
+  }
   return manifest
 }
 
@@ -443,7 +473,7 @@ function validatePluginDeclarations(manifest: WorkbenchAppManifest): void {
 
 // Capability requests live in the plugin manifest, not in smart-app.verify.json,
 // which only understands host/client/remote.
-const MANIFEST_CAPABILITY_FIELDS = new Set(['decisionModel'])
+const MANIFEST_CAPABILITY_FIELDS = new Set(['decisionModel', 'native'])
 
 function validateCapabilityDeclarations(manifest: WorkbenchAppManifest): void {
   const capabilities = manifest.capabilities
@@ -455,7 +485,15 @@ function validateCapabilityDeclarations(manifest: WorkbenchAppManifest): void {
     if (!MANIFEST_CAPABILITY_FIELDS.has(key)) {
       throw validationError('SA-MANIFEST-CAPABILITIES', `Unknown Smart app capability: ${key}`)
     }
-    if (typeof value !== 'boolean') {
+    if (key === 'native') {
+      if (
+        !Array.isArray(value) ||
+        new Set(value).size !== value.length ||
+        value.some(item => !WORKBENCH_NATIVE_CAPABILITIES.includes(item))
+      ) {
+        throw validationError('SA-MANIFEST-CAPABILITIES', 'Invalid native workbench capabilities')
+      }
+    } else if (typeof value !== 'boolean') {
       throw validationError(
         'SA-MANIFEST-CAPABILITIES',
         `Smart app capability ${key} must be a boolean`

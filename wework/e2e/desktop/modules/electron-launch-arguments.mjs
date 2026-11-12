@@ -1,4 +1,19 @@
 import assert from 'node:assert/strict'
+import { isAbsolute } from 'node:path'
+
+export function resolveDesktopLaunchCommand(appBinary, launchArguments, launchCommand) {
+  if (launchCommand === undefined) return { command: appBinary, args: launchArguments }
+  assert.ok(
+    launchCommand && typeof launchCommand.command === 'string' && isAbsolute(launchCommand.command),
+    'A desktop launch override must select an absolute executable'
+  )
+  assert.ok(
+    Array.isArray(launchCommand.args) &&
+      launchCommand.args.every(value => typeof value === 'string'),
+    'A desktop launch override must supply an argument array'
+  )
+  return { command: launchCommand.command, args: [...launchCommand.args] }
+}
 
 // Chromium verbose logging is opt-in per run: it records why child processes
 // (network service, zygote) exit, which is the evidence needed to attribute
@@ -24,11 +39,17 @@ export function resolveElectronLaunchArguments({
   getuid = process.getuid,
   isolatedXvfb = process.env.WEWORK_E2E_ISOLATED_XVFB,
   extraArguments = [],
+  startupUrls = [],
   verboseLoggingArguments = chromiumVerboseLoggingArguments(),
 } = {}) {
   assert.ok(Array.isArray(extraArguments), 'Electron E2E launch arguments must be an array')
   for (const argument of extraArguments) {
     assert.match(argument, /^--[^=]+(?:=.*)?$/, `Invalid Electron E2E launch argument: ${argument}`)
+  }
+  assert.ok(Array.isArray(startupUrls), 'Electron E2E startup URLs must be an array')
+  for (const url of startupUrls) {
+    assert.equal(typeof url, 'string', 'Electron E2E startup URLs must be strings')
+    assert.equal(new URL(url).protocol, 'wework:', 'Electron E2E startup URLs must use wework:')
   }
   assert.ok(
     Array.isArray(verboseLoggingArguments),
@@ -63,7 +84,8 @@ export function resolveElectronLaunchArguments({
       '--disable-features=' + [...disabledFeatures].join(','),
       ...verboseLoggingArguments,
       ...scenarioArguments,
+      ...startupUrls,
     ]
   }
-  return [...argumentsForPlatform, ...verboseLoggingArguments, ...extraArguments]
+  return [...argumentsForPlatform, ...verboseLoggingArguments, ...extraArguments, ...startupUrls]
 }

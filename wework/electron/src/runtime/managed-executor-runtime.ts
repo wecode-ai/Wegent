@@ -73,11 +73,23 @@ export class ManagedExecutorRuntime {
     this.process.on('exit', () => {
       this.ownerSocket?.destroy()
       this.ownerSocket = null
+      this.notifyLifecycle('stopped')
+    })
+    this.process.on('state', state => {
+      if (state === 'ready') this.notifyLifecycle('ready')
     })
   }
 
   async start(): Promise<void> {
     await this.process.start()
+  }
+
+  private notifyLifecycle(state: 'ready' | 'stopped'): void {
+    try {
+      this.options.onEvent?.('executor.lifecycle', { state })
+    } catch {
+      console.warn('[executor-runtime] Lifecycle observer failed')
+    }
   }
 
   environment(): NodeJS.ProcessEnv {

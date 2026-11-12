@@ -1,3 +1,4 @@
+import { WorkbenchApplicationSettings } from '@/features/harness-apps/WorkbenchApplicationSettings'
 import { beginSmartAppPublication } from '@/features/harness-apps/smartAppOperations'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import JSZip from 'jszip'
@@ -260,6 +261,9 @@ export function SmartAppsMarketplacePage({
   const [tag, setTag] = useState('')
   const [marketplaceSort, setMarketplaceSort] = useState<MarketplaceSort>('recommended')
   const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
+  const [settingsInstallation, setSettingsInstallation] = useState<HarnessAppInstallation | null>(
+    null
+  )
   const [busy, setBusy] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [accessNotice, setAccessNotice] = useState<{
@@ -268,7 +272,7 @@ export function SmartAppsMarketplacePage({
   } | null>(null)
   const [selected, setSelected] = useState<SelectedSmartApp | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null)
-  const [modelKey, setModelKey] = useState('')
+  const [modelKey, setModelKey] = useState<string | null>(null)
   const [publishItem, setPublishItem] = useState<SmartAppMarketplaceItem | null | undefined>()
   const [publishInstallation, setPublishInstallation] = useState<HarnessAppInstallation | null>(
     null
@@ -342,7 +346,6 @@ export function SmartAppsMarketplacePage({
     start: startInstalledApp,
     stop: stopInstalledApp,
   } = useHarnessAppManagement({
-    installations: activeInstallations,
     onBusyChange: setBusy,
     onError: setError,
     onRefresh: refresh,
@@ -352,7 +355,7 @@ export function SmartAppsMarketplacePage({
     installRequestRef.current += 1
     queueMicrotask(() => {
       setPendingInstall(null)
-      setModelKey('')
+      setModelKey(null)
       setBusy(current =>
         current === 'install' || current?.startsWith('download-') ? null : current
       )
@@ -375,7 +378,7 @@ export function SmartAppsMarketplacePage({
     queueMicrotask(() => {
       setSelected(null)
       setPendingInstall(null)
-      setModelKey('')
+      setModelKey(null)
       setBusy(current =>
         current === 'install' || current?.startsWith('download-') ? null : current
       )
@@ -402,7 +405,7 @@ export function SmartAppsMarketplacePage({
       queueMicrotask(() => {
         setSelected(null)
         setPendingInstall(null)
-        setModelKey('')
+        setModelKey(null)
         setBusy(current =>
           current === 'install' || current?.startsWith('download-') ? null : current
         )
@@ -429,9 +432,14 @@ export function SmartAppsMarketplacePage({
     const installation = activeInstallations.find(
       candidate => candidate.smartAppId === targetSmartAppId
     )
+    if (installation) {
+      catalogTargetSmartAppIdRef.current = null
+      targetItemsSnapshotRef.current = null
+      targetLookupFailedRef.current = null
+    }
     if (installation && (installation.state !== 'running' || installation.webUrl)) {
       const shouldOpen = handledTargetSmartAppIdRef.current !== targetSmartAppId
-      if (shouldOpen && (installation.state === 'running' || hasSelectedModel(installation))) {
+      if (shouldOpen) {
         handledTargetSmartAppIdRef.current = targetSmartAppId
       }
       targetLookupInFlightRef.current = null
@@ -530,7 +538,7 @@ export function SmartAppsMarketplacePage({
             error,
             t(
               'workbench.smart_apps_deep_link_unavailable',
-              '未找到此智能工作台，可能已下架或你没有访问权限。'
+              '未找到此工作台，可能已下架或你没有访问权限。'
             ),
             t
           )
@@ -554,7 +562,7 @@ export function SmartAppsMarketplacePage({
     targetSmartAppId,
     targetLookupRevision,
   ])
-  const installModelKey = modelKey || modelOptions[0]?.key || ''
+  const installModelKey = modelKey ?? modelOptions[0]?.key ?? ''
   const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
     return activeInstallations.map(installation => {
       const ownedItem = items.find(item =>
@@ -709,14 +717,14 @@ export function SmartAppsMarketplacePage({
       const latest = readLocalInstallations()
       if (!latest) return
       setPendingInstall({ ...preparation, readInstallations: readLocalInstallations })
-      setModelKey(latest.find(candidate => candidate.smartAppId === item.id)?.modelKey ?? '')
+      setModelKey(latest.find(candidate => candidate.smartAppId === item.id)?.modelKey ?? null)
       setSelected(null)
     } catch (downloadError) {
       if (requestId !== downloadRequestRef.current) return
       setError(
         getSmartAppErrorMessage(
           downloadError,
-          t('workbench.smart_apps_download_failed', '智能工作台下载失败'),
+          t('workbench.smart_apps_download_failed', '工作台下载失败'),
           t
         )
       )
@@ -727,7 +735,7 @@ export function SmartAppsMarketplacePage({
 
   async function install() {
     const installations = readLocalInstallations()
-    if (!currentPendingInstall || !installModelKey || !installations) return
+    if (!currentPendingInstall || !installations) return
     const current = installations.find(
       candidate => candidate.smartAppId === currentPendingInstall.item.id
     )
@@ -743,17 +751,17 @@ export function SmartAppsMarketplacePage({
     setBusy('install')
     setError(null)
     try {
-      await installMarketplaceSmartApp(currentPendingInstall, installModelKey)
+      await installMarketplaceSmartApp(currentPendingInstall, installModelKey || null)
       if (requestId !== installRequestRef.current) return
       setPendingInstall(null)
-      setModelKey('')
+      setModelKey(null)
       await refresh()
     } catch (installError) {
       if (requestId !== installRequestRef.current) return
       setError(
         getSmartAppErrorMessage(
           installError,
-          t('workbench.smart_apps_install_failed_keep_old', '智能工作台安装失败，原版本已保留'),
+          t('workbench.smart_apps_install_failed_keep_old', '工作台安装失败，原版本已保留'),
           t
         )
       )
@@ -773,7 +781,7 @@ export function SmartAppsMarketplacePage({
         intent === 'created'
           ? t(
               'workbench.smart_apps_builder_intent_created',
-              '这是刚从 Web 预设创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
+              '这是刚创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
             )
           : t(
               'workbench.smart_apps_builder_intent_develop',
@@ -783,9 +791,9 @@ export function SmartAppsMarketplacePage({
       const queued = queuePluginReferenceTrial({
         pluginName: 'smart-app-builder',
         marketplaceName: 'wework-personal',
-        displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
+        displayName: t('workbench.smart_apps_builder_name', '工作台开发助手'),
         prompt: [
-          `${t('workbench.smart_apps_builder_directory_prefix', '智能工作台目录：')}${installation.packagePath}`,
+          `${t('workbench.smart_apps_builder_directory_prefix', '工作台目录：')}${installation.packagePath}`,
           intentPrompt,
           t(
             'workbench.smart_apps_builder_completion',
@@ -804,7 +812,7 @@ export function SmartAppsMarketplacePage({
     } catch (builderError) {
       console.error('[Wework Smart apps] failed to prepare Smart App Builder', builderError)
       setCreateError(
-        t('workbench.smart_apps_builder_install_failed', '智能工作台开发助手安装失败，请重试。')
+        t('workbench.smart_apps_builder_install_failed', '工作台开发助手安装失败，请重试。')
       )
     }
   }
@@ -814,7 +822,7 @@ export function SmartAppsMarketplacePage({
     const current = requireCurrentInstallation(pluginInstallation)
     if (current.state === 'running') {
       const stopped = await stopInstalledApp(current, false)
-      if (!stopped) throw new Error(t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'))
+      if (!stopped) throw new Error(t('workbench.harness_apps_stop_failed', '停止工作台失败。'))
     }
     requireCurrentInstallation(current)
     await harnessAppsApi.addPlugin(current.id, pluginSpec)
@@ -830,6 +838,7 @@ export function SmartAppsMarketplacePage({
         throw new Error(t('workbench.no_local_project_device', '暂无可用本地设备'))
       }
       const installation = await harnessAppsApi.createDirectory(input)
+      if (!installation) return
       notifyHarnessAppInstallationsChanged({
         type: 'installed',
         installationId: installation.id,
@@ -855,6 +864,7 @@ export function SmartAppsMarketplacePage({
         name: input.name,
         displayName: input.displayName,
       })
+      if (!installation) return
       notifyHarnessAppInstallationsChanged({
         type: 'installed',
         installationId: installation.id,
@@ -881,6 +891,7 @@ export function SmartAppsMarketplacePage({
     setError(null)
     try {
       const installation = await harnessAppsApi.linkDirectory(path)
+      if (!installation) return
       notifyHarnessAppInstallationsChanged({
         type: 'installed',
         installationId: installation.id,
@@ -910,7 +921,7 @@ export function SmartAppsMarketplacePage({
       setError(
         getSmartAppErrorMessage(
           importError,
-          t('workbench.smart_apps_import_failed', '智能工作台导入失败'),
+          t('workbench.smart_apps_import_failed', '工作台导入失败'),
           t
         )
       )
@@ -924,9 +935,7 @@ export function SmartAppsMarketplacePage({
       'dialog.open',
       {
         properties: ['openFile'],
-        filters: [
-          { name: t('workbench.smart_apps_package', '智能工作台发布包'), extensions: ['zip'] },
-        ],
+        filters: [{ name: t('workbench.smart_apps_package', '工作台发布包'), extensions: ['zip'] }],
       }
     )
     const path = selected.filePaths[0]
@@ -1025,6 +1034,35 @@ export function SmartAppsMarketplacePage({
     item: SmartAppMarketplaceItem | null
   ): ActionMenuItem[] {
     const actions: ActionMenuItem[] = []
+    actions.push({
+      label: t('workbench.workbench_settings', '工作台设置'),
+      icon: Settings2,
+      testId: `workbench-settings-${installation.id}`,
+      disabled: !localReady,
+      onSelect: () => withCurrentInstallation(installation, setSettingsInstallation),
+    })
+    if (installation.state === 'running')
+      actions.push({
+        label: t('workbench.workbench_hide', '隐藏窗口并保持运行'),
+        icon: Square,
+        testId: `workbench-hide-${installation.id}`,
+        disabled: !localReady,
+        onSelect: async () => {
+          try {
+            await harnessAppsApi.hide(installation.id)
+            await refresh()
+          } catch (value) {
+            setError(
+              getSmartAppErrorMessage(
+                value,
+                t('workbench.workbench_hide_failed', '隐藏工作台失败。'),
+                t
+              )
+            )
+          }
+        },
+      })
+
     if (mode === 'owned') {
       actions.push({
         label: t('workbench.smart_apps_change_model', '修改模型'),
@@ -1150,8 +1188,8 @@ export function SmartAppsMarketplacePage({
       setBusy(installationId)
       invalidateRefresh()
       notifyHarnessAppInstallationsChanged({ type: 'removed', installationId })
+      await harnessAppsApi.delete(installationId, true)
       setPendingDelete(null)
-      await harnessAppsApi.delete(installationId)
       await refresh()
     } catch (deleteError) {
       notifyHarnessAppInstallationsChanged({
@@ -1162,7 +1200,7 @@ export function SmartAppsMarketplacePage({
       setError(
         getSmartAppErrorMessage(
           deleteError,
-          t('workbench.harness_apps_delete_failed', '卸载智能工作台失败。'),
+          t('workbench.harness_apps_delete_failed', '卸载工作台失败。'),
           t
         )
       )
@@ -1189,6 +1227,40 @@ export function SmartAppsMarketplacePage({
             {creating
               ? t('workbench.smart_apps_preparing', '正在准备…')
               : t('workbench.smart_apps_create', '创建工作台')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="workbench-create-todo"
+            disabled={creating}
+            onClick={() => {
+              setCreating(true)
+              setCreateError(null)
+              void harnessAppsApi
+                .createTodo()
+                .then(async installation => {
+                  if (installation) {
+                    notifyHarnessAppInstallationsChanged({
+                      type: 'installed',
+                      installationId: installation.id,
+                      installation,
+                    })
+                    await refresh()
+                  }
+                })
+                .catch(value =>
+                  setCreateError(
+                    getSmartAppErrorMessage(
+                      value,
+                      t('workbench.smart_apps_development_failed', '创建工作台失败。'),
+                      t
+                    )
+                  )
+                )
+                .finally(() => setCreating(false))
+            }}
+          >
+            {t('workbench.workbench_create_todo', '创建 TODO 示例')}
           </Button>
           <Button
             size="sm"
@@ -1380,7 +1452,7 @@ export function SmartAppsMarketplacePage({
           <Download className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
           <div className="min-w-0">
             <p className="text-sm font-medium text-text-primary">
-              {t('workbench.smart_apps_deep_link_install_title', '此智能工作台尚未安装')}
+              {t('workbench.smart_apps_deep_link_install_title', '此工作台尚未安装')}
             </p>
             <p className="mt-1 text-sm leading-5 text-text-secondary">
               {t(
@@ -1419,7 +1491,7 @@ export function SmartAppsMarketplacePage({
               variant="outline"
               className="shrink-0 border-success/30 bg-background text-text-primary shadow-sm hover:bg-success/10"
               data-testid="smart-app-access-view-marketplace"
-              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app')}
+              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app&view=marketplace')}
             >
               {t('workbench.smart_apps_view_marketplace', '去市场查看')}
             </Button>
@@ -1430,7 +1502,7 @@ export function SmartAppsMarketplacePage({
       {!api && mode === 'marketplace' ? (
         <EmptyState
           icon={<Box className="h-6 w-6" />}
-          title={t('workbench.smart_apps_cloud_required', '连接云端后使用智能工作台市场')}
+          title={t('workbench.smart_apps_cloud_required', '连接云端后使用工作台市场')}
           description={t(
             'workbench.smart_apps_cloud_required_hint',
             '本地已安装工作台不受影响，仍可离线管理和运行。'
@@ -1457,7 +1529,7 @@ export function SmartAppsMarketplacePage({
           title={
             mode === 'owned'
               ? t('workbench.smart_apps_my_empty', '还没有符合条件的工作台')
-              : t('workbench.smart_apps_marketplace_empty', '没有找到智能工作台')
+              : t('workbench.smart_apps_marketplace_empty', '没有找到工作台')
           }
           description={
             mode === 'owned'
@@ -1503,7 +1575,7 @@ export function SmartAppsMarketplacePage({
                     : runtimeStateLabel(installation)
                   : !localReady
                     ? localError
-                      ? t('workbench.smart_apps_load_failed', '智能工作台加载失败。')
+                      ? t('workbench.smart_apps_load_failed', '工作台加载失败。')
                       : t('workbench.smart_apps_loading', '正在加载')
                     : t('workbench.smart_apps_not_installed', '未安装')
                 return (
@@ -1546,6 +1618,18 @@ export function SmartAppsMarketplacePage({
                     onDetails={item ? () => selectDetails(item) : undefined}
                     supplementary={
                       <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
+                        {installation ? (
+                          <span data-testid={`workbench-flavor-${installation.id}`}>
+                            {(installation.flavor ?? installation.manifest.flavor) === 'lightweight'
+                              ? t('workbench.workbench_flavor_lightweight', '轻量型')
+                              : t('workbench.workbench_flavor_extended', '扩展型')}
+                          </span>
+                        ) : null}
+                        {installation?.shortcutError ? (
+                          <span role="alert" className="text-danger">
+                            {installation.shortcutError}
+                          </span>
+                        ) : null}
                         {installation ? (
                           <label className="flex min-w-0 items-center gap-1">
                             <span>{t('workbench.harness_apps_bound_model', '模型')}：</span>
@@ -1638,11 +1722,7 @@ export function SmartAppsMarketplacePage({
                             <Button
                               size="sm"
                               data-testid={`harness-app-start-${installation.id}`}
-                              disabled={
-                                !localReady ||
-                                busy === installation.id ||
-                                !hasSelectedModel(installation)
-                              }
+                              disabled={!localReady || busy === installation.id}
                               onClick={() =>
                                 withCurrentInstallation(installation, startInstalledApp)
                               }
@@ -1720,7 +1800,7 @@ export function SmartAppsMarketplacePage({
                         : runtimeStateLabel(state.installation)
                       : !localReady
                         ? localError
-                          ? t('workbench.smart_apps_load_failed', '智能工作台加载失败。')
+                          ? t('workbench.smart_apps_load_failed', '工作台加载失败。')
                           : t('workbench.smart_apps_loading', '正在加载')
                         : t('workbench.smart_apps_not_installed', '未安装')
                   }
@@ -1772,11 +1852,7 @@ export function SmartAppsMarketplacePage({
                           <Button
                             size="sm"
                             data-testid={`harness-app-start-${state.installation.id}`}
-                            disabled={
-                              !localReady ||
-                              busy === state.installation.id ||
-                              !hasSelectedModel(state.installation)
-                            }
+                            disabled={!localReady || busy === state.installation.id}
                             onClick={() =>
                               withCurrentInstallation(state.installation, startInstalledApp)
                             }
@@ -1884,6 +1960,17 @@ export function SmartAppsMarketplacePage({
           }}
         />
       ) : null}
+      {settingsInstallation ? (
+        <WorkbenchApplicationSettings
+          installation={
+            activeInstallations.find(item => item.id === settingsInstallation.id) ??
+            settingsInstallation
+          }
+          onClose={() => setSettingsInstallation(null)}
+          onRefresh={refresh}
+          onOpen={openInstalledApp}
+        />
+      ) : null}
       {developmentDialog ? (
         <SmartAppDevelopmentDialog
           mode={developmentDialog}
@@ -1911,11 +1998,11 @@ export function SmartAppsMarketplacePage({
           pendingDelete?.source === 'linked'
             ? t(
                 'workbench.smart_apps_unlink_local_description',
-                '将停止运行并从列表中移除，但不会删除工作台文件夹。'
+                '将停止运行、从列表中移除并删除本机应用数据，但不会删除工作台文件夹。'
               )
             : t(
                 'workbench.smart_apps_remove_local_description',
-                '将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。'
+                '将停止运行并删除本机应用数据和安装文件。已发布版本和分享范围不会受到影响。'
               )
         }
         cancelLabel={t('common.cancel', '取消')}
@@ -2616,7 +2703,7 @@ export function SmartAppPublishDialog({
           'workbench.smart_apps_manifest_required',
           '发布包必须包含且只能包含一个 plugin-manifest.json'
         ),
-        invalidPackage: t('workbench.smart_apps_invalid_package', '不是有效的智能工作台发布包'),
+        invalidPackage: t('workbench.smart_apps_invalid_package', '不是有效的工作台发布包'),
       })
       if (item && parsed.name !== item.name) {
         throw new Error(
@@ -2748,7 +2835,7 @@ export function SmartAppPublishDialog({
       setError(
         getSmartAppErrorMessage(
           value,
-          t('workbench.smart_apps_publish_failed', '智能工作台发布失败'),
+          t('workbench.smart_apps_publish_failed', '工作台发布失败'),
           t
         )
       )
@@ -2769,7 +2856,7 @@ export function SmartAppPublishDialog({
             <h2 className="heading-small">
               {item
                 ? t('workbench.smart_apps_publish_version', '发布新版本')
-                : t('workbench.smart_apps_publish_smart_app', '发布智能工作台')}
+                : t('workbench.smart_apps_publish_smart_app', '发布工作台')}
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
               {t('workbench.smart_apps_auto_publish_hint', '上传并通过安全扫描后自动发布')}
@@ -2809,10 +2896,10 @@ export function SmartAppPublishDialog({
             </div>
           ) : (
             <div className="text-sm font-medium">
-              <span>{t('workbench.smart_apps_zip', '智能工作台发布包（ZIP）')}</span>
+              <span>{t('workbench.smart_apps_zip', '工作台发布包（ZIP）')}</span>
               <SmartAppFilePicker
                 inputTestId="smart-app-publish-package"
-                label={t('workbench.smart_apps_zip', '智能工作台 ZIP')}
+                label={t('workbench.smart_apps_zip', '工作台 ZIP')}
                 accept=".zip,application/zip"
                 files={file ? [file] : []}
                 onChange={files => void choosePackage(files[0] ?? null)}

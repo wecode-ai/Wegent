@@ -4,6 +4,9 @@ import {
   setExperimentalFeatures,
   waitForElementCount,
   ZIP_BACKPRESSURE_CONTENT,
+  confirmHarnessInstallation,
+  invokeHarnessHost,
+  waitForHarnessAppView,
 } from './harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 import { telemetryEvents } from './response-protocol.mjs'
@@ -32,8 +35,8 @@ export async function prepareHarnessAppUi(
   })
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="workspace-tab-add-smart-app"]')),
-    0,
-    'Smart apps were visible before experimental features were enabled'
+    1,
+    'Workbenches must remain available without experimental features'
   )
   await captureScreenshot(control, 'harness-apps-00-experimental-hidden.png', 'body')
   await control.command('click', '[data-testid="workspace-tab-add"]')
@@ -47,7 +50,7 @@ export async function prepareHarnessAppUi(
   })
   await control.command('click', '[data-testid="workspace-tab-add"]')
   await control.command('waitFor', '[data-testid="workspace-tab-add-smart-app"]', {
-    text: '智能工作台',
+    text: '工作台',
     timeoutMs: uiTimeoutMs,
   })
   await captureScreenshot(control, 'harness-apps-02-top-tab-entry.png', 'body')
@@ -59,6 +62,10 @@ export async function prepareHarnessAppUi(
       timeoutMs: uiTimeoutMs,
     }
   )
+  await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', '[data-testid="smart-apps-section-marketplace"]')
   await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
     timeoutMs: uiTimeoutMs,
   })
@@ -120,6 +127,7 @@ export async function prepareHarnessAppUi(
   await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   const installRequest = await control.awaitTelemetryEvent('smart_app_install_succeeded')
   const installEvent = telemetryEvents(installRequest.payload).find(
     event => event.event === 'smart_app_install_succeeded'
@@ -135,6 +143,11 @@ export async function prepareHarnessAppUi(
   )
   const installed = downloadedInstallations.find(item => item.id === 'market-1')
   assert.ok(installed, 'Downloaded Smart App was not registered')
+  await invokeHarnessHost(control, 'smartApps.configure', {
+    installationId: installed.id,
+    presentation: 'tab',
+    background: false,
+  })
   assert.equal(
     await readFile(
       join(installed.packagePath, 'packages/bundle/smoke-app/lib/zip-backpressure.txt'),
@@ -153,9 +166,7 @@ export async function prepareHarnessAppUi(
     'Official Harness management page did not expose its workspace tab ID'
   )
   await control.command('click', '[data-testid="harness-app-start-market-1"]')
-  await control.command('waitFor', '[data-testid="harness-app-launch-market-1"]', {
-    timeoutMs: 60_000,
-  })
+  await waitForHarnessAppView(control, 'market-1', 600_000)
   await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
     timeoutMs: 600_000,
   })
@@ -224,8 +235,14 @@ async function verifyLegacyAppLaunch(
       },
     ]),
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', `[data-testid="smart-app-created-item-${id}"]`, {
     timeoutMs: uiTimeoutMs,
+  })
+  await invokeHarnessHost(control, 'smartApps.configure', {
+    installationId: id,
+    presentation: 'tab',
+    background: false,
   })
   await control.command('navigate', 'body', { value: '/sites?app_type=smart_app&view=owned' })
   const modelSelector = `[data-testid="harness-app-model-${id}"]`

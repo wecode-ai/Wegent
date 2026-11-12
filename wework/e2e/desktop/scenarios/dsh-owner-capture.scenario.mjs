@@ -2,7 +2,8 @@ import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { waitForEmbeddedBrowserVisibility } from '../modules/embedded-browser-visibility.mjs'
+import { confirmHarnessInstallation } from '../modules/harness-app-fixture.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 
 const HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const MODEL_LABEL = 'Desktop E2E Chat'
@@ -44,6 +45,18 @@ async function enableExperimentalFeatures(control) {
   await control.command('waitFor', `${selector}[aria-checked="true"]`, { stableMs: 300 })
 }
 
+async function waitForOwnerVisibility(readOwner, initial, visible, message, timeoutMs) {
+  const state = await until(
+    readOwner,
+    value => value.running && value.visible === visible,
+    message,
+    timeoutMs
+  )
+  assert.equal(state.contentsId, initial.contentsId, 'Host-owned workbench contents changed')
+  assert.equal(state.url, initial.url, 'Host-owned workbench URL changed')
+  assert.equal(state.presentation, 'tab')
+}
+
 async function verifyMicrophoneDiagnostics(control, origin) {
   const capability = 'deviceDiagnostics.microphone'
   const initial = await invoke(control, origin, capability)
@@ -79,15 +92,23 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
   return {
     async verify(control) {
       const origin = await control.command('getLocationOrigin', 'body')
-      const workbench = await invoke(control, origin, 'smartApps.createDirectory', {
+      const creating = invoke(control, origin, 'smartApps.createDirectory', {
         parentPath: resultDir,
         name: 'dsh-owner-capture-bridge',
         displayName: 'DSH owner capture bridge',
         description: 'Desktop E2E fixture for scoped Smart App capture',
         template: 'web',
       })
+      void creating.catch(() => {})
+      await confirmHarnessInstallation(control, uiTimeoutMs)
+      const workbench = await creating
+      assert.ok(workbench?.id, 'Native installation confirmation did not produce a workbench')
 
       try {
+        await invoke(control, origin, 'smartApps.configure', {
+          installationId: workbench.id,
+          presentation: 'tab',
+        })
         await enableExperimentalFeatures(control)
         await control.command('navigate', 'body', {
           value: '/sites?app_type=smart_app&view=owned',
@@ -110,21 +131,39 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         )
         assert.ok(previousTabTestId, 'The workbench did not have an active workspace tab')
         await control.command('clickWhenEnabled', startSelector)
+        const readOwner = async () =>
+          JSON.parse(
+            await control.command('workbenchApp', 'body', {
+              value: JSON.stringify({ action: 'snapshot', id: workbench.id }),
+            })
+          )
+        const owner = await until(
+          readOwner,
+          state =>
+            state.running &&
+            state.visible &&
+            Number.isInteger(state.contentsId) &&
+            state.contentsId > 0 &&
+            state.presentation === 'tab' &&
+            URL.canParse(state.url) &&
+            /^https?:$/.test(new URL(state.url).protocol),
+          'The Host-owned workbench HTTP page did not become visible',
+          600_000
+        )
         const appView = `[data-testid="app-iframe-harness-${workbench.id}"]`
-        await control.command('waitFor', appView, { timeoutMs: 600_000 })
-        const webUrl = await control.command('getAttribute', appView, { value: 'data-src' })
-        const ownerLabel = await control.command('getAttribute', appView, {
-          value: 'data-embedded-browser-label',
-        })
-        assert.ok(webUrl, 'Workbench DSH did not expose a URL')
-        assert.equal(ownerLabel, `smart-app:${workbench.id}`)
+        await control.command('waitFor', appView)
         const ownerTabId = await control.command('getAttribute', appView, {
           value: 'data-workspace-tab-id',
         })
         assert.ok(ownerTabId, 'The Smart App did not expose its workspace tab')
         const ownerTabSelector = `[data-testid="workspace-tab-select-${ownerTabId}"]`
 
-        const workbenchOrigin = new URL(webUrl).origin
+        const workbenchOrigin = new URL(owner.url).origin
+        assert.notEqual(
+          workbenchOrigin,
+          origin,
+          'Workbench capture must use its scoped Host origin'
+        )
         const microphoneDiagnostics = {
           core: await verifyMicrophoneDiagnostics(control, origin),
           workbench: await verifyMicrophoneDiagnostics(control, workbenchOrigin),
@@ -148,15 +187,15 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         })
         assert.equal(invalid.code, 'invalid_params')
 
-        // The renderer owns visibility; keep the owner inactive while testing rejection.
+        // Wait for the native surface to follow the renderer's selected tab.
         await control.command('click', `[data-testid="${previousTabTestId}"]`)
         await control.command('waitFor', `${ownerTabSelector}[aria-selected="false"]`)
-        await waitForEmbeddedBrowserVisibility(
-          control,
-          ownerLabel,
+        await waitForOwnerVisibility(
+          readOwner,
+          owner,
           false,
-          uiTimeoutMs,
-          'Switching tabs did not hide the Smart App owner view'
+          'Switching tabs did not hide the Smart App owner view',
+          uiTimeoutMs
         )
         assert.deepEqual(await invoke(control, workbenchOrigin, 'dshCapture.capabilities'), {
           available: false,
@@ -171,12 +210,12 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
 
         await control.command('click', ownerTabSelector)
         await control.command('waitFor', `${ownerTabSelector}[aria-selected="true"]`)
-        await waitForEmbeddedBrowserVisibility(
-          control,
-          ownerLabel,
+        await waitForOwnerVisibility(
+          readOwner,
+          owner,
           true,
-          uiTimeoutMs,
-          'Returning to the Smart App did not restore its owner view'
+          'Returning to the Smart App did not restore its owner view',
+          uiTimeoutMs
         )
         assert.deepEqual(await invoke(control, workbenchOrigin, 'dshCapture.capabilities'), {
           available: true,

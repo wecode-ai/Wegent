@@ -12,8 +12,6 @@ import {
 import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -290,7 +288,6 @@ export function WorkspaceTabStrip({
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
   const appPreferences = useAppPreferencesState()
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const {
     tabs,
     activeTabId,
@@ -327,7 +324,7 @@ export function WorkspaceTabStrip({
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
   useEffect(() => {
-    if (!addMenuPosition || !experimentalFeaturesEnabled) return
+    if (!addMenuPosition || !availableKindSet.has('auxiliary')) return
     let cancelled = false
     void harnessAppsApi
       .list()
@@ -340,7 +337,7 @@ export function WorkspaceTabStrip({
     return () => {
       cancelled = true
     }
-  }, [addMenuPosition, experimentalFeaturesEnabled])
+  }, [addMenuPosition, availableKindSet])
 
   useEffect(() => {
     if (tabs.length > 0 && visibleTabs.length === 0) {
@@ -619,7 +616,7 @@ export function WorkspaceTabStrip({
                   {t('interactions.title', '待你处理')}
                 </button>
               ) : null}
-              {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (
+              {availableKindSet.has('auxiliary') ? (
                 <>
                   {installedSmartApps.map(installation => (
                     <button
@@ -642,11 +639,7 @@ export function WorkspaceTabStrip({
                     className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
                   >
                     <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                    {t('workbench.smart_apps_manage', '管理智能工作台')}
-                    <ExperimentalBadge
-                      testId="workspace-tab-add-smart-app-experimental-badge"
-                      className="ml-auto"
-                    />
+                    {t('workbench.smart_apps_manage', '管理工作台')}
                   </button>
                 </>
               ) : null}

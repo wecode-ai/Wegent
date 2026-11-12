@@ -12,7 +12,6 @@ import { openRuntimeInteractionsTab } from './runtimeInteractionsNavigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getDshApps, resolveDshApp } from '@/features/dsh-runtime/dshApps'
 import { subscribeDshSlot, WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 
 function openAuxiliaryRoute(
   tabs: ReturnType<typeof useWorkspaceTabs>,
@@ -95,7 +94,7 @@ export function WeworkSchemeBridge() {
             item => item.smartAppId === destination.smartAppId
           )
           if (installation?.state === 'running') {
-            openHarnessAppTab(tabsRef.current, installation)
+            await harnessAppsApi.open(installation.id)
             return true
           }
         } catch (error) {
@@ -103,7 +102,7 @@ export function WeworkSchemeBridge() {
         }
         openAuxiliaryRoute(
           tabsRef.current,
-          t('workbench.smart_apps_title', '智能工作台'),
+          t('workbench.smart_apps_title', '工作台'),
           weworkDestinationRoute(destination)
         )
         return true

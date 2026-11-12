@@ -42,6 +42,7 @@ describe('development data isolation', () => {
       WEGENT_EXECUTOR_LOG_DIR: release,
       WEWORK_APP_CONFIG_DIR: release,
       WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: release,
+      WEWORK_CLI_PATH: join(release, 'wework'),
       WEWORK_EXECUTOR_ENDPOINT: 'parent-endpoint',
       WEWORK_EXECUTOR_TOKEN: 'synthetic',
       WEGENT_APP_IPC_TOKEN: 'synthetic',
@@ -68,6 +69,7 @@ describe('development data isolation', () => {
       'WEGENT_EXECUTOR_LOG_FILE',
       'WEGENT_AUTH_TOKEN',
       'WEGENT_TASK_ID',
+      'WEWORK_CLI_PATH',
     ]) {
       expect(environment[key]).toBeUndefined()
     }

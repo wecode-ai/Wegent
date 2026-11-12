@@ -7,6 +7,8 @@ import {
   createHarnessPackage,
   MODEL_LABEL,
   setExperimentalFeatures,
+  confirmHarnessInstallation,
+  invokeHarnessHost as invokeHost,
 } from './harness-app-fixture.mjs'
 import { LOCAL_MODEL_CASES } from './shared.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
@@ -58,8 +60,13 @@ export async function verifyHarnessAppModels(
       },
     ]),
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', `[data-testid="smart-app-created-item-${INSTALLED_APP_ID}"]`, {
     timeoutMs: uiTimeoutMs,
+  })
+  await invokeHost(control, 'smartApps.configure', {
+    installationId: INSTALLED_APP_ID,
+    background: false,
   })
   await selectHarnessAppModel(control, INSTALLED_APP_ID, MODEL_LABEL, uiTimeoutMs)
   const ownedTabId = await control.command(
@@ -138,6 +145,7 @@ export async function verifyHarnessAppModels(
       },
     ]),
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', `[data-testid="smart-app-created-item-${FAILING_APP_ID}"]`, {
     timeoutMs: uiTimeoutMs,
   })
@@ -165,10 +173,8 @@ export async function verifyHarnessAppModels(
   await waitForHarnessModelRequest(control, afterFailurePrompt, EXTRA_MODEL.modelId, 30_000)
   await waitForSessionIdle(control, installation.webUrl, sessionId, 30_000)
 
-  // Closing the app tab must stop the runtime and release every route, not just
-  // the route used by the selected model.
-  const appTabId = await harnessAppTabId(control, INSTALLED_APP_ID)
-  await closeHarnessAppTab(control, appTabId, INSTALLED_APP_ID, uiTimeoutMs)
+  // With background disabled, closing the independent view releases every route.
+  await closeHarnessAppView(control, INSTALLED_APP_ID, uiTimeoutMs)
   await waitForReleasedRoutes([defaultRoute, extraRoute], 60_000)
 
   const reopened = await startInstalledHarnessApp(control, INSTALLED_APP_ID, {
@@ -188,11 +194,10 @@ export async function verifyHarnessAppModels(
     captureScreenshot,
   })
 
-  const reopenedTabId = await harnessAppTabId(control, INSTALLED_APP_ID)
-  await closeHarnessAppTab(control, reopenedTabId, INSTALLED_APP_ID, uiTimeoutMs)
+  await closeHarnessAppView(control, INSTALLED_APP_ID, uiTimeoutMs)
   await waitForReleasedRoutes([reopenedDefaultRoute, reopenedExtraRoute], 60_000)
 
-  await verifyCloseDuringTokenHandoff(control, {
+  await verifyStopDuringHeldLaunchResponse(control, {
     gates,
     ownedTabId,
     uiTimeoutMs,
@@ -247,25 +252,29 @@ async function armHostResponse(gates, id, name, hold = true) {
 }
 
 async function startWithCatalogRefresh(control, { gates, uiTimeoutMs, resultDir }) {
-  const id = 'catalog-refresh-start'
+  const id = 'catalog-refresh-open'
   try {
-    await armHostResponse(gates, id, 'smartApps.start')
+    await armHostResponse(gates, id, 'smartApps.open')
     await control.command(
       'clickWhenEnabled',
       `[data-testid="harness-app-start-${INSTALLED_APP_ID}"]`,
       { timeoutMs: 60_000 }
     )
-    await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLED_APP_ID}"]`, {
-      timeoutMs: 60_000,
-    })
-    // The real runtime is running in Electron, but its start response has not
-    // reached the launcher. Refreshing the catalog must not cancel this launch.
     await gates.wait(id, undefined, 600_000)
+    const running = await workbenchState(control, INSTALLED_APP_ID)
+    assert.equal(
+      running.running,
+      true,
+      'The Host did not start while its renderer response was held'
+    )
+    assert.equal(running.presentation, 'window')
     await refreshModelCatalogDuringLaunch(control, uiTimeoutMs)
     await gates.release(id)
-    await control.command('waitFor', `[data-testid="app-iframe-harness-${INSTALLED_APP_ID}"]`, {
-      timeoutMs: 600_000,
-    })
+    await waitForDshValue(
+      () => workbenchState(control, INSTALLED_APP_ID),
+      value => value.running && value.visible,
+      30_000
+    )
   } finally {
     await gates.save(resultDir, 'harness-model-catalog-refresh.json', [id])
     await gates.reset()
@@ -286,25 +295,20 @@ async function selectOwnedAppsTab(control, tabId, uiTimeoutMs) {
 
 async function refreshModelCatalogDuringLaunch(control, uiTimeoutMs) {
   const refreshedLabel = `${UNAVAILABLE_MODEL_LABEL} Refreshed`
-  const configs = await readLocalModelConfigs(control)
-  assert.ok(configs.some(config => config.id === UNAVAILABLE_MODEL_ID))
   await injectInvalidLegacyModelForRejectionTest(control, refreshedLabel)
-  // Read the connected launcher's real catalog without navigating to Owned
-  // Apps, whose independent provider can be disconnected by React Activity.
-  const deadline = Date.now() + uiTimeoutMs
-  while (Date.now() < deadline) {
-    const snapshot = JSON.parse(
-      await control.command('getHarnessAppLaunchDiagnostics', 'body', {
-        value: INSTALLED_APP_ID,
-      })
-    )
-    if (snapshot?.modelLabels.includes(refreshedLabel)) return
-    await delay(100)
-  }
-  assert.fail('The connected launcher did not receive the real catalog refresh')
+  const raw = await control.command('getLocalStorageItem', 'body', {
+    value: LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+  })
+  assert.equal(
+    JSON.parse(raw).find(value => value.id === UNAVAILABLE_MODEL_ID)?.displayName,
+    refreshedLabel
+  )
+  await control.command('waitFor', `[data-testid="harness-app-model-${INSTALLED_APP_ID}"]`, {
+    text: MODEL_LABEL,
+    timeoutMs: uiTimeoutMs,
+  })
 }
-
-async function verifyCloseDuringTokenHandoff(
+async function verifyStopDuringHeldLaunchResponse(
   control,
   {
     gates,
@@ -316,106 +320,122 @@ async function verifyCloseDuringTokenHandoff(
     captureScreenshot,
   }
 ) {
-  const ids = ['closing-handoff', 'closing-take', 'reopening-start']
+  const id = 'closing-held-open'
   try {
-    await armHostResponse(gates, ids[0], 'smartApps.storeAdditionalProxyTokens')
-    await armHostResponse(gates, ids[1], 'smartApps.takeAdditionalProxyTokens')
+    await armHostResponse(gates, id, 'smartApps.open')
     await selectOwnedAppsTab(control, ownedTabId, uiTimeoutMs)
     await control.command(
       'clickWhenEnabled',
       `[data-testid="harness-app-start-${INSTALLED_APP_ID}"]`,
       { timeoutMs: 60_000 }
     )
-    // The retained Owned Apps page can still hold the previous running
-    // registration. Starting again must invalidate it before the new tab mounts.
-    assert.equal(
-      Number(
-        await control.command(
-          'getElementCount',
-          `[data-testid="app-iframe-harness-${INSTALLED_APP_ID}"]`
-        )
-      ),
-      0,
-      'Starting a stopped app must not mount its stale running URL'
-    )
-    await gates.wait(ids[0], undefined, 600_000)
+    await gates.wait(id, undefined, 600_000)
     const oldRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
-    assert.ok(oldRoutes.length > 1, 'The held launch did not register default and extra routes')
-    assert.equal(
-      Number(
-        await control.command(
-          'getElementCount',
-          `[data-testid="app-iframe-harness-${INSTALLED_APP_ID}"]`
-        )
-      ),
-      0,
-      'Token handoff must finish before publishing the running app tab'
+    assert.ok(
+      oldRoutes.length > 1,
+      'The held launch did not register default and additional routes'
     )
-    const closingTabId = await control.command(
-      'getAttribute',
-      `[data-workspace-tab-content]:has([data-testid="harness-app-launch-${INSTALLED_APP_ID}"])`,
-      { value: 'data-workspace-tab-content' }
-    )
-    assert.ok(closingTabId, 'The starting Smart app did not own a workspace tab')
-    await closeHarnessAppTab(control, closingTabId, INSTALLED_APP_ID, uiTimeoutMs)
-
-    await armHostResponse(gates, ids[2], 'smartApps.start', false)
-    // Reentering Owned Apps fetches the real host state. The old runtime is
-    // still running while its token handoff is held, so reopen through Open.
-    await selectOwnedAppsTab(control, ownedTabId, uiTimeoutMs)
-    await control.command(
-      'clickWhenEnabled',
-      `[data-testid="harness-app-open-${INSTALLED_APP_ID}"]`,
-      {
-        timeoutMs: 60_000,
-      }
-    )
-    await control.command('waitFor', `[data-testid="harness-app-launch-${INSTALLED_APP_ID}"]`, {
-      timeoutMs: 60_000,
-    })
-    // The reopened owner must survive in the background even when the old
-    // launch clears installation-wide progress state before the queue advances.
-    await selectOwnedAppsTab(control, ownedTabId, uiTimeoutMs)
-    assert.equal(await gates.read(ids[2]), null, 'Reopening raced the old token handoff')
-    await gates.release(ids[0])
-    await gates.wait(ids[1])
-    assert.equal(await gates.read(ids[2]), null, 'Reopening raced the old route release')
-    await gates.release(ids[1])
-    await gates.wait(ids[2], undefined, 600_000)
-    await control.command('waitFor', `[data-testid="app-iframe-harness-${INSTALLED_APP_ID}"]`, {
-      timeoutMs: 600_000,
-    })
+    const oldSurface = await workbenchState(control, INSTALLED_APP_ID)
+    assert.equal(oldSurface.running, true)
+    // The native Host owns routes. A delayed renderer response must not prevent stop.
+    await invokeHost(control, 'smartApps.stop', { installationId: INSTALLED_APP_ID })
     await waitForReleasedRoutes(oldRoutes, 60_000)
-    const reopened = await waitForRunningInstallation(
+    assert.equal((await workbenchState(control, INSTALLED_APP_ID)).running, false)
+    // Open again before releasing the old response; the new Host lifetime is independent.
+    const reopened = await invokeHost(control, 'smartApps.open', {
+      installationId: INSTALLED_APP_ID,
+    })
+    const newRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
+    assert.ok(newRoutes.length > 1, 'Rapid reopen lost the additional model provider')
+    for (const route of newRoutes)
+      assert.equal(
+        oldRoutes.some(old => old.baseUrl === route.baseUrl),
+        false,
+        'Rapid reopen reused a released route'
+      )
+    const newSurface = await workbenchState(control, INSTALLED_APP_ID)
+    assert.notEqual(
+      newSurface.contentsId,
+      oldSurface.contentsId,
+      'Stop retained the old renderer lifetime'
+    )
+    await gates.release(id)
+    await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLED_APP_ID}"]`, {
+      enabled: true,
+      timeoutMs: uiTimeoutMs,
+    })
+    const afterLateResponse = await workbenchState(control, INSTALLED_APP_ID)
+    assertCurrentHarnessAppSurface(afterLateResponse, {
+      contentsId: newSurface.contentsId,
+      webUrl: reopened.webUrl,
+    })
+    const persisted = await waitForRunningInstallation(
       electronUserDataDirectory,
       INSTALLED_APP_ID,
       30_000
     )
-    const newRoutes = await waitForActiveHarnessModelRoutes(instanceDirectory)
-    assert.ok(newRoutes.length > 1, 'Rapid reopen lost the additional provider')
-    for (const route of newRoutes) {
-      assert.equal(
-        oldRoutes.some(old => old.baseUrl === route.baseUrl),
-        false,
-        'Rapid reopen reused a released model route'
-      )
-    }
+    assert.equal(persisted.webUrl, reopened.webUrl)
+    await waitForReleasedRoutes(oldRoutes, 60_000)
     await exerciseModelRoutes(control, reopened, {
       resultDir,
       screenshotName: 'harness-apps-15-rapid-reopen-model-routes.png',
       captureScreenshot,
     })
-    await closeHarnessAppTab(
-      control,
-      await harnessAppTabId(control, INSTALLED_APP_ID),
-      INSTALLED_APP_ID,
-      uiTimeoutMs
-    )
+    await closeHarnessAppView(control, INSTALLED_APP_ID, uiTimeoutMs)
     await waitForReleasedRoutes(newRoutes, 60_000)
   } finally {
-    await gates.save(resultDir, 'harness-model-token-handoff.json', ids)
+    await gates.save(resultDir, 'harness-model-held-open-response.json', [id])
     await gates.reset()
   }
+}
+
+export function assertCurrentHarnessAppSurface(actual, expected) {
+  assert.equal(
+    actual.contentsId,
+    expected.contentsId,
+    'A late response replaced the current Host surface'
+  )
+  assert.equal(
+    new URL(actual.url).href,
+    new URL(expected.webUrl).href,
+    'A late response restored an obsolete runtime URL'
+  )
+}
+
+async function workbenchState(control, installationId) {
+  return JSON.parse(
+    await control.command('workbenchApp', 'body', {
+      value: JSON.stringify({ action: 'snapshot', id: installationId }),
+    })
+  )
+}
+
+async function closeHarnessAppView(control, installationId, uiTimeoutMs) {
+  await control.command('workbenchApp', 'body', {
+    value: JSON.stringify({ action: 'close', id: installationId }),
+  })
+  await waitForDshValue(
+    () => workbenchState(control, installationId),
+    value => !value.running,
+    uiTimeoutMs
+  )
+}
+
+async function startInstalledHarnessApp(
+  control,
+  installationId,
+  { uiTimeoutMs, electronUserDataDirectory }
+) {
+  await openOwnedApps(control, uiTimeoutMs)
+  await control.command('clickWhenEnabled', `[data-testid="harness-app-start-${installationId}"]`, {
+    timeoutMs: 60_000,
+  })
+  await waitForDshValue(
+    () => workbenchState(control, installationId),
+    value => value.running && value.visible,
+    600_000
+  )
+  return waitForRunningInstallation(electronUserDataDirectory, installationId, 30_000)
 }
 
 async function openOwnedApps(control, uiTimeoutMs) {
@@ -435,11 +455,11 @@ async function openSmartAppsTab(control, uiTimeoutMs) {
   })
   await control.command('click', '[data-testid="workspace-tab-add"]')
   await control.command('waitFor', '[data-testid="workspace-tab-add-smart-app"]', {
-    text: '智能工作台',
+    text: '工作台',
     timeoutMs: uiTimeoutMs,
   })
   await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
-  await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
+  await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
     timeoutMs: uiTimeoutMs,
   })
   await control.command('waitFor', '[data-testid="smart-apps-section-owned"]', {
@@ -461,54 +481,6 @@ async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
-}
-
-async function harnessAppTabId(control, installationId) {
-  const tabId = await control.command(
-    'getAttribute',
-    `[data-testid="app-iframe-harness-${installationId}"]`,
-    { value: 'data-workspace-tab-id' }
-  )
-  assert.ok(tabId, 'Harness app did not expose its workspace tab ID')
-  return tabId
-}
-
-async function closeHarnessAppTab(control, tabId, installationId, uiTimeoutMs) {
-  const tabSelector = `[data-testid="workspace-tab-select-${tabId}"]`
-  await control.command('click', tabSelector)
-  await control.command('waitFor', `${tabSelector}[aria-selected="true"]`, {
-    timeoutMs: uiTimeoutMs,
-  })
-  await control.command('click', `[data-testid="workspace-tab-close-${tabId}"]`)
-  await waitForSelectorGone(control, `[data-testid="app-iframe-harness-${installationId}"]`, 30_000)
-  await waitForSelectorGone(control, `[data-testid="harness-app-launch-${installationId}"]`, 30_000)
-}
-
-async function waitForSelectorGone(control, selector, timeoutMs) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < timeoutMs) {
-    if (Number(await control.command('getElementCount', selector)) === 0) return
-    await delay(100)
-  }
-  throw new Error(`Timed out waiting for "${selector}" to disappear`)
-}
-
-async function startInstalledHarnessApp(
-  control,
-  installationId,
-  { uiTimeoutMs, electronUserDataDirectory }
-) {
-  await openOwnedApps(control, uiTimeoutMs)
-  await control.command('clickWhenEnabled', `[data-testid="harness-app-start-${installationId}"]`, {
-    timeoutMs: 60_000,
-  })
-  await control.command('waitFor', `[data-testid="harness-app-launch-${installationId}"]`, {
-    timeoutMs: 60_000,
-  })
-  await control.command('waitFor', `[data-testid="app-iframe-harness-${installationId}"]`, {
-    timeoutMs: 600_000,
-  })
-  return waitForRunningInstallation(electronUserDataDirectory, installationId, 30_000)
 }
 
 async function exerciseModelRoutes(

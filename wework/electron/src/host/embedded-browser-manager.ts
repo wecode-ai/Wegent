@@ -15,6 +15,7 @@ import {
   type WebContents,
 } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { protectLightweightWorkbenchFrames } from './lightweight-workbench-navigation.js'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -25,6 +26,12 @@ import {
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
+import {
+  awaitBrowserOperation,
+  createBrowserConditionEvaluator,
+  evaluateBrowserScript,
+  type BrowserConditionEvaluator,
+} from './embedded-browser-evaluation.js'
 import {
   BrowserDeviceMetricsController,
   type BrowserDeviceMetrics,
@@ -212,7 +219,7 @@ export class EmbeddedBrowserManager {
 
   private interceptWeworkNavigation(contents: WebContents): void {
     const handleNavigation = (event: Electron.Event, url: string) => {
-      if (!url.startsWith('wework://')) return
+      if (event.defaultPrevented || !url.startsWith('wework://')) return
       event.preventDefault()
       this.openWeworkScheme(url)
     }
@@ -390,6 +397,7 @@ export class EmbeddedBrowserManager {
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
     this.attachedContents.set(normalizedLabel, contents)
+    protectLightweightWorkbenchFrames(contents)
     contents.on('before-mouse-event', (_event, mouse) => {
       if (mouse.type !== 'mouseDown') return
       const entry = [...this.entries.values()].find(
@@ -593,12 +601,13 @@ export class EmbeddedBrowserManager {
     this.emitPageState(entry)
   }
 
-  async waitForNavigation(label: string, timeoutMs = 10_000): Promise<void> {
+  async waitForNavigation(label: string, timeoutMs = 10_000, signal?: AbortSignal): Promise<void> {
     const entry = this.required(label)
+    const deadline = Date.now() + timeoutMs
     let completion: Promise<void>
     do {
       completion = entry.navigationCompletion
-      await completion
+      await awaitBrowserOperation(completion, signal)
     } while (completion !== entry.navigationCompletion)
     await waitForState(
       () => {
@@ -609,9 +618,20 @@ export class EmbeddedBrowserManager {
           this.currentVisibleUrl(entry) === entry.requestedUrl
         )
       },
-      timeoutMs,
-      'Timed out waiting for the requested browser document'
+      Math.max(0, deadline - Date.now()),
+      'Timed out waiting for the requested browser document',
+      signal
     )
+  }
+
+  createConditionEvaluator(label: string): BrowserConditionEvaluator {
+    const entry = this.required(label)
+    return createBrowserConditionEvaluator({
+      contents: entry.contents,
+      isCurrent: () => this.entries.get(label) === entry,
+      waitForNavigation: (remainingMs, signal) =>
+        this.waitForNavigation(label, remainingMs, signal),
+    })
   }
 
   backgroundThrottling(label: string): boolean {
@@ -650,18 +670,7 @@ export class EmbeddedBrowserManager {
   ): Promise<unknown> {
     // Hidden guests can execute Electron's script while leaving its isolated-world
     // reply Promise pending. Return the main-world result through Chromium instead.
-    return withDebuggerSession(this.required(label).contents, async target => {
-      const { result, exceptionDetails } = await target.sendCommand('Runtime.evaluate', {
-        expression,
-        returnByValue: true,
-        awaitPromise: options.awaitPromise ?? true,
-        userGesture: true,
-      })
-      if (exceptionDetails) {
-        throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
-      }
-      return result.value
-    })
+    return evaluateBrowserScript(this.required(label).contents, expression, options)
   }
 
   async uploadFiles(
@@ -1457,12 +1466,24 @@ function browserFrame(bounds: BrowserBounds): number[] {
 async function waitForState(
   predicate: () => boolean,
   timeoutMs: number,
-  message: string
+  message: string,
+  signal?: AbortSignal
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() <= deadline) {
+    signal?.throwIfAborted()
     if (predicate()) return
-    await new Promise(resolve => setTimeout(resolve, 50))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await awaitBrowserOperation(
+        new Promise<void>(resolve => {
+          timer = setTimeout(resolve, 50)
+        }),
+        signal
+      )
+    } finally {
+      clearTimeout(timer)
+    }
   }
   throw new Error(message)
 }

@@ -1,7 +1,8 @@
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix, resolve, win32 } from 'node:path'
 
 const MANAGED_MARKER = '# Wework CLI launcher'
+const CLI_NAMESPACES = ['desktop', 'smart-app', 'workbench']
 
 export interface WeworkCliInstallOptions {
   appCommand: string[]
@@ -31,21 +32,40 @@ export async function installWeworkCli(
   sourcePath: string,
   platform: NodeJS.Platform,
   options: WeworkCliInstallOptions
-): Promise<void> {
-  await mkdir(runtimeBin, { recursive: true, mode: 0o700 })
-  const cliPath = join(runtimeBin, 'wework-cli.mjs')
+): Promise<string> {
+  const directory = resolve(runtimeBin)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const cliPath = join(directory, 'wework-cli.mjs')
   await copyFile(sourcePath, cliPath)
   await chmod(cliPath, 0o700)
   if (platform === 'win32') {
-    const launcher = join(runtimeBin, 'wework.cmd')
+    const launcher = join(directory, 'wework.cmd')
     await rm(launcher, { force: true })
     await writeFile(launcher, windowsLauncher(cliPath, options), { mode: 0o600 })
-    return
+    return launcher
   }
-  const launcher = join(runtimeBin, 'wework')
+  const launcher = join(directory, 'wework')
   await rm(launcher, { force: true })
   await writeFile(launcher, posixLauncher(cliPath, options), { mode: 0o700 })
   await chmod(launcher, 0o700)
+  return launcher
+}
+
+export function withWeworkCliEnvironment(
+  environment: NodeJS.ProcessEnv,
+  cliPath: string,
+  platform: NodeJS.Platform
+): NodeJS.ProcessEnv {
+  const paths = platform === 'win32' ? win32 : posix
+  if (!paths.isAbsolute(cliPath)) throw new Error('Wework CLI path must be absolute')
+  const directory = paths.dirname(cliPath)
+  const delimiter = platform === 'win32' ? ';' : ':'
+  const entries = environment.PATH?.split(delimiter).filter(Boolean) ?? []
+  return {
+    ...environment,
+    WEWORK_CLI_PATH: cliPath,
+    PATH: [...new Set([directory, ...entries])].join(delimiter),
+  }
 }
 
 export async function canReplaceWeworkCli(path: string): Promise<boolean> {
@@ -65,20 +85,15 @@ ${MANAGED_MARKER}
 set -eu
 
 if [ "\${1:-}" = "-h" ] || [ "\${1:-}" = "--help" ]; then
-  cat <<'EOF'
-Usage:
-  wework [path]
-  wework desktop <command> [options]
-EOF
-  exit 0
+  exec ${nodeCommand} ${shellQuote(cliPath)} desktop --help
 fi
 
-if [ "\${1:-}" = "desktop" ]; then
-  exec ${nodeCommand} ${shellQuote(cliPath)} "$@"
-fi
+case "\${1:-}" in
+  ${CLI_NAMESPACES.join('|')}) exec ${nodeCommand} ${shellQuote(cliPath)} "$@" ;;
+esac
 
 if [ "$#" -gt 1 ]; then
-  echo "wework: expected a path or the desktop subcommand" >&2
+  echo "wework: expected a path or a CLI subcommand" >&2
   exit 2
 fi
 
@@ -100,10 +115,9 @@ function windowsLauncher(cliPath: string, options: WeworkCliInstallOptions): str
 rem ${MANAGED_MARKER}\r
 if "%~1"=="-h" goto usage\r
 if "%~1"=="--help" goto usage\r
-if "%~1"=="desktop" ${nodeCommand} ${windowsQuote(cliPath)} %*\r
-if "%~1"=="desktop" exit /b %errorlevel%\r
+${CLI_NAMESPACES.map(namespace => `if "%~1"=="${namespace}" goto cli\r`).join('\n')}
 if not "%~2"=="" (\r
-  echo wework: expected a path or the desktop subcommand 1>&2\r
+  echo wework: expected a path or a CLI subcommand 1>&2\r
   exit /b 2\r
 )\r
 set "TARGET_PATH=%~f1"\r
@@ -115,10 +129,12 @@ if not exist "%TARGET_PATH%\\" (\r
 set "ELECTRON_RUN_AS_NODE="\r
 ${appCommand} --open-workspace "%TARGET_PATH%"\r
 exit /b %errorlevel%\r
+:cli\r
+${nodeCommand} ${windowsQuote(cliPath)} %*\r
+exit /b %errorlevel%\r
 :usage\r
-echo Usage:\r
-echo   wework [path]\r
-echo   wework desktop ^<command^> [options]\r
+${nodeCommand} ${windowsQuote(cliPath)} desktop --help\r
+exit /b %errorlevel%\r
 `
 }
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 
@@ -22,6 +22,14 @@ function usage() {
   wework smart-app inspect --project ABSOLUTE_PATH [--instance ID] [--format human|json]
   wework smart-app verify --project ABSOLUTE_PATH [--instance ID] [--format human|json]
   wework smart-app pack --project ABSOLUTE_PATH --output ABSOLUTE_PATH.zip [--instance ID] [--format human|json]
+  wework workbench list [--instance ID] [--format human|json]
+  wework workbench create --project ABSOLUTE_PATH --name NAME --display-name TITLE --flavor lightweight|extended [--instance ID]
+  wework workbench install --project ABSOLUTE_PATH [--instance ID] [--format human|json]
+  wework workbench create-todo [--instance ID] [--format human|json]
+  wework workbench launch --id INSTALLATION_ID [--presentation window|tab] [--instance ID]
+  wework workbench <hide|stop|remove|shortcut> --id INSTALLATION_ID [--instance ID]
+  wework workbench set-shortcut --id INSTALLATION_ID (--accelerator SHORTCUT | --clear true) [--instance ID]
+  wework workbench configure --id INSTALLATION_ID [--presentation window|tab] [--resident true|false] [--background true|false] [--instance ID]
 
 Instance selection:
   --instance ID    Select an exact running Wework instance.
@@ -131,8 +139,12 @@ export function selectInstance(instances, options, cwd = process.cwd()) {
   throw new Error('Multiple Wework instances are running; pass --instance or --project')
 }
 
-async function request(instance, path, body) {
-  const timeoutMs = Number(body?.timeoutMs) || DEFAULT_TIMEOUT_MS
+async function request(
+  instance,
+  path,
+  body,
+  timeoutMs = Number(body?.timeoutMs) || DEFAULT_TIMEOUT_MS
+) {
   const signal = AbortSignal.timeout(timeoutMs + 1_000)
   const response = await fetch(`http://${instance.address}${path}`, {
     method: body ? 'POST' : 'GET',
@@ -233,21 +245,136 @@ export function summarizeSmartAppResult(result) {
     .join('\n')
 }
 
+export function workbenchRequest(command, options) {
+  const commands = [
+    'list',
+    'create',
+    'install',
+    'create-todo',
+    'launch',
+    'hide',
+    'stop',
+    'remove',
+    'shortcut',
+    'set-shortcut',
+    'configure',
+  ]
+  if (!commands.includes(command)) throw new Error(`Unknown workbench command: ${command}`)
+  const needsId = !['list', 'create', 'install', 'create-todo'].includes(command)
+  const allowed = new Set([
+    'instance',
+    'format',
+    ...(['install', 'create'].includes(command) ? ['project'] : []),
+    ...(command === 'create' ? ['name', 'display-name', 'flavor'] : []),
+    ...(needsId ? ['id'] : []),
+    ...(command === 'set-shortcut' ? ['accelerator', 'clear'] : []),
+    ...(['launch', 'configure'].includes(command) ? ['presentation'] : []),
+    ...(command === 'configure' ? ['resident', 'background'] : []),
+  ])
+  const unknown = Object.keys(options).find(option => !allowed.has(option))
+  if (unknown) throw new Error(`Unknown workbench option: --${unknown}`)
+  const format = options.format ?? 'human'
+  if (format !== 'human' && format !== 'json') throw new Error('--format must be "human" or "json"')
+  const input = { action: command, format }
+  if (command === 'install' || command === 'create') {
+    if (!options.project || !isAbsolute(options.project))
+      throw new Error('--project must be an absolute path')
+    const result = { ...input, projectPath: resolve(options.project) }
+    if (command === 'create') {
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(options.name ?? ''))
+        throw new Error('--name must be a lowercase workbench package name')
+      if (!options['display-name']?.trim()) throw new Error('--display-name is required')
+      if (!['lightweight', 'extended'].includes(options.flavor))
+        throw new Error('--flavor must be "lightweight" or "extended"')
+      return {
+        ...result,
+        name: options.name,
+        displayName: options['display-name'].trim(),
+        flavor: options.flavor,
+      }
+    }
+    return result
+  }
+  if (!needsId) return input
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(options.id ?? ''))
+    throw new Error('--id must be a valid workbench installation ID')
+  if (['launch', 'configure'].includes(command)) {
+    if (options.presentation !== undefined && !['window', 'tab'].includes(options.presentation)) {
+      throw new Error('--presentation must be "window" or "tab"')
+    }
+    const result = {
+      ...input,
+      id: options.id,
+      ...(options.presentation !== undefined ? { presentation: options.presentation } : {}),
+    }
+    if (command === 'configure') {
+      const resident = optionalBoolean(options.resident, 'resident')
+      const background = optionalBoolean(options.background, 'background')
+      if (resident !== undefined) result.resident = resident
+      if (background !== undefined) result.background = background
+      if (
+        options.presentation === undefined &&
+        resident === undefined &&
+        background === undefined
+      ) {
+        throw new Error('Provide --presentation, --resident or --background')
+      }
+    }
+    return result
+  }
+  if (command !== 'set-shortcut') return { ...input, id: options.id }
+  const clear = optionalBoolean(options.clear, 'clear') ?? false
+  if (clear === Boolean(options.accelerator?.trim())) {
+    throw new Error('Provide either --accelerator SHORTCUT or --clear true')
+  }
+  return { ...input, id: options.id, accelerator: clear ? null : options.accelerator.trim() }
+}
+
+export function summarizeWorkbenchResult(result) {
+  if (result === null) return 'Workbench installation cancelled.'
+  if (Array.isArray(result)) {
+    return result.length === 0
+      ? 'No workbenches installed.'
+      : result
+          .map(
+            app =>
+              `${app.id}\t${app.manifest.displayName}\t${app.state === 'running' ? (app.visible ? 'visible' : 'background') : app.state}`
+          )
+          .join('\n')
+  }
+  if (typeof result === 'string') return result
+  if (result?.manifest) return `Workbench: ${result.manifest.displayName} (${result.id})`
+  return result?.id ? `Workbench action completed: ${result.id}` : 'Workbench action completed.'
+}
+
 async function main() {
   const { namespace, command, options } = parseCliArgs(process.argv.slice(2))
   if (
-    ['desktop', 'smart-app'].includes(namespace) &&
+    ['desktop', 'smart-app', 'workbench'].includes(namespace) &&
     (['-h', '--help'].includes(command) || options.help === true)
   ) {
     usage()
     return
   }
-  if (!['desktop', 'smart-app'].includes(namespace) || !command) {
+  if (!['desktop', 'smart-app', 'workbench'].includes(namespace) || !command) {
     usage()
     process.exitCode = 2
     return
   }
   const instances = await runningInstances()
+  if (namespace === 'workbench') {
+    const { format, ...body } = workbenchRequest(command, options)
+    const instance = selectInstance(instances, { instance: options.instance })
+    const timeoutMs = ['create', 'install', 'create-todo', 'launch'].includes(command)
+      ? 300_000
+      : DEFAULT_TIMEOUT_MS
+    const result = await request(instance, '/workbench', body, timeoutMs)
+    console.log(
+      format === 'json' ? JSON.stringify(result, null, 2) : summarizeWorkbenchResult(result)
+    )
+    if (result === null) process.exitCode = 1
+    return
+  }
   if (namespace === 'smart-app') {
     const input = smartAppRequest(command, options)
     const instance = selectInstance(instances, options)
@@ -312,7 +439,20 @@ async function main() {
   console.log(JSON.stringify(result, null, 2))
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+async function isMainModule() {
+  if (!process.argv[1]) return false
+  try {
+    return (
+      (await realpath(resolve(process.argv[1]))) ===
+      (await realpath(fileURLToPath(import.meta.url)))
+    )
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+if (await isMainModule()) {
   main().catch(error => {
     console.error(`wework: ${error?.message || error}`)
     process.exitCode = 1

@@ -1,10 +1,32 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import {
   chromiumVerboseLoggingArguments,
+  resolveDesktopLaunchCommand,
   resolveElectronLaunchArguments,
 } from './electron-launch-arguments.mjs'
+
+test('a native shortcut runs its exact executable and owns its startup arguments', () => {
+  const shortcut = join(tmpdir(), 'Todo.app', 'Contents', 'MacOS', 'launch-workbench')
+  assert.deepEqual(
+    resolveDesktopLaunchCommand('/default/app', ['--old-switch'], { command: shortcut, args: [] }),
+    { command: shortcut, args: [] }
+  )
+  assert.deepEqual(resolveDesktopLaunchCommand('/default/app', ['--switch']), {
+    command: '/default/app',
+    args: ['--switch'],
+  })
+  for (const command of [
+    null,
+    {},
+    { command: 'relative', args: [] },
+    { command: shortcut, args: '--arg' },
+  ])
+    assert.throws(() => resolveDesktopLaunchCommand('/default/app', [], command))
+})
 
 test('appends scenario-specific Electron switches', () => {
   assert.deepEqual(

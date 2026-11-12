@@ -6,9 +6,19 @@ import {
 } from './capability-router.js'
 
 describe('HostCapabilityRouter', () => {
-  test('exposes the decision route token capabilities separately from the model proxy', () => {
-    expect(HOST_CAPABILITIES).toContain('smartApps.storeDecisionToken')
-    expect(HOST_CAPABILITIES).toContain('smartApps.takeDecisionToken')
+  test('keeps route tokens exclusively in the Host lifecycle owner', () => {
+    expect(HOST_CAPABILITIES).toContain('smartApps.open')
+    for (const name of [
+      'storeProxyToken',
+      'takeProxyToken',
+      'storeAdditionalProxyTokens',
+      'takeAdditionalProxyTokens',
+      'storeContextToken',
+      'takeContextToken',
+      'storeDecisionToken',
+      'takeDecisionToken',
+    ])
+      expect(HOST_CAPABILITIES).not.toContain(`smartApps.${name}`)
   })
 
   test('dispatches only explicitly granted capabilities', async () => {

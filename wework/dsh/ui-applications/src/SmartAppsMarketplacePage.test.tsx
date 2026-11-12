@@ -1,7 +1,11 @@
 import { ApiError } from '@/api/http'
+import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
-import { notifyHarnessAppInstallationsChanged } from '@/features/harness-apps/harnessAppInstallationsChanged'
-import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
+import {
+  HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
+  notifyHarnessAppInstallationsChanged,
+} from '@/features/harness-apps/harnessAppInstallationsChanged'
+import { openHarnessAppTab, registerHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 import { localHarnessModelOptionKey } from '@/features/local-harness/localHarnessModels'
 import type { UnifiedModel } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -20,6 +24,7 @@ const previewPackage = vi.fn()
 const invokeDesktopHost = vi.fn()
 const deleteInstalled = vi.fn()
 const stopInstalled = vi.fn()
+const openInstalled = vi.fn()
 const updateInstalled = vi.fn()
 const exportToDownloads = vi.fn()
 const exportPackage = vi.fn()
@@ -90,9 +95,6 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   openHarnessAppTab: vi.fn(),
   registerHarnessAppTab: vi.fn(),
   takeHarnessAppAdditionalProxyTokens: vi.fn().mockResolvedValue([]),
-  takeHarnessAppContextToken: vi.fn().mockResolvedValue(null),
-  takeHarnessAppProxyToken: vi.fn().mockResolvedValue(null),
-  takeHarnessAppDecisionToken: vi.fn().mockResolvedValue(null),
   unregisterHarnessAppTab: vi.fn(),
 }))
 vi.mock('@/api/local/harnessApps', () => ({
@@ -101,8 +103,9 @@ vi.mock('@/api/local/harnessApps', () => ({
     download: (value: unknown) => downloadPackage(value),
     preview: (path: string) => previewPackage(path),
     install: (...args: unknown[]) => installPackage(...args),
-    delete: (id: string) => deleteInstalled(id),
+    delete: (...args: unknown[]) => deleteInstalled(...args),
     stop: (id: string) => stopInstalled(id),
+    open: (id: string, presentation?: string) => openInstalled(id, presentation),
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
     exportToDownloads: (id: string) => exportToDownloads(id),
     export: (id: string) => exportPackage(id),
@@ -212,10 +215,17 @@ describe('SmartAppsMarketplacePage', () => {
     window.history.replaceState({}, '', '/')
     workbenchModels.current = [harnessModel]
     vi.mocked(openHarnessAppTab).mockClear()
+    vi.mocked(registerHarnessAppTab).mockClear()
     navigateTo.mockReset()
     queuePluginReferenceTrial.mockReset().mockReturnValue(true)
     queueSmartAppDevelopmentPreview.mockReset()
     ensureBundledPluginInstalled.mockReset().mockResolvedValue(undefined)
+    openInstalled.mockReset().mockImplementation(async (id: string) => ({
+      ...(await listInstalled()).find((value: { id: string }) => value.id === id),
+      state: 'running',
+      webUrl: 'http://localhost:9000',
+      presentation: 'tab',
+    }))
     listInstalled.mockReset().mockResolvedValue([])
     verifyInstallation.mockReset().mockResolvedValue({ status: 'passed', issues: [] })
     deleteInstalled.mockReset().mockResolvedValue(undefined)
@@ -470,6 +480,32 @@ describe('SmartAppsMarketplacePage', () => {
     expect(
       screen.getByTestId(`smart-app-created-item-${importedInstallation.id}`)
     ).toBeInTheDocument()
+  })
+
+  test('does not open a builder or publish an installation when copy approval is cancelled', async () => {
+    const installation = { ...importedInstallation, id: 'market-7', source: 'market' as const }
+    listInstalled.mockResolvedValue([installation])
+    copyToDirectory.mockResolvedValueOnce(null)
+    const changed = vi.fn()
+    window.addEventListener(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, changed)
+    onTestFinished(() =>
+      window.removeEventListener(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, changed)
+    )
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-actions-market-7'))
+    fireEvent.pointerDown(screen.getByTestId('smart-app-copy-market-7'))
+    fireEvent.change(screen.getByTestId('smart-app-development-parent-path'), {
+      target: { value: '/tmp/workbenches' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    await waitFor(() => expect(copyToDirectory).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.queryByTestId('smart-app-development-dialog')).toBeNull())
+    expect(changed).not.toHaveBeenCalled()
+    expect(queueSmartAppDevelopmentPreview).not.toHaveBeenCalled()
+    expect(navigateTo).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   test.each(['failure'])(
@@ -787,7 +823,7 @@ describe('SmartAppsMarketplacePage', () => {
       expect(model).toBeEnabled()
       expect(model).toHaveValue(installation.modelKey)
       fireEvent.click(submit)
-      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id))
+      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id, true))
     }
   )
 
@@ -910,6 +946,73 @@ describe('SmartAppsMarketplacePage', () => {
     }
   )
 
+  test.each(['managed', 'linked', 'market'] as const)(
+    'confirmed %s removal deletes owned data while cancellation preserves the installation',
+    async source => {
+      const installation = { ...importedInstallation, id: `removal-confirm-${source}`, source }
+      listInstalled.mockResolvedValue([installation])
+      window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+      render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+      const openRemoval = async () => {
+        fireEvent.click(await screen.findByTestId(`smart-app-actions-${installation.id}`))
+        fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+        return screen.getByRole('dialog', { name: '从本机移除工作台？' })
+      }
+
+      const confirmation = await openRemoval()
+      expect(confirmation).toHaveTextContent('删除本机应用数据')
+      if (source === 'linked') expect(confirmation).toHaveTextContent('不会删除工作台文件夹')
+      fireEvent.click(within(confirmation).getByRole('button', { name: '取消' }))
+      expect(deleteInstalled).not.toHaveBeenCalled()
+      expect(stopInstalled).not.toHaveBeenCalled()
+
+      await openRemoval()
+      fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
+      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id, true))
+      expect(deleteInstalled).toHaveBeenCalledOnce()
+    }
+  )
+
+  test.each(['resolve', 'reject'] as const)(
+    'keeps removal pending until owned data cleanup %ss',
+    async outcome => {
+      const installation = { ...importedInstallation, id: `removal-pending-${outcome}` }
+      const removal = deferred<void>()
+      onTestFinished(async () => {
+        await act(async () => removal.resolve())
+      })
+      deleteInstalled.mockReturnValueOnce(removal.promise)
+      listInstalled.mockResolvedValue([installation])
+      window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+      render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+      fireEvent.click(await screen.findByTestId(`smart-app-actions-${installation.id}`))
+      fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+      fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
+      await waitFor(() => expect(deleteInstalled).toHaveBeenCalledOnce())
+
+      const submit = screen.getByTestId('smart-app-remove-local-confirm')
+      expect(submit).toBeDisabled()
+      expect(screen.getByTestId('smart-app-remove-local-confirm-cancel-button')).toBeDisabled()
+      fireEvent.click(submit)
+      expect(deleteInstalled).toHaveBeenCalledOnce()
+
+      if (outcome === 'resolve') {
+        await act(async () => removal.resolve())
+        await waitFor(() =>
+          expect(screen.queryByTestId('smart-app-remove-local-confirm')).not.toBeInTheDocument()
+        )
+      } else {
+        await act(async () => removal.reject(new Error('Owned data cleanup failed')))
+        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('卸载工作台失败。'))
+        expect(submit).toBeEnabled()
+        expect(screen.getByTestId(`smart-app-actions-${installation.id}`)).toBeInTheDocument()
+        fireEvent.click(submit)
+        await waitFor(() => expect(deleteInstalled).toHaveBeenCalledTimes(2))
+        expect(deleteInstalled).toHaveBeenLastCalledWith(installation.id, true)
+      }
+    }
+  )
+
   test('fully removes an imported app card while preserving its published cloud version', async () => {
     const publishedImport = {
       ...importedInstallation,
@@ -943,7 +1046,7 @@ describe('SmartAppsMarketplacePage', () => {
     )
     fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
 
-    await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(publishedImport.id))
+    await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(publishedImport.id, true))
     expect(screen.queryByText('研究工作台')).not.toBeInTheDocument()
     rerender(<SmartAppsMarketplacePage api={refreshedApi} mode="owned" />)
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
@@ -1010,7 +1113,7 @@ describe('SmartAppsMarketplacePage', () => {
     const viewMarketplaceButton = screen.getByTestId('smart-app-access-view-marketplace')
     expect(viewMarketplaceButton).toHaveClass('border-success/30', 'bg-background', 'shadow-sm')
     fireEvent.click(viewMarketplaceButton)
-    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
+    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=marketplace')
     expect(screen.queryByTestId('smart-app-access-success')).not.toBeInTheDocument()
   })
 
@@ -1083,6 +1186,9 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.change(screen.getByTestId('smart-app-development-description'), {
       target: { value: '持续开发' },
     })
+    fireEvent.change(screen.getByTestId('smart-app-development-flavor'), {
+      target: { value: 'extended' },
+    })
     fireEvent.click(advancedToggle)
     expect(advancedToggle).toHaveAttribute('aria-expanded', 'true')
     fireEvent.change(screen.getByTestId('smart-app-development-name'), {
@@ -1117,7 +1223,11 @@ describe('SmartAppsMarketplacePage', () => {
       })
     )
     expect(createDirectory).toHaveBeenCalledWith(
-      expect.objectContaining({ description: '持续开发', template: 'web-host-remote' })
+      expect.objectContaining({
+        description: '持续开发',
+        template: 'web-host-remote',
+        flavor: 'extended',
+      })
     )
     expect(navigateTo).toHaveBeenCalledWith('/')
   })
@@ -1234,6 +1344,110 @@ describe('SmartAppsMarketplacePage', () => {
     expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
   })
 
+  test.each([
+    { state: 'installed' as const, dismissed: false },
+    { state: 'running' as const, dismissed: false },
+    { state: 'installed' as const, dismissed: true },
+    { state: 'running' as const, dismissed: true },
+  ])(
+    're-resolves the same target after removing a $state installation (details dismissed: $dismissed)',
+    async ({ state, dismissed }) => {
+      const smartAppsApi = api([])
+      const lookup = deferred<SmartAppMarketplaceItem>()
+      const pendingOpen = deferred<HarnessAppInstallation>()
+      const installation: HarnessAppInstallation = {
+        ...importedInstallation,
+        id: `same-target-${state}-${dismissed}`,
+        smartAppId: 7,
+        state,
+      }
+      openInstalled.mockReturnValue(pendingOpen.promise)
+      vi.mocked(smartAppsApi.getItem)
+        .mockResolvedValueOnce(item())
+        .mockReturnValueOnce(lookup.promise)
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" targetSmartAppId={7} />)
+      await screen.findByText('还没有符合条件的工作台')
+      expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+        '研究工作台'
+      )
+      await screen.findByTestId('smart-app-details')
+      if (dismissed) fireEvent.click(screen.getByTestId('smart-app-details-close'))
+
+      listInstalled.mockResolvedValue([installation])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({
+          type: 'updated',
+          installationId: installation.id,
+          installation,
+        })
+      })
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+      expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+
+      listInstalled.mockResolvedValue([])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({ type: 'removed', installationId: installation.id })
+      })
+      await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2))
+      expect(screen.queryByTestId('smart-app-deep-link-install-prompt')).not.toBeInTheDocument()
+      await act(async () => lookup.resolve(item({ displayName: '更新后的工作台' })))
+
+      expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+        '更新后的工作台'
+      )
+      if (dismissed) {
+        expect(screen.queryByTestId('smart-app-details')).not.toBeInTheDocument()
+      } else {
+        expect(screen.getByTestId('smart-app-details')).toHaveTextContent('更新后的工作台')
+      }
+      await act(async () => pendingOpen.resolve(installation))
+    }
+  )
+
+  test.each(['installed', 'running'] as const)(
+    'starts a fresh target lookup after removing a %s installation that superseded a lookup failure',
+    async state => {
+      const smartAppsApi = api([])
+      const pendingOpen = deferred<HarnessAppInstallation>()
+      const installation: HarnessAppInstallation = {
+        ...importedInstallation,
+        id: `failed-target-${state}`,
+        smartAppId: 7,
+        state,
+      }
+      openInstalled.mockReturnValue(pendingOpen.promise)
+      vi.mocked(smartAppsApi.getItem)
+        .mockRejectedValueOnce(new ApiError('temporary failure', 503, 'unavailable'))
+        .mockResolvedValueOnce(item({ displayName: '恢复后的工作台' }))
+      render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" targetSmartAppId={7} />)
+      await screen.findByText('还没有符合条件的工作台')
+      await screen.findByTestId('smart-app-deep-link-retry')
+
+      listInstalled.mockResolvedValue([installation])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({
+          type: 'updated',
+          installationId: installation.id,
+          installation,
+        })
+      })
+      expect(screen.queryByTestId('smart-app-deep-link-retry')).not.toBeInTheDocument()
+      expect(smartAppsApi.getItem).toHaveBeenCalledExactlyOnceWith(7)
+
+      listInstalled.mockResolvedValue([])
+      await act(async () => {
+        notifyHarnessAppInstallationsChanged({ type: 'removed', installationId: installation.id })
+      })
+
+      expect(await screen.findByTestId('smart-app-deep-link-install-prompt')).toHaveTextContent(
+        '恢复后的工作台'
+      )
+      expect(smartAppsApi.getItem).toHaveBeenCalledTimes(2)
+      expect(screen.queryByTestId('smart-app-deep-link-retry')).not.toBeInTheDocument()
+      await act(async () => pendingOpen.resolve(installation))
+    }
+  )
+
   test('ignores a pending download after the deep-link target changes', async () => {
     const smartAppsApi = api([item()])
     let resolveDownload: (
@@ -1265,32 +1479,44 @@ describe('SmartAppsMarketplacePage', () => {
     )
 
     expect(
-      await screen.findByText('未找到此智能工作台，可能已下架或你没有访问权限。')
+      await screen.findByText('未找到此工作台，可能已下架或你没有访问权限。')
     ).toBeInTheDocument()
     expect(screen.queryByTestId('harness-app-install-confirm')).not.toBeInTheDocument()
   })
 
-  test('retries a deep-link start after the model catalog becomes available', async () => {
+  test('delegates a deep-link launch to the Host without waiting for renderer model hydration', async () => {
     workbenchModels.current = []
-    const installation = {
-      ...importedInstallation,
-      smartAppId: 7,
-      modelKey: localHarnessModelOptionKey(harnessModel),
-      state: 'installed',
-    }
+    const installation = { ...importedInstallation, smartAppId: 7, state: 'installed' }
     listInstalled.mockResolvedValue([installation])
-    const { rerender } = render(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={7} />)
-    expect(
-      await screen.findByText('此智能工作台绑定的 Wework 模型已不可用，请重新选择模型。')
-    ).toBeInTheDocument()
-    expect(openHarnessAppTab).not.toHaveBeenCalled()
-
-    workbenchModels.current = [harnessModel]
-    rerender(<SmartAppsMarketplacePage api={api([])} targetSmartAppId={7} />)
-
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" targetSmartAppId={7} />)
+    await waitFor(() => expect(openInstalled).toHaveBeenCalledWith(installation.id, undefined))
     await waitFor(() =>
-      expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
+      expect(screen.getByTestId(`harness-app-start-${installation.id}`)).toBeEnabled()
     )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
+    expect(screen.getByTestId(`harness-app-model-${installation.id}`)).toBeInTheDocument()
+  })
+
+  test('does not register running presentations from the initial or refreshed catalog', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        state: 'running',
+        webUrl: 'http://localhost:9000',
+        presentation: 'tab',
+      },
+    ])
+    const { rerender } = render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+    await screen.findByTestId(`smart-app-created-item-${importedInstallation.id}`)
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
+
+    rerender(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
+    expect(registerHarnessAppTab).not.toHaveBeenCalled()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+    expect(openInstalled).not.toHaveBeenCalled()
   })
 
   test('ignores a pending target lookup after the API is removed', async () => {

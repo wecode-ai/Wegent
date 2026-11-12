@@ -1874,18 +1874,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   >(() => initialBrowserWorkspaceState.states)
   const browserStatesRef = useRef(browserStates)
   const smartAppDevelopmentPreviewRequestsRef = useRef(new Map<RightWorkspaceBrowserTab, number>())
-  const localHarnessModelApiRef = useRef(services.localHarnessModelApi)
-  const localDecisionRouterApiRef = useRef(services.localDecisionRouterApi)
   const recentBrowserPopupRequestsRef = useRef(new Map<string, number>())
   useEffect(() => {
     browserStatesRef.current = browserStates
   }, [browserStates])
-  useEffect(() => {
-    localHarnessModelApiRef.current = services.localHarnessModelApi
-  }, [services.localHarnessModelApi])
-  useEffect(() => {
-    localDecisionRouterApiRef.current = services.localDecisionRouterApi
-  }, [services.localDecisionRouterApi])
   const updateBrowserState = useCallback(
     (tab: RightWorkspaceBrowserTab, update: Partial<RightWorkspaceBrowserState>) => {
       setBrowserStates(current => {
@@ -3563,7 +3555,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           displayName:
             initialDisplayName ??
             browserStatesRef.current[tab]?.developmentPreview?.displayName ??
-            t('workbench.smart_apps_title', '智能工作台'),
+            t('workbench.smart_apps_title', '工作台'),
           workspaceTabId:
             browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
           status: reload ? 'reloading' : 'starting',
@@ -3574,37 +3566,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         const installations = await harnessAppsApi.list()
         const installation = installations.find(item => item.id === installationId)
         if (!installation) {
-          throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的智能工作台'))
+          throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的工作台'))
         }
-        const modelOptions = getHarnessModelOptions('opencode')
         const missingWebUrlMessage = t(
           'workbench.smart_apps_missing_web_url',
-          '智能工作台没有返回可用地址'
+          '工作台没有返回可用地址'
         )
         const running = reload
-          ? await restartHarnessAppDevelopmentRuntime(
-              installation,
-              modelOptions,
-              services.localHarnessModelApi,
-              missingWebUrlMessage,
-              services.localDecisionRouterApi
-            )
+          ? await restartHarnessAppDevelopmentRuntime(installation, missingWebUrlMessage)
           : await startHarnessAppDevelopmentRuntime({
               installation,
-              modelOptions,
-              localHarnessModelApi: services.localHarnessModelApi,
-              localDecisionRouterApi: services.localDecisionRouterApi,
               missingWebUrlMessage,
             })
         if (
           smartAppDevelopmentPreviewRequestsRef.current.get(tab) !== requestId ||
           !browserStatesRef.current[tab]
         ) {
-          await stopHarnessAppDevelopmentRuntime(
-            installationId,
-            services.localHarnessModelApi,
-            services.localDecisionRouterApi
-          ).catch(error => {
+          await stopHarnessAppDevelopmentRuntime(installationId).catch(error => {
             console.error('Failed to stop closed Smart app development preview:', error)
           })
           return
@@ -3645,7 +3623,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             displayName:
               initialDisplayName ??
               browserStatesRef.current[tab]?.developmentPreview?.displayName ??
-              t('workbench.smart_apps_title', '智能工作台'),
+              t('workbench.smart_apps_title', '工作台'),
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'error',
@@ -3661,9 +3639,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       closeSmartAppDevelopmentPreviewBrowser,
       defaultEmbeddedBrowserLabel,
-      getHarnessModelOptions,
-      services.localDecisionRouterApi,
-      services.localHarnessModelApi,
       t,
       updateBrowserState,
       workspaceTabId,
@@ -3680,7 +3655,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const installations = await harnessAppsApi.list()
       const installation = installations.find(item => item.id === installationId)
       if (!installation) {
-        throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的智能工作台'))
+        throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的工作台'))
       }
       await closeSmartAppDevelopmentPreviewBrowser(tab)
       updateBrowserState(tab, {
@@ -3695,11 +3670,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       try {
         if (installation.state === 'running') {
-          await stopHarnessAppDevelopmentRuntime(
-            installationId,
-            services.localHarnessModelApi,
-            services.localDecisionRouterApi
-          )
+          await stopHarnessAppDevelopmentRuntime(installationId)
         }
         await harnessAppsApi.addPlugin(installationId, pluginSpec)
         await loadSmartAppDevelopmentPreview(tab, installationId, false)
@@ -3720,8 +3691,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       closeSmartAppDevelopmentPreviewBrowser,
       loadSmartAppDevelopmentPreview,
-      services.localDecisionRouterApi,
-      services.localHarnessModelApi,
       t,
       updateBrowserState,
       workspaceTabId,
@@ -3785,11 +3754,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         )
       })
       installationIds.forEach(installationId => {
-        void stopHarnessAppDevelopmentRuntime(
-          installationId,
-          localHarnessModelApiRef.current,
-          localDecisionRouterApiRef.current
-        ).catch(error => {
+        void stopHarnessAppDevelopmentRuntime(installationId).catch(error => {
           console.error('Failed to stop Smart app development runtime during disposal:', error)
         })
       })
@@ -3843,11 +3808,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
       installationIds.forEach(installationId => {
-        void stopHarnessAppDevelopmentRuntime(
-          installationId,
-          localHarnessModelApiRef.current,
-          localDecisionRouterApiRef.current
-        ).catch(error => {
+        void stopHarnessAppDevelopmentRuntime(installationId).catch(error => {
           console.error('Failed to stop Smart app runtime with its workspace tab:', error)
         })
       })
@@ -4136,13 +4097,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         (smartAppDevelopmentPreviewRequestsRef.current.get(tab as RightWorkspaceBrowserTab) ?? 0) +
           1
       )
-      void stopHarnessAppDevelopmentRuntime(
-        browserState.developmentPreview.installationId,
-        services.localHarnessModelApi,
-        services.localDecisionRouterApi
-      ).catch(error => {
-        console.error('Failed to stop closed Smart app development preview:', error)
-      })
+      void stopHarnessAppDevelopmentRuntime(browserState.developmentPreview.installationId).catch(
+        error => {
+          console.error('Failed to stop closed Smart app development preview:', error)
+        }
+      )
     }
     if (browserState?.label) {
       void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(

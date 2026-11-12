@@ -302,16 +302,13 @@ const harnessAppMocks = vi.hoisted(() => ({
   addPlugin: vi.fn(),
   inspectVerification: vi.fn(),
   list: vi.fn(),
-  start: vi.fn(),
+  preparePreview: vi.fn(),
   stop: vi.fn(),
   verify: vi.fn(),
 }))
 const harnessAppTabMocks = vi.hoisted(() => ({
   register: vi.fn(),
   unregister: vi.fn(),
-  takeProxyToken: vi.fn(),
-  takeContextToken: vi.fn(),
-  takeDecisionToken: vi.fn(),
 }))
 const dshExtensionMocks = vi.hoisted(() => ({
   bindConversationController: vi.fn(() => vi.fn()),
@@ -382,7 +379,7 @@ vi.mock('@/api/local/harnessApps', async importOriginal => {
       addPlugin: harnessAppMocks.addPlugin,
       inspectVerification: harnessAppMocks.inspectVerification,
       list: harnessAppMocks.list,
-      start: harnessAppMocks.start,
+      preparePreview: harnessAppMocks.preparePreview,
       stop: harnessAppMocks.stop,
       verify: harnessAppMocks.verify,
     },
@@ -395,9 +392,6 @@ vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
     ...actual,
     registerHarnessAppTab: harnessAppTabMocks.register,
     unregisterHarnessAppTab: harnessAppTabMocks.unregister,
-    takeHarnessAppProxyToken: harnessAppTabMocks.takeProxyToken,
-    takeHarnessAppContextToken: harnessAppTabMocks.takeContextToken,
-    takeHarnessAppDecisionToken: harnessAppTabMocks.takeDecisionToken,
   }
 })
 
@@ -1027,14 +1021,11 @@ describe('DesktopWorkbenchLayout', () => {
     harnessAppMocks.list.mockResolvedValue([])
     harnessAppMocks.addPlugin.mockReset()
     harnessAppMocks.inspectVerification.mockReset().mockResolvedValue(null)
-    harnessAppMocks.start.mockReset()
+    harnessAppMocks.preparePreview.mockReset()
     harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
     harnessAppMocks.verify.mockReset()
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
-    harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
-    harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
-    harnessAppTabMocks.takeDecisionToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
@@ -6463,7 +6454,7 @@ describe('DesktopWorkbenchLayout', () => {
       webUrl: 'http://127.0.0.1:43126/',
     }
     harnessAppMocks.list.mockResolvedValue([running])
-    harnessAppMocks.start.mockResolvedValue(running)
+    harnessAppMocks.preparePreview.mockResolvedValue(running)
     harnessAppMocks.inspectVerification.mockResolvedValue({
       schemaVersion: 1,
       status: 'failed',
@@ -6506,7 +6497,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(
         screen.getByTestId('smart-app-development-preview-verification-failed')
-      ).toHaveTextContent('智能工作台校验未通过，请修复后重新验证。')
+      ).toHaveTextContent('工作台校验未通过，请修复后重新验证。')
     )
     expect(
       screen.getByTestId('smart-app-development-preview-verification-failed')
@@ -6569,7 +6560,7 @@ describe('DesktopWorkbenchLayout', () => {
     }
     const start = createDeferred<typeof running>()
     harnessAppMocks.list.mockResolvedValue([installed])
-    harnessAppMocks.start.mockImplementation(() => start.promise)
+    harnessAppMocks.preparePreview.mockImplementation(() => start.promise)
     queueSmartAppDevelopmentPreview({
       installationId: installed.id,
       displayName: installed.manifest.displayName,
@@ -6580,6 +6571,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.getByTestId('smart-app-development-preview-starting')).toBeInTheDocument()
     )
+    const developmentPreview = screen.getByTestId('smart-app-development-preview')
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
@@ -6594,7 +6586,15 @@ describe('DesktopWorkbenchLayout', () => {
       start.resolve(running)
       await start.promise
     })
-    await waitFor(() => expect(harnessAppTabMocks.register).toHaveBeenCalledWith(running))
+    await waitFor(
+      () =>
+        expect(within(developmentPreview).getByTestId('workspace-browser-frame')).toHaveAttribute(
+          'src',
+          running.webUrl
+        ),
+      { container: developmentPreview }
+    )
+    expect(harnessAppTabMocks.register).not.toHaveBeenCalled()
     expect(embeddedBrowserMocks.setEmbeddedBrowserActiveTab).not.toHaveBeenCalled()
 
     rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
@@ -6621,7 +6621,7 @@ describe('DesktopWorkbenchLayout', () => {
     const workspaceTab = {
       id: 'smart-app-development-tab',
       kind: 'task' as const,
-      title: '智能工作台开发',
+      title: '工作台开发',
       contentRoute: '/',
       fixed: false,
     }
@@ -6668,7 +6668,7 @@ describe('DesktopWorkbenchLayout', () => {
       webUrl: 'http://127.0.0.1:43124/',
     }
     harnessAppMocks.list.mockResolvedValue([installed])
-    harnessAppMocks.start.mockResolvedValue(running)
+    harnessAppMocks.preparePreview.mockResolvedValue(running)
     queueSmartAppDevelopmentPreview({
       installationId: installed.id,
       displayName: installed.manifest.displayName,

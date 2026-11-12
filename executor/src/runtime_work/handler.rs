@@ -148,6 +148,7 @@ mod fork_transfer;
 mod git_connections;
 mod git_source_workspace;
 mod git_webhook_setup;
+mod harness_proxy_configuration;
 mod hooks;
 pub(super) mod lifecycle;
 mod mcp_approval_context;

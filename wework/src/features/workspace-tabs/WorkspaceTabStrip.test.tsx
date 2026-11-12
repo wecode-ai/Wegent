@@ -116,7 +116,7 @@ describe('WorkspaceTabStrip', () => {
       ...defaultAppPreferences,
       ...patch,
     }))
-    experimentalFeatures.enabled = true
+    experimentalFeatures.enabled = false
     listHarnessApps.mockReset()
     listHarnessApps.mockResolvedValue([])
     window.history.replaceState({}, '', '/')
@@ -477,36 +477,51 @@ describe('WorkspaceTabStrip', () => {
     )
   })
 
-  test('opens Smart apps from the top tab add menu', async () => {
-    const user = userEvent.setup()
-    renderStrip()
+  test.each([false, true])(
+    'opens Workbenches from the top tab add menu with experiments %s',
+    async enabled => {
+      experimentalFeatures.enabled = enabled
+      const user = userEvent.setup()
+      renderStrip()
 
-    await user.click(screen.getByTestId('workspace-tab-add'))
-    await user.click(screen.getByTestId('workspace-tab-add-smart-app'))
+      await user.click(screen.getByTestId('workspace-tab-add'))
+      expect(screen.getByTestId('workspace-tab-add-smart-app')).toHaveTextContent('管理工作台')
+      expect(
+        screen.queryByTestId('workspace-tab-add-smart-app-experimental-badge')
+      ).not.toBeInTheDocument()
+      await user.click(screen.getByTestId('workspace-tab-add-smart-app'))
 
-    expect(window.location.pathname).toBe('/sites')
-    expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
-    expect(screen.getByRole('tab', { name: '应用' })).toHaveAttribute('aria-selected', 'true')
-  })
+      expect(window.location.pathname).toBe('/sites')
+      expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
+      expect(screen.getByRole('tab', { name: '应用' })).toHaveAttribute('aria-selected', 'true')
+    }
+  )
 
-  test('opens an installed Smart app directly from the top tab add menu', async () => {
-    listHarnessApps.mockResolvedValue([
-      {
-        id: 'research',
-        manifest: {
-          displayName: '研究工作台',
+  test.each([false, true])(
+    'opens an installed Workbench from the top tab add menu with experiments %s',
+    async enabled => {
+      experimentalFeatures.enabled = enabled
+      listHarnessApps.mockResolvedValue([
+        {
+          id: 'research',
+          manifest: {
+            displayName: '研究工作台',
+          },
         },
-      },
-    ])
-    const user = userEvent.setup()
-    renderStrip()
+      ])
+      const user = userEvent.setup()
+      renderStrip()
 
-    await user.click(screen.getByTestId('workspace-tab-add'))
-    await user.click(await screen.findByTestId('workspace-tab-add-smart-app-research'))
+      await user.click(screen.getByTestId('workspace-tab-add'))
+      await user.click(await screen.findByTestId('workspace-tab-add-smart-app-research'))
 
-    expect(window.location.pathname).toBe('/app/harness-research')
-    expect(screen.getByRole('tab', { name: '研究工作台' })).toHaveAttribute('aria-selected', 'true')
-  })
+      expect(window.location.pathname).toBe('/app/harness-research')
+      expect(screen.getByRole('tab', { name: '研究工作台' })).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+    }
+  )
 
   test('opens a native DSH workspace slot from the top tab add menu', async () => {
     const descriptors = [{ id: 'dashboard', label: 'DSH Dashboard', order: 1 }]
@@ -528,14 +543,14 @@ describe('WorkspaceTabStrip', () => {
     )
   })
 
-  test('hides Smart apps from the top tab add menu while experiments are disabled', async () => {
-    experimentalFeatures.enabled = false
+  test('does not fetch or expose Workbenches in a window without auxiliary tabs', async () => {
     const user = userEvent.setup()
-    renderStrip()
+    renderStrip('', ['task', 'agent'])
 
     await user.click(screen.getByTestId('workspace-tab-add'))
 
     expect(screen.queryByTestId('workspace-tab-add-smart-app')).not.toBeInTheDocument()
+    expect(listHarnessApps).not.toHaveBeenCalled()
   })
 
   test('opens an allowed fallback tab in a board-only window when board is unavailable', async () => {

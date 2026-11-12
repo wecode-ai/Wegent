@@ -5,6 +5,13 @@ import {
   type WorkbenchAppManifest,
 } from '../runtime/workbench-dsh-runtime.js'
 import type { SmartAppVerificationContract } from './smart-app-verification-types.js'
+import type { WorkbenchNativeCapability } from './workbench-app-capabilities.js'
+import { bundleLightweightHtmlWithModules } from './lightweight-workbench-assets.js'
+import {
+  createLightweightClientSource,
+  LIGHTWEIGHT_WORKBENCH_FRAME_NAME,
+  LIGHTWEIGHT_HOST_SOURCE,
+} from './lightweight-workbench-client.js'
 
 export const SMART_APP_TEMPLATES = ['web', 'host', 'web-host', 'web-host-remote'] as const
 
@@ -17,9 +24,15 @@ export interface SmartAppScaffoldInput {
   description: string
   dshVersion: string
   template: SmartAppTemplate
+  flavor?: 'lightweight' | 'extended'
+  nativeCapabilities?: WorkbenchNativeCapability[]
+  window?: { width: number; height: number; alwaysOnTop: boolean }
+  html?: string
 }
 
 export async function scaffoldSmartApp(input: SmartAppScaffoldInput): Promise<void> {
+  if (input.flavor === 'lightweight' && input.template !== 'web')
+    throw new Error('Lightweight workbenches use the web template without Host or Remote plugins')
   const capabilities = templateCapabilities(input.template)
   const packageName = `@wework-smart-app/${input.name}`
   const bundlePath = `packages/bundle/${input.name}`
@@ -33,6 +46,9 @@ export async function scaffoldSmartApp(input: SmartAppScaffoldInput): Promise<vo
     displayName: input.displayName,
     version: '0.1.0',
     type: 'deepseek-harness-plugin-bundle',
+    ...(input.flavor ? { flavor: input.flavor } : {}),
+    ...(input.nativeCapabilities ? { capabilities: { native: input.nativeCapabilities } } : {}),
+    ...(input.window ? { window: input.window } : {}),
     description: input.description,
     packages: [{ name: packageName, role: 'profile-bundle', path: bundlePath }],
     entry: { installPackage: bundlePath, profile: 'web' },
@@ -76,6 +92,8 @@ export async function scaffoldSmartApp(input: SmartAppScaffoldInput): Promise<vo
   })
   await writeBundle(input, packageName, bundle, capabilities)
   await writeProjectTools(input, bundlePath, capabilities)
+  if (input.flavor === 'lightweight')
+    await writeLightweightBundle(input, packageName, bundle, bundlePath)
   await writeFile(
     join(input.path, 'PLUGIN.md'),
     `# ${input.displayName}\n\n${input.description}\n\nTemplate: ${input.template}. Add only the services this Smart App actually uses.\n`
@@ -83,6 +101,44 @@ export async function scaffoldSmartApp(input: SmartAppScaffoldInput): Promise<vo
   await writeFile(
     join(input.path, 'INSTALL.zh-CN.md'),
     '# 安装\n\n可在 Wework 中直接关联此目录运行，或通过验证后导出 ZIP 安装。\n'
+  )
+}
+
+export async function scaffoldLightweightWorkbench(
+  input: Omit<SmartAppScaffoldInput, 'template' | 'flavor'>
+): Promise<void> {
+  return scaffoldSmartApp({ ...input, template: 'web', flavor: 'lightweight' })
+}
+
+async function writeLightweightBundle(
+  input: SmartAppScaffoldInput,
+  packageName: string,
+  bundle: string,
+  bundlePath: string
+): Promise<void> {
+  const html =
+    input.html ??
+    `<main data-testid="workbench-ready">${input.displayName.replace(/[&<>"']/g, character => `&#${character.charCodeAt(0)};`)}</main>`
+  await writeFile(join(input.path, 'view.html'), html, { mode: 0o600 })
+  const client = createLightweightClientSource(packageName, html)
+  for (const prefix of ['', 'src']) {
+    await writeFile(join(bundle, prefix, 'index.js'), LIGHTWEIGHT_HOST_SOURCE)
+    await writeFile(join(bundle, prefix, 'client.js'), client)
+  }
+  await writeFile(
+    join(input.path, 'scripts', 'build.mjs'),
+    `import * as fs from 'node:fs/promises'
+import * as path from 'node:path'
+const { writeFile } = fs
+import { fileURLToPath } from 'node:url'
+const bundleLightweightHtml = ${bundleLightweightHtmlWithModules.toString()}
+const LIGHTWEIGHT_WORKBENCH_FRAME_NAME = ${JSON.stringify(LIGHTWEIGHT_WORKBENCH_FRAME_NAME)}
+const createLightweightClientSource = ${createLightweightClientSource.toString()}
+const html = await bundleLightweightHtml(fileURLToPath(new URL('../', import.meta.url)), 'view.html', {fs, path})
+const bundle = new URL('../${bundlePath}/', import.meta.url)
+await writeFile(new URL('index.js', bundle), ${JSON.stringify(LIGHTWEIGHT_HOST_SOURCE)})
+await writeFile(new URL('client.js', bundle), createLightweightClientSource(${JSON.stringify(packageName)}, html))
+`
   )
 }
 

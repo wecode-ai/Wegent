@@ -1,56 +1,35 @@
-import { useCallback, useEffect, useMemo } from 'react'
-import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
+import { useCallback, useMemo } from 'react'
+import {
+  harnessAppsApi,
+  type HarnessAppInstallation,
+  type WorkbenchPresentation,
+} from '@/api/local/harnessApps'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
 import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
-import {
-  harnessAppRoute,
-  openHarnessAppTab,
-  registerHarnessAppTab,
-  unregisterHarnessAppTab,
-} from './harnessAppTabs'
-import { beginHarnessAppLaunch, clearHarnessAppLaunch } from './harnessAppLaunchState'
-import { releaseHarnessAppRoutes } from './harnessAppRoutes'
-import {
-  isHarnessAppRuntimeOperationPending,
-  runHarnessAppRuntimeOperation,
-} from './harnessAppRuntimeOperations'
+import { harnessAppRoute, unregisterHarnessAppTab } from './harnessAppTabs'
+import { clearHarnessAppLaunch } from './harnessAppLaunchState'
 
 interface HarnessAppManagementOptions {
-  installations: HarnessAppInstallation[]
   onBusyChange: (installationId: string | null) => void
   onError: (message: string | null) => void
   onRefresh: () => Promise<void>
 }
 
 export function useHarnessAppManagement({
-  installations,
   onBusyChange,
   onError,
   onRefresh,
 }: HarnessAppManagementOptions) {
   const { t } = useTranslation('common')
-  const { projectChat, services } = useWorkbench()
+  const { projectChat } = useWorkbench()
   const workspaceTabs = useWorkspaceTabs()
   const modelOptions = useMemo(
     () => listLocalHarnessModelOptions('opencode', projectChat.models),
     [projectChat.models]
   )
-
-  useEffect(() => {
-    installations
-      // Host "running" precedes renderer token handoff. The lifecycle owner
-      // publishes the tab only after handoff (or removes it after queued stop).
-      .filter(
-        installation =>
-          installation.state === 'running' &&
-          installation.webUrl &&
-          !isHarnessAppRuntimeOperationPending(installation.id)
-      )
-      .forEach(installation => registerHarnessAppTab(installation))
-  }, [installations])
 
   const hasSelectedModel = useCallback(
     (installation: HarnessAppInstallation) =>
@@ -77,84 +56,46 @@ export function useHarnessAppManagement({
     [workspaceTabs]
   )
 
-  const start = useCallback(
-    (installation: HarnessAppInstallation) => {
-      if (!hasSelectedModel(installation)) {
+  const open = useCallback(
+    async (installation: HarnessAppInstallation, presentation?: WorkbenchPresentation) => {
+      onBusyChange(installation.id)
+      onError(null)
+      try {
+        await harnessAppsApi.open(installation.id, presentation)
+        await onRefresh()
+      } catch (error) {
         onError(
-          t(
-            'workbench.harness_apps_model_missing',
-            '此智能工作台绑定的 Wework 模型已不可用，请重新选择模型。'
+          getSmartAppErrorMessage(
+            error,
+            t('workbench.smart_apps_launch_failed', '工作台启动失败'),
+            t
           )
         )
-        return
+      } finally {
+        onBusyChange(null)
       }
-      onError(null)
-      // A retained management page may have republished its old running
-      // snapshot before refreshing. Do not mount that stopped runtime's URL
-      // while the new launcher is still registering and handing off routes.
-      // An existing tab or operation owns its registration even if this
-      // management snapshot has not received the running update yet.
-      if (
-        installation.state !== 'running' &&
-        !isHarnessAppRuntimeOperationPending(installation.id) &&
-        !workspaceTabs.tabs.some(tab => tab.contentRoute === harnessAppRoute(installation.id))
-      ) {
-        unregisterHarnessAppTab(installation.id)
-      }
-      openHarnessAppTab(workspaceTabs, installation)
     },
-    [hasSelectedModel, onError, t, workspaceTabs]
+    [onBusyChange, onError, onRefresh, t]
   )
 
-  const open = useCallback(
-    (installation: HarnessAppInstallation) => {
-      if (!installation.webUrl) return
-      const route = harnessAppRoute(installation.id)
-      const tabAlreadyOpen = workspaceTabs.tabs.some(tab => tab.contentRoute === route)
-      if (!tabAlreadyOpen) {
-        beginHarnessAppLaunch(
-          installation.id,
-          installation.manifest.displayName,
-          () => {
-            if (!isHarnessAppRuntimeOperationPending(installation.id)) {
-              registerHarnessAppTab(installation)
-            }
-            openHarnessAppTab(workspaceTabs, installation)
-          },
-          'loadingApp'
-        )
-      }
-      if (!isHarnessAppRuntimeOperationPending(installation.id)) {
-        registerHarnessAppTab(installation)
-      }
-      openHarnessAppTab(workspaceTabs, installation)
-    },
-    [workspaceTabs]
-  )
+  const start = open
 
   const stop = useCallback(
     async (installation: HarnessAppInstallation, refresh = true): Promise<boolean> => {
       onBusyChange(installation.id)
       onError(null)
       try {
-        await runHarnessAppRuntimeOperation(installation.id, async () => {
-          await harnessAppsApi.stop(installation.id)
-          unregisterHarnessAppTab(installation.id)
-          clearHarnessAppLaunch(installation.id)
-          closeAppTabs(installation.id)
-          await releaseHarnessAppRoutes(
-            installation.id,
-            services.localHarnessModelApi,
-            services.localDecisionRouterApi
-          )
-        })
+        await harnessAppsApi.stop(installation.id)
+        unregisterHarnessAppTab(installation.id)
+        clearHarnessAppLaunch(installation.id)
+        closeAppTabs(installation.id)
         if (refresh) await onRefresh()
         return true
       } catch (error) {
         onError(
           getSmartAppErrorMessage(
             error,
-            t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'),
+            t('workbench.harness_apps_stop_failed', '停止工作台失败。'),
             t
           )
         )
@@ -163,24 +104,14 @@ export function useHarnessAppManagement({
         onBusyChange(null)
       }
     },
-    [
-      closeAppTabs,
-      onBusyChange,
-      onError,
-      onRefresh,
-      services.localHarnessModelApi,
-      services.localDecisionRouterApi,
-      t,
-    ]
+    [closeAppTabs, onBusyChange, onError, onRefresh, t]
   )
 
   const changeModel = useCallback(
     async (installation: HarnessAppInstallation, nextModelKey: string) => {
       if (!nextModelKey || nextModelKey === installation.modelKey) return
       if (installation.state === 'running') {
-        onError(
-          t('workbench.smart_apps_model_change_stop_first', '请先停止智能工作台，再修改模型。')
-        )
+        onError(t('workbench.smart_apps_model_change_stop_first', '请先停止工作台，再修改模型。'))
         return
       }
       onBusyChange(installation.id)
@@ -192,7 +123,7 @@ export function useHarnessAppManagement({
         onError(
           getSmartAppErrorMessage(
             error,
-            t('workbench.smart_apps_model_change_failed', '修改智能工作台模型失败。'),
+            t('workbench.smart_apps_model_change_failed', '修改工作台模型失败。'),
             t
           )
         )

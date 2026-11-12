@@ -615,6 +615,7 @@ export function pluginDevelopmentEnvironment(
   delete environment.WEWORK_NODE_PATH
   delete environment.WEWORK_NODE_RUNTIME_KIND
   delete environment.WEWORK_RUNTIME_BIN
+  delete environment.WEWORK_CLI_PATH
   delete environment.WEGENT_PYTHON_PATH
   delete environment.WEWORK_PYTHON_RUNTIME_URL
   delete environment.WEWORK_PYTHON_RUNTIME_TOKEN

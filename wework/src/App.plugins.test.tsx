@@ -1533,6 +1533,47 @@ describe('App plugins route', () => {
     }
   })
 
+  test('opens local workbenches by default without experimental features or a Sites collection request', async () => {
+    desktopHostMocks.preferences.experimentalFeaturesEnabled = false
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+      desktopHost: 'electron',
+    }
+    window.history.pushState({}, '', '/sites')
+
+    await renderApp()
+
+    expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('smart-apps-section-owned')).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByTestId('smart-apps-marketplace-page')).not.toBeInTheDocument()
+    await waitFor(() => expect(desktopHostMocks.invoke).toHaveBeenCalledWith('smartApps.list'))
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/sites?'))).toBe(
+      false
+    )
+
+    await userEvent.click(screen.getByTestId('smart-apps-section-marketplace'))
+    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
+    const marketSearch = new URLSearchParams(window.location.search)
+    expect(marketSearch.get('app_type')).toBe('smart_app')
+    expect(marketSearch.get('view')).toBe('marketplace')
+    expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+
+    await userEvent.click(screen.getByTestId('smart-apps-section-owned'))
+    expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-section-owned')).toHaveAttribute('aria-current', 'page')
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/sites?'))).toBe(
+      false
+    )
+  })
+
   test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...window.__WEWORK_RUNTIME_CONFIG__,
@@ -1546,7 +1587,7 @@ describe('App plugins route', () => {
       text: () => Promise.resolve('Internal server error'),
     } as Response)
     vi.stubGlobal('fetch', fetchMock)
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
 
@@ -1648,7 +1689,7 @@ describe('App plugins route', () => {
       throw new Error(`Unexpected request: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
 
@@ -1995,7 +2036,7 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
     expect(await screen.findByText('还没有站点', {}, { timeout: 5_000 })).toBeInTheDocument()
@@ -2057,7 +2098,7 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
     await createSiteFromMenu()
@@ -2112,7 +2153,7 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
     await createSiteFromMenu()
@@ -2150,7 +2191,7 @@ describe('App plugins route', () => {
         json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
       } as Response
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
 
@@ -2193,7 +2234,7 @@ describe('App plugins route', () => {
         json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
       } as Response
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
 
@@ -2225,7 +2266,7 @@ describe('App plugins route', () => {
         json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
       } as Response
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     await renderApp()
 
@@ -2274,7 +2315,7 @@ describe('App plugins route', () => {
           } as Response
         throw new Error('Backend plugin service unavailable')
       })
-      window.history.pushState({}, '', '/sites')
+      window.history.pushState({}, '', '/sites?app_type=web')
       await renderApp()
       await screen.findByText('Local site')
       if (entry === 'continue')
@@ -2316,7 +2357,7 @@ describe('App plugins route', () => {
         } as Response
       throw new Error('Unexpected request: ' + url)
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
     await renderApp()
     await createSiteFromMenu()
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(

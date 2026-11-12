@@ -22,6 +22,7 @@ Wework is a desktop workbench for collaborating with AI. Open a local project an
 - [Working with AI](./tasks.md)
 - [Coding workbench](./workbench.md)
 - [Built-in browser](./browser.md)
+- [Workbench applications](./workbench-apps.md): independent windows, background operation and system shortcuts
 - [Devices and cloud work](./devices.md)
 - [Plugins and Skills](./plugins-and-skills.md)
 - [Settings and data](./settings.md)

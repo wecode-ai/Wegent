@@ -25,6 +25,7 @@ export class MainWindowStateController {
   ) {}
 
   start(window: StateWindow): void {
+    if (this.window === window) return
     if (this.window) throw new Error('Main window state tracking is already active')
     this.window = window
     window.on('resize', this.changed)

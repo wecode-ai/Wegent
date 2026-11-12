@@ -411,11 +411,13 @@ describe('managed executor runtime', () => {
     let ownerConnectionsPath: string
     let identityPath: string
     let runtime: ManagedExecutorRuntime
+    const onEvent = vi.fn()
 
     beforeEach(async () => {
       directory = await temporaryDirectory('managed-executor-restart-')
       ownerConnectionsPath = join(directory.path, 'owner-connections')
       identityPath = join(directory.path, 'executor-identity.json')
+      onEvent.mockClear()
       runtime = new ManagedExecutorRuntime({
         command: process.execPath,
         args: [
@@ -469,6 +471,7 @@ describe('managed executor runtime', () => {
         logDirectory: join(directory.path, 'logs'),
         deviceId: 'test-device',
         deviceName: 'Test Device',
+        onEvent,
       })
 
       await runtime.start()
@@ -494,6 +497,7 @@ describe('managed executor runtime', () => {
         })
 
       const firstPid = runtime.pid()
+      expect(onEvent).toHaveBeenCalledWith('executor.lifecycle', { state: 'ready' })
       expect(firstPid).not.toBeNull()
       process.kill(firstPid!, 'SIGKILL')
 
@@ -504,6 +508,13 @@ describe('managed executor runtime', () => {
           { timeout: 5_000 }
         )
         .toBe(2)
+      await expect
+        .poll(() =>
+          onEvent.mock.calls
+            .filter(([event]) => event === 'executor.lifecycle')
+            .map(([, payload]) => payload.state)
+        )
+        .toEqual(['ready', 'stopped', 'ready'])
     })
   })
 

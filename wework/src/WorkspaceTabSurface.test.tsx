@@ -15,6 +15,7 @@ import { WorkspaceTabSurface } from './App'
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
   props: vi.fn(),
+  workbenchProps: vi.fn(),
 }))
 const workbenchProviderMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
@@ -46,6 +47,12 @@ vi.mock('@/components/topnav/AppIframe', () => ({
     appIframeMocks.props(props)
     useEffect(() => appIframeMocks.cleanup, [])
     return <div data-testid="mock-app-iframe" data-active={String(props.active)} />
+  },
+}))
+vi.mock('@/features/harness-apps/WorkbenchTabSurface', () => ({
+  WorkbenchTabSurface: (props: { active: boolean; installationId: string }) => {
+    appIframeMocks.workbenchProps(props)
+    return <div data-testid="mock-workbench-host-surface" data-active={String(props.active)} />
   },
 }))
 
@@ -140,6 +147,7 @@ describe('WorkspaceTabSurface', () => {
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
     appIframeMocks.props.mockClear()
+    appIframeMocks.workbenchProps.mockClear()
     workbenchProviderMocks.cleanup.mockClear()
     workbenchProviderMocks.composerAppsSourceActive.mockClear()
     workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
@@ -272,6 +280,40 @@ describe('WorkspaceTabSurface', () => {
     unregisterHarnessAppTab('titlebar')
   })
 
+  test('attaches an Electron workbench through its Host surface without creating an iframe', () => {
+    runtimeEnvironmentMocks.electron = true
+    registerHarnessAppTab({
+      id: 'native-view',
+      webUrl: 'http://localhost:3000',
+      manifest: { displayName: 'Native workbench', description: '' },
+    } as never)
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      tab: {
+        id: 'native-view-tab',
+        kind: 'auxiliary' as const,
+        contentRoute: '/app/harness-native-view',
+        title: 'Native workbench',
+      },
+      user: { id: 1, user_name: 'tester', email: 'tester@example.com' },
+    }
+    const view = render(<WorkspaceTabSurface {...props} active />)
+    expect(screen.getByTestId('mock-workbench-host-surface')).toHaveAttribute('data-active', 'true')
+    expect(screen.queryByTestId('mock-app-iframe')).not.toBeInTheDocument()
+    view.rerender(<WorkspaceTabSurface {...props} active={false} />)
+    expect(screen.getByTestId('mock-workbench-host-surface')).toHaveAttribute(
+      'data-active',
+      'false'
+    )
+    expect(appIframeMocks.workbenchProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ installationId: 'native-view', workspaceTabId: 'native-view-tab' })
+    )
+    view.unmount()
+    unregisterHarnessAppTab('native-view')
+  })
+
   test('does not render an unavailable route before Smart app startup establishes launch state', () => {
     const installationId = 'initially-empty-launch'
     runtimeEnvironmentMocks.electron = true
@@ -283,7 +325,6 @@ describe('WorkspaceTabSurface', () => {
         cloudWebUrl={null}
         lifecycleStore={{} as never}
         services={{} as never}
-        smartAppsEnabled
         tab={{
           id: 'initially-empty-launch-tab',
           kind: 'auxiliary',
@@ -315,7 +356,6 @@ describe('WorkspaceTabSurface', () => {
       cloudWebUrl: null,
       lifecycleStore: {} as never,
       services: {} as never,
-      smartAppsEnabled: true,
       tab: {
         id: 'launching-app-tab',
         kind: 'auxiliary' as const,
@@ -371,7 +411,6 @@ describe('WorkspaceTabSurface', () => {
         cloudWebUrl: null,
         lifecycleStore: {} as never,
         services: {} as never,
-        smartAppsEnabled: true,
         tab: {
           id: `queued-tab-${hadPreviousLaunch}`,
           kind: 'auxiliary' as const,
@@ -434,7 +473,6 @@ describe('WorkspaceTabSurface', () => {
       cloudWebUrl: null,
       lifecycleStore: {} as never,
       services: {} as never,
-      smartAppsEnabled: true,
       tab: {
         id: 'reopened-existing-iframe-tab',
         kind: 'auxiliary' as const,

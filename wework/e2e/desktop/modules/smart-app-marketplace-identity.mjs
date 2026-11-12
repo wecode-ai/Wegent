@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
-import { MODEL_LABEL } from './harness-app-fixture.mjs'
+import {
+  MODEL_LABEL,
+  confirmHarnessInstallation,
+  invokeHarnessHost,
+} from './harness-app-fixture.mjs'
 
 export async function verifySmartAppMarketplaceIdentity({
   control,
@@ -50,8 +54,14 @@ export async function verifySmartAppMarketplaceIdentity({
   await control.command('clickWhenEnabled', '[data-testid="harness-app-install-confirm"]', {
     timeoutMs: uiTimeoutMs,
   })
+  await confirmHarnessInstallation(control, uiTimeoutMs)
   await control.command('waitFor', `[data-testid="harness-app-start-market-${marketItem.id}"]`, {
     timeoutMs: uiTimeoutMs,
+  })
+  await invokeHarnessHost(control, 'smartApps.configure', {
+    installationId: `market-${marketItem.id}`,
+    presentation: 'tab',
+    background: false,
   })
   await control.command('navigate', 'body', {
     value: '/sites?app_type=smart_app&view=owned',
@@ -178,7 +188,7 @@ export async function verifySmartAppMarketplaceIdentity({
     value: `wework://smart-apps/${marketItem.id}`,
   })
   await control.command('waitFor', '[data-testid="smart-app-deep-link-install-prompt"]', {
-    text: '此智能工作台尚未安装',
+    text: '此工作台尚未安装',
     timeoutMs: uiTimeoutMs,
   })
   await control.command('waitFor', '[data-testid="smart-app-details"]', {
@@ -196,7 +206,7 @@ export async function verifySmartAppMarketplaceIdentity({
     value: 'wework://smart-apps/2147483647',
   })
   await control.command('waitFor', '[data-testid="smart-app-deep-link-error"]', {
-    text: '未找到此智能工作台',
+    text: '未找到此工作台，可能已下架或你没有访问权限。',
     timeoutMs: uiTimeoutMs,
   })
   await control.command('waitFor', '[data-testid="smart-app-deep-link-retry"]', {
@@ -205,7 +215,7 @@ export async function verifySmartAppMarketplaceIdentity({
   })
   await control.command('click', '[data-testid="smart-app-deep-link-retry"]')
   await control.command('waitFor', '[data-testid="smart-app-deep-link-error"]', {
-    text: '未找到此智能工作台',
+    text: '未找到此工作台，可能已下架或你没有访问权限。',
     timeoutMs: uiTimeoutMs,
   })
   await captureScreenshot(control, 'harness-apps-15d-deep-link-retry.png', 'body')
