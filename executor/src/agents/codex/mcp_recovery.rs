@@ -3,8 +3,8 @@
 
 use super::*;
 
-/// A native reload reconciles every thread and retains healthy clients. Claim all
-/// observed failures together so concurrent resumes do not each reload the runtime.
+/// Coalesce native reconciliation across concurrent resumes without retaining a
+/// failed startup future or replaying business operations.
 #[derive(Default)]
 pub(super) struct McpRecovery {
     failures: StdMutex<HashMap<(String, String), bool>>,
@@ -58,22 +58,27 @@ impl McpRecovery {
             .failures
             .lock()
             .expect("MCP recovery registry poisoned");
-        if !failures
-            .iter()
-            .any(|((thread, _), attempted)| thread == thread_id && !attempted)
-        {
-            return Vec::new();
-        }
         failures
             .iter_mut()
-            .filter_map(|(key, attempted)| {
-                if *attempted {
+            .filter_map(|((thread, server), attempted)| {
+                if thread != thread_id || *attempted {
                     return None;
                 }
                 *attempted = true;
-                Some(key.clone())
+                Some((thread.clone(), server.clone()))
             })
             .collect()
+    }
+
+    fn claim_other_failures(&self) {
+        for attempted in self
+            .failures
+            .lock()
+            .expect("MCP recovery registry poisoned")
+            .values_mut()
+        {
+            *attempted = true;
+        }
     }
 }
 
@@ -128,6 +133,9 @@ impl CodexAppServerClient {
         if unavailable.is_empty() {
             return Ok(());
         }
+        // The native API reconciles all threads. Do not separately inspect a
+        // peer thread that may close while this resume holds its own admission.
+        recovery.claim_other_failures();
         log_executor_event(
             "codex MCP startup recovery",
             &[
@@ -159,7 +167,8 @@ mod tests {
         recovery.observe(&status("one", "computer", "failed"));
         recovery.observe(&status("two", "calendar", "cancelled"));
         assert!(recovery.claim("unrelated").is_empty());
-        assert_eq!(recovery.claim("one").len(), 2);
+        assert_eq!(recovery.claim("one").len(), 1);
+        recovery.claim_other_failures();
         for phase in ["starting", "failed", "cancelled"] {
             recovery.observe(&status("two", "calendar", phase));
             assert!(recovery.claim("two").is_empty());

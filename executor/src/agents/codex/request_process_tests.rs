@@ -372,6 +372,55 @@ done
     fixture.client.restart().await;
 }
 
+#[tokio::test]
+async fn authentication_required_mcp_does_not_trigger_native_reload() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"test/fail-mcp"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"mail","status":"failed"}}'
+      result='{}' ;;
+    *'"method":"mcpServerStatus/list"'*) result='{"data":[{"name":"mail","runtimeStatus":"authenticationRequired"}]}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#,
+    );
+    fixture
+        .client
+        .request("test/fail-mcp", json!({}))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        fixture
+            .client
+            .request("thread/resume", json!({"threadId":"one"}))
+            .await
+            .unwrap();
+    }
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "mcpServerStatus/list")
+            .count(),
+        1
+    );
+    assert!(!requests
+        .iter()
+        .any(|r| r["method"] == "config/mcpServer/reload"));
+    fixture.client.restart().await;
+}
+
 async fn pid(client: &CodexAppServerClient) -> u32 {
     client
         .state
