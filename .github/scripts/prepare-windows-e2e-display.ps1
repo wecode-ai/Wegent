@@ -7,60 +7,67 @@ if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) {
 } else {
   # Set-DisplayResolution ships only with Windows Server. Client SKUs such as
   # the windows-11-arm runner need the user32 display API instead.
-  Add-Type -Namespace WeworkE2E -Name NativeDisplay -MemberDefinition @'
-[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-public struct DEVMODE {
-  [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
-  public short dmSpecVersion;
-  public short dmDriverVersion;
-  public short dmSize;
-  public short dmDriverExtra;
-  public int dmFields;
-  public int dmPositionX;
-  public int dmPositionY;
-  public int dmDisplayOrientation;
-  public int dmDisplayFixedOutput;
-  public short dmColor;
-  public short dmDuplex;
-  public short dmYResolution;
-  public short dmTTOption;
-  public short dmCollate;
-  [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
-  public short dmLogPixels;
-  public int dmBitsPerPel;
-  public int dmPelsWidth;
-  public int dmPelsHeight;
-  public int dmDisplayFlags;
-  public int dmDisplayFrequency;
-  public int dmICMMethod;
-  public int dmICMIntent;
-  public int dmMediaType;
-  public int dmDitherType;
-  public int dmReserved1;
-  public int dmReserved2;
-  public int dmPanningWidth;
-  public int dmPanningHeight;
-  [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-  public static extern int ChangeDisplaySettingsEx(string lpszDeviceName, ref DEVMODE lpDevMode, System.IntPtr hwnd, int dwflags, System.IntPtr lParam);
-  [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-  public static extern bool EnumDisplaySettings(string lpszDeviceName, int iModeNum, ref DEVMODE lpDevMode);
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class WeworkE2EDisplayMode {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct DEVMODE {
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+    public short dmSpecVersion;
+    public short dmDriverVersion;
+    public short dmSize;
+    public short dmDriverExtra;
+    public int dmFields;
+    public int dmPositionX;
+    public int dmPositionY;
+    public int dmDisplayOrientation;
+    public int dmDisplayFixedOutput;
+    public short dmColor;
+    public short dmDuplex;
+    public short dmYResolution;
+    public short dmTTOption;
+    public short dmCollate;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+    public short dmLogPixels;
+    public int dmBitsPerPel;
+    public int dmPelsWidth;
+    public int dmPelsHeight;
+    public int dmDisplayFlags;
+    public int dmDisplayFrequency;
+    public int dmICMMethod;
+    public int dmICMIntent;
+    public int dmMediaType;
+    public int dmDitherType;
+    public int dmReserved1;
+    public int dmReserved2;
+    public int dmPanningWidth;
+    public int dmPanningHeight;
+  }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  static extern int ChangeDisplaySettingsEx(string device, ref DEVMODE mode, IntPtr hwnd, int flags, IntPtr param);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  static extern bool EnumDisplaySettings(string device, int modeNum, ref DEVMODE mode);
+  public static void SetPrimaryResolution(int width, int height) {
+    DEVMODE mode = new DEVMODE();
+    mode.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+    // ENUM_CURRENT_SETTINGS = -1
+    if (!EnumDisplaySettings(null, -1, ref mode)) {
+      throw new InvalidOperationException("Failed to enumerate the current Windows display mode");
+    }
+    mode.dmPelsWidth = width;
+    mode.dmPelsHeight = height;
+    // DM_PELSWIDTH | DM_PELSHEIGHT
+    mode.dmFields = 0x00080000 | 0x00100000;
+    int result = ChangeDisplaySettingsEx(null, ref mode, IntPtr.Zero, 0, IntPtr.Zero);
+    // DISP_CHANGE_SUCCESSFUL = 0
+    if (result != 0) {
+      throw new InvalidOperationException("Failed to set the Windows display mode (ChangeDisplaySettingsEx=" + result + ")");
+    }
+  }
 }
 '@
-  $devmode = New-Object WeworkE2E.NativeDisplay+DEVMODE
-  $devmode.dmSize = [short][System.Runtime.InteropServices.Marshal]::SizeOf([type][WeworkE2E.NativeDisplay+DEVMODE])
-  # ENUM_CURRENT_SETTINGS = -1
-  if (-not [WeworkE2E.NativeDisplay+DEVMODE]::EnumDisplaySettings($null, -1, [ref]$devmode)) {
-    throw "Failed to enumerate the current Windows display mode"
-  }
-  $devmode.dmPelsWidth = 1920
-  $devmode.dmPelsHeight = 1080
-  # DM_PELSWIDTH | DM_PELSHEIGHT
-  $devmode.dmFields = 0x00080000 -bor 0x00100000
-  $result = [WeworkE2E.NativeDisplay+DEVMODE]::ChangeDisplaySettingsEx($null, [ref]$devmode, [System.IntPtr]::Zero, 0, [System.IntPtr]::Zero)
-  # DISP_CHANGE_SUCCESSFUL = 0
-  if ($result -ne 0) {
-    throw "Failed to set the Windows display mode to 1920x1080 (ChangeDisplaySettingsEx=$result)"
-  }
+  [WeworkE2EDisplayMode]::SetPrimaryResolution(1920, 1080)
 }
 Add-Type -AssemblyName System.Windows.Forms
 $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
