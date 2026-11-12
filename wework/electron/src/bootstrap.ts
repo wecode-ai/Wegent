@@ -17,9 +17,7 @@ try {
   if (recovery) throw new Error(recovery)
   const metadata = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   if (app.isPackaged && isInstalledPreparationRequest(process.argv)) {
-    const { prepareInstallation } = await import(
-      './runtime/installed-preparation-bootstrap.js'
-    )
+    const { prepareInstallation } = await import('./runtime/installed-preparation-bootstrap.js')
     await prepareInstallation(metadata)
   } else {
     const { routeRelease } = await import('./release-bootstrap.js')

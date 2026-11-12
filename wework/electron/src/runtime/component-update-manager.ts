@@ -116,7 +116,14 @@ export interface ComponentUpdateManagerOptions {
   fetch?: typeof fetch
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
+  onStage?: (event: ComponentPreparationStage) => void
   validateExecutor?: (path: string) => Promise<void>
+}
+
+export interface ComponentPreparationStage {
+  stage: string
+  phase: 'started' | 'completed' | 'failed'
+  elapsedMs: number
 }
 
 export class ComponentUpdateManager {
@@ -129,6 +136,7 @@ export class ComponentUpdateManager {
   private readonly fetch: typeof fetch
   private readonly retryDelay: (attempt: number) => Promise<void>
   private readonly log: (event: Record<string, unknown>) => void
+  private readonly onStage: ((event: ComponentPreparationStage) => void) | undefined
   private activeStage: {
     id: string
     key: string
@@ -150,6 +158,7 @@ export class ComponentUpdateManager {
     this.platform = options.platform ?? process.platform
     this.arch = options.arch ?? process.arch
     this.fetch = options.fetch ?? cloudFetch
+    this.onStage = options.onStage
     this.retryDelay =
       options.retryDelay ??
       (attempt =>
@@ -245,7 +254,7 @@ export class ComponentUpdateManager {
     current?: ComponentSet
   ): Promise<ComponentPaths> {
     const paths = await this.resolvePaths(packaged, current)
-    await this.validateExecutor(paths.executor)
+    await this.stage('component-executor-validation', () => this.validateExecutor(paths.executor))
     return paths
   }
 
@@ -476,11 +485,13 @@ export class ComponentUpdateManager {
       paths[entry.id] = entry.path
       fingerprints[entry.id] = entry.contentSha256
     }
-    const composedCorePlugins = await this.composeCorePlugins(
-      paths.weworkCorePlugins,
-      paths.weworkAppStatic,
-      fingerprints.weworkCorePlugins,
-      fingerprints.weworkAppStatic
+    const composedCorePlugins = await this.stage('component-compose', () =>
+      this.composeCorePlugins(
+        paths.weworkCorePlugins,
+        paths.weworkAppStatic,
+        fingerprints.weworkCorePlugins,
+        fingerprints.weworkAppStatic
+      )
     )
     fingerprints.weworkCorePlugins = createHash('sha256')
       .update(fingerprints.weworkCorePlugins)
@@ -530,27 +541,53 @@ export class ComponentUpdateManager {
     current?: ComponentSet
   ): Promise<ResolvedComponent[]> {
     return Promise.all(
-      MANAGED_COMPONENT_IDS.map(async id => {
-        const packagedComponent = packaged.components[id]
-        const active = current?.components[id]
-        const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
-        let path: string
-        if (!active) {
-          path = await this.packagedComponentPath(id, packagedComponent)
-        } else {
-          const root = this.componentRoot(id, active.archiveSha256)
-          const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
-          if (await componentMatches(managedPath, active.contentSha256)) {
-            path = managedPath
-          } else if (active.contentSha256 === packagedComponent.sha256) {
+      MANAGED_COMPONENT_IDS.map(id =>
+        this.stage(`component-${id}`, async () => {
+          const packagedComponent = packaged.components[id]
+          const active = current?.components[id]
+          const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
+          let path: string
+          if (!active) {
             path = await this.packagedComponentPath(id, packagedComponent)
           } else {
-            throw new Error(`Managed component checksum mismatch: ${id}`)
+            const root = this.componentRoot(id, active.archiveSha256)
+            const managedPath = active.entryPath === '.' ? root : join(root, active.entryPath)
+            if (await componentMatches(managedPath, active.contentSha256)) {
+              path = managedPath
+            } else if (active.contentSha256 === packagedComponent.sha256) {
+              path = await this.packagedComponentPath(id, packagedComponent)
+            } else {
+              throw new Error(`Managed component checksum mismatch: ${id}`)
+            }
           }
-        }
-        return { id, path, contentSha256 }
-      })
+          return { id, path, contentSha256 }
+        })
+      )
     )
+  }
+
+  private async stage<T>(stage: string, run: () => Promise<T>): Promise<T> {
+    const startedAt = performance.now()
+    const report = (phase: ComponentPreparationStage['phase']) => {
+      try {
+        this.onStage?.({
+          stage,
+          phase,
+          elapsedMs: Math.round(performance.now() - startedAt),
+        })
+      } catch {
+        // Diagnostics must never interrupt component preparation.
+      }
+    }
+    report('started')
+    try {
+      const result = await run()
+      report('completed')
+      return result
+    } catch (error) {
+      report('failed')
+      throw error
+    }
   }
 
   private async packagedComponentPath(

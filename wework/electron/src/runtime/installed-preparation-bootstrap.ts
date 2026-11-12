@@ -3,11 +3,12 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { resolveWorkbenchPaths } from './workbench-environment.js'
+import type { BrandRuntimeMetadata } from './brand-runtime-environment.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
 import { INSTALLED_PREPARATION_PROGRESS_PREFIX } from './installed-preparation-contract.mjs'
 import { prepareInstalledEnvironment } from './installed-preparation.js'
 
-interface InstalledPreparationMetadata {
+interface InstalledPreparationMetadata extends BrandRuntimeMetadata {
   version: string
   weworkUpdateBaseUrl?: string
 }

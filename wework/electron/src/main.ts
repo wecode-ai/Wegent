@@ -2365,15 +2365,22 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
   logStartupStep('workbench-mode-initialize', 'started')
-  await initializeWorkbenchModePreference(requiredPreferences(), {
+  const workbenchModeInitialization = initializeWorkbenchModePreference(requiredPreferences(), {
     environment: process.env,
     homeDirectory: app.getPath('home'),
-  })
-  logStartupStep('workbench-mode-initialize', 'completed')
+  }).then(
+    () => logStartupStep('workbench-mode-initialize', 'completed'),
+    error => {
+      logStartupStep('workbench-mode-initialize', 'failed')
+      throw error
+    }
+  )
+  void workbenchModeInitialization.catch(() => {})
   logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
   startupRuntimeEnvironment = environment
   logStartupStep('desktop-environment', 'completed')
+  await workbenchModeInitialization
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
       ...currentElectronLaunch(),
@@ -3164,6 +3171,8 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
           WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
         }),
       log: event => appUpdateLogger.info(event),
+      onStage: event =>
+        logStartupStep(event.stage, event.phase, { phaseElapsedMs: event.elapsedMs }),
       resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,
