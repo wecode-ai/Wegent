@@ -50,3 +50,17 @@ function isTranscriptBusy(payload) {
   const message = JSON.stringify(payload ?? {})
   return message.includes('Transcript processing is busy')
 }
+
+export async function writeCodexModelConfig(control, { provider, model }, timeoutMs) {
+  for (const [keyPath, value] of [
+    ['model_provider', provider],
+    ['model', model],
+  ]) {
+    await requestExecutor(
+      control,
+      'runtime.codex.app_server.request',
+      { method: 'config/value/write', params: { keyPath, value, mergeStrategy: 'replace' } },
+      timeoutMs
+    )
+  }
+}

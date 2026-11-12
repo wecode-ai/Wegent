@@ -135,7 +135,7 @@ export function createWeeklyUserStory(options) {
       response.end(createSse([responseCreated(id), ...events, responseCompleted(id)]))
       return true
     },
-    async verify(control, openCalendarReviewTemplate) {
+    async verify(control, openCalendarReviewTemplate, timeZone) {
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await openCalendarReviewTemplate(control)
@@ -157,12 +157,12 @@ export function createWeeklyUserStory(options) {
       assert.ok(schedule)
       assert.equal(schedule.enabled, true)
       assert.equal(schedule.schedule.expression, '0 9 * * 1')
-      assert.equal(schedule.timezone, 'Asia/Shanghai')
+      assert.equal(schedule.timezone, timeZone)
       assert.deepEqual(schedule.taskRequest.standInOwner, { userId: USER, roleId: '@primary' })
       const next = new Date(schedule.nextRunAt)
       assert.equal(
         new Intl.DateTimeFormat('en-US', {
-          timeZone: 'Asia/Shanghai',
+          timeZone,
           weekday: 'short',
           hour: '2-digit',
           minute: '2-digit',

@@ -123,7 +123,14 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
+export async function createAutoTaggedIssue(
+  control,
+  request,
+  projectId,
+  agent,
+  timeoutMs,
+  onCreated
+) {
   const rule = await request(`/api/v1/cloud-projects/${projectId}/automations`, {
     method: 'POST',
     body: JSON.stringify({
@@ -152,6 +159,8 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     'The auto-tagged Issue was not persisted',
     timeoutMs
   )
+  // The tag can dispatch the model before the remaining UI commands finish.
+  onCreated(issue)
   // Persistence can be visible before the create dialog becomes the saved Issue.
   await waitForControlValue(
     control,
@@ -882,8 +891,16 @@ export function createDesktopScenario({
         'Direct assignment entered a manager/group execution path'
       )
       assert.equal(modelRequests, 1, 'Direct agent assignment invoked the model more than once')
-      const tagged = await createAutoTaggedIssue(control, request, project.id, agent, uiTimeoutMs)
-      issue = tagged.issue
+      const tagged = await createAutoTaggedIssue(
+        control,
+        request,
+        project.id,
+        agent,
+        uiTimeoutMs,
+        createdIssue => {
+          issue = createdIssue
+        }
+      )
       const autoExecution = await waitForValue(
         async () => {
           const result = await request(

@@ -24,6 +24,7 @@ import {
 
 const USER = 9001
 const GUIDE = '[data-testid="stand-in-onboarding"]'
+const CLIENT_TIME_ZONE = 'America/New_York'
 
 export function onboardingArrangementIds(items) {
   const memoryId = `stand-in-memory-review-${USER}`
@@ -125,6 +126,10 @@ export function createDesktopScenario(options) {
   return {
     ...original,
     verifiesStandInOnboarding: true,
+    async prepareApp(context) {
+      await original.prepareApp?.(context)
+      context.appEnvironment.TZ = CLIENT_TIME_ZONE
+    },
     async handleHttp(req, response, url) {
       if (await weeklyStory.handleHttp(req, response, url)) return true
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
@@ -371,6 +376,16 @@ export function createDesktopScenario(options) {
       )
       await options.captureScreenshot(control, 'review-04-review-example-draft.png')
       await openCalendarReviewTemplate(control)
+      await control.command('clickWhenEnabled', '[data-testid="automation-frequency-settings"]')
+      await control.command('waitFor', '[data-testid="automation-timezone-input"]')
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-timezone-input"]'),
+        CLIENT_TIME_ZONE,
+        'The weekly template must inherit the client timezone'
+      )
+      await control.command('fill', '[data-testid="automation-timezone-input"]', {
+        value: 'Asia/Shanghai',
+      })
       await control.command('click', '[data-testid="automation-cron-time"]')
       await control.command('scrollIntoView', '[data-testid="automation-cron-time-option-10:30"]')
       await control.command('clickWhenEnabled', '[data-testid="automation-cron-time-option-10:30"]')
@@ -384,6 +399,18 @@ export function createDesktopScenario(options) {
       assert.equal(review.enabled, true)
       assert.equal(review.timezone, 'Asia/Shanghai')
       assert.equal(review.schedule.expression, '30 10 * * 1')
+      assert.ok(review.nextRunAt, 'The scheduler must compute the next run for the edited timezone')
+      const savedNext = new Intl.DateTimeFormat('en-US', {
+        timeZone: review.timezone,
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(new Date(review.nextRunAt))
+      const savedNextPart = type => savedNext.find(part => part.type === type)?.value
+      assert.equal(savedNextPart('weekday'), 'Mon')
+      assert.equal(savedNextPart('hour'), '10')
+      assert.equal(savedNextPart('minute'), '30')
       await control.command('click', '[data-testid="stand-in-primary-profile-close"]')
       await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', {
         visible: false,
@@ -425,6 +452,22 @@ export function createDesktopScenario(options) {
         item => item.taskRequest?.standInCalendar?.template === 'weekly_review'
       )
       assert.ok(recreated)
+      assert.equal(recreated.timezone, CLIENT_TIME_ZONE)
+      assert.ok(
+        recreated.nextRunAt,
+        'The scheduler must compute the next run for the saved timezone'
+      )
+      const next = new Intl.DateTimeFormat('en-US', {
+        timeZone: recreated.timezone,
+        weekday: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(new Date(recreated.nextRunAt))
+      const nextPart = type => next.find(part => part.type === type)?.value
+      assert.equal(nextPart('weekday'), 'Monday')
+      assert.equal(nextPart('hour'), '09')
+      assert.equal(nextPart('minute'), '00')
       await openStandInArrangement(control, recreated.id)
       await control.command('click', `[data-testid="automation-detail-actions-${recreated.id}"]`)
       await control.command('click', '[data-testid="automation-run-now-button"]')
@@ -444,7 +487,7 @@ export function createDesktopScenario(options) {
       await control.command('waitFor', 'body', { text: 'WEEKLY_REVIEW_VERIFIED' })
       await options.captureScreenshot(control, 'review-06-report-conversation.png')
       await rpc('runtime.automations.delete', { automationId: recreated.id })
-      await weeklyStory.verify(control, openCalendarReviewTemplate)
+      await weeklyStory.verify(control, openCalendarReviewTemplate, CLIENT_TIME_ZONE)
       await ensureExperimentalFeaturesDisabled(control)
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
       const projects = await rpc('projects.list', {})
