@@ -3,7 +3,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import {
@@ -96,7 +96,7 @@ test('re-upgrade independence requires legacy files to retain their rollback has
           app: { getPath: () => profile },
           safeStorage: { decryptStringAsync: async value => ({ result: value.toString('utf8') }) },
         }
-      if (name.endsWith('/secure-value-store.js'))
+      if (basename(name) === 'secure-value-store.js')
         return {
           SecureValueStore: class {
             async get() {
@@ -104,7 +104,7 @@ test('re-upgrade independence requires legacy files to retain their rollback has
             }
           },
         }
-      if (name.endsWith('/cloud-credential-service.js'))
+      if (basename(name) === 'cloud-credential-service.js')
         return {
           CloudCredentialService: class {
             async prepareAuthorization() {

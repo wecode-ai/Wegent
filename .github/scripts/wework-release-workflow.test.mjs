@@ -278,6 +278,11 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
       ["linux", "x64"],
     ],
   );
+  const native = jobs.build.steps.find(
+    (step) => step.name === "Verify native contracts before packaging",
+  );
+  assert.equal(native.if, undefined);
+  assert.match(native.run, /wework\/scripts\/upgrade-credentials\.test\.mjs/);
   for (const name of [
     "Verify declared upgrade and rollback edges on real release packages",
     "Upload verified release upgrade evidence",

@@ -347,7 +347,7 @@ jobs:
         shell: bash
         run: |
           # Compile and validate the launcher before timed runtime probes; Node sorts test files.
-          tests=(wework/scripts/build-launcher.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/release-startup-owner.test.mjs)
+          tests=(wework/scripts/build-launcher.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/release-startup-owner.test.mjs wework/scripts/upgrade-credentials.test.mjs)
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
             sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
