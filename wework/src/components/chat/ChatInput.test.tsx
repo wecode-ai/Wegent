@@ -1247,6 +1247,45 @@ describe('ChatInput', () => {
     await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
+  test('normalizes a TIFF from clipboard history before attaching it', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const screenshot = new File(['tiff'], '2026-11-12_14-07-58.tiff', {
+      type: 'image/tiff',
+    })
+    vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
+    vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(
+      'data:image/png;base64,iVBORw0KGgo='
+    )
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: { files: [screenshot] },
+    })
+
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledOnce())
+    const [files] = handleFileSelect.mock.calls[0] as unknown as [File[]]
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatchObject({
+      name: '2026-11-12_14-07-58.png',
+      type: 'image/png',
+    })
+    expect(desktopHost.invokeDesktopHost).toHaveBeenCalledWith('clipboard.convertImageToPng', {
+      dataBase64: 'dGlmZg==',
+      fileName: '2026-11-12_14-07-58.tiff',
+      mimeType: 'image/tiff',
+    })
+  })
+
   test.each(['drop'] as const)(
     'renders a local Markdown file %s as an attachment outside the text editor',
     async action => {

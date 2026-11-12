@@ -2169,6 +2169,13 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
     ) -> Result<String, String> {
         let mut request = runtime_event_request_from_link(link);
+        // Execution identities are intentionally omitted from the persisted profile.
+        // Rebind the authoritative owner before rebuilding managed MCP services.
+        crate::runtime_work::api_context::bind_task_identity(
+            &mut request,
+            &self.device_id,
+            &link.local_task_id,
+        );
         self.apply_backend_connection(&mut request);
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));

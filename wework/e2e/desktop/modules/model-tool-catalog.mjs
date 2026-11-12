@@ -39,7 +39,7 @@ export function programmaticInput(name, args) {
   ].join('\n')
 }
 
-export function discoverySelection(request, query) {
+export function discoverySelection(request, query, qualifiedName) {
   const entries = programmaticExecTools(request)
   assert.equal(
     entries.length,
@@ -59,9 +59,10 @@ export function discoverySelection(request, query) {
   )
   const input = [
     `const query = ${JSON.stringify(query.toLowerCase())}`,
+    `const qualifiedName = ${JSON.stringify(qualifiedName?.replace(/^mcp__/, '') ?? null)}`,
     'const words = query.split(/[^a-z0-9_]+/).filter(Boolean)',
-    'const matches = ALL_TOOLS.filter(tool => { const text = (tool.name + " " + tool.description).toLowerCase(); return words.every(word => text.includes(word)) || words.some(word => word.includes("_") && tool.name.endsWith("__" + word)) })',
-    'if (!matches.length || matches.length > 8) throw new Error("Discovery must select between one and eight real native capabilities")',
+    'const matches = ALL_TOOLS.filter(tool => { if (qualifiedName) return tool.name.replace(/^mcp__/, "") === qualifiedName; const text = (tool.name + " " + tool.description).toLowerCase(); return words.every(word => text.includes(word)) || words.some(word => word.includes("_") && tool.name.endsWith("__" + word)) })',
+    'if (qualifiedName ? matches.length !== 1 : !matches.length || matches.length > 8) throw new Error("Native discovery requires " + (qualifiedName ? "one exact capability" : "between one and eight capabilities") + ": " + JSON.stringify({ query, qualifiedName, matchedNames: matches.map(tool => tool.name), availableNames: ALL_TOOLS.map(tool => tool.name) }))',
     'text({ tools: matches })',
   ].join('\n')
   return { name: entries[0].name, codeMode: { ...entries[0], input } }

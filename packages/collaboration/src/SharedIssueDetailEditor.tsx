@@ -150,6 +150,7 @@ export interface SharedIssueDetailExtensionContext {
 export interface SharedIssueDetailExtensions {
   onSaveError?(error: unknown): void;
   normalizeDescription?(value: string): string;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
   dueDateInputType?: "date" | "datetime-local";
   startDateFromSource?(value: string | null): string;
   startDateToSource?(value: string, context: DueDateSourceContext): string;
@@ -1879,7 +1880,8 @@ export function TodoEditor(props: TodoEditorProps) {
     };
   }
 
-  async function pasteAttachments(files: File[]): Promise<string | null> {
+  async function pasteAttachments(rawFiles: File[]): Promise<string | null> {
+    const files = await normalizedPastedFiles(rawFiles);
     if (isCreate) {
       setPendingFiles((current) => [...current, ...files]);
       return null;
@@ -1910,6 +1912,15 @@ export function TodoEditor(props: TodoEditorProps) {
     } finally {
       if (isCurrentItemLoad(itemId, itemLoadGeneration))
         setAttachmentBusy(false);
+    }
+  }
+
+  async function normalizedPastedFiles(files: File[]): Promise<File[]> {
+    if (!extensions?.normalizePastedFiles) return files;
+    try {
+      return await extensions.normalizePastedFiles(files);
+    } catch {
+      return files;
     }
   }
 

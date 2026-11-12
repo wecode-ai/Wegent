@@ -89,6 +89,7 @@ import {
   settleRuntimeConversationGuidance,
   settleRuntimeConversationSubagents,
   syncRuntimeConversationDeviceAliases,
+  unmarkRuntimeConversationArchived,
 } from './runtimeConversationCache'
 import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
 import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
@@ -173,7 +174,10 @@ import type {
   WorkbenchPaneContextValue,
   WorkbenchProviderProps,
 } from './workbenchContextTypes'
-import { createRuntimeWorkRefreshQueue } from './workbenchDataRefreshHelpers'
+import {
+  createRuntimeWorkRefreshQueue,
+  mergeRuntimeTaskAddresses,
+} from './workbenchDataRefreshHelpers'
 import { resolveWorkbenchOwnership } from './workbenchOwnership'
 import {
   findFirstSelectableProject,
@@ -1183,9 +1187,15 @@ function OwnedWorkbenchProvider({
     })
   }, [stableRefreshWorkLists, workspaceTabRevealRevision])
   useEffect(() => {
-    const queue = createRuntimeWorkRefreshQueue(() =>
-      stableRefreshWorkLists({ refreshDevices: false })
-    )
+    let unarchivedTasks: RuntimeTaskAddress[] = []
+    const queue = createRuntimeWorkRefreshQueue(() => {
+      const restored = unarchivedTasks
+      unarchivedTasks = []
+      return stableRefreshWorkLists({
+        refreshDevices: false,
+        ...(restored.length ? { unarchivedTasks: restored } : {}),
+      })
+    })
     const refreshChangedWork = () => queue.refresh()
     const unsubscribe = resolvedServices.chatStream.subscribe({
       onRuntimeWorkChanged: payload => {
@@ -1195,6 +1205,11 @@ function OwnedWorkbenchProvider({
             `${payload.deviceId ?? ''}\0${workspacePath}\0${payload.taskId}`,
             t('workbench.archived_cleanup_partial_failed', { message: errors.join('; ') })
           )
+        }
+        if (payload.archived === false && payload.deviceId) {
+          const restored = { deviceId: payload.deviceId, taskId: payload.taskId }
+          unmarkRuntimeConversationArchived(restored)
+          unarchivedTasks = mergeRuntimeTaskAddresses(unarchivedTasks, [restored])
         }
         void refreshChangedWork().catch(error => {
           console.warn('[Wework] Failed to refresh changed runtime work', error)

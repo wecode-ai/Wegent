@@ -1323,6 +1323,7 @@ function CollaborationPlatformAppContent({
   renderProject,
   renderShell,
   sidebarFooter,
+  normalizePastedFiles,
 }: {
   api: SharedWorkspaceApi;
   refreshKey?: string;
@@ -1341,6 +1342,7 @@ function CollaborationPlatformAppContent({
     sidebar: React.ReactNode;
   }): React.ReactNode;
   sidebarFooter?: React.ReactNode;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
 }) {
   const messages = platformMessages[locale];
   const translate = createCollaborationTranslator(locale);
@@ -2017,6 +2019,7 @@ function CollaborationPlatformAppContent({
           api={scopedApi}
           initialProject={selectedProject ?? undefined}
           issueArchiveEnabled
+          normalizePastedFiles={normalizePastedFiles}
           locale={locale}
           onProjectChange={commands.registerProject}
           showProjectBack={false}
