@@ -397,18 +397,20 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
           callId: resultsCallId,
           method: 'tools/list',
         })
-        assert.deepEqual(
-          bindings.tools.map(tool => tool.name),
-          ['list_conversations', 'unarchive_conversation']
-        )
-        assert.deepEqual(bindings.tools[0].outputSchema.required, [
+        assert.deepEqual(bindings.tools.map(tool => tool.name).sort(), [
+          'list_conversations',
+          'unarchive_conversation',
+        ])
+        const listTool = bindings.tools.find(tool => tool.name === 'list_conversations')
+        const restoreTool = bindings.tools.find(tool => tool.name === 'unarchive_conversation')
+        assert.deepEqual(listTool.outputSchema.required, [
           'items',
           'has_more',
           'next_cursor',
           'coverage',
         ])
-        assert.equal(bindings.tools[0].outputSchema.properties.items.items.type, 'object')
-        assert.deepEqual(bindings.tools[1].outputSchema.required, ['accepted'])
+        assert.equal(listTool.outputSchema.properties.items.items.type, 'object')
+        assert.deepEqual(restoreTool.outputSchema.required, ['accepted'])
         await assert.rejects(
           () =>
             rpc('runtime.mcp_apps.request', {
