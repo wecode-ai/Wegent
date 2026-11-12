@@ -29,14 +29,17 @@ import { verifyConnectorAccountSwitch } from '../modules/connector-account-switc
 import { openPlugin, testId, until } from '../modules/plugin-regression-fixture.mjs'
 import {
   assistantMessage,
+  codexRequestKind,
   createSse,
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
+  requestToolSearchResults,
   responseCompleted,
   responseCreated,
   toolOutputText,
 } from '../modules/response-protocol.mjs'
+import { wireDeclarations } from '../modules/model-wire-contract.mjs'
 
 const PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_PROMPT'
 const RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_RESUMED'
@@ -66,6 +69,40 @@ function isResumeRequest(body) {
   return RESUME_FRAGMENTS.some(fragment => text.includes(fragment))
 }
 
+function toolRequestDiagnostic(body, sequence) {
+  const input = Array.isArray(body.input) ? body.input : []
+  const searchInput = input.filter(item => item.call_id === `${TOOL_CALL_ID}-search`)
+  const searchOutput = toolOutputText({ input: searchInput }, `${TOOL_CALL_ID}-search`)
+  const declarations = wireDeclarations(
+    { tools: Array.isArray(body.tools) ? body.tools : [], input },
+    'responses'
+  )
+  return {
+    sequence,
+    requestKind: codexRequestKind(body) ?? null,
+    hasCurrentTools: Object.hasOwn(body, 'tools'),
+    execDeclarations: declarations
+      .filter(tool => ['exec', 'functions__exec'].includes(tool.name))
+      .map(tool => ({ type: tool.type, name: tool.name, namespace: tool.namespace ?? null })),
+    searchOutputPresent: searchOutput != null,
+    searchOutputLength: searchOutput?.length ?? 0,
+    searchOutputSignals: [
+      'Discovery must select between one and eight real native capabilities',
+      'Native capability is missing or ambiguous',
+      'ReferenceError',
+      'SyntaxError',
+      'Script failed',
+    ].filter(signal => searchOutput?.includes(signal)),
+    discoveredNamespaces: requestToolSearchResults({ input: searchInput }).map(namespace => ({
+      name: namespace.name,
+      toolNames: (namespace.tools ?? []).map(tool => tool.name),
+    })),
+    invocationOutputPresent: requestContainsToolOutput(body, TOOL_CALL_ID),
+    responseMode: null,
+    responseItems: [],
+  }
+}
+
 export function createDesktopScenario({
   checkpoint,
   captureScreenshot,
@@ -78,6 +115,7 @@ export function createDesktopScenario({
   let provider
   let connectorAppId = 0
   const modelRequests = []
+  const toolRequestDiagnostics = []
   let replySequence = 0
   let catalogAtResume = null
   let localSyncHold = null
@@ -134,26 +172,38 @@ export function createDesktopScenario({
       const text = lastInputText(body)
       replySequence += 1
       if (JSON.stringify(body).includes(TOOL_PROMPT)) {
+        const diagnostic = toolRequestDiagnostic(body, replySequence)
+        toolRequestDiagnostics.push(diagnostic)
         if (requestContainsToolOutput(body, TOOL_CALL_ID)) {
           assert.ok(
             toolOutputText(body, TOOL_CALL_ID)?.includes('CONNECTOR-OAUTH-ECHO-OK'),
             'The authorized local MCP call must return the upstream success marker'
           )
+          diagnostic.responseMode = 'completion'
           writeReply(response, `connector-oauth-tool-${replySequence}`, TOOL_COMPLETION)
           return true
         }
         const responseId = `connector-oauth-tool-${replySequence}`
         response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        const selection = mcpToolRequestEvents(body, {
+          toolName: 'echo',
+          argumentsValue: { value: TOOL_PROMPT },
+          directToolName: `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG}__echo`,
+          searchCallId: `${TOOL_CALL_ID}-search`,
+          toolCallId: TOOL_CALL_ID,
+        })
+        diagnostic.responseMode = selection.mode
+        diagnostic.responseItems = selection.events
+          .filter(event => event.type === 'response.output_item.done')
+          .map(event => ({
+            type: event.item.type,
+            name: event.item.name,
+            namespace: event.item.namespace ?? null,
+          }))
         response.end(
           createSse([
             responseCreated(responseId),
-            ...mcpToolRequestEvents(body, {
-              toolName: 'echo',
-              argumentsValue: { value: TOOL_PROMPT },
-              directToolName: `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG}__echo`,
-              searchCallId: `${TOOL_CALL_ID}-search`,
-              toolCallId: TOOL_CALL_ID,
-            }).events,
+            ...selection.events,
             responseCompleted(responseId),
           ])
         )
@@ -453,6 +503,10 @@ export function createDesktopScenario({
     diagnostics() {
       return {
         modelRequests: modelRequests.length,
+        toolRequestDiagnostics:
+          toolRequestDiagnostics.length <= 16
+            ? toolRequestDiagnostics
+            : [...toolRequestDiagnostics.slice(0, 4), ...toolRequestDiagnostics.slice(-12)],
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
         refreshRequests: provider?.refreshRequests ?? 0,

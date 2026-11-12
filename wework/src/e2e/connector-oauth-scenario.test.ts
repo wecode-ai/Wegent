@@ -185,3 +185,50 @@ test('an unsuccessful upstream tool result cannot complete the checkpoint', asyn
   )
   expect(modelResponse.end).not.toHaveBeenCalled()
 })
+
+test('tool discovery diagnostics identify failures without exposing raw output', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  const failure = 'Discovery must select between one and eight real native capabilities'
+  const body = codeModeBody(
+    'unused search script',
+    `Error: ${failure}\nBearer fixture-private-value`,
+    `${callId}-search`
+  )
+
+  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+
+  const diagnostic = scenario.diagnostics().toolRequestDiagnostics[0]
+  expect(diagnostic).toMatchObject({
+    sequence: 1,
+    hasCurrentTools: true,
+    execDeclarations: [{ type: 'custom', name: 'exec', namespace: 'functions' }],
+    searchOutputPresent: true,
+    searchOutputSignals: [failure],
+    discoveredNamespaces: [],
+    invocationOutputPresent: false,
+    responseMode: 'search',
+    responseItems: [{ type: 'custom_tool_call', name: 'exec', namespace: 'functions' }],
+  })
+  expect(JSON.stringify(diagnostic)).not.toContain('fixture-private-value')
+})
+
+test('tool request diagnostics retain a bounded first-and-last observation window', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+
+  for (let index = 0; index < 20; index++) {
+    expect(
+      await scenario.handleHttp(
+        request({ tools: [execDeclaration], input: [{ role: 'user', content: prompt }] }),
+        response(),
+        url
+      )
+    ).toBe(true)
+  }
+
+  const diagnostics = scenario.diagnostics().toolRequestDiagnostics
+  expect(diagnostics).toHaveLength(16)
+  expect(diagnostics.map(item => item.sequence)).toEqual([
+    1, 2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  ])
+})
