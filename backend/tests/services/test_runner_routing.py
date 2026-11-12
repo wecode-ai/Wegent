@@ -99,6 +99,51 @@ def test_catalog_rejects_duplicate_model_identity():
         RunnerCatalog(models=[model, model])
 
 
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        {},
+        {"default_reasoning_effort": None, "supported_reasoning_efforts": None},
+        {"default_reasoning_effort": "low", "supported_reasoning_efforts": []},
+        {
+            "default_reasoning_effort": "high",
+            "supported_reasoning_efforts": ["low", "high", "future-effort"],
+        },
+    ],
+)
+def test_catalog_preserves_optional_reasoning_metadata(reasoning):
+    report = RunnerCatalog(
+        runtimes=["codex"],
+        models=[
+            {**MODEL, "label": "Model X", "local_model_id": "native-x", **reasoning}
+        ],
+    )
+
+    model = report.model_dump()["models"][0]
+    assert model["default_reasoning_effort"] == reasoning.get(
+        "default_reasoning_effort"
+    )
+    assert model["supported_reasoning_efforts"] == reasoning.get(
+        "supported_reasoning_efforts"
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"default_reasoning_effort": 42},
+        {"supported_reasoning_efforts": "high"},
+        {"supported_reasoning_efforts": ["low", 42]},
+        {"unknown_reasoning_field": "high"},
+    ],
+)
+def test_catalog_rejects_invalid_reasoning_metadata_and_unknown_fields(invalid):
+    with pytest.raises(ValidationError):
+        RunnerCatalog(
+            models=[{**MODEL, "label": "X", "local_model_id": "native-x", **invalid}]
+        )
+
+
 def resolve(db, user, issue, mode="project_pool", selection=None, **kwargs):
     return resolve_routing(
         db,
@@ -951,7 +996,15 @@ def test_catalog_report_preserves_device_config_updated_after_loading(
     assert "cloudConfig" not in device.json["spec"]
 
     report = RunnerCatalog(
-        models=[{**MODEL, "label": "Updated model", "local_model_id": "updated-native"}]
+        models=[
+            {
+                **MODEL,
+                "label": "Updated model",
+                "local_model_id": "updated-native",
+                "default_reasoning_effort": "high",
+                "supported_reasoning_efforts": ["low", "high"],
+            }
+        ]
     )
     save_catalog(test_db, device, report)
     test_db.expire(device, ["json"])

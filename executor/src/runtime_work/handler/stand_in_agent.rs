@@ -3,6 +3,21 @@ use super::stand_in::settings_error;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn prepare_background_stand_in_execution(
+        &self,
+        payload: Value,
+        config: &Value,
+    ) -> Result<Value, AppIpcError> {
+        let catalog = if config["model"].is_null() {
+            self.runner_catalog().await?
+        } else {
+            Value::Null
+        };
+        let mut config = config.clone();
+        config["model"] = background_stand_in_model(&config, &catalog)?;
+        self.prepare_stand_in_execution(payload, &config).await
+    }
+
     pub(super) async fn normalize_stand_in_agent(
         &self,
         mut agent: Value,

@@ -176,6 +176,8 @@ export interface RuntimeSendRequest {
   message: string
   clientUserMessageId?: string
   queueIfBusy?: boolean
+  startNewSession?: boolean
+  expectedThreadId?: string
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean

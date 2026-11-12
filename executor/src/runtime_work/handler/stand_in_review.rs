@@ -1,8 +1,78 @@
 //! Personal review setup belongs to the current account on this Executor.
 use super::*;
-use crate::runtime_work::automations::weekly_review;
+use crate::runtime_work::automations::{weekly_review, Automation, AutomationRun};
 #[cfg(test)]
 use crate::task_runtime::mcp::StandInMcpIdentity;
+
+fn review_binding_denied(
+    reason: &str,
+    actor: &RuntimeTaskLink,
+    user: i64,
+    automation: Option<&Automation>,
+    run: Option<&AutomationRun>,
+) -> AppIpcError {
+    let schedule = &actor.runtime_handle["executionRequest"]["standInSchedule"];
+    let binding = run.and_then(|run| run.coordination.as_ref());
+    log_executor_event(
+        "stand-in review authorization denied",
+        &[
+            ("reason", reason.to_owned()),
+            ("task_id", actor.local_task_id.clone()),
+            ("user_id", user.to_string()),
+            (
+                "automation_id",
+                schedule["id"].as_str().unwrap_or_default().to_owned(),
+            ),
+            (
+                "schedule_version",
+                schedule["version"]
+                    .as_u64()
+                    .map(|version| version.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "automation_version",
+                automation
+                    .map(|item| item.version.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "automation_enabled",
+                automation
+                    .map(|item| item.enabled.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "run_id",
+                schedule["runId"].as_str().unwrap_or_default().to_owned(),
+            ),
+            (
+                "run_automation_id",
+                run.map(|item| item.automation_id.clone())
+                    .unwrap_or_default(),
+            ),
+            (
+                "run_status",
+                run.map(|item| format!("{:?}", item.status))
+                    .unwrap_or_default(),
+            ),
+            (
+                "coordination_version",
+                binding
+                    .map(|item| item.automation_version.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "coordination_task_id",
+                binding.map(|item| item.task_id.clone()).unwrap_or_default(),
+            ),
+        ],
+    );
+    AppIpcError::new(
+        "permission_denied",
+        format!("The review run binding is no longer valid: {reason}"),
+    )
+}
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn review_run_end(
@@ -25,45 +95,45 @@ impl RuntimeWorkRpcHandler {
         } else {
             (WEEKLY_REVIEW_TEMPLATE, "weeklyReview")
         };
-        let denied = || {
-            AppIpcError::new(
-                "permission_denied",
-                "The review run binding is no longer valid",
-            )
-        };
         let schedule = &actor.runtime_handle["executionRequest"]["standInSchedule"];
         let automation = schedule["id"]
             .as_str()
             .and_then(|id| self.automation_store.get(id))
-            .ok_or_else(denied)?;
+            .ok_or_else(|| review_binding_denied("automation_missing", actor, user, None, None))?;
+        let denied =
+            |reason, run| review_binding_denied(reason, actor, user, Some(&automation), run);
         if actor.runtime_handle["origin"]["type"] != "stand_in_schedule"
             || actor.runtime_handle["origin"][flag] != true
             || actor.runtime_handle["origin"]["automationId"] != automation.id
             || automation.task_request["standInOwner"]["userId"] != user
             || automation.task_request["standInOwner"]["roleId"] != "@primary"
             || automation.task_request["standInCalendar"]["template"] != template
-            || json!(automation.version) != schedule["version"]
         {
-            return Err(denied());
+            return Err(denied("identity_mismatch", None));
+        }
+        if json!(automation.version) != schedule["version"] {
+            return Err(denied("automation_version_changed", None));
         }
         let run = self
             .automation_store
             .list_runs(Some(&automation.id))
             .into_iter()
-            .find(|run| {
-                json!(run.id) == schedule["runId"]
-                    && matches!(
-                        run.status,
-                        AutomationRunStatus::Pending | AutomationRunStatus::Running
-                    )
-                    && run.coordination.as_ref().is_some_and(|binding| {
-                        binding.user_id == user
-                            && binding.role_id == "@primary"
-                            && binding.automation_version == automation.version
-                            && binding.task_id == actor.local_task_id
-                    })
-            })
-            .ok_or_else(denied)?;
+            .find(|run| json!(run.id) == schedule["runId"])
+            .ok_or_else(|| denied("run_missing", None))?;
+        if !matches!(
+            run.status,
+            AutomationRunStatus::Pending | AutomationRunStatus::Running
+        ) {
+            return Err(denied("run_not_active", Some(&run)));
+        }
+        if !run.coordination.as_ref().is_some_and(|binding| {
+            binding.user_id == user
+                && binding.role_id == "@primary"
+                && binding.automation_version == automation.version
+                && binding.task_id == actor.local_task_id
+        }) {
+            return Err(denied("coordination_mismatch", Some(&run)));
+        }
         Ok(run.scheduled_for)
     }
 
@@ -76,6 +146,12 @@ impl RuntimeWorkRpcHandler {
             .as_i64()
             .filter(|id| *id >= 0)
             .ok_or_else(|| AppIpcError::new("bad_request", "userId is required"))?;
+        let timezone = match payload.get("timezone") {
+            None => "UTC",
+            Some(value) => value.as_str().ok_or_else(|| {
+                AppIpcError::new("bad_request", "timezone must be an IANA timezone")
+            })?,
+        };
         let template = weekly_review(
             user,
             &self.device_id,
@@ -84,6 +160,7 @@ impl RuntimeWorkRpcHandler {
             } else {
                 "09:00"
             },
+            timezone,
             payload["language"].as_str().unwrap_or("zh-CN"),
         )
         .map_err(|error| AppIpcError::new("bad_request", error))?;

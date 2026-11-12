@@ -76,6 +76,12 @@ export async function sendRuntimeQueuedMessage(
         clientUserMessageId: message.id,
         ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
         ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+        ...(message.startNewSession !== undefined
+          ? { startNewSession: message.startNewSession }
+          : {}),
+        ...(message.expectedThreadId !== undefined
+          ? { expectedThreadId: message.expectedThreadId }
+          : {}),
         ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
