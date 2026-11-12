@@ -351,7 +351,8 @@ fn quota_wait_protocol_checks_windows_and_rejects_changed_native_owners() {
     let binary = home.path().join("codex-fixture");
     fs::write(
         &binary,
-        r#"#!/bin/sh
+        crate::test_env::with_codex_bundled_catalog(
+            r#"#!/bin/sh
 directory=$(dirname "$0")
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -373,6 +374,7 @@ while IFS= read -r line; do
   printf '{"id":%s,"result":%s}\n' "$id" "$result"
 done
 "#,
+        ),
     )
     .unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
