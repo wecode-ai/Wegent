@@ -192,3 +192,193 @@ async fn pttl(redis: &RedisService, key: &str) -> i64 {
     command.arg(key);
     redis.command(command).await.unwrap()
 }
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL and Redis; explicitly run by Backend Rust CI"]
+async fn app_registration_respects_a_legacy_unique_device_name() {
+    const OWNER_ID: i32 = 8;
+    const USERNAME: &str = "app-registration-e2e";
+
+    let address: SocketAddr = std::env::var("WEGENT_TEST_REDIS_ADDRESS")
+        .expect("set the disposable Redis fixture address")
+        .parse()
+        .expect("numeric loopback address");
+    assert!(
+        address.ip().is_loopback(),
+        "only a disposable Redis is allowed"
+    );
+    let redis = RedisService::single(address.to_string()).await.unwrap();
+    let mut load = cmd("SCRIPT");
+    load.arg("LOAD").arg(LOCK_RELEASE_SCRIPT);
+    let digest: String = redis.command(load).await.unwrap();
+    assert_eq!(digest, "c3f8721cbb97f72bc19e972846bd7aaf91901658");
+
+    let fixture = fixture::Fixture::new().await;
+    migrations::upgrade(&fixture.mysql).await.unwrap();
+    fixture.mysql.execute(
+        "CREATE UNIQUE INDEX uniq_user_kind_name_namespace ON kinds (user_id, kind, name, namespace)",
+        (),
+    ).await.unwrap();
+    fixture.mysql.execute(
+        "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)
+         VALUES (?, ?, '', true, 'user', 'password', '{}')",
+        (OWNER_ID, USERNAME),
+    ).await.unwrap();
+    let registration = fixture.mysql.execute(
+        "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
+         VALUES (?, 'Device', 'local-device', 'default', ?, false, now(), now())",
+        (OWNER_ID, json!({
+            "kind": "Device",
+            "metadata": {"name": "local-device", "namespace": "default"},
+            "spec": {
+                "deviceType": "app", "deviceId": "local-device",
+                "runtimeInstanceId": "runtime-original", "appDeviceId": "local-device",
+            },
+        }).to_string()),
+    ).await.unwrap();
+    let route = format!("app-record-{}", registration.last_insert_id);
+    let key = format!("device:online:{OWNER_ID}:{route}");
+
+    let state = build_app_state_with_clients(fixture.mysql.clone(), Some(redis.clone()))
+        .await
+        .unwrap();
+    assert!(
+        state.unique_app_device_names,
+        "enable legacy unique names for this test"
+    );
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &json!({"sub": USERNAME, "exp": chrono::Utc::now().timestamp() + 60}),
+        &jsonwebtoken::EncodingKey::from_secret(state.auth.jwt_key.as_bytes()),
+    )
+    .unwrap();
+    let server = socketio::handlers::build(Arc::new(state)).await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let (stop, stopped) = oneshot::channel();
+    let server = tokio::spawn(server.serve(listener, async {
+        let _ = stopped.await;
+    }));
+
+    let outcome = tokio::spawn({
+        let mysql = fixture.mysql.clone();
+        let redis = redis.clone();
+        let key = key.clone();
+        async move {
+            timeout(
+                Duration::from_secs(20),
+                assert_app_conflicts(&address, &token, &mysql, &redis, &key, &route, OWNER_ID),
+            )
+            .await
+            .expect("App registration scenario timed out");
+        }
+    })
+    .await;
+    let _ = stop.send(());
+    let stopped = server.await;
+    redis.del(key).await.unwrap();
+    fixture.close().await;
+    stopped.unwrap().unwrap();
+    outcome.unwrap();
+}
+
+#[derive(brz_mysql::FromMysqlRow)]
+struct AppDeviceRecord {
+    id: i64,
+    is_active: i8,
+    json: Value,
+}
+
+async fn assert_app_conflicts(
+    address: &str,
+    token: &str,
+    mysql: &brz_mysql::MysqlService,
+    redis: &RedisService,
+    key: &str,
+    route: &str,
+    owner_id: i32,
+) {
+    let connect = || async {
+        PollClient::connect(address, NAMESPACE, &json!({"token": token}).to_string())
+            .await
+            .unwrap()
+    };
+    let read_records = || async {
+        mysql
+            .fetch_all::<_, _, AppDeviceRecord>(
+                "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+             AND namespace = 'default' AND name = 'local-device'",
+                (owner_id,),
+            )
+            .await
+            .unwrap()
+    };
+    let registration = |runtime: &str, app_id: &str| {
+        json!({
+            "device_id": "local-device", "name": "App E2E", "device_type": "app",
+            "runtime_instance_id": runtime, "app_device_id": app_id,
+        })
+    };
+    let conflict = json!({
+        "error": "Registration failed: App device identity changed; ask an administrator to verify and rebind this installation",
+    });
+
+    let original = connect().await;
+    let contender = connect().await;
+    assert_eq!(
+        event_ack(
+            &contender,
+            1,
+            "device:register",
+            registration("runtime-original", "electron-new")
+        )
+        .await,
+        conflict,
+    );
+    let rows = read_records().await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].is_active, 0);
+    assert!(redis.get::<_, String>(key).await.unwrap().is_none());
+
+    assert_eq!(
+        event_ack(
+            &original,
+            1,
+            "device:register",
+            registration("runtime-original", "local-device")
+        )
+        .await,
+        json!({"success": true, "device_id": "local-device", "device_route_id": route}),
+    );
+    assert_eq!(
+        event_ack(
+            &contender,
+            2,
+            "device:register",
+            registration("runtime-original", "electron-new")
+        )
+        .await,
+        conflict,
+    );
+    assert_eq!(
+        event_ack(
+            &contender,
+            3,
+            "device:register",
+            registration("runtime-other", "electron-other")
+        )
+        .await,
+        json!({"error": "Registration failed: Device name is already registered; configure a unique persistent device ID for this installation"}),
+    );
+
+    let rows = read_records().await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(format!("app-record-{}", rows[0].id), route);
+    assert_eq!(rows[0].is_active, 1);
+    assert_eq!(
+        rows[0].json["spec"]["runtimeInstanceId"],
+        "runtime-original"
+    );
+    assert_eq!(rows[0].json["spec"]["appDeviceId"], "local-device");
+    assert_eq!(online(redis, key).await["socket_id"], original.socket_id());
+}

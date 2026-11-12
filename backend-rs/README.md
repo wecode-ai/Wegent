@@ -60,6 +60,12 @@ path prefixes, or templates with `:parameter` and terminal `*path` segments.
 Named parameters match one nonempty path segment, so unrelated Python paths
 under the same prefix remain with Python.
 
+Set `WEGENT_RS_UNIQUE_APP_DEVICE_NAMES=1` if a legacy MySQL schema enforces
+uniqueness on `kinds (user_id, kind, name, namespace)`. Rust App device
+registration then returns an identity conflict before attempting an insert.
+The default preserves separate record-scoped routes for installations that
+share a logical device ID.
+
 ## Observability foundation
 
 MySQL migration and default-data initialization run from the Rust executable
