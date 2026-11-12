@@ -155,8 +155,12 @@ test('leaves an already expanded workspace untouched', async () => {
   const section =
     '[data-workspace-tab-content][aria-hidden="false"] [data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspaces-section-toggle"]'
   assert.deepEqual(calls, [
+    { action: 'waitFor', selector: section, options: { timeoutMs: 10000 } },
+    { action: 'scrollIntoView', selector: section, options: { visible: true } },
     { action: 'waitFor', selector: section, options: { visible: true, timeoutMs: 10000 } },
     { action: 'getAttribute', selector: section, options: { value: 'aria-expanded' } },
+    { action: 'waitFor', selector: toggle, options: { timeoutMs: 10000 } },
+    { action: 'scrollIntoView', selector: toggle, options: { visible: true } },
     { action: 'waitFor', selector: toggle, options: { visible: true, timeoutMs: 10000 } },
     {
       action: 'getAttribute',
@@ -340,7 +344,9 @@ test('opens space management before expanding its workspace', async () => {
   assert.deepEqual(clicks, [section, toggle])
   assert.deepEqual(waits, [
     section,
+    section,
     section + '[aria-expanded="true"]',
+    toggle,
     toggle,
     toggle + '[aria-expanded="true"]',
   ])
@@ -356,4 +362,36 @@ test('does not click space management without a declared expanded state', async 
   }
   await assert.rejects(expandCollaborationSpaces(control), /must expose its expanded state/)
   assert.deepEqual(clicks, [])
+})
+
+test('reveals offscreen navigation controls before testing visibility or clicking', async () => {
+  const states = new Map([
+    ['collaboration-workspaces-section-toggle', { mounted: true, visible: false, expanded: false }],
+    [
+      'collaboration-workspace-toggle-guest-parent',
+      { mounted: false, visible: false, expanded: false },
+    ],
+  ])
+  const control = {
+    async command(action, selector, options = {}) {
+      const key = [...states.keys()].find(id => selector.includes(`"${id}"`))
+      const state = states.get(key)
+      assert.ok(state?.mounted, 'Workspace controls require open space management')
+      if (action === 'scrollIntoView') state.visible = true
+      if (options.visible && action !== 'scrollIntoView') assert.ok(state.visible)
+      if (action === 'getAttribute') return String(state.expanded)
+      if (action === 'click') {
+        assert.ok(state.visible, 'An offscreen control must be revealed before clicking')
+        state.expanded = true
+        if (key === 'collaboration-workspaces-section-toggle')
+          states.get('collaboration-workspace-toggle-guest-parent').mounted = true
+      }
+      if (selector.endsWith('[aria-expanded="true"]')) assert.ok(state.expanded)
+    },
+  }
+  await expandCollaborationWorkspace(
+    control,
+    '[data-testid="collaboration-workspace-toggle-guest-parent"]'
+  )
+  assert.ok([...states.values()].every(state => state.expanded))
 })

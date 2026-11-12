@@ -140,6 +140,8 @@ export async function expandCollaborationWorkspace(
 }
 
 async function expandCollaborationToggle(control, toggleSelector, timeoutMs) {
+  await control.command('waitFor', toggleSelector, { timeoutMs })
+  await control.command('scrollIntoView', toggleSelector, { visible: true })
   await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
   const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
   const expanded = await control.command('getAttribute', toggleSelector, {
