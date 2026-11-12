@@ -4216,7 +4216,8 @@ class DesktopE2EServer {
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
-      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      const cellWaits = this.mcpElicitationCellWaits ?? 0
+      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length - cellWaits
       assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
       const round = Math.ceil(requestNumber / 3)
       const stage = ((requestNumber - 1) % 3) + 1
@@ -4254,12 +4255,24 @@ class DesktopE2EServer {
         return
       }
 
+      const waitCallId = `${callId}-wait`
+      const waited = requestContainsToolOutput(body, waitCallId)
+      const output = toolOutputText(body, waited ? waitCallId : callId)
+      assert.ok(output, 'The MCP elicitation tool output did not return to the real model request')
+      const cellId = waited ? null : output.match(/Script running with cell ID (\S+)/)?.[1]
+      if (cellId) {
+        // Form expiry can outlast the native programmatic tool's initial yield.
+        this.mcpElicitationCellWaits = cellWaits + 1
+        const wait = selectTool(body, 'wait', { cell_id: cellId, yield_time_ms: 30_000 })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(waitCallId, wait),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       assert.ok(
-        requestContainsToolOutput(body, callId),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(
+        output.includes(
           timeoutScenario
             ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
             : MCP_ELICITATION_ACCEPTED_MARKER
