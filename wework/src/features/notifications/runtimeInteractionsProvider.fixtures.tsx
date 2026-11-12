@@ -31,6 +31,7 @@ const harness = vi.hoisted(() => ({
   focusListeners: new Set<(focused: boolean) => void>(),
   host: vi.fn(),
   flushStorage: vi.fn(),
+  commitStorage: vi.fn(),
   hostListeners: new Set<(event: { type: string }) => void>(),
   transcript: vi.fn(),
   send: vi.fn(),
@@ -42,6 +43,8 @@ const harness = vi.hoisted(() => ({
 export { harness }
 vi.mock('@/desktop/localStoragePersistence', () => ({
   flushDesktopLocalStoragePersistence: harness.flushStorage,
+  readCommittedLocalStorageValue: async (key: string) => localStorage.getItem(key),
+  commitLocalStorageValue: (...args: unknown[]) => harness.commitStorage(...args),
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: harness.t }) }))
 vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
@@ -137,6 +140,10 @@ beforeEach(() => {
   harness.hostListeners.clear()
   harness.host.mockReset()
   harness.flushStorage.mockReset().mockResolvedValue(undefined)
+  harness.commitStorage.mockReset().mockImplementation(async (key: string, value: string) => {
+    await harness.flushStorage()
+    localStorage.setItem(key, value)
+  })
   localStorage.clear()
   harness.send.mockResolvedValue({ accepted: true })
   harness.guide.mockResolvedValue({ accepted: true })

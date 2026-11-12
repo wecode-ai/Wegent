@@ -27,21 +27,20 @@ export function selectedPrefetchSources(frozen, { channel, sourceVersion }) {
   ].filter(Boolean)
 }
 
-async function readUpgradePolicy() {
-  return JSON.parse(await readFile(new URL('../../upgrade-policy.json', import.meta.url), 'utf8'))
-}
-
-export async function prefetchUpgradeSources(
-  options,
-  download = downloadPublishedDesktopRelease,
-  readPolicy = readUpgradePolicy
-) {
-  const { directory, planDirectory, platform, arch, version, releaseChannel, repository } = options
-  const policy = await readPolicy()
+export async function prefetchUpgradeSources(options, download = downloadPublishedDesktopRelease) {
+  const { planDirectory, platform, arch, version, releaseChannel } = options
+  const policy = JSON.parse(
+    await readFile(new URL('../../upgrade-policy.json', import.meta.url), 'utf8')
+  )
   const frozen = validateUpgradeShardPlan(
     JSON.parse(await readFile(join(planDirectory, `${platform}-${arch}.json`), 'utf8')),
     { version, channel: releaseChannel, policy, platform, arch }
   )
+  await prefetchSelectedSources(frozen, options, download)
+}
+
+export async function prefetchSelectedSources(frozen, options, download) {
+  const { directory, platform, arch, repository } = options
   const sources = selectedPrefetchSources(frozen, options)
   const results = await Promise.allSettled(
     sources.map(source =>

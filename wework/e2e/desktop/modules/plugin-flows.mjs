@@ -327,9 +327,16 @@ async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) 
     ? [`source = ${JSON.stringify(expectedSource)}`, `source = '${expectedSource}'`]
     : []
   const startedAt = Date.now()
+  let registration
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
       const config = await readFile(configPath, 'utf8')
+      registration = {
+        marketplacePresent: config.includes('[marketplaces.wework-personal]'),
+        localSourceTypePresent: config.includes('source_type = "local"'),
+        expectedSourcePresent: expectedSourceLines.some(line => config.includes(line)),
+        bytes: Buffer.byteLength(config),
+      }
       if (
         config.includes('[marketplaces.wework-personal]') &&
         config.includes('source_type = "local"') &&
@@ -340,6 +347,7 @@ async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) 
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
+  console.error('[desktop-e2e] Bundled marketplace registration diagnostics', registration)
   throw new Error(
     `The bundled local plugin marketplace was not registered from ${expectedSource ?? 'the expected local source'}`
   )

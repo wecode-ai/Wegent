@@ -58,9 +58,13 @@ For clone authentication failures, execution-environment device errors or Git au
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
 
+Dismiss pending work: **Needs your input → cross beside an entry (Dismiss item)**, or **Needs your input → above the left list → Dismiss all**. These actions archive locally without answering questions or changing Issue state. See [Questions and project work](./workbench.md#ai-questions).
+
 When a question is already handled but a notification reply was not sent, **Needs your input → above the left list → Unsent replies** retains selectable text and offers **Discard this draft**. See [Handle AI questions](./workbench.md#ai-questions).
 
 From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
+
+Edit Agent definitions from **Project settings → AI team**. Imported and manually created Agents share the same entry and permission rules; see [Agent configuration](./projects.md#agent-capabilities).
 
 ## Sidebar feature entries
 
@@ -143,3 +147,5 @@ Open **bottom-left account menu → Settings**, then select the group and page b
 This page indexes locations; linked topic guides own detailed procedures to avoid duplicate instructions. Automated checks compare settings pages and registered sidebar entries against real DSH declarations in both languages, including names, groups and visibility flags. Additions, removals and renames must update this page in the same change.
 
 Composer controls, project menus and account menus still require manual code-review checks. Automated tests cannot prove that every button is documented or that the running layout matches. See repository `wework/AGENTS.md` for maintenance rules. Builds copy both documentation trees into bundled wework-docs; repository edits do not instantly update older installed versions.
+
+For recovery-center and local-service notices during launch, see [Startup recovery](./getting-started.md#startup-recovery).

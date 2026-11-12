@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Exchanges secrets only on the already authenticated native device socket.
+//! Exchanges secrets only through an authenticated native plugin transport.
 
 use super::{AuthError, Credential, ExecutionRequest, ExportedCredential, PreparedPackage};
+#[cfg(test)]
 use crate::local::backend::LocalBackendTransport;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,7 +26,7 @@ pub struct ConnectionMetadata {
 }
 
 /// Must remain in the native host. Never expose call/read as a tool or IPC result.
-pub struct NativeAuthGateway<T: LocalBackendTransport> {
+pub struct NativeAuthGateway<T: super::PluginAuthTransport> {
     transport: T,
 }
 
@@ -36,7 +37,7 @@ pub struct RefreshLease {
     pub credential: Credential,
 }
 
-impl<T: LocalBackendTransport> NativeAuthGateway<T> {
+impl<T: super::PluginAuthTransport> NativeAuthGateway<T> {
     pub fn new(transport: T) -> Self {
         Self { transport }
     }
@@ -275,7 +276,7 @@ impl<T: LocalBackendTransport> NativeAuthGateway<T> {
     pub(super) async fn call(&self, event: &str, payload: Value) -> Result<Value, AuthError> {
         let value = self
             .transport
-            .call(event, payload, Duration::from_secs(15))
+            .exchange(event, payload, Duration::from_secs(15))
             .await
             .map_err(|_| AuthError("plugin_auth_backend_unavailable"))?;
         let response = if value.is_array() {

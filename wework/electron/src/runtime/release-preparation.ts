@@ -4,7 +4,12 @@ import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import { ComponentUpdateManager } from './component-update-manager.js'
 import { prepareCoreDshRuntime } from './core-dsh-runtime.js'
 import { cloneReleaseProfile, profileRevision } from './release-profile.js'
-import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
+import {
+  atomicReleaseWrite,
+  ReleaseStore,
+  sameReleasePath,
+  type DesktopRelease,
+} from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { RotatingLog } from './rotating-log.js'
 import { recoverReleaseLayout } from './release-layout-recovery.js'
@@ -22,6 +27,25 @@ export interface ReleasePreparationStage {
   releaseId: string
   version: string
   stage: string
+}
+
+export async function assertReleasePreparationIdentity(
+  release: DesktopRelease,
+  resources: string,
+  version: string,
+  dataSchema: number,
+  readableDataSchemas: number[]
+): Promise<void> {
+  if (
+    version !== release.version ||
+    dataSchema !== release.dataSchema ||
+    JSON.stringify([...readableDataSchemas].sort()) !==
+      JSON.stringify([...release.readableDataSchemas].sort())
+  )
+    throw new Error('Target release identity does not match the selected package')
+  // Module URLs resolve aliases such as macOS /tmp before reaching this CLI.
+  if (!(await sameReleasePath(resources, release.resources)))
+    throw new Error('Target release identity does not match the selected package')
 }
 
 export async function preparationStep<T>(
@@ -74,14 +98,13 @@ export async function prepareReleaseEnvironment(
 ): Promise<void> {
   const request = JSON.parse(await readFile(requestFile, 'utf8')) as ReleasePreparationRequest
   const { release } = request
-  if (
-    version !== release.version ||
-    resources !== release.resources ||
-    dataSchema !== release.dataSchema ||
-    JSON.stringify([...readableDataSchemas].sort()) !==
-      JSON.stringify([...release.readableDataSchemas].sort())
+  await assertReleasePreparationIdentity(
+    release,
+    resources,
+    version,
+    dataSchema,
+    readableDataSchemas
   )
-    throw new Error('Target release identity does not match the selected package')
   const store = new ReleaseStore(request.storeRoot)
   await assertCredentialStorageCompatibility(store, resources)
   const log = new RotatingLog({

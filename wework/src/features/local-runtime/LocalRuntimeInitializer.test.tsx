@@ -9,6 +9,7 @@ import {
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from './LocalRuntimeNotice'
 
 const desktopHostInvokeMock = vi.hoisted(() => vi.fn())
 
@@ -59,6 +60,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -79,6 +81,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -134,6 +137,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -237,6 +241,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -263,6 +268,7 @@ describe('LocalRuntimeInitializer', () => {
 
     const { rerender } = render(
       <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
         <MountProbe onMount={onMount} />
       </LocalRuntimeInitializer>
     )
@@ -272,6 +278,7 @@ describe('LocalRuntimeInitializer', () => {
 
     rerender(
       <LocalRuntimeInitializer startupReady>
+        <LocalRuntimeNotice />
         <MountProbe onMount={onMount} />
       </LocalRuntimeInitializer>
     )
@@ -289,6 +296,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -297,11 +305,17 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
-  test('shows startup error and retries initialization', async () => {
+  test('keeps the workbench open during a local service failure and retry', async () => {
     const startupError = new Error('stdio unavailable')
-    ensureMock
-      .mockRejectedValueOnce(startupError)
-      .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
+    let finishRetry:
+      | ((value: { running: boolean; ready: boolean; deviceId: string }) => void)
+      | undefined
+    ensureMock.mockRejectedValueOnce(startupError).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishRetry = resolve
+        })
+    )
 
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
@@ -310,21 +324,24 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
 
     expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
-    expect(screen.getByText('~/.wework/logs/executor.log')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed', {
-        message: 'stdio unavailable',
-        stack: startupError.stack,
-        source: 'local_runtime_initialize',
-      })
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    expect(desktopHostInvokeMock).not.toHaveBeenCalledWith(
+      'renderer.startupFailed',
+      expect.anything()
     )
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
+    expect(screen.getByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
+    expect(screen.getByTestId('local-runtime-retry-button')).toBeDisabled()
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    await act(async () => finishRetry?.({ running: true, ready: true, deviceId: 'local-device' }))
+    await waitFor(() => expect(screen.queryByTestId('local-runtime-error')).not.toBeInTheDocument())
 
     await waitFor(() => expect(screen.getByTestId('main-app')).toBeInTheDocument())
   })
@@ -334,6 +351,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )
@@ -351,6 +369,7 @@ describe('LocalRuntimeInitializer', () => {
 
     render(
       <LocalRuntimeInitializer>
+        <LocalRuntimeNotice />
         <div data-testid="main-app">Main app</div>
       </LocalRuntimeInitializer>
     )

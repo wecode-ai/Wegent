@@ -385,3 +385,78 @@ describe('CloudCredentialService', () => {
     } satisfies Partial<CloudCredentialError>)
   })
 })
+
+describe('Native plugin session proof', () => {
+  async function fixture() {
+    const root = await mkdtemp(join(tmpdir(), 'wework-native-plugin-'))
+    roots.push(root)
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: 'success',
+          access_token: 'access-secret',
+          refresh_token: 'refresh-secret',
+          username: 'alice',
+        }),
+        { status: 200 }
+      )
+    )
+    const service = new CloudCredentialService(root, request, protection)
+    const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
+    await service.claimAuthorization({
+      authorizationId: prepared.authorizationId,
+      sessionId: 'session',
+      pollToken: 'poll',
+    })
+    await service.commitAuthorization(prepared.authorizationId, 7)
+    return { service, request }
+  }
+  test('proves possession for the exact plugin path after checking the current owner', async () => {
+    const { service, request } = await fixture()
+    const expiresAt = Math.floor(Date.now() / 1000) + 600
+    request.mockResolvedValueOnce(new Response('{"id":7}')).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          protocolVersion: 1,
+          account_id: 7,
+          native_token: 'private-native-token',
+          expires_at: expiresAt,
+        })
+      )
+    )
+    const result = await service.pluginNativeSession(
+      'https://cloud.example.com/api',
+      'access-secret'
+    )
+    expect(result).toEqual({
+      backend_url: 'https://cloud.example.com',
+      account_token: 'access-secret',
+      native_token: 'private-native-token',
+      expires_at: expiresAt,
+    })
+    const proofRequest = JSON.parse(String(request.mock.calls[2][1]?.body))
+    expect(proofRequest.operation).toBe('session')
+    expect(proofRequest.data.refresh_token).toBe('refresh-secret')
+    const claims = JSON.parse(
+      Buffer.from(proofRequest.data.proof.split('.')[1], 'base64url').toString()
+    )
+    expect(claims).toMatchObject({ htm: 'POST', htu: '/api/plugins/native-auth/exchange' })
+  })
+  test('keeps an older Backend on Socket when the new endpoint returns 404', async () => {
+    const { service, request } = await fixture()
+    request
+      .mockResolvedValueOnce(new Response('{"id":7}'))
+      .mockResolvedValueOnce(new Response('', { status: 404 }))
+    await expect(
+      service.pluginNativeSession('https://cloud.example.com/api', 'access-secret')
+    ).resolves.toBeNull()
+  })
+  test('rejects a different owner before sending any proof or refresh token', async () => {
+    const { service, request } = await fixture()
+    request.mockResolvedValueOnce(new Response('{"id":8}'))
+    await expect(
+      service.pluginNativeSession('https://cloud.example.com/api', 'other-owner')
+    ).rejects.toMatchObject({ code: 'cloud_auth_expired' })
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+})

@@ -29,6 +29,19 @@ const developerHomePlugin = {
 }
 
 describe('workbench mode runtime policy', () => {
+  test('uses the detected mode even when settings cannot be written', async () => {
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockRejectedValue(new Error('disk is read-only')),
+    }
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: {},
+        homeDirectory: tmpdir(),
+        probeCommand: async () => false,
+      })
+    ).resolves.toBe('focus')
+  })
   test('defaults unknown stored values to developer mode', () => {
     expect(normalizeWorkbenchMode('focus')).toBe('focus')
     expect(normalizeWorkbenchMode('developer')).toBe('developer')

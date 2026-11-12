@@ -5,7 +5,6 @@ use super::{
     resolve_managed_package, AuthError, Credential, NativeAdapter, NativeAuthGateway,
     OAuthOperation, PreparedPackage,
 };
-use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{path::Path, time::Duration};
@@ -36,7 +35,7 @@ impl RevocationPage {
     }
 }
 
-pub async fn revoke_pending<T: LocalBackendTransport>(
+pub async fn revoke_pending<T: super::PluginAuthTransport>(
     transport: T,
     home: &Path,
 ) -> Result<(), AuthError> {
@@ -87,7 +86,7 @@ pub async fn revoke_pending<T: LocalBackendTransport>(
     Ok(())
 }
 
-async fn spawn_revocation<T: LocalBackendTransport>(
+async fn spawn_revocation<T: super::PluginAuthTransport>(
     pending: &mut tokio::task::JoinSet<()>,
     transport: T,
     home: &Path,
@@ -121,7 +120,7 @@ fn identifier(value: &Value) -> Result<&str, AuthError> {
         .ok_or(AuthError("plugin_auth_invalid_response"))
 }
 
-async fn revoke_one<T: LocalBackendTransport>(
+async fn revoke_one<T: super::PluginAuthTransport>(
     gateway: &NativeAuthGateway<T>,
     home: &Path,
     connection_id: &str,

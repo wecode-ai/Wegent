@@ -618,6 +618,21 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
+if ! ruby -ryaml - "$wework_workflow" "$wework_desktop_image" <<'RUBY'
+core = YAML.load_file(ARGV[0]).fetch('jobs').fetch('wework-desktop-core-e2e')
+commands = core.fetch('steps').map { |step| step.fetch('run', '') }.join("\n")
+abort 'Core shards must consume system dependencies from their immutable image' if commands.match?(/install-e2e-apt-packages|apt-get/)
+image = File.read(ARGV[1])
+%w[file xdg-utils pcmanfm openjdk-21-jre-headless gdb].each do |package|
+  abort "Desktop image must install #{package}" unless image.lines.any? { |line| line.strip == "#{package} \\" }
+end
+%w[java keytool gdb pcmanfm].each do |binary|
+  abort "Core setup must verify #{binary}" unless commands.include?(binary)
+end
+RUBY
+then
+  fail "Desktop Core dependencies must be prepared in the immutable image"
+fi
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
     "$wework_browser_image" ||

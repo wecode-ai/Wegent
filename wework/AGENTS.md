@@ -20,6 +20,44 @@ Do not treat task ownership, project-space storage, code-workspace location, exe
 
 Before changing a Wework flow, identify the affected product area and trace its source object, storage owner, workspace, executor, and session lifecycle. If the requested behavior does not make these boundaries clear, ask the user before implementation.
 
+## Startup availability and fault isolation
+
+Opening Wework is a primary availability requirement. Application-managed failures
+must leave an operable window available, including after a restart. Data corruption,
+the risk of irreversible data loss, missing or unreadable credentials, failed
+authentication, incompatible versions, damaged release history, and failed updates
+or migrations do not justify refusing to open the entire application.
+
+- Separate opening the interface from enabling a capability or modifying data.
+  Keep unaffected workbench features usable. If the core runtime cannot load,
+  open an independent recovery interface that does not require that runtime,
+  its database, credentials, or a cloud connection.
+- Keep data integrity and permission protections at the operation they guard.
+  Refuse unsafe writes, migrations, restores, credential access, or unauthorized
+  requests; isolate the affected data or capability while the application stays
+  open. Never weaken permission invariants or security assertions to satisfy
+  startup availability.
+- Missing credentials disable only the capabilities that require them and must
+  leave a sign-in or repair entry accessible. Never clear credentials, reset user
+  state, overwrite damaged data, or restore a snapshot automatically just to make
+  startup succeed.
+- Remove unnecessary startup checks and dependencies. Optional services,
+  maintenance, diagnostics, preference persistence, update bookkeeping, and one
+  page's initial requests must not gate opening the workbench. Handle failures in
+  their owning feature with an actionable retry or repair entry.
+- For every retained rejection, identify the exact operation being refused and
+  substantiate its concrete data or permission consequence from code or evidence.
+  A version mismatch or hypothetical risk alone is not grounds for an application
+  exit, an endless splash, or a restart loop.
+- Do not hide defects by swallowing errors or reporting failed components as
+  ready. Preserve truthful feature status and useful diagnostics. Reuse the
+  existing recovery mechanisms, fix the primary flow, and remove obsolete paths.
+- Cover failure isolation as well as successful startup: the window remains
+  usable, unaffected features remain available, unsafe operations stay blocked,
+  original data and credentials remain intact, and retry and subsequent launch
+  can recover after the cause is repaired. Follow the repository's test execution
+  policy; a visible recovery window is not proof that the normal runtime is ready.
+
 ## UI and component rules
 
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.

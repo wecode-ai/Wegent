@@ -54,6 +54,7 @@ export interface AppPreferences {
   experimentalFeaturesEnabled: boolean
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
+  telemetryConsentRevision: number
   telemetryEnabled: boolean
   performanceRecordingEnabled: boolean
   supervisorPrinciples: string
@@ -189,6 +190,7 @@ export const defaultAppPreferences: AppPreferences = {
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
+  telemetryConsentRevision: 0,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
   supervisorPrinciples: '',
@@ -363,6 +365,12 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.telemetryEnabled === 'boolean'
         ? record.telemetryEnabled
         : defaultAppPreferences.telemetryEnabled,
+    telemetryConsentRevision:
+      typeof record.telemetryConsentRevision === 'number' &&
+      Number.isSafeInteger(record.telemetryConsentRevision) &&
+      record.telemetryConsentRevision >= 0
+        ? record.telemetryConsentRevision
+        : 0,
     performanceRecordingEnabled:
       typeof record.performanceRecordingEnabled === 'boolean'
         ? record.performanceRecordingEnabled
@@ -569,13 +577,21 @@ export async function getAppPreferences(): Promise<AppPreferences> {
   return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))
 }
 
-export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
+export async function updateAppPreferences(
+  patch: AppPreferencesPatch,
+  expectedTelemetryConsentRevision?: number
+): Promise<AppPreferences> {
   if (typeof window === 'undefined') {
     const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
     return preferences
   }
   const preferences = mergeAppPreferences(
-    await invokeDesktopHost<Record<string, unknown>>('preferences.update', { patch })
+    await invokeDesktopHost<Record<string, unknown>>('preferences.update', {
+      patch,
+      ...(expectedTelemetryConsentRevision !== undefined
+        ? { expectedTelemetryConsentRevision }
+        : {}),
+    })
   )
   emitAppPreferencesChanged(preferences)
   return preferences

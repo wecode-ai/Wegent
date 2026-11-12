@@ -315,6 +315,26 @@ fn launch(root: &Path, bridge: &OsStr, forwarded: &[OsString]) -> io::Result<()>
 fn main() {
     if let Err(error) = run() {
         eprintln!("Wework launcher: {error}");
+        // Keep a failed selection from stranding the user after the entry host
+        // exited. The healthy bridge opens recovery without opening user data.
+        let arguments: Vec<_> = env::args_os().skip(1).collect();
+        if let [root, bridge, forwarded @ ..] = arguments.as_slice() {
+            if !root.to_string_lossy().starts_with("--") {
+                if Command::new(bridge)
+                    .args(forwarded)
+                    .env(
+                        "WEWORK_STARTUP_RECOVERY",
+                        format!("Wework launcher: {error}"),
+                    )
+                    .env_remove("WEWORK_RELEASE_SUPERVISED")
+                    .stdin(Stdio::null())
+                    .spawn()
+                    .is_ok()
+                {
+                    return;
+                }
+            }
+        }
         std::process::exit(1);
     }
 }

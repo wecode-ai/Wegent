@@ -261,6 +261,67 @@ export class CloudCredentialService {
     })
   }
 
+  /** Native-only result: pass directly to Executor, never to a renderer. */
+  pluginNativeSession(
+    apiBaseUrl: string,
+    accountToken: string
+  ): Promise<{
+    backend_url: string
+    account_token: string
+    native_token: string
+    expires_at: number
+  } | null> {
+    const revision = this.activeRevision
+    return this.serial(async () => {
+      const base = normalizeApiBaseUrl(apiBaseUrl)
+      const credential = await this.readCredential()
+      this.requireActiveRevision(revision)
+      if (!credential || credential.apiBaseUrl !== base || !credential.ownerUserId)
+        throw new CloudCredentialError(
+          'credentials_unavailable',
+          'Desktop plugin credentials unavailable'
+        )
+      const ownerResponse = await this.requestWithTimeout(`${base}/users/me`, {
+        headers: { Authorization: `Bearer ${accountToken}` },
+      })
+      const owner = await responseJson(ownerResponse)
+      if (!ownerResponse.ok || owner.id !== credential.ownerUserId)
+        throw new CloudCredentialError('cloud_auth_expired', 'Plugin account owner changed')
+      const endpoint = `${base}/plugins/native-auth/exchange`
+      const response = await this.requestWithTimeout(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'session',
+          data: {
+            refresh_token: credential.refreshToken,
+            proof: createDeviceProof(
+              credential.privateKey,
+              credential.publicKey,
+              credential.refreshToken,
+              '/api/plugins/native-auth/exchange'
+            ),
+          },
+        }),
+      })
+      this.requireActiveRevision(revision)
+      if (response.status === 404) return null
+      const result = await responseJson(response)
+      if (!response.ok) throw requestError(response.status, result)
+      if (result.protocolVersion !== 1 || result.account_id !== credential.ownerUserId)
+        throw new CloudCredentialError('request_failed', 'Invalid plugin authorization response')
+      const expiresAt = numberValue(result.expires_at, 'plugin session expiry')
+      if (expiresAt <= Math.floor(Date.now() / 1000))
+        throw new CloudCredentialError('cloud_auth_expired', 'Plugin authorization expired')
+      return {
+        backend_url: base.replace(/\/api$/, ''),
+        account_token: accountToken,
+        native_token: requiredString(result.native_token, 'native plugin token'),
+        expires_at: expiresAt,
+      }
+    })
+  }
+
   private generateCredential(apiBaseUrl = ''): StoredCloudCredential {
     const { publicKey, privateKey } = generateKeyPairSync('ec', {
       namedCurve: 'prime256v1',

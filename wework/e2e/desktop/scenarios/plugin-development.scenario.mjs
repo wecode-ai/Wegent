@@ -62,11 +62,13 @@ export async function openPluginDevelopmentPanel(control) {
   await control.command('waitFor', `${shell}[aria-hidden="false"]`)
   const tab = '[data-testid="right-workspace-extension-tab-wework-plugin-developer.debug"]'
   const option = '[data-testid="right-workspace-extension-option-wework-plugin-developer.debug"]'
+  const newTab = '[data-testid="right-workspace-new-tab-button"]'
+  await control.command('waitFor', `${tab}, ${option}, ${newTab}`, { visible: true })
   if (await visible(tab)) {
     await control.command('clickWhenEnabled', tab)
   } else {
     if (!(await visible(option))) {
-      await control.command('clickWhenEnabled', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('clickWhenEnabled', newTab)
     }
     await control.command('clickWhenEnabled', option)
   }

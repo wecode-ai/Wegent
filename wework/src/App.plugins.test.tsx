@@ -377,6 +377,7 @@ const workbenchValue: WorkbenchContextValue = {
     projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
     devices: [],
     runtimeWork: null,
+    runtimeWorkLoad: { phase: 'loading', error: null },
     currentProject: null,
     currentRuntimeTask: null,
     standaloneDeviceId: null,

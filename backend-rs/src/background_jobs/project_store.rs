@@ -107,6 +107,24 @@ pub(crate) async fn locked(
     .await
 }
 
+/// Provider-owned Issues can have no index; avoid range-locking an absent key.
+pub(crate) async fn locked_existing(
+    tx: &mut impl MysqlTransaction,
+    kind: &str,
+    id: &str,
+) -> MysqlResult<Option<Node>> {
+    let present: Option<(String,)> = tx
+        .fetch_optional(
+            "SELECT id FROM loop_items WHERE id=? AND resource_type=?",
+            (id, kind),
+        )
+        .await?;
+    if present.is_none() {
+        return Ok(None);
+    }
+    locked(tx, kind, id).await
+}
+
 #[derive(Debug, FromMysqlRow)]
 struct Column {
     column_name: String,
@@ -141,6 +159,7 @@ impl MysqlValue for Arg {
 /// Respect the same nullable-vs-sentinel adapter as Python's LoopNode hooks.
 /// In particular, nullable unique public_id/project_key/storage_prefix must
 /// remain NULL; an empty string would create collisions between unrelated rows.
+/// Generated columns are database-owned and must never appear in INSERTs.
 pub(crate) async fn insert(
     tx: &mut impl MysqlTransaction,
     kind: &str,
@@ -165,7 +184,7 @@ async fn insert_with_conflict_clause(
     conflict_clause: &str,
 ) -> MysqlResult<String> {
     let columns: Vec<Column> = tx.fetch_all(
-        "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(DATA_TYPE AS CHAR) AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='loop_items' ORDER BY ORDINAL_POSITION", ()
+        "SELECT CAST(COLUMN_NAME AS CHAR) AS column_name, CAST(IS_NULLABLE AS CHAR) AS is_nullable, CAST(DATA_TYPE AS CHAR) AS data_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='loop_items' AND GENERATION_EXPRESSION='' ORDER BY ORDINAL_POSITION", ()
     ).await?;
     let now = Utc::now()
         .naive_utc()

@@ -12,6 +12,10 @@ mod im_callback_routing;
 #[path = "superseded_turn_tests.rs"]
 mod superseded_turn_tests;
 
+#[cfg(unix)]
+#[path = "codex_startup_tests.rs"]
+mod codex_startup_tests;
+
 #[test]
 fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
     for method in [
@@ -163,6 +167,8 @@ fn runtime_proxy_configuration_releases_deferred_startup_recovery() {
                 "device-1",
                 "/bin/false",
                 event_tx,
+                None,
+                None,
             );
             assert!(handler.startup_recovery_deferred.load(Ordering::Acquire));
 
@@ -3581,6 +3587,8 @@ fn archived_cleanup_failure_preserves_task_and_snapshot_for_retry() {
                 "device-1",
                 "/bin/false",
                 event_tx.clone(),
+                None,
+                None,
             );
             handler.store = RuntimeWorkStore::new(root.path().join("fixture-runtime/index.json"));
             handler.worktrees =
@@ -7444,6 +7452,8 @@ fn decision_proxy_handler() -> RuntimeWorkRpcHandler {
         "device-1",
         "/bin/false",
         event_tx,
+        None,
+        None,
     )
 }
 

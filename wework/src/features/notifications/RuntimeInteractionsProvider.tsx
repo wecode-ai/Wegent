@@ -20,6 +20,7 @@ import { useIssueHumanInteractions } from './useIssueHumanInteractions'
 import {
   isResolvedIssueQuestion,
   issueQuestionIdentity,
+  issueQuestionHandoff,
   matchesIssueResolution,
 } from './issueHumanInteractions'
 import { createIssueQuestionEnricher } from './enrichIssueQuestions'
@@ -61,6 +62,7 @@ import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskRe
 import { isRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCacheStore'
 import {
   readInteractionHistory,
+  readInteractionDismissal,
   saveInteractionState,
   readPendingInteractionCache,
   pendingInteractionCache,
@@ -156,7 +158,6 @@ function RuntimeInteractionsState({
   const successfulReadApi = useRef(source?.services?.runtimeWorkApi)
   const fetching = useRef(false)
   const reportedOfflineDevices = useRef(new Set<string>())
-  const failedArchiveWrites = useRef(new Set<string>())
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
@@ -213,17 +214,16 @@ function RuntimeInteractionsState({
 
   const archive = useCallback(
     async (
-      item: RuntimeInteraction,
-      answeredAt = item.createdAt,
+      item: RuntimeInteraction | InteractionHistory,
+      answeredAt = 'task' in item ? item.createdAt : item.answeredAt,
       resolvedIssueQuestion?: InteractionHistory['resolvedIssueQuestion']
     ) => {
       await persistInteractionArchive(
         historyKey,
         {
-          ...interactionHistoryEntry(item, answeredAt),
+          ...('task' in item ? interactionHistoryEntry(item, answeredAt) : { ...item, answeredAt }),
           ...(resolvedIssueQuestion ? { resolvedIssueQuestion } : {}),
         },
-        failedArchiveWrites.current,
         next => {
           if (mounted.current) {
             setHistory(next)
@@ -449,7 +449,8 @@ function RuntimeInteractionsState({
                   stage = `archive:${answered.requestKey}`
                   await retainDraft(interactionHistoryEntry(answered, answered.createdAt))
                   await archive(answered)
-                  localStorage.removeItem(acceptancePrefix + answered.id)
+                  if (!readInteractionDismissal(acceptancePrefix + answered.id))
+                    localStorage.removeItem(acceptancePrefix + answered.id)
                 }
               } catch (error) {
                 successfulReads.current.delete(item.key)
@@ -509,6 +510,24 @@ function RuntimeInteractionsState({
     return () => window.clearInterval(timer)
   }, [refresh, signature, source?.services?.runtimeWorkApi])
 
+  const isDismissed = useCallback(
+    (id: string, questionIdentity?: string | null, handoff?: string) =>
+      history.some(
+        entry =>
+          entry.dismissed &&
+          (questionIdentity
+            ? entry.dismissedQuestionIdentity === questionIdentity &&
+              (handoff === undefined || (entry.dismissedHandoff ?? 'initial') === handoff)
+            : entry.id === id)
+      ) ||
+      readInteractionDismissal(
+        acceptancePrefix +
+          (questionIdentity
+            ? `issue:${handoff === undefined ? questionIdentity : JSON.stringify([questionIdentity, handoff])}`
+            : id)
+      ),
+    [history, acceptancePrefix]
+  )
   const pending = useMemo(() => {
     const visible = new Map([...(source?.items ?? []), ...inventory].map(item => [item.key, item]))
     const runtime = Object.values(loaded)
@@ -516,6 +535,7 @@ function RuntimeInteractionsState({
       .filter(
         item =>
           !item.answered &&
+          !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item)) &&
           !isResolvedIssueQuestion(item, issueInteractions.resolved) &&
           !history.some(
             entry =>
@@ -552,7 +572,9 @@ function RuntimeInteractionsState({
       ...runtime.filter(
         item => !shared.has(item.id) && !sharedQuestions.has(issueQuestionIdentity(item))
       ),
-      ...sharedItems,
+      ...sharedItems.filter(
+        item => !isDismissed(item.id, issueQuestionIdentity(item), issueQuestionHandoff(item))
+      ),
     ].sort((a, b) => b.createdAt - a.createdAt)
   }, [
     acceptancePrefix,
@@ -564,6 +586,7 @@ function RuntimeInteractionsState({
     issueInteractions.items,
     issueInteractions.resolved,
     history,
+    isDismissed,
   ])
 
   useEffect(() => {
@@ -599,14 +622,42 @@ function RuntimeInteractionsState({
   )
   useRuntimeInteractionSettlements(pending, settleFromConversation)
   const dismiss = useCallback(
-    async (item: RuntimeInteraction) => {
-      if (item.sharedRequest || inFlight.current.has(item.id)) return
+    async (item: RuntimeInteraction | InteractionHistory) => {
+      if (inFlight.current.has(item.id)) return
       inFlight.current.add(item.id)
       setBusy(new Set(inFlight.current))
       try {
         await navigator.locks.request(historyKey + ':' + item.id, async () => {
-          await archive(item, Date.now())
-          saveInteractionState(acceptancePrefix + item.id, true)
+          const handledAt = Date.now()
+          const questionIdentity =
+            'task' in item ? issueQuestionIdentity(item) : item.dismissedQuestionIdentity
+          const handoff =
+            'task' in item
+              ? (issueQuestionHandoff(
+                  issueInteractions.items.find(
+                    candidate =>
+                      questionIdentity && issueQuestionIdentity(candidate) === questionIdentity
+                  ) ?? item
+                ) ?? 'initial')
+              : (item.dismissedHandoff ?? 'initial')
+          await archive(
+            {
+              ...('task' in item ? interactionHistoryEntry(item, handledAt) : item),
+              dismissed: true,
+              ...(questionIdentity
+                ? { dismissedQuestionIdentity: questionIdentity, dismissedHandoff: handoff }
+                : {}),
+            },
+            handledAt
+          )
+          saveInteractionState(acceptancePrefix + item.id, 'dismissed')
+          if (questionIdentity) {
+            saveInteractionState(acceptancePrefix + `issue:${questionIdentity}`, 'dismissed')
+            saveInteractionState(
+              acceptancePrefix + `issue:${JSON.stringify([questionIdentity, handoff])}`,
+              'dismissed'
+            )
+          }
           if (!mounted.current) return
           markHandled(item.id)
           clearReplyDraft(item.id)
@@ -616,7 +667,7 @@ function RuntimeInteractionsState({
         if (mounted.current) setBusy(new Set(inFlight.current))
       }
     },
-    [acceptancePrefix, archive, clearReplyDraft, historyKey, markHandled]
+    [acceptancePrefix, archive, clearReplyDraft, historyKey, markHandled, issueInteractions.items]
   )
   const respond = useCallback(
     async (
@@ -897,6 +948,7 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
+      isDismissed,
       refresh,
       open,
       notice,
@@ -916,6 +968,7 @@ function RuntimeInteractionsState({
       loading,
       respond,
       dismiss,
+      isDismissed,
       refresh,
       open,
       notice,
