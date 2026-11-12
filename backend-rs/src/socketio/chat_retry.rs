@@ -147,6 +147,8 @@ struct UserSubtask {
     id: i64,
     #[mysql(rename = "prompt")]
     prompt: Option<String>,
+    #[mysql(rename = "result")]
+    result: Option<Json<OpaqueJson>>,
 }
 
 /// One task row (`get_non_deleted_task`).
@@ -237,7 +239,13 @@ async fn prepare_retry(
             message,
             interactive_form_answer: None,
             additional_skills: Vec::new(),
-            options: Default::default(),
+            options: super::chat_trigger::ChatTurnOptions {
+                generation: user_subtask
+                    .result
+                    .as_ref()
+                    .and_then(|result| retry_image_generation(&result.0.to_value())),
+                ..Default::default()
+            },
             is_group_chat: task_json
                 .pointer("/spec/is_group_chat")
                 .and_then(Value::as_bool)
@@ -311,7 +319,7 @@ async fn fetch_user_subtask(
     message_id: i64,
 ) -> Result<Option<UserSubtask>, RetryFailure> {
     let statement = format!(
-        "SELECT id, prompt FROM `{table}` WHERE task_id = ? AND message_id = ? \
+        "SELECT id, prompt, result FROM `{table}` WHERE task_id = ? AND message_id = ? \
          AND `role` = 'USER' LIMIT 1"
     );
     let mut handle = &state.mysql;
@@ -323,6 +331,11 @@ async fn fetch_user_subtask(
     )
     .await
     .map_err(|_| RetryFailure::Internal)
+}
+
+fn retry_image_generation(result: &Value) -> Option<Value> {
+    let size = result.pointer("/image_config/size")?.as_str()?;
+    Some(json!({ "size": size }))
 }
 
 /// `_is_code_wiki_task`.
@@ -519,4 +532,24 @@ fn local_isoformat() -> String {
         .naive_local()
         .format("%Y-%m-%dT%H:%M:%S%.6f")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_restores_image_size_from_the_user_turn() {
+        assert_eq!(
+            retry_image_generation(&json!({
+                "image_config": {"model": "gpt-image-e2e", "size": "1536x1024"}
+            })),
+            Some(json!({ "size": "1536x1024" }))
+        );
+        assert_eq!(retry_image_generation(&Value::Null), None);
+        assert_eq!(
+            retry_image_generation(&json!({"image_config": {"size": null}})),
+            None
+        );
+    }
 }

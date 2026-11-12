@@ -21,7 +21,7 @@ class ModelServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), ModelHandler)
         self.jobs: dict[str, dict] = {}
         self.failures: list[str] = []
-        self.image_requests: list[str] = []
+        self.image_requests: list[tuple[str, str | None]] = []
         image = BytesIO()
         Image.new("RGB", (8, 8), "blue").save(image, format="PNG")
         self.image = image.getvalue()
@@ -80,8 +80,11 @@ class ModelHandler(BaseHTTPRequestHandler):
     def generate_image(self) -> None:
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         prompt = payload["prompt"]
-        first_attempt = prompt not in self.server.image_requests
-        self.server.image_requests.append(prompt)
+        first_attempt = not any(
+            previous_prompt == prompt
+            for previous_prompt, _ in self.server.image_requests
+        )
+        self.server.image_requests.append((prompt, payload.get("size")))
         if payload["model"] != "gpt-image-e2e":
             status, result = 400, {"error": {"message": "Unexpected image model"}}
         elif prompt == "Retry the blue square" and first_attempt:

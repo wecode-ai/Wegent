@@ -30,7 +30,7 @@ class ImageCases:
                         "api_key": "",
                     }
                 },
-                "imageConfig": {"output_format": "png"},
+                "imageConfig": {"output_format": "png", "size": "1024x1024"},
             },
             "Bot": {
                 "ghostRef": {"name": self.suffix},
@@ -82,8 +82,16 @@ class ImageCases:
             first_id = self.chat_assistant_id(first)
             await self._assert_completed_image(first_id, done)
 
-            second = await self._send_image(client, team_id, "Retry the blue square")
+            selected_size = "1536x1024"
+            second = await self._send_image(
+                client, team_id, "Retry the blue square", size=selected_size
+            )
             retry_id = self.chat_assistant_id(second)
+            with SessionLocal() as db:
+                user_subtask = db.get(Subtask, second["subtask_id"])
+                self.assertEqual(
+                    user_subtask.result["image_config"]["size"], selected_size
+                )
             failed = await self._wait_image_turn(retry_id)
             self.assertEqual(failed.status.value, "FAILED")
             self.assertIn("Image model test failure", failed.error_message)
@@ -101,13 +109,22 @@ class ImageCases:
             await client.disconnect()
         self.assertEqual(
             self.model.image_requests,
-            ["Draw a blue square", "Retry the blue square", "Retry the blue square"],
+            [
+                ("Draw a blue square", "1024x1024"),
+                ("Retry the blue square", selected_size),
+                ("Retry the blue square", selected_size),
+            ],
         )
 
-    async def _send_image(self, client, team_id: int, prompt: str) -> dict:
+    async def _send_image(
+        self, client, team_id: int, prompt: str, *, size: str | None = None
+    ) -> dict:
+        payload: dict = {"team_id": team_id, "task_type": "image", "message": prompt}
+        if size is not None:
+            payload["generate_params"] = {"size": size}
         ack = await client.call(
             "chat:send",
-            {"team_id": team_id, "task_type": "image", "message": prompt},
+            payload,
             namespace="/chat",
             timeout=15,
         )
