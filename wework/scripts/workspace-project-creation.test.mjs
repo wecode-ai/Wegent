@@ -8,6 +8,7 @@ import {
   openProjectAgentCreator,
   expandCollaborationWorkspace,
   expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
   selectCollaborationIssueAgent,
   selectCollaborationProjectView,
 } from '../e2e/desktop/modules/workspace-flows.mjs'
@@ -394,4 +395,19 @@ test('reveals offscreen navigation controls before testing visibility or clickin
     '[data-testid="collaboration-workspace-toggle-guest-parent"]'
   )
   assert.ok([...states.values()].every(state => state.expanded))
+})
+
+test('reveals a workspace identity independently of its section toggle position', async () => {
+  const identity =
+    'main [data-testid="collaboration-workspace-tree-local"] .collaboration-workspace-identity'
+  let visible = false
+  const control = {
+    async command(action, selector, options = {}) {
+      assert.equal(selector, identity)
+      if (action === 'scrollIntoView') visible = true
+      if (action === 'waitFor' && options.visible) assert.ok(visible)
+    },
+  }
+  await revealCollaborationSidebarElement(control, identity)
+  assert.ok(visible)
 })

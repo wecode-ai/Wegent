@@ -1,3 +1,16 @@
+import {
+  COLLABORATION_SIDEBAR_SELECTOR,
+  inCollaborationSidebar,
+  expandCollaborationSpaces,
+  revealCollaborationSidebarElement,
+} from './collaboration-sidebar-navigation.mjs'
+export {
+  COLLABORATION_SIDEBAR_SELECTOR,
+  inCollaborationSidebar,
+  expandCollaborationSpaces,
+  expandCollaborationWorkspace,
+  revealCollaborationSidebarElement,
+} from './collaboration-sidebar-navigation.mjs'
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { waitForSnapshot } from './conversation-layout.mjs'
@@ -45,13 +58,6 @@ const FIXED_BOARD_CONTENT_SELECTOR = `[data-testid="${FIXED_BOARD_TAB_CONTENT_TE
 const WEWORK_COLLABORATION_PLATFORM_TEST_ID = 'wework-collaboration-platform'
 const SHARED_COLLABORATION_PLATFORM_TEST_ID = 'collaboration-platform-root'
 const LOCAL_COLLABORATION_WORKSPACE_ID = 'wework-local-workspace'
-export const COLLABORATION_SIDEBAR_SELECTOR = '[data-testid="collaboration-platform-sidebar"]'
-
-export function inCollaborationSidebar(selector, contentSelector = '') {
-  const sidebarSelector = `${COLLABORATION_SIDEBAR_SELECTOR} ${selector}`
-  return contentSelector ? `${contentSelector} ${sidebarSelector}` : sidebarSelector
-}
-
 export function inProjectCreateDialog(selector = '') {
   const dialog = '[data-testid="collaboration-project-create-dialog"]'
   return selector ? `${dialog} ${selector}` : dialog
@@ -115,48 +121,6 @@ export async function selectCollaborationDomain(control, contentSelector, domain
     'The unified collaboration board still exposed a cloud selector'
   )
   await expandCollaborationSpaces(control, contentSelector)
-}
-
-/** Open optional space management before interacting with workspace controls. */
-export async function expandCollaborationSpaces(
-  control,
-  contentSelector = '[data-workspace-tab-content][aria-hidden="false"]',
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
-) {
-  const toggle = inCollaborationSidebar(
-    '[data-testid="collaboration-workspaces-section-toggle"]',
-    contentSelector
-  )
-  await expandCollaborationToggle(control, toggle, timeoutMs)
-}
-
-export async function expandCollaborationWorkspace(
-  control,
-  toggleSelector,
-  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
-) {
-  await expandCollaborationSpaces(control, undefined, timeoutMs)
-  await expandCollaborationToggle(control, toggleSelector, timeoutMs)
-}
-
-async function expandCollaborationToggle(control, toggleSelector, timeoutMs) {
-  await control.command('waitFor', toggleSelector, { timeoutMs })
-  await control.command('scrollIntoView', toggleSelector, { visible: true })
-  await control.command('waitFor', toggleSelector, { visible: true, timeoutMs })
-  const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
-  const expanded = await control.command('getAttribute', toggleSelector, {
-    value: 'aria-expanded',
-  })
-  assert.ok(
-    expanded === 'true' || expanded === 'false',
-    'A workspace toggle must expose its expanded state'
-  )
-  if (expanded === 'true') return
-  await control.command('click', toggleSelector)
-  await control.command('waitFor', expandedSelector, {
-    visible: true,
-    timeoutMs,
-  })
 }
 
 export async function selectCollaborationIssueAgent(
@@ -528,16 +492,10 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
     contentSelector
   )
   const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
-  await control.command('waitFor', localWorkspaceIdentity, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await revealCollaborationSidebarElement(control, localWorkspaceIdentity)
   await control.command('click', localWorkspaceIdentity)
   const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
-  await control.command('waitFor', `${activeWorkspaceHome}[aria-current="page"]`, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await revealCollaborationSidebarElement(control, `${activeWorkspaceHome}[aria-current="page"]`)
   await control.command(
     'waitFor',
     `${contentSelector} [data-testid="collaboration-workspace-project-create"]`,
@@ -556,14 +514,15 @@ export async function createLocalCollaborationProject(control, contentSelector, 
   )
   await control.command('click', '[data-testid="collaboration-workspace-project-import-folder"]')
   await completeLocalCollaborationFolderImport(control, projectName)
-  await control.command(
-    'waitFor',
-    inCollaborationSidebar('[data-testid^="collaboration-workspace-project-"]', contentSelector),
-    {
-      text: projectName,
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  const projectTestId = await waitForTestIdByText(
+    control,
+    `${contentSelector} ${COLLABORATION_SIDEBAR_SELECTOR}`,
+    'collaboration-workspace-project-',
+    projectName
+  )
+  await revealCollaborationSidebarElement(
+    control,
+    inCollaborationSidebar(`[data-testid="${projectTestId}"]`, contentSelector)
   )
   await waitForLocalProjectNavigation(control, contentSelector, projectName)
 }
@@ -2156,10 +2115,7 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     `[data-testid="collaboration-workspace-home-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     secondBoardContent
   )
-  await control.command('waitFor', secondLocalWorkspace, {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await revealCollaborationSidebarElement(control, secondLocalWorkspace)
   assert.equal(
     Number(
       await control.command(
