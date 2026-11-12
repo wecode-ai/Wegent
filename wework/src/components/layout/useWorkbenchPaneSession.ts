@@ -1067,18 +1067,25 @@ export function useWorkbenchPaneSession({
 
   const getRuntimeModelFields = useCallback(
     (modelOptionsOverride?: ModelOptions) => {
-      const selectedModel =
-        projectChat.getSelectedModel?.() ??
-        projectChat.selectedModel ??
-        resolveAutomaticModel(projectChat.models)
-      const selectedModelOptions =
-        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      // A pane renders one conversation, which may differ from the provider's
+      // active pane in a split layout. Resolve against this pane's address.
+      const taskModelSelection = currentRuntimeTask
+        ? projectChat.resolveRuntimeTaskModelSelection?.(currentRuntimeTask)
+        : null
+      const selectedModel = currentRuntimeTask
+        ? (taskModelSelection?.selectedModel ?? null)
+        : (projectChat.getSelectedModel?.() ??
+          projectChat.selectedModel ??
+          resolveAutomaticModel(projectChat.models))
+      const selectedModelOptions = currentRuntimeTask
+        ? (taskModelSelection?.selectedModelOptions ?? {})
+        : (projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions)
       return selectedModelExecutionFields(selectedModel, {
         ...selectedModelOptions,
         ...modelOptionsOverride,
       })
     },
-    [projectChat]
+    [currentRuntimeTask, projectChat]
   )
 
   const appendLocalUserMessage = useCallback(

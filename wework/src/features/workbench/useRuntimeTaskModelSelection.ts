@@ -74,16 +74,26 @@ export function useRuntimeTaskModelSelection({
     setSelectedModelOptionForScope,
     setSelectionForScope,
   } = modelStore
-  const taskSelectionConfig = useCallback(
-    (address: RuntimeTaskAddress) =>
-      resolveTask(address)?.modelSelection ??
-      modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
-      null,
+  const resolveTaskModelConfig = useCallback(
+    (address: RuntimeTaskAddress) => {
+      const task = resolveTask(address)
+      const handleSelection = modelSelectionFromRuntimeHandle(address.runtimeHandle)
+      return {
+        // A loaded summary without a selection is authoritative: the
+        // conversation deliberately uses the runtime's native model.
+        selectionResolved: Boolean(task || handleSelection),
+        taskSelection: task?.modelSelection ?? handleSelection ?? null,
+      }
+    },
     [resolveTask]
+  )
+  const taskSelectionConfig = useCallback(
+    (address: RuntimeTaskAddress) => resolveTaskModelConfig(address).taskSelection,
+    [resolveTaskModelConfig]
   )
   const resolveRuntimeTaskModelSelection = useCallback(
     (address: RuntimeTaskAddress): RuntimeTaskModelSelectionControls => {
-      const taskSelection = taskSelectionConfig(address)
+      const { selectionResolved, taskSelection } = resolveTaskModelConfig(address)
       const taskModel =
         findModelForSelection(models, taskSelection) ?? modelFromTaskSnapshot(taskSelection)
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
@@ -91,14 +101,18 @@ export function useRuntimeTaskModelSelection({
         selectedModelByScope,
         scopeKey
       )
+      const scopedModel = hasScopedSelection ? (selectedModelByScope[scopeKey] ?? null) : null
       return {
+        // A model chosen in this pane is authoritative even before the task
+        // summary arrives. An empty scoped entry is not.
+        selectionResolved: selectionResolved || Boolean(scopedModel),
         taskSelection,
         activeModel: taskModel,
         ...((resolveTask(address)?.runtimeHandle ?? address.runtimeHandle)?.modelProviderRouting ===
         'thread'
           ? { supportsModelProviderSwitch: true }
           : {}),
-        selectedModel: hasScopedSelection ? (selectedModelByScope[scopeKey] ?? null) : taskModel,
+        selectedModel: hasScopedSelection ? scopedModel : taskModel,
         selectedModelOptions: hasScopedSelection
           ? (selectedModelOptionsByScope[scopeKey] ?? {})
           : (taskSelection?.options ?? {}),
@@ -107,9 +121,9 @@ export function useRuntimeTaskModelSelection({
     [
       models,
       resolveTask,
+      resolveTaskModelConfig,
       selectedModelByScope,
       selectedModelOptionsByScope,
-      taskSelectionConfig,
       userId,
     ]
   )
@@ -122,18 +136,12 @@ export function useRuntimeTaskModelSelection({
           scopeKey,
           selection.selectedModel,
           selection.selectedModelOptions,
-          taskSelectionConfig(address)
+          selection.taskSelection
         )
       }
       return scopeKey
     },
-    [
-      hasSelectionForScope,
-      resolveRuntimeTaskModelSelection,
-      setSelectionForScope,
-      taskSelectionConfig,
-      userId,
-    ]
+    [hasSelectionForScope, resolveRuntimeTaskModelSelection, setSelectionForScope, userId]
   )
   const setRuntimeTaskSelectedModel = useCallback(
     (address: RuntimeTaskAddress, model: UnifiedModel | null) => {
