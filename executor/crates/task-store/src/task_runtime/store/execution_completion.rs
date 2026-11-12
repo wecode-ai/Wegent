@@ -316,6 +316,9 @@ impl LocalTaskStore {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let group_owned = get_item_from(&connection, project_id, "chat_group")?.is_some();
+        if group_owned {
+            chat_groups::require_participation(&connection, project_id, task_id, true)?;
+        }
         let agent = if group_owned {
             task_resource_agent(&connection, project_id, task_id, agent_id)?
         } else {
@@ -345,6 +348,14 @@ impl LocalTaskStore {
                 params![task_id, agent_id, trigger], |row| row.get(0),
             ).optional()?;
             if let Some(id) = existing {
+                let existing = execution_row(&connection, id)?;
+                resource_bindings::require_current_comment_crew(
+                    &connection,
+                    project_id,
+                    task_id,
+                    agent_id,
+                    existing.execution_payload.as_ref().unwrap_or(&Value::Null),
+                )?;
                 return execution_row(&connection, id);
             }
             payload = local_execution_activity::comment_execution_payload(
@@ -375,6 +386,15 @@ impl LocalTaskStore {
                     ));
                 }
             }
+        }
+        if trigger_message_id.is_some() {
+            resource_bindings::require_current_comment_crew(
+                &connection,
+                project_id,
+                task_id,
+                agent_id,
+                &payload,
+            )?;
         }
         let execution_id = create_local_execution(
             &connection,

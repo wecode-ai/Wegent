@@ -233,7 +233,73 @@ pub(super) fn task_execution_agent(
         .get("collaboration_group")
         .filter(|crew| crew.is_object())
     {
+        require_current_execution_crew(connection, owner, task, agent, payload)?;
         return crew_agent(connection, owner, task, crew, agent);
     }
     task_resource_agent(connection, owner, task, agent)
+}
+
+/// A reply may resume only the currently assigned crew generation and leader.
+pub(super) fn require_current_comment_crew(
+    connection: &Connection,
+    owner: &str,
+    task: &str,
+    agent: &str,
+    payload: &Value,
+) -> Result<(), TaskRuntimeError> {
+    if get_item_from(connection, owner, "chat_group")?.is_none()
+        || !payload["collaboration_group"].is_object()
+    {
+        return Ok(());
+    }
+    let item = get_item_from(connection, task, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+    let assigned = &item.metadata["collaboration_group"];
+    let snapshot = &payload["collaboration_group"];
+    if ["id", "binding_owner_id"]
+        .iter()
+        .any(|key| assigned[key] != snapshot[key])
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Current collaboration group assignment changed".into(),
+        ));
+    }
+    require_current_execution_crew(connection, owner, task, agent, payload)
+}
+
+pub(super) fn require_current_execution_crew(
+    connection: &Connection,
+    owner: &str,
+    task: &str,
+    agent: &str,
+    payload: &Value,
+) -> Result<(), TaskRuntimeError> {
+    if get_item_from(connection, owner, "chat_group")?.is_none()
+        || !payload["collaboration_group"].is_object()
+    {
+        return Ok(());
+    }
+    let snapshot = &payload["collaboration_group"];
+    let current = current_crew(connection, owner, task, snapshot)?;
+    if ["id", "binding_owner_id", "leader", "members", "stages"]
+        .iter()
+        .any(|key| snapshot[key] != current[key])
+    {
+        return Err(TaskRuntimeError::Invalid(
+            "Current collaboration group assignment changed".into(),
+        ));
+    }
+    let resolved = crew_agent(connection, owner, task, snapshot, agent)?;
+    if payload["dispatch_role"] == "manager" {
+        let leader = current["leader"]["id"].as_str().ok_or_else(|| {
+            TaskRuntimeError::Invalid("Collaboration manager is unavailable".into())
+        })?;
+        if current["leader"]["kind"] != "agent"
+            || crew_agent(connection, owner, task, snapshot, leader)?.id != resolved.id
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Current collaboration manager changed".into(),
+            ));
+        }
+    }
+    Ok(())
 }

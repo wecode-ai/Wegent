@@ -80,7 +80,7 @@ impl LocalTaskStore {
                     c.sender_type, c.sender_id, c.sender_name, c.message_type, c.content,
                     c.metadata, c.trigger_message_id, c.reply_to_message_id,
                     c.thread_root_message_id, c.status, c.sequence_number, c.created_at, c.updated_at,
-                    e.status, e.observed_state, e.sync_state
+                    e.status, e.observed_state, e.sync_state, e.id
              FROM loop_item_comments c
              LEFT JOIN loop_item_executions e
                ON e.id = json_extract(c.metadata, '$.execution_id')
@@ -98,11 +98,24 @@ impl LocalTaskStore {
                 comment.metadata["run_status"] =
                     json!(local_execution_display_state(&status, &observed, &sync));
             }
-            Ok(comment)
+            Ok((comment, row.get::<_, Option<i64>>(21)?))
         })?;
         let mut comments = Vec::new();
         for comment in rows {
-            comments.push(comment?);
+            let (mut comment, execution_id) = comment?;
+            if let Some(metadata) = comment.metadata.as_object_mut() {
+                metadata.remove("collaboration_group");
+                metadata.remove("manager_agent_id");
+            }
+            if let Some(id) = execution_id {
+                let execution = execution_row(&connection, id)?;
+                local_execution_activity::project_execution_crew(
+                    &connection,
+                    &execution,
+                    &mut comment.metadata,
+                )?;
+            }
+            comments.push(comment);
         }
         Ok(comments)
     }
@@ -113,6 +126,19 @@ impl LocalTaskStore {
     ) -> Result<LocalComment, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if [
+            "execution_id",
+            "collaboration_group",
+            "manager_agent_id",
+            "dispatch_role",
+        ]
+        .iter()
+        .any(|key| create.metadata.get(key).is_some())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Execution provenance is server-owned".into(),
+            ));
+        }
         if !create.task_id.is_empty() {
             chat_groups::require_participation(
                 &transaction,
