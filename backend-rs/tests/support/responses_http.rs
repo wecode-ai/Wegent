@@ -4,7 +4,7 @@
 
 //! Real HTTP gateway, application, authentication, MySQL and Redis coverage.
 
-use brz_mysql::MysqlService;
+use brz_mysql::{Json, MysqlService};
 use brz_redis::{Redis, RedisSubscription};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
@@ -261,11 +261,15 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
             .fetch_one("SELECT status FROM subtasks WHERE id = ?", (subtask_id,))
             .await
             .unwrap();
-        let task: String = mysql.fetch_one(
-            "SELECT JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) FROM tasks WHERE id = ?",
-            (task_id,),
-        ).await.unwrap();
-        (task, subtask)
+        let task: Json<Value> = mysql
+            .fetch_one("SELECT json FROM tasks WHERE id = ?", (task_id,))
+            .await
+            .unwrap();
+        let task_status = task.0["status"]["status"]
+            .as_str()
+            .expect("task status")
+            .to_owned();
+        (task_status, subtask)
     };
     let completed = json!({
         "response": {"output": [{"type": "message", "content": [{"type":"output_text", "text":"saved result"}]}]}
@@ -312,14 +316,11 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         .unwrap();
     assert_eq!(send("response.completed", completed).await, 200);
     assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
-    let stored_value: String = mysql
-        .fetch_one(
-            "SELECT JSON_UNQUOTE(JSON_EXTRACT(result, '$.value')) FROM subtasks WHERE id = ?",
-            (subtask_id,),
-        )
+    let stored_result: Json<Value> = mysql
+        .fetch_one("SELECT result FROM subtasks WHERE id = ?", (subtask_id,))
         .await
         .unwrap();
-    assert_eq!(stored_value, "saved result");
+    assert_eq!(stored_result.0["value"], "saved result");
     assert_eq!(redis.get::<_, String>(marker.as_str()).await.unwrap(), None);
     let event = next_callback(&mut subscription).await;
     assert_eq!(event["type"], "done");
