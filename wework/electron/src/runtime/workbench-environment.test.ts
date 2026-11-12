@@ -4,7 +4,11 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-import { prepareWorkbenchEnvironment, resolveWorkbenchPaths } from './workbench-environment.js'
+import {
+  prepareWorkbenchEnvironment,
+  resolveWorkbenchCodexHome,
+  resolveWorkbenchPaths,
+} from './workbench-environment.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { assertCodexHomeCanMove } from './workbench-codex-migration.js'
 
@@ -37,6 +41,27 @@ beforeEach(() => {
 
 const temporaryDirectories: string[] = []
 const metadata = { weworkExecutorNamespace: 'com.example.wework' }
+
+test.each(['default', 'branded'])(
+  'stopped migration and runtime select the same %s Home without opening it',
+  kind => {
+    const homeDirectory = join(tmpdir(), 'pure-workbench-home')
+    const metadata = kind === 'branded' ? { weworkExecutorNamespace: 'example' } : {}
+    const legacy =
+      kind === 'branded'
+        ? join(homeDirectory, '.wework', 'apps', 'example')
+        : join(homeDirectory, '.wework')
+    const options = { homeDirectory, metadata, environment: {} as NodeJS.ProcessEnv }
+    const defaultHome = resolveWorkbenchPaths(options).codexHome
+    expect(resolveWorkbenchCodexHome(options)).toBe(defaultHome)
+    options.environment.WEGENT_EXECUTOR_HOME = legacy
+    expect(resolveWorkbenchCodexHome(options)).toBe(defaultHome)
+    options.environment.WEGENT_EXECUTOR_HOME = join(homeDirectory, 'custom-executor')
+    expect(resolveWorkbenchCodexHome(options)).toBe(join(homeDirectory, 'custom-executor', 'codex'))
+    options.environment.WEGENT_CODEX_HOME = ` ${join(homeDirectory, 'explicit-codex')} `
+    expect(resolveWorkbenchCodexHome(options)).toBe(join(homeDirectory, 'explicit-codex'))
+  }
+)
 
 async function fixture() {
   const homeDirectory = await mkdtemp(join(tmpdir(), 'workbench-environment-'))

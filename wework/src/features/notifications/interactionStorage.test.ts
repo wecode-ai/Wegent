@@ -30,6 +30,15 @@ const resolution = {
   nativeInteractionId: JSON.stringify(['device', 'review', 'item:question']),
 }
 
+it('updates the durable dismissal scope when the same question is ignored after a new handoff', () => {
+  const first = { ...entry(1), dismissed: true as const, dismissedHandoff: 'first' }
+  const second = { ...entry(2), dismissed: true as const }
+  const repeated = { ...first, dismissedHandoff: 'second' }
+  const history = archiveInteraction([second, first], repeated)
+  expect(history).toEqual([second, repeated])
+  expect(archiveInteraction(history, repeated)).toBe(history)
+})
+
 it('persists only complete internally consistent canonical resolution identities', () => {
   const resolved = {
     ...entry(1),
@@ -174,4 +183,42 @@ it('keeps a storage quota failure from changing the accepted response outcome', 
 it('acknowledges a successful synchronous storage update', () => {
   expect(saveInteractionState('history', [entry(1)])).toBe(true)
   expect(readInteractionHistory('history')).toEqual([entry(1)])
+})
+
+it('adds local dismissal without losing authoritative resolution or changing history order', () => {
+  const resolved = {
+    ...entry(1),
+    id: resolution.nativeInteractionId,
+    resolvedIssueQuestion: resolution,
+  }
+  const dismissed = archiveInteraction([resolved], { ...resolved, dismissed: true, answeredAt: 9 })
+  expect(dismissed).toEqual([{ ...resolved, dismissed: true }])
+  expect(archiveInteraction(dismissed, resolved)).toBe(dismissed)
+  saveInteractionState('history', dismissed)
+  expect(readInteractionHistory('history')).toEqual(dismissed)
+})
+
+it('validates the exact Issue identity of a local dismissal without granting resolution authority', () => {
+  const dismissed = {
+    ...entry(1),
+    dismissed: true as const,
+    dismissedQuestionIdentity: JSON.stringify([
+      'backend',
+      'project',
+      'ISSUE-1',
+      'review',
+      'question',
+    ]),
+  }
+  saveInteractionState('history', [dismissed])
+  expect(readInteractionHistory('history')).toEqual([dismissed])
+  expect(readInteractionHistory('history')[0].resolvedIssueQuestion).toBeUndefined()
+  for (const invalid of [
+    'not-json',
+    JSON.stringify(['backend', 'project']),
+    JSON.stringify(['other', 'project', 'ISSUE-1', 'review', 'question']),
+  ]) {
+    saveInteractionState('history', [{ ...dismissed, dismissedQuestionIdentity: invalid }])
+    expect(readInteractionHistory('history')).toEqual([])
+  }
 })

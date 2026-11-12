@@ -113,6 +113,56 @@ async def test_chat_command_leaves_stand_in_without_changing_its_identity(monkey
     port.delete_conversation_task_id.assert_awaited_once_with("chat", 7)
 
 
+async def test_chat_command_clears_restorable_task_mapping(
+    fake_im_session_cache, test_user, monkeypatch
+):
+    from app.services.channels.device_selection import device_selection_manager
+    from app.services.channels.dingtalk.handler import DingTalkChannelHandler
+
+    _, context, _ = fixture("/chat")
+    session = await im_session_service.get_or_create_private_session(
+        db=None,
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        sender_id="staff-a",
+    )
+    await im_session_service.remember_chat_task(
+        user_id=test_user.id,
+        channel_type="dingtalk",
+        channel_id=77,
+        conversation_id="conv-private",
+        task_id=42,
+    )
+    await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
+    context.conversation_id = session.conversation_id
+    handler = DingTalkChannelHandler(channel_id=77)
+    handler.send_text_reply = AsyncMock(return_value=True)
+    selection = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.channels.handler.cache_manager", fake_im_session_cache
+    )
+    monkeypatch.setattr(device_selection_manager, "set_chat_mode", selection)
+    await im_interaction_service.route_private_message(
+        db=Mock(),
+        user=test_user,
+        im_session=session,
+        message_context=context,
+        port=handler,
+    )
+
+    assert (
+        await im_session_service.get_chat_task(
+            user_id=test_user.id,
+            channel_type="dingtalk",
+            channel_id=77,
+            conversation_id="conv-private",
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize("command", ["/task", "/switch", "/mode task", "/cancel"])
 async def test_retired_task_commands_cannot_create_or_select_a_task(command):
     session, context, port = fixture(command)

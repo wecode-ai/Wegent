@@ -324,13 +324,14 @@ fn queued_nested_runtime_payload_requires_catalog_before_claim() {
 
 #[test]
 fn native_claim_binds_issue_and_rechecks_removed_model_and_can_cancel() {
-    let (_directory, store, project, agent, issue, catalog) = setup();
+    let (_directory, store, project, agent, issue, mut catalog) = setup();
+    catalog["models"][0]["default_reasoning_effort"] = json!("low");
     let run = store
         .enqueue_execution(
             &project.id,
             &issue.id,
             &agent.id,
-            json!({"message":"First"}),
+            json!({"message":"First","modelOptions":{"reasoning":"high","speed":"fast"}}),
             None,
         )
         .unwrap();
@@ -348,6 +349,12 @@ fn native_claim_binds_issue_and_rechecks_removed_model_and_can_cancel() {
         payload["executionRequest"]["model_config"]["model_provider"],
         "test"
     );
+    assert_eq!(
+        payload["executionRequest"]["model_config"]["reasoning"]["effort"],
+        "high"
+    );
+    assert_eq!(payload["modelSelection"]["options"]["reasoning"], "high");
+    assert_eq!(payload["modelSelection"]["options"]["speed"], "fast");
     assert_eq!(
         payload["executionRequest"]["preload_skills"],
         json!(["review"])

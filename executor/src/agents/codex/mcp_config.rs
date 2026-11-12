@@ -11,9 +11,11 @@ pub(super) fn configure_task_mcp(
         let overrides = global_mcp_config_overrides(&mut launch.thread_config)?;
         launch.config_overrides.extend(overrides);
     }
+    launch
+        .config_overrides
+        .extend(computer_use_mcp_config_overrides());
     for (overrides, environment) in [
         cdp_browser_mcp_config_overrides(request)?,
-        computer_use_mcp_config_overrides(),
         managed_wework_mcp_config_overrides(request)?,
         runtime_capabilities::request_mcp_config_overrides(request, &mut launch.thread_config)?,
     ] {

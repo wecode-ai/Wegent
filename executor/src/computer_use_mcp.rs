@@ -1,13 +1,33 @@
-use std::{collections::HashMap, env, time::Duration};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     task::{AbortHandle, JoinSet},
 };
 
-const BRIDGE_URL_ENV: &str = "WEWORK_COMPUTER_USE_BRIDGE_URL";
-const BRIDGE_TOKEN_ENV: &str = "WEWORK_COMPUTER_USE_BRIDGE_TOKEN";
+#[derive(Deserialize)]
+pub(crate) struct BridgeRecord {
+    pub address: String,
+    pub token: String,
+}
+
+pub(crate) fn read_bridge_record(path: &Path) -> Result<BridgeRecord, String> {
+    let contents =
+        fs::read(path).map_err(|_| "Computer use bridge record is unavailable".to_owned())?;
+    let record: BridgeRecord = serde_json::from_slice(&contents)
+        .map_err(|_| "Computer use bridge record is invalid".to_owned())?;
+    if record.address.trim().is_empty() || record.token.trim().is_empty() {
+        return Err("Computer use bridge record is incomplete".to_owned());
+    }
+    Ok(record)
+}
 
 pub fn is_computer_use_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("computer-use-mcp-server")
@@ -15,6 +35,9 @@ pub fn is_computer_use_mcp_command() -> bool {
 
 /// Bind the private host bridge and serve the authenticated stdio transport.
 pub async fn run() -> Result<(), String> {
+    let path = env::args_os()
+        .nth(2)
+        .ok_or_else(|| "Computer use bridge record path is required".to_owned())?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(120))
@@ -23,10 +46,7 @@ pub async fn run() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let bridge = BridgeClient {
         client,
-        url: env::var(BRIDGE_URL_ENV)
-            .map_err(|_| "Computer use bridge URL is unavailable".to_owned())?,
-        token: env::var(BRIDGE_TOKEN_ENV)
-            .map_err(|_| "Computer use bridge token is unavailable".to_owned())?,
+        runtime_path: PathBuf::from(path),
     };
     run_with_io(
         bridge,
@@ -148,8 +168,7 @@ async fn write_response(
 #[derive(Clone)]
 struct BridgeClient {
     client: reqwest::Client,
-    url: String,
-    token: String,
+    runtime_path: PathBuf,
 }
 
 /// Dispatch an MCP message, omitting replies for notifications.
@@ -215,10 +234,12 @@ async fn handle_request(client: &BridgeClient, request: &Value) -> Option<Value>
 
 /// Forward one operation through the token-protected loopback bridge.
 async fn bridge_request(bridge: &BridgeClient, payload: Value) -> Result<Value, String> {
+    // Each operation observes enable/disable and token rotation without restarting Codex.
+    let record = read_bridge_record(&bridge.runtime_path)?;
     let client = &bridge.client;
     let response = client
-        .post(format!("{}/computer", bridge.url.trim_end_matches('/')))
-        .bearer_auth(&bridge.token)
+        .post(format!("http://{}/computer", record.address.trim()))
+        .bearer_auth(record.token.trim())
         .json(&payload)
         .send()
         .await
@@ -284,7 +305,7 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{mcp_tool_result, run_with_io, BridgeClient};
+    use super::{bridge_request, mcp_tool_result, read_bridge_record, run_with_io, BridgeClient};
     use serde_json::json;
     use std::time::Duration;
     use tokio::{
@@ -295,9 +316,94 @@ mod tests {
         time::timeout,
     };
 
-    async fn pending_bridge() -> (BridgeClient, oneshot::Receiver<()>, JoinHandle<()>) {
+    #[test]
+    fn bridge_record_tracks_enable_rotation_and_disable_without_process_environment() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("computer-use-bridge.json");
+        assert!(read_bridge_record(&path).is_err());
+        for (address, token) in [("127.0.0.1:1234", "first"), ("127.0.0.1:5678", "rotated")] {
+            std::fs::write(&path, json!({"address":address,"token":token}).to_string()).unwrap();
+            let record = read_bridge_record(&path).unwrap();
+            assert_eq!(record.address, address);
+            assert_eq!(record.token, token);
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert!(read_bridge_record(&path).is_err());
+    }
+
+    #[test]
+    fn bridge_record_rejects_invalid_credentials_without_disclosing_them() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("computer-use-bridge.json");
+        for contents in [
+            r#"{"address":"127.0.0.1:1234","token":"private-token""#,
+            r#"{"address":"127.0.0.1:1234"}"#,
+            r#"{"address":" ","token":"private-token"}"#,
+            r#"{"address":"127.0.0.1:1234","token":" "}"#,
+        ] {
+            std::fs::write(&path, contents).unwrap();
+            let error = read_bridge_record(&path)
+                .err()
+                .expect("invalid record accepted");
+            assert!(!error.contains("private-token"));
+        }
+    }
+
+    #[tokio::test]
+    async fn existing_client_uses_rotated_bridge_and_fails_closed_after_disable() {
+        let home = tempfile::tempdir().unwrap();
+        let bridge = BridgeClient {
+            client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            runtime_path: home.path().join("bridge.json"),
+        };
+        for token in ["first", "rotated"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let app = axum::Router::new().route(
+                "/computer",
+                axum::routing::post(move |headers: axum::http::HeaderMap| async move {
+                    assert_eq!(headers["authorization"], format!("Bearer {token}"));
+                    axum::Json(json!({"ok":true,"data":{"generation":token}}))
+                }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            std::fs::write(
+                &bridge.runtime_path,
+                json!({"address":address.to_string(),"token":token}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                bridge_request(&bridge, json!({"action":"listTools"}))
+                    .await
+                    .unwrap(),
+                json!({"generation":token})
+            );
+            server.abort();
+        }
+        std::fs::remove_file(&bridge.runtime_path).unwrap();
+        assert_eq!(
+            bridge_request(&bridge, json!({"action":"listTools"}))
+                .await
+                .unwrap_err(),
+            "Computer use bridge record is unavailable"
+        );
+    }
+
+    async fn pending_bridge() -> (
+        BridgeClient,
+        oneshot::Receiver<()>,
+        JoinHandle<()>,
+        tempfile::TempDir,
+    ) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
+        let home = tempfile::tempdir().unwrap();
+        let runtime_path = home.path().join("bridge.json");
+        std::fs::write(
+            &runtime_path,
+            json!({"address":listener.local_addr().unwrap().to_string(),"token":"test-token"})
+                .to_string(),
+        )
+        .unwrap();
         let (entered, received) = oneshot::channel();
         let closed = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
@@ -309,18 +415,18 @@ mod tests {
         (
             BridgeClient {
                 client: reqwest::Client::builder().no_proxy().build().unwrap(),
-                url,
-                token: "test-token".into(),
+                runtime_path,
             },
             received,
             closed,
+            home,
         )
     }
 
     #[tokio::test]
     async fn cancellation_closes_http_while_pending_calls_do_not_block_ping() {
         for request_id in [json!(1), json!("session-start")] {
-            let (bridge, entered, closed) = pending_bridge().await;
+            let (bridge, entered, closed, _home) = pending_bridge().await;
             let (client, server) = tokio::io::duplex(8192);
             let (input, output) = tokio::io::split(server);
             let adapter = tokio::spawn(run_with_io(bridge, BufReader::new(input), output));
@@ -388,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn stdin_eof_closes_pending_http_requests() {
-        let (bridge, entered, closed) = pending_bridge().await;
+        let (bridge, entered, closed, _home) = pending_bridge().await;
         let (mut writer, input) = tokio::io::duplex(8192);
         let adapter = tokio::spawn(run_with_io(
             bridge,

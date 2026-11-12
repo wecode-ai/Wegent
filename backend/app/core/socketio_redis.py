@@ -122,6 +122,11 @@ class ObservedRedisManager(AsyncRedisManager):
 
     async def run_ack_probe(self, interval_seconds: float) -> None:
         """Check independently of HTTP traffic and local Socket.IO connections."""
+        # Keep the subscriber active before its blocking read expires. Otherwise
+        # a healthy idle connection closes and loses callbacks while resubscribing.
+        socket_timeout = self.redis_options.get("socket_timeout")
+        if socket_timeout is not None:
+            interval_seconds = min(interval_seconds, socket_timeout / 2)
         while True:
             await self.check_ack()
             await asyncio.sleep(interval_seconds)

@@ -59,6 +59,7 @@ from app.services.device.identity import (
     resolve_owned_device_alias,
 )
 from app.services.device.runtime_route import runtime_device_route_id
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.ghost_capabilities import (
     load_ghost_chain,
     merge_ghost_capabilities,
@@ -265,6 +266,7 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
     }
 
 
+@execution_resource_scope()
 def compiled_bot_config(
     db: Session,
     row: ProjectChatAgent,

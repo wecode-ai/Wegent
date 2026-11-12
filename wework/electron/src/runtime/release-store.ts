@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, relative } from 'node:path'
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { removePhysicalRelease } from './physical-release-files.js'
 import { serializePathOperation } from './path-operation-queue.js'
 import { parseRollbackHistory, type ReleaseRollbackRecord } from './release-update-history.js'
@@ -45,6 +45,23 @@ export function releaseId(value: string): string {
   return value
 }
 
+async function existingReleasePath(value: string): Promise<string | undefined> {
+  if (typeof value !== 'string' || !isAbsolute(value)) return undefined
+  try {
+    return await realpath(value)
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+      return undefined
+    throw error
+  }
+}
+
+/** Match actual delivered paths, preserving rejection of absent or relative paths. */
+export async function sameReleasePath(first: string, second: string): Promise<boolean> {
+  const [left, right] = await Promise.all([existingReleasePath(first), existingReleasePath(second)])
+  return left !== undefined && left === right
+}
+
 export async function optionalText(path: string): Promise<string | null> {
   try {
     return (await readFile(path, 'utf8')).trimEnd()
@@ -69,6 +86,16 @@ export class ReleaseStore {
 
   slot(id: string): string {
     return join(this.root, 'slots', releaseId(id))
+  }
+
+  async isSlotExecutable(executable: string): Promise<boolean> {
+    const [slots, actual] = await Promise.all([
+      existingReleasePath(join(this.root, 'slots')),
+      existingReleasePath(executable),
+    ])
+    if (!slots || !actual) return false
+    const child = relative(slots, actual)
+    return child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child)
   }
 
   async read(id: string): Promise<DesktopRelease> {

@@ -631,6 +631,16 @@ docker kill <executor-container-id>
 
 ---
 
+### 协作小组分配提示没有匹配的项目授权环境
+
+项目中显示在线设备，只能证明设备在目录中可见。分配协作小组时，后端还会检查每个机器人配置的执行环境及模型，并要求所有成员有共同可用的设备。先保留失败现场，按同一请求的追踪标识关联以下 Backend 警告日志：
+
+- `group_member_routing_denied`：包含 `project_id`、`issue_id`、`group_id`、机器人 `agent_id` / `agent_name`、小组成员引用和错误码，定位失败成员。
+- `runner_environment_denied`：包含实际解析后的 `execution_policy`、`authorized_environment_ids`、设备 ID / 名称 / 路由标识 / namespace / 活跃状态，以及空间和项目两级原始授权记录的 ID、scope、role、status。根据目标设备 ID 对比两级记录，区分授权缺失、未批准、角色不足、固定设备未获授权或设备记录失效。`phase=configuration_validation` 表示失败发生在机器人创建或配置校验阶段；`phase=execution` 表示执行环境筛选失败。旧绑定另有 `agent_device_id`、`agent_authorization_version` 和 `legacy_device_revocations`，用于核对历史授权。
+- `group_runner_intersection_empty`：每个成员都通过了单独校验，但 `member_candidate_environment_ids` 没有公共设备，需比较各成员的环境和模型策略。
+
+这些诊断不会改变权限判断或 API 错误码；详细授权查询仅在环境拒绝时运行。日志不输出完整设备配置、模型凭据或令牌。部署包含诊断代码的 Backend 后重现一次失败，再根据记录定位问题；仅有 HTTP 422 访问日志不足以认定具体原因。
+
 ## ⚡ 性能问题
 
 ### 问题 13: 系统响应慢

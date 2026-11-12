@@ -3042,6 +3042,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "wegent-executor-test-support",
  "wegent-runtime-config",
  "wegent-subprocess",
 ]
@@ -3218,6 +3219,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "wegent-runtime-logging",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
