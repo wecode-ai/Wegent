@@ -28,7 +28,10 @@ export function PersonalHomeIssuePanel({
   refreshKey: number
 }) {
   const { t } = useTranslation('common')
-  const publishUpdated = useStableEvent(onUpdated)
+  const publishUpdated = useStableEvent((item: CollaborationIssue) => {
+    if (item.title !== issue.title || item.version !== issue.version)
+      onUpdated({ ...issue, ...item })
+  })
   const [snapshot, setSnapshot] = useState<{
     api: SharedWorkspaceApi
     id: string
@@ -62,8 +65,7 @@ export function PersonalHomeIssuePanel({
             taskBindings,
           },
         })
-        if (item.title !== issue.title || item.version !== issue.version)
-          publishUpdated({ ...issue, ...item })
+        publishUpdated(item)
       }
     })().catch(() => {
       if (current) setSnapshot({ api, id: issue.id, failed: true })

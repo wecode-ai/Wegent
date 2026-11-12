@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import String, and_, case, cast, func, literal, or_, select
+from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select
 
 from app.models.delivery import LoopItem, LoopItemTaskBinding, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
@@ -106,7 +106,7 @@ def attention_order(user_id: int, assigned_only: bool, order: str = "attention")
             else_=4,
         )
         if assigned_only or order == "priority"
-        else literal(0)
+        else cast(literal(0), Integer)
     )
     comment_at = (
         select(func.max(nodes.c.created_at))
@@ -137,7 +137,7 @@ def attention_order(user_id: int, assigned_only: bool, order: str = "attention")
             (LoopItem.status.in_(["completed", "cancelled", "archived"]), 4), else_=0
         )
         if order != "priority":
-            priority = literal(0)
+            priority = cast(literal(0), Integer)
     if order == "assignment":
         index = LoopItem.__table__.alias("attention_assignment")
         event = LoopItem.__table__.alias("attention_assignment_event")

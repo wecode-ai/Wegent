@@ -409,7 +409,11 @@ export function WeworkPersonalHome({
         className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
         data-testid="personal-home"
       >
-        <main className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:p-8">
+        <main
+          aria-busy={state.loading}
+          data-testid="personal-home-items-region"
+          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:p-8"
+        >
           <div className="w-full max-w-6xl">
             <header className="mb-7 flex items-start justify-between gap-4">
               <div>

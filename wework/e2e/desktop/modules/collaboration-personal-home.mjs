@@ -38,7 +38,10 @@ export async function handlePersonalHomeModel(request, response, url) {
 }
 
 /** Uses the shared-core scenario's real project, Issue and Executor fixtures. */
-export async function verifyCollaborationPersonalHome(control, { scoped, project, issue }) {
+export async function verifyCollaborationPersonalHome(
+  control,
+  { scoped, project, issue, cloudAvailable = true }
+) {
   await control.command(
     'click',
     inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
@@ -50,6 +53,35 @@ export async function verifyCollaborationPersonalHome(control, { scoped, project
     text: issue.title,
   })
   await control.command('waitFor', scoped('[data-testid="personal-home-work-list"]'))
+  for (const order of ['assignment', 'activity', 'priority', 'attention']) {
+    await control.command('fill', scoped('[data-testid="personal-home-sort"]'), { value: order })
+    await control.command(
+      'waitFor',
+      scoped('[data-testid="personal-home-items-region"][aria-busy="false"]')
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped('[data-testid="personal-home-items-region"] [role="alert"]')
+        )
+      ),
+      cloudAvailable ? 0 : 1,
+      cloudAvailable
+        ? `Both stores must load successfully with ${order} ordering`
+        : `Unavailable cloud must remain visible without blocking local ${order} ordering`
+    )
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          scoped(`[data-testid="personal-home-issue-${issue.id}"]`)
+        )
+      ),
+      1,
+      'The local Issue remains available after every ordering request'
+    )
+  }
   assert.equal(
     Number(
       await control.command(
@@ -266,6 +298,16 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
   await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
     text: HOME_TASK_RESULT,
   })
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid="ai-chat-modal"] [data-testid="runtime-transcript-error"]')
+      )
+    ),
+    0,
+    'Reopening the linked task must load its real conversation without a history error'
+  )
   await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
   assert.equal(
     await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
