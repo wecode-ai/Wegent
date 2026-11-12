@@ -29,7 +29,7 @@ use crate::http_compat::FastApiError;
 use crate::internal_callback::completion;
 use crate::state::AppState;
 
-use super::dispatch::{self, ExecutionRequest};
+use super::dispatch::ExecutionRequest;
 use super::executor_client::{DEFAULT_EXECUTOR_MANAGER_URL, EXECUTOR_MANAGER_URL_ENV};
 use super::request::{BuildExecutionRequestInput, build_execution_request};
 use super::response_object::ResponseObject;
@@ -161,7 +161,7 @@ pub async fn dispatch_create(
     // before the user/team reloads and this builder), so the response
     // timestamp never includes their work.
     let created_at = input.created_at;
-    let request = match build_execution_request(
+    let mut request = match build_execution_request(
         state,
         &BuildExecutionRequestInput {
             user_id: input.user_id,
@@ -234,17 +234,12 @@ pub async fn dispatch_create(
         input.stream,
         input.background,
     );
-    // `ExecutionDispatcher.dispatch`: `_recover_executor_if_needed`
-    // (`dispatcher.py:117`) reads the assistant subtask with its contexts
-    // before `_update_subtask_to_running` (`:166`). The HTTP+Callback
-    // streaming branch subscribes to its channel first
-    // (`openapi_responses.py:1352-1370`), so its dispatch chain runs inside
-    // that branch's stream; every other branch keeps the chain here.
-    if branch != CreateBranch::CallbackStream {
-        super::recover_executor::recover_executor_if_needed(state, &request).await;
-        // `_update_subtask_to_running` (`dispatcher.py:166`): every dispatch
-        // mode flips the assistant subtask to RUNNING before it is dispatched,
-        // and the committed change re-derives the Task CRD's status.
+    // Executor recovery runs inside the dispatch job. A callback stream
+    // subscribes before submitting it, and a queued create can return promptly.
+    if branch != CreateBranch::CallbackStream
+        && target.mode != routing::CommunicationMode::HttpCallback
+    {
+        recover_before_dispatch(state, &mut request, None).await?;
         mark_subtask_running(state, request.subtask_id).await;
     }
     if matches!(branch, CreateBranch::CallbackStream | CreateBranch::Queued) {
@@ -685,22 +680,17 @@ async fn set_subtask_executor(
     Ok(())
 }
 
-/// The HTTP+Callback dispatch chain (`dispatcher.py:117-180,730-747`):
-/// `_recover_executor_if_needed`, `_update_subtask_to_running` (the subtask
-/// UPDATE, its after-commit run metrics, and the Task CRD status), then the
-/// fire-and-forget executor POST. The streaming branch runs it after its
-/// channel subscription so the recorded order is SUBSCRIBE, subtask update,
-/// metrics, task update, POST, `chat:start`.
+/// Submit the dispatch after the response stream subscribes to its callbacks.
 pub(super) async fn dispatch_executor_after_subscribe(
     state: &AppState,
-    request: &ExecutionRequest,
+    request: &mut ExecutionRequest,
     target_url: Option<&str>,
     request_id: &str,
-) {
-    super::recover_executor::recover_executor_if_needed(state, request).await;
-    mark_subtask_running(state, request.subtask_id).await;
+) -> Result<(), FastApiError> {
     if let Some(url) = target_url {
         if super::package_runtime::is_target(url) {
+            recover_before_dispatch(state, request, None).await?;
+            mark_subtask_running(state, request.subtask_id).await;
             enqueue_chat_shell_dispatch(state, Some(url), request.clone(), request_id);
         } else {
             // The OpenAPI streaming path creates no Task of its own, so its
@@ -708,6 +698,39 @@ pub(super) async fn dispatch_executor_after_subscribe(
             enqueue_executor_dispatch(state, url, request, None);
         }
     }
+    Ok(())
+}
+
+pub(crate) async fn recover_before_dispatch(
+    state: &AppState,
+    request: &mut ExecutionRequest,
+    device_id: Option<&str>,
+) -> Result<(), FastApiError> {
+    let Err(error) =
+        super::recover_executor::recover_executor_if_needed(state, request, device_id).await
+    else {
+        return Ok(());
+    };
+    let message = error.to_string();
+    tracing::warn!(
+        task_id = request.task_id,
+        subtask_id = request.subtask_id,
+        %error,
+        "executor recovery failed"
+    );
+    crate::responses::dispatch::finalize_executor_failure(
+        &crate::responses::dispatch::ConsumerState::from_app(state),
+        request.task_id,
+        request.subtask_id,
+        request.user_id,
+        request.message_id,
+        (&message, "container_error"),
+    )
+    .await;
+    Err(FastApiError::detail(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        message,
+    ))
 }
 
 /// `_dispatch_http_callback`: admit the fire-and-forget executor-manager
@@ -719,8 +742,6 @@ pub(super) fn enqueue_executor_dispatch(
     request: &ExecutionRequest,
     created_task: Option<crate::internal_callback::emitter::CreatedTask>,
 ) {
-    let payload = dispatch::assemble(request, false, true);
-    let body = serde_json::to_value(&payload).unwrap_or(Value::Null);
     let url = super::executor_client::executor_responses_url(target_url);
     state
         .responses_dispatch
@@ -731,7 +752,9 @@ pub(super) fn enqueue_executor_dispatch(
             user_id: request.user_id,
             message_id: request.message_id,
             url,
-            body,
+            body: crate::responses::dispatch::ExecutorDispatchBody::Recover(Box::new(
+                request.clone(),
+            )),
             start: state
                 .redis
                 .clone()
@@ -817,12 +840,11 @@ pub(super) fn sse_stream_response(stream: BodyStream) -> HttpResponse<BodyStream
 /// fire-and-forget POST plus its `chat:start` acknowledgement.
 pub(crate) async fn dispatch_chat_turn(
     state: &AppState,
-    request: &ExecutionRequest,
+    request: &mut ExecutionRequest,
     request_id: &str,
     created_task: Option<crate::internal_callback::emitter::CreatedTask>,
     device_id: Option<&str>,
 ) -> Result<(), FastApiError> {
-    super::recover_executor::recover_executor_if_needed(state, request).await;
     // `dispatcher.py:121-127`: resolve the device route before routing and
     // before the subtask turns RUNNING.
     let resolved_device = resolve_device_route_id(state, request, device_id).await?;
@@ -843,6 +865,14 @@ pub(crate) async fn dispatch_chat_turn(
             == Some("video"),
         model_protocol: request.model_config.get("protocol").and_then(Value::as_str),
     });
+    if target.mode == routing::CommunicationMode::HttpCallback {
+        let Some(url) = target.url.as_deref() else {
+            return Err(FastApiError::internal());
+        };
+        enqueue_executor_dispatch(state, url, request, created_task);
+        return Ok(());
+    }
+    recover_before_dispatch(state, request, device_id).await?;
     mark_subtask_running(state, request.subtask_id).await;
     if target.mode == routing::CommunicationMode::Websocket {
         let Some(route) = resolved_device.as_deref() else {
@@ -891,8 +921,6 @@ pub(crate) async fn dispatch_chat_turn(
             .submit(crate::responses::dispatch::DefaultDispatchJob::ChatShell(
                 Box::new(job),
             ));
-    } else {
-        enqueue_executor_dispatch(state, url, request, created_task);
     }
     Ok(())
 }

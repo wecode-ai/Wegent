@@ -141,13 +141,19 @@ pub(crate) fn start_event<R: Redis>(
     }
 }
 
+/// Input to an executor dispatch job.
+pub(crate) enum ExecutorDispatchBody {
+    Prepared(Value),
+    Recover(Box<ExecutionRequest>),
+}
+
 /// One background dispatch the create flow hands to the supervisor.
 pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `_dispatch_http_callback`: `POST {target}/v1/responses` with
     /// `stream=false, background=true`, then the `chat:start` emit.
     Executor {
         url: String,
-        body: Value,
+        body: ExecutorDispatchBody,
         start: Option<ExecutorStart<R>>,
         consumer: Box<ConsumerState<M, R>>,
         task_id: i64,
@@ -385,18 +391,52 @@ where
             subtask_id,
             user_id,
             message_id,
-        } => match send_executor(http, &url, &body).await {
-            Ok(()) => {
-                if let Some(start) = start {
-                    emit_executor_start(start).await;
+        } => {
+            let body = match body {
+                ExecutorDispatchBody::Prepared(body) => body,
+                ExecutorDispatchBody::Recover(mut request) => {
+                    let Some(app) = consumer.app.upgrade() else {
+                        tracing::warn!(
+                            task_id,
+                            subtask_id,
+                            "application stopped before executor dispatch"
+                        );
+                        return;
+                    };
+                    if super::create::seam::recover_before_dispatch(&app, &mut request, None)
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    super::create::seam::mark_subtask_running(&app, subtask_id).await;
+                    let payload = super::create::dispatch::assemble(&request, false, true);
+                    serde_json::to_value(payload).unwrap_or(Value::Null)
+                }
+            };
+            match send_executor(http, &url, &body).await {
+                Ok(()) => {
+                    if let Some(start) = start {
+                        emit_executor_start(start).await;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
+                    finalize_executor_failure(
+                        &consumer,
+                        task_id,
+                        subtask_id,
+                        user_id,
+                        message_id,
+                        (
+                            "Could not dispatch execution to the executor",
+                            "EXECUTOR_DISPATCH_FAILED",
+                        ),
+                    )
+                    .await;
                 }
             }
-            Err(error) => {
-                tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
-                finalize_executor_failure(&consumer, task_id, subtask_id, user_id, message_id)
-                    .await;
-            }
-        },
+        }
         DispatchJob::ChatShell(job) => {
             let _ = run_chat_shell(*job).await;
         }
@@ -442,12 +482,13 @@ async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
     }
 }
 
-async fn finalize_executor_failure<M: Mysql, R: Redis>(
+pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
     consumer: &ConsumerState<M, R>,
     task_id: i64,
     subtask_id: i64,
     user_id: i64,
     message_id: Option<i64>,
+    (message, code): (&str, &str),
 ) {
     use crate::internal_callback::{
         completion, emitter,
@@ -469,8 +510,6 @@ async fn finalize_executor_failure<M: Mysql, R: Redis>(
         tables: consumer.tables,
         executor_manager: &consumer.executor_manager,
     };
-    let message = "Could not dispatch execution to the executor";
-    let code = "EXECUTOR_DISPATCH_FAILED";
     let result = completion::complete_terminal_event(
         &ctx,
         task_id,
@@ -487,6 +526,11 @@ async fn finalize_executor_failure<M: Mysql, R: Redis>(
     event.message_id = message_id;
     event.error = Some(message.to_owned());
     event.error_code = Some(code.to_owned());
+    if let Err(error) =
+        crate::internal_callback::session::publish_callback_event(redis, subtask_id, &event).await
+    {
+        tracing::warn!(%error, task_id, subtask_id, "executor failure callback publish failed");
+    }
     if let Err(error) = emitter::emit_terminal_frames(
         redis,
         &event,

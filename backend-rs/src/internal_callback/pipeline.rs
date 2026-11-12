@@ -222,8 +222,10 @@ async fn dispatch_execution(
                 user_id: execution.user_id,
                 message_id: execution.message_id,
                 url: executor_client::executor_responses_url(url),
-                body: serde_json::to_value(dispatch::assemble(&execution, false, true))
-                    .map_err(|_| FastApiError::internal())?,
+                body: crate::responses::dispatch::ExecutorDispatchBody::Prepared(
+                    serde_json::to_value(dispatch::assemble(&execution, false, true))
+                        .map_err(|_| FastApiError::internal())?,
+                ),
                 start: state
                     .redis
                     .clone()

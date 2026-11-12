@@ -771,7 +771,7 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             &http,
             DispatchJob::Executor {
                 url,
-                body: json!({}),
+                body: ExecutorDispatchBody::Prepared(json!({})),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
                 consumer: Box::new(consumer(mysql.clone(), redis.clone())),
                 task_id: TASK_ID,
@@ -801,6 +801,11 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             .unwrap_or_else(|| panic!("missing chat:error in {:?}", redis.calls()));
         assert_eq!(error["data"][0]["subtask_id"], SUBTASK_ID);
         assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
+        let callback = frames
+            .iter()
+            .find(|frame| frame["type"] == "error" && frame["subtask_id"] == SUBTASK_ID)
+            .expect("the Responses stream also receives the terminal error");
+        assert_eq!(callback["error_code"], "EXECUTOR_DISPATCH_FAILED");
         assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
     }
 }
