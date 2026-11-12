@@ -168,7 +168,7 @@ export function createDesktopScenario(options) {
   let officialCalls = 0
   let officialFailures = 0
   let cloudRetryCalls = 0
-  let retryTaskId, retryThreadId, retryMessageIds, recoveredHistory
+  let retryTaskId, retryThreadId, retryMessageIds, retrySameNativeThread, recoveredHistory
   return {
     ...catalog,
     appEnvironment,
@@ -250,6 +250,7 @@ export function createDesktopScenario(options) {
         retryTaskId,
         retryThreadId,
         retryMessageIds,
+        retrySameNativeThread,
       })
       if (retryEvidence) recoveredHistory = retryEvidence
       calls.set(name, (calls.get(name) ?? 0) + 1)
@@ -424,6 +425,7 @@ export function createDesktopScenario(options) {
           'An explicit legacy provider lookup must resolve through the owning Runtime'
         )
         assert.equal(resolved.runtimeHandle.modelProviderRouting, 'thread')
+        retrySameNativeThread = true
         assert.deepEqual(resolved.runtimeHandle.activeModelProvider, {
           threadId: primaryThreadId,
           provider: '~',
