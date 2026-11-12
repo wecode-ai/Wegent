@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -317,7 +317,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       assert.equal(await fallbackManager.rollbackStartup(), false);
       assert.equal(await fs.readFile(statePath, 'utf8'), sharedState);
       await assert.rejects(fs.lstat(home), { code: 'ENOENT' });
-      process.stdout.write(JSON.stringify({
+      await fs.writeFile(path.join(input.root, 'compatibility-evidence.json'), JSON.stringify({
         compatibleExecutorAccepted: true,
         nativeFileLockMutualExclusion: true,
         incompatibleExecutorRejectedBeforeHomeWrites: true,
@@ -340,7 +340,8 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   // Packaged executables always launch their own app; use the matching Electron toolchain
   // to import the packaged modules with real Electron APIs available.
   const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
-  const { stdout } = await promisify(execFile)(
+  const evidencePath = join(root, 'compatibility-evidence.json')
+  await promisify(execFile)(
     require('electron'),
     [scriptPath, JSON.stringify(input), ...resolveElectronLaunchArguments()],
     {
@@ -349,7 +350,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       maxBuffer: 1024 * 1024,
     }
   )
-  const evidence = JSON.parse(stdout)
+  const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
   if (macosLogStartup) evidence.macosLogStartup = macosLogStartup
   evidence.missingDesktopUserData = missingDesktopUserData
   if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup

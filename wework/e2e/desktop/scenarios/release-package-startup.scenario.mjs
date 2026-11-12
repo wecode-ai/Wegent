@@ -4,6 +4,7 @@ import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
 import { waitForStartupAttempt } from '../modules/cold-package-startup.mjs'
+import { resolveElectronLaunchArguments } from '../modules/electron-launch-arguments.mjs'
 import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
 
 const PROFILE_NAME = 'wework-core'
@@ -359,12 +360,16 @@ export async function createDesktopScenario({
     usesReleasePackageRuntimeAssets: true,
 
     async prepareApp({ appBinary, appEnvironment }) {
-      const preparation = spawnSync(appBinary, [INSTALLED_PREPARATION_ARGUMENT], {
-        env: appEnvironment,
-        encoding: 'utf8',
-        timeout: INSTALL_PREPARATION_TIMEOUT_MS,
-        windowsHide: true,
-      })
+      const preparation = spawnSync(
+        appBinary,
+        [INSTALLED_PREPARATION_ARGUMENT, ...resolveElectronLaunchArguments()],
+        {
+          env: appEnvironment,
+          encoding: 'utf8',
+          timeout: INSTALL_PREPARATION_TIMEOUT_MS,
+          windowsHide: true,
+        }
+      )
       await writeFile(
         join(resultDir, 'install-preparation.log'),
         `${preparation.stdout}${preparation.stderr}`
