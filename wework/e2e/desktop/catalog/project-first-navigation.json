@@ -1,0 +1,17 @@
+{
+  "order": 23010,
+  "scenario": "./scenarios/project-first-navigation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 23010,
+      "shard": 8,
+      "position": 14010
+    }
+  },
+  "paths": [
+    "packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx",
+    "wework/src/features/todo/ProjectSpacePickerMenu.tsx",
+    "wework/src/features/todo/projectSpacePickerModel.ts"
+  ]
+}

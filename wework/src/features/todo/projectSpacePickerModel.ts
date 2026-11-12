@@ -16,7 +16,8 @@ export type ProjectSpacePickerOrder = 'name-asc' | 'name-desc'
 
 export function projectSpacePickerEntries(
   projects: CloudProject[],
-  labels: { local: string; cloud: string }
+  labels: { local: string; cloud: string },
+  grouping: 'storage' | 'workspace' = 'workspace'
 ): ProjectSpacePickerEntry[] {
   return projects.map(project => {
     const workspace = project.workspace_context
@@ -24,8 +25,13 @@ export function projectSpacePickerEntries(
       key: projectKey(project),
       project,
       group: {
-        key: workspace ? `${project.project_store}:${workspace.id}` : project.project_store,
-        label: workspace?.name ?? labels[project.project_store === 'local' ? 'local' : 'cloud'],
+        key:
+          grouping === 'workspace' && workspace
+            ? `${project.project_store}:${workspace.id}`
+            : project.project_store,
+        label:
+          (grouping === 'workspace' ? workspace?.name : undefined) ??
+          labels[project.project_store === 'local' ? 'local' : 'cloud'],
       },
     }
   })
@@ -39,7 +45,7 @@ export function searchProjectSpaceEntries(
   const terms = normalize(query).trim().split(/\s+/).filter(Boolean)
   return entries.filter(({ project, group }) => {
     const text = normalize(
-      `${project.name}\n${group.label}\n${project.project_key}\n${project.public_id}`
+      `${project.name}\n${group.label}\n${project.workspace_context?.name ?? ''}\n${project.project_key}\n${project.public_id}`
     )
     return terms.every(term => text.includes(term))
   })
@@ -55,7 +61,10 @@ export function sortProjectSpaceEntries(
   return [...entries].sort(
     (left, right) =>
       direction * collator.compare(left.project.name, right.project.name) ||
-      collator.compare(left.group.label, right.group.label) ||
+      collator.compare(
+        left.project.workspace_context?.name ?? left.group.label,
+        right.project.workspace_context?.name ?? right.group.label
+      ) ||
       collator.compare(left.key, right.key)
   )
 }
