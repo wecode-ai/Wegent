@@ -125,6 +125,39 @@ def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
     assert [item.subtask.id for item in items] == [1, 2]
 
 
+def test_resolve_for_fork_does_not_limit_parent_reads(monkeypatch):
+    root = _task(1, 7)
+    fork = _task(
+        2,
+        7,
+        fork={"sourceTaskId": 1, "afterMessageId": 3, "rootTaskId": 1},
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        "app.services.task_fork_history.task_store.get_by_id",
+        lambda db, task_id, owner_user_id=None: {1: root, 2: fork}.get(task_id),
+    )
+
+    def list_by_task_ordered(_db, *, task_id, owner_user_id=None, recent_limit=None):
+        calls.append((task_id, recent_limit))
+        return []
+
+    monkeypatch.setattr(
+        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
+        list_by_task_ordered,
+    )
+
+    task_fork_history_resolver.resolve_for_task(
+        db=None,
+        task_id=2,
+        user_id=7,
+        limit=2,
+    )
+
+    assert calls == [(1, None), (2, 2)]
+
+
 def test_resolve_for_fork_uses_parent_cutoff(monkeypatch):
     root = _task(1, 7)
     fork = _task(

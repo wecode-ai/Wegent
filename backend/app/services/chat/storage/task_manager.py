@@ -889,7 +889,7 @@ async def create_task_and_subtasks(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=existing_subtasks,
+                existing_subtasks=session.memory_history,
                 current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,

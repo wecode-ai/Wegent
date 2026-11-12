@@ -150,8 +150,43 @@ def test_list_by_task_ordered_can_load_only_recent_rows(test_db: Session) -> Non
     )
 
     assert [subtask.id for subtask in subtasks] == [72, 73]
+    assert [subtask.message_id for subtask in subtasks] == [2, 3]
     assert (
         store.list_by_task_ordered(test_db, task_id=7, owner_user_id=10, recent_limit=0)
+        == []
+    )
+
+
+def test_list_completed_recent_by_task_loads_latest_rows(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(8, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(
+                subtask_id=81,
+                task_id=8,
+                user_id=10,
+                message_id=1,
+                status=SubtaskStatus.PENDING,
+            ),
+            _subtask(subtask_id=82, task_id=8, user_id=10, message_id=2),
+            _subtask(subtask_id=83, task_id=8, user_id=10, message_id=3),
+        ]
+    )
+    test_db.commit()
+
+    subtasks = store.list_completed_recent_by_task(
+        test_db,
+        task_id=8,
+        limit=1,
+        owner_user_id=10,
+    )
+
+    assert [subtask.id for subtask in subtasks] == [83]
+    assert (
+        store.list_completed_recent_by_task(
+            test_db, task_id=8, limit=0, owner_user_id=10
+        )
         == []
     )
 

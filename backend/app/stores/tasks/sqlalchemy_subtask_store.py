@@ -674,6 +674,28 @@ class SqlAlchemySubtaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.order_by(Subtask.message_id.asc()).all()
 
+    def list_completed_recent_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        limit: int,
+        owner_user_id: Optional[int] = None,
+    ) -> list[Subtask]:
+        if limit <= 0:
+            return []
+        query = db.query(Subtask.id).filter(
+            Subtask.task_id == task_id,
+            Subtask.status == SubtaskStatus.COMPLETED,
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        rows = (
+            query.order_by(Subtask.message_id.desc(), Subtask.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return self._load_ordered(db, [row[0] for row in rows][::-1])
+
     def get_retry_assistant(
         self,
         db: Session,
@@ -849,13 +871,17 @@ class SqlAlchemySubtaskStore:
         if recent_limit is not None:
             if recent_limit <= 0:
                 return []
-            query = query.order_by(None).order_by(Subtask.id.desc()).limit(recent_limit)
+            query = (
+                query.order_by(None)
+                .order_by(Subtask.message_id.desc(), Subtask.created_at.desc())
+                .limit(recent_limit)
+            )
             recent_rows = query.all()
-            subtasks = self._load_ordered(db, [row[0] for row in recent_rows][::-1])
-            self._attach_sender_user_names(db, subtasks)
-            return subtasks
-        rows = query.all()
-        subtasks = self._load_ordered(db, [row[0] for row in rows])
+            subtask_ids = [row[0] for row in recent_rows][::-1]
+        else:
+            rows = query.all()
+            subtask_ids = [row[0] for row in rows]
+        subtasks = self._load_ordered(db, subtask_ids)
         self._attach_sender_user_names(db, subtasks)
         return subtasks
 

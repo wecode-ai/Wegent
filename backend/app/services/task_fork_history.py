@@ -66,7 +66,12 @@ class TaskForkHistoryResolver:
                 db,
                 task_id=node.task.id,
                 owner_user_id=node.task.user_id,
-                recent_limit=limit,
+                recent_limit=(
+                    None
+                    if node.inherited_cutoff is not None
+                    or before_message_id is not None
+                    else limit
+                ),
             )
             for subtask in subtasks:
                 if (

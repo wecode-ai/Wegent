@@ -792,6 +792,15 @@ class SubtaskStore(Protocol):
         owner_user_id: Optional[int] = None,
     ) -> list[Subtask]: ...
 
+    def list_completed_recent_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        limit: int,
+        owner_user_id: Optional[int] = None,
+    ) -> list[Subtask]: ...
+
     def get_retry_assistant(
         self,
         db: Session,
