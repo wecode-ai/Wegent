@@ -148,6 +148,30 @@ describe('bound remote task model selection', () => {
     })
   })
 
+  it('keeps a just-picked model sendable before the catalog refresh catches up', () => {
+    const store = modelStore([])
+    store.hasSelectionForScope.mockReturnValue(true)
+    store.getSelectedModelForScope.mockReturnValue({
+      name: 'newly-created-model',
+      type: 'public',
+      provider: 'openai',
+    })
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({ userId: 7, resolveTask: () => null, modelStore: store })
+    )
+
+    expect(
+      result.current.resolveRuntimeTaskModelSelection({
+        deviceId: 'remote-device',
+        taskId: 'runtime-12',
+      })
+    ).toMatchObject({
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: { name: 'newly-created-model' },
+    })
+  })
+
   it('reads a picked model from the synchronous store before React commits the state update', () => {
     const store = modelStore([{ name: 'picked-model', type: 'runtime', provider: 'local' }])
     store.selectedModelByScope['user:7:runtime:remote-device:runtime-4'] = {
@@ -207,6 +231,82 @@ describe('bound remote task model selection', () => {
       selectionReady: true,
       selectedModel: { name: 'saved-model' },
       selectedModelOptions: { collaborationMode: 'plan' },
+    })
+  })
+
+  it('keeps saved routing options when a scoped entry only overrides options', () => {
+    const savedAddress = { deviceId: 'remote-device', taskId: 'runtime-10' }
+    const store = modelStore([{ name: 'saved-model', type: 'runtime', provider: 'local' }])
+    store.hasSelectionForScope.mockReturnValue(true)
+    store.getSelectedModelForScope.mockReturnValue(null)
+    store.getSelectedModelOptionsForScope.mockReturnValue({ collaborationMode: 'plan' })
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: target =>
+          target.taskId === savedAddress.taskId
+            ? {
+                taskId: target.taskId,
+                workspacePath: '/workspace',
+                title: 'Saved routing',
+                runtime: 'codex',
+                running: false,
+                modelSelection: {
+                  modelName: 'saved-model',
+                  modelType: 'runtime',
+                  options: { runnerModelProvider: 'native-provider' },
+                },
+              }
+            : null,
+        modelStore: store,
+      })
+    )
+
+    expect(result.current.resolveRuntimeTaskModelSelection(savedAddress)).toMatchObject({
+      selectedModel: { name: 'saved-model' },
+      selectedModelOptions: {
+        runnerModelProvider: 'native-provider',
+        collaborationMode: 'plan',
+      },
+    })
+  })
+
+  it('does not report a saved selection ready when its provider identity is gone', () => {
+    const savedAddress = { deviceId: 'remote-device', taskId: 'runtime-11' }
+    const store = modelStore([
+      {
+        name: 'saved-model',
+        type: 'runtime',
+        provider: 'local',
+        config: { codexProviderId: 'current-provider' },
+      },
+    ])
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({
+        userId: 7,
+        resolveTask: target =>
+          target.taskId === savedAddress.taskId
+            ? {
+                taskId: target.taskId,
+                workspacePath: '/workspace',
+                title: 'Removed provider',
+                runtime: 'codex',
+                running: false,
+                modelSelection: {
+                  modelName: 'saved-model',
+                  modelType: 'runtime',
+                  options: { codexProviderId: 'removed-provider' },
+                },
+              }
+            : null,
+        modelStore: store,
+      })
+    )
+
+    expect(result.current.resolveRuntimeTaskModelSelection(savedAddress)).toMatchObject({
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: { name: 'saved-model' },
     })
   })
 

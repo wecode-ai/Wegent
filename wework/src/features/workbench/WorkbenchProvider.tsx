@@ -1076,6 +1076,7 @@ function OwnedWorkbenchProvider({
     isOptionsLocked,
     attachmentSelection,
     modelSelection,
+    resolveRuntimeTaskModelSelection,
     skillSelection,
     refreshWorkLists,
   })
