@@ -13,10 +13,13 @@ import {
   createIssueBoardCardLabels,
   issueNeedsUser,
   pendingIssueHumanRequests,
+  IssueDetailDraftProvider,
 } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { PersonalHomeIssueActivity } from './PersonalHomeIssueActivity'
-import { usePersonalHomeIssues } from './usePersonalHomeIssues'
+import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
+import { personalHomeAssignmentAt, personalHomeAssignmentDuration } from './personalHomeAssignment'
+import { useSidebarRelativeTimeRefresh } from '@/components/layout/runtimeSidebarTime'
 import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
 import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
 
@@ -28,6 +31,7 @@ export interface PersonalHomeIssueDetailContext {
   onOpenIssue(issue: WorkspaceMyWorkItem): void
   onClose?(): void
   onExpandedChange?(expanded: boolean): void
+  onOpenInProject?(): void
   taskRequest?: {
     key: string
     binding?: WorkspaceTaskBinding
@@ -53,11 +57,15 @@ function PersonalIssueList({
   onOpenIssue,
   active,
   onOpenTask,
+  recentIssue,
+  order,
 }: {
   userId: number
   localUserIds?: readonly (string | number)[]
   active: boolean
   onOpenTask(issue: WorkspaceMyWorkItem, binding: WorkspaceTaskBinding): void
+  recentIssue?: WorkspaceMyWorkItem
+  order: PersonalHomeIssueOrder
   state: ReturnType<typeof usePersonalHomeIssues>
   projects: CollaborationProject[]
   showCompleted: boolean
@@ -65,20 +73,49 @@ function PersonalIssueList({
   onOpenIssue(issue: WorkspaceMyWorkItem): void
 }) {
   const { t, i18n } = useTranslation('common')
+  useSidebarRelativeTimeRefresh(active)
+  const recentCard = useRef<HTMLElement>(null)
+  const revealedIssue = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (!recentIssue || !recentCard.current || revealedIssue.current === recentIssue.id) return
+    revealedIssue.current = recentIssue.id
+    recentCard.current.scrollIntoView?.({ block: 'nearest' })
+    recentCard.current.animate?.(
+      [
+        { backgroundColor: 'color-mix(in srgb, currentColor 8%, transparent)' },
+        { backgroundColor: 'transparent' },
+      ],
+      { duration: 1600 }
+    )
+  }, [recentIssue])
   const labels = createIssueBoardCardLabels(
     createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
   )
-  const orderedItems = [...state.items].sort((left, right) => {
+  const visibleItems = recentIssue
+    ? [
+        recentIssue,
+        ...state.items.filter(
+          item =>
+            item.id !== recentIssue.id || item.cloud_project_id !== recentIssue.cloud_project_id
+        ),
+      ]
+    : state.items
+  const compareItems = (left: WorkspaceMyWorkItem, right: WorkspaceMyWorkItem) => {
+    if (left.id === right.id && left.cloud_project_id === right.cloud_project_id) return 0
+    if (left.id === recentIssue?.id) return -1
+    if (right.id === recentIssue?.id) return 1
     const a = left.attention_order
     const b = right.attention_order
     return (
       (a?.[0] ?? 3) - (b?.[0] ?? 3) ||
       (a?.[1] ?? 4) - (b?.[1] ?? 4) ||
-      (Date.parse(b?.[2] ?? right.updated_at) || 0) -
-        (Date.parse(a?.[2] ?? left.updated_at) || 0) ||
+      ((Date.parse(b?.[2] ?? right.updated_at) || 0) -
+        (Date.parse(a?.[2] ?? left.updated_at) || 0)) *
+        (order === 'assignment' ? -1 : 1) ||
       right.id.localeCompare(left.id)
     )
-  })
+  }
+  const orderedItems = [...visibleItems].sort(compareItems)
   const itemsByProject = new Map<string, WorkspaceMyWorkItem[]>()
   for (const item of orderedItems) {
     const key = String(item.cloud_project_id)
@@ -105,8 +142,12 @@ function PersonalIssueList({
     .filter(group => group.items.length)
     .sort(
       (left, right) =>
-        Number(right.items.some(item => item.attention_order?.[0] === 0)) -
-        Number(left.items.some(item => item.attention_order?.[0] === 0))
+        Number(right.project.id === recentIssue?.cloud_project_id) -
+          Number(left.project.id === recentIssue?.cloud_project_id) ||
+        (order === 'attention'
+          ? Number(right.items.some(item => item.attention_order?.[0] === 0)) -
+            Number(left.items.some(item => item.attention_order?.[0] === 0))
+          : compareItems(left.items[0], right.items[0]))
     )
   return (
     <>
@@ -145,6 +186,12 @@ function PersonalIssueList({
             </span>
           </h3>
           {items.map(item => {
+            const assignedAt = personalHomeAssignmentAt(
+              item,
+              project.project_store === 'local'
+                ? (localUserIds ?? [userId])
+                : [project.current_user_id ?? userId]
+            )
             const waiting =
               pendingIssueHumanRequests(item).length > 0 &&
               issueNeedsUser(
@@ -162,6 +209,7 @@ function PersonalIssueList({
             return (
               <CollaborationIssueCard
                 variant="list"
+                cardRef={item.id === recentIssue?.id ? recentCard : undefined}
                 key={item.id}
                 item={item}
                 reference={`#${item.sequence_number}`}
@@ -176,7 +224,7 @@ function PersonalIssueList({
                 }}
                 display={{
                   showAssignee: true,
-                  showDate: true,
+                  showDate: false,
                   showPriority: true,
                   showTags: true,
                 }}
@@ -196,11 +244,24 @@ function PersonalIssueList({
                   <>
                     <PersonalHomeIssueActivity
                       summary={
-                        item.description ? (
-                          <p className="line-clamp-2 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
-                            {item.description}
-                          </p>
-                        ) : undefined
+                        <>
+                          {assignedAt && (
+                            <p
+                              data-testid={`personal-home-assignment-age-${item.id}`}
+                              title={new Date(assignedAt).toLocaleString(i18n.language)}
+                              className="mb-1 text-xs text-text-muted"
+                            >
+                              {t('personalHome.assignedFor', {
+                                duration: personalHomeAssignmentDuration(assignedAt, i18n.language),
+                              })}
+                            </p>
+                          )}
+                          {item.description ? (
+                            <p className="line-clamp-2 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
+                              {item.description}
+                            </p>
+                          ) : undefined}
+                        </>
                       }
                       assignment={item.assignment_context}
                       bindings={item.task_bindings}
@@ -260,6 +321,7 @@ export function WeworkPersonalHome({
   }, [entryRequestKey])
   const [showCompleted, setShowCompleted] = useState(false)
   const [assignedOnly, setAssignedOnly] = useState(true)
+  const [order, setOrder] = useState<PersonalHomeIssueOrder>('attention')
   const [issueTabs, setIssueTabs] = useState<
     Array<{
       id: string
@@ -279,7 +341,8 @@ export function WeworkPersonalHome({
     active,
     assignedOnly,
     showCompleted,
-    localUserIds ?? [userId]
+    localUserIds ?? [userId],
+    order
   )
   const openIssue = (
     issue: WorkspaceMyWorkItem,
@@ -291,16 +354,29 @@ export function WeworkPersonalHome({
     setIssueTabs(tabs =>
       tabs.some(tab => tab.id === id)
         ? tabs.map(tab => (tab.id === id && taskRequest ? { ...tab, taskRequest } : tab))
-        : [...tabs, { id, issue, project, taskRequest }]
+        : [{ id, issue, project, taskRequest }]
     )
+    setExpandedTabs(current => (current.has(id) ? current : new Set()))
     setActiveTab(id)
   }
   const [handledCreation, setHandledCreation] = useState<string>()
+  const [recentCreation, setRecentCreation] = useState<{
+    issue: WorkspaceMyWorkItem
+    assignedOnly: boolean
+    order: PersonalHomeIssueOrder
+  }>()
   if (createdIssue && createdIssue.key !== handledCreation) {
     setHandledCreation(createdIssue.key)
+    const ownIds =
+      createdIssue.project.project_store === 'local'
+        ? (localUserIds ?? [userId])
+        : [createdIssue.project.current_user_id ?? userId]
+    const scope =
+      assignedOnly && ownIds.some(id => String(id) === String(createdIssue.issue.assignee_user_id))
+    setAssignedOnly(scope)
+    setRecentCreation({ issue: createdIssue.issue, assignedOnly: scope, order })
     const id = issueTabId(createdIssue.project, createdIssue.issue)
-    setIssueTabs(tabs => [
-      ...tabs.filter(tab => tab.id !== id),
+    setIssueTabs([
       {
         id,
         issue: createdIssue.issue,
@@ -310,6 +386,7 @@ export function WeworkPersonalHome({
           : undefined,
       },
     ])
+    setExpandedTabs(new Set())
     setActiveTab(id)
   }
   const creationKey = createdIssue?.key
@@ -327,193 +404,229 @@ export function WeworkPersonalHome({
     if (activeTab === id) setActiveTab(remaining[Math.max(0, index - 1)]?.id ?? 'stand-in')
   }
   return (
-    <div
-      className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
-      data-testid="personal-home"
-    >
-      <main className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:p-8">
-        <div className="w-full max-w-6xl">
-          <header className="mb-7 flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-heading-md font-medium">{t('personalHome.title')}</h1>
-              <p className="mt-2 text-base text-text-secondary">{t('personalHome.subtitle')}</p>
-            </div>
-          </header>
-          <div ref={composerRegion} className="mb-7" data-testid="personal-home-create">
-            {createIssue}
-          </div>
-          <div className="mb-5 flex items-center justify-between gap-3">
-            <div
-              role="group"
-              aria-label={t('personalHome.issueScope')}
-              className="flex min-w-0 flex-wrap items-center gap-1"
-            >
-              {[
-                { value: true, label: 'assigned' },
-                { value: false, label: 'participating' },
-              ].map(option => (
-                <button
-                  type="button"
-                  key={option.label}
-                  data-testid={`personal-home-scope-${option.label}`}
-                  aria-pressed={assignedOnly === option.value}
-                  onClick={() => setAssignedOnly(option.value)}
-                  className={`min-h-11 rounded-md px-3 text-base md:min-h-8 ${assignedOnly === option.value ? 'bg-muted font-medium text-text-primary' : 'text-text-secondary hover:bg-muted'}`}
-                >
-                  {t(`personalHome.${option.label}`)}
-                </button>
-              ))}
-            </div>
-            <select
-              aria-label={t('personalHome.filter')}
-              data-testid="personal-home-filter"
-              className="min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
-              value={showCompleted ? 'all' : 'open'}
-              onChange={event => setShowCompleted(event.target.value === 'all')}
-            >
-              <option value="open">{t('personalHome.open')}</option>
-              <option value="all">{t('personalHome.all')}</option>
-            </select>
-          </div>
-          <PersonalIssueList
-            userId={userId}
-            localUserIds={localUserIds}
-            state={state}
-            projects={projects}
-            showCompleted={showCompleted}
-            assignedOnly={assignedOnly}
-            onOpenIssue={openIssue}
-            active={active}
-            onOpenTask={(issue, binding) => openIssue(issue, { key: crypto.randomUUID(), binding })}
-          />
-          {state.hasMore && (
-            <button
-              type="button"
-              data-testid="personal-home-load-more"
-              disabled={state.loading}
-              onClick={() => void state.loadMore()}
-              className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
-            >
-              {t('personalHome.loadMore')}
-            </button>
-          )}
-        </div>
-      </main>
-      <aside
-        aria-label={t('personalHome.standIn')}
-        className={`flex min-h-96 min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : 'lg:w-96 xl:w-[28rem]'}`}
-        data-testid="personal-home-stand-in"
+    <IssueDetailDraftProvider key={userId} scope={sources}>
+      <div
+        className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
+        data-testid="personal-home"
       >
-        <header
-          ref={tabsViewport}
-          role="tablist"
-          aria-label={t('personalHome.workspaceTabs')}
-          data-testid="personal-home-tabs"
-          className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3"
-          onKeyDown={event => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-            const tabs = Array.from(
-              event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
-            )
-            const index = tabs.indexOf(event.target as HTMLElement)
-            if (index < 0) return
-            event.preventDefault()
-            const target =
-              event.key === 'Home'
-                ? tabs[0]
-                : event.key === 'End'
-                  ? tabs.at(-1)
-                  : tabs[
-                      (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-                    ]
-            target?.click()
-            target?.focus()
-          }}
-        >
-          <WorkspaceTitleTab
-            id={`${panelId}-stand-in-tab`}
-            controls={`${panelId}-stand-in-panel`}
-            testId="personal-home-tab-stand-in"
-            active={activeTab === 'stand-in'}
-            label={t('personalHome.standInTab')}
-            icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
-            onSelect={() => setActiveTab('stand-in')}
-          />
-          {issueTabs.map(tab => (
-            <WorkspaceTitleTab
-              id={`${panelId}-${tab.id}-tab`}
-              controls={`${panelId}-${tab.id}-panel`}
-              key={tab.id}
-              testId={`personal-home-tab-${tab.issue.id}`}
-              active={activeTab === tab.id}
-              label={`${tab.project.name} · #${tab.issue.sequence_number}`}
-              title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
-              icon={<Circle aria-hidden="true" className="h-4 w-4" />}
-              onSelect={() => setActiveTab(tab.id)}
-              onClose={() => closeIssue(tab.id)}
-            />
-          ))}
-        </header>
-        <div
-          id={`${panelId}-stand-in-panel`}
-          role="tabpanel"
-          aria-labelledby={`${panelId}-stand-in-tab`}
-          aria-label={t('personalHome.standInTab')}
-          className={activeTab === 'stand-in' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
-          inert={activeTab !== 'stand-in'}
-        >
-          {conversation(active && activeTab === 'stand-in', {
-            pendingIssues: state.items.flatMap(item => {
-              const project = projects.find(project => project.id === item.cloud_project_id)
-              if (!project || item.archived_at || ['completed', 'cancelled'].includes(item.status))
-                return []
-              const viewer =
-                project.project_store === 'local'
-                  ? (localUserIds ?? [userId])
-                  : (project.current_user_id ?? userId)
-              const requests = pendingIssueHumanRequests(item).filter(request =>
-                issueNeedsUser({ ...item, human_requests: [request] }, viewer)
-              )
-              return requests.length ? [{ ...item, human_requests: requests }] : []
-            }),
-            onOpenIssue: openIssue,
-          })}
-        </div>
-        {issueTabs.map(tab => (
-          <div
-            id={`${panelId}-${tab.id}-panel`}
-            key={tab.id}
-            role="tabpanel"
-            aria-labelledby={`${panelId}-${tab.id}-tab`}
-            aria-label={tab.issue.title}
-            className={activeTab === tab.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
-            inert={activeTab !== tab.id}
-          >
-            {renderIssueDetail({
-              issue: tab.issue,
-              project: tab.project,
-              active: active && activeTab === tab.id,
-              taskRequest: tab.taskRequest,
-              onClose: () => closeIssue(tab.id),
-              onExpandedChange: expanded =>
-                setExpandedTabs(current => {
-                  if (current.has(tab.id) === expanded) return current
-                  const next = new Set(current)
-                  if (expanded) next.add(tab.id)
-                  else next.delete(tab.id)
-                  return next
-                }),
-              onOpenIssue: openIssue,
-              onUpdated: issue => {
-                state.replaceIssue(issue)
-                setIssueTabs(tabs =>
-                  tabs.map(current => (current.id === tab.id ? { ...current, issue } : current))
+        <main className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:p-8">
+          <div className="w-full max-w-6xl">
+            <header className="mb-7 flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-heading-md font-medium">{t('personalHome.title')}</h1>
+                <p className="mt-2 text-base text-text-secondary">{t('personalHome.subtitle')}</p>
+              </div>
+            </header>
+            <div ref={composerRegion} className="mb-7" data-testid="personal-home-create">
+              {createIssue}
+            </div>
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <div
+                role="group"
+                aria-label={t('personalHome.issueScope')}
+                className="flex min-w-0 flex-wrap items-center gap-1"
+              >
+                {[
+                  { value: true, label: 'assigned' },
+                  { value: false, label: 'participating' },
+                ].map(option => (
+                  <button
+                    type="button"
+                    key={option.label}
+                    data-testid={`personal-home-scope-${option.label}`}
+                    aria-pressed={assignedOnly === option.value}
+                    onClick={() => setAssignedOnly(option.value)}
+                    className={`min-h-11 rounded-md px-3 text-base md:min-h-8 ${assignedOnly === option.value ? 'bg-muted font-medium text-text-primary' : 'text-text-secondary hover:bg-muted'}`}
+                  >
+                    {t(`personalHome.${option.label}`)}
+                  </button>
+                ))}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <select
+                  aria-label={t('personalHome.sort')}
+                  data-testid="personal-home-sort"
+                  className="min-h-11 rounded-md bg-transparent px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+                  value={order}
+                  onChange={event => setOrder(event.target.value as PersonalHomeIssueOrder)}
+                >
+                  {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
+                    <option key={value} value={value}>
+                      {t(`personalHome.sort_${value}`)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label={t('personalHome.filter')}
+                  data-testid="personal-home-filter"
+                  className="min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
+                  value={showCompleted ? 'all' : 'open'}
+                  onChange={event => setShowCompleted(event.target.value === 'all')}
+                >
+                  <option value="open">{t('personalHome.open')}</option>
+                  <option value="all">{t('personalHome.all')}</option>
+                </select>
+              </div>
+            </div>
+            <PersonalIssueList
+              recentIssue={
+                recentCreation &&
+                recentCreation.assignedOnly === assignedOnly &&
+                recentCreation.order === order &&
+                issueTabs.some(
+                  tab =>
+                    tab.issue.id === recentCreation.issue.id &&
+                    tab.issue.cloud_project_id === recentCreation.issue.cloud_project_id
                 )
-              },
+                  ? recentCreation.issue
+                  : undefined
+              }
+              order={order}
+              userId={userId}
+              localUserIds={localUserIds}
+              state={state}
+              projects={projects}
+              showCompleted={showCompleted}
+              assignedOnly={assignedOnly}
+              onOpenIssue={openIssue}
+              active={active}
+              onOpenTask={(issue, binding) =>
+                openIssue(issue, { key: crypto.randomUUID(), binding })
+              }
+            />
+            {state.hasMore && (
+              <button
+                type="button"
+                data-testid="personal-home-load-more"
+                disabled={state.loading}
+                onClick={() => void state.loadMore()}
+                className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+              >
+                {t('personalHome.loadMore')}
+              </button>
+            )}
+          </div>
+        </main>
+        <aside
+          aria-label={t('personalHome.standIn')}
+          className={`flex min-h-96 min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : 'lg:w-96 xl:w-[28rem]'}`}
+          data-testid="personal-home-stand-in"
+        >
+          <header
+            ref={tabsViewport}
+            role="tablist"
+            aria-label={t('personalHome.workspaceTabs')}
+            data-testid="personal-home-tabs"
+            className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3"
+            onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+              const tabs = Array.from(
+                event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
+              )
+              const index = tabs.indexOf(event.target as HTMLElement)
+              if (index < 0) return
+              event.preventDefault()
+              const target =
+                event.key === 'Home'
+                  ? tabs[0]
+                  : event.key === 'End'
+                    ? tabs.at(-1)
+                    : tabs[
+                        (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                      ]
+              target?.click()
+              target?.focus()
+            }}
+          >
+            <WorkspaceTitleTab
+              id={`${panelId}-stand-in-tab`}
+              controls={`${panelId}-stand-in-panel`}
+              testId="personal-home-tab-stand-in"
+              active={activeTab === 'stand-in'}
+              label={t('personalHome.standInTab')}
+              icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
+              onSelect={() => setActiveTab('stand-in')}
+            />
+            {issueTabs.map(tab => (
+              <WorkspaceTitleTab
+                id={`${panelId}-${tab.id}-tab`}
+                controls={`${panelId}-${tab.id}-panel`}
+                key={tab.id}
+                testId={`personal-home-tab-${tab.issue.id}`}
+                active={activeTab === tab.id}
+                label={tab.issue.title}
+                title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
+                icon={<Circle aria-hidden="true" className="h-4 w-4" />}
+                onSelect={() => setActiveTab(tab.id)}
+                onClose={() => closeIssue(tab.id)}
+              />
+            ))}
+          </header>
+          <div
+            id={`${panelId}-stand-in-panel`}
+            role="tabpanel"
+            aria-labelledby={`${panelId}-stand-in-tab`}
+            aria-label={t('personalHome.standInTab')}
+            className={activeTab === 'stand-in' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+            inert={activeTab !== 'stand-in'}
+          >
+            {conversation(active && activeTab === 'stand-in', {
+              pendingIssues: state.items.flatMap(item => {
+                const project = projects.find(project => project.id === item.cloud_project_id)
+                if (
+                  !project ||
+                  item.archived_at ||
+                  ['completed', 'cancelled'].includes(item.status)
+                )
+                  return []
+                const viewer =
+                  project.project_store === 'local'
+                    ? (localUserIds ?? [userId])
+                    : (project.current_user_id ?? userId)
+                const requests = pendingIssueHumanRequests(item).filter(request =>
+                  issueNeedsUser({ ...item, human_requests: [request] }, viewer)
+                )
+                return requests.length ? [{ ...item, human_requests: requests }] : []
+              }),
+              onOpenIssue: openIssue,
             })}
           </div>
-        ))}
-      </aside>
-    </div>
+          {issueTabs.map(tab => (
+            <div
+              id={`${panelId}-${tab.id}-panel`}
+              key={tab.id}
+              role="tabpanel"
+              aria-labelledby={`${panelId}-${tab.id}-tab`}
+              aria-label={tab.issue.title}
+              className={activeTab === tab.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+              inert={activeTab !== tab.id}
+            >
+              {renderIssueDetail({
+                issue: tab.issue,
+                project: tab.project,
+                active: active && activeTab === tab.id,
+                taskRequest: tab.taskRequest,
+                onClose: () => closeIssue(tab.id),
+                onExpandedChange: expanded =>
+                  setExpandedTabs(current => {
+                    if (current.has(tab.id) === expanded) return current
+                    const next = new Set(current)
+                    if (expanded) next.add(tab.id)
+                    else next.delete(tab.id)
+                    return next
+                  }),
+                onOpenIssue: openIssue,
+                onUpdated: issue => {
+                  state.replaceIssue(issue)
+                  setIssueTabs(tabs =>
+                    tabs.map(current => (current.id === tab.id ? { ...current, issue } : current))
+                  )
+                },
+              })}
+            </div>
+          ))}
+        </aside>
+      </div>
+    </IssueDetailDraftProvider>
   )
 }

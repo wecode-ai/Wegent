@@ -6,6 +6,7 @@ import type {
 } from '@wegent/collaboration'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 
 /** Load an authorized Issue and reuse the board's complete detail and task workflow. */
@@ -27,6 +28,7 @@ export function PersonalHomeIssuePanel({
   refreshKey: number
 }) {
   const { t } = useTranslation('common')
+  const publishUpdated = useStableEvent(onUpdated)
   const [snapshot, setSnapshot] = useState<{
     api: SharedWorkspaceApi
     id: string
@@ -49,7 +51,7 @@ export function PersonalHomeIssuePanel({
         api.assignments?.list(issue.id) ?? Promise.resolve([]),
         api.taskBindings?.list(issue.id, String(project.id)) ?? Promise.resolve([]),
       ])
-      if (current)
+      if (current) {
         setSnapshot({
           api,
           id: issue.id,
@@ -60,13 +62,16 @@ export function PersonalHomeIssuePanel({
             taskBindings,
           },
         })
+        if (item.title !== issue.title || item.version !== issue.version)
+          publishUpdated({ ...issue, ...item })
+      }
     })().catch(() => {
       if (current) setSnapshot({ api, id: issue.id, failed: true })
     })
     return () => {
       current = false
     }
-  }, [api, issue.id, project.id, active, revision, refreshKey])
+  }, [api, issue.id, project.id, active, revision, refreshKey, publishUpdated])
   const current = snapshot?.api === api && snapshot?.id === issue.id ? snapshot : undefined
   if (current?.failed)
     return (

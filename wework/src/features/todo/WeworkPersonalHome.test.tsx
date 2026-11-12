@@ -6,6 +6,7 @@ import type {
   WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
 import i18n from '@/i18n'
+import { useIssueDetailDraft } from '@wegent/collaboration'
 import { WeworkPersonalHome, type PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 import {
   RuntimeTaskLifecycleProvider,
@@ -14,6 +15,24 @@ import {
 import type { ReactNode } from 'react'
 
 afterEach(cleanup)
+
+it('replaces the single Issue tab while keeping the assistant tab', async () => {
+  await setup([
+    source(
+      vi.fn().mockResolvedValue(Array.from({ length: 7 }, (_, index) => issue(`fifo-${index}`)))
+    ),
+  ])
+  await screen.findByText('Issue fifo-0')
+  for (let index = 0; index < 5; index++)
+    fireEvent.click(screen.getByTestId(`personal-home-issue-fifo-${index}`))
+  fireEvent.click(screen.getByTestId('personal-home-issue-fifo-5'))
+  expect(screen.queryByTestId('personal-home-tab-fifo-0')).not.toBeInTheDocument()
+  expect(screen.getByTestId('personal-home-tab-stand-in')).toBeInTheDocument()
+  expect(screen.getAllByRole('tab')).toHaveLength(2)
+  fireEvent.click(screen.getByTestId('personal-home-issue-fifo-6'))
+  expect(screen.queryByTestId('personal-home-tab-fifo-1')).not.toBeInTheDocument()
+  expect(screen.getByTestId('personal-home-tab-fifo-6')).toHaveAttribute('aria-selected', 'true')
+})
 
 it('merges attention order across stores and puts projects needing intervention first', async () => {
   const ordinary = {
@@ -74,12 +93,19 @@ const projects = [
   { id: 'p2', name: 'Platform', project_store: 'backend' },
 ] as CollaborationProject[]
 
-async function setup(sources: SharedWorkspaceApi[]) {
-  await i18n.changeLanguage('en')
-  const renderIssueDetail = vi.fn(({ issue, onUpdated }: PersonalHomeIssueDetailContext) => (
+function DraftDetail({ issue, onUpdated }: PersonalHomeIssueDetailContext) {
+  const { draft, setField } = useIssueDetailDraft({
+    source: issue,
+    initial: { title: '', description: '', status: 'pending', priority: 'none' },
+  })
+  return (
     <div>
       <span>Details for {issue.id}</span>
-      <input aria-label={`Draft ${issue.id}`} />
+      <input
+        aria-label={`Draft ${issue.id}`}
+        value={draft.description}
+        onChange={event => setField('description', event.target.value)}
+      />
       <button
         data-testid={`save-${issue.id}`}
         onClick={() => onUpdated({ ...issue, title: 'Updated issue' })}
@@ -87,6 +113,13 @@ async function setup(sources: SharedWorkspaceApi[]) {
         Save
       </button>
     </div>
+  )
+}
+
+async function setup(sources: SharedWorkspaceApi[]) {
+  await i18n.changeLanguage('en')
+  const renderIssueDetail = vi.fn((context: PersonalHomeIssueDetailContext) => (
+    <DraftDetail {...context} />
   ))
   const props = {
     userId: 7,
@@ -117,7 +150,11 @@ it('groups participating issues by project, filters finished work and opens the 
   expect(screen.getByText('Product')).toBeInTheDocument()
   expect(screen.queryByText('Issue finished')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('personal-home-issue-open'))
-  expect(screen.getByTestId('personal-home-tab-open')).toHaveTextContent('Product · #1')
+  expect(screen.getByTestId('personal-home-tab-open')).toHaveTextContent('Issue open')
+  expect(screen.getByTestId('personal-home-tab-open')).toHaveAttribute(
+    'title',
+    'Product · #1 Issue open'
+  )
   expect(screen.getByTestId('personal-home-issue-open')).not.toHaveTextContent('DEMO')
   expect(renderIssueDetail).toHaveBeenLastCalledWith(
     expect.objectContaining({ issue: open, active: true })
@@ -154,7 +191,7 @@ it('uses the local participation identities without treating them as cloud assig
   expect(screen.queryByText('Issue remote')).not.toBeInTheDocument()
 })
 
-it('stacks deduplicated Issue tabs beside the retained stand-in, preserves drafts and closes back to the previous tab', async () => {
+it('replaces the Issue detail, restores its draft on reopening and closes back to the assistant', async () => {
   await setup([source(vi.fn().mockResolvedValue([issue('first'), issue('second')]))])
   await screen.findByText('Issue first')
   fireEvent.change(screen.getByLabelText('Stand-in draft'), {
@@ -165,8 +202,10 @@ it('stacks deduplicated Issue tabs beside the retained stand-in, preserves draft
     target: { value: 'Keep my issue draft' },
   })
   fireEvent.click(screen.getByTestId('personal-home-issue-second'))
+  expect(screen.queryByLabelText('Draft first')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('personal-home-tab-first')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('personal-home-issue-first'))
-  expect(screen.getAllByRole('tab')).toHaveLength(3)
+  expect(screen.getAllByRole('tab')).toHaveLength(2)
   expect(screen.getByLabelText('Draft first')).toHaveValue('Keep my issue draft')
   expect(screen.getByLabelText('Stand-in draft')).toHaveAttribute('data-active', 'false')
   fireEvent.click(screen.getByTestId('personal-home-tab-stand-in'))
@@ -174,8 +213,6 @@ it('stacks deduplicated Issue tabs beside the retained stand-in, preserves draft
   expect(screen.getByLabelText('Stand-in draft')).toHaveAttribute('data-active', 'true')
   fireEvent.click(screen.getByTestId('personal-home-tab-first'))
   fireEvent.click(screen.getByTestId('personal-home-tab-first-close-button'))
-  expect(screen.getByTestId('personal-home-tab-second')).toHaveAttribute('aria-selected', 'true')
-  fireEvent.click(screen.getByTestId('personal-home-tab-second-close-button'))
   expect(screen.getByTestId('personal-home-tab-stand-in')).toHaveAttribute('aria-selected', 'true')
 })
 
@@ -186,6 +223,32 @@ it('updates the original list row when an issue is saved in the right workspace'
   fireEvent.click(screen.getByTestId('save-editable'))
   expect(screen.getByTestId('personal-home-issue-editable')).toHaveTextContent('Updated issue')
   expect(screen.getByTestId('personal-home-tab-editable')).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByTestId('personal-home-tab-editable')).toHaveTextContent('Updated issue')
+})
+
+it('requests the selected ordering before pagination and keeps a newly created Issue visible across refreshes', async () => {
+  const api = source(vi.fn().mockResolvedValue([issue('older')]))
+  const { props, rerender } = await setup([api])
+  await screen.findByText('Issue older')
+  fireEvent.change(screen.getByTestId('personal-home-sort'), { target: { value: 'assignment' } })
+  await waitFor(() =>
+    expect(api.myWork!.page).toHaveBeenLastCalledWith(
+      expect.objectContaining({ order: 'assignment' })
+    )
+  )
+  rerender(
+    <WeworkPersonalHome
+      {...props}
+      createdIssue={{ key: 'created', issue: issue('new'), project: projects[0] }}
+    />
+  )
+  await screen.findByTestId('personal-home-issue-new')
+  fireEvent(window, new Event('focus'))
+  await waitFor(() => expect(api.myWork!.page).toHaveBeenCalledTimes(4))
+  expect(screen.getAllByTestId(/^personal-home-issue-/)[0]).toHaveAttribute(
+    'data-testid',
+    'personal-home-issue-new'
+  )
 })
 
 it('keeps the stand-in draft and tabs when creating an issue or reselecting My work', async () => {

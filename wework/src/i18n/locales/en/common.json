@@ -6,6 +6,13 @@
     "participating": "Participating",
     "issueScope": "Issue scope",
     "workspaceTabs": "Right workspace",
+    "openInProject": "Open in project",
+    "sort": "Issue order",
+    "sort_attention": "Needs my attention",
+    "sort_assignment": "Longest assigned",
+    "sort_activity": "Recent activity",
+    "sort_priority": "Priority",
+    "assignedFor": "Assigned to you for {{duration}}",
     "standInTab": "Assistant",
     "detailFailed": "Could not load Issue details. Please retry.",
     "relatedFailed": "Could not load related issues.",
@@ -5473,7 +5480,8 @@
     "parent_board_nested_summary": "{{parents}} parent issues · {{children}} direct sub-issues",
     "parent_board_summary_with_other": "{{parents}} parent issues · {{standalone}} standalone issues · {{other}} other issues",
     "parent_board_direct_children": "Direct sub-issues",
-    "parent_board_other": "Other issues"
+    "parent_board_other": "Other issues",
+    "assistant_task_pending": "Waiting for assistant"
   },
   "collaboration": {
     "all_workspaces": "All workspaces",

@@ -28,6 +28,10 @@ impl RuntimeWorkRpcHandler {
         });
         binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
+        binding["standInPending"] = json!(self
+            .store
+            .get_task_summary(binding["taskId"].as_str().unwrap())
+            .is_none());
         binding["standInConversationId"] =
             json!(super::stand_in::stand_in_issue_identity(config, issue));
         let issue_id = issue["id"].as_str().unwrap_or_default();
@@ -36,7 +40,7 @@ impl RuntimeWorkRpcHandler {
                 reqwest::Method::POST,
                 &format!("/v1/loop-items/{issue_id}/tasks"),
                 Some(&json!({
-                    "deviceId":binding["deviceId"],"taskId":binding["taskId"],"taskTitle":issue["title"],"standInConversationId":binding["standInConversationId"]
+                    "deviceId":binding["deviceId"],"taskId":binding["taskId"],"taskTitle":issue["title"],"standInPending":binding["standInPending"],"standInConversationId":binding["standInConversationId"]
                 })),
             )
             .await?;

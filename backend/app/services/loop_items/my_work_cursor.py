@@ -17,6 +17,7 @@ def encode_my_work_cursor(
     item_id: str,
     user_id: int,
     attention: tuple[int, int] | None = None,
+    order: str = "attention",
 ) -> str:
     payload = json.dumps(
         {
@@ -24,7 +25,11 @@ def encode_my_work_cursor(
             "user_id": user_id,
             "updated_at": updated_at,
             "id": item_id,
-            **({"attention": attention} if attention is not None else {}),
+            **(
+                {"attention": attention, "order": order}
+                if attention is not None
+                else {}
+            ),
         },
         separators=(",", ":"),
     ).encode()
@@ -35,6 +40,7 @@ def decode_my_work_cursor(
     cursor: str | None,
     user_id: int,
     attention: bool = False,
+    order: str = "attention",
 ) -> tuple[str, str, int, int] | None:
     if cursor is None:
         return None
@@ -51,9 +57,11 @@ def decode_my_work_cursor(
             "user_id",
             "updated_at",
             "id",
-        } | ({"attention"} if attention else set())
+        } | ({"attention", "order"} if attention else set())
         if not isinstance(payload, dict) or set(payload) != expected:
             raise ValueError("Unexpected cursor fields")
+        if attention and payload["order"] != order:
+            raise ValueError("Cursor sort changed")
         ranks = payload.get("attention", [0, 0])
         if (
             not isinstance(ranks, list)

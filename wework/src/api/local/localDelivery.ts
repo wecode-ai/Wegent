@@ -1128,7 +1128,7 @@ export function createLocalDeliveryApi(
       limit?: number
       scope?: 'assigned' | 'participating'
       includeCompleted?: boolean
-      order?: 'recent' | 'attention'
+      order?: 'recent' | 'attention' | 'activity' | 'assignment' | 'priority'
       viewerIds?: readonly (string | number)[]
     }) {
       const page = await request<{

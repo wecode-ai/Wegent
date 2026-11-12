@@ -2,7 +2,13 @@ import { inCollaborationSidebar } from './workspace-flows.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import assert from 'node:assert/strict'
-import { assistantMessage, createSse, readRequestBody, responseCompleted, responseCreated } from './response-protocol.mjs'
+import {
+  assistantMessage,
+  createSse,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from './response-protocol.mjs'
 
 const HOME_TASK_PROMPT = 'Personal home start work'
 const HOME_TASK_RESULT = 'Personal home task complete'
@@ -10,16 +16,24 @@ const HOME_ISSUE_TITLE = '首页任务执行验证'
 
 /** Only the model boundary is simulated; Issue, binding and execution remain real. */
 export async function handlePersonalHomeModel(request, response, url) {
-  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) return false
+  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+    return false
   const body = await readRequestBody(request)
   const text = JSON.stringify(body.input ?? [])
   if (!text.includes(HOME_TASK_PROMPT)) return false
   assert.ok(body.model, 'The Tasks composer must preserve the selected model')
   const generatingTitle = text.includes('适合作为任务标题')
-  if (!generatingTitle) assert.match(text, /Issue/i, 'The task must reach the model with its real Issue context')
+  if (!generatingTitle)
+    assert.match(text, /Issue/i, 'The task must reach the model with its real Issue context')
   const id = `personal-home-${Date.now()}`
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-  response.end(createSse([responseCreated(id), assistantMessage(generatingTitle ? HOME_ISSUE_TITLE : HOME_TASK_RESULT), responseCompleted(id)]))
+  response.end(
+    createSse([
+      responseCreated(id),
+      assistantMessage(generatingTitle ? HOME_ISSUE_TITLE : HOME_TASK_RESULT),
+      responseCompleted(id),
+    ])
+  )
   return true
 }
 
@@ -53,10 +67,24 @@ export async function verifyCollaborationPersonalHome(control, { scoped, project
     'waitFor',
     scoped(`[data-testid="personal-home-tab-${issue.id}"][aria-selected="true"]`)
   )
-  assert.equal(Number(await control.command('getElementCount', scoped('[data-testid="issue-persistent-task-action"]'))), 0,
-    'The AI assistance bar must not appear before scrolling past linked tasks')
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-tasks"] [data-testid="cloud-todo-create-task"]'))
-  await control.command('click', scoped('[data-testid="cloud-todo-tasks"] [data-testid="cloud-todo-create-task"]'))
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid="issue-persistent-task-action"]')
+      )
+    ),
+    0,
+    'The AI assistance bar must not appear before scrolling past linked tasks'
+  )
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-tasks"] [data-testid="cloud-todo-create-task"]')
+  )
+  await control.command(
+    'click',
+    scoped('[data-testid="cloud-todo-tasks"] [data-testid="cloud-todo-create-task"]')
+  )
   await control.command(
     'waitFor',
     scoped('[data-testid="issue-conversation-drawers"][data-has-conversation="true"]')
@@ -97,30 +125,62 @@ export async function openCollaborationIssueCreation(control, scoped) {
 export async function verifyPersonalHomeStartWork(control, { scoped, project, viewerId }) {
   assert.ok(viewerId != null, 'Start-work coverage needs the project viewer identity')
   const userId = Number(viewerId)
-  const previous = await requestExecutor(control, 'runtime.stand_in.personal.get', { userId }, 10_000)
+  const previous = await requestExecutor(
+    control,
+    'runtime.stand_in.personal.get',
+    { userId },
+    10_000
+  )
   const template = previous.roles[0]
   assert.ok(template, 'Personal assistants expose an existing role template')
-  await requestExecutor(control, 'runtime.stand_in.personal.save', {
-    userId,
-    settings: {
-      ...previous,
-      roles: ['review', 'development'].map(id => ({
-        ...template,
-        id: `home-personal-${id}`,
-        name: `Home ${id}`,
-        enabled: true,
-        handlingPolicy: { ...template.handlingPolicy, automatic: true, askBeforeAct: true, immediate: false },
-        collaboration: {
-          enabled: true, allProjects: false, excludedProjects: [], tags: [],
-          projects: [{ id: String(project.id), store: userId === 0 ? 'local' : 'cloud' }],
-        },
-      })),
+  await requestExecutor(
+    control,
+    'runtime.stand_in.personal.save',
+    {
+      userId,
+      settings: {
+        ...previous,
+        roles: ['review', 'development'].map(id => ({
+          ...template,
+          id: `home-personal-${id}`,
+          name: `Home ${id}`,
+          enabled: true,
+          handlingPolicy: {
+            ...template.handlingPolicy,
+            automatic: true,
+            askBeforeAct: true,
+            immediate: false,
+          },
+          collaboration: {
+            enabled: true,
+            allProjects: false,
+            excludedProjects: [],
+            tags: [],
+            projects: [{ id: String(project.id), store: userId === 0 ? 'local' : 'cloud' }],
+          },
+        })),
+      },
     },
-  }, 10_000)
+    10_000
+  )
   try {
     await verifyPersonalHomeStartWorkWithAssistants(control, { scoped, project, viewerId })
   } finally {
-    await requestExecutor(control, 'runtime.stand_in.personal.save', { userId, settings: previous }, 10_000)
+    const current = await requestExecutor(
+      control,
+      'runtime.stand_in.personal.get',
+      { userId },
+      10_000
+    )
+    await requestExecutor(
+      control,
+      'runtime.stand_in.personal.save',
+      {
+        userId,
+        settings: { ...previous, version: current.version },
+      },
+      10_000
+    )
   }
 }
 
@@ -133,19 +193,26 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
   await control.command('fill', scoped('[data-testid="personal-home-task-content"]'), {
     value: title,
   })
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="personal-home-start-task"]')
-  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="personal-home-start-task"]'))
   await control.command('waitFor', scoped('[data-testid="personal-home"]'))
-  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
-    text: title,
-  })
+  await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'))
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        scoped('[data-testid="personal-home-tabs"] [role="tab"]')
+      )
+    ),
+    2,
+    'The assistant stays fixed beside a single Issue detail'
+  )
   await control.command(
     'waitFor',
     scoped('[data-testid="issue-conversation-drawers"][data-has-conversation="true"]')
   )
-  await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), { text: HOME_TASK_RESULT })
+  await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+    text: HOME_TASK_RESULT,
+  })
   await waitForValue(
     () => control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
     value => value === HOME_ISSUE_TITLE,
@@ -167,20 +234,43 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
     'waitFor',
     scoped('[data-testid="issue-conversation-drawers"][data-has-conversation="false"]')
   )
-  const linkedTask = scoped('[data-testid="cloud-todo-task-list"] [data-testid^="cloud-todo-open-task-conversation-"]')
+  const linkedTask = scoped(
+    '[data-testid="cloud-todo-task-list"] [data-testid^="cloud-todo-open-task-conversation-"]'
+  )
   await control.command('waitFor', linkedTask)
-  assert.equal(Number(await control.command('getElementCount', linkedTask)), 1,
-    'Starting work once must persist exactly one linked task')
+  assert.equal(
+    Number(await control.command('getElementCount', linkedTask)),
+    1,
+    'Starting work once must persist exactly one linked task'
+  )
   const observationEnds = Date.now() + 11_000
-  await waitForValue(async () => {
-    assert.equal((await control.command('getText', scoped('[data-testid="cloud-todo-execution-task-count"]'))).trim(), '1',
-      'Automatic assistant intake must not reserve additional tasks for personal work')
-    return Date.now()
-  }, now => now >= observationEnds, 'Observe a complete automatic intake interval', 15_000)
+  await waitForValue(
+    async () => {
+      assert.equal(
+        (
+          await control.command(
+            'getText',
+            scoped('[data-testid="cloud-todo-execution-task-count"]')
+          )
+        ).trim(),
+        '1',
+        'Automatic assistant intake must not reserve additional tasks for personal work'
+      )
+      return Date.now()
+    },
+    now => now >= observationEnds,
+    'Observe a complete automatic intake interval',
+    15_000
+  )
   await control.command('click', linkedTask)
-  await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), { text: HOME_TASK_RESULT })
+  await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
+    text: HOME_TASK_RESULT,
+  })
   await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-  assert.equal(await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
-    `user:${viewerId}`, 'Starting my task must assign the Issue to the current user')
+  assert.equal(
+    await control.command('getValue', scoped('[data-testid="cloud-todo-detail-assignee"]')),
+    `user:${viewerId}`,
+    'Starting my task must assign the Issue to the current user'
+  )
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
 }

@@ -9,21 +9,34 @@ impl LocalTaskStore {
         assigned_only: bool,
         include_completed: bool,
         viewer_ids: &[i64],
-        attention: bool,
+        order: &str,
     ) -> Result<Value, TaskRuntimeError> {
         if !(1..=100).contains(&limit) {
             return Err(TaskRuntimeError::Invalid(
                 "My work limit must be 1..100".into(),
             ));
         }
-        let before: Option<(i64, i64, String, String, bool)> = cursor
+        let sort_mode = match order {
+            "recent" => 0,
+            "attention" => 1,
+            "activity" => 2,
+            "assignment" => 3,
+            "priority" => 4,
+            _ => return Err(TaskRuntimeError::Invalid("Invalid My work sort".into())),
+        };
+        let attention = sort_mode != 0;
+        let before: Option<(i64, i64, String, String, String)> = cursor
             .map(serde_json::from_str)
             .transpose()
             .map_err(|error| {
                 TaskRuntimeError::Invalid(format!("Invalid My work cursor: {error}"))
             })?;
-        if before.as_ref().is_some_and(|key| key.4 != attention || !(0..=4).contains(&key.0) || !(0..=4).contains(&key.1)) {
-            return Err(TaskRuntimeError::Invalid("Invalid My work ordering key".into()));
+        if before.as_ref().is_some_and(|key| {
+            key.4 != order || !(0..=4).contains(&key.0) || !(0..=4).contains(&key.1)
+        }) {
+            return Err(TaskRuntimeError::Invalid(
+                "Invalid My work ordering key".into(),
+            ));
         }
         let connection = self.connection()?;
         let mut statement = connection.prepare(
@@ -35,6 +48,8 @@ impl LocalTaskStore {
                     t.assignee_agent_id,t.created_by_user_id,t.assignee_user_id,p.project_key AS home_project_key,p.name AS home_project_name,
                     CASE WHEN ?8=0 THEN 0
                          WHEN t.status IN ('completed','cancelled','archived') THEN 4
+                         WHEN ?8=3 THEN CASE WHEN json_extract(t.metadata,'$.assignment_history[#-1].to_type')='user' AND CAST(json_extract(t.metadata,'$.assignment_history[#-1].to_id') AS TEXT) IN (SELECT CAST(value AS TEXT) FROM json_each(?7)) AND json_extract(t.metadata,'$.assignment_history[#-1].at') IS NOT NULL THEN 0 ELSE 3 END
+                         WHEN ?8 IN (2,4) THEN 0
                          WHEN EXISTS(SELECT 1 FROM loop_items h WHERE h.resource_type='human_request_index' AND h.parent_id=t.id AND h.assignee_user_id IN (SELECT value FROM json_each(?7)))
                            OR (t.status='in_review' AND t.assignee_user_id IN (SELECT value FROM json_each(?7)))
                            OR ((SELECT status FROM loop_item_executions e WHERE e.loop_item_id=t.id ORDER BY e.id DESC LIMIT 1)='pending_approval' AND EXISTS(SELECT 1 FROM loop_items a WHERE a.id=t.assignee_agent_id AND a.created_by_user_id IN (SELECT value FROM json_each(?7)))) THEN 0
@@ -43,8 +58,8 @@ impl LocalTaskStore {
                            AND NOT EXISTS(SELECT 1 FROM loop_items b WHERE b.resource_type='execution' AND b.loop_item_id=t.id AND b.task_user_id IN (SELECT value FROM json_each(?7)) AND b.unlinked_at IS NULL) THEN 1
                          WHEN ?2=1 AND (t.status='in_progress' OR (SELECT status FROM loop_item_executions e WHERE e.loop_item_id=t.id ORDER BY e.id DESC LIMIT 1) IN ('queued','claimed','running','cancel_requested')) THEN 2
                          ELSE 3 END AS attention_rank,
-                    CASE WHEN ?8=0 OR ?2=0 THEN 0 ELSE CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END END AS attention_priority,
-                    CASE WHEN ?8=0 THEN t.updated_at ELSE MAX(t.updated_at,
+                    CASE WHEN ?8 IN (0,2,3) OR (?8=1 AND ?2=0) THEN 0 ELSE CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END END AS attention_priority,
+                    CASE WHEN ?8=3 THEN COALESCE(CASE WHEN json_extract(t.metadata,'$.assignment_history[#-1].to_type')='user' AND CAST(json_extract(t.metadata,'$.assignment_history[#-1].to_id') AS TEXT) IN (SELECT CAST(value AS TEXT) FROM json_each(?7)) THEN json_extract(t.metadata,'$.assignment_history[#-1].at') END,'9999-01-01T00:00:00+00:00') WHEN ?8=0 THEN t.updated_at ELSE MAX(t.updated_at,
                       COALESCE((SELECT MAX(c.created_at) FROM loop_item_comments c WHERE c.task_id=t.id AND c.deleted_at IS NULL),t.updated_at),
                       COALESCE((SELECT MAX(e.completed_at) FROM loop_item_executions e WHERE e.loop_item_id=t.id AND e.status IN ('completed','failed','cancelled')),t.updated_at)) END AS activity_at
              FROM loop_items t JOIN loop_items p ON p.id=t.cloud_project_id
@@ -57,8 +72,8 @@ impl LocalTaskStore {
              ) SELECT * FROM work
              WHERE ?4 IS NULL OR attention_rank>?9
                OR (attention_rank=?9 AND attention_priority>?10)
-               OR (attention_rank=?9 AND attention_priority=?10 AND (activity_at<?4 OR (activity_at=?4 AND id<?5)))
-             ORDER BY attention_rank,attention_priority,activity_at DESC,id DESC LIMIT ?6",
+               OR (attention_rank=?9 AND attention_priority=?10 AND ((?8=3 AND activity_at>?4) OR (?8<>3 AND activity_at<?4) OR (activity_at=?4 AND id<?5)))
+             ORDER BY attention_rank,attention_priority,CASE WHEN ?8=3 THEN activity_at END ASC,CASE WHEN ?8<>3 THEN activity_at END DESC,id DESC LIMIT ?6",
         )?;
         let mut rows = statement
             .query_map(
@@ -70,7 +85,7 @@ impl LocalTaskStore {
                     before.as_ref().map(|value| &value.3),
                     limit + 1,
                     json!(viewer_ids).to_string(),
-                    attention,
+                    sort_mode,
                     before.as_ref().map(|value| value.0),
                     before.as_ref().map(|value| value.1)
                 ],
@@ -89,8 +104,9 @@ impl LocalTaskStore {
         let has_more = rows.len() > limit;
         rows.truncate(limit);
         let next_cursor = if has_more {
-            rows.last()
-                .map(|(item, _, _, rank, priority, activity)| json!([rank, priority, activity, item.id, attention]).to_string())
+            rows.last().map(|(item, _, _, rank, priority, activity)| {
+                json!([rank, priority, activity, item.id, order]).to_string()
+            })
         } else {
             None
         };
@@ -109,18 +125,20 @@ impl LocalTaskStore {
         let mut executions = projections::latest_executions_for_items(&connection, &ids)?;
         let items = rows
             .into_iter()
-            .map(|(item, project_key, project_name, rank, priority, activity)| {
-                let bindings = bindings_by_issue.remove(&item.id).unwrap_or_default();
-                let execution = executions.remove(&item.id);
-                json!({
-                    "issue": attach_execution(item, execution),
-                    "project_key": project_key,
-                    "project_name": project_name,
-                    "task_bindings": bindings,
-                    "assignment_context": null,
-                    "attention_order": attention.then_some(json!([rank,priority,activity]))
-                })
-            })
+            .map(
+                |(item, project_key, project_name, rank, priority, activity)| {
+                    let bindings = bindings_by_issue.remove(&item.id).unwrap_or_default();
+                    let execution = executions.remove(&item.id);
+                    json!({
+                        "issue": attach_execution(item, execution),
+                        "project_key": project_key,
+                        "project_name": project_name,
+                        "task_bindings": bindings,
+                        "assignment_context": null,
+                        "attention_order": attention.then_some(json!([rank,priority,activity]))
+                    })
+                },
+            )
             .collect::<Vec<_>>();
         Ok(json!({"items":items,"next_cursor":next_cursor}))
     }
@@ -131,28 +149,118 @@ mod tests {
     use super::*;
 
     #[test]
+    fn explicit_sort_modes_page_in_database_order_and_preserve_assignment_age() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("sort.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Sort"})).unwrap())
+            .unwrap();
+        let mut ids = Vec::new();
+        for index in 0..3 {
+            let issue = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":format!("Work {index}")})).unwrap(),
+                )
+                .unwrap();
+            let history = if index == 2 {
+                json!([])
+            } else {
+                json!([{"to_type":"user","to_id":0,"at":format!("2026-01-0{}T00:00:00+00:00", 2-index)}])
+            };
+            store.connection().unwrap().execute("UPDATE loop_items SET assignee_user_id=0,priority=?1,updated_at=?2,metadata=json_set(metadata,'$.assignment_history',json(?3)) WHERE id=?4", params![["urgent","low","high"][index],format!("2026-02-0{}T00:00:00+00:00",index+1), history.to_string(),issue.id]).unwrap();
+            ids.push(issue.id);
+        }
+        for (order, expected) in [
+            ("assignment", [1, 0, 2]),
+            ("activity", [2, 1, 0]),
+            ("priority", [0, 2, 1]),
+        ] {
+            let mut cursor = None;
+            let mut actual = Vec::new();
+            for _ in 0..3 {
+                let page = store
+                    .my_work_page(1, cursor.as_deref(), true, false, &[0], order)
+                    .unwrap();
+                actual.push(page["items"][0]["issue"]["id"].as_str().unwrap().to_owned());
+                cursor = page["next_cursor"].as_str().map(str::to_owned);
+            }
+            assert_eq!(actual, expected.map(|index| ids[index].clone()), "{order}");
+            assert!(cursor.is_none());
+        }
+        let first = store
+            .my_work_page(1, None, true, false, &[0], "assignment")
+            .unwrap();
+        assert!(store
+            .my_work_page(
+                1,
+                first["next_cursor"].as_str(),
+                true,
+                false,
+                &[0],
+                "priority"
+            )
+            .is_err());
+    }
+
+    #[test]
     fn attention_sort_precedes_pagination_and_participating_ignores_priority() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("attention.sqlite")).unwrap();
-        let project = store.create_project(serde_json::from_value(json!({"name":"Attention"})).unwrap()).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Attention"})).unwrap())
+            .unwrap();
         let mut ids = Vec::new();
-        for (index, (status, priority)) in [("in_review", "none"), ("pending", "high"), ("inbox", "low"), ("in_progress", "none"), ("blocked", "none"), ("completed", "urgent")].iter().enumerate() {
-            let issue = store.create_task(&project.id, serde_json::from_value(json!({"title":format!("Work {index}")})).unwrap()).unwrap();
+        for (index, (status, priority)) in [
+            ("in_review", "none"),
+            ("pending", "high"),
+            ("inbox", "low"),
+            ("in_progress", "none"),
+            ("blocked", "none"),
+            ("completed", "urgent"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let issue = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":format!("Work {index}")})).unwrap(),
+                )
+                .unwrap();
             store.connection().unwrap().execute("UPDATE loop_items SET status=?1,priority=?2,assignee_user_id=0,updated_at=?3 WHERE id=?4",params![status,priority,format!("2026-01-01T00:0{index}:00+00:00"),issue.id]).unwrap();
             ids.push(issue.id);
         }
         let mut cursor = None;
         let mut actual = Vec::new();
         for _ in 0..3 {
-            let page = store.my_work_page(2, cursor.as_deref(), true, true, &[0], true).unwrap();
-            actual.extend(page["items"].as_array().unwrap().iter().map(|row|row["issue"]["id"].as_str().unwrap().to_owned()));
+            let page = store
+                .my_work_page(2, cursor.as_deref(), true, true, &[0], "attention")
+                .unwrap();
+            actual.extend(
+                page["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["issue"]["id"].as_str().unwrap().to_owned()),
+            );
             cursor = page["next_cursor"].as_str().map(str::to_owned);
         }
         assert_eq!(actual, ids);
         assert!(cursor.is_none());
-        let page = store.my_work_page(30, None, false, true, &[0], true).unwrap();
-        let actual = page["items"].as_array().unwrap().iter().map(|row|row["issue"]["id"].as_str().unwrap()).collect::<Vec<_>>();
-        assert_eq!(actual, vec![&ids[0], &ids[4], &ids[3], &ids[2], &ids[1], &ids[5]]);
+        let page = store
+            .my_work_page(30, None, false, true, &[0], "attention")
+            .unwrap();
+        let actual = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["issue"]["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual,
+            vec![&ids[0], &ids[4], &ids[3], &ids[2], &ids[1], &ids[5]]
+        );
     }
 
     #[test]
@@ -172,10 +280,12 @@ mod tests {
                     .unwrap();
             }
         }
-        let first = store.my_work_page(30, None, false, true, &[0], false).unwrap();
+        let first = store
+            .my_work_page(30, None, false, true, &[0], "recent")
+            .unwrap();
         let next = first["next_cursor"].as_str().unwrap();
         let second = store
-            .my_work_page(30, Some(next), false, true, &[0], false)
+            .my_work_page(30, Some(next), false, true, &[0], "recent")
             .unwrap();
         let ids = first["items"]
             .as_array()
@@ -188,9 +298,11 @@ mod tests {
         assert_eq!(second["items"].as_array().unwrap().len(), 6);
         assert_eq!(ids.len(), 36);
         assert!(second["next_cursor"].is_null());
-        assert!(store.my_work_page(101, None, false, true, &[0], false).is_err());
         assert!(store
-            .my_work_page(30, Some("invalid"), false, true, &[0], false)
+            .my_work_page(101, None, false, true, &[0], "recent")
+            .is_err());
+        assert!(store
+            .my_work_page(30, Some("invalid"), false, true, &[0], "recent")
             .is_err());
     }
 
@@ -222,7 +334,9 @@ mod tests {
                 )
                 .unwrap();
         }
-        let page = store.my_work_page(30, None, true, false, &[0, 7], false).unwrap();
+        let page = store
+            .my_work_page(30, None, true, false, &[0, 7], "recent")
+            .unwrap();
         assert_eq!(page["items"].as_array().unwrap().len(), 2);
         assert!(page["items"]
             .as_array()
@@ -230,7 +344,9 @@ mod tests {
             .iter()
             .all(|row| [json!(0), json!(7)].contains(&row["issue"]["assignee_user_id"])));
         assert_eq!(
-            store.my_work_page(30, None, false, true, &[0], false).unwrap()["items"]
+            store
+                .my_work_page(30, None, false, true, &[0], "recent")
+                .unwrap()["items"]
                 .as_array()
                 .unwrap()
                 .len(),

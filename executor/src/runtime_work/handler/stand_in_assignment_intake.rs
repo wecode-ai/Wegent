@@ -67,7 +67,10 @@ impl RuntimeWorkRpcHandler {
             ));
         };
         if super::stand_in::personal_task_claimed(&issue) {
-            return Err(AppIpcError::new("source_removed", "The user started this assignment personally"));
+            return Err(AppIpcError::new(
+                "source_removed",
+                "The user started this assignment personally",
+            ));
         }
         if issue["assignee_user_id"] != user
             || issue["cloud_project_id"] != project

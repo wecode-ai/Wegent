@@ -59,6 +59,13 @@ async fn rejected_local_creation_preserves_the_issue_reservation() {
         &serde_json::to_value(&issue).unwrap(),
     );
     assert!(store.find_user_task_binding("mac", &task_id).is_ok());
+    assert_eq!(
+        store
+            .find_user_task_binding("mac", &task_id)
+            .unwrap()
+            .stand_in_pending,
+        Some(true)
+    );
     assert!(handler.local_task_link(&task_id).is_none());
 }
 

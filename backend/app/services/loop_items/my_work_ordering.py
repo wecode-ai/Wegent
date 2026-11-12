@@ -1,12 +1,14 @@
 """Database ordering for personal work; applied before keyset pagination."""
 
+from datetime import datetime
+
 from sqlalchemy import String, and_, case, cast, func, literal, or_, select
 
 from app.models.delivery import LoopItem, LoopItemTaskBinding, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 
 
-def attention_order(user_id: int, assigned_only: bool):
+def attention_order(user_id: int, assigned_only: bool, order: str = "attention"):
     nodes = LoopItem.__table__.alias("attention_node")
     mine = LoopItem.assignee_user_id == user_id
     request = (
@@ -103,7 +105,7 @@ def attention_order(user_id: int, assigned_only: bool):
             (LoopItem.priority == "low", 3),
             else_=4,
         )
-        if assigned_only
+        if assigned_only or order == "priority"
         else literal(0)
     )
     comment_at = (
@@ -130,4 +132,33 @@ def attention_order(user_id: int, assigned_only: bool):
         (comment_at > LoopItem.updated_at, comment_at), else_=LoopItem.updated_at
     )
     activity = case((completed_at > activity, completed_at), else_=activity)
+    if order != "attention":
+        rank = case(
+            (LoopItem.status.in_(["completed", "cancelled", "archived"]), 4), else_=0
+        )
+        if order != "priority":
+            priority = literal(0)
+    if order == "assignment":
+        index = LoopItem.__table__.alias("attention_assignment")
+        event = LoopItem.__table__.alias("attention_assignment_event")
+        assigned_at = (
+            select(func.max(event.c.created_at))
+            .select_from(index.join(event, event.c.id == index.c.loop_item_id))
+            .where(
+                index.c.resource_type == "assignment_index",
+                index.c.parent_id == LoopItem.id,
+                event.c.resource_type == "comment",
+                event.c.metadata["target_type"].as_string() == "human",
+                event.c.metadata["target_id"].as_string() == str(user_id),
+                mine,
+            )
+            .correlate(LoopItem)
+            .scalar_subquery()
+        )
+        rank = case(
+            (LoopItem.status.in_(["completed", "cancelled", "archived"]), 4),
+            (assigned_at.is_(None), 3),
+            else_=0,
+        )
+        activity = func.coalesce(assigned_at, literal(datetime(9999, 1, 1)))
     return rank, priority, cast(activity, String)

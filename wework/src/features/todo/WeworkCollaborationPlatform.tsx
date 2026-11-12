@@ -13,7 +13,7 @@ import { LOCAL_USER } from '@/api/local/localSession'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
-import { MessageSquare } from 'lucide-react'
+import { ArrowUpRight, MessageSquare } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
@@ -1231,6 +1231,21 @@ export function WeworkSharedProject({
           workspacePanelFill
           readFirst
           showPanelControls
+          showFullscreenControl={!personalIssue}
+          headerActions={
+            personalIssue?.onOpenInProject ? (
+              <button
+                type="button"
+                data-testid="personal-home-open-in-project"
+                aria-label={t('personalHome.openInProject')}
+                title={t('personalHome.openInProject')}
+                onClick={personalIssue.onOpenInProject}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+              >
+                <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
+              </button>
+            ) : undefined
+          }
           item={issue as unknown as CloudLoopItem}
           project={editorProject}
           allItems={allIssues as unknown as CloudLoopItem[]}
@@ -1803,7 +1818,31 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                   <WeworkSharedProject
                     api={projectApi}
                     project={context.project}
-                    personalIssue={context}
+                    personalIssue={{
+                      ...context,
+                      onOpenInProject: () => {
+                        const projectId = String(context.project.id)
+                        navigationRequestRevisionRef.current += 1
+                        pendingNavigationProjectIdRef.current = props.onActiveProjectChange
+                          ? projectId
+                          : undefined
+                        setLocation({
+                          ...routeProjectLocation(
+                            { projectStore: context.project.project_store, projectId },
+                            context.issue.id
+                          )!,
+                          workspaceId:
+                            context.project.project_store === 'local'
+                              ? LOCAL_WORKSPACE_ID
+                              : (context.project.workspace_id ?? null),
+                          projectSettingsSection: null,
+                        })
+                        publishActiveProject({
+                          ...context.project,
+                          location: context.project.project_store === 'local' ? 'local' : 'cloud',
+                        } as LocatedProjectSpace)
+                      },
+                    }}
                     projectCatalogApi={platformApi.projects}
                     detailServices={
                       props.services.projectSpaceDetailServices?.[

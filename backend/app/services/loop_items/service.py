@@ -156,6 +156,8 @@ def _task_binding_metadata(
     values: LoopItemTaskBind, *, include_workflow_node: bool = True
 ) -> dict[str, object]:
     metadata: dict[str, object] = {}
+    if values.stand_in_pending is not None:
+        metadata["stand_in_pending"] = values.stand_in_pending
     if values.wegent_team_id is not None:
         metadata["wegent_team_id"] = values.wegent_team_id
     if include_workflow_node and values.workflow_node_id:
@@ -3180,6 +3182,7 @@ class LoopItemService:
         assigned_only: bool = False,
         include_completed: bool = True,
         attention: bool = False,
+        order: str | None = None,
     ) -> tuple[list[dict[str, object]], str | None]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
@@ -3190,9 +3193,11 @@ class LoopItemService:
         )
         from app.services.loop_items.my_work_ordering import attention_order
 
-        before = decode_my_work_cursor(cursor, user_id, attention)
+        order = order or ("attention" if attention else "recent")
+        attention = order != "recent"
+        before = decode_my_work_cursor(cursor, user_id, attention, order)
         rank, priority, activity = (
-            attention_order(user_id, assigned_only)
+            attention_order(user_id, assigned_only, order)
             if attention
             else (literal(0), literal(0), cast(LoopItem.updated_at, String))
         )
@@ -3222,7 +3227,11 @@ class LoopItemService:
                         rank == before_rank,
                         priority == before_priority,
                         or_(
-                            activity < before_time,
+                            (
+                                activity > before_time
+                                if order == "assignment"
+                                else activity < before_time
+                            ),
                             (activity == before_time) & (LoopItem.id < item_id),
                         ),
                     ),
@@ -3236,7 +3245,12 @@ class LoopItemService:
                 priority.label("attention_priority"),
             )
             .filter(*my_work_filters)
-            .order_by(rank, priority, activity.desc(), LoopItem.id.desc())
+            .order_by(
+                rank,
+                priority,
+                activity.asc() if order == "assignment" else activity.desc(),
+                LoopItem.id.desc(),
+            )
             .limit(limit + 1)
             .all()
         )
@@ -3251,6 +3265,7 @@ class LoopItemService:
                 items[-1].id,
                 user_id,
                 (rows[-1][2], rows[-1][3]) if attention else None,
+                order,
             )
             if has_more
             else None

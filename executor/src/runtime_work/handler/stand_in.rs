@@ -6,14 +6,21 @@ use crate::agents::normalize_reasoning_effort_alias;
 use crate::runtime_work::response::local_task_json;
 
 pub(super) fn personal_task_claimed(issue: &Value) -> bool {
-    let marker = issue.get("personal_task_assignment_at")
+    let marker = issue
+        .get("personal_task_assignment_at")
         .filter(|value| value.is_string())
         .or_else(|| issue["metadata"].get("personal_task_assignment_at"));
-    let history = issue.get("assignment_history").filter(|value| value.is_array())
+    let history = issue
+        .get("assignment_history")
+        .filter(|value| value.is_array())
         .unwrap_or(&issue["metadata"]["assignment_history"]);
-    marker.is_some_and(|marker| marker.is_string() && history.as_array()
-        .and_then(|rows| rows.last())
-        .is_some_and(|assignment| assignment["at"] == *marker))
+    marker.is_some_and(|marker| {
+        marker.is_string()
+            && history
+                .as_array()
+                .and_then(|rows| rows.last())
+                .is_some_and(|assignment| assignment["at"] == *marker)
+    })
 }
 
 pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
@@ -452,7 +459,9 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
             let mut issue_value = serde_json::to_value(&issue).unwrap();
-            if personal_task_claimed(&issue_value) { continue; }
+            if personal_task_claimed(&issue_value) {
+                continue;
+            }
             issue_value["tags"] = issue.metadata["tags"].clone();
             let history = issue.metadata["assignment_history"].as_array();
             let Some(assignment) = history.and_then(|rows| rows.last()) else {
@@ -486,7 +495,8 @@ impl RuntimeWorkRpcHandler {
             if bindings.iter().any(|row| row.task_id == previous) {
                 continue;
             }
-            for config in super::personal_stand_in::matching_personal_roles(&eligible, &issue_value)
+            for config in
+                super::personal_stand_in::automatic_assignment_roles(&eligible, &issue_value)
             {
                 let task_id = self.stand_in_task_id(config, &issue_value);
                 if self.stand_in_assignment_is_handled(config, &task_id, &binding) {
@@ -546,7 +556,9 @@ impl RuntimeWorkRpcHandler {
             issue["id"].as_str().unwrap_or_default()
         ));
         let _guard = gate.lock().await;
-        if personal_task_claimed(issue) { return Ok(()); }
+        if personal_task_claimed(issue) {
+            return Ok(());
+        }
         if issue["assignee_user_id"] != config["userId"] {
             self.log_stand_in_decision(
                 config,
@@ -574,7 +586,7 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        let matching = super::personal_stand_in::matching_personal_roles(configs, issue);
+        let matching = super::personal_stand_in::automatic_assignment_roles(configs, issue);
         if matching.is_empty() {
             self.log_stand_in_decision(config, issue, "no_matching_role_tags", json!({}));
             return Ok(());

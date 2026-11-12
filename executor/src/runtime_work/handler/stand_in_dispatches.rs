@@ -34,7 +34,7 @@ impl RuntimeWorkRpcHandler {
         let matching = if manual {
             configs.iter().collect()
         } else {
-            super::personal_stand_in::matching_personal_roles(configs, issue)
+            super::personal_stand_in::automatic_assignment_roles(configs, issue)
         };
         let pending: Vec<&Value> = matching
             .into_iter()

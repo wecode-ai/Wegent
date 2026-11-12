@@ -279,6 +279,8 @@ impl RuntimeWorkRpcHandler {
         // A binding reserves ownership, not completion. Keep it on failure so
         // reconciliation can resume the same task without a compensating DELETE.
         self.dispatch_stand_in_task(payload, retry).await?;
+        self.accept_stand_in_assignment(config, issue, binding)
+            .await?;
         self.store.update_task(&task_id, |task| {
             if !task.runtime_handle["standInIssueWakeups"].is_array() {
                 task.runtime_handle["standInIssueWakeups"] = json!([]);

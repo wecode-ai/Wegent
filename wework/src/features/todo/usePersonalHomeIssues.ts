@@ -14,20 +14,23 @@ type SourceSnapshot = {
   queryKey: string
 }
 
+export type PersonalHomeIssueOrder = 'attention' | 'activity' | 'assignment' | 'priority'
+
 /** Each store publishes one bounded page independently; cards never fetch their own context. */
 export function usePersonalHomeIssues(
   sources: SharedWorkspaceApi[],
   active: boolean,
   assignedOnly: boolean,
   includeCompleted: boolean,
-  viewerIds: readonly (string | number)[]
+  viewerIds: readonly (string | number)[],
+  order: PersonalHomeIssueOrder = 'attention'
 ) {
   const [snapshots, setSnapshots] = useState<SourceSnapshot[]>([])
   const [revision, setRevision] = useState(0)
   const generation = useRef(0)
   const pendingPages = useRef(new Set<SharedWorkspaceApi>())
   const viewers = JSON.stringify(viewerIds)
-  const queryKey = JSON.stringify([revision, assignedOnly, includeCompleted, viewers])
+  const queryKey = JSON.stringify([revision, assignedOnly, includeCompleted, viewers, order])
   const reload = useCallback(() => setRevision(value => value + 1), [])
   useEffect(() => {
     const requestGeneration = ++generation.current
@@ -35,7 +38,7 @@ export function usePersonalHomeIssues(
     if (!active) return
     const input = {
       limit: 30,
-      order: 'attention' as const,
+      order,
       scope: assignedOnly ? ('assigned' as const) : ('participating' as const),
       includeCompleted,
       viewerIds: JSON.parse(viewers) as (string | number)[],
@@ -90,7 +93,7 @@ export function usePersonalHomeIssues(
       unsubscribeContext()
       window.removeEventListener('focus', reload)
     }
-  }, [sources, queryKey, active, assignedOnly, includeCompleted, viewers, reload])
+  }, [sources, queryKey, active, assignedOnly, includeCompleted, viewers, order, reload])
   const current = sources.map(api => {
     const snapshot = snapshots.find(snapshot => snapshot.api === api)
     return snapshot
@@ -121,7 +124,7 @@ export function usePersonalHomeIssues(
             const page = await snapshot.api.myWork!.page!({
               cursor: snapshot.nextCursor!,
               limit: 30,
-              order: 'attention',
+              order,
               scope: assignedOnly ? 'assigned' : 'participating',
               includeCompleted,
               viewerIds,
@@ -158,6 +161,7 @@ export function usePersonalHomeIssues(
     )
   }
   return {
+    revision,
     items: current.flatMap(snapshot => snapshot.items),
     loading: current.some(snapshot => snapshot.loading),
     error: current.some(snapshot => snapshot.error),

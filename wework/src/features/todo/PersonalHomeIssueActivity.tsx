@@ -47,7 +47,7 @@ export function PersonalHomeIssueActivity({
             ? runtimeTaskTrackingExecutionStatus(lifecycle)
             : task
               ? runtimeTaskSummaryTrackingExecutionStatus(task)
-              : null) ?? 'unknown')
+              : null) ?? (binding.standInPending ? 'reserved' : 'unknown'))
     return {
       binding,
       status,
@@ -55,11 +55,13 @@ export function PersonalHomeIssueActivity({
     }
   })
   const statusLabel = (status: string) =>
-    status === 'waiting'
-      ? t('personalHome.taskStatusWaiting')
-      : status === 'unknown'
-        ? t('personalHome.taskStatusUnknown')
-        : t(`todo.workflow_task_status_${status === 'queued' ? 'pending' : status}`)
+    status === 'reserved'
+      ? t('todo.assistant_task_pending')
+      : status === 'waiting'
+        ? t('personalHome.taskStatusWaiting')
+        : status === 'unknown'
+          ? t('personalHome.taskStatusUnknown')
+          : t(`todo.workflow_task_status_${status === 'queued' ? 'pending' : status}`)
   const statusOrder = [
     'waiting',
     'failed',
@@ -68,6 +70,7 @@ export function PersonalHomeIssueActivity({
     'cancelled',
     'succeeded',
     'archived',
+    'reserved',
     'unknown',
   ]
   const counts = [
@@ -112,7 +115,7 @@ export function PersonalHomeIssueActivity({
               ? `personal-home-task-${issueId}-${tasks[0].binding.id}`
               : `personal-home-tasks-summary-${issueId}`
           }
-          disabled={!onOpenTask}
+          disabled={!onOpenTask || (tasks.length === 1 && tasks[0].status === 'reserved')}
           aria-haspopup={tasks.length > 1 ? 'dialog' : undefined}
           aria-expanded={tasks.length > 1 ? Boolean(taskAnchor) : undefined}
           title={tasks.map(task => `${task.title} · ${statusLabel(task.status)}`).join('\n')}
@@ -162,6 +165,7 @@ export function PersonalHomeIssueActivity({
             <button
               type="button"
               key={task.binding.id}
+              disabled={!onOpenTask || task.status === 'reserved'}
               data-testid={`personal-home-task-${issueId}-${task.binding.id}`}
               className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted md:min-h-8"
               onClick={event => {

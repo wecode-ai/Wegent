@@ -794,7 +794,7 @@ export function createDeliveryApi(client: HttpClient) {
       limit?: number
       scope?: 'assigned' | 'participating'
       includeCompleted?: boolean
-      order?: 'recent' | 'attention'
+      order?: 'recent' | 'attention' | 'activity' | 'assignment' | 'priority'
       viewerIds?: readonly (string | number)[]
     }): Promise<{ items: CloudMyWorkItem[]; errors?: string[]; next_cursor?: string | null }> {
       const query = new URLSearchParams()

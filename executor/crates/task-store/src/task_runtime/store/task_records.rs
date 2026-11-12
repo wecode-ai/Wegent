@@ -202,9 +202,15 @@ impl LocalTaskStore {
         }
         if personal_task {
             if input.assignee_user_id != Some(project.created_by_user_id) {
-                return Err(TaskRuntimeError::Invalid("Personal work must belong to its creator".into()));
+                return Err(TaskRuntimeError::Invalid(
+                    "Personal work must belong to its creator".into(),
+                ));
             }
-            metadata["personal_task_assignment_at"] = metadata["assignment_history"].as_array().and_then(|rows| rows.last()).map(|row| row["at"].clone()).unwrap_or(Value::Null);
+            metadata["personal_task_assignment_at"] = metadata["assignment_history"]
+                .as_array()
+                .and_then(|rows| rows.last())
+                .map(|row| row["at"].clone())
+                .unwrap_or(Value::Null);
         }
         // Allocating an Issue number does not change editable project configuration.
         transaction.execute(

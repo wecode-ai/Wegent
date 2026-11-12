@@ -377,3 +377,51 @@ def test_attention_cursor_cannot_be_used_with_recent_order(test_db, test_user):
     with pytest.raises(HTTPException) as failure:
         loop_item_service.list_my_work_page(test_db, test_user.id, cursor=cursor)
     assert failure.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("order", "expected"),
+    [("assignment", [1, 0, 2]), ("activity", [2, 1, 0]), ("priority", [0, 2, 1])],
+)
+def test_personal_sort_modes_apply_before_every_page(
+    test_db, test_user, order, expected
+):
+    from app.services.issue_assignments import issue_assignment_service
+
+    project = _make_project(test_db, test_user)
+    rows = add_items(test_db, project, test_user.id, 3, prefix="SORT")
+    for index, row in enumerate(rows):
+        row.assignee_user_id = test_user.id
+        row.priority = ["urgent", "low", "high"][index]
+        if index != 2:
+            event, created = issue_assignment_service.record(
+                test_db,
+                project_id=project.id,
+                issue_id=row.id,
+                member_type="human",
+                member_id=str(test_user.id),
+                assigned_by_user_id=test_user.id,
+                workflow_step=None,
+                notify=False,
+                trigger="manual",
+                comment_body="Assignment",
+            )
+            assert created
+            event.comment.created_at = datetime(2026, 1, 2 - index)
+    test_db.flush()
+    for index, row in enumerate(rows):
+        row.updated_at = datetime(2026, 2, index + 1)
+    test_db.commit()
+    cursor, actual = None, []
+    for _ in range(3):
+        page, cursor = loop_item_service.list_my_work_page(
+            test_db,
+            test_user.id,
+            order=order,
+            assigned_only=True,
+            limit=1,
+            cursor=cursor,
+        )
+        actual.extend(row["id"] for row in page)
+    assert actual == [rows[index].id for index in expected]
+    assert cursor is None

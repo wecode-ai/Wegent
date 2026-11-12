@@ -726,27 +726,32 @@ export function TodoEditor(props: TodoEditorProps) {
   const [createMilestoneId, setCreateMilestoneId] = useState<string | null>(
     draft ? draft.milestoneId : (createProps?.initialMilestoneId ?? null),
   );
-  const [editingContent, setEditingContent] = useState(!readFirst);
 
-  const { draft: issueDraft, setField: setIssueDraftField } =
-    useIssueDetailDraft({
-      source: item,
-      initial: {
-        title: createProps?.initialTitle ?? draft?.title ?? "",
-        description: draft?.markdown ?? "",
-        status: createProps?.initialStatus ?? "inbox",
-        priority: draft?.priority ?? "none",
-        parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
-        startDate: draft?.startDate ?? "",
-        dueDate: draft?.dueDate ?? "",
-        assigneeTarget: draft?.assigneeTarget ?? "",
-        tags: draft?.tags ?? createProps?.initialTags ?? [],
-      },
-      normalizeDescription: extensions?.normalizeDescription,
-      startDateFromSource:
-        extensions?.startDateFromSource ?? todoDueDateFromSource,
-      dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
-    });
+  const {
+    draft: issueDraft,
+    setField: setIssueDraftField,
+    restoredContentDirty,
+  } = useIssueDetailDraft({
+    source: item,
+    initial: {
+      title: createProps?.initialTitle ?? draft?.title ?? "",
+      description: draft?.markdown ?? "",
+      status: createProps?.initialStatus ?? "inbox",
+      priority: draft?.priority ?? "none",
+      parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
+      startDate: draft?.startDate ?? "",
+      dueDate: draft?.dueDate ?? "",
+      assigneeTarget: draft?.assigneeTarget ?? "",
+      tags: draft?.tags ?? createProps?.initialTags ?? [],
+    },
+    normalizeDescription: extensions?.normalizeDescription,
+    startDateFromSource:
+      extensions?.startDateFromSource ?? todoDueDateFromSource,
+    dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
+  });
+  const [editingContent, setEditingContent] = useState(
+    !readFirst || restoredContentDirty,
+  );
   const {
     title,
     description,
@@ -990,9 +995,13 @@ export function TodoEditor(props: TodoEditorProps) {
   const statusHistoryTriggerRef = useRef<HTMLButtonElement>(null);
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const personalTaskActionRef = useRef<HTMLButtonElement>(null);
-  const [personalTaskActionPinned, setPersonalTaskActionPinned] = useState(false);
+  const [personalTaskActionPinned, setPersonalTaskActionPinned] =
+    useState(false);
   const canPinPersonalTaskAction = Boolean(
-    workspacePanel && item && props.onCreateTask && extensions?.renderPersonalTaskAction,
+    workspacePanel &&
+    item &&
+    props.onCreateTask &&
+    extensions?.renderPersonalTaskAction,
   );
   useEffect(() => {
     setPersonalTaskActionPinned(false);
@@ -3513,7 +3522,10 @@ export function TodoEditor(props: TodoEditorProps) {
                         createTaskRef={
                           personalTaskAction ? personalTaskActionRef : undefined
                         }
-                        createTaskLabel={t("todo.create_personal_task", "创建任务")}
+                        createTaskLabel={t(
+                          "todo.create_personal_task",
+                          "创建任务",
+                        )}
                         childItems={executionChildItems}
                         statusOptions={statusOptions}
                         statusDotClasses={columnDotClasses}
@@ -3522,7 +3534,9 @@ export function TodoEditor(props: TodoEditorProps) {
                         selectedTaskId={props.selectedTaskId}
                         showCurrentTaskOnly={props.showCurrentTaskOnly}
                         onCreateTask={
-                          canStartWork || personalTaskAction || executionTaskCount > 0
+                          canStartWork ||
+                          personalTaskAction ||
+                          executionTaskCount > 0
                             ? props.onCreateTask
                             : undefined
                         }

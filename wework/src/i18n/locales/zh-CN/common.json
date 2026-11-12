@@ -6,6 +6,13 @@
     "participating": "我参与的",
     "issueScope": "Issue 范围",
     "workspaceTabs": "右侧工作区",
+    "openInProject": "在项目中打开",
+    "sort": "事项排序",
+    "sort_attention": "待我处理优先",
+    "sort_assignment": "分配最久",
+    "sort_activity": "最近活动",
+    "sort_priority": "优先级",
+    "assignedFor": "已分配给你 {{duration}}",
     "standInTab": "助理",
     "detailFailed": "Issue 详情加载失败，请重试。",
     "relatedFailed": "关联 Issue 加载失败。",
@@ -5468,7 +5475,8 @@
     "parent_board_nested_summary": "{{parents}} 个父事项 · {{children}} 个直属子事项",
     "parent_board_summary_with_other": "{{parents}} 个父事项 · {{standalone}} 个独立事项 · {{other}} 个其他事项",
     "parent_board_direct_children": "直属子事项",
-    "parent_board_other": "其他事项"
+    "parent_board_other": "其他事项",
+    "assistant_task_pending": "等待助理处理"
   },
   "collaboration": {
     "all_workspaces": "所有空间",

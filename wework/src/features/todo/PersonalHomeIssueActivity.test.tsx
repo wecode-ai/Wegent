@@ -9,6 +9,22 @@ import {
 import i18n from '@/i18n'
 
 afterEach(cleanup)
+
+it('keeps a reserved assistant task unavailable until its real Runtime starts', async () => {
+  await i18n.changeLanguage('en')
+  const pending = { ...binding, standInPending: true }
+  const { store, onOpenTask } = mount([pending])
+  const row = screen.getByTestId('personal-home-task-issue-binding')
+  expect(row).toBeDisabled()
+  expect(row).toHaveTextContent('Waiting for assistant')
+  fireEvent.click(row)
+  expect(onOpenTask).not.toHaveBeenCalled()
+  act(() => store.executorStarted(binding))
+  expect(row).toBeEnabled()
+  expect(row).toHaveTextContent('Running')
+  fireEvent.click(row)
+  expect(onOpenTask).toHaveBeenCalledExactlyOnceWith(pending)
+})
 const binding: WorkspaceTaskBinding = {
   id: 'binding',
   projectId: 'project',

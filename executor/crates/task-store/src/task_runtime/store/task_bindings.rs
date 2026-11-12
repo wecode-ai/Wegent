@@ -62,6 +62,13 @@ impl LocalTaskStore {
         // fields are omitted: the rebind below merges with a JSON patch where
         // null values would delete the stored identity.
         if let Some(dispatch) = dispatch {
+            if let Some(pending) = dispatch
+                .get("standInPending")
+                .or_else(|| dispatch.get("stand_in_pending"))
+                .and_then(Value::as_bool)
+            {
+                metadata["stand_in_pending"] = json!(pending);
+            }
             for (metadata_key, value) in [
                 (
                     "human_assignment_id",

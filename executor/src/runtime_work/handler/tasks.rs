@@ -238,10 +238,13 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Err(error) = self.sync_generated_issue_title(&latest_link, &title).await {
-            log_executor_event("generated Issue title update failed", &[
-                ("local_task_id", local_task_id.clone()),
-                ("error", error.message),
-            ]);
+            log_executor_event(
+                "generated Issue title update failed",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("error", error.message),
+                ],
+            );
         }
         self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
