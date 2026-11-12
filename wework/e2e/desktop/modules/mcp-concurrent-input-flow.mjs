@@ -304,19 +304,31 @@ export async function verifyConcurrentMcpUserInput(control) {
     },
     DEFAULT_STEP_TIMEOUT_MS
   )
+  let verificationFailed = false
   try {
     await restartCodexWhenIdle(control)
     await verifyConcurrentCases(control)
+  } catch (error) {
+    verificationFailed = true
+    throw error
   } finally {
-    await requestExecutor(
-      control,
-      'runtime.codex.catalog.overrides.write',
-      {
-        slug: DEFAULT_MODEL_ID,
-        entry: model.effective,
-      },
-      DEFAULT_STEP_TIMEOUT_MS
-    )
-    await restartCodexWhenIdle(control)
+    try {
+      await requestExecutor(
+        control,
+        'runtime.codex.catalog.overrides.write',
+        {
+          slug: DEFAULT_MODEL_ID,
+          entry: model.effective,
+        },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await restartCodexWhenIdle(control)
+    } catch (error) {
+      if (!verificationFailed) throw error
+      console.error(
+        'Failed to restore the Codex model catalog after concurrent MCP verification',
+        error
+      )
+    }
   }
 }
