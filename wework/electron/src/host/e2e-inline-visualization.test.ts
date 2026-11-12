@@ -251,6 +251,33 @@ describe('inline visualization verification controls', () => {
     probe.expectCleaned()
   })
 
+  test('uses the same native wheel path for an owned MCP App document', async () => {
+    const { contents, frame } = visibleWheelTarget()
+    const mcpUrl = 'codex-sandbox://card.web-sandbox.oaiusercontent.com/mcp-app.html'
+    const element = document.querySelector<HTMLIFrameElement>('iframe')!
+    element.dataset.testid = 'mcp-app-frame'
+    element.src = mcpUrl
+    frame.url = mcpUrl
+    await expect(
+      controlInlineVisualizationFrame(
+        contents,
+        { url: mcpUrl, action: 'wheel', selector: '#blank', deltaY: -120 },
+        environment
+      )
+    ).resolves.toMatchObject({
+      backend: 'chromium-input-dispatch',
+      deltaY: -120,
+      probe: { before: { ownsPoint: true, hit: { testId: 'mcp-app-frame' } } },
+    })
+    expect(contents.debugger.sendCommand).toHaveBeenCalledWith('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: 210,
+      y: 210,
+      deltaX: 0,
+      deltaY: -120,
+    })
+  })
+
   test('clips native wheel coordinates to the visible conversation viewport', async () => {
     const { contents } = target()
     document.body.innerHTML = `<div id="viewport" style="overflow-y:auto"><iframe data-testid="codex-inline-visualization-frame" src="${url}"></iframe></div><section id="blank"></section>`

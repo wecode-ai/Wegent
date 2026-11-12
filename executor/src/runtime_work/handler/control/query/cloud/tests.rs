@@ -59,6 +59,7 @@ fn cloud_query_keeps_active_pages_when_archived_history_is_denied() {
 #[test]
 fn cloud_metadata_preserves_frontend_fields_and_redacts_secrets() {
     let view = cloud_view(&json!({"id":123,"title":"Weekly work","git_repo":"team/repo","branch_name":"feature/week", "modelConfig":{"api_key":"private-secret"},"updated_at":"2026-10-30T00:00:00Z"})).unwrap();
+    crate::workbench_control::assert_output_contract("get_conversation", &view);
     assert_eq!(view["git_repo"], "team/repo");
     assert_eq!(view["branch_name"], "feature/week");
     assert!(view["updated_at"].as_i64().unwrap() > 0);
@@ -71,6 +72,7 @@ fn cloud_history_pages_preserve_order_and_both_directions_past_one_hundred() {
         .map(|index| json!({"id":if index==0 {9999} else {index},"content":index}))
         .collect();
     let recent = message_page(messages.clone(), &json!({"limit":100})).unwrap();
+    crate::workbench_control::assert_output_contract("read_conversation", &recent);
     assert_eq!(recent["messages"][0]["content"], 151);
     assert_eq!(recent["has_more_before"], true);
     let older = message_page(

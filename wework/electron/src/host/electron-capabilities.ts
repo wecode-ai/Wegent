@@ -1060,6 +1060,9 @@ export function createElectronCapabilityRouter(
     }
     if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
     const contents = e2eHost.captureTarget('main')
+    if (params.action === 'wheel' || params.action === 'metrics') {
+      return controlInlineVisualizationFrame(contents, params)
+    }
     const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)
     if (!frame) throw new Error('MCP App frame is not loaded')
     const action = stringParam(params, 'action')
