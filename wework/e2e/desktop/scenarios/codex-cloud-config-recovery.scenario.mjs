@@ -215,7 +215,9 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       })
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
-      await assertDegraded(resumeFault, { method: 'thread/resume' })
+      // Bundled plugin initialization can be the first native request to observe
+      // the failed cloud config. The resumed thread is the behavior under test.
+      await assertDegraded(resumeFault, { taskId: oldTask, threadId: oldThread })
       assert.equal((await task(oldTask)).threadId, oldThread)
       assert.ok(continued.turns.length > original.turns.length)
       assert.ok(JSON.stringify(continued.messages).includes(`${PREFIX}_OLD_COMPLETE`))
