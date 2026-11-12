@@ -16,6 +16,8 @@ use wegent_backend_rs::{
 
 use super::fixture::{LARGE_RESULT_BYTES, LONG_CONVERSATION_ROWS};
 
+#[path = "history_window.rs"]
+mod history_window;
 #[path = "session_auth.rs"]
 mod session_auth;
 
@@ -80,6 +82,7 @@ pub async fn assert_http_reads(
     task_ids: &[i64],
     user_id: i32,
     long_conversation: bool,
+    history_tables: &[&str],
 ) {
     // Require explicitly configured disposable services, never local dotenv defaults.
     for name in ["DATABASE_URL", "REDIS_URL"] {
@@ -94,6 +97,7 @@ pub async fn assert_http_reads(
     state.mysql = mysql.clone();
     state.task_store = store;
     state.user_reader = Arc::new(PublicUserReader::new(mysql.clone()));
+    state.internal_chat.internal_service_token = Some(history_window::TOKEN.into());
     state.auth = AuthConfig {
         jwt_key: "responses-fixture-signing-key".into(),
         legacy_jwt_keys: Vec::new(),
@@ -209,6 +213,15 @@ pub async fn assert_http_reads(
     }
     session_auth::assert_session_compatibility(&client, address, task_ids[0], user_id + 1).await;
     session_auth::assert_skill_identity_compatibility(&client, address, &mysql, user_id).await;
+    if !long_conversation {
+        assert_eq!(task_ids.len(), history_tables.len());
+        for (task_id, table) in task_ids.iter().zip(history_tables) {
+            history_window::assert_history_windows(
+                &client, address, &mysql, *task_id, table, user_id,
+            )
+            .await;
+        }
+    }
     stop.send(()).unwrap();
     gateway_task.await.unwrap();
     api_stop.send(()).unwrap();

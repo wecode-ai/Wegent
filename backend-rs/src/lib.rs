@@ -105,6 +105,8 @@ mod chat_attachment_text;
 mod chat_guidance;
 mod chat_guidance_consume;
 mod chat_history;
+mod chat_history_checkpoint;
+mod chat_history_window;
 mod chat_message_update;
 mod chat_repository;
 mod ci_lint_probe;

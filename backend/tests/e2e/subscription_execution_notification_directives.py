@@ -638,6 +638,63 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 ]
                 self.assertEqual(cached_seed, expected)
 
+        self._assert_package_history_payload_window(task_id, fork_id, seeded_content[1])
+
+    def _assert_package_history_payload_window(
+        self, task_id: int, fork_id: int, summary: str
+    ) -> None:
+        """Exercise the real package loader and inspect actual MySQL row counts."""
+        from sqlalchemy import event
+
+        from app.db.session import engine
+        from chat_shell.history.loader import _load_history_from_db_sync
+
+        with SessionLocal() as db:
+            checkpoint = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                    Subtask.result["value"].as_string() == summary,
+                )
+                .one()
+            )
+            checkpoint.result = {
+                "messages_chain": [
+                    {
+                        "role": "user",
+                        "content": summary,
+                        "additional_kwargs": {"summary_compacted": True},
+                    }
+                ]
+            }
+            db.commit()
+        for target in [task_id, fork_id]:
+            payload_reads = []
+
+            def capture(_conn, cursor, statement, _parameters, _context, _many):
+                projection = statement.split("FROM", 1)[0]
+                if statement.lstrip().upper().startswith("SELECT") and (
+                    "subtasks" in statement and ".result" in projection
+                ):
+                    payload_reads.append((statement, cursor.rowcount))
+
+            event.listen(engine, "after_cursor_execute", capture)
+            try:
+                messages = _load_history_from_db_sync(
+                    target, False, limit=20, from_latest_compaction=True
+                )
+            finally:
+                event.remove(engine, "after_cursor_execute", capture)
+            self.assertEqual(messages[0]["content"], summary)
+            self.assertTrue(payload_reads, "No actual package payload read captured")
+            self.assertTrue(all(0 <= count <= 20 for _, count in payload_reads))
+            self.assertLessEqual(
+                sum(count for _, count in payload_reads),
+                20 if target == task_id else 40,
+            )
+            self.assertTrue(all("ORDER BY" not in sql for sql, _ in payload_reads))
+
     def test_silent_real_execution_keeps_private(self) -> None:
         result = self._execute(
             "只输出两行：第一行“测试，现在时间：{{time}}”，最后一行【静默】", "Chat"

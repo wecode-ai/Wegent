@@ -4,6 +4,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.models.subtask import SubtaskRole, SubtaskStatus
 
 
@@ -12,6 +14,8 @@ def _assistant(msg_id, chain, status=SubtaskStatus.COMPLETED):
         role=SubtaskRole.ASSISTANT,
         status=status,
         message_id=msg_id,
+        id=msg_id,
+        created_at=None,
         result={"messages_chain": chain},
     )
 
@@ -183,7 +187,11 @@ def test_resolve_history_no_checkpoint_uses_plain_limit(monkeypatch):
         for i in range(5)
     ]
     monkeypatch.setattr(
-        cc.task_fork_history_resolver, "resolve_for_task", lambda *a, **k: items
+        cc.task_fork_history_resolver,
+        "resolve_for_task",
+        lambda *a, **k: (
+            [] if k.get("summary_checkpoint_only") else items[-k["limit"] :]
+        ),
     )
 
     out = cc.resolve_history_subtasks(
@@ -197,6 +205,101 @@ def test_resolve_history_no_checkpoint_uses_plain_limit(monkeypatch):
     )
     # No checkpoint yet -> plain "most recent N", NOT [oldest] + last N-1.
     assert [s.message_id for s in out] == [3, 4]
+
+
+@pytest.mark.parametrize("limit", [1, 2, 20])
+def test_bounded_history_keeps_old_checkpoint_without_loading_all(monkeypatch, limit):
+    from app.services.chat import compaction_checkpoint as cc
+
+    checkpoint = _assistant(2, [{"additional_kwargs": {"summary_compacted": True}}])
+    subtasks = [_assistant(i, [{"content": str(i)}]) for i in range(1, 50)]
+    subtasks[1] = checkpoint
+    calls = []
+
+    def resolve(_db, **options):
+        calls.append(options)
+        eligible = [checkpoint] if options.get("summary_checkpoint_only") else subtasks
+        return [
+            SimpleNamespace(subtask=subtask)
+            for subtask in eligible[-options["limit"] :]
+        ]
+
+    monkeypatch.setattr(cc.task_fork_history_resolver, "resolve_for_task", resolve)
+    out = cc.resolve_history_subtasks(
+        db=None, task_id=1, user_id=7, limit=limit, from_latest_compaction=True
+    )
+
+    assert out[0] is checkpoint
+    assert len(out) == limit
+    assert [call["limit"] for call in calls] == ([1] if limit == 1 else [1, limit - 1])
+    assert calls[0]["summary_checkpoint_only"] is True
+    if limit > 1:
+        assert [row.message_id for row in out[1:]] == list(range(50 - limit + 1, 50))
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_disabled_history_does_not_resolve(monkeypatch, limit):
+    from app.services.chat import compaction_checkpoint as cc
+
+    monkeypatch.setattr(
+        cc.task_fork_history_resolver,
+        "resolve_for_task",
+        lambda *a, **k: pytest.fail("disabled history must not read DB"),
+    )
+    assert (
+        cc.resolve_history_subtasks(
+            db=None, task_id=1, user_id=7, limit=limit, from_latest_compaction=True
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("forked", [False, True])
+@pytest.mark.parametrize("from_latest_compaction", [False, True])
+def test_database_history_only_loads_window_and_latest_valid_checkpoint(
+    test_db,
+    monkeypatch,
+    forked,
+    from_latest_compaction,
+):
+    from app.services.chat import compaction_checkpoint as cc
+    from app.services.task_fork_history import subtask_store
+    from tests.services.test_task_fork_history import _subtask, _task
+
+    root = _task(1, 8)
+    fork = _task(2, 7, fork={"sourceTaskId": 1, "afterMessageId": 70, "rootTaskId": 1})
+    rows = [_subtask(i, 1, 8, i, SubtaskRole.ASSISTANT) for i in range(1, 101)]
+    for index in [1, 4, 79]:
+        rows[index].result = {
+            "messages_chain": [{"additional_kwargs": {"summary_compacted": True}}]
+        }
+    rows[49].status = SubtaskStatus.PENDING
+    test_db.add_all([root, fork, *rows])
+    test_db.flush()
+    test_db.expunge_all()
+    loaded = []
+    original_load = subtask_store._load_ordered
+
+    def record_load(db, ids):
+        loaded.append(list(ids))
+        return original_load(db, ids)
+
+    monkeypatch.setattr(subtask_store, "_load_ordered", record_load)
+    subtasks = cc.resolve_history_subtasks(
+        db=test_db,
+        task_id=2 if forked else 1,
+        user_id=7 if forked else 8,
+        before_message_id=61,
+        limit=20,
+        from_latest_compaction=from_latest_compaction,
+    )
+
+    tail = [i for i in range(1, 61) if i != 50]
+    expected = [5] + tail[-19:] if from_latest_compaction else tail[-20:]
+    assert [row.id for row in subtasks] == expected
+    assert sum(map(len, loaded)) == 20
+    assert all(len(ids) <= 20 for ids in loaded)
+    assert set(identifier for ids in loaded for identifier in ids) == set(expected)
 
 
 def test_subtask_to_messages_forwards_summary_marker_via_metadata():

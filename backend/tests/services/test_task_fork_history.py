@@ -114,6 +114,7 @@ def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
         statuses=None,
         roles=None,
         before_message_id=None,
+        summary_checkpoint_only=False,
     ):
         calls.append((task_id, owner_user_id, recent_limit, statuses, roles))
         return local if recent_limit is None else local[-recent_limit:]

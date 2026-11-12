@@ -17,6 +17,7 @@ use crate::owned_statements::tasks_by_ids_statement;
 
 pub use crate::request_sql::{RequestSql, RouteKey, StatementArgs, fetch_optional_as};
 pub use crate::task_store_default::DefaultTaskStore;
+pub use crate::task_store_history::{SubtaskHistoryWindow, history_window_by_task};
 pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     order_assistant_subtasks, order_subtasks_by_message, ordered_subtasks_for_user,
@@ -599,6 +600,15 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     ) -> MysqlResult<SubtaskListing> {
         crate::task_store_listing::ordered_subtasks_by_task(&self.mysql, SUBTASKS_TABLE, task_id)
             .await
+    }
+
+    async fn list_subtasks_history_window(
+        &self,
+        task_id: i64,
+        _owner_user_id: i64,
+        window: SubtaskHistoryWindow,
+    ) -> MysqlResult<Vec<MysqlRow>> {
+        history_window_by_task(&self.mysql, SUBTASKS_TABLE, task_id, window).await
     }
 
     async fn lineage_task_on(

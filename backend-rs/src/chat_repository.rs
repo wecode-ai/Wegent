@@ -277,6 +277,20 @@ impl<'a> ChatHistoryRepository<'a> {
         listing.rows.iter().map(decode_subtask_row).collect()
     }
 
+    pub async fn list_subtasks_history_window(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        window: crate::task_store::SubtaskHistoryWindow,
+    ) -> MysqlResult<Vec<SubtaskRow>> {
+        self.task_store
+            .list_subtasks_history_window(task_id, owner_user_id, window)
+            .await?
+            .iter()
+            .map(decode_subtask_row)
+            .collect()
+    }
+
     // Note (replay/20261001-6): recording 20260928050001 contains a single wide
     // batched `subtask_contexts` read (16,508 ids, ~206 KB of SQL, ~33 K tokens).
     // Replay's optional-session classifier only proves a statement read-only

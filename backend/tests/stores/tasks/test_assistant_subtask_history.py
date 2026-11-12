@@ -153,3 +153,62 @@ def test_ordered_task_history_preserves_filters_without_sorting_large_payloads(
     _assert_id_sort_projection(
         history_statements, empty=options.get("message_ids") == []
     )
+
+
+@pytest.mark.parametrize(
+    "chain",
+    [
+        [{"additional_kwargs": {"summary_compacted": True}}],
+        [{"additional_kwargs": {"summary_compacted": "true"}}],
+        [{"additional_kwargs": {"summary_compacted": 1}}],
+        [{"additional_kwargs": {"summary_compacted": False}}],
+        [{"additional_kwargs": {"summary_compacted": [True]}}],
+        [{"additional_kwargs": [{"summary_compacted": True}]}],
+        [[{"additional_kwargs": {"summary_compacted": True}}]],
+        {"additional_kwargs": {"summary_compacted": True}},
+        ["text", 1, None, {"additional_kwargs": {"summary_compacted": True}}],
+        ["text", 1, None],
+        None,
+    ],
+)
+@pytest.mark.parametrize(
+    ("role", "status"),
+    [
+        (SubtaskRole.ASSISTANT, SubtaskStatus.COMPLETED),
+        (SubtaskRole.USER, SubtaskStatus.COMPLETED),
+        (SubtaskRole.ASSISTANT, SubtaskStatus.FAILED),
+    ],
+)
+def test_checkpoint_database_filter_matches_exact_marker_contract(
+    test_db,
+    history_statements,
+    chain,
+    role,
+    status,
+):
+    from app.services.chat.compaction_checkpoint import subtask_has_summary_checkpoint
+    from tests.services.test_task_fork_history import _subtask, _task
+
+    row = _subtask(1, 42, 7, 1, role)
+    row.status = status
+    row.result = {
+        "messages_chain": chain,
+        "context_compactions": [{"status": "completed"}],
+    }
+    test_db.add_all([_task(42, 7), row])
+    test_db.flush()
+    expected = [1] if subtask_has_summary_checkpoint(row) else []
+    test_db.expunge_all()
+    history_statements.clear()
+
+    selected = SqlAlchemySubtaskStore().list_by_task_ordered(
+        test_db,
+        task_id=42,
+        owner_user_id=7,
+        recent_limit=1,
+        summary_checkpoint_only=True,
+    )
+
+    assert [row.id for row in selected] == expected
+    _assert_id_sort_projection(history_statements)
+    assert "LIMIT" in next(sql for sql in history_statements if "ORDER BY" in sql)

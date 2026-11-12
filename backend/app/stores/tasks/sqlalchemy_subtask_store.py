@@ -14,6 +14,7 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
+from app.stores.tasks.history_checkpoint import summary_checkpoint_predicate
 from app.stores.tasks.interfaces import (
     ExecutorReference,
     FailedSubtaskDetail,
@@ -832,9 +833,12 @@ class SqlAlchemySubtaskStore:
         statuses: Optional[Sequence[SubtaskStatus]] = None,
         roles: Optional[Sequence[SubtaskRole]] = None,
         before_message_id: Optional[int] = None,
+        summary_checkpoint_only: bool = False,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if summary_checkpoint_only:
+            query = query.filter(summary_checkpoint_predicate(db, Subtask))
         if before_message_id is not None:
             query = query.filter(Subtask.message_id < before_message_id)
         if message_ids is not None:

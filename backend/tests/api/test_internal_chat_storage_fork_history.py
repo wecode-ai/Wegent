@@ -33,10 +33,28 @@ def _subtask(message_id: int, role: SubtaskRole):
 
 
 def _patch_internal_history(monkeypatch, items, *, resolver_applies_limit=False):
-    def resolve_for_task(db, *, task_id, user_id, before_message_id=None, limit=None):
+    def resolve_for_task(
+        db,
+        *,
+        task_id,
+        user_id,
+        before_message_id=None,
+        limit=None,
+        statuses=None,
+        summary_checkpoint_only=False,
+    ):
+        eligible = [
+            item
+            for item in items
+            if (not statuses or item.subtask.status in statuses)
+            and (
+                not summary_checkpoint_only
+                or compaction_checkpoint.subtask_has_summary_checkpoint(item.subtask)
+            )
+        ]
         if resolver_applies_limit and limit:
-            return items[-limit:]
-        return items
+            return eligible[-limit:]
+        return eligible
 
     monkeypatch.setattr(
         chat_storage,

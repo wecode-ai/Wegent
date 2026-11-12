@@ -85,6 +85,28 @@ fn limit_with_checkpoint_never_drops_checkpoint() {
 }
 
 #[test]
+fn bounded_history_keeps_old_checkpoint_and_only_newer_stable_keys() {
+    use crate::chat_history_window::{keep_checkpoint, lineage_before};
+    let checkpoint = item(2, "COMPLETED", "ASSISTANT", true);
+    let mut duplicate = item(2, "COMPLETED", "ASSISTANT", false);
+    duplicate.subtask.id = 100;
+    let recent = vec![
+        item(1, "COMPLETED", "USER", false),
+        item(2, "COMPLETED", "ASSISTANT", true),
+        duplicate,
+        item(40, "COMPLETED", "USER", false),
+    ];
+    let kept = keep_checkpoint(checkpoint, recent);
+    assert_eq!(
+        kept.iter().map(|item| item.subtask.id).collect::<Vec<_>>(),
+        vec![2, 100, 40]
+    );
+    assert_eq!(lineage_before(Some(30), Some(20)), Some(21));
+    assert_eq!(lineage_before(Some(10), Some(20)), Some(10));
+    assert_eq!(lineage_before(None, Some(i64::MAX)), None);
+}
+
+#[test]
 fn chain_message_ids_carry_the_chain_index() {
     // Verified against the recorded response: 69956427469762-0 ...
     let id = format!("{}-{}", 69_956_427_469_762_i64, 0);

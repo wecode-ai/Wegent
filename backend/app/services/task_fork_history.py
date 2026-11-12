@@ -51,6 +51,7 @@ class TaskForkHistoryResolver:
         current_task: Optional[TaskResource] = None,
         statuses: Optional[Sequence[SubtaskStatus]] = None,
         roles: Optional[Sequence[SubtaskRole]] = None,
+        summary_checkpoint_only: bool = False,
     ) -> list[ForkHistoryItem]:
         if limit is not None and limit <= 0:
             return []
@@ -84,6 +85,7 @@ class TaskForkHistoryResolver:
                 statuses=statuses,
                 roles=roles,
                 before_message_id=node_before_message_id,
+                summary_checkpoint_only=summary_checkpoint_only,
             )
             for subtask in subtasks:
                 if (

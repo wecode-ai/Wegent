@@ -890,6 +890,7 @@ class SubtaskStore(Protocol):
         statuses: Optional[Sequence[SubtaskStatus]] = None,
         roles: Optional[Sequence[SubtaskRole]] = None,
         before_message_id: Optional[int] = None,
+        summary_checkpoint_only: bool = False,
     ) -> list[Subtask]: ...
 
     def list_recent_by_task_ids(

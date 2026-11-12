@@ -132,6 +132,7 @@ async fn responses_mysql_large_json_preserves_message_order_and_owner_filter() {
             &[42],
             7,
             false,
+            &["subtasks"],
         )
         .await;
     }
@@ -157,6 +158,7 @@ async fn responses_mysql_long_conversation_exceeds_prepared_statement_limit() {
             &[42],
             7,
             true,
+            &["subtasks"],
         )
         .await;
     }

@@ -17,6 +17,7 @@ pub mod task_store_create;
 pub mod task_store_default;
 pub mod task_store_edit;
 pub mod task_store_executor_reference;
+pub mod task_store_history;
 pub mod task_store_listing;
 pub mod task_store_maintenance;
 pub mod task_store_personal;

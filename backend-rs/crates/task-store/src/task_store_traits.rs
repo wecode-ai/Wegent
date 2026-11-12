@@ -422,6 +422,14 @@ pub trait TaskStore:
         owner_user_id: i64,
     ) -> MysqlResult<SubtaskListing>;
 
+    /// Read eligible recent history without loading payloads outside the window.
+    async fn list_subtasks_history_window(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        window: crate::task_store_history::SubtaskHistoryWindow,
+    ) -> MysqlResult<Vec<MysqlRow>>;
+
     /// [`Self::list_subtasks_by_task_ordered`] on the caller's request
     /// transaction.
     async fn list_subtasks_by_task_ordered_on(

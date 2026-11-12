@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use crate::attachment_block as blocks;
 use crate::attachments::context_store::python_media_scalar;
 use crate::attachments::external_media::ExternalMediaReference;
+use crate::chat_history_checkpoint::scope_to_latest_checkpoint;
 use crate::chat_repository::{ChatHistoryRepository, SubtaskContextRow, SubtaskRow, TaskForkSpec};
 use crate::internal_auth::http_error::HttpError;
 use crate::state::AppState;
@@ -102,44 +103,8 @@ pub fn parse_session_id(session_id: &str) -> Result<(&str, i64), HttpError> {
 
 /// One resolved history subtask with its lineage origin.
 #[derive(Debug, Clone)]
-struct ForkHistoryItem {
-    subtask: SubtaskRow,
-}
-
-/// Summary-compaction checkpoint detection
-/// (`subtask_has_summary_checkpoint`).
-fn subtask_has_summary_checkpoint(subtask: &SubtaskRow) -> bool {
-    if subtask.role != "ASSISTANT" || subtask.status != "COMPLETED" {
-        return false;
-    }
-    let Some(result) = subtask.result.as_ref().map(|json| &json.0) else {
-        return false;
-    };
-    let Some(chain) = result.get("messages_chain").and_then(Value::as_array) else {
-        return false;
-    };
-    chain.iter().any(|msg| {
-        msg.get("additional_kwargs")
-            .and_then(Value::as_object)
-            .and_then(|kwargs| kwargs.get("summary_compacted"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    })
-}
-
-/// Slice `subtasks` to start at the latest checkpoint subtask
-/// (`scope_to_latest_checkpoint`).
-fn scope_to_latest_checkpoint(subtasks: &[ForkHistoryItem]) -> (&[ForkHistoryItem], Option<usize>) {
-    let mut latest: Option<usize> = None;
-    for (index, item) in subtasks.iter().enumerate() {
-        if subtask_has_summary_checkpoint(&item.subtask) {
-            latest = Some(index);
-        }
-    }
-    match latest {
-        None => (subtasks, None),
-        Some(index) => (&subtasks[index..], Some(index)),
-    }
+pub(super) struct ForkHistoryItem {
+    pub(super) subtask: SubtaskRow,
 }
 
 /// Apply `limit` without ever dropping the checkpoint subtask
@@ -177,7 +142,7 @@ fn apply_checkpoint_limit(
 
 /// Resolve the fork lineage for a task (`resolve_lineage`), bounded by
 /// `MAX_FORK_DEPTH`; cycle detection raises a bad-request error.
-async fn resolve_lineage(
+pub(super) async fn resolve_lineage(
     repository: &ChatHistoryRepository<'_>,
     task_id: i64,
     user_id: i32,
@@ -246,6 +211,17 @@ async fn resolve_history_subtasks(
     limit: Option<i64>,
     from_latest_compaction: bool,
 ) -> Result<Vec<ForkHistoryItem>, HttpError> {
+    if let Some(limit) = limit {
+        return crate::chat_history_window::resolve_bounded_history(
+            repository,
+            task_id,
+            user_id,
+            before_message_id,
+            limit,
+            from_latest_compaction,
+        )
+        .await;
+    }
     let lineage = resolve_lineage(repository, task_id, user_id).await?;
     let mut items: Vec<ForkHistoryItem> = Vec::new();
 
@@ -269,13 +245,7 @@ async fn resolve_history_subtasks(
         }
     }
 
-    items.sort_by(|left, right| {
-        left.subtask
-            .message_id
-            .cmp(&right.subtask.message_id)
-            .then_with(|| left.subtask.created_at.cmp(&right.subtask.created_at))
-            .then_with(|| left.subtask.id.cmp(&right.subtask.id))
-    });
+    items.sort_by_key(crate::chat_history_window::history_key);
 
     let mut subtasks: Vec<ForkHistoryItem> = items
         .into_iter()
