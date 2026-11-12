@@ -304,19 +304,34 @@ export async function verifyConcurrentMcpUserInput(control) {
     },
     DEFAULT_STEP_TIMEOUT_MS
   )
+  let scenarioError
   try {
     await restartCodexWhenIdle(control)
     await verifyConcurrentCases(control)
+  } catch (error) {
+    scenarioError = error
+    throw error
   } finally {
-    await requestExecutor(
-      control,
-      'runtime.codex.catalog.overrides.write',
-      {
-        slug: DEFAULT_MODEL_ID,
-        entry: model.effective,
-      },
-      DEFAULT_STEP_TIMEOUT_MS
-    )
-    await restartCodexWhenIdle(control)
+    try {
+      await requestExecutor(
+        control,
+        'runtime.codex.catalog.overrides.write',
+        {
+          slug: DEFAULT_MODEL_ID,
+          entry: model.effective,
+        },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await restartCodexWhenIdle(control)
+    } catch (cleanupError) {
+      if (scenarioError) {
+        throw new AggregateError(
+          [scenarioError, cleanupError],
+          'Concurrent MCP scenario and catalog restoration failed',
+          { cause: scenarioError }
+        )
+      }
+      throw cleanupError
+    }
   }
 }

@@ -32,6 +32,15 @@ import {
 } from './workspace-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 
+async function assertElicitationCountdown(control, durationMs) {
+  const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
+  const match = /\b0:([0-5]\d)\b/.exec(countdown)
+  assert.ok(
+    match && Number(match[1]) <= durationMs / 1000,
+    `Expected a countdown within the configured ${durationMs}ms deadline, got ${countdown}`
+  )
+}
+
 async function verifyMcpElicitationInFullAccess(control) {
   await verifyConcurrentMcpUserInput(control)
   const evidencePath = join(resultDir, 'mcp-elicitation-result.jsonl')
@@ -70,12 +79,7 @@ async function verifyMcpElicitationInFullAccess(control) {
   for (const expectedText of ['访问范围', '所有人', '仅自己']) {
     assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
   }
-  const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
-  assert.match(
-    countdown,
-    /0:(?:[0-2]\d|30)/,
-    'A new MCP form must use the configured thirty-second deadline'
-  )
+  await assertElicitationCountdown(control, MCP_FORM_TIMEOUT_MS)
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
@@ -376,10 +380,7 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   const original = await readPendingElicitation(control, taskId)
   const remainingSeconds = Math.ceil((original.expiresAtUnixMs - Date.now()) / 1000)
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
-  assert.match(
-    await control.command('getText', '[data-testid="request-user-input-deadline"]'),
-    isUrl ? /0:0[0-5]/ : /0:(?:[0-2]\d|30)/
-  )
+  await assertElicitationCountdown(control, durationMs)
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(
     record => record.event === 'timeout_elicitation_request' && record.scenario === scenario
