@@ -385,7 +385,7 @@ pub(crate) async fn build_versioned_snapshot<Q: PluginQuery>(
     let payload =
         build_desired_capabilities_for_registration_on(query, user_id, device_id, include_plugins)
             .await?;
-    super::state_store::fence_legacy_snapshot(query, &payload, fences).await?;
+    super::state_store::fence_legacy_snapshot(query, &payload, fences, generation).await?;
     let mut document = snapshot_state.json.clone();
     set_generation(&mut document, generation);
     if let Some(guard) = guard {

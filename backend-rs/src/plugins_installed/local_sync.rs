@@ -176,7 +176,6 @@ async fn local_plan(
                 coordination_error("plugin_write_unavailable")
             })?
     };
-    super::state_store::fence_legacy_snapshot(&mut query, &payload, fences).await?;
     let revision = hash(&capability_snapshot(&payload));
     let unchanged = !body.targeted
         && body.known_revision.as_deref() == Some(&revision)
@@ -197,6 +196,10 @@ async fn local_plan(
         Some(generation)
     };
     let mut query = &mut *tx;
+    let floor = document["spec"]["generation"]
+        .as_i64()
+        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+    super::state_store::fence_legacy_snapshot(&mut query, &payload, fences, floor).await?;
     write_sync_state_document(
         &mut query,
         state.id,

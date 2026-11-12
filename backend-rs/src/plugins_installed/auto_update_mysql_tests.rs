@@ -212,7 +212,9 @@ async fn verify_stale_batch(mysql: &MysqlService, redis: &RedisService) -> Mysql
     snapshot_rx.await.unwrap();
     let current = auto_update_batch(mysql, Some(redis), &registry(), 7).await;
     resume_tx.send(()).unwrap();
-    let stale_error = stale.await.unwrap().unwrap_err();
+    let stale = stale.await.unwrap();
+    assert!(stale.is_err(), "current={current:?}; stale={stale:?}");
+    let stale_error = stale.unwrap_err();
     assert_eq!(current?.updated_count, 1);
     assert_eq!(
         http_error(stale_error).detail_message(),

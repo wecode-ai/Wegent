@@ -382,6 +382,13 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             return Ok(acknowledgement(spec, generation, "superseded", "remove"));
         }
         if existing.as_ref().is_some_and(|plugin| {
+            plugin.get("installed_plugin_id").and_then(Value::as_i64) == spec.installed_plugin_id
+                && !is_reconcilable(&spec.key, plugin)
+        }) {
+            return Err(invalid("Refusing to remove an unmanaged plugin"));
+        }
+        self.remove_installation_aliases(spec, manifest, activation)?;
+        if existing.as_ref().is_some_and(|plugin| {
             plugin.get("installed_plugin_id").and_then(Value::as_i64) != spec.installed_plugin_id
         }) {
             // A different installation may still be materialized while this
@@ -391,12 +398,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .manifest
                 .save_with_revision_bump(manifest.clone())?;
             return Ok(acknowledgement(spec, generation, "removed", "remove"));
-        }
-        if existing
-            .as_ref()
-            .is_some_and(|plugin| !is_reconcilable(&spec.key, plugin))
-        {
-            return Err(invalid("Refusing to remove an unmanaged plugin"));
         }
         record_intent(manifest, spec, generation, true);
         self.store

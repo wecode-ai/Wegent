@@ -176,3 +176,37 @@ def test_physical_parent_cleanup_keeps_an_explicit_device_tombstone(snapshot_ses
     register_plugin_snapshot_intent(
         snapshot_sessions, user_id=1, device_id="desktop", payload=payload
     )
+
+
+def test_existing_plugin_advances_beyond_its_last_legacy_client_snapshot(
+    snapshot_sessions,
+):
+    from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
+
+    identity = seed(snapshot_sessions, "upgrade-existing")
+    snapshot(snapshot_sessions, [identity])
+    with snapshot_sessions.begin() as db:
+        legacy = lock_plugin_sync_state(db, 1)
+        legacy.json = {"spec": {"revision": 0, "generation": 100}}
+    legacy = load_versioned_plugin_payload(
+        snapshot_sessions,
+        user_id=1,
+        protocol_version=2,
+        complete=True,
+        load_payload=lambda db: {
+            "mode": "merge",
+            "scope": "plugins",
+            "plugins": [
+                {
+                    "installed_plugin_id": identity,
+                    "name": "upgrade-existing",
+                    "version": "1.0.0",
+                }
+            ],
+        },
+    )
+    current = snapshot(snapshot_sessions, [identity])
+    assert (
+        current["plugin_sync"]["revisions"][str(identity)]
+        > legacy["plugin_sync"]["generation"]
+    )

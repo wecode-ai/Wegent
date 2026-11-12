@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlTransaction};
 use serde_json::{Value, json};
 
-const CREATE: &str = "CREATE TABLE plugin_states (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,user_id BIGINT NOT NULL,plugin_key VARCHAR(100) NOT NULL,installed_kind_id INTEGER NOT NULL DEFAULT 0,json JSON NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,CONSTRAINT uniq_plugin_states_identity UNIQUE (user_id,plugin_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Plugin-scoped synchronization identities and transaction fences'";
+const CREATE: &str = "CREATE TABLE plugin_states (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,user_id BIGINT NOT NULL,plugin_key VARCHAR(100) NOT NULL,installed_kind_id INTEGER NOT NULL DEFAULT 0,json JSON NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,CONSTRAINT uniq_plugin_states_identity UNIQUE (user_id,plugin_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Plugin-scoped synchronization identities and transaction fences'";
 
 #[derive(FromMysqlRow)]
 struct Source {
@@ -90,7 +90,7 @@ pub(super) async fn upgrade(tx: &mut impl MysqlTransaction) -> MysqlResult<()> {
     struct Duplicate {
         user_id: i64,
     }
-    let duplicates: Vec<Duplicate> = tx.fetch_all("SELECT user_id FROM kinds WHERE kind='InstalledPlugin' AND namespace='default' GROUP BY user_id,CONVERT(name USING utf8mb4) COLLATE utf8mb4_bin HAVING COUNT(*)>1 LIMIT 1",()).await?;
+    let duplicates: Vec<Duplicate> = tx.fetch_all("SELECT user_id FROM kinds WHERE kind='InstalledPlugin' AND namespace='default' GROUP BY user_id,CONVERT(name USING utf8mb4) COLLATE utf8mb4_unicode_ci HAVING COUNT(*)>1 LIMIT 1",()).await?;
     if let Some(duplicate) = duplicates.first() {
         let _ = duplicate.user_id;
         return Err(invalid());

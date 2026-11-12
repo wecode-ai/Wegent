@@ -27,6 +27,6 @@ class PluginState(Base):
             "comment": "Plugin-scoped synchronization identities and transaction fences",
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_bin",
+            "mysql_collate": "utf8mb4_unicode_ci",
         },
     )

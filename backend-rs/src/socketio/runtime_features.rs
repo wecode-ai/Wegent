@@ -214,13 +214,17 @@ fn project_editing(value: &Value) -> Map<String, Value> {
 /// `RuntimePluginSyncFeatures`: a malformed advertisement is dropped.
 fn plugin_sync(value: &Value) -> Option<Map<String, Value>> {
     let object = value.as_object()?;
-    let version = field(object, "protocolVersion", "protocol_version")?.as_i64()?;
-    if version < 1 {
-        return None;
+    let mut normalized = serde_json::json!({
+        "protocolVersion": field(object,"protocolVersion","protocol_version")?
+    });
+    if let Some(versions) = field(object, "supportedVersions", "supported_versions") {
+        normalized["supportedVersions"] = versions.clone();
     }
-    let mut document = Map::new();
-    document.insert("protocolVersion".to_owned(), Value::from(version));
-    Some(document)
+    let feature = crate::devices::RuntimePluginSyncFeatures::from_value(&normalized)?;
+    serde_json::to_value(feature)
+        .expect("plugin sync feature serializes")
+        .as_object()
+        .cloned()
 }
 
 /// Read a member by its alias or its field name (`populate_by_name=True`).
@@ -246,6 +250,25 @@ fn flag(object: &Map<String, Value>, alias: &str, name: &str, default: bool) -> 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn plugin_sync_keeps_scoped_versions_through_registration_normalization() {
+        for advertisement in [
+            json!({"protocolVersion":2,"supportedVersions":[2,3]}),
+            json!({"protocol_version":2,"supported_versions":[2,3]}),
+        ] {
+            let features =
+                normalize(&json!({"schemaVersion":4,"pluginSync":advertisement})).unwrap();
+            assert_eq!(
+                features["pluginSync"],
+                json!({"protocolVersion":2,"supportedVersions":[2,3]})
+            );
+        }
+        for versions in [json!(true), json!("3"), json!([true, 3]), json!([0, 3])] {
+            let features=normalize(&json!({"schemaVersion":4,"pluginSync":{"protocolVersion":2,"supportedVersions":versions}})).unwrap();
+            assert_eq!(features["pluginSync"], json!({"protocolVersion":2}));
+        }
+    }
 
     #[test]
     fn undeclared_worktree_members_are_dropped() {

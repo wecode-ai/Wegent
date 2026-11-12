@@ -822,3 +822,29 @@ async fn scoped_retired_installation_removal_can_accompany_its_replacement() {
         .unwrap();
     assert_eq!(replay["plugins"][0]["status"], "superseded");
 }
+
+#[tokio::test]
+async fn scoped_uninstall_after_catalog_rename_removes_the_previous_runtime_alias() {
+    let (_root, handler) = fixture();
+    handler
+        .apply_sync(scoped(delta(
+            1,
+            vec![plugin("alpha", 1), plugin("gamma", 3)],
+            vec![],
+        )))
+        .await
+        .unwrap();
+    let removed = handler
+        .apply_sync(scoped(delta(2, vec![], vec![plugin("beta", 1)])))
+        .await
+        .unwrap();
+    assert_eq!(removed["plugins"][0]["status"], "removed");
+    let manifest = handler.store.manifest.load().unwrap();
+    assert!(manifest["plugins"]["alpha@wework"].is_null());
+    assert!(manifest["plugins"]["gamma@wework"].is_object());
+    let late = handler
+        .apply_sync(scoped(delta(1, vec![plugin("alpha", 1)], vec![])))
+        .await
+        .unwrap();
+    assert_eq!(late["plugins"][0]["status"], "superseded");
+}

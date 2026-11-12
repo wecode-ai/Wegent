@@ -262,6 +262,7 @@ pub(super) async fn fence_legacy_snapshot<Q: PluginQuery>(
     query: &mut Q,
     payload: &Value,
     fences: Vec<SnapshotFence>,
+    legacy_generation: i64,
 ) -> MysqlResult<()> {
     let items: BTreeMap<_, _> = ["plugins", "removed_plugins"]
         .into_iter()
@@ -274,6 +275,7 @@ pub(super) async fn fence_legacy_snapshot<Q: PluginQuery>(
     }
     for fence in fences {
         let mut document = fence.state.json.clone();
+        document["spec"]["generation"] = json!(generation(&document)?.max(legacy_generation));
         if let Some(item) = items.get(&fence.state.installed_kind_id) {
             document["spec"]["runtimeIdentity"] = runtime_identity(item);
         }

@@ -48,7 +48,7 @@ Python 使用已有的有界初始化连接池，数据库等待超时后明确�
 `plugin_sync.revisions[安装ID]` 为逐插件 generation，`intentRevisions[安装ID]` 为安装意图 revision。
 `complete=false`，卸载目标通过 `removed_plugins` 明示，不能以快照中缺席来删除其他插件。
 
-新状态从历史 V2 generation 基线起步，之后独立递增，避免切换时接纳历史迟到消息。
+新状态从历史 V2 generation 基线起步，之后独立递增，避免切换时接纳历史迟到消息。V2 快照同时抬高所覆盖插件的 generation 下界，保证客户端升级到 V3 后能超过旧水位。
 完整 Skills/MCP 同步使用独立的 `@capabilities` 顺序流；普通插件操作不触碰它。
 V2 快照使用 `@legacy-v2` 聚合 generation，并在发布前 CAS 校验各插件版本。日常插件写入不更新账号聚合行。
 新协议的普通插件操作不创建或推进账号聚合同步状态。

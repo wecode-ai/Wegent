@@ -130,7 +130,7 @@ def upgrade():
             sa.text(
                 "SELECT user_id FROM kinds WHERE kind='InstalledPlugin' "
                 "AND namespace='default' GROUP BY user_id, "
-                "CONVERT(name USING utf8mb4) COLLATE utf8mb4_bin "
+                "CONVERT(name USING utf8mb4) COLLATE utf8mb4_unicode_ci "
                 "HAVING COUNT(*) > 1 LIMIT 1"
             )
         ).first()
@@ -191,7 +191,7 @@ def upgrade():
         ),
         mysql_engine="InnoDB",
         mysql_charset="utf8mb4",
-        mysql_collate="utf8mb4_bin",
+        mysql_collate="utf8mb4_unicode_ci",
         comment="Plugin-scoped synchronization identities and transaction fences",
     )
     _, states = _tables()

@@ -76,7 +76,7 @@ Redis key 为 `wegent:plugin-write:{user_id}:{InstalledPlugin.name}`。名称复
 
 健康目录只读检查不取得插件写租约；检测到目录漂移或重复安装后，才对需修复的记录加锁并重新核验。
 
-新状态仅在创建时继承历史 V2 generation 基线，之后独立递增。新版探测公布 `pluginSyncVersions=[2,3]`，Native 选择 3；运行时继续声明旧 `protocolVersion=2` 并显式公布 `supportedVersions=[2,3]`，新版服务端选择 3。V3 使用 `plugin_sync.revisions[安装ID]` 分别排序，`intentRevisions[安装ID]` 校验回执对应的安装意图；`complete=false` 且卸载通过 `removed_plugins` 明示。插件同步不写账号聚合版本。包含 Skills/MCP 的完整能力快照仅为这些能力使用独立的 `@capabilities` 顺序流。
+新状态仅在创建时继承历史 V2 generation 基线，之后独立递增。旧客户端发布 V2 快照时同步抬高所覆盖插件的 generation 下界，保证客户端升级后的 V3 请求能超过旧水位。新版探测公布 `pluginSyncVersions=[2,3]`，Native 选择 3；运行时继续声明旧 `protocolVersion=2` 并显式公布 `supportedVersions=[2,3]`，新版服务端选择 3。V3 使用 `plugin_sync.revisions[安装ID]` 分别排序，`intentRevisions[安装ID]` 校验回执对应的安装意图；`complete=false` 且卸载通过 `removed_plugins` 明示。插件同步不写账号聚合版本。包含 Skills/MCP 的完整能力快照仅为这些能力使用独立的 `@capabilities` 顺序流。
 
 快照先捕获各插件元数据版本，再读取安装意图，最后逐插件 CAS 发布。安装、更新和卸载同时推进相应插件的元数据版本；冲突时回滚并重读。回执校验逐插件 generation、设备水位、安装意图 revision 和当前期望状态。旧 V2 客户端使用 `@legacy-v2` 聚合 generation；发布完整快照时同时 CAS 校验捕获的插件版本。日常插件写入始终只推进自身状态，不更新账号聚合行。
 

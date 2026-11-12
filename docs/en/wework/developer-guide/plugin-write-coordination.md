@@ -64,7 +64,7 @@ unrelated plugin.
 New state starts above its historical V2 generation baseline and then advances
 independently. Full Skills/MCP snapshots use a separate `@capabilities` stream;
 ordinary plugin operations never touch it. V2 snapshots retain `@legacy-v2` for aggregate generations and CAS the captured
-plugin revisions before publishing. Ordinary desired-state writes
+plugin revisions before publishing. V2 publication also raises the covered plugin generation floors so upgraded V3 clients advance beyond their stored legacy watermarks. Ordinary desired-state writes
 do not create or advance account aggregate synchronization state.
 
 Acknowledgements validate per-plugin generation, device watermarks, current intent

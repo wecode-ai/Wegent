@@ -165,7 +165,9 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         scoped["payload"]["plugin_sync"]["revisions"][target.id.to_string()]
             .as_i64()
             .unwrap()
-            > 0
+            > removed["payload"]["plugin_sync"]["generation"]
+                .as_i64()
+                .unwrap()
     );
     let unknown = post(
         81002,

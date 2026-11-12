@@ -119,6 +119,23 @@ def verify(engine, url):
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
         command.stamp(config, PARENT)
+        with engine.begin() as db:
+            db.execute(
+                Kind.__table__.update().where(Kind.id == 18).values(name="plugin-17 ")
+            )
+        try:
+            command.upgrade(config, "head")
+        except RuntimeError as error:
+            assert "repair duplicate source records" in str(error)
+        else:
+            raise AssertionError(
+                "MySQL-equivalent identities were not rejected before DDL"
+            )
+        assert "plugin_states" not in inspect(engine).get_table_names()
+        with engine.begin() as db:
+            db.execute(
+                Kind.__table__.update().where(Kind.id == 18).values(name="plugin-18")
+            )
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names()) == before | {"plugin_states"}
         with Session(engine) as db:

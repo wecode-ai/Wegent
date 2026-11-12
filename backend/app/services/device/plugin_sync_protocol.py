@@ -98,7 +98,11 @@ def load_versioned_plugin_payload(
 
         remember_runtime_identities(db, user_id, payload)
         for _installed, fence in fences:
-            fence.json = deepcopy(fence.json)
+            document = deepcopy(fence.json)
+            document.setdefault("spec", {})["generation"] = max(
+                _next_generation(fence) - 1, generation
+            )
+            fence.json = document
         document = deepcopy(state.json)
         document.setdefault("spec", {})["generation"] = generation
         state.json = document
