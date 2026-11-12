@@ -119,6 +119,16 @@ async function waitForSettled(control, timeoutMs) {
   throw new Error('The recovered executor stream remained in a running state')
 }
 
+async function waitForDroppedEvent(control, eventName, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const counts = JSON.parse(await control.command('getDroppedRuntimeEventCounts', 'body'))
+    if ((counts[eventName] ?? 0) > 0) return counts
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The renderer did not drop ${eventName} after reconnecting`)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
@@ -214,12 +224,11 @@ export function createDesktopScenario({
         text: COMPLETION_TEXT,
         timeoutMs: uiTimeoutMs,
       })
-      const recoveringSnapshot = JSON.parse(
-        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
-      )
-      assert.ok(
-        recoveringSnapshot.testIds.includes('pause-response-button'),
-        'The terminal event was not actually dropped before settle'
+      const droppedEvents = await waitForDroppedEvent(control, 'response.completed', uiTimeoutMs)
+      assert.equal(
+        droppedEvents['response.completed'],
+        1,
+        'The renderer did not drop the terminal event after reconnecting'
       )
       const recoveredRequest = JSON.parse(
         await control.command('awaitLocalExecutorRequestHold', 'body')

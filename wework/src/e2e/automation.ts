@@ -140,6 +140,7 @@ import { saveTelemetryConsent } from '@/telemetry/sessionConsent'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import {
   E2E_DROPPED_RUNTIME_EVENTS_KEY,
+  E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY,
   E2E_RUNTIME_EVENT_DISPATCHERS_KEY,
   E2E_RUNTIME_EVENT_LISTENERS_KEY,
 } from '@/api/runtime/runtimeChatStream'
@@ -2423,6 +2424,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY] ??= []
       root[E2E_DROPPED_RUNTIME_EVENTS_KEY].push(command.value ?? '')
       return ''
+    }
+    case 'getDroppedRuntimeEventCounts': {
+      const root = globalThis as typeof globalThis & {
+        [E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY]?: Record<string, number>
+      }
+      return JSON.stringify(root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ?? {})
     }
     case 'holdLocalExecutorRequests': {
       const { method, phase } = JSON.parse(command.value ?? '{}') as {
