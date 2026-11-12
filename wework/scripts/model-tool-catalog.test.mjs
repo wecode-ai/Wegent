@@ -227,7 +227,34 @@ test('uses the latest native exec definition across incremental Lite catalog upd
   expect(discoverySelection({ ...request, tools: [top] }, 'get_goal').codeMode.description).toBe(
     'current'
   )
-  expect(() => discoverySelection({ ...request, tools: [entry] }, 'get_goal')).toThrow()
+  expect(discoverySelection({ ...request, tools: [entry] }, 'get_goal').codeMode).toEqual({
+    ...entry,
+    input: expect.any(String),
+  })
+})
+
+test('selects the current API exec after a native Lite conversation changes provider', () => {
+  const current = {
+    type: 'function',
+    name: 'exec',
+    parameters: { properties: { input: { type: 'string' } } },
+  }
+  const input = variants[1].input
+  const request = { input, tools: [current] }
+  expect(discoverySelection(request, 'read_task').codeMode).toEqual({
+    ...current,
+    input: expect.any(String),
+  })
+  expect(programmaticSelection(request, 'get_goal', {}).codeMode).toEqual({
+    ...current,
+    targetName: 'get_goal',
+  })
+  expect(() => discoverySelection({ input, tools: [] }, 'read_task')).toThrow(
+    'Expected exactly one native Code Mode discovery declaration'
+  )
+  expect(() =>
+    discoverySelection({ input, tools: [current, ...variants[1].input[0].tools] }, 'read_task')
+  ).toThrow('Expected exactly one native Code Mode discovery declaration')
 })
 
 test('keeps actual structured results and native permission-denial text', async () => {

@@ -31,7 +31,11 @@ const TOOLS = [
 ]
 
 /** Reuse the control checkpoint's real app, Executor and model endpoint. */
-export function createWorkbenchControlCollaboration({ uiTimeoutMs, findValue }) {
+export function createWorkbenchControlCollaboration({
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  findValue,
+}) {
   let active = false
   let phase = 'initial'
   let target
@@ -185,7 +189,7 @@ export function createWorkbenchControlCollaboration({ uiTimeoutMs, findValue }) 
           },
           value => value.running === false && value.status === 'done',
           'Native collaboration did not complete',
-          uiTimeoutMs
+          modelResponseTimeoutMs
         )
       try {
         const created = await rpc('runtime.tasks.create', {

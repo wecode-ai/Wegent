@@ -22,6 +22,8 @@ On macOS, the default shortcuts are `Command+B` for the left sidebar, `Option+Co
 
 ## Where do I go?
 
+For in-conversation model switching and continuity, see [Model settings](./user-guide/model-settings.md#model-controls).
+
 For clone authentication failures, execution-environment device errors or Git authentication cards in conversations, use **Configure Git account** at the original entry to open the current cloud Web settings. It edits a matching account or prefills a new one. Desktop **Account menu → Settings → Coding → Git hosting → Device Git configuration** provides manual sync and separately confirmed clearing when accounts are empty. These entries apply to ClaudeCode cloud or remote devices; native local Git / SSH stays local, and an unresolved Web address never redirects to Backend. See [Repository access configuration and device sync](./git-connections.md#device-git-configuration).
 
 | Goal / common search terms                              | Click path                                                          | Conditions and details                                                                                                                                                                                                                                                               |
@@ -56,6 +58,8 @@ For clone authentication failures, execution-environment device errors or Git au
 | Open / preview a webpage                                | Right workspace → new-tab menu → Browser                            | Not external Chrome. See [Built-in browser](./browser.md)                                                                                                                                                                                                                            |
 | Open terminal                                           | Bottom panel → + → Terminal                                         | Starts in the task working directory; expanding the panel alone does not create one                                                                                                                                                                                                  |
 | Version / check for updates                             | Bottom-left account menu → About / Check for updates                | Separate actions. See [Settings and data](./settings.md)                                                                                                                                                                                                                             |
+
+To report a problem or export runtime logs, select **Report a problem** in the upper-right corner of any Wework desktop page. Plugins, My Stand-in, Scheduled and Settings use the same entry; task pages can also include task context. See [Getting help](./troubleshooting.md#getting-help).
 
 Pending business questions offer **Talk it through** on the task question card or in **Needs your input** question details. It opens a discussion tab alongside browser and files in the original task's right sidebar. See [Handle AI questions](./workbench.md#ai-questions) for its purpose and restrictions.
 

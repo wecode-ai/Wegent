@@ -248,13 +248,14 @@ export function TemporaryChatPanel({
   const activeModel = modelControls
     ? findModelForSelection(modelControls.models, activeModelSelection)
     : taskModelSelection?.activeModel
+  const supportsModelProviderSwitch = taskModelSelection?.supportsModelProviderSwitch === true
   const {
     provider: activeModelProvider,
     pending: activeProviderPending,
     failed: activeProviderFailed,
     refresh: refreshActiveProvider,
   } = useStandInActiveModelProvider({
-    enabled: Boolean(modelControls) && active,
+    enabled: Boolean(modelControls) && active && !supportsModelProviderSwitch,
     api: services.standInApi,
     address,
     threadId: activeThreadId,
@@ -315,21 +316,13 @@ export function TemporaryChatPanel({
       ...(address && taskModelSelection
         ? {
             activeModel: taskModelSelection.activeModel,
+            supportsModelProviderSwitch: taskModelSelection.supportsModelProviderSwitch,
             selectedModel: taskModelSelection.selectedModel,
             selectedModelOptions: taskModelSelection.selectedModelOptions,
             setSelectedModel: (model: UnifiedModel | null) =>
               projectChat.setRuntimeTaskSelectedModel(address, model),
             setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
               projectChat.setRuntimeTaskSelectedModelAndOptions(address, model, options),
-            continueInNewConversation: (
-              model: UnifiedModel,
-              options?: ModelOptions,
-              source?: { draft?: string }
-            ) =>
-              projectChat.continueInNewConversation?.(model, options, {
-                ...source,
-                address,
-              }),
             setSelectedModelOption: (optionId: string, value: string) =>
               projectChat.setRuntimeTaskSelectedModelOption(address, optionId, value),
             getSelectedModel: () =>
@@ -352,6 +345,7 @@ export function TemporaryChatPanel({
             activeModel: activeThreadId ? activeModel : null,
             activeModelSelection: activeThreadId ? activeModelSelection : null,
             activeModelProvider,
+            supportsModelProviderSwitch,
             modelSwitchMode: 'session' as const,
             requiresNewSession: activeProviderPending,
             onSessionStartConfirmed: (model: UnifiedModel) =>
@@ -393,6 +387,7 @@ export function TemporaryChatPanel({
       activeModel,
       activeModelSelection,
       activeModelProvider,
+      supportsModelProviderSwitch,
       activeProviderPending,
       refreshActiveProvider,
       activeSessionKey,
@@ -692,7 +687,8 @@ export function TemporaryChatPanel({
           activeModel,
           modelControls.selectedModel,
           activeModelSelection,
-          activeModelProvider
+          activeModelProvider,
+          supportsModelProviderSwitch
         ))
         ? { startNewSession: true, expectedThreadId: activeThreadId }
         : {},
@@ -702,6 +698,7 @@ export function TemporaryChatPanel({
       activeModel,
       activeModelSelection,
       activeModelProvider,
+      supportsModelProviderSwitch,
       explicitNewSession,
     ]
   )
