@@ -155,7 +155,7 @@ test("sparse aggregation loads its policy and rejects missing independent platfo
     (error) => {
       assert.match(
         error.stderr.toString(),
-        /Both independent package platforms require frozen upgrade plans/,
+        /Every independent package platform requires a frozen upgrade plan/,
       );
       return true;
     },

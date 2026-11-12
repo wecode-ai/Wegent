@@ -104,7 +104,7 @@ export async function createDesktopScenario({
         join(packagedResourcesRoot(appBinary), 'harness-runtime'),
         join(resultDir, 'harness-runtime')
       )
-      if (releaseAssetToken) {
+      if (releaseAssetToken && legacy) {
         const response = await fetchGithubReleaseAsset({
           repository: 'wecode-ai/Wegent',
           tag: 'wework-updater',

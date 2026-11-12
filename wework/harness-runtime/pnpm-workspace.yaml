@@ -29,4 +29,8 @@ minimumReleaseAgeExclude:
   - 'jose@6.2.10'
 
 overrides:
+  # 1.13.8 (pinned by @deepseek-ai/dsh-experimental-speech-to-text-sensevoice)
+  # has no win-arm64 prebuild; sherpa-onnx-win-arm64 first ships in 2.0.0.
+  # The override is global and also applies to macOS/Linux/Windows x64 builds.
+  # Remove once the DSH speech package loosens its pin to a 2.x range.
   sherpa-onnx-node: 2.0.1

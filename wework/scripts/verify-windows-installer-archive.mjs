@@ -73,11 +73,17 @@ export async function verifyWindowsArm64Installer(installer, sevenZip) {
     const { stdout } = await execFileAsync(sevenZip, ['l', '-slt', archive], {
       maxBuffer: 64 * 1024 * 1024,
     })
+    const listedEntries = (stdout.match(/^Path = /gm) ?? []).length
+    if (listedEntries === 0) {
+      throw new Error(
+        `${basename(installer)} produced no parseable 7-Zip listing entries; the archive shape or 7-Zip output format is not recognized.`
+      )
+    }
     const filtered = arm64FilteredEntries(stdout)
     if (filtered.length > 0) {
       const sample = filtered.slice(0, 5).join(', ')
       throw new Error(
-        `${basename(installer)} packs ${filtered.length} entries with the ARM64 BCJ filter, which the NSIS extractor cannot decode (${sample}). Set ELECTRON_BUILDER_7Z_FILTER=BCJ for Windows arm64 builds.`
+        `${basename(installer)} packs at least ${filtered.length} entries with the ARM64 BCJ filter, which the NSIS extractor cannot decode (${sample}). Set ELECTRON_BUILDER_7Z_FILTER=BCJ for Windows arm64 builds.`
       )
     }
   } finally {

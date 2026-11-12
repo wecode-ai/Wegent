@@ -481,14 +481,15 @@ describe('resolveHostTarget', () => {
     ['darwin', 'arm64', 'aarch64-apple-darwin'],
     ['darwin', 'x64', 'x86_64-apple-darwin'],
     ['linux', 'x64', 'x86_64-unknown-linux-gnu'],
+    ['win32', 'arm64', 'aarch64-pc-windows-msvc'],
     ['win32', 'x64', 'x86_64-pc-windows-msvc'],
   ])('maps %s/%s to %s', (platform, arch, target) => {
     expect(resolveHostTarget(platform, arch)).toBe(target)
   })
 
   test('rejects unsupported source platforms', () => {
-    expect(() => resolveHostTarget('win32', 'arm64')).toThrow(
-      'Unsupported Electron source platform: win32/arm64'
+    expect(() => resolveHostTarget('win32', 'ia32')).toThrow(
+      'Unsupported Electron source platform: win32/ia32'
     )
   })
 })

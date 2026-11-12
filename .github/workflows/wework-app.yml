@@ -1023,7 +1023,17 @@ jobs:
                 fi
                 if node wework/scripts/update-channel-manifests.mjs \
                   is-newer "$current_version" "$RELEASE_VERSION"; then
-                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets."
+                  missing_assets="$(
+                    node wework/scripts/update-channel-manifests.mjs \
+                      missing-channel-assets "$current_assets" "$channel"
+                  )"
+                  # Channels published before Windows arm64 existed legitimately
+                  # lack only the arm64 component manifest; keep them intact.
+                  if [[ "$missing_assets" == "components-${channel}-windows-arm64.json" ]]; then
+                    echo "Keeping newer ${channel} update manifests at ${current_version}; it predates Windows arm64 updater assets."
+                    return
+                  fi
+                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets: ${missing_assets}"
                   return 1
                 fi
                 echo "Repairing incomplete ${channel} updater assets at ${current_version}."

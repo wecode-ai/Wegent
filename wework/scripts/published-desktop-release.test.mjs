@@ -132,6 +132,55 @@ test('downloads immutable delivered bytes and reuses the verified source without
     )
   }))
 
+test('resolves the native Codex sidecar inside a Windows arm64 package', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-published-release-arm64-'))
+  try {
+    const appRoot = join(root, 'built')
+    await mkdir(join(appRoot, 'resources/bin'), { recursive: true })
+    await mkdir(join(appRoot, 'resources/codex/vendor/aarch64-pc-windows-msvc/bin'), {
+      recursive: true,
+    })
+    await writeFile(
+      join(appRoot, 'resources/codex/vendor/aarch64-pc-windows-msvc/bin/codex.exe'),
+      'delivered arm64 codex bytes'
+    )
+    await writeFile(join(appRoot, 'WeWork.exe'), 'delivered desktop bytes')
+    await writeFile(join(appRoot, 'resources/bin/wegent-executor.exe'), 'delivered executor bytes')
+    await writeFile(
+      join(appRoot, 'resources/components.json'),
+      JSON.stringify({
+        appVersion: '1.0.0',
+        sourceSha: 'a'.repeat(40),
+        dataSchema: 1,
+        readableDataSchemas: [1],
+      })
+    )
+    const release = await portableDesktopRelease({
+      appRoot,
+      version: '1.0.0',
+      platform: 'windows',
+      arch: 'arm64',
+      output: join(root, 'published'),
+    })
+    const source = await downloadPublishedDesktopRelease({
+      repository: 'wecode-ai/Wegent',
+      version: release.version,
+      platform: release.platform,
+      arch: release.arch,
+      directory: join(root, 'consumer'),
+      expected: release,
+      download: async (repository, tag, name, path) => {
+        if (name.endsWith('.json')) await writeFile(path, JSON.stringify(release))
+        else await copyFile(release.path, path)
+      },
+    })
+    assert.equal(await readFile(source.codex, 'utf8'), 'delivered arm64 codex bytes')
+    assert.match(source.codex, /aarch64-pc-windows-msvc/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('rejects a changed published archive before extracting or accepting it into the cache', () =>
   fixture(async ({ options, root }) => {
     const download = options.download

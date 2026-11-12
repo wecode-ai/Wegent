@@ -5,6 +5,7 @@ import {
   expectedChannelAssetNames,
   hasCompleteChannelAssets,
   isNewerWeworkVersion,
+  missingChannelAssets,
   parseElectronManifestVersion,
   parseWeworkVersion,
 } from './update-channel-manifests.mjs'
@@ -54,6 +55,18 @@ describe('Wework update channel manifests', () => {
         'beta'
       )
     ).toBe(true)
+  })
+
+  test('reports the missing channel assets so pre-arm64 channels can be kept intact', () => {
+    const stableAssets = expectedChannelAssetNames('stable')
+    expect(missingChannelAssets(stableAssets, 'stable')).toEqual([])
+    const legacyAssets = stableAssets.filter(
+      name => name !== 'components-stable-windows-arm64.json'
+    )
+    expect(missingChannelAssets(legacyAssets, 'stable')).toEqual([
+      'components-stable-windows-arm64.json',
+    ])
+    expect(hasCompleteChannelAssets(legacyAssets, 'stable')).toBe(false)
   })
 
   test('reads the current version from an Electron YAML manifest', () => {
