@@ -9,13 +9,13 @@ sidebar_position: 61
 ## 清单兼容和升级路径
 
 正式发版先构建候选包并完成验证，再生成升级清单，最后创建版本 tag 和 Release。
-验证或清单生成失败时不会占用版本 tag。macOS arm64 和 Windows x64 独立运行
+验证或清单生成失败时不会占用版本 tag。macOS arm64、Windows x64 和 Windows arm64 独立运行
 实际发布包的升级与回退验证；macOS x64 复用 arm64 通过的版本路径和最低来源版本，
 不再在发版中运行升级与回退 E2E。x64 记录保留自身包哈希及下载地址，并通过
 `verification.kind=architecture-equivalence`、`arch=arm64` 和 arm64 来源/目标包哈希
 注明证据来源。来源和目标的源码提交必须分别与 arm64 相同；缺少匹配的历史 x64
 包记录时阻止发布，不把 arm64 包哈希当作 x64 包哈希。普通 PR 不运行打包升级 E2E。
-下文逐架构实际包验证规则在正式发版中适用于 macOS arm64 和 Windows x64；
+下文逐架构实际包验证规则在正式发版中适用于 macOS arm64、Windows x64 和 Windows arm64；
 macOS x64 使用上述明确的架构等价规则。
 
 继续使用既有 Electron YAML 和 `components-<channel>-<platform>-<arch>.json`，不更换发现地址、不改变原字段含义。组件清单新增 `upgradePolicy`，其中每个目标版本声明 `minSourceVersion`，并记录明确的来源版本、目标版本、交付包哈希及升级和回退 E2E 证据。
@@ -128,7 +128,7 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 1. 改行为时修改共用场景；发新版本时修改版本对配置，不复制测试代码，也不把历史用例自动改指向最新版。
 2. 接受标准有实质变化时增加套件版本，使旧证据不能为新边背书。
 3. 每次失败保留完整日志，定位并修复后再运行；不以重试、跳过或削弱断言获取通过。
-4. macOS arm64 和 Windows x64 独立验证。macOS x64 仅采用前述源码一致、保留自身包哈希的架构等价发布证明。
+4. macOS arm64、Windows x64 和 Windows arm64 独立验证。macOS x64 仅采用前述源码一致、保留自身包哈希的架构等价发布证明。
 5. 截图、测试包、快照、会话目录和临时恢复数据均不提交仓库，CI 仅上传经过筛选的诊断与结果文件。
 
 升级 E2E 只由 `Wework App` 发版流程执行，包括不发布的构建验证；普通 PR 和 `ci:all` 不执行升级专项。发版门禁调用共享 `upgrade-and-rollback` 组，全部通过才生成并推广精确版本对的升级策略。接受标准版本统一由 `upgrade-suite.mjs` 管理，不能复用旧套件证据为新边背书。
@@ -234,7 +234,7 @@ Beta 的来源包可以来自 Stable。必须用 Beta 渠道的真实升级/回�
 
 在推广滚动清单前，先上传不可变目标包和证据。任何必需版本对失败都阻止推广。最低版本、源码兼容声明或单元测试通过都不能替代真实版本对证据。
 
-修复验证脚本后，非发布重放可复用同一流程中 macOS arm64 和 Windows x64 均构建成功、尚未过期的签名产物。未参与该重放的 macOS x64 或 Linux 构建失败不会阻断这两种平台的验证；实际验证平台仍必须有且只有一个成功的生产者，并通过来源、版本、产物摘要及包内哈希校验。普通 dry run 和正式发布仍要求四个平台生产者全部成功：
+修复验证脚本后，非发布重放可复用同一流程中 macOS arm64、Windows x64 和 Windows arm64 均构建成功、尚未过期的签名产物。未参与该重放的 macOS x64 或 Linux 构建失败不会阻断这三种平台的验证；实际验证平台仍必须有且只有一个成功的生产者，并通过来源、版本、产物摘要及包内哈希校验。普通 dry run 和正式发布仍要求五个平台生产者全部成功：
 
 ```bash
 gh workflow run wework-app.yml --ref <验证脚本分支> -f verification_run_id=<原构建run-id> -f publish_release=false
