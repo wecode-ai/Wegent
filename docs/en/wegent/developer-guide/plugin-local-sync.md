@@ -14,6 +14,10 @@ The existing `PluginSyncState/plugin-sync/account` retains generation and device
 
 Native persists original requests before HTTP in an account/Backend-scoped journal without tokens. The shared Socket/HTTP installer owns real files, manifests, generation ordering, tombstones, validation and publication.
 
+HTTP and Socket deliveries of the same plugin target share preparation and publication, while each response retains its own generation. The target fingerprint covers the installation and plugin identities, enabled state, version, package checksum, and component configuration. Sharing installation targets across generations requires a trusted checksum, which also allows temporary download URLs to be ignored. The manifest retains the fingerprint and equivalent ordering range; publication always preserves the newest accepted generation. A changed target, update, or removal ends the previous equivalent range, so a later return to that target cannot revive an obsolete operation. Shared failures and cancellations never confirm successful installation.
+
+Connected devices submit their precise registered record route as the optional origin; unregistered local instances leave it empty. The Backend retains a supplied but ambiguous origin and defers its background broadcast instead of treating failed resolution as an instruction to synchronize every device. Local HTTP operations still complete independently.
+
 ## Execution
 
 1. Probe `POST /api/plugins/local-sync` with `probeOnly=true`; require protocol 1 and contract revision 3. Backend probing performs no writes.

@@ -337,6 +337,21 @@ fn local_result(payload: &Value, result: Value) -> Value {
 }
 
 impl LocalBackendConnectionController {
+    fn plugin_source_device_id(&self) -> String {
+        if !self
+            .connection_status
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return String::new();
+        }
+        self.device_route_id
+            .lock()
+            .ok()
+            .and_then(|route| route.clone())
+            .filter(|route| !optional_origin(route).is_empty())
+            .unwrap_or_default()
+    }
+
     pub(super) async fn local_plugin_sync(&self, params: Value) -> Result<Value, AppIpcError> {
         let root = wework_codex_home().join("plugin-local-sync");
         self.local_plugin_sync_at(params, &root).await
@@ -401,7 +416,7 @@ impl LocalBackendConnectionController {
                 || journal["reconcilePending"] == true;
             let mut capabilities = capabilities;
             capabilities["recoveryPending"] = json!(recovery);
-            capabilities["sourceDeviceId"] = json!(optional_origin(&self.base_config.device_id));
+            capabilities["sourceDeviceId"] = json!(self.plugin_source_device_id());
             return Ok(capabilities);
         }
 
@@ -486,7 +501,13 @@ impl LocalBackendConnectionController {
             recovery::record_submission_attempt(&mut journal, operation.unwrap());
             persist(path, &journal)?;
             drop(lease.take());
-            let outcome = submit(connection, instance, request, &self.base_config.device_id).await;
+            let outcome = submit(
+                connection,
+                instance,
+                request,
+                &self.plugin_source_device_id(),
+            )
+            .await;
             journal = self
                 .resume_local_sync_journal(connection, path, lease)
                 .await?;

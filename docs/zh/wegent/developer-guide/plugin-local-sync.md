@@ -14,6 +14,10 @@ sidebar_position: 59
 - 期望状态、最新受理标记与顺序水位在插件 Redis 租约和 CAS 下同事务提交。旧客户端的写入和 Socket generation 更新保留这些字段。
 - Native journal 按 Backend 和账号隔离，原请求在 HTTP 之前原子落盘，不保存 token。实际文件、manifest 和运行时配置由统一安装器管理。HTTP 和 Socket 共享安装器、generation、tombstone、校验与发布保护。
 
+HTTP 与 Socket 对同一插件下发相同目标时，共享一次准备和发布，并分别按各自 generation 返回结果。目标指纹包含安装记录、插件身份、启用状态、版本、包校验值及组件配置；跨 generation 合并安装目标必须有可信包校验值，此时可忽略临时下载地址。manifest 的目标指纹和等价顺序范围保留真正变更的边界，实际发布水位始终取已接纳的最新 generation。更新、卸载或目标变化会终止旧目标的等价范围；旧目标后来再次出现也不能复活此前的操作。共享任务失败或取消不会被当作安装成功。
+
+已连接设备提交当前连接的精确记录路由作为可选来源，未注册本机不填写该字段。服务端保留“已提供但无法唯一解析”的来源信息并延后后台广播，避免把来源丢失误当成向全部设备同步；本机 HTTP 操作仍可独立完成。
+
 ## 核心流程
 
 1. 能力探测：Rust `POST /api/plugins/local-sync`，`probeOnly=true`，要求 `protocolVersion=1`、`contractRevision=3`。服务端探测不写数据库。

@@ -23,6 +23,48 @@ mod journal_tests;
 mod runtime_token_tests;
 mod scanning_tests;
 
+#[tokio::test]
+async fn foreground_and_recovery_use_only_the_registered_record_route_as_source() {
+    for registered in [false, true] {
+        let fixture = Fixture::new(Plan::Valid, false).await;
+        *fixture.controller.device_route_id.lock().unwrap() =
+            registered.then(|| "app-record-92".to_owned());
+        fixture
+            .controller
+            .connection_status
+            .store(registered, Ordering::Release);
+        let lease = fixture
+            .controller
+            .acquire_local_sync_lease(&fixture.connection, &fixture.path)
+            .await
+            .unwrap();
+        let recovery = fixture
+            .controller
+            .schedule_local_recovery(
+                &fixture.connection,
+                "native",
+                &fixture.path,
+                &mut load_journal(&fixture.path).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        drop(lease);
+        fixture.recovery_entered.notified().await;
+        fixture.recovery_release.notify_one();
+        recovery.await.unwrap().unwrap();
+        let result = fixture
+            .sync(json!({"action":"update","targetId":8,"payload":{"enabled":true}}))
+            .await
+            .unwrap();
+        assert_eq!(result["localCompleted"], true);
+        let submitted = fixture.submissions.lock().unwrap();
+        assert_eq!(submitted.len(), 2);
+        assert!(submitted.iter().all(
+            |query| query["source_device_id"] == if registered { "app-record-92" } else { "" }
+        ));
+    }
+}
+
 #[derive(Default)]
 struct DigestGate {
     hold_at: AtomicUsize,
@@ -122,6 +164,7 @@ struct Fixture {
     recovery_release: Arc<Notify>,
     probe_entered: Arc<Notify>,
     plans: Arc<Mutex<Vec<Value>>>,
+    submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -159,12 +202,16 @@ impl Fixture {
         let recovery_release = Arc::new(Notify::new());
         let probe_entered = Arc::new(Notify::new());
         let plans = Arc::new(Mutex::new(Vec::new()));
+        let submissions = Arc::new(Mutex::new(Vec::new()));
         let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
         let accept_intent = {
             let removals = removals.clone();
+            let submissions = submissions.clone();
             move |method: axum::http::Method, Query(query): Query<HashMap<String, String>>| {
                 let removals = removals.clone();
+                let submissions = submissions.clone();
                 async move {
+                    submissions.lock().unwrap().push(query.clone());
                     removals.lock().unwrap().insert(
                         query["operation_id"].clone(),
                         method == axum::http::Method::DELETE,
@@ -233,10 +280,13 @@ impl Fixture {
             .route("/api/plugins/marketplace/7/install", post({
                 let entered = recovery_entered.clone();
                 let release = recovery_release.clone();
+                let submissions = submissions.clone();
                 move |Query(query): Query<HashMap<String,String>>| {
                     let entered = entered.clone();
                     let release = release.clone();
+                    let submissions = submissions.clone();
                     async move {
+                        submissions.lock().unwrap().push(query.clone());
                         assert_eq!(query["operation_id"], "original");
                         assert_eq!(query["local_intent_order"], "7");
                         assert_eq!(query["release_id"], "3");
@@ -294,6 +344,7 @@ impl Fixture {
             recovery_release,
             probe_entered,
             plans,
+            submissions,
             server,
         }
     }

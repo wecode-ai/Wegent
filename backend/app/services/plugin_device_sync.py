@@ -16,6 +16,7 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
+from app.services.device.identity import device_identity_ids
 from app.services.device.plugin_change_sync import schedule_other_devices
 from app.services.device.plugin_removal_sync import (
     prepare_plugin_removal,
@@ -25,7 +26,10 @@ from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
 )
-from app.services.device.runtime_route import resolve_runtime_route_identity
+from app.services.device.runtime_route import (
+    resolve_runtime_route_identity,
+    runtime_device_route_id,
+)
 from app.services.device_service import device_service
 from app.services.plugin_device_identity import (
     plugin_device_id,
@@ -44,6 +48,17 @@ from app.services.plugin_write_operations import run_plugin_operation
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+
+def _has_owned_source_device(db: Session, user_id: int, source: str) -> bool:
+    devices = db.query(Kind).filter_by(
+        user_id=user_id, kind="Device", namespace="default", is_active=True
+    )
+    return any(
+        source.strip()
+        in {*device_identity_ids(device), runtime_device_route_id(device)}
+        for device in devices
+    )
 
 
 def _prepare_cloud_sync_after_local_change(
@@ -95,6 +110,18 @@ async def sync_cloud_plugins_after_local_change(
                 if source_device_id
                 else None
             )
+            if (
+                source_device_id
+                and source is None
+                and _has_owned_source_device(db, user_id, source_device_id)
+            ):
+                logger.info(
+                    "Deferring plugin broadcast with ambiguous local source: "
+                    "user_id=%s installed_id=%s",
+                    user_id,
+                    installed_id,
+                )
+                return
             if release is not None:
                 await plugin_device_installation_service.ensure_pending_for_all_devices(
                     db,

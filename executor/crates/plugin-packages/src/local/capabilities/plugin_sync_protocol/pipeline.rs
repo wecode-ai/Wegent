@@ -96,8 +96,8 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let _publication = self.store.lock_shared_manifest()?;
         let _binding = self.plugin_sync_binding.lock_active()?;
         let mut manifest = self.store.manifest.load()?;
+        let binding_changed = self.plugin_sync_binding.bind_manifest(&mut manifest);
         let original = manifest.clone();
-        self.plugin_sync_binding.bind_manifest(&mut manifest);
         if !request.plugins_only && request.generation > full_generation(&manifest) {
             protocol_state(&mut manifest)
                 .insert("full_generation".to_owned(), json!(request.generation));
@@ -155,17 +155,23 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             } else {
                 // Persist before downloads or lane waits. A newer removal or
                 // complete snapshot can fence an already preparing installation.
-                record_intent(&mut manifest, &spec, request.generation, removing);
+                let first = coalescing::equivalent_generation(
+                    &original,
+                    &spec,
+                    request.generation,
+                    removing,
+                );
+                record_intent_from(&mut manifest, &spec, request.generation, removing, first);
                 accepted.jobs.push((spec, removing));
             }
         }
-        if manifest != original {
+        if binding_changed || manifest != original {
             self.store.manifest.save_with_revision_bump(manifest)?;
         }
         Ok(accepted)
     }
 
-    async fn prepare_and_publish_plugin(
+    pub(super) async fn prepare_and_publish_plugin_once(
         &self,
         mut spec: PluginSyncSpec,
         generation: u64,
@@ -254,14 +260,21 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     Default::default(),
                 ));
             }
+            let publication_generation =
+                coalescing::publication_generation(&manifest, spec, generation, removing);
             if removing {
-                result =
-                    self.remove_ordered_plugin(spec, generation, &mut manifest, &mut activation)?;
+                result = self.remove_ordered_plugin(
+                    spec,
+                    publication_generation,
+                    &mut manifest,
+                    &mut activation,
+                )?;
             } else {
                 let prepared = prepared.expect("upsert has preparation result");
                 result = match prepared {
                     Err(failure) => failed_ack(spec, generation, failure),
                     Ok(mut prepared) => {
+                        prepared.spec.sync_generation = Some(publication_generation);
                         if manifest["plugins"].get(&spec.key) != snapshot["plugins"].get(&spec.key)
                         {
                             return Err(invalid("Plugin installation changed during preparation; retry against current state"));
@@ -286,6 +299,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             }
         }
         let mut result = result;
+        result["generation"] = json!(generation);
         if result["status"] == "synced" {
             result["version"] = json!(spec.version);
             result["checksum"] = json!(spec.checksum);

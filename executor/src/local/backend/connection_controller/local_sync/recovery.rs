@@ -135,7 +135,13 @@ impl LocalBackendConnectionController {
 
         // Recovery submits intent only. The shared installer applies the current
         // account plan on a subsequent reconciliation, never this captured intent.
-        let outcome = submit(connection, instance, &request, &self.base_config.device_id).await;
+        let outcome = submit(
+            connection,
+            instance,
+            &request,
+            &self.plugin_source_device_id(),
+        )
+        .await;
 
         let _serial = self.local_sync_lock.lock().await;
         let _file = lock_file(&path.with_extension("lock"))?;

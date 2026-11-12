@@ -6,11 +6,16 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::sync::{mpsc, Semaphore};
 
+#[path = "coalescing_tests.rs"]
+mod coalescing_tests;
+
 struct GatedPackages {
     entered: mpsc::UnboundedSender<String>,
     gates: BTreeMap<String, Arc<Semaphore>>,
     active: AtomicUsize,
     maximum: AtomicUsize,
+    calls: AtomicUsize,
+    fail: AtomicBool,
 }
 
 struct Download<'a>(&'a AtomicUsize);
@@ -34,12 +39,16 @@ impl CapabilityPackageProvider for GatedPackages {
         path: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
         Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             let _download = Download(&self.active);
             self.maximum.fetch_max(active, Ordering::SeqCst);
             self.entered.send(path.to_owned()).unwrap();
             if let Some(gate) = self.gates.get(path) {
                 gate.acquire().await.unwrap().forget();
+            }
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(invalid("Injected download failure"));
             }
             if path.ends_with("/corrupt") {
                 return Ok(b"corrupt archive bytes".to_vec());
@@ -103,6 +112,8 @@ fn gated_fixture(
             .collect(),
         active: AtomicUsize::new(0),
         maximum: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+        fail: AtomicBool::new(false),
     };
     (
         root,
