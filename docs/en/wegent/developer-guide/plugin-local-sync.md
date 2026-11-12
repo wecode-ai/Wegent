@@ -20,6 +20,27 @@ After a shared download failure, a waiting request with a different download pat
 
 Connected devices submit their precise registered record route as the optional origin; unregistered local instances leave it empty. The Backend retains a supplied but ambiguous origin and defers its background broadcast instead of treating failed resolution as an instruction to synchronize every device. Local HTTP operations still complete independently.
 
+Manual reconciliation treats Native `plugin_local_sync_busy` as a deferral signal, rereading and checking again after 500 ms, then 1 second, capped at 2-second intervals within a 30-second waiting window. It schedules state checks without creating new install, update, or uninstall intents; the journal retains its existing request recovery. Foreground operations suspend checking, which resumes with fresh state afterward. Account, Backend, device, or request changes cancel old work. Real failures and expired waits remain visible, and success requires inventory readback verification.
+
+After a Rust device reconnect, plugin acknowledgements commit one installation at a time, each with its own plugin lease, transaction, and CAS validation. Persistence does not hold every plugin lease together, and one busy plugin does not prevent other acknowledgements from committing. The entire round retains its 20-second write budget. Database conflicts retry only the transaction without resending an executed device operation; unrecorded plugins remain pending and diagnostics identify the installation.
+
+```mermaid
+flowchart TD
+  A[Refresh installation state] --> B[Read local inventory and request Native reconciliation]
+  B --> C{Result}
+  C -->|Temporarily busy| D{Current scope and within waiting window}
+  D -->|Yes| E[Show waiting and reschedule]
+  E --> B
+  D -->|No| F[Cancel old work or report expired wait]
+  C -->|Real failure| G[Preserve error and retry entry]
+  C -->|Completed| H[Read back account and local inventories]
+  H --> I{Still current}
+  I -->|No| F
+  I -->|Yes| K{Inventory verified}
+  K -->|Yes| J[Report successful reconciliation]
+  K -->|No| G
+```
+
 ## Execution
 
 1. Probe `POST /api/plugins/local-sync` with `probeOnly=true`; require protocol 1 and contract revision 3. Backend probing performs no writes.

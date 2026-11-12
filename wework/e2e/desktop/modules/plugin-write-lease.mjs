@@ -42,8 +42,16 @@ export async function holdDeviceRegistrationRow(cloud, userId, recordId) {
   return holdPluginCoordinationFault(cloud, 'device-row', userId, recordId)
 }
 
-export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId) {
-  assert.ok(['lease', 'user-row', 'device-row', 'plugin-row', 'redis-unavailable'].includes(mode))
+export async function holdPluginScanLock(cloud, path, executorHome) {
+  return holdPluginCoordinationFault(cloud, 'scan-lock', 1, undefined, { path, executorHome })
+}
+
+export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId, scan) {
+  assert.ok(
+    ['lease', 'user-row', 'device-row', 'plugin-row', 'redis-unavailable', 'scan-lock'].includes(
+      mode
+    )
+  )
   const redisUrl = `redis://127.0.0.1:${cloud.redisPort}/0`
   assert.equal(cloud.backendEnv.REDIS_URL, redisUrl)
   const child = spawn(
@@ -65,6 +73,12 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
         ...(recordId ? { WEWORK_E2E_DEVICE_RECORD_ID: String(recordId) } : {}),
         ...(mode === 'lease' ? { WEWORK_E2E_PLUGIN_NAME: String(recordId) } : {}),
         WEWORK_E2E_PLUGIN_FAULT: mode,
+        ...(scan
+          ? {
+              WEWORK_E2E_PLUGIN_SCAN_LOCK: scan.path,
+              WEWORK_E2E_EXECUTOR_HOME: scan.executorHome,
+            }
+          : {}),
         WEWORK_E2E_PLUGIN_MYSQL: JSON.stringify({
           ...cloud.mysqlConnectionOptions,
           database: cloud.databaseName,

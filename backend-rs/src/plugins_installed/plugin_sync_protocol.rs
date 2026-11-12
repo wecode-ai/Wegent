@@ -36,7 +36,7 @@ const PLUGIN_SYNC_STATE_NAMESPACE: &str = "plugin-sync";
 /// `PLUGIN_SYNC_STATE_NAME`.
 const PLUGIN_SYNC_STATE_NAME: &str = "account";
 
-async fn with_sync_write_budget<T, E>(
+pub(super) async fn with_sync_write_budget<T, E>(
     write: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, E>
 where

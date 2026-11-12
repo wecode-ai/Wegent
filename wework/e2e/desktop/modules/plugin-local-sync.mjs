@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { verifyPluginDuplicateDelivery } from './plugin-duplicate-delivery.mjs'
+import { verifyPluginReconciliationBusy } from './plugin-reconciliation-busy.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -25,6 +26,7 @@ export async function verifyPluginLocalSync({
   packageProxy,
   resultDir,
   timeoutMs,
+  captureScreenshot,
 }) {
   const flags = { ...cloud.backendEnv }
   const current = await requestPluginExecutor(control, 'executor.backend.status')
@@ -56,6 +58,16 @@ export async function verifyPluginLocalSync({
       resultDir,
       timeoutMs,
       evidence,
+    })
+    await verifyPluginReconciliationBusy({
+      cloud,
+      control,
+      apiProxy,
+      executorHome,
+      resultDir,
+      timeoutMs,
+      evidence,
+      captureScreenshot,
     })
     apiProxy.disconnectWebSockets(true)
     for (const row of rows)

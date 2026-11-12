@@ -17,6 +17,7 @@
 
 use std::time::Duration;
 
+use brz_mysql::FromMysqlRow;
 use serde_json::Value;
 
 use crate::state::AppState;
@@ -136,11 +137,33 @@ pub(crate) async fn record_registration_sync_result(
     user_id: i64,
     result: &SyncResult,
 ) {
-    if let Err(error) = super::plugin_sync_protocol::retry_sync_write(3, || {
-        persist_registration_result(state, user_id, result)
-    })
-    .await
-    {
+    let write = async {
+        #[derive(FromMysqlRow)]
+        struct InstallationId {
+            id: i64,
+        }
+        let installations: Vec<InstallationId> = state.mysql.fetch_all(
+            "SELECT kinds.id FROM kinds WHERE kinds.user_id=? AND kinds.kind='InstalledPlugin' AND kinds.namespace='default' AND (kinds.is_active=true OR EXISTS (SELECT 1 FROM plugin_device_installations WHERE user_id=? AND installed_kind_id=kinds.id)) ORDER BY kinds.id",
+            (user_id, user_id),
+        ).await?;
+        for installed in installations {
+            if let Err(error) = super::plugin_sync_protocol::retry_sync_write(3, || {
+                persist_registration_result(state, user_id, result, installed.id)
+            })
+            .await
+            {
+                tracing::error!(
+                    %error,
+                    user_id,
+                    installed_id = installed.id,
+                    device_id = result.device_id,
+                    "Registration plugin acknowledgement remains pending"
+                );
+            }
+        }
+        Ok::<(), brz_mysql::MysqlError>(())
+    };
+    if let Err(error) = super::plugin_sync_protocol::with_sync_write_budget(write).await {
         tracing::error!(
             %error,
             user_id,
@@ -154,9 +177,11 @@ async fn persist_registration_result(
     state: &AppState,
     user_id: i64,
     result: &SyncResult,
+    installed_id: i64,
 ) -> brz_mysql::MysqlResult<()> {
-    // Each retry owns a fresh transaction and fresh installation leases; the
-    // device has already executed the snapshot and must never be called again.
+    // A complete ACK still commits one installation at a time. Other plugins
+    // stay writable while this one waits for a foreground writer. Each retry
+    // revalidates current state without replaying the executed device RPC.
     let lease = async {
         super::plugin_sync_protocol::ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
             .await?;
@@ -164,7 +189,7 @@ async fn persist_registration_result(
             &state.mysql,
             state.redis.as_ref(),
             user_id,
-            None,
+            Some(&[installed_id]),
         )
         .await
     }

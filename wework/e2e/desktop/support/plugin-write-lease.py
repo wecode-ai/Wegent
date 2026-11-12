@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Hold and observe a real lease in the desktop harness's isolated Redis."""
+"""Hold real plugin coordination faults in the isolated desktop harness."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from queue import SimpleQueue
 from urllib.parse import urlparse
 
@@ -26,6 +27,10 @@ def emit(event: str) -> None:
 
 
 def main() -> None:
+    mode = os.environ.get("WEWORK_E2E_PLUGIN_FAULT", "lease")
+    if mode == "scan-lock":
+        hold_scan_lock()
+        return
     url = os.environ["WEWORK_E2E_PLUGIN_REDIS_URL"]
     parsed = urlparse(url)
     if parsed.hostname != "127.0.0.1" or parsed.port != int(
@@ -38,7 +43,6 @@ def main() -> None:
     name = os.environ.get("WEWORK_E2E_PLUGIN_NAME", "")
     key = f"wegent:plugin-write:{user_id}:{name}"
     client = Redis.from_url(url, socket_connect_timeout=1, socket_timeout=2)
-    mode = os.environ.get("WEWORK_E2E_PLUGIN_FAULT", "lease")
     if mode in {"user-row", "device-row", "plugin-row"}:
         options = json.loads(os.environ["WEWORK_E2E_PLUGIN_MYSQL"])
         if options["host"] != "127.0.0.1" or not options["database"].startswith(
@@ -169,6 +173,30 @@ def main() -> None:
         lock.release()
         client.close()
         emit("released")
+
+
+def hold_scan_lock() -> None:
+    import fcntl
+
+    home = Path(os.environ["WEWORK_E2E_EXECUTOR_HOME"]).resolve()
+    path = Path(os.environ["WEWORK_E2E_PLUGIN_SCAN_LOCK"]).resolve()
+    if (
+        home.name != "executor-home"
+        or not path.is_relative_to(home)
+        or path.parent.name != "plugin-local-sync"
+        or not path.name.endswith(".scan.lock")
+    ):
+        raise ValueError("The scan lock requires the isolated E2E executor home")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            emit("ready")
+            if sys.stdin.read():
+                raise ValueError("The scan lock accepts only stdin closure")
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            emit("released")
 
 
 if __name__ == "__main__":
