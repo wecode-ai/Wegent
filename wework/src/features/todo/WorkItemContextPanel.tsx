@@ -52,29 +52,53 @@ export function WorkItemContextPanel({
     services.projectSpaceDetailServices?.[projectStoreLocation(project.project_store)]
   const [currentItem, setCurrentItem] = useState(item)
   const [allItems, setAllItems] = useState<CloudLoopItem[]>([item])
+  const [listError, setListError] = useState(false)
+  const [revision, setRevision] = useState(0)
 
   useEffect(() => {
-    let active = true
-    void api.listLoopItems(project.id).then(response => {
-      if (!active) return
-      setAllItems(
-        response.items.some(candidate => candidate.id === currentItem.id)
-          ? response.items.map(candidate =>
-              candidate.id === currentItem.id ? currentItem : candidate
-            )
-          : [...response.items, currentItem]
-      )
-    })
+    let current = true
+    void api
+      .listLoopItems(project.id)
+      .then(response => {
+        if (!current) return
+        setListError(false)
+        setAllItems(
+          response.items.some(candidate => candidate.id === currentItem.id)
+            ? response.items.map(candidate =>
+                candidate.id === currentItem.id ? currentItem : candidate
+              )
+            : [...response.items, currentItem]
+        )
+      })
+      .catch(() => {
+        if (current) setListError(true)
+      })
     return () => {
-      active = false
+      current = false
     }
-  }, [api, currentItem, project.id])
+  }, [api, currentItem, project.id, revision])
 
   return (
     <section
       data-testid="work-item-context-panel"
       className="flex min-h-0 flex-1 flex-col bg-background"
     >
+      {listError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm text-error"
+        >
+          {t('personalHome.relatedFailed')}
+          <button
+            type="button"
+            data-testid="work-item-related-retry"
+            className="min-h-11 underline md:min-h-8"
+            onClick={() => setRevision(value => value + 1)}
+          >
+            {t('standIn.reload')}
+          </button>
+        </div>
+      )}
       <div className="min-h-0 flex-1">
         <TodoEditor
           getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
@@ -136,10 +160,7 @@ export function WorkItemContextPanel({
             )
           }}
           onOpenTaskConversation={task =>
-            onOpenTask({
-              deviceId: task.device_id,
-              taskId: task.task_id,
-            })
+            onOpenTask({ deviceId: task.device_id, taskId: task.task_id })
           }
         />
       </div>

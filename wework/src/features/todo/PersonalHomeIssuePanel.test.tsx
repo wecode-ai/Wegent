@@ -1,0 +1,109 @@
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import type {
+  CollaborationIssue,
+  CollaborationIssueDetailRenderContext,
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceMyWorkItem,
+} from '@wegent/collaboration'
+import i18n from '@/i18n'
+import { PersonalHomeIssuePanel } from './PersonalHomeIssuePanel'
+
+afterEach(cleanup)
+async function setup(
+  get = vi
+    .fn()
+    .mockResolvedValue({ id: 'one', cloud_project_id: 'p1', title: 'Authoritative', version: 3 })
+) {
+  await i18n.changeLanguage('en')
+  const renderDetail = vi.fn((context: CollaborationIssueDetailRenderContext) => (
+    <>
+      <button onClick={() => context.onChange({ ...context.issue, title: 'Saved title' })}>
+        Actual board editor
+      </button>
+      <button onClick={context.onCreateTask}>Create task</button>
+    </>
+  ))
+  const api = {
+    issues: { get, list: vi.fn().mockResolvedValue([]) },
+    assignments: { list: vi.fn().mockResolvedValue([]) },
+    taskBindings: { list: vi.fn().mockResolvedValue([]) },
+  } as unknown as SharedWorkspaceApi
+  const props = {
+    api,
+    renderDetail,
+    project: { id: 'p1', project_store: 'backend' } as CollaborationProject,
+    issue: {
+      id: 'one',
+      cloud_project_id: 'p1',
+      title: 'Summary',
+      project_key: 'KEY',
+    } as WorkspaceMyWorkItem,
+    active: true,
+    refreshKey: 0,
+    onUpdated: vi.fn(),
+    onOpenIssue: vi.fn(),
+    onClose: vi.fn(),
+    onCreateTask: vi.fn(),
+  }
+  return { ...render(<PersonalHomeIssuePanel {...props} />), props, get, renderDetail }
+}
+it('loads the authorized detail and gives the board renderer its real task creation callback', async () => {
+  const { props, get, renderDetail } = await setup()
+  await screen.findByText('Actual board editor')
+  expect(get).toHaveBeenCalledExactlyOnceWith('one')
+  expect(renderDetail).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      issue: expect.objectContaining({ title: 'Authoritative', version: 3 }),
+      onCreateTask: expect.any(Function),
+    })
+  )
+  fireEvent.click(screen.getByText('Create task'))
+  expect(props.onCreateTask).toHaveBeenCalledWith(
+    expect.objectContaining({ id: 'one', version: 3 })
+  )
+  fireEvent.click(screen.getByText('Actual board editor'))
+  expect(props.onUpdated).toHaveBeenCalledWith(
+    expect.objectContaining({ title: 'Saved title', project_key: 'KEY', version: 3 })
+  )
+})
+it('keeps failures local and retries without displaying a stale summary', async () => {
+  const get = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('403'))
+    .mockResolvedValue({ id: 'one', cloud_project_id: 'p1', version: 1 })
+  const { renderDetail } = await setup(get)
+  await screen.findByRole('alert')
+  expect(renderDetail).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByTestId('personal-home-detail-retry'))
+  await screen.findByText('Actual board editor')
+})
+it('rejects late responses from a previous API scope', async () => {
+  let resolveOld!: (item: CollaborationIssue) => void
+  const { props, rerender, renderDetail } = await setup(
+    vi.fn().mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveOld = resolve
+        })
+    )
+  )
+  const api = {
+    ...props.api,
+    issues: {
+      ...props.api.issues,
+      get: vi
+        .fn()
+        .mockResolvedValue({ id: 'one', cloud_project_id: 'p1', title: 'New scope', version: 2 }),
+    },
+  }
+  rerender(<PersonalHomeIssuePanel {...props} api={api} />)
+  await screen.findByText('Actual board editor')
+  await act(async () =>
+    resolveOld({ id: 'one', cloud_project_id: 'p1', title: 'Old scope' } as CollaborationIssue)
+  )
+  expect(renderDetail).toHaveBeenLastCalledWith(
+    expect.objectContaining({ issue: expect.objectContaining({ title: 'New scope' }) })
+  )
+})

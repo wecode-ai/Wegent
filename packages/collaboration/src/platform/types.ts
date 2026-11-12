@@ -64,6 +64,20 @@ export interface CollaborationPlatformHostAdapter {
   };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
+  renderPersonalHome?(props: {
+    projects: CollaborationProject[];
+    createIssue: ReactNode;
+    createdIssue?: {
+      key: string;
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem;
+      project: CollaborationProject;
+      task?: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress;
+    };
+    onCreatedIssueHandled?(key: string): void;
+    onOpenIssue(
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
+    ): void;
+  }): ReactNode;
   renderStandInPage?(props: {
     projects: CollaborationProject[];
     onClose(): void;

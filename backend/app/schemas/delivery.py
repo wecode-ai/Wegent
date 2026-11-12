@@ -424,17 +424,6 @@ class LoopItemAttachmentImport(BaseModel):
     context_ids: list[int] = Field(min_length=1)
 
 
-class MyWorkItemResponse(LoopItemResponse):
-    project_key: str
-    project_name: str
-    has_active_task: bool
-
-
-class MyWorkListResponse(BaseModel):
-    items: list[MyWorkItemResponse]
-    next_cursor: str | None = None
-
-
 class LoopItemCollaboratorCreate(BaseModel):
     user_id: int = Field(ge=1)
 
@@ -552,6 +541,25 @@ class LoopItemTaskBindingResponse(BaseModel):
     @classmethod
     def normalize_unlinked_at(cls, value: object) -> object:
         return LoopItemResponse.normalize_unset_datetime(value)
+
+
+class MyWorkAssignmentContextResponse(BaseModel):
+    body: str
+    created_by_user_name: str | None
+    created_at: datetime
+
+
+class MyWorkItemResponse(LoopItemResponse):
+    project_key: str
+    project_name: str
+    has_active_task: bool
+    task_bindings: list[LoopItemTaskBindingResponse] = Field(default_factory=list)
+    assignment_context: MyWorkAssignmentContextResponse | None = None
+
+
+class MyWorkListResponse(BaseModel):
+    items: list[MyWorkItemResponse]
+    next_cursor: str | None = None
 
 
 class LoopItemPageResponse(BaseModel):

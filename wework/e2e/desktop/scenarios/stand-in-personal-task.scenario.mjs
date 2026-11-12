@@ -264,7 +264,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await control.command('click', scoped(`collaboration-workspace-project-${project.id}`))
       await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${manualIssue.id}`))
-      await control.command('clickWhenEnabled', scoped('cloud-todo-personal-task-start'))
+      await control.command('clickWhenEnabled', scoped('cloud-todo-create-task'))
       const composer = `${scoped('work-item-new-task-chat-panel')} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer)
       await selectE2EModel(control, undefined, undefined, scoped('work-item-new-task-chat-panel'))

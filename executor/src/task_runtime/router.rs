@@ -248,6 +248,10 @@ impl TaskRuntime {
         }
     }
 
+    pub fn my_work_page(&self, limit: usize, cursor: Option<&str>, assigned_only: bool, include_completed: bool, viewer_ids: &[i64]) -> Result<Value, TaskRuntimeError> {
+        self.local_store.my_work_page(limit, cursor, assigned_only, include_completed, viewer_ids)
+    }
+
     // Native DingTalk AI Table operations (dynamic schema, records, fields).
 
     pub async fn dws_auth_status(&self) -> Result<serde_json::Value, TaskRuntimeError> {

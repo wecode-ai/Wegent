@@ -929,6 +929,11 @@
   color: rgb(var(--color-text-secondary));
 }
 
+.task-detail-persistent-action > .task-detail-personal-task {
+  margin-top: 0;
+  padding: 4px 0;
+}
+
 .task-detail-personal-task-icon {
   display: inline-flex;
   width: 24px;

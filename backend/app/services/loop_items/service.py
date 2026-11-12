@@ -3166,6 +3166,8 @@ class LoopItemService:
         *,
         limit: int = MY_WORK_ITEM_LIMIT,
         cursor: str | None = None,
+        assigned_only: bool = False,
+        include_completed: bool = True,
     ) -> tuple[list[dict[str, object]], str | None]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
@@ -3185,6 +3187,10 @@ class LoopItemService:
             loop_datetime_is_unset(LoopItem.deleted_at),
             related_item_filter(user_id),
         ]
+        if assigned_only:
+            my_work_filters.append(LoopItem.assignee_user_id == user_id)
+        if not include_completed:
+            my_work_filters.append(LoopItem.status.notin_(["completed", "cancelled"]))
         if before is not None:
             updated_at, item_id = before
             before_time = bindparam(
@@ -3217,21 +3223,42 @@ class LoopItemService:
         )
         result: list[dict[str, object]] = []
         item_ids = [item.id for item in items]
-        active_task_items = (
-            {
-                item_id
-                for (item_id,) in db.query(LoopItemTaskBinding.loop_item_id)
+        binding_rows = (
+                db.query(LoopItemTaskBinding)
                 .filter(
                     LoopItemTaskBinding.loop_item_id.in_(item_ids),
                     LoopItemTaskBinding.task_user_id == user_id,
                     loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
                 )
                 .all()
-                if item_id
-            }
             if item_ids
-            else set()
+            else []
         )
+        bindings_by_item: dict[str, list[LoopItemTaskBinding]] = {}
+        for binding in binding_rows:
+            if binding.loop_item_id:
+                bindings_by_item.setdefault(binding.loop_item_id, []).append(binding)
+        active_task_items = set(bindings_by_item)
+        from app.services.issue_assignments import issue_assignment_service
+
+        assignments = issue_assignment_service.active_for_issues(db, item_ids)
+        personal_assignments = {
+            issue_id: max(personal, key=lambda assignment: assignment.created_at)
+            for issue_id, rows in assignments.items()
+            if (personal := [row for row in rows if row.member_type == "human" and row.member_id == str(user_id)])
+        }
+        author_ids = {row.assigned_by_user_id for row in personal_assignments.values()}
+        authors = {
+            row.id: row.user_name for row in db.query(User).filter(User.id.in_(author_ids)).all()
+        } if author_ids else {}
+        contexts = {
+            issue_id: {
+                "body": assignment.comment.description or "",
+                "created_by_user_name": authors.get(assignment.assigned_by_user_id),
+                "created_at": database_datetime_as_utc(db, assignment.created_at),
+            }
+            for issue_id, assignment in personal_assignments.items()
+        }
         executions_by_item: dict[str, object] = {}
         if item_ids:
             from app.models.loop_item_execution import LoopItemExecution
@@ -3347,6 +3374,8 @@ class LoopItemService:
                         "project_key": project.project_key,
                         "project_name": project.name,
                         "has_active_task": item.id in active_task_items,
+                        "task_bindings": bindings_by_item.get(item.id, []),
+                        "assignment_context": contexts.get(item.id),
                         "assignment_history": (
                             assignment_history
                             if isinstance(assignment_history, list)
@@ -3378,6 +3407,8 @@ class LoopItemService:
                     "project_key": project_by_id[item.cloud_project_id].project_key,
                     "project_name": project_by_id[item.cloud_project_id].name,
                     "has_active_task": item.id in active_task_items,
+                    "task_bindings": bindings_by_item.get(item.id, []),
+                    "assignment_context": contexts.get(item.id),
                     "assignment_history": (
                         assignment_history
                         if isinstance(assignment_history, list)

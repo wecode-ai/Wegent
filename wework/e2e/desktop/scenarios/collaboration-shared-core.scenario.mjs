@@ -1,5 +1,6 @@
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
+import { openCollaborationIssueCreation } from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -545,7 +546,7 @@ export function createDesktopScenario({
             plugins: [],
           }),
         })
-        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await openCollaborationIssueCreation(control, scoped)
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -575,7 +576,7 @@ export function createDesktopScenario({
           uiTimeoutMs,
           remoteDevice.id
         )
-        await control.command('click', scoped('[data-testid="collaboration-primary-home"]'))
+        await openCollaborationIssueCreation(control, scoped)
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-workspace"]'), {
           timeoutMs: uiTimeoutMs,
         })
@@ -857,7 +858,7 @@ export function createDesktopScenario({
           text: '关联任务',
           timeoutMs: uiTimeoutMs,
         })
-        await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
           text: '创建任务',
           timeoutMs: uiTimeoutMs,
         })
@@ -908,7 +909,7 @@ export function createDesktopScenario({
           previousBindings.map(binding => binding.taskId ?? binding.task_id)
         )
 
-        await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+        await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
         await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), {
           timeoutMs: uiTimeoutMs,
         })

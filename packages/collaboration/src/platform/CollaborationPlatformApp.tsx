@@ -352,8 +352,16 @@ function CollaborationPlatformNavigation({
                 })
               }
             >
-              <Plus aria-hidden="true" />
-              <span>{messages.home}</span>
+              {host.renderPersonalHome ? (
+                <UserRound aria-hidden="true" />
+              ) : (
+                <Plus aria-hidden="true" />
+              )}
+              <span>
+                {host.renderPersonalHome
+                  ? messages.personalHome
+                  : messages.home}
+              </span>
             </button>
             {host.renderStandInPage && (
               <button
@@ -1344,7 +1352,9 @@ function IssueHomeLauncher({
   api,
   locale,
   renderTaskComposer,
+  currentUserId,
 }: {
+  currentUserId?: number;
   messages: PlatformMessages;
   projects: CollaborationProject[];
   workspaces: CollaborationWorkspace[];
@@ -1393,14 +1403,12 @@ function IssueHomeLauncher({
     void Promise.all([
       api.members.list(selectedProjectId),
       api.agents.list(selectedProjectId),
-      api.issues.list(selectedProjectId),
       api.projects.listCollaborationGroups?.(selectedProjectId) ?? [],
     ])
-      .then(([items, projectAgents, issues, groups]) => {
+      .then(([items, projectAgents, groups]) => {
         if (active) {
           setMembers(items);
           setAgents(projectAgents);
-          setMentionIssues(issues);
           setMentionGroups(groups);
         }
       })
@@ -1411,6 +1419,17 @@ function IssueHomeLauncher({
       active = false;
     };
   }, [api, selectedProjectId, messages.issueHomeMembersFailed]);
+  const needsIssueReferences = content.includes("#");
+  useEffect(() => {
+    if (!needsIssueReferences) return;
+    let active = true;
+    void api.issues.list(selectedProjectId).then((issues) => {
+      if (active) setMentionIssues(issues);
+    }).catch(() => {
+      if (active) setMemberError(messages.issueHomeMembersFailed);
+    });
+    return () => { active = false; };
+  }, [api, selectedProjectId, needsIssueReferences, messages.issueHomeMembersFailed]);
   const guides = [
     {
       Icon: SquarePen,
@@ -1437,6 +1456,7 @@ function IssueHomeLauncher({
   const composer = (
     <IssueHomeComposer
       renderTaskComposer={renderTaskComposer}
+      currentUserId={currentUserId}
       ref={composerRef}
       value={content}
       onChange={setContent}
@@ -2042,6 +2062,12 @@ function CollaborationPlatformAppContent({
     null,
   );
   const [rootIssueLoading, setRootIssueLoading] = useState(false);
+  const [createdHomeIssue, setCreatedHomeIssue] =
+    useState<
+      Parameters<
+        NonNullable<CollaborationPlatformHostAdapter["renderPersonalHome"]>
+      >[0]["createdIssue"]
+    >();
   const rootIssueSubmitting = useRef(false);
   const [standInRetry, setStandInRetry] = useState<{
     projectId: string;
@@ -2365,13 +2391,25 @@ function CollaborationPlatformAppContent({
           });
         }
       }
-      navigateWithin(host, {
-        workspaceId: rootIssueProject.workspace_id,
-        workspaceView: "projects",
-        projectId: rootIssueProject.id,
-        projectView: "board",
-        issueId: created.id,
-      });
+      if (host.renderPersonalHome) {
+        setCreatedHomeIssue({
+          key: crypto.randomUUID(),
+          project: rootIssueProject,
+          issue: {
+            ...created,
+            project_key: rootIssueProject.project_key,
+            project_name: rootIssueProject.name,
+            has_active_task: false,
+          },
+        });
+      } else
+        navigateWithin(host, {
+          workspaceId: rootIssueProject.workspace_id,
+          workspaceView: "projects",
+          projectId: rootIssueProject.id,
+          projectView: "board",
+          issueId: created.id,
+        });
       return true;
     } catch (error) {
       host.notify?.(
@@ -2388,9 +2426,11 @@ function CollaborationPlatformAppContent({
     const project = state.projects.find(
       (candidate) => candidate.id === item.cloud_project_id,
     );
-    if (!project?.workspace_id) return;
+    if (!project) return;
     navigateWithin(host, {
-      workspaceId: project.workspace_id,
+      collaborationDomain:
+        project.project_store === "local" ? "local" : "cloud",
+      workspaceId: project.workspace_id ?? null,
       workspaceView: "projects",
       projectId: project.id,
       projectView: "board",
@@ -2808,7 +2848,36 @@ function CollaborationPlatformAppContent({
             />
           ) : (
             <IssueHomeLauncher
-              renderTaskComposer={host.renderIssueComposer}
+              renderTaskComposer={
+                host.renderIssueComposer
+                  ? (props) =>
+                      host.renderIssueComposer!({
+                        ...props,
+                        onTaskCreated: (issue, task) => {
+                          const project = props.projects.find(
+                            (item) => item.id === props.projectId,
+                          );
+                          if (!project) return;
+                          setCreatedHomeIssue({
+                            key: crypto.randomUUID(),
+                            project,
+                            issue: {
+                              ...issue,
+                              project_key: project.project_key,
+                              project_name: project.name,
+                              has_active_task: true,
+                            },
+                            task,
+                          });
+                        },
+                      })
+                  : undefined
+              }
+              currentUserId={
+                host.renderPersonalHome
+                  ? (rootIssueProject?.current_user_id ?? host.currentUser?.id)
+                  : undefined
+              }
               api={api}
               locale={locale}
               messages={messages}
@@ -2846,6 +2915,18 @@ function CollaborationPlatformAppContent({
           )}
         </div>
       );
+    if (rootView === "home" && host.renderPersonalHome) {
+      content = host.renderPersonalHome({
+        projects: state.navigationProjects,
+        createIssue: content,
+        createdIssue: createdHomeIssue,
+        onCreatedIssueHandled: (key) =>
+          setCreatedHomeIssue((current) =>
+            current?.key === key ? undefined : current,
+          ),
+        onOpenIssue: openMyWorkItem,
+      });
+    }
   } else {
     const workspace = state.workspace;
     const canManageWorkspace =

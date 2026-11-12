@@ -387,6 +387,14 @@ impl LocalTaskStore {
         &self,
         item_ids: &[String],
     ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        Self::list_task_bindings_from(&connection, item_ids)
+    }
+
+    pub(super) fn list_task_bindings_from(
+        connection: &Connection,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
         let item_ids = item_ids
             .iter()
             .map(|item_id| item_id.trim())
@@ -399,7 +407,6 @@ impl LocalTaskStore {
             .take(item_ids.len())
             .collect::<Vec<_>>()
             .join(", ");
-        let connection = self.connection()?;
         let mut statement = connection.prepare(&format!(
             "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items

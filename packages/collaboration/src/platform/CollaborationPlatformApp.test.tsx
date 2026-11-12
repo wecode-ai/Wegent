@@ -796,6 +796,7 @@ function PlatformHarness({
   renderProject,
   renderIssueComposer,
   renderStandInPage,
+  renderPersonalHome,
   openProjectConversation,
   currentUser,
   workspaceOwnerOptions,
@@ -810,6 +811,7 @@ function PlatformHarness({
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
+  renderPersonalHome?: CollaborationPlatformHostAdapter["renderPersonalHome"];
   openProjectConversation?: CollaborationPlatformHostAdapter["openProjectConversation"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
@@ -838,6 +840,7 @@ function PlatformHarness({
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
+    renderPersonalHome,
     openProjectConversation,
     currentUser,
     location,
@@ -2915,6 +2918,65 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(editor.value).toBe("unsaved");
   });
 
+  it.each(["self", "agent"])(
+    "records a new %s-owned Issue in the personal home without implicitly starting a task",
+    async (target) => {
+      const { api } = createApi();
+      vi.mocked(api.issues.create).mockResolvedValue({
+        ...issue,
+        description: "Ship the change",
+        assignee_user_id: target === "self" ? 7 : null,
+        assignee_agent_id: target === "agent" ? agent.id : null,
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          currentUser={{ id: 7, name: "李明" }}
+          renderPersonalHome={({ createIssue, createdIssue }) => (
+            <div>
+              {createIssue}
+              <output
+                data-testid="created-home-issue"
+                data-start={String(Boolean(createdIssue?.task))}
+              >
+                {createdIssue?.issue.description}
+              </output>
+            </div>
+          )}
+          renderIssueComposer={(props) => (
+            <div>
+              {props.ownerControl}
+              <button
+                data-testid="submit-home-work"
+                onClick={() => props.onSubmit("Ship the change")}
+              >
+                Create
+              </button>
+            </div>
+          )}
+        />,
+      );
+      await click(byTestId("collaboration-issue-owner"));
+      await click(
+        document.querySelector<HTMLElement>(
+          target === "self"
+            ? '[data-testid="collaboration-issue-owner-7"]'
+            : '[data-testid="collaboration-issue-owner-agent:' +
+                agent.id +
+                '"]',
+        )!,
+      );
+      await click(byTestId("submit-home-work"));
+      expect(byTestId("created-home-issue").textContent).toBe(
+        "Ship the change",
+      );
+      expect(byTestId("created-home-issue").getAttribute("data-start")).toBe(
+        "false",
+      );
+      expect(api.issues.create).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("creates a personal Issue and retries Stand-in without creating it again", async () => {
     const { api } = createApi();
     const run = vi
@@ -3522,6 +3584,49 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("test-empty-local-project-importer")).toBeTruthy();
   });
 
+  it.each(["local", "backend"] as const)(
+    "opens personal-home issues in their %s store without requiring workspace membership",
+    async (store) => {
+      const linkedProject = {
+        ...project,
+        project_store: store,
+        workspace_id: null,
+      };
+      const { api } = createApi({ initialProjects: [linkedProject] });
+      await render(
+        <PlatformHarness
+          api={api}
+          renderProject={() => <div />}
+          renderPersonalHome={({ onOpenIssue }) => (
+            <button
+              data-testid="test-my-home-open"
+              onClick={() =>
+                onOpenIssue({
+                  ...issue,
+                  project_key: project.project_key,
+                  project_name: project.name,
+                  has_active_task: false,
+                })
+              }
+            >
+              Open Issue
+            </button>
+          )}
+        />,
+      );
+      expect(byTestId("collaboration-primary-home").textContent).toContain(
+        "我的",
+      );
+      await click(byTestId("test-my-home-open"));
+      expect(JSON.parse(byTestId("test-location").textContent!)).toMatchObject({
+        collaborationDomain: store === "local" ? "local" : "cloud",
+        projectId: project.id,
+        workspaceId: null,
+        issueId: issue.id,
+      });
+    },
+  );
+
   it("shows Wework primary navigation before the non-collapsible spaces section", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace, workspace],
@@ -3663,15 +3768,15 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.assignments?.list).toHaveBeenCalledExactlyOnceWith(issue.id);
   });
 
-  it('shows the parent layout toggle and groups child issues on the Web project board', async () => {
+  it("shows the parent layout toggle and groups child issues on the Web project board", async () => {
     const child = {
       ...issue,
-      id: 'child-issue',
+      id: "child-issue",
       sequence_number: 2,
       parent_id: issue.id,
-      title: '实现子事项',
-    }
-    const { api } = createApi({ initialIssues: [issue, child] })
+      title: "实现子事项",
+    };
+    const { api } = createApi({ initialIssues: [issue, child] });
 
     await render(
       <PlatformHarness
@@ -3681,31 +3786,31 @@ describe("CollaborationPlatformApp real component flow", () => {
           workspaceId: workspace.id,
           projectId: project.id,
         }}
-      />
-    )
+      />,
+    );
 
-    const toggle = byTestId('cloud-board-parent-layout')
-    expect(toggle.textContent).toContain('按父事项')
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    const toggle = byTestId("cloud-board-parent-layout");
+    expect(toggle.textContent).toContain("按父事项");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(
-      container.querySelector(`[data-testid="cloud-todo-card-${child.id}"]`)
-    ).toBeNull()
+      container.querySelector(`[data-testid="cloud-todo-card-${child.id}"]`),
+    ).toBeNull();
 
-    await click(toggle)
+    await click(toggle);
 
-    expect(toggle.getAttribute('aria-pressed')).toBe('true')
-    expect(byTestId(`cloud-board-parent-row-${issue.id}`).textContent).toContain(
-      child.title
-    )
-
-    await click(toggle)
-
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(
-      container.querySelector('[data-testid="cloud-board-parent-rows"]')
-    ).toBeNull()
-    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy()
-  })
+      byTestId(`cloud-board-parent-row-${issue.id}`).textContent,
+    ).toContain(child.title);
+
+    await click(toggle);
+
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(
+      container.querySelector('[data-testid="cloud-board-parent-rows"]'),
+    ).toBeNull();
+    expect(byTestId(`cloud-todo-card-${issue.id}`)).toBeTruthy();
+  });
 
   it("keeps the loaded board when its workspace catalog arrives later", async () => {
     const target = {

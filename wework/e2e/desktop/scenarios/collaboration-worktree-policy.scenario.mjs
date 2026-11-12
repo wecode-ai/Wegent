@@ -90,7 +90,7 @@ async function createTask(control, label, timeoutMs, executionMode = 'current_wo
   await createIssue(control, label)
   await control.command(
     'clickWhenEnabled',
-    scoped('[data-testid="cloud-todo-personal-task-start"]')
+    scoped('[data-testid="cloud-todo-create-task"]')
   )
   await control.command('waitFor', COMPOSER)
   const projectButton = `${PANEL} [data-testid="project-work-button"]`

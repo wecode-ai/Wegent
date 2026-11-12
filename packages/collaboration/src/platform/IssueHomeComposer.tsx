@@ -62,6 +62,14 @@ export interface IssueHomeTaskComposerProps {
   attachments: Attachment[];
   onFileSelect(files: File | File[]): void;
   onRemoveAttachment(id: number): void;
+  pendingFiles?: File[];
+  onResetDraft?(): void;
+  onPendingChange?(pending: boolean): void;
+  projectControl?: ReactNode;
+  onTaskCreated?(
+    issue: CollaborationIssue,
+    task: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress,
+  ): void;
 }
 const images: AttachmentImageServices<PendingFile> = {
   identity: (item) => String(item.id),
@@ -98,7 +106,9 @@ export function IssueHomeComposer({
   error,
   environmentNotice,
   renderTaskComposer,
+  currentUserId,
 }: {
+  currentUserId?: number;
   ref: Ref<ComposerInputHandle>;
   value: string;
   onChange(value: string): void;
@@ -142,8 +152,18 @@ export function IssueHomeComposer({
     [],
   );
   const candidates = useMemo(
-    () => issueHomeOwners(projectId, members, agents, groups, translate),
-    [members, agents, groups, projectId, translate],
+    () =>
+      issueHomeOwners(projectId, members, agents, groups, translate).map(
+        (candidate) =>
+          candidate.owner.kind === "user" &&
+          String(candidate.owner.id) === String(currentUserId)
+            ? {
+                ...candidate,
+                title: `${candidate.title} · ${translate("issue_creation.do_myself", "我来做")}`,
+              }
+            : candidate,
+      ),
+    [members, agents, groups, projectId, translate, currentUserId],
   );
   const addFiles = (input: File | File[]) => {
     const batch = (Array.isArray(input) ? input : [input]).map((file) => {
@@ -193,6 +213,7 @@ export function IssueHomeComposer({
     ownerOverride?.projectId === projectId ? ownerOverride.id : automaticOwner;
   const ownerControl = (
     <IssueOwnerPicker
+      showLabel={Boolean(renderTaskComposer)}
       owners={candidates}
       value={ownerId}
       disabled={pending}
@@ -245,7 +266,7 @@ export function IssueHomeComposer({
           content.slice(mention.end);
       }
     }
-    return onSubmit(
+    const accepted = await onSubmit(
       content.trim(),
       candidates.find((candidate) => candidate.id === selectedOwner)?.owner ??
         null,
@@ -254,6 +275,18 @@ export function IssueHomeComposer({
         ? [standInDeviceId, ...(standInId ? [standInId] : [])]
         : []),
     );
+    if (accepted) {
+      resetDraft();
+      onChange("");
+    }
+    return accepted;
+  };
+  const resetDraft = () => {
+    setFiles([]);
+    setOwnerOverride(null);
+    setAutomaticOwner(null);
+    for (const url of previews.current) URL.revokeObjectURL(url);
+    previews.current.clear();
   };
   const projectSelector = (
     <div className="flex min-h-10 items-center justify-center rounded-t-[26px] bg-surface px-4">
@@ -309,6 +342,8 @@ export function IssueHomeComposer({
             : error,
           members: [...candidates, ...issueCandidates],
           attachments: files,
+          pendingFiles: files.map((item) => item.file),
+          onResetDraft: resetDraft,
           onFileSelect: addFiles,
           onRemoveAttachment: removeFile,
         })}

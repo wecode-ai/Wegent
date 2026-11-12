@@ -110,7 +110,7 @@ export function createDesktopScenario({
     await control.command('clickWhenEnabled', scoped(`[data-testid="cloud-todo-card-${issue.id}"]`))
     await control.command(
       'clickWhenEnabled',
-      scoped('[data-testid="cloud-todo-personal-task-start"]')
+      scoped('[data-testid="cloud-todo-create-task"]')
     )
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`

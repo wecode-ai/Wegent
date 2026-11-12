@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openCollaborationIssueCreation, verifyCollaborationPersonalHome, verifyPersonalHomeStartWork } from '../modules/collaboration-personal-home.mjs'
 import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -45,7 +46,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'First use did not expose the standalone Agent destination'
       )
 
-      await control.command('click', sidebarScoped('[data-testid="collaboration-primary-home"]'))
+      await openCollaborationIssueCreation(control, scoped)
       await control.command(
         'waitFor',
         scoped('[data-testid="collaboration-first-project-starter"]'),
@@ -104,6 +105,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         `The first Issue did not retain its human owner ${ownerName}`
       )
       await capture(control, 'collaboration-first-use-06-issue-ready.png')
+      await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+      const projectTestId = await control.command('getAttribute', sidebarScoped('[data-testid^="collaboration-workspace-project-"]'), { value: 'data-testid' })
+      const projectId = projectTestId.replace('collaboration-workspace-project-', '')
+      const issueTestId = await control.command('getAttribute', scoped('[data-testid^="cloud-todo-card-"]:not([data-testid^="cloud-todo-card-header-"]):not([data-testid^="cloud-todo-card-metadata-"]):not([data-testid^="cloud-todo-card-reference-"]):not([data-testid^="cloud-todo-card-status-"])'), { value: 'data-testid' })
+      const issueId = issueTestId.replace('cloud-todo-card-', '')
+      const localProject = { id: projectId, name: PROJECT_NAME }
+      await verifyCollaborationPersonalHome(control, { scoped, project: localProject, issue: { id: issueId, title: ISSUE_NAME } })
+      await verifyPersonalHomeStartWork(control, { scoped, project: localProject, viewerId: ownerTarget.replace('user:', '') })
+      await capture(control, 'collaboration-first-use-07-home-workflow.png')
     },
 
     diagnostics() {

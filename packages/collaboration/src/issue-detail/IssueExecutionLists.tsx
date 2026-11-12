@@ -1,5 +1,5 @@
 import { IssueDeliveryRow } from './IssueDeliveryRow'
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode, type Ref } from 'react'
 import { ChevronRight, Plus } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
 import type { CollaborationIssue, CollaborationStatus } from '../types'
@@ -26,7 +26,6 @@ function ExecutionListSection({
   toggleTestId,
   countTestId,
   actions,
-  introduction,
   translate,
   children,
 }: {
@@ -37,7 +36,6 @@ function ExecutionListSection({
   toggleTestId: string
   countTestId?: string
   actions?: ReactNode
-  introduction?: ReactNode
   translate: CollaborationTranslate
   children(expanded: boolean): ReactNode
 }) {
@@ -46,7 +44,7 @@ function ExecutionListSection({
   const listRef = useRef<HTMLDivElement>(null)
   const canExpand = count > PREVIEW_LIMIT
 
-  if (count === 0) return null
+  if (count === 0 && !actions) return null
 
   return (
     <section className="task-detail-workspace-section" data-testid={testId}>
@@ -80,7 +78,6 @@ function ExecutionListSection({
           {actions}
         </div>
       </div>
-      {introduction}
       <div
         id={id}
         ref={listRef}
@@ -102,7 +99,6 @@ type LinkedEntry =
 
 export function IssueLinkedTasks({
   tasks,
-  creationAction,
   childItems,
   statusOptions,
   statusDotClasses,
@@ -111,12 +107,13 @@ export function IssueLinkedTasks({
   selectedTaskId,
   showCurrentTaskOnly,
   onCreateTask,
+  createTaskRef,
+  createTaskLabel,
   onOpenTaskConversation,
   onOpenChildTask,
   translate,
 }: {
   tasks: SharedIssueDetailTaskBinding[]
-  creationAction?: ReactNode
   childItems: CollaborationIssue[]
   statusOptions: CollaborationStatus[]
   statusDotClasses: Readonly<Record<string, string>>
@@ -127,6 +124,8 @@ export function IssueLinkedTasks({
   selectedTaskId?: string | null
   showCurrentTaskOnly?: boolean
   onCreateTask?: () => void
+  createTaskRef?: Ref<HTMLButtonElement>
+  createTaskLabel?: string
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void
   onOpenChildTask?: (child: CollaborationIssue) => void
   translate: CollaborationTranslate
@@ -159,18 +158,18 @@ export function IssueLinkedTasks({
       listTestId="cloud-todo-task-list"
       toggleTestId="cloud-todo-toggle-tasks"
       countTestId="cloud-todo-execution-task-count"
-      introduction={creationAction}
       translate={translate}
       actions={
         onCreateTask ? (
           <button
+            ref={createTaskRef}
             type="button"
             data-testid="cloud-todo-create-task"
             onClick={onCreateTask}
             className="task-detail-workspace-ghost-action"
           >
             <Plus aria-hidden="true" className="h-3.5 w-3.5" />
-            {translate('todo.new_task', '新建任务')}
+            {createTaskLabel ?? translate('todo.new_task', '新建任务')}
           </button>
         ) : null
       }

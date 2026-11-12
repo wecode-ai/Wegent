@@ -22,6 +22,7 @@ mod human_requests;
 mod stand_in_dispatches;
 pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
+mod my_work;
 pub mod milestones;
 mod ordering;
 #[path = "project_coordination.rs"]

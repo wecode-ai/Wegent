@@ -179,6 +179,8 @@ export interface ChatInputProps {
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   submitLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
   alwaysShowComposerToolbar?: boolean
@@ -314,6 +316,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     nativeEmptyCaret = false,
     submitButtonTestId,
     submitLabel,
+    showSubmitButton,
+    showAttachmentActions,
     variant = 'compact',
     collapseWhenIdle = false,
     alwaysShowComposerToolbar = false,
@@ -602,6 +606,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     nativeEmptyCaret,
     submitButtonTestId,
     submitLabel,
+    showSubmitButton,
+    showAttachmentActions,
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,

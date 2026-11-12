@@ -628,6 +628,8 @@ export interface CloudMyWorkItem extends CloudLoopItem {
   project_key: string
   project_name: string
   has_active_task: boolean
+  task_bindings?: LoopItemTaskBinding[]
+  assignment_context?: { body: string; created_by_user_name: string | null; created_at: string } | null
 }
 
 export const DEFAULT_WORK_ITEM_PROJECT_KEY = 'WORK'
@@ -784,9 +786,18 @@ export function createDeliveryApi(client: HttpClient) {
     },
     listMyWork(options?: {
       cursor?: string
+      limit?: number
+      scope?: 'assigned' | 'participating'
+      includeCompleted?: boolean
+      viewerIds?: readonly (string | number)[]
     }): Promise<{ items: CloudMyWorkItem[]; errors?: string[]; next_cursor?: string | null }> {
+      const query = new URLSearchParams()
+      if (options?.cursor) query.set('cursor', options.cursor)
+      if (options?.limit != null) query.set('limit', String(options.limit))
+      if (options?.scope) query.set('scope', options.scope)
+      if (options?.includeCompleted != null) query.set('include_completed', String(options.includeCompleted))
       return client.get(
-        `/v1/cloud-work-items/my-work${options?.cursor ? `?cursor=${encodeURIComponent(options.cursor)}` : ''}`
+        `/v1/cloud-work-items/my-work${query.size ? `?${query}` : ''}`
       )
     },
     listLoopItems(

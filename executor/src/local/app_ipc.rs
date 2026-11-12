@@ -2307,6 +2307,13 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({"deleted": true}))
         }
+        "todos.my_work" => runtime.my_work_page(
+            params["limit"].as_u64().unwrap_or(30) as usize,
+            params["cursor"].as_str(),
+            params["scope"].as_str() == Some("assigned"),
+            params["include_completed"].as_bool().unwrap_or(true),
+            &params["assignee_user_ids"].as_array().map(|values| values.iter().filter_map(Value::as_i64).collect::<Vec<_>>()).unwrap_or_else(|| vec![0]),
+        ).map_err(task_runtime_error),
         "todos.list" => {
             let project_id = required_task_string(&params, "project_id")?;
             serialize_task_value(

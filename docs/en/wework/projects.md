@@ -63,7 +63,27 @@ To delete an imported personal template, open **Collaboration → Templates → 
 
 ## New Issue content and assignee
 
-Open **Collaboration → New Issue**, choose the project first and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+Record an issue directly at the top of **Collaboration → My work**; choose the project and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+
+<a id="personal-collaboration-home"></a>
+
+### Personal collaboration home
+
+The home defaults to a compact **Record an issue** composer. Choose a project, enter content, optionally assign it to a member, agent or team, and select **Record**. Self-assignment also only records the Issue. To begin immediately, select **Create task**; the draft and attachments carry into the Tasks composer with model, plugin, workspace, attachment, plan-mode and voice controls. Submitting automatically derives the Issue title from the content and creates the linked execution in one flow. Results use the existing Issue publication flow. The list stays visible and the new Issue and task open on the right. A rejected start retains the draft and retries the same Issue. **Back to record** preserves drafts.
+
+Collaboration opens **My work** with **Assigned to me** selected, showing Issues whose assignee is you. Choose **Participating** for the broader participation list. Both scopes group issues by project and initially show **Unfinished** work. Choose **All** to include completed or cancelled issues. Pending questions explicitly addressed to you show **Needs my input** in the same list.
+
+**Record an issue** and **Create task** are parallel modes: select either label to switch while preserving the draft. The project selector has no background at rest and uses a subtle hover state. Issues appear in a project-grouped list with title, status and assignee kept together, followed by the summary, assignment comment and a single-line linked-task summary. The list does not use a multi-column card grid. Select an issue for details or a linked task to open its execution.
+
+The right workspace uses the task interface's tab style and opens **Stand-in** by default. Selecting an Issue adds a detail tab without navigating the list. Selecting it again focuses the existing tab. Open multiple issues, switch tabs or close them with their close controls; closing the active Issue selects an adjacent tab, returning to Stand-in when none remain. Switching tabs preserves conversation drafts and detail editing state. Only the visible stand-in conversation confirms messages as read. Details reuse the full board Issue workflow. Where the existing creation conditions allow it, **Create task** initially appears only beside **Linked tasks**. Once you scroll past that control, the complete **Let AI help me** action bar appears at the top; it disappears when you scroll back. It opens a second conversation pane in the same right-hand tab and widens the workspace. Linked tasks use the same second pane; closing the conversation returns to the Issue and closing the Issue returns to the home list.
+
+**Stand-in** defaults to tasks grouped by role, with **In progress** and **Completed** sections per role; failed and cancelled work retains its actual status. **Needs my input** on the right contains only collaboration Issues explicitly waiting for you and opens the corresponding Issue. Select a task to continue its original conversation in the right pane and use Back to return. **Assistant settings** opens the existing primary configuration. This list includes only assistant tasks linked to collaboration Issues, excluding unrelated mail, calendar and general assistant work. If no enabled primary assistant or role connects an accessible board, **Connect a board so your assistant can help** guides you through the existing assistant setup. Creating an assistant or completing the earlier onboarding alone does not count as connecting a board.
+
+Issue rows show title, status, assignee, tags, date and a content excerpt. When an actual assignment comment exists, **Assignment comment** shows its text and author. Assignment context and task bindings load in the same bounded page without per-Issue requests. One task-summary line shows the first two names, task count and live execution status. A single task opens directly; multiple tasks open a picker. Collaboration items awaiting you show a bell and **Needs my input**, linking to the Issue. Projects use readable group names, cards use #numbers, and detail tabs show project names and numbers.
+
+Discussions exceeding 20 activity entries preserve the first two and latest ten, with an expandable middle. Comment links and reply targets remain visible.
+
+Notifications remain in the title-bar bell. Reading them does not resolve pending work. Failed list requests show an error and retry action. Reopening the home or focusing the app refreshes the list.
 
 Type **#** and select a matching Issue from this project. After switching projects, recheck/reselect references rather than retaining invalid old-project links. This creates an Issue, not a runtime task, so do not assume task plan-mode/plugin/Skill-slash controls are available. Review project, assignee and references before submitting, then continue in details.
 

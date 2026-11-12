@@ -678,7 +678,7 @@ export function createDesktopScenario({
         text: '让 AI 帮我处理',
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-create-task"]'), {
         visible: true,
         timeoutMs: uiTimeoutMs,
       })
@@ -702,7 +702,7 @@ export function createDesktopScenario({
       assert.equal(humanAssignment.payload.assignmentId, HUMAN_ASSIGNMENT_ID)
       assert.ok(humanAssignment.payload.humanAssignmentId)
       await captureScreenshot(control, 'human-round-01-human-and-ai-assigned.png', CONTENT)
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
       const directTaskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
       await control.command('waitFor', directTaskPanel, { timeoutMs: uiTimeoutMs })
       assert.ok(
@@ -831,7 +831,7 @@ export function createDesktopScenario({
         visible: false,
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'))
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'))
       const taskPanel = scoped('[data-testid="work-item-new-task-chat-panel"]')
       const taskComposer = `${taskPanel} [data-testid="chat-message-input"]`
       await control.command('waitFor', taskComposer, { timeoutMs: uiTimeoutMs })
