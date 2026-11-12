@@ -321,7 +321,15 @@ async fn notify_runtime_event(
     let Some(plan) = notification_plan(user_id, device_id, payload) else {
         return Ok(());
     };
-    runtime_im_notification::enqueue(state, user_id, device_id, payload, &plan).await
+    runtime_im_notification::enqueue(
+        state,
+        user_id,
+        device_id,
+        payload,
+        &plan,
+        envelope.get("sequence").and_then(Value::as_u64),
+    )
+    .await
 }
 
 #[path = "device_runtime_im_notification.rs"]

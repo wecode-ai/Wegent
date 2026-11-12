@@ -130,7 +130,13 @@ impl NotificationSessionCache for RedisNotificationSessionCache<'_> {
     }
 
     async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError> {
-        self.redis()?.zrevrange(key, 0, -1).await
+        self.redis()?
+            .eval(
+                "return redis.call('ZREVRANGE', KEYS[1], 0, -1)",
+                [key],
+                [] as [&str; 0],
+            )
+            .await
     }
 
     async fn remove_user_sessions(&self, key: &str, members: &[String]) -> Result<(), RedisError> {
@@ -141,9 +147,14 @@ impl NotificationSessionCache for RedisNotificationSessionCache<'_> {
     }
 
     async fn fresh_presence_members(&self, key: &str) -> Result<Vec<String>, RedisError> {
-        let redis = self.redis()?;
-        redis.zremrangebyscore(key, "-inf", unix_seconds()).await?;
-        redis.zrevrange(key, 0, -1).await
+        self.redis()?
+            .eval(
+                "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); \
+                 return redis.call('ZREVRANGE', KEYS[1], 0, -1)",
+                [key],
+                [unix_seconds()],
+            )
+            .await
     }
 }
 
@@ -339,6 +350,10 @@ fn dedupe_sessions(sessions: Vec<PrivateSession>) -> Vec<PrivateSession> {
 fn user_sessions_key(user_id: i64) -> String {
     format!("{USER_PRIVATE_SESSIONS_PREFIX}{user_id}")
 }
+
+#[cfg(test)]
+#[path = "runtime_work_im_notification_session_protocol_tests.rs"]
+mod protocol_tests;
 
 #[cfg(test)]
 mod tests {

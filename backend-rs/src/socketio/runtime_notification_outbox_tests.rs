@@ -65,6 +65,27 @@ async fn runtime_notification_outbox_protocol() -> Result<()> {
             Some(json!({"processQueryKey":"provider-1"}))
         );
         settle(mysql, &retried, true).await?;
+        let payload: Json<Value> = mysql
+            .fetch_one(
+                "SELECT payload FROM runtime_notification_deliveries WHERE id='first'",
+                (),
+            )
+            .await?;
+        assert_eq!(
+            payload.0,
+            json!({}),
+            "A sent tombstone must retain no recipient or message payload"
+        );
+        let provider: Option<Json<Value>> = mysql
+            .fetch_one(
+                "SELECT provider_result FROM runtime_notification_deliveries WHERE id='first'",
+                (),
+            )
+            .await?;
+        assert!(
+            provider.is_none(),
+            "Reply identifiers are not needed after settlement"
+        );
 
         // Event replay cannot resurrect a sent notification.
         enqueue(mysql, vec![("first".to_owned(), delivery("recipient-a"))]).await?;

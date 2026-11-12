@@ -114,7 +114,9 @@ async fn runtime_notification_replay_preserves_delivery_and_reply_target() -> Re
     };
     let send = |_| async {
         calls.fetch_add(1, Ordering::SeqCst);
-        Ok(json!({"processQueryKey":"provider-message"}))
+        Ok(
+            json!({"processQueryKey":"provider-message","text":"private notification body","chat":{"id":"private-chat"}}),
+        )
     };
     let delivery = || outbox::Delivery {
         session: serde_json::from_value(serde_json::to_value(&session).unwrap()).unwrap(),
@@ -124,6 +126,22 @@ async fn runtime_notification_replay_preserves_delivery_and_reply_target() -> Re
     let outcome = outbox::test_database(async |mysql| {
         outbox::enqueue(mysql, vec![(receipt.clone(), delivery())]).await?;
         let first = outbox::claim(mysql).await?.unwrap();
+        let rejection = deliver_session(mysql, &fault, &first, |_| async {
+            Ok(json!({"code":"Forbidden","message":"provider rejected delivery"}))
+        })
+        .await
+        .unwrap_err();
+        assert!(rejection.to_string().contains("Forbidden"));
+        let saved: Option<brz_mysql::Json<Value>> = mysql
+            .fetch_one(
+                "SELECT provider_result FROM runtime_notification_deliveries WHERE id=?",
+                (receipt.as_str(),),
+            )
+            .await?;
+        assert!(
+            saved.is_none(),
+            "An HTTP-level success with a provider error is not a receipt"
+        );
         let error = deliver_session(mysql, &fault, &first, send)
             .await
             .unwrap_err();
@@ -143,7 +161,10 @@ async fn runtime_notification_replay_preserves_delivery_and_reply_target() -> Re
             )
             .await?;
         let reopened = outbox::claim(mysql).await?.unwrap();
-        assert!(reopened.provider_result.is_some());
+        assert_eq!(
+            reopened.provider_result,
+            Some(json!({"messageId":"provider-message"}))
+        );
         assert!(!deliver_session(mysql, &fault, &reopened, send).await?);
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -152,6 +173,15 @@ async fn runtime_notification_replay_preserves_delivery_and_reply_target() -> Re
         );
         let saved: Option<String> = redis.get(&reply).await?;
         assert_eq!(serde_json::from_str::<Value>(&saved.unwrap())?, address);
+        let saved: String = redis.get(receipt.as_str()).await?.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&saved)?,
+            json!({"messageId":"provider-message"})
+        );
+        let mut ttl = brz_redis::cmd("TTL");
+        ttl.arg(receipt.as_str());
+        let ttl: i64 = redis.command(ttl).await?;
+        assert!(ttl > 0 && ttl <= 7 * 24 * 60 * 60);
         outbox::settle(mysql, &reopened, true).await?;
 
         // Replaying the same turn after success remains a no-op.

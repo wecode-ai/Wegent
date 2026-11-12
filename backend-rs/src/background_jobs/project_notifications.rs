@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 mod im;
 pub(crate) use im::{
     DingTalkAccessToken, active_dingtalk_channel_config, dingtalk_access_token,
-    dingtalk_credentials, send_im, send_text, telegram_message,
+    dingtalk_credentials, ensure_im_success, send_im, send_text, telegram_message,
 };
 
 pub(crate) struct Pending {

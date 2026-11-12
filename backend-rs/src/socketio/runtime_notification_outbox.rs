@@ -149,7 +149,7 @@ async fn settle_at(
         mysql
             .execute(
                 "UPDATE runtime_notification_deliveries SET status='sent',lease_token=NULL,\
-             payload=JSON_REMOVE(payload,'$.message'),updated_at=? \
+             payload=JSON_OBJECT(),provider_result=NULL,updated_at=? \
              WHERE id=? AND status='pending' AND lease_token=?",
                 (now, claimed.id.as_str(), claimed.token.as_str()),
             )

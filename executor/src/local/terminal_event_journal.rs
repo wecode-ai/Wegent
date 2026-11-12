@@ -16,6 +16,7 @@ use super::event_stream::event_sequence;
 #[derive(Default)]
 pub(super) struct TerminalEventJournal {
     pending: BTreeMap<u64, Value>,
+    suspended: BTreeMap<String, BTreeMap<u64, Value>>,
     persisted: BTreeSet<u64>,
     root: Option<PathBuf>,
     directory: Option<PathBuf>,
@@ -38,8 +39,12 @@ impl TerminalEventJournal {
     pub fn bind(&mut self, scope: String) -> Result<u64, String> {
         let Some(root) = &self.root else { return Ok(0) };
         if self.scope.as_ref() != Some(&scope) {
-            if self.scope.is_some() {
-                self.pending.clear();
+            if let Some(previous) = &self.scope {
+                // Preserve even events whose disk writes failed, without
+                // exposing them to the account that is connecting next.
+                self.suspended
+                    .insert(previous.clone(), std::mem::take(&mut self.pending));
+                self.pending = self.suspended.remove(&scope).unwrap_or_default();
             }
             self.persisted.clear();
             self.directory = Some(root.join(&scope));
@@ -183,5 +188,32 @@ mod tests {
         assert!(journal.pending().is_err());
         fs::remove_file(&directory).unwrap();
         assert_eq!(journal.pending().unwrap(), vec![event]);
+    }
+
+    #[test]
+    fn account_switches_retain_unwritten_events_without_sharing_them() {
+        let root = tempfile::tempdir().unwrap();
+        let blocked = root.path().join("account-a");
+        fs::write(&blocked, b"unavailable").unwrap();
+        let first = json!({"event":"response.failed","sequence":41});
+        let second = json!({"event":"response.completed","sequence":42});
+        let mut journal = TerminalEventJournal::default();
+        journal.enable(root.path().to_owned());
+        assert!(journal.bind("account-a".to_owned()).is_err());
+        assert!(journal.retain(&first).is_err());
+        journal.bind("account-b".to_owned()).unwrap();
+        assert!(journal.pending().unwrap().is_empty());
+        journal.retain(&second).unwrap();
+        fs::remove_file(blocked).unwrap();
+        journal.bind("account-a".to_owned()).unwrap();
+        assert_eq!(journal.pending().unwrap(), vec![first.clone()]);
+        drop(journal);
+
+        let mut reopened = TerminalEventJournal::default();
+        reopened.enable(root.path().to_owned());
+        reopened.bind("account-a".to_owned()).unwrap();
+        assert_eq!(reopened.pending().unwrap(), vec![first]);
+        reopened.bind("account-b".to_owned()).unwrap();
+        assert_eq!(reopened.pending().unwrap(), vec![second]);
     }
 }

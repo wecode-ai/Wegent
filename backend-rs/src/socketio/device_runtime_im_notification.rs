@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::NotificationPlan;
-use crate::background_jobs::project::notifications::send_text;
+use crate::background_jobs::project::notifications::{ensure_im_success, send_text};
 use crate::runtime_work_im_notification_sessions::{
     runtime_notification_sessions, runtime_task_notification_key,
 };
@@ -21,6 +21,7 @@ pub(super) async fn enqueue(
     device_id: &str,
     payload: &Map<String, Value>,
     plan: &NotificationPlan,
+    sequence: Option<u64>,
 ) -> Result<()> {
     let mut address = json!({"deviceId": device_id, "localTaskId": plan.local_task_id});
     let selection = payload
@@ -41,7 +42,7 @@ pub(super) async fn enqueue(
     } else {
         plan.status
     };
-    let notification = notification_id(payload, status)
+    let notification = notification_id(payload, status, sequence)
         .context("Runtime notification requires a stable turn or event identity")?;
     let title = [
         payload.get("taskTitle"),
@@ -163,7 +164,7 @@ async fn deliver_locked<F: std::future::Future<Output = Result<Value>>>(
     let delivery = &claimed.delivery;
     let mut newly_sent = false;
     let result = if let Some(result) = &claimed.provider_result {
-        result.clone()
+        delivery_receipt(result)
     } else {
         // Honor receipts from before the durable outbox was introduced.
         let previous: Option<String> = redis
@@ -173,12 +174,18 @@ async fn deliver_locked<F: std::future::Future<Output = Result<Value>>>(
                 [] as [&str; 0],
             )
             .await?;
+        let previous = previous
+            .map(|previous| -> Result<Value> {
+                if previous == "sent" {
+                    Ok(json!({}))
+                } else {
+                    Ok(serde_json::from_str(&previous)?)
+                }
+            })
+            .transpose()?
+            .filter(|value| ensure_im_success(value).is_ok());
         let result = if let Some(previous) = previous {
-            if previous == "sent" {
-                json!({"legacyReceipt":true})
-            } else {
-                serde_json::from_str(&previous)?
-            }
+            previous
         } else {
             let message = if delivery.session.channel_type == "dingtalk" {
                 format!("{}\n\n引用本通知回复，即可继续该任务。", delivery.message)
@@ -188,10 +195,18 @@ async fn deliver_locked<F: std::future::Future<Output = Result<Value>>>(
             newly_sent = true;
             send(message).await?
         };
+        ensure_im_success(&result)?;
+        let result = delivery_receipt(&result);
         outbox::record_result(mysql, claimed, &result).await?;
         result
     };
-    redis.set(claimed.id.as_str(), result.to_string()).await?;
+    redis
+        .set_with(
+            claimed.id.as_str(),
+            result.to_string(),
+            SetOptions::default().with_expiration(SetExpiration::Seconds(7 * 24 * 60 * 60)),
+        )
+        .await?;
     save_reply(redis, &delivery.session, &delivery.address, &result).await?;
     Ok(newly_sent)
 }
@@ -216,6 +231,10 @@ async fn save_reply(
             .await?;
     }
     Ok(())
+}
+
+fn delivery_receipt(result: &Value) -> Value {
+    reply_reference(result).map_or_else(|| json!({}), |reference| json!({"messageId":reference}))
 }
 
 fn reply_reference(result: &Value) -> Option<String> {
@@ -247,7 +266,12 @@ fn receipt_key(user_id: i64, task_key: &str, session_key: &str, notification: &s
     )
 }
 
-fn notification_id(payload: &Map<String, Value>, status: &str) -> Option<String> {
+fn notification_id(
+    payload: &Map<String, Value>,
+    status: &str,
+    sequence: Option<u64>,
+) -> Option<String> {
+    let sequence = sequence.filter(|value| *value > 0).map(Value::from);
     let data = payload.get("data").unwrap_or(&Value::Null);
     let turn = [
         data.get("turnId"),
@@ -273,7 +297,8 @@ fn notification_id(payload: &Map<String, Value>, status: &str) -> Option<String>
                 .get("eventSeq")
                 .filter(|value| value.as_u64().is_some_and(|id| id > 0))
                 .map(|value| ("event", value))
-        })?;
+        })
+        .or_else(|| sequence.as_ref().map(|value| ("event", value)))?;
     Some(format!(
         "{kind}:{}:{}",
         crate::json_compat::python_str(identity),
@@ -318,15 +343,20 @@ mod tests {
     fn receipts_are_scoped_to_recipient_and_turn() {
         let first = json!({"data":{"turnId":"turn-1"}, "eventSeq":1});
         let replay = json!({"data":{"turnId":"turn-1"}, "eventSeq":2});
-        let first = notification_id(first.as_object().unwrap(), "COMPLETED").unwrap();
-        let replay = notification_id(replay.as_object().unwrap(), "COMPLETED").unwrap();
+        let first = notification_id(first.as_object().unwrap(), "COMPLETED", Some(10)).unwrap();
+        let replay = notification_id(replay.as_object().unwrap(), "COMPLETED", Some(11)).unwrap();
         assert_eq!(first, "turn:turn-1:completed");
         assert_eq!(first, replay);
         assert_ne!(
             receipt_key(1, "d:t", "a", &first),
             receipt_key(1, "d:t", "b", &replay)
         );
-        assert!(notification_id(&Map::new(), "COMPLETED").is_none());
+        assert!(notification_id(&Map::new(), "COMPLETED", None).is_none());
+        assert_eq!(
+            notification_id(&Map::new(), "COMPLETED", Some(12)).as_deref(),
+            Some("event:12:completed")
+        );
+        assert!(notification_id(&Map::new(), "COMPLETED", Some(0)).is_none());
     }
 
     #[test]

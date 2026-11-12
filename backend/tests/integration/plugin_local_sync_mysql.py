@@ -1,4 +1,4 @@
-"""Verify recovery using only existing Kind tables and an unchanged migration head."""
+"""Verify Kind-based recovery across the notification-only schema migration."""
 
 import os
 import uuid
@@ -79,11 +79,13 @@ def verify(engine, url):
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Model a preexisting deployment with the unchanged migration head.
+        # Model populated Kind tables at the pre-notification migration head.
         User.__table__.create(engine)
         Kind.__table__.create(engine)
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
+        assert "runtime_notification_deliveries" not in tables
+        tables.add("runtime_notification_deliveries")
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names()) == tables
         assert "plugin_local_sync_operations" not in tables
@@ -114,7 +116,7 @@ def verify(engine, url):
             assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
         assert set(inspect(engine).get_table_names()) == tables
     print(
-        "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
+        "MySQL: notification-only schema change, Kind marker recovery and identity isolation passed"
     )
 
 

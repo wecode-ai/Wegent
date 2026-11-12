@@ -356,18 +356,23 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
 - Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
 - Executor persists unacknowledged terminal events per Backend account and device, deleting them only after a Backend business ACK. Closing the desktop UI, streaming history overflow, reconnects, and process restarts must not discard these events. UI history remains bounded while terminal notification delivery retains the complete payload.
+- Streaming relay and terminal acknowledgement run independently. Up to eight terminal ACKs can be in flight, with failures retried per event. A missing ACK for one task cannot block other tasks' streams or terminal delivery. The durable journal, rather than the stream cursor, determines which terminals still require acceptance.
+- Backend reads notification settings, session indexes, and current presence from the Redis primary so replica lag cannot decide the wrong recipients. Read failures reject the ACK and require a retry.
 - Backend creates unique delivery intents in MySQL's `runtime_notification_deliveries`, scoped by user, device task, turn and terminal status, and recipient IM session. It ACKs only after the transaction commits. Independent workers claim expiring leases with fencing tokens, retry failures with backoff, and keep successful identities while removing message bodies. Redis still holds settings, sessions, reply routing, and recognized legacy receipts; it is not the authoritative delivery store.
-- After DingTalk returns success, workers persist its response in MySQL before writing disposable reply routing. Reply-cache failures, Redis eviction, and event replay reuse the saved response without another provider send. Different turns with identical text still receive separate notifications; message content is never the deduplication identity.
+- IM business errors never count as successful sends. After acceptance, workers persist only the reply identifier in MySQL before writing seven-day caches and reply routing. Settlement clears message content, recipient sessions, task addresses, and temporary provider results, retaining the deduplication record. Reply-cache failures, Redis eviction, and event replay reuse the saved identifier without another provider send. Different turns with identical text still receive separate notifications; message content is never the deduplication identity. Events without a turn identity use the stable transport sequence.
 - The current plain-text DingTalk API has no client idempotency key. If DingTalk accepts a message but its HTTP response is lost, or the process crashes before persisting that response, the sender cannot determine the external outcome. Business ACKs and local receipts cannot remove that external-system boundary. Protocol integration tests use real MySQL and Redis with a provider test double; real DingTalk compatibility remains unverified.
 
 ```mermaid
 sequenceDiagram
     participant E as Executor terminal journal
     participant B as Backend
+    participant R as Redis primary
     participant M as MySQL delivery records
     participant W as Notification worker
     participant I as IM provider
     E->>B: Stable turn event (retained and replayed on failure)
+    Note over E,B: Relay streams independently; acknowledge terminals concurrently and retry individually
+    B->>R: Read preferences, sessions and presence
     B->>M: Commit unique recipient delivery intents
     M-->>B: Transaction committed
     B-->>E: Business ACK (remove local record)
@@ -376,6 +381,7 @@ sequenceDiagram
     I-->>W: Provider result
     W->>M: Persist provider result
     Note over W,M: Restore reply cache from result without another send
+    W->>M: Mark sent and clear temporary delivery data
 ```
 
 ## URL

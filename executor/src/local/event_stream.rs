@@ -85,21 +85,21 @@ impl ExecutorEventHub {
             .enable(directory);
     }
 
-    pub fn subscribe_backend(&self, after: u64) -> Result<ExecutorEventSubscription, String> {
+    pub fn subscribe_backend(&self, after: u64) -> ExecutorEventSubscription {
         let receiver = self.backend_tx.subscribe();
         let mut subscription = self.subscribe_after(after);
         subscription.receiver = receiver;
-        // Streaming history may be bounded, but unacknowledged completions
-        // must survive both that limit and a connection controller restart.
+        // Terminal delivery has its own durable queue and acknowledgement
+        // lifecycle, independent of the streaming replay cursor.
         subscription.replay.retain(|event| !is_terminal(event));
-        subscription.replay.extend(
-            self.terminal_events
-                .lock()
-                .expect("terminal event journal lock")
-                .pending()?,
-        );
-        subscription.replay.sort_by_key(event_sequence);
-        Ok(subscription)
+        subscription
+    }
+
+    pub fn pending_backend_terminals(&self) -> Result<Vec<Value>, String> {
+        self.terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .pending()
     }
 
     pub fn acknowledge_backend(&self, event: &Value) -> Result<(), String> {
@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn oversized_completions_remain_deliverable_without_expanding_ui_history() {
         let hub = event_hub();
-        let mut backend = hub.subscribe_backend(0).unwrap();
+        let mut backend = hub.subscribe_backend(0);
         let content = "x".repeat(EVENT_ENVELOPE_MAX_BYTES + 1);
         hub.publish(json!({"event":"response.completed","payload":{"taskId":"a","data":{"turnId":"turn-a","value":content}}}));
         let live = backend.receiver.try_recv().unwrap();
@@ -564,13 +564,12 @@ mod tests {
             hub.subscribe_after(0).replay[0]["event"],
             "executor.event_lagged"
         );
-        let replay = hub.subscribe_backend(0).unwrap().replay;
+        let replay = hub.pending_backend_terminals().unwrap();
         assert!(replay.contains(&live));
         hub.acknowledge_backend(&live).unwrap();
         assert!(hub
-            .subscribe_backend(0)
+            .pending_backend_terminals()
             .unwrap()
-            .replay
             .iter()
             .all(|event| event["event"] != "response.completed"));
     }
@@ -579,7 +578,7 @@ mod tests {
     fn backend_completions_survive_history_overflow_and_runner_replacement() {
         let hub = event_hub();
         hub.publish(json!({"event":"response.completed","payload":{"taskId":"task-1","subtaskId":"turn-1"}}));
-        let terminal = hub.subscribe_backend(0).unwrap().replay.remove(0);
+        let terminal = hub.pending_backend_terminals().unwrap().remove(0);
         let sequence = event_sequence(&terminal).unwrap();
         for _ in 0..EVENT_JOURNAL_MAX_EVENTS + 1 {
             hub.publish(json!({"event":"response.output_text.delta","payload":{"delta":"x"}}));
@@ -589,13 +588,12 @@ mod tests {
             .replay
             .iter()
             .all(|event| event["event"] != "response.completed"));
-        let replay = hub.subscribe_backend(sequence).unwrap().replay;
+        let replay = hub.pending_backend_terminals().unwrap();
         assert!(replay.contains(&terminal));
         hub.acknowledge_backend(&terminal).unwrap();
         assert!(hub
-            .subscribe_backend(0)
+            .pending_backend_terminals()
             .unwrap()
-            .replay
             .iter()
             .all(|event| event["event"] != "response.completed"));
     }

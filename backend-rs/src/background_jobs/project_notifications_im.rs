@@ -298,10 +298,22 @@ async fn http_json(
             response.status().as_u16()
         )
     }
-    response
+    let value = response
         .json()
         .await
-        .map_err(|_| anyhow::anyhow!("IM notification returned invalid JSON"))
+        .map_err(|_| anyhow::anyhow!("IM notification returned invalid JSON"))?;
+    ensure_im_success(&value)?;
+    Ok(value)
+}
+
+pub(crate) fn ensure_im_success(value: &Value) -> Result<()> {
+    if let Some(code) = value.get("code")
+        && code != "0"
+        && code != 0
+    {
+        bail!("IM provider rejected request with code {code}");
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -633,6 +645,51 @@ fn telegram_request(chat_id: i64, message_id: Option<i64>, text: &str) -> (&'sta
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn http_200_with_a_provider_error_is_not_a_success() {
+        for (body, accepted) in [
+            (json!({"processQueryKey":"sent"}), true),
+            (json!({"code":"0","processQueryKey":"sent"}), true),
+            (json!({"code":0,"processQueryKey":"sent"}), true),
+            (json!({"code":"Forbidden"}), false),
+            (json!({"code":400}), false),
+        ] {
+            let (endpoint, server) = provider_fixture(body).await;
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                http_json(&im_client().unwrap(), &endpoint, None, &json!({})),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.is_ok(), accepted, "{result:?}");
+            server.await.unwrap();
+        }
+    }
+
+    async fn provider_fixture(body: Value) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 1024];
+                let read = stream.read(&mut buffer).await.unwrap();
+                assert_ne!(read, 0);
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(offset) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                    && request.len() >= offset + 6
+                {
+                    break;
+                }
+            }
+            let body = body.to_string();
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        });
+        (endpoint, server)
+    }
     #[test]
     fn notifications_escape_member_markdown_without_changing_plain_punctuation() {
         assert_eq!(escape("[x] *a* - 2026"), "\\[x\\] \\*a\\* - 2026");
