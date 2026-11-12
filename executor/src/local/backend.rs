@@ -28,7 +28,7 @@ use crate::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
         environment_prepare::execute_environment_prepare,
-        event_stream::{event_sequence, ExecutorEventHub},
+        event_stream::ExecutorEventHub,
         session::{LocalSessionHandler, SessionType, TerminalEvent},
         session_gateway::start_session_gateway,
         workspace_files::{execute_workspace_file_command, is_workspace_file_command},
@@ -47,6 +47,7 @@ mod connection;
 mod connection_controller;
 mod extension;
 mod handlers;
+mod runtime_events;
 pub(crate) mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
@@ -256,6 +257,8 @@ where
         .with_device_route_id_slot(device_route_id)
     }
 
+    /// Shared producers must capture `RuntimeEventSource` when accepting work
+    /// and stamp events with that source, including after account changes.
     pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
         config: LocalBackendConfig,
         transport: T,
@@ -451,78 +454,12 @@ where
         if let Some(forwarder) = self.runtime_event_forwarder.take() {
             forwarder.abort();
         }
-        let client = self.client.clone();
-        let connection_status = Arc::clone(&self.connection_status);
-        self.runtime_event_forwarder = Some(tokio::spawn(async move {
-            let mut delivered_sequence = 0;
-            loop {
-                while !connection_status.load(Ordering::Acquire) {
-                    sleep(RUNTIME_EVENT_CONNECTION_POLL_INTERVAL).await;
-                }
-                let mut subscription = event_hub.subscribe_after(delivered_sequence);
-                let mut reconnect = false;
-                for event in subscription.replay.drain(..) {
-                    if !connection_status.load(Ordering::Acquire) {
-                        reconnect = true;
-                        break;
-                    }
-                    match client
-                        .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
-                        .await
-                    {
-                        Ok(()) => {
-                            delivered_sequence =
-                                event_sequence(&event).unwrap_or(delivered_sequence);
-                        }
-                        Err(error) => {
-                            connection_status.store(false, Ordering::Release);
-                            write_executor_error_line(&format_executor_log(
-                                "runtime event relay paused until reconnect",
-                                &[("error", error)],
-                            ));
-                            reconnect = true;
-                            break;
-                        }
-                    }
-                }
-                if reconnect {
-                    while connection_status.load(Ordering::Acquire) {
-                        sleep(RUNTIME_EVENT_CONNECTION_POLL_INTERVAL).await;
-                    }
-                    continue;
-                }
-                delivered_sequence = delivered_sequence.max(subscription.resume_after);
-                loop {
-                    if !connection_status.load(Ordering::Acquire) {
-                        break;
-                    }
-                    match subscription.receiver.recv().await {
-                        Ok(event) => {
-                            let sequence = event_sequence(&event).unwrap_or(delivered_sequence);
-                            if sequence <= delivered_sequence {
-                                continue;
-                            }
-                            match client
-                                .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
-                                .await
-                            {
-                                Ok(()) => delivered_sequence = sequence,
-                                Err(error) => {
-                                    connection_status.store(false, Ordering::Release);
-                                    write_executor_error_line(&format_executor_log(
-                                        "runtime event relay paused until reconnect",
-                                        &[("error", error)],
-                                    ));
-                                    break;
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => break,
-                        Err(broadcast::error::RecvError::Closed) => return,
-                    }
-                }
-            }
-        }));
+        runtime_events::bind_journal(&event_hub, &self.client.config);
+        self.runtime_event_forwarder = Some(tokio::spawn(runtime_events::forward(
+            self.client.clone(),
+            event_hub,
+            Arc::clone(&self.connection_status),
+        )));
     }
 
     pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
@@ -885,6 +822,8 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
     let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
     let event_hub = ExecutorEventHub::new(runtime_event_tx.clone());
+    event_hub
+        .enable_terminal_event_journal(super::event_scope::device_directory(&config.device_id));
     event_hub.ensure_started();
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
@@ -917,9 +856,13 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
 
 pub async fn serve_remote_local_backend(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config);
-    LocalBackendRunner::new(backend_config, SocketIoTransport::default())
-        .run_forever()
-        .await
+    let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
+    if let Some(hub) = &runner.runtime_event_hub {
+        hub.enable_terminal_event_journal(super::event_scope::device_directory(
+            &runner.client.config.device_id,
+        ));
+    }
+    runner.run_forever().await
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {

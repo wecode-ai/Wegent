@@ -36,7 +36,7 @@ use serde_json::{Map, Value};
 
 use crate::json_compat::{python_str, python_strip, python_truthy};
 use crate::runtime_work_im_notifications::{
-    GlobalNotification, PrivateSession, cache_get, global_notification_key, missing_redis_error,
+    GlobalNotification, PrivateSession, global_notification_key, missing_redis_error,
     normalize_subscriptions, parse_private_session, presence_key, presence_members_are_away,
     private_session_key, runtime_task_subscriptions_key, unix_seconds,
 };
@@ -45,8 +45,8 @@ use crate::state::AppState;
 /// `USER_PRIVATE_SESSIONS_PREFIX` (`IMSessionService._user_sessions_key`).
 const USER_PRIVATE_SESSIONS_PREFIX: &str = "channel:user_private_sessions:";
 
-/// Resolution failures reach the source's best-effort `except Exception`
-/// boundary in `_notify_runtime_event`: the caller logs and stops.
+/// Resolution failures reject the event ACK so the executor retains it until
+/// recipient settings can be read successfully.
 #[derive(Debug)]
 pub(crate) enum NotificationSessionError {
     /// `runtime_task_notification_key` raising `ValueError` for an incomplete
@@ -82,9 +82,9 @@ impl From<RedisError> for NotificationSessionError {
 /// live server.
 #[async_trait]
 pub(crate) trait NotificationSessionCache: Send + Sync {
-    /// `cache_manager.get`: a missing key, a swallowed read error, or an
-    /// undecodable value is `None`.
-    async fn get_json(&self, key: &str) -> Option<OpaqueJson>;
+    /// A missing document is distinct from a failed read: only the former may
+    /// suppress notification delivery and acknowledge a terminal event.
+    async fn get_json(&self, key: &str) -> Result<Option<OpaqueJson>, RedisError>;
 
     /// `_list_user_session_keys`: `ZREVRANGE key 0 -1`.
     async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError>;
@@ -110,12 +110,33 @@ impl RedisNotificationSessionCache<'_> {
 
 #[async_trait]
 impl NotificationSessionCache for RedisNotificationSessionCache<'_> {
-    async fn get_json(&self, key: &str) -> Option<OpaqueJson> {
-        cache_get(self.redis, key).await
+    async fn get_json(&self, key: &str) -> Result<Option<OpaqueJson>, RedisError> {
+        // Recipient decisions must observe the writer, including a preference
+        // or private session saved just before this completion event.
+        let value: Option<String> = self
+            .redis()?
+            .eval("return redis.call('GET', KEYS[1])", [key], [] as [&str; 0])
+            .await?;
+        value
+            .map(|value| {
+                OpaqueJson::from_json_text(&value).ok_or_else(|| {
+                    RedisError::new(
+                        brz_redis::ErrorKind::ClientError,
+                        "Invalid notification settings document",
+                    )
+                })
+            })
+            .transpose()
     }
 
     async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError> {
-        self.redis()?.zrevrange(key, 0, -1).await
+        self.redis()?
+            .eval(
+                "return redis.call('ZREVRANGE', KEYS[1], 0, -1)",
+                [key],
+                [] as [&str; 0],
+            )
+            .await
     }
 
     async fn remove_user_sessions(&self, key: &str, members: &[String]) -> Result<(), RedisError> {
@@ -126,9 +147,14 @@ impl NotificationSessionCache for RedisNotificationSessionCache<'_> {
     }
 
     async fn fresh_presence_members(&self, key: &str) -> Result<Vec<String>, RedisError> {
-        let redis = self.redis()?;
-        redis.zremrangebyscore(key, "-inf", unix_seconds()).await?;
-        redis.zrevrange(key, 0, -1).await
+        self.redis()?
+            .eval(
+                "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); \
+                 return redis.call('ZREVRANGE', KEYS[1], 0, -1)",
+                [key],
+                [unix_seconds()],
+            )
+            .await
     }
 }
 
@@ -150,7 +176,7 @@ async fn resolve<C: NotificationSessionCache + ?Sized>(
     user_id: i64,
     address: &Value,
 ) -> Result<Vec<PrivateSession>, NotificationSessionError> {
-    let settings_value = cache.get_json(&global_notification_key(user_id)).await;
+    let settings_value = cache.get_json(&global_notification_key(user_id)).await?;
     let settings = GlobalNotification::from_value(settings_value.as_ref());
     if !settings.enabled {
         return Ok(Vec::new());
@@ -183,7 +209,7 @@ async fn resolve<C: NotificationSessionCache + ?Sized>(
     if !is_user_away(cache, user_id).await? {
         return Ok(Vec::new());
     }
-    let Some(session) = get_session(cache, session_key).await else {
+    let Some(session) = get_session(cache, session_key).await? else {
         return Ok(Vec::new());
     };
     if session.user_id != user_id {
@@ -233,11 +259,12 @@ async fn list_active_runtime_task_sessions<C: NotificationSessionCache + ?Sized>
     Ok(sessions
         .into_iter()
         .filter(|session| {
-            session
-                .active_runtime_task_object()
-                .and_then(notification_key_from_map)
-                .as_deref()
-                == Some(task_key)
+            session.user_id == user_id
+                && session
+                    .active_runtime_task_object()
+                    .and_then(notification_key_from_map)
+                    .as_deref()
+                    == Some(task_key)
         })
         .collect())
 }
@@ -253,7 +280,7 @@ async fn list_user_sessions<C: NotificationSessionCache + ?Sized>(
     let mut sessions = Vec::with_capacity(session_keys.len());
     let mut missing = Vec::new();
     for session_key in session_keys {
-        match get_session(cache, &session_key).await {
+        match get_session(cache, &session_key).await? {
             Some(session) => sessions.push(session),
             None => missing.push(session_key),
         }
@@ -273,7 +300,7 @@ async fn list_runtime_task_notification_sessions<C: NotificationSessionCache + ?
 ) -> Result<Vec<PrivateSession>, RedisError> {
     let subscriptions_value = cache
         .get_json(&runtime_task_subscriptions_key(user_id))
-        .await;
+        .await?;
     let subscriptions = normalize_subscriptions(subscriptions_value.as_ref());
     let Some((_, session_keys)) = subscriptions.into_iter().find(|(key, _)| key == task_key) else {
         return Ok(Vec::new());
@@ -281,7 +308,7 @@ async fn list_runtime_task_notification_sessions<C: NotificationSessionCache + ?
 
     let mut sessions = Vec::with_capacity(session_keys.len());
     for session_key in session_keys {
-        if let Some(session) = get_session(cache, &session_key).await
+        if let Some(session) = get_session(cache, &session_key).await?
             && session.user_id == user_id
         {
             sessions.push(session);
@@ -305,9 +332,9 @@ async fn is_user_away<C: NotificationSessionCache + ?Sized>(
 async fn get_session<C: NotificationSessionCache + ?Sized>(
     cache: &C,
     session_key: &str,
-) -> Option<PrivateSession> {
-    let value = cache.get_json(&private_session_key(session_key)).await;
-    parse_private_session(value.as_ref())
+) -> Result<Option<PrivateSession>, RedisError> {
+    let value = cache.get_json(&private_session_key(session_key)).await?;
+    Ok(parse_private_session(value.as_ref()))
 }
 
 /// `_dedupe_sessions`: keep the first session per `session_key`.
@@ -325,6 +352,10 @@ fn user_sessions_key(user_id: i64) -> String {
 }
 
 #[cfg(test)]
+#[path = "runtime_work_im_notification_session_protocol_tests.rs"]
+mod protocol_tests;
+
+#[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -340,6 +371,7 @@ mod tests {
         user_sessions: Vec<String>,
         presence: Vec<String>,
         calls: Mutex<Vec<String>>,
+        fail_key: Option<String>,
     }
 
     impl RecordingCache {
@@ -354,11 +386,18 @@ mod tests {
 
     #[async_trait]
     impl NotificationSessionCache for RecordingCache {
-        async fn get_json(&self, key: &str) -> Option<OpaqueJson> {
+        async fn get_json(&self, key: &str) -> Result<Option<OpaqueJson>, RedisError> {
             self.record(format!("get {key}"));
-            self.values
+            if self.fail_key.as_deref() == Some(key) {
+                return Err(RedisError::new(
+                    brz_redis::ErrorKind::ClientError,
+                    "Injected read failure",
+                ));
+            }
+            Ok(self
+                .values
                 .get(key)
-                .map(|value| OpaqueJson::from(value.clone()))
+                .map(|value| OpaqueJson::from(value.clone())))
         }
 
         async fn user_session_keys(&self, key: &str) -> Result<Vec<String>, RedisError> {
@@ -409,6 +448,41 @@ mod tests {
             .iter()
             .map(|session| session.session_key.as_str())
             .collect()
+    }
+
+    #[tokio::test]
+    async fn read_failures_require_retry_and_never_remove_a_live_session() {
+        for failed in [global_notification_key(273), private_session_key("sess-1")] {
+            let mut cache = RecordingCache {
+                fail_key: Some(failed),
+                ..Default::default()
+            };
+            cache
+                .values
+                .insert(global_notification_key(273), json!({"enabled":true}));
+            cache.user_sessions = vec!["sess-1".to_owned()];
+            assert!(resolve(&cache, 273, &address()).await.is_err());
+            assert!(cache.calls().iter().all(|call| !call.starts_with("zrem ")));
+        }
+    }
+
+    #[tokio::test]
+    async fn an_active_session_in_another_users_index_cannot_receive_the_task() {
+        let mut cache = RecordingCache::default();
+        cache.values.insert(
+            global_notification_key(273),
+            json!({"enabled":true,"session_key":"own"}),
+        );
+        cache.user_sessions = vec!["foreign".to_owned()];
+        cache.values.insert(
+            private_session_key("foreign"),
+            session("foreign", 274, Some(address())),
+        );
+        cache
+            .values
+            .insert(private_session_key("own"), session("own", 273, None));
+        let sessions = resolve(&cache, 273, &address()).await.unwrap();
+        assert_eq!(session_key(&sessions), vec!["own"]);
     }
 
     #[tokio::test]

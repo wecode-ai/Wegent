@@ -273,6 +273,15 @@ jobs:
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
 
+      - name: Verify runtime notification protocol with MySQL and Redis
+        working-directory: backend-rs
+        env:
+          RUNTIME_NOTIFICATION_TEST_REDIS_ADDRESS: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib runtime_notification_ -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/runtime-notification-protocol.log
+
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
         env:

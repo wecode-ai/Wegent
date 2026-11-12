@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -18,6 +18,8 @@ use tokio::{
     time::{self, Duration, MissedTickBehavior},
 };
 
+use super::event_scope::RAW_ACCOUNT;
+use super::terminal_event_journal::{is_terminal, TerminalEventJournal};
 use super::RUNTIME_EVENT_BUFFER_CAPACITY;
 
 const EVENT_JOURNAL_MAX_EVENTS: usize = 4096;
@@ -31,8 +33,12 @@ const EVENT_METADATA_MAX_CHARS: usize = 256;
 pub(crate) struct ExecutorEventHub {
     raw_tx: broadcast::Sender<Value>,
     event_tx: broadcast::Sender<Value>,
+    backend_tx: broadcast::Sender<BackendEvent>,
     state: Arc<Mutex<EventJournal>>,
     started: Arc<AtomicBool>,
+    terminal_events: Arc<Mutex<TerminalEventJournal>>,
+    terminal_storage_status: Arc<Mutex<BTreeMap<String, Option<String>>>>,
+    terminal_storage_notices: Arc<Mutex<VecDeque<Value>>>,
 }
 
 pub(crate) struct ExecutorEventSubscription {
@@ -41,7 +47,21 @@ pub(crate) struct ExecutorEventSubscription {
     pub resume_after: u64,
 }
 
+#[derive(Clone)]
+pub(crate) struct BackendEvent {
+    pub account: String,
+    pub value: Value,
+}
+
+pub(crate) struct BackendEventSubscription {
+    pub replay: Vec<Value>,
+    pub receiver: broadcast::Receiver<BackendEvent>,
+    pub resume_after: u64,
+}
+
 struct JournalEvent {
+    account: Option<String>,
+    terminal: bool,
     sequence: u64,
     bytes: usize,
     value: Value,
@@ -57,11 +77,16 @@ struct EventJournal {
 impl ExecutorEventHub {
     pub fn new(raw_tx: broadcast::Sender<Value>) -> Self {
         let (event_tx, _) = broadcast::channel(RUNTIME_EVENT_BUFFER_CAPACITY);
+        let (backend_tx, _) = broadcast::channel(RUNTIME_EVENT_BUFFER_CAPACITY);
         Self {
             raw_tx,
             event_tx,
+            backend_tx,
             state: Arc::new(Mutex::new(EventJournal::new())),
             started: Arc::new(AtomicBool::new(false)),
+            terminal_events: Arc::new(Mutex::new(TerminalEventJournal::default())),
+            terminal_storage_status: Arc::new(Mutex::new(BTreeMap::new())),
+            terminal_storage_notices: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -70,6 +95,71 @@ impl ExecutorEventHub {
         let hub = Self::new(raw_tx);
         hub.start(receiver);
         hub
+    }
+
+    pub fn enable_terminal_event_journal(&self, directory: std::path::PathBuf) {
+        self.terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .enable(directory);
+    }
+
+    pub fn subscribe_backend(&self, account: &str, after: u64) -> BackendEventSubscription {
+        let mut state = self.state.lock().expect("executor event journal lock");
+        let receiver = self.backend_tx.subscribe();
+        let latest = state.latest_sequence();
+        let history_lost = after > 0 && (after < state.dropped_through || after > latest);
+        let replay = if history_lost {
+            vec![state.recovery_event(after)]
+        } else {
+            state
+                .events
+                .iter()
+                .filter(|event| {
+                    event.sequence > after
+                        && event.account.as_deref() == Some(account)
+                        && !event.terminal
+                })
+                .map(|event| event.value.clone())
+                .collect()
+        };
+        BackendEventSubscription {
+            replay,
+            receiver,
+            resume_after: state.latest_sequence(),
+        }
+    }
+
+    pub fn pending_backend_terminals(&self, account: &str) -> Result<Vec<Value>, String> {
+        let pending = self
+            .terminal_events
+            .lock()
+            .map_err(|_| "Terminal event journal lock is unavailable".to_owned())?
+            .pending(account);
+        self.report_terminal_storage(account, pending.persistence_error);
+        Ok(pending.events)
+    }
+
+    pub fn acknowledge_backend(&self, account: &str, event: &Value) -> Result<(), String> {
+        self.terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .acknowledge(account, event)
+    }
+
+    pub fn bind_backend_journal(&self, account: &str) {
+        let loaded = self
+            .terminal_events
+            .lock()
+            .expect("terminal event journal lock")
+            .bind(account);
+        match loaded {
+            Ok(last) => {
+                let mut state = self.state.lock().expect("executor event journal lock");
+                state.next_sequence = state.next_sequence.max(last.saturating_add(1));
+            }
+            Err(error) => self.report_terminal_storage(account, Some(error)),
+        }
     }
 
     pub fn ensure_started(&self) {
@@ -89,10 +179,24 @@ impl ExecutorEventHub {
         tokio::spawn(async move {
             let mut pending = VecDeque::<(String, Value)>::new();
             let mut flush = time::interval(EVENT_COALESCE_INTERVAL);
+            let mut storage_retry = time::interval(Duration::from_secs(1));
+            storage_retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
             flush.set_missed_tick_behavior(MissedTickBehavior::Skip);
             flush.tick().await;
             loop {
                 tokio::select! {
+                    _ = storage_retry.tick() => {
+                        let statuses = hub.terminal_events.lock()
+                            .expect("terminal event journal lock").retry_storage();
+                        for (account, error) in statuses {
+                            hub.report_terminal_storage(&account, error);
+                        }
+                        let notices = std::mem::take(&mut *hub.terminal_storage_notices.lock()
+                            .expect("terminal storage notice lock"));
+                        for notice in notices {
+                            hub.publish(notice);
+                        }
+                    }
                     _ = flush.tick(), if !pending.is_empty() => {
                         hub.flush_pending(&mut pending, None);
                     }
@@ -195,14 +299,63 @@ impl ExecutorEventHub {
     }
 
     fn publish(&self, raw: Value) {
-        let event = {
+        let account = raw
+            .get(RAW_ACCOUNT)
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let terminal = is_terminal(&raw);
+        if terminal {
+            if let Some(account) = &account {
+                // A late producer may belong to an account not yet connected
+                // in this process. Load its sequence boundary before allocation.
+                self.bind_backend_journal(account);
+            }
+        }
+        let (event, backend_event) = {
             let mut state = self
                 .state
                 .lock()
                 .expect("executor event journal should not be poisoned");
             state.append(raw)
         };
+        // Unowned local events remain available to local IPC subscribers;
+        // a later login must never acquire them for cloud delivery.
+        if let Some(account) = account {
+            if terminal {
+                let retained = self
+                    .terminal_events
+                    .lock()
+                    .expect("terminal event journal lock")
+                    .retain(&account, &backend_event);
+                self.report_terminal_storage(&account, retained.err());
+            }
+            let _ = self.backend_tx.send(BackendEvent {
+                account,
+                value: backend_event,
+            });
+        }
         let _ = self.event_tx.send(event);
+    }
+
+    fn report_terminal_storage(&self, account: &str, error: Option<String>) {
+        let previous = self
+            .terminal_storage_status
+            .lock()
+            .expect("terminal storage status lock")
+            .insert(account.to_owned(), error.clone());
+        if previous.as_ref() == Some(&error) || (previous.is_none() && error.is_none()) {
+            return;
+        }
+        if let Some(error) = &error {
+            crate::logging::write_executor_error_line(error);
+        }
+        self.terminal_storage_notices.lock().expect("terminal storage notice lock").push_back(json!({
+            "event":"executor.event_lagged",
+            "payload":{
+                "reason":if error.is_some() { "terminal_journal_unavailable" } else { "terminal_journal_recovered" },
+                "retryable":true
+            }
+        }));
     }
 
     fn flush_pending(&self, pending: &mut VecDeque<(String, Value)>, task_id: Option<&str>) {
@@ -235,12 +388,24 @@ impl EventJournal {
         }
     }
 
-    fn append(&mut self, raw: Value) -> Value {
+    fn append(&mut self, raw: Value) -> (Value, Value) {
+        let account = raw
+            .get(RAW_ACCOUNT)
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let sequence = self.take_sequence();
-        let event = bounded_event_envelope(raw, sequence);
+        let envelope = event_envelope(raw, sequence);
+        // Construct metadata once for every consumer, retaining the full
+        // terminal payload before applying the UI history budget.
+        let terminal = is_terminal(&envelope);
+        let full_terminal = terminal.then(|| envelope.clone());
+        let event = bounded_event_envelope(envelope);
+        let backend_event = full_terminal.unwrap_or_else(|| event.clone());
         let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
 
         self.events.push_back(JournalEvent {
+            account,
+            terminal,
             sequence,
             bytes,
             value: event.clone(),
@@ -253,7 +418,7 @@ impl EventJournal {
             self.bytes = self.bytes.saturating_sub(dropped.bytes);
             self.dropped_through = dropped.sequence;
         }
-        event
+        (event, backend_event)
     }
 
     fn recovery_event(&mut self, requested_after: u64) -> Value {
@@ -326,7 +491,13 @@ fn coalescing_key(event: &Value) -> Option<String> {
         })
         .and_then(Value::as_str)
         .unwrap_or_default();
-    Some(format!("{event_name}\0{task_id}\0{subtask_id}\0{block_id}"))
+    let account = event
+        .get(RAW_ACCOUNT)
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(format!(
+        "{account}\0{event_name}\0{task_id}\0{subtask_id}\0{block_id}"
+    ))
 }
 
 fn merge_coalesced_event(pending: &mut Value, next: &Value) -> bool {
@@ -418,489 +589,35 @@ fn event_envelope(raw: Value, sequence: u64) -> Value {
     })
 }
 
-fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
-    let original_event = raw
+fn bounded_event_envelope(mut event: Value) -> Value {
+    let sequence = event_sequence(&event).expect("event sequence");
+    let original_event = event
         .get("event")
         .and_then(Value::as_str)
         .unwrap_or("executor.unknown")
         .chars()
         .take(EVENT_METADATA_MAX_CHARS)
         .collect::<String>();
-    let task_id = event_task_id(&raw).map(|task_id| {
+    let task_id = event_task_id(&event).map(|task_id| {
         task_id
             .chars()
             .take(EVENT_METADATA_MAX_CHARS)
             .collect::<String>()
     });
-    let event = event_envelope(raw, sequence);
     let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
     if bytes <= EVENT_ENVELOPE_MAX_BYTES {
         return event;
     }
-    let replacement = event_envelope(
-        json!({
-            "type": "event",
-            "event": "executor.event_lagged",
-            "payload": {
-                "reason": "event_too_large",
-                "originalEvent": original_event,
-                "originalBytes": bytes,
-                "taskId": task_id,
-                "latestSequence": sequence,
-            },
-        }),
-        sequence,
-    );
-    if serde_json::to_vec(&replacement).map_or(usize::MAX, |encoded| encoded.len())
-        <= EVENT_ENVELOPE_MAX_BYTES
-    {
-        return replacement;
-    }
-    event_envelope(
-        json!({
-            "type": "event",
-            "event": "executor.event_lagged",
-            "payload": {
-                "reason": "event_too_large",
-                "originalBytes": bytes,
-                "latestSequence": sequence,
-            },
-        }),
-        sequence,
-    )
+    event["event"] = json!("executor.event_lagged");
+    event["payload"] = json!({
+        "reason": "event_too_large",
+        "originalEvent": original_event,
+        "originalBytes": bytes,
+        "taskId": task_id,
+        "latestSequence": sequence,
+    });
+    event
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        coalescing_key, event_sequence, merge_coalesced_event, EventJournal, ExecutorEventHub,
-        EVENT_ENVELOPE_MAX_BYTES, EVENT_JOURNAL_MAX_EVENTS,
-    };
-    use serde_json::json;
-    use tokio::sync::broadcast;
-
-    fn event_hub() -> ExecutorEventHub {
-        let (raw_tx, _) = broadcast::channel(8);
-        ExecutorEventHub::new(raw_tx)
-    }
-
-    #[test]
-    fn a_new_journal_reports_old_cursors_even_before_its_first_event() {
-        for has_event in [false, true] {
-            let hub = event_hub();
-            let boundary = hub.subscribe_from_now().resume_after;
-            let old_cursor = boundary.checked_sub(1).unwrap();
-            assert!(old_cursor > 0);
-            if has_event {
-                hub.publish(json!({"event":"response.created","payload":{}}));
-            }
-            let latest = hub.subscribe_from_now().resume_after;
-
-            let subscription = hub.subscribe_after(old_cursor);
-
-            assert_eq!(subscription.replay.len(), 1);
-            let recovery = &subscription.replay[0];
-            assert_eq!(recovery["event"], "executor.event_lagged");
-            assert_eq!(recovery["payload"]["reason"], "event_history_lost");
-            assert_eq!(recovery["payload"]["requestedAfter"], old_cursor);
-            assert_eq!(recovery["payload"]["latestSequence"], latest);
-            assert!(subscription.resume_after > latest);
-            assert!(hub
-                .subscribe_after(subscription.resume_after)
-                .replay
-                .is_empty());
-        }
-    }
-
-    #[test]
-    fn zero_and_the_from_now_boundary_can_subscribe_without_false_history_loss() {
-        let hub = event_hub();
-        let from_now = hub.subscribe_from_now();
-        assert!(hub.subscribe_after(0).replay.is_empty());
-        assert!(hub.subscribe_after(from_now.resume_after).replay.is_empty());
-
-        hub.publish(json!({"event":"response.created","payload":{}}));
-
-        for cursor in [0, from_now.resume_after] {
-            let resumed = hub.subscribe_after(cursor);
-            assert_eq!(resumed.replay.len(), 1);
-            assert_eq!(resumed.replay[0]["event"], "response.created");
-            assert!(resumed.resume_after > from_now.resume_after);
-            assert!(hub.subscribe_after(resumed.resume_after).replay.is_empty());
-        }
-    }
-
-    #[test]
-    fn retained_events_replay_only_after_the_same_journal_cursor() {
-        let hub = event_hub();
-        hub.publish(json!({"event":"response.created","payload":{}}));
-        let first = hub.subscribe_from_now().resume_after;
-        hub.publish(json!({"event":"response.completed","payload":{}}));
-
-        let resumed = hub.subscribe_after(first);
-
-        assert_eq!(resumed.replay.len(), 1);
-        assert_eq!(resumed.replay[0]["event"], "response.completed");
-        assert_eq!(resumed.resume_after, first + 1);
-    }
-
-    #[test]
-    fn a_truncated_journal_preserves_its_exact_replay_boundary() {
-        let hub = event_hub();
-        let initial_boundary = hub.subscribe_from_now().resume_after;
-        for _ in 0..=EVENT_JOURNAL_MAX_EVENTS {
-            hub.publish(json!({"event":"response.created","payload":{}}));
-        }
-        let first_dropped = initial_boundary + 1;
-
-        let retained = hub.subscribe_after(first_dropped);
-
-        assert_eq!(retained.replay.len(), EVENT_JOURNAL_MAX_EVENTS);
-        assert!(retained
-            .replay
-            .iter()
-            .all(|event| event["event"] == "response.created"));
-        assert_eq!(event_sequence(&retained.replay[0]), Some(first_dropped + 1));
-        let lost = hub.subscribe_after(initial_boundary);
-        assert_eq!(lost.replay.len(), 1);
-        assert_eq!(lost.replay[0]["event"], "executor.event_lagged");
-        assert_eq!(lost.replay[0]["payload"]["reason"], "event_history_lost");
-    }
-
-    #[test]
-    fn journal_bounds_events_and_reports_history_loss() {
-        let mut journal = EventJournal::new();
-        let first = journal.append(json!({"event": "response.created", "payload": {}}));
-        let first_sequence = event_sequence(&first).unwrap();
-        for index in 0..EVENT_JOURNAL_MAX_EVENTS {
-            journal.append(json!({
-                "event": "response.output_text.delta",
-                "payload": {"data": {"delta": index.to_string()}},
-            }));
-        }
-
-        let recovery = journal.recovery_event(first_sequence.saturating_sub(1));
-
-        assert_eq!(journal.dropped_through, first_sequence);
-        assert_eq!(recovery["event"], "executor.event_lagged");
-        assert_eq!(recovery["payload"]["reason"], "event_history_lost");
-        assert!(event_sequence(&recovery).unwrap() > first_sequence);
-    }
-
-    #[test]
-    fn oversized_event_becomes_a_bounded_lag_event() {
-        let mut journal = EventJournal::new();
-        let event = journal.append(json!({
-            "event": "response.block.updated",
-            "payload": {
-                "taskId": "task-1",
-                "data": {"content": "x".repeat(EVENT_ENVELOPE_MAX_BYTES)}
-            },
-        }));
-
-        assert_eq!(event["event"], "executor.event_lagged");
-        assert_eq!(event["payload"]["reason"], "event_too_large");
-        assert_eq!(event["payload"]["taskId"], "task-1");
-        assert_eq!(journal.events.len(), 1);
-    }
-
-    #[test]
-    fn oversized_event_metadata_cannot_overflow_the_replacement() {
-        let mut journal = EventJournal::new();
-        let event = journal.append(json!({
-            "event": "e".repeat(EVENT_ENVELOPE_MAX_BYTES),
-            "payload": {
-                "taskId": "t".repeat(EVENT_ENVELOPE_MAX_BYTES),
-                "data": {"content": "x".repeat(EVENT_ENVELOPE_MAX_BYTES)}
-            },
-        }));
-
-        assert_eq!(event["event"], "executor.event_lagged");
-        assert!(
-            serde_json::to_vec(&event).unwrap().len() <= EVENT_ENVELOPE_MAX_BYTES,
-            "replacement event must respect the downstream envelope limit"
-        );
-    }
-
-    #[test]
-    fn block_updates_coalesce_per_task_and_block() {
-        let first = json!({
-            "event": "response.block.updated",
-            "payload": {
-                "taskId": "task-1",
-                "subtaskId": "turn-1",
-                "data": {"block_id": "block-1"}
-            }
-        });
-        let second = json!({
-            "event": "response.block.updated",
-            "payload": {
-                "taskId": "task-2",
-                "subtaskId": "turn-1",
-                "data": {"block_id": "block-1"}
-            }
-        });
-
-        assert_ne!(coalescing_key(&first), coalescing_key(&second));
-    }
-
-    #[tokio::test]
-    async fn latest_block_update_is_flushed_before_terminal_event() {
-        let (raw_tx, _) = broadcast::channel(8);
-        let hub = ExecutorEventHub::new(raw_tx.clone());
-        hub.ensure_started();
-        let mut events = hub.subscribe_live();
-        for content in ["first", "second"] {
-            raw_tx
-                .send(json!({
-                    "event": "response.block.updated",
-                    "payload": {
-                        "taskId": "task-1",
-                        "subtaskId": "turn-1",
-                        "data": {
-                            "block_id": "block-1",
-                            "updates": {"content": content}
-                        }
-                    }
-                }))
-                .unwrap();
-        }
-        raw_tx
-            .send(json!({
-                "event": "response.completed",
-                "payload": {"taskId": "task-1", "subtaskId": "turn-1"}
-            }))
-            .unwrap();
-
-        let update = events.recv().await.unwrap();
-        let terminal = events.recv().await.unwrap();
-
-        assert_eq!(update["payload"]["data"]["updates"]["content"], "second");
-        assert_eq!(terminal["event"], "response.completed");
-        assert!(event_sequence(&terminal).unwrap() > event_sequence(&update).unwrap());
-    }
-
-    #[tokio::test]
-    async fn block_content_deltas_are_concatenated_before_flush() {
-        let (raw_tx, _) = broadcast::channel(8);
-        let hub = ExecutorEventHub::new(raw_tx.clone());
-        hub.ensure_started();
-        let mut events = hub.subscribe_live();
-        for content_delta in ["first", "second"] {
-            raw_tx
-                .send(json!({
-                    "event": "response.block.updated",
-                    "payload": {
-                        "taskId": "task-1",
-                        "subtaskId": "turn-1",
-                        "data": {
-                            "block_id": "block-1",
-                            "updates": {
-                                "content_delta": content_delta,
-                                "status": "streaming"
-                            }
-                        }
-                    }
-                }))
-                .unwrap();
-        }
-        raw_tx
-            .send(json!({
-                "event": "response.completed",
-                "payload": {"taskId": "task-1", "subtaskId": "turn-1"}
-            }))
-            .unwrap();
-
-        let update = events.recv().await.unwrap();
-        let terminal = events.recv().await.unwrap();
-
-        assert_eq!(
-            update["payload"]["data"]["updates"]["content_delta"],
-            "firstsecond"
-        );
-        assert_eq!(terminal["event"], "response.completed");
-    }
-
-    #[tokio::test]
-    async fn terminal_block_status_preserves_pending_content_delta() {
-        let (raw_tx, _) = broadcast::channel(8);
-        let hub = ExecutorEventHub::new(raw_tx.clone());
-        hub.ensure_started();
-        let mut events = hub.subscribe_live();
-        raw_tx
-            .send(json!({
-                "event": "response.block.updated",
-                "payload": {
-                    "taskId": "task-1",
-                    "subtaskId": "turn-1",
-                    "data": {
-                        "block_id": "block-1",
-                        "updates": {
-                            "content_delta": "last chunk",
-                            "status": "streaming"
-                        }
-                    }
-                }
-            }))
-            .unwrap();
-        raw_tx
-            .send(json!({
-                "event": "response.block.updated",
-                "payload": {
-                    "taskId": "task-1",
-                    "subtaskId": "turn-1",
-                    "data": {
-                        "block_id": "block-1",
-                        "updates": {"status": "done"}
-                    }
-                }
-            }))
-            .unwrap();
-        raw_tx
-            .send(json!({
-                "event": "response.completed",
-                "payload": {"taskId": "task-1", "subtaskId": "turn-1"}
-            }))
-            .unwrap();
-
-        let update = events.recv().await.unwrap();
-
-        assert_eq!(
-            update["payload"]["data"]["updates"]["content_delta"],
-            "last chunk"
-        );
-        assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
-    }
-
-    #[tokio::test]
-    async fn terminal_output_deltas_survive_coalescing_and_status_updates() {
-        let (raw_tx, _) = broadcast::channel(8);
-        let hub = ExecutorEventHub::new(raw_tx.clone());
-        hub.ensure_started();
-        let mut events = hub.subscribe_live();
-        for updates in [
-            json!({"tool_output_delta": "tick-5\n", "status": "streaming"}),
-            json!({"tool_output_delta": "tick-6\n", "status": "streaming"}),
-            json!({"tool_output_delta": "tick-7\n", "status": "streaming"}),
-            json!({"status": "done"}),
-        ] {
-            raw_tx
-                .send(json!({
-                    "event": "response.block.updated",
-                    "payload": {"taskId": "task-1", "subtaskId": "turn-1",
-                        "data": {"block_id": "command-1", "updates": updates}}
-                }))
-                .unwrap();
-        }
-        raw_tx
-            .send(json!({
-                "event": "response.completed", "payload": {"taskId": "task-1"}
-            }))
-            .unwrap();
-
-        let update = events.recv().await.unwrap();
-        let terminal = events.recv().await.unwrap();
-
-        assert_eq!(
-            update["payload"]["data"]["updates"]["tool_output_delta"],
-            "tick-5\ntick-6\ntick-7\n"
-        );
-        assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
-        assert_eq!(terminal["event"], "response.completed");
-    }
-
-    #[tokio::test]
-    async fn output_snapshot_and_delta_boundaries_keep_their_original_order() {
-        for (first, second) in [
-            (
-                json!({"tool_output_delta": "tick-6\n"}),
-                json!({"tool_output": "snapshot\n"}),
-            ),
-            (
-                json!({"tool_output": "snapshot\n"}),
-                json!({"tool_output_delta": "tick-6\n"}),
-            ),
-            (
-                json!({"content_delta": "live"}),
-                json!({"content": "snapshot"}),
-            ),
-            (
-                json!({"content": "snapshot"}),
-                json!({"content_delta": "live"}),
-            ),
-            (
-                json!({"render_payload": {"first": true}}),
-                json!({"render_payload": {"second": true}}),
-            ),
-            (
-                json!({"tool_output_delta": "live"}),
-                json!({"tool_output_delta": null}),
-            ),
-        ] {
-            let (raw_tx, _) = broadcast::channel(8);
-            let hub = ExecutorEventHub::new(raw_tx.clone());
-            hub.ensure_started();
-            let mut events = hub.subscribe_live();
-            for updates in [&first, &second] {
-                raw_tx
-                    .send(json!({
-                        "event": "response.block.updated",
-                        "payload": {"taskId": "task-1", "subtaskId": "turn-1",
-                            "data": {"block_id": "command-1", "updates": updates}}
-                    }))
-                    .unwrap();
-            }
-            raw_tx
-                .send(json!({
-                    "event": "response.completed", "payload": {"taskId": "task-1"}
-                }))
-                .unwrap();
-
-            let first_event = events.recv().await.unwrap();
-            let second_event = events.recv().await.unwrap();
-
-            assert_eq!(first_event["payload"]["data"]["updates"], first);
-            assert_eq!(second_event["payload"]["data"]["updates"], second);
-            assert!(event_sequence(&first_event).unwrap() < event_sequence(&second_event).unwrap());
-        }
-    }
-
-    #[test]
-    fn block_updates_preserve_metadata_before_a_delta() {
-        let mut pending = json!({
-            "event": "response.block.updated",
-            "payload": {"data": {"updates": {"status": "streaming", "tool_name": "exec"}}}
-        });
-        let next = json!({
-            "event": "response.block.updated",
-            "payload": {"data": {"updates": {"tool_output_delta": "tick-6\n"}}}
-        });
-
-        assert!(merge_coalesced_event(&mut pending, &next));
-        assert_eq!(
-            pending["payload"]["data"]["updates"],
-            json!({
-                "status": "streaming", "tool_name": "exec", "tool_output_delta": "tick-6\n"
-            })
-        );
-    }
-
-    #[test]
-    fn full_block_snapshots_are_not_collapsed_with_partial_updates() {
-        let mut pending = json!({
-            "event": "response.block.updated",
-            "payload": {"data": {"updates": {"tool_output_delta": "tick-6\n"}}}
-        });
-        let original = pending.clone();
-        let next = json!({
-            "event": "response.block.updated",
-            "payload": {"data": {"block": {"tool_output": "snapshot"}}}
-        });
-
-        assert!(!merge_coalesced_event(&mut pending, &next));
-        assert_eq!(pending, original);
-        let mut snapshot = next.clone();
-        assert!(!merge_coalesced_event(&mut snapshot, &pending));
-        assert_eq!(snapshot, next);
-    }
-}
+mod tests;

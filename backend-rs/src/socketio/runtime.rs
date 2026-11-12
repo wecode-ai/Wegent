@@ -434,6 +434,14 @@ impl SocketRuntime {
         // The migrated publishers deliver locally first (`_handle_emit`) and
         // then publish, so the process's own subscribers need these handles.
         set_local_emitters(Arc::clone(&emitters));
+        // Delivery intents survive socket disconnects and process restarts.
+        for _ in 0..4 {
+            tokio::spawn(
+                super::device_runtime_event::runtime_im_notification::run_worker(Arc::clone(
+                    &state,
+                )),
+            );
+        }
         // The callback registry shared by the adapter sink (which registers
         // every accepted inbound call) and the sequencer (which holds a later
         // acknowledgement behind an earlier accepted id). Installed before the

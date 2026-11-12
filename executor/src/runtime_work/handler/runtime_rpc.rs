@@ -15,8 +15,11 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
 
     fn handle_runtime_rpc<'a>(
         &'a self,
-        data: Value,
+        mut data: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        if let Some(payload) = data.get_mut("payload") {
+            self.admit_runtime_event_account(payload);
+        }
         Box::pin(async move {
             let method = string_field(&data, "method")
                 .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;

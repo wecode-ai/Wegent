@@ -191,7 +191,7 @@ fn restore_env(key: &str, value: Option<OsString>) {
     }
 }
 
-fn backend_config(device_id: &str) -> LocalBackendConfig {
+pub(super) fn backend_config(device_id: &str) -> LocalBackendConfig {
     LocalBackendConfig {
         backend_url: "https://backend.example.com".to_string(),
         socket_url: "wss://socket.example.com".to_string(),

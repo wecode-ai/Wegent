@@ -180,8 +180,8 @@ mod tests {
     #[test]
     fn checked_in_graph_preserves_all_legacy_revisions() {
         let graph = Graph::load().unwrap();
-        assert_eq!(graph.revisions.len(), 65);
-        assert_eq!(graph.head, "f3a7c9e1b2d4");
+        assert_eq!(graph.revisions.len(), 66);
+        assert_eq!(graph.head, "a4d8e2f9c7b1");
         assert_eq!(
             graph
                 .revisions
@@ -191,7 +191,7 @@ mod tests {
             6
         );
         let plan = graph.upgrade(&BTreeSet::new(), &graph.head).unwrap();
-        assert_eq!(plan.len(), 65);
+        assert_eq!(plan.len(), 66);
         let mut applied = BTreeSet::new();
         for revision in plan {
             assert!(revision.parents.iter().all(|p| applied.contains(p)));
@@ -205,6 +205,28 @@ mod tests {
             super::super::legacy::validate(revision, false).unwrap();
             super::super::legacy::validate(revision, true).unwrap();
         }
+    }
+
+    #[test]
+    fn runtime_notification_migration_extends_the_previous_head() {
+        let graph = Graph::load().unwrap();
+        let previous = BTreeSet::from(["f3a7c9e1b2d4".to_owned()]);
+        let plan = graph.upgrade(&previous, &graph.head).unwrap();
+        assert_eq!(
+            plan.iter()
+                .map(|row| row.revision.as_str())
+                .collect::<Vec<_>>(),
+            ["a4d8e2f9c7b1"]
+        );
+        let current = BTreeSet::from([graph.head.clone()]);
+        let rollback = graph.downgrade(&current, "f3a7c9e1b2d4").unwrap();
+        assert_eq!(
+            rollback
+                .iter()
+                .map(|row| row.revision.as_str())
+                .collect::<Vec<_>>(),
+            ["a4d8e2f9c7b1"]
+        );
     }
 
     #[test]

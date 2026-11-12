@@ -355,7 +355,49 @@ Runtime tasks can send notifications to IM sessions, but notification state is k
 - A single IM session can subscribe to one runtime task and receive only that task's updates.
 - The executor sends `runtime:event` over the device WebSocket. Backend delivers only `response.completed`, `response.failed`, `response.incomplete`, and `error` terminal updates according to active task bindings, task subscriptions, and global notification settings. Successful terminal events without reply content are not sent.
 - Notification identity uses `deviceId + localTaskId` and excludes `workspacePath`. IM-originated turns do not echo another notification to the same IM, while the legacy `runtime.tasks.updated` receiver remains only for older executors.
-- Backend stores Redis delivery receipts by user, device task, turn and terminal status, and recipient IM session. Successfully delivered notifications are suppressed when events replay after desktop restarts or device reconnects. Concurrent delivery uses a short-lived lock; successful receipts do not expire. Failures release the lock, and partial failures retry only recipients without a successful receipt. Legacy watcher updates use `updatedAt`; events without a turn ID or update timestamp cannot be reliably deduplicated because distinct turns may return identical content.
+- Executor retains complete unacknowledged terminals per Backend account and device. Once either its local journal or Backend confirms durable acceptance, closing the UI, history overflow, reconnects and restarts preserve the notification. A Backend business ACK removes local records. UI history remains bounded.
+- Terminal journals use `0700` directories and `0600` files, repair existing permissions on load, and reject symlinks. The shared atomic writer syncs file contents before the journal directory. Disk failures still permit Backend acceptance of retained terminals; local persistence retries independently every second and exposes failure/recovery through local `executor.event_lagged` reasons. When both stores are unavailable, events remain unaccepted; abrupt process loss can lose memory-only events.
+- Turn admission captures the event account, which survives queue recovery and late publication. Account keys prefer the stable user ID, so credential refreshes and username changes retain pending deliveries. Backend replay, live relay, terminal journals, and ACK deletion explicitly match the connection account. Switching accounts cannot adopt another account's events or work created without a login. Queued and recovered requests cannot borrow the new account's Backend credentials. Local IPC retains local events; cloud forwarding excludes local events with no account ownership. Submitted requests cannot choose their own event account.
+- Custom shared Runtime event producers capture `RuntimeEventSource` when accepting work and reuse it to stamp later events. Relaying must never fill in missing identity from the current login.
+- Nested collaboration requests, member profiles and model variants capture their account at the same ingress; restored legacy queues without account metadata remain unowned. Model gateways and credentials bind from the checked connection snapshot. Oversized terminals retain their original classification when bounded into UI lag markers and cannot enter ordinary Backend stream replay.
+- Streaming relay and terminal acknowledgement run independently. Up to eight terminal ACKs can be in flight, with failures retried per event. A missing ACK for one task cannot block other tasks' streams or terminal delivery. The durable journal, rather than the stream cursor, determines which terminals still require acceptance.
+- Backend reads notification settings, session indexes, and current presence from the Redis primary so replica lag cannot decide the wrong recipients. Read failures reject the ACK and require a retry.
+- Backend projects and broadcasts only after notification intents are durably accepted; rejected acceptance must not run those side effects first.
+- Backend creates unique delivery intents in MySQL's `runtime_notification_deliveries`, scoped by user, device task, turn and terminal status, and recipient IM session. It ACKs only after the transaction commits. Independent workers claim expiring leases with fencing tokens, retry failures with backoff, and keep successful identities while removing message bodies. Redis still holds settings, sessions, reply routing, and recognized legacy receipts; it is not the authoritative delivery store.
+- IM business errors never count as successful sends. After acceptance, workers persist only the reply identifier in MySQL before writing seven-day caches and reply routing. Before settlement, retries after reply-cache failures or Redis eviction reuse that saved identifier without another provider send. Settlement clears message content, recipient sessions, task addresses, and temporary provider results, retaining the deduplication record. Later cache expiry or eviction cannot rebuild reply routing, and event replay does not send again. Different turns with identical text still receive separate notifications; message content is never the deduplication identity. Events without a turn identity use the stable transport sequence.
+- The current plain-text DingTalk API has no client idempotency key. If DingTalk accepts a message but its HTTP response is lost, or the process crashes before persisting that response, the sender cannot determine the external outcome. Business ACKs and local receipts cannot remove that external-system boundary. Protocol integration tests use real MySQL and Redis with a provider test double; real DingTalk compatibility remains unverified.
+
+```mermaid
+sequenceDiagram
+    participant T as Turn with captured account
+    participant E as Executor terminal journal
+    participant B as Backend
+    participant U as Runtime subscribers
+    participant R as Redis primary
+    participant M as MySQL delivery records
+    participant W as Notification worker
+    participant I as IM provider
+    T->>E: Original account event (including late events after switching)
+    E->>E: Private atomic journal; retry storage independently on failure
+    E-->>U: Local storage failure and recovery status
+    Note over T,E: One checked connection snapshot; unknown legacy accounts remain unowned
+    E->>B: Stable event matching connection account (retained and replayed on failure)
+    Note over E,B: Relay streams independently; acknowledge terminals concurrently and retry individually
+    Note over E,B: UI size limits preserve terminal classification; terminals use only their durable replay lane
+    B->>R: Read preferences, sessions and presence
+    B->>M: Commit unique recipient delivery intents
+    M-->>B: Transaction committed
+    B->>U: Project and relay accepted event
+    B-->>E: Business ACK (remove local record)
+    W->>M: Claim an expiring fenced lease
+    W->>I: Send notification
+    I-->>W: Provider result
+    W->>M: Persist provider result
+    Note over W,M: Before settlement, restore reply cache from result without another send
+    W->>R: Save seven-day receipt and reply routing
+    R-->>W: Written (retain result and retry on failure)
+    W->>M: Mark sent and clear temporary delivery data
+```
 
 ## URL
 

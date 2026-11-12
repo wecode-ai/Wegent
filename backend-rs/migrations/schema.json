@@ -1,5 +1,5 @@
 {
-  "revision": "f3a7c9e1b2d4",
+  "revision": "a4d8e2f9c7b1",
   "tables": [
     {
       "table": "background_executions",
@@ -268,6 +268,14 @@
         "CREATE INDEX idx_resource_members_status ON resource_members (status)",
         "CREATE INDEX ix_resource_members_id ON resource_members (id)",
         "CREATE INDEX ix_resource_members_share_link_id ON resource_members (share_link_id)"
+      ]
+    },
+    {
+      "table": "runtime_notification_deliveries",
+      "statements": [
+        "CREATE TABLE runtime_notification_deliveries (\n\tid VARCHAR(128) NOT NULL, \n\tuser_id BIGINT NOT NULL, \n\tpayload JSON NOT NULL, \n\tstatus VARCHAR(16) NOT NULL DEFAULT 'pending', \n\tprovider_result JSON, \n\tattempts INTEGER UNSIGNED NOT NULL DEFAULT '0', \n\tnext_attempt_at DATETIME(6) NOT NULL, \n\tlease_token VARCHAR(64), \n\tcreated_at DATETIME(6) NOT NULL, \n\tupdated_at DATETIME(6) NOT NULL, \n\tPRIMARY KEY (id)\n)ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_runtime_notification_due ON runtime_notification_deliveries (status, next_attempt_at, id)",
+        "CREATE INDEX ix_runtime_notification_user ON runtime_notification_deliveries (user_id, created_at)"
       ]
     },
     {

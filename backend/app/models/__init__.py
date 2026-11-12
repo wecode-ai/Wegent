@@ -57,6 +57,7 @@ from app.models.plugin_publication import (
 from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.runtime_notification_delivery import RuntimeNotificationDelivery
 from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
 from app.models.smart_app_marketplace import (
@@ -96,6 +97,7 @@ from app.models.work_queue import (
 from app.schemas.namespace import GroupRole
 
 __all__ = [
+    "RuntimeNotificationDelivery",
     "WeworkNotification",
     "DingtalkSyncedNode",
     "CloudProject",

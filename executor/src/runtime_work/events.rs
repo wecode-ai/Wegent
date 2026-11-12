@@ -182,6 +182,7 @@ pub(crate) fn emit_response_event(
             );
         }
     }
+    crate::local::event_scope::stamp(&mut payload, request);
     let receiver_count = event_tx.receiver_count();
     let delivery = event_tx.send(payload);
     if terminal {

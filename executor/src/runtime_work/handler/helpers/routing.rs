@@ -491,7 +491,8 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
     persisted.extra.retain(|key, _| {
         matches!(
             key.as_str(),
-            "additional_skills"
+            "_runtime_event_account"
+                | "additional_skills"
                 | "deferred_project_environment"
                 | "additionalSkills"
                 | "cloudProjectId"
