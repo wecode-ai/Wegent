@@ -9,6 +9,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from knowledge_engine.diagnostics import (
+    knowledge_context,
+    log_timing,
+    task_context,
+    timed_stage,
+)
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
@@ -26,6 +32,8 @@ from shared.models import (
     RemoteQueryResponse,
     RetrievalScope,
 )
+from shared.telemetry.context.span import get_request_id, request_context
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +56,25 @@ class QueryExecutor:
         self._config_loader = config_loader or RuntimeConfigLoader()
         self._planner = planner or QueryPlanner()
 
-    async def execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
+    @trace_async(span_name="knowledge.runtime.query", tracer_name="knowledge_runtime")
+    async def execute(
+        self, request: RemoteQueryRequest, *, task_id: int | None = None
+    ) -> RemoteQueryResponse:
+        """Correlate all query stages and restore the caller's context on exit."""
+        with (
+            request_context(get_request_id()),
+            task_context(task_id),
+            timed_stage(
+                "query_total",
+                kb_ids=request.knowledge_base_ids,
+                user_id=request.user_id,
+            ),
+        ):
+            response = await self._execute(request)
+            log_timing("query_result", "end", returned_records=len(response.records))
+            return response
+
+    async def _execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
         """Execute the query operation.
 
         Args:
@@ -69,18 +95,19 @@ class QueryExecutor:
         resolved_scope = request.scope
         if resolved_scope is None and request.document_ids is not None:
             resolved_scope = RetrievalScope(document_ids=request.document_ids)
-        configs_by_kb_id = self._config_loader.resolve_query_configs(
-            knowledge_base_ids=request.knowledge_base_ids,
-            user_id=request.user_id,
-            authorized=authorized_by_kb_id,
-            scope=resolved_scope,
-            retrieval_overrides={
-                knowledge_base_id: override.retrieval_config.model_dump(
-                    exclude_unset=True
-                )
-                for knowledge_base_id, override in retrieval_override_by_kb_id.items()
-            },
-        )
+        with timed_stage("config_resolution"):
+            configs_by_kb_id = self._config_loader.resolve_query_configs(
+                knowledge_base_ids=request.knowledge_base_ids,
+                user_id=request.user_id,
+                authorized=authorized_by_kb_id,
+                scope=resolved_scope,
+                retrieval_overrides={
+                    knowledge_base_id: override.retrieval_config.model_dump(
+                        exclude_unset=True
+                    )
+                    for knowledge_base_id, override in retrieval_override_by_kb_id.items()
+                },
+            )
         search_hints = self._search_hints_dict(request.search_hints)
         self._log_query_plan(plan, search_hints)
 
@@ -158,10 +185,15 @@ class QueryExecutor:
         knowledge_base_id: int, config: QueryConfig, plan: QueryPlan
     ) -> QueryTarget:
         """Supply execution dependencies after the config session has closed."""
-        storage = create_storage_backend_from_runtime_config(config.retriever_config)
-        embedding = create_embedding_model_from_runtime_config(
-            config.embedding_model_config
-        )
+        with knowledge_context(str(knowledge_base_id)):
+            with timed_stage("storage_backend_init"):
+                storage = create_storage_backend_from_runtime_config(
+                    config.retriever_config
+                )
+            with timed_stage("embedding_model_init", level=logging.DEBUG):
+                embedding = create_embedding_model_from_runtime_config(
+                    config.embedding_model_config
+                )
         logger.info(
             "Runtime query config: kb_id=%s top_k=%s score_threshold=%s retrieval_mode=%s",
             knowledge_base_id,

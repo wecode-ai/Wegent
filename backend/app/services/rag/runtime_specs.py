@@ -84,6 +84,7 @@ QueryKnowledgeBaseRetrievalOverride = RemoteKnowledgeBaseRetrievalOverride
 
 
 class QueryRuntimeSpec(RuntimeSpecModel):
+    task_id: int | None = None
     knowledge_base_ids: list[int]
     query: str
     search_hints: SearchHints | None = None

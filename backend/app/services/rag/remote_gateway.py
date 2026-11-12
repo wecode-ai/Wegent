@@ -73,11 +73,18 @@ class RemoteRagGateway:
         self._auth_token = auth_token or settings.INTERNAL_SERVICE_TOKEN
 
     async def _post_model(
-        self, path: str, payload: Any, *, timeout: float | None = None
+        self,
+        path: str,
+        payload: Any,
+        *,
+        timeout: float | None = None,
+        task_id: int | None = None,
     ) -> dict[str, Any]:
         headers = {}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
+        if task_id is not None:
+            headers["X-Task-ID"] = str(task_id)
 
         effective_timeout: httpx.Timeout | float = (
             httpx.Timeout(connect=30.0, read=timeout, write=30.0, pool=30.0)
@@ -166,7 +173,9 @@ class RemoteRagGateway:
             scope=spec.scope,
             metadata_condition=spec.metadata_condition,
         )
-        response_payload = await self._post_model("/internal/rag/query", payload)
+        response_payload = await self._post_model(
+            "/internal/rag/query", payload, task_id=spec.task_id
+        )
         response = RemoteQueryResponse.model_validate(response_payload)
         return {
             "mode": "rag_retrieval",

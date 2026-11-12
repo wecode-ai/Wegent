@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from time import perf_counter
 from typing import Any
 
+from knowledge_engine.diagnostics import knowledge_context, log_timing, timed_stage
 from knowledge_engine.retrieval.hierarchical import (
     collect_parent_node_ids,
     merge_parent_records,
@@ -18,6 +20,7 @@ from shared.knowledge_contracts import (
     RuntimeRetrievalConfig,
     SearchHints,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,7 @@ class QueryExecutor:
         self.storage_backend = storage_backend
         self.embed_model = embed_model
 
+    @trace_async(span_name="knowledge.query", tracer_name="knowledge_engine")
     async def execute(
         self,
         *,
@@ -62,21 +66,41 @@ class QueryExecutor:
         if user_id is not None:
             kwargs["user_id"] = user_id
 
-        result = await asyncio.to_thread(
-            self.storage_backend.retrieve,
-            knowledge_id=knowledge_id,
-            query=query,
-            embed_model=self.embed_model,
-            retrieval_setting=retrieval_setting,
-            scope=resolved_scope,
-            metadata_condition=metadata_condition,
-            **kwargs,
+        with (
+            knowledge_context(knowledge_id),
+            timed_stage(
+                "retrieval_total",
+                level=logging.DEBUG,
+                backend=type(self.storage_backend).__name__,
+            ),
+        ):
+            result = await asyncio.to_thread(
+                self._retrieve_in_worker,
+                perf_counter(),
+                knowledge_id=knowledge_id,
+                query=query,
+                embed_model=self.embed_model,
+                retrieval_setting=retrieval_setting,
+                scope=resolved_scope,
+                metadata_condition=metadata_condition,
+                **kwargs,
+            )
+            with timed_stage("hierarchical_merge", level=logging.DEBUG):
+                return await self._merge_hierarchical_records(
+                    knowledge_id=knowledge_id,
+                    result=result,
+                    kwargs=kwargs,
+                )
+
+    def _retrieve_in_worker(self, submitted_at: float, **kwargs: Any) -> dict[str, Any]:
+        """Measure executor scheduling separately from synchronous retrieval."""
+        log_timing(
+            "worker_queue",
+            "end",
+            duration_ms=round((perf_counter() - submitted_at) * 1000, 2),
         )
-        return await self._merge_hierarchical_records(
-            knowledge_id=knowledge_id,
-            result=result,
-            kwargs=kwargs,
-        )
+        with timed_stage("storage_retrieve", level=logging.DEBUG):
+            return self.storage_backend.retrieve(**kwargs)
 
     @staticmethod
     def _normalize_retrieval_setting(

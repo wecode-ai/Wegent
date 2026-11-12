@@ -12,6 +12,7 @@ import pytest
 from app.core.config import settings
 from app.services.rag.gateway_factory import get_rag_gateway
 from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
+from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import (
     DeleteRuntimeSpec,
     DropKnowledgeIndexRuntimeSpec,
@@ -41,6 +42,43 @@ def _build_response(
 ) -> httpx.Response:
     request = httpx.Request("POST", url)
     return httpx.Response(status_code, json=json_body, request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_id", [None, 17042430385152])
+async def test_query_sends_task_correlation_as_header_only(mocker, task_id) -> None:
+    post = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={"records": [], "total": 0, "total_estimated_tokens": 0},
+        ),
+    )
+    spec = RagRuntimeResolver().build_query_runtime_spec(
+        knowledge_base_ids=[1],
+        query="query",
+        max_results=5,
+        route_mode="rag_retrieval",
+        user_id=8,
+        task_id=task_id,
+    )
+    gateway = RemoteRagGateway(
+        base_url="http://knowledge-runtime", auth_token="test-token"
+    )
+
+    result = await gateway.query(spec)
+
+    assert result["records"] == []
+    assert spec.task_id == task_id
+    post.assert_awaited_once()
+    headers = post.await_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer test-token"
+    if task_id is None:
+        assert "X-Task-ID" not in headers
+    else:
+        assert headers["X-Task-ID"] == str(task_id)
+    assert "task_id" not in post.await_args.kwargs["json"]
 
 
 @pytest.mark.asyncio

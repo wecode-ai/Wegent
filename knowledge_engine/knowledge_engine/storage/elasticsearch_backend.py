@@ -28,6 +28,7 @@ from llama_index.core.vector_stores.types import (
 )
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
+from knowledge_engine.diagnostics import log_timing, timed_stage
 from knowledge_engine.retrieval.filters import (
     build_elasticsearch_filters,
     filter_chunk_records,
@@ -258,7 +259,8 @@ class ElasticsearchBackend(BaseStorageBackend):
         native_filter_clauses = [*metadata_filter_clauses, *scope_filter_clauses]
 
         # Create vector store with appropriate retrieval strategy
-        vector_store = self.create_vector_store(index_name, retrieval_mode)
+        with timed_stage("vector_store_init", backend="elasticsearch"):
+            vector_store = self.create_vector_store(index_name, retrieval_mode)
 
         # Determine query mode and parameters
         resolved_queries = resolve_search_queries(query, retrieval_setting)
@@ -277,17 +279,23 @@ class ElasticsearchBackend(BaseStorageBackend):
             # Hybrid search - needs embedding
             # alpha: 0 = pure keyword, 1 = pure vector, default 0.7 (70% vector)
             query_mode = VectorStoreQueryMode.HYBRID
-            query_embedding = embed_model.get_query_embedding(
-                resolved_queries.dense_query
-            )
+            with timed_stage(
+                "query_embedding", level=logging.DEBUG, backend="elasticsearch"
+            ):
+                query_embedding = embed_model.get_query_embedding(
+                    resolved_queries.dense_query
+                )
             query_str = format_sparse_query_for_elasticsearch(resolved_queries)
             alpha = self._resolve_hybrid_alpha(retrieval_setting)
         else:
             # Default: Pure vector search
             query_mode = VectorStoreQueryMode.DEFAULT
-            query_embedding = embed_model.get_query_embedding(
-                resolved_queries.dense_query
-            )
+            with timed_stage(
+                "query_embedding", level=logging.DEBUG, backend="elasticsearch"
+            ):
+                query_embedding = embed_model.get_query_embedding(
+                    resolved_queries.dense_query
+                )
             query_str = resolved_queries.dense_query
             alpha = None
 
@@ -318,7 +326,8 @@ class ElasticsearchBackend(BaseStorageBackend):
         )
 
         # Execute query
-        result = vector_store.query(vs_query, custom_query=custom_query)
+        with timed_stage("search", backend="elasticsearch"):
+            result = vector_store.query(vs_query, custom_query=custom_query)
 
         logger.info(
             "[Elasticsearch] query result: index=%s, nodes_count=%d, top_scores=%s",
@@ -328,7 +337,19 @@ class ElasticsearchBackend(BaseStorageBackend):
         )
 
         # Process results
-        return self._process_query_results(result, score_threshold)
+        with timed_stage(
+            "result_processing", level=logging.DEBUG, backend="elasticsearch"
+        ):
+            processed = self._process_query_results(result, score_threshold)
+        log_timing(
+            "retrieval_result",
+            "end",
+            backend="elasticsearch",
+            candidates=len(result.nodes or []),
+            returned_records=len(processed["records"]),
+            score_threshold=score_threshold,
+        )
+        return processed
 
     def _resolve_hybrid_alpha(self, retrieval_setting: Dict[str, Any]) -> float:
         """Resolve the hybrid alpha from the configured retrieval weights."""

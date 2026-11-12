@@ -18,7 +18,12 @@ from tenacity import (
     wait_exponential,
 )
 
+from knowledge_engine.diagnostics import timed_stage
 from knowledge_engine.embedding.contract import ensure_vector_contract
+from knowledge_engine.embedding.diagnostics import (
+    log_embedding_attempt,
+    log_embedding_retry,
+)
 from knowledge_engine.embedding.errors import (
     EmbeddingDimensionMismatchError,
     EmbeddingResponseFormatError,
@@ -84,6 +89,8 @@ class CustomEmbedding(BaseEmbedding):
         ),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
+        before=log_embedding_attempt,
+        before_sleep=log_embedding_retry,
         reraise=True,
     )
     def _call_api(self, text: str) -> list[float]:
@@ -93,15 +100,15 @@ class CustomEmbedding(BaseEmbedding):
         if self._encoding_format is not None:
             payload["encoding_format"] = self._encoding_format
 
-        response = requests.post(
-            self.api_url,
-            json=payload,
-            headers=self.headers,
-            timeout=30,
-        )
-        response.raise_for_status()
-
-        return self._parse_embedding_response(response)
+        with timed_stage("embedding_request", model=self.model):
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                headers=self.headers,
+                timeout=30,
+            )
+            response.raise_for_status()
+            return self._parse_embedding_response(response)
 
     def _parse_embedding_response(self, response: requests.Response) -> list[float]:
         try:

@@ -4,6 +4,8 @@
 
 """Tests for QueryExecutor service."""
 
+import asyncio
+import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +23,7 @@ from shared.models import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from shared.telemetry.context.span import get_request_id, request_context
 
 
 def _authorized(knowledge_base_id: int) -> RemoteAuthorizedRetrievalResources:
@@ -683,3 +686,146 @@ class TestQueryExecutor:
         )
         assert result.records[0].knowledge_base_id == 1
         assert result.records[0].document_id == 100
+
+
+@pytest.mark.asyncio
+async def test_runtime_generates_distinct_ids_and_propagates_to_worker(mocker, caplog):
+    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="knowledge_engine.diagnostics")
+    storage = MagicMock()
+    storage.retrieve.return_value = {"records": []}
+    mocker.patch(
+        "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+        return_value=storage,
+    )
+    mocker.patch(
+        "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config"
+    )
+
+    async def query(kb_id):
+        request = RemoteQueryRequest(
+            knowledge_base_ids=[kb_id],
+            user_id=42,
+            query="fixture",
+            authorized_resources=[_authorized(kb_id)],
+        )
+        executor = QueryExecutor(
+            config_loader=_make_config_loader(_make_query_config(kb_id))
+        )
+        return await executor.execute(request, task_id=17042430385152 + kb_id)
+
+    before = get_request_id()
+    results = await asyncio.gather(query(1), query(2))
+
+    assert all(result.records == [] for result in results)
+    assert get_request_id() == before
+    worker_logs = [m for m in caplog.messages if "stage=worker_queue" in m]
+    assert len(worker_logs) == 2
+    request_ids = {
+        re.search(r"request_id=(\S+)", message).group(1) for message in worker_logs
+    }
+    assert len(request_ids) == 2
+    assert "-" not in request_ids
+    for request_id in request_ids:
+        logs = [m for m in caplog.messages if f"request_id={request_id} " in m]
+        assert not any("event=start" in m for m in logs)
+        assert any("stage=query_total event=end" in m for m in logs)
+        assert any("stage=config_resolution event=end" in m for m in logs)
+        for stage in (
+            "embedding_model_init",
+            "retrieval_total",
+            "storage_retrieve",
+            "hierarchical_merge",
+        ):
+            assert not any(f"stage={stage} " in m for m in logs)
+    for kb_id in (1, 2):
+        logs = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "knowledge_engine.diagnostics"
+            and f"kb_id={kb_id} " in record.getMessage()
+        ]
+        assert logs
+        assert all(f"task_id={17042430385152 + kb_id} " in m for m in logs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+async def test_runtime_restores_request_context_on_failure(
+    failure_type, mocker, caplog
+):
+    caplog.set_level("INFO", logger="knowledge_engine.diagnostics")
+    failure = failure_type("private-provider-response")
+    loader = _make_config_loader(_make_query_config())
+    loader.resolve_query_configs.side_effect = failure
+    request = RemoteQueryRequest(
+        knowledge_base_ids=[1],
+        user_id=42,
+        query="fixture",
+        authorized_resources=[_authorized(1)],
+    )
+
+    with request_context("caller-request"):
+        with pytest.raises(failure_type) as caught:
+            await QueryExecutor(config_loader=loader).execute(
+                request, task_id=17042430385152
+            )
+        assert get_request_id() == "caller-request"
+
+    assert caught.value is failure
+    assert "request_id=caller-request" in caplog.text
+    assert "stage=query_total event=error" in caplog.text
+    assert f"error_type={failure_type.__name__}" in caplog.text
+    assert "private-provider-response" not in caplog.text
+    from knowledge_engine.diagnostics import log_timing
+
+    log_timing("outside", "start")
+    assert "task_id=-" in caplog.messages[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_id", [None, 17042430385152])
+async def test_query_header_reaches_worker_logs_without_changing_body(
+    task_id, mocker, caplog
+):
+    import httpx
+    from fastapi import FastAPI
+
+    from knowledge_runtime.api.endpoints.query import router
+
+    caplog.set_level("INFO", logger="knowledge_engine.diagnostics")
+    storage = MagicMock()
+    storage.retrieve.return_value = {"records": []}
+    mocker.patch(
+        "knowledge_runtime.services.query_executor.RuntimeConfigLoader",
+        return_value=_make_config_loader(_make_query_config(1)),
+    )
+    mocker.patch(
+        "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+        return_value=storage,
+    )
+    mocker.patch(
+        "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config"
+    )
+    app = FastAPI()
+    app.include_router(router)
+    payload = RemoteQueryRequest(
+        knowledge_base_ids=[1],
+        user_id=42,
+        query="fixture",
+        authorized_resources=[_authorized(1)],
+    ).model_dump(mode="json")
+    headers = {} if task_id is None else {"X-Task-ID": str(task_id)}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://runtime"
+    ) as client:
+        response = await client.post("/query", json=payload, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["records"] == []
+    assert storage.retrieve.call_args.kwargs["user_id"] == 7
+    assert "task_id" not in storage.retrieve.call_args.kwargs
+    logs = [m for m in caplog.messages if "[KnowledgeTiming]" in m]
+    assert any("stage=worker_queue" in m for m in logs)
+    assert all(f"task_id={task_id if task_id is not None else '-'} " in m for m in logs)

@@ -250,6 +250,7 @@ class RagRuntimeResolver:
             )
 
         return QueryRuntimeSpec(
+            task_id=task_id,
             knowledge_base_ids=knowledge_base_ids,
             query=query,
             search_hints=search_hints,
