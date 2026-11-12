@@ -438,7 +438,10 @@ export function processGroupIsExitingFromDarwinRows(members, ownerUid) {
     Number.isInteger(ownerUid) &&
     Array.isArray(members) &&
     members.every(
-      fields => fields.length === 5 && Number(fields[3]) === ownerUid && fields[4].includes('E')
+      fields =>
+        fields.length === 5 &&
+        Number(fields[3]) === ownerUid &&
+        (fields[4].startsWith('Z') || fields[4].includes('E'))
     )
   )
 }
@@ -483,7 +486,7 @@ function signalProcessGroup(processGroupId, signal) {
         callerUid: process.getuid?.(),
         members,
       })
-      // P_WEXIT members cannot receive another signal. Keep the existing exit
+      // Zombies and P_WEXIT members cannot receive another signal. Keep the existing exit
       // waits and deadlines; a live or unowned group still fails below.
       if (exiting) return
       throw error

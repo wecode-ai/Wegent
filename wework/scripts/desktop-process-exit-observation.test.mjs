@@ -67,22 +67,42 @@ test('retains permission failures for a live macOS process group', async () => {
   await assert.rejects(stopProcessGroup(child), error => error === denied)
 })
 
-test('retains the existing exit deadline when P_WEXIT never completes', async () => {
+test('waits for the observed owned zombie leader and P_WEXIT descendant to disappear', async () => {
   vi.useFakeTimers()
-  const { child } = exitingDarwinGroup({ exits: false })
-  const stopping = stopProcessGroup(child).then(
-    () => null,
-    error => error
+  const { child } = exitingDarwinGroup()
+  execFileSync.mockReturnValue('17455 15043 17455 501 Z\n17456 1 17455 501 ?E\n')
+  const stopping = stopProcessGroup(child)
+  await vi.advanceTimersByTimeAsync(200)
+  await stopping
+  assert.equal(child.listenerCount('exit'), 0)
+  assert.equal(
+    process.kill.mock.calls.some(([, signal]) => signal === 'SIGKILL'),
+    false
   )
-  await vi.advanceTimersByTimeAsync(21_000)
-  assert.match((await stopping).message, /Timed out waiting for process 17455 to exit/)
 })
+
+test.each(['?Es', 'Z'])(
+  'retains the existing exit deadline when %s never completes',
+  async state => {
+    vi.useFakeTimers()
+    const { child } = exitingDarwinGroup({ exits: false, state })
+    const stopping = stopProcessGroup(child).then(
+      () => null,
+      error => error
+    )
+    await vi.advanceTimersByTimeAsync(21_000)
+    assert.match((await stopping).message, /Timed out waiting for process 17455 to exit/)
+  }
+)
 
 test('recognizes only an absent group or owned macOS processes already exiting', () => {
   const exiting = ['17455', '15043', '17455', '501', '?Es']
   assert.equal(processGroupIsExitingFromDarwinRows([exiting], 501), true)
   assert.equal(processGroupIsExitingFromDarwinRows([], 501), true)
-  for (const state of ['S', 'R', '?', 'Z']) {
+  const zombie = ['17456', '15043', '17455', '501', 'Z']
+  assert.equal(processGroupIsExitingFromDarwinRows([exiting, zombie], 501), true)
+  assert.equal(processGroupIsExitingFromDarwinRows([zombie], 0), false)
+  for (const state of ['S', 'R', '?', 'T', 'U']) {
     assert.equal(
       processGroupIsExitingFromDarwinRows([exiting, [...exiting.slice(0, 4), state]], 501),
       false,
