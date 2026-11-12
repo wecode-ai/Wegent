@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { openCollaborationIssueCreation, verifyCollaborationPersonalHome, verifyPersonalHomeStartWork } from '../modules/collaboration-personal-home.mjs'
+import { handlePersonalHomeModel, openCollaborationIssueCreation, verifyCollaborationPersonalHome, verifyPersonalHomeStartWork } from '../modules/collaboration-personal-home.mjs'
 import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -25,6 +25,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     captureScreenshot(control, name, selector)
 
   return {
+    handleHttp: handlePersonalHomeModel,
     async verify(control) {
       await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
       await ensureExperimentalFeaturesEnabled(control)

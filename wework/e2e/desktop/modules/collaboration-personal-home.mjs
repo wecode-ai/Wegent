@@ -1,5 +1,23 @@
 import { inCollaborationSidebar } from './workspace-flows.mjs'
 import assert from 'node:assert/strict'
+import { assistantMessage, createSse, readRequestBody, responseCompleted, responseCreated } from './response-protocol.mjs'
+
+const HOME_TASK_PROMPT = 'Personal home start work'
+const HOME_TASK_RESULT = 'Personal home task complete'
+
+/** Only the model boundary is simulated; Issue, binding and execution remain real. */
+export async function handlePersonalHomeModel(request, response, url) {
+  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname)) return false
+  const body = await readRequestBody(request)
+  const text = JSON.stringify(body.input ?? [])
+  if (!text.includes(HOME_TASK_PROMPT)) return false
+  assert.ok(body.model, 'The Tasks composer must preserve the selected model')
+  assert.match(text, /Issue/i, 'The task must reach the model with its real Issue context')
+  const id = `personal-home-${Date.now()}`
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+  response.end(createSse([responseCreated(id), assistantMessage(HOME_TASK_RESULT), responseCompleted(id)]))
+  return true
+}
 
 /** Uses the shared-core scenario's real project, Issue and Executor fixtures. */
 export async function verifyCollaborationPersonalHome(control, { scoped, project, issue }) {
@@ -78,7 +96,7 @@ export async function verifyPersonalHomeStartWork(control, { scoped, project, vi
   await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
   await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
   await control.command('click', scoped('[data-testid="personal-home-new-issue"]'))
-  const title = `Personal home start work ${Date.now()}`
+  const title = `${HOME_TASK_PROMPT} ${Date.now()}`
   await control.command('fill', scoped('[data-testid="personal-home-task-content"]'), {
     value: title,
   })
@@ -94,6 +112,7 @@ export async function verifyPersonalHomeStartWork(control, { scoped, project, vi
     'waitFor',
     scoped('[data-testid="issue-conversation-drawers"][data-has-conversation="true"]')
   )
+  await control.command('waitFor', scoped('[data-testid="ai-chat-modal"]'), { text: HOME_TASK_RESULT })
   assert.equal(
     Number(
       await control.command(

@@ -1,6 +1,6 @@
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
-import { openCollaborationIssueCreation } from '../modules/collaboration-personal-home.mjs'
+import { handlePersonalHomeModel, openCollaborationIssueCreation } from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -258,7 +258,9 @@ export function createDesktopScenario({
 
   return {
     requiresCloudEnvironment: true,
-    handleHttp: boardReplyModel.handleHttp,
+    async handleHttp(request, response, url) {
+      return await handlePersonalHomeModel(request, response, url) || boardReplyModel.handleHttp(request, response, url)
+    },
 
     async prepareCloud(cloud) {
       backendUrl = cloud.backendUrl
