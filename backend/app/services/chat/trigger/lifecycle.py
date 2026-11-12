@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole
@@ -51,6 +52,7 @@ class ExecutionSessionSetup:
     user_subtask: Subtask
     assistant_subtask: Optional[Subtask]
     existing_subtasks: List[Subtask]
+    memory_history: List[Subtask]
     bot_ids: List[int]
     bot_name: str
     bot_namespace: str
@@ -360,6 +362,20 @@ def prepare_execution_session(
             limit=resolved_task_params.history_window,
         )
     ]
+    memory_history = (
+        [
+            item.subtask
+            for item in task_fork_history_resolver.resolve_for_task(
+                db,
+                task_id=task.id,
+                user_id=subtask_user_id,
+                current_task=task,
+                limit=settings.MEMORY_CONTEXT_MESSAGES - 1,
+            )
+        ]
+        if resolved_task_params.history_window is not None
+        else existing_subtasks
+    )
     next_message_id = task_fork_history_resolver.get_next_message_id(
         db,
         task_id=task.id,
@@ -435,6 +451,7 @@ def prepare_execution_session(
         user_subtask=user_subtask,
         assistant_subtask=assistant_subtask,
         existing_subtasks=existing_subtasks,
+        memory_history=memory_history,
         bot_ids=bot_ids,
         bot_name=first_bot_name,
         bot_namespace=first_bot_namespace,

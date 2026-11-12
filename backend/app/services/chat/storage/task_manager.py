@@ -31,7 +31,6 @@ from app.services.chat.task_default_knowledge_bases import (
 )
 from app.services.chat.task_source_group import get_or_create_task_source_group
 from app.services.readers import KindType, kindReader
-from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_skill_selection import build_task_skill_labels
 from app.services.task_status import mark_task_completed
 
@@ -890,20 +889,7 @@ async def create_task_and_subtasks(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=(
-                    [
-                        item.subtask
-                        for item in task_fork_history_resolver.resolve_for_task(
-                            db,
-                            task_id=task.id,
-                            user_id=subtask_user_id,
-                            current_task=task,
-                            limit=settings.MEMORY_CONTEXT_MESSAGES - 1,
-                        )
-                    ]
-                    if params.history_window is not None
-                    else session.existing_subtasks
-                ),
+                existing_subtasks=session.memory_history,
                 current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,
