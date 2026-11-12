@@ -18,7 +18,7 @@ import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
@@ -362,20 +362,21 @@ def prepare_execution_session(
             limit=resolved_task_params.history_window,
         )
     ]
-    memory_history = (
-        [
+    if resolved_task_params.history_window is not None:
+        memory_candidates = task_fork_history_resolver.resolve_for_task(
+            db,
+            task_id=task.id,
+            user_id=subtask_user_id,
+            current_task=task,
+        )
+        memory_history = [
             item.subtask
-            for item in task_fork_history_resolver.resolve_for_task(
-                db,
-                task_id=task.id,
-                user_id=subtask_user_id,
-                current_task=task,
-                limit=settings.MEMORY_CONTEXT_MESSAGES - 1,
-            )
-        ]
-        if resolved_task_params.history_window is not None
-        else existing_subtasks
-    )
+            for item in memory_candidates
+            if item.subtask.status == SubtaskStatus.COMPLETED
+            and item.subtask.role in (SubtaskRole.USER, SubtaskRole.ASSISTANT)
+        ][-settings.MEMORY_CONTEXT_MESSAGES + 1 :]
+    else:
+        memory_history = existing_subtasks
     next_message_id = task_fork_history_resolver.get_next_message_id(
         db,
         task_id=task.id,
