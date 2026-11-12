@@ -468,6 +468,9 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
           selectionResolved:
             mocks.taskSelectionResolved ??
             Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
+          selectionReady:
+            mocks.taskSelectionResolved ??
+            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
           taskSelection: selection,
           selectedModel: model,
           activeModel: model,

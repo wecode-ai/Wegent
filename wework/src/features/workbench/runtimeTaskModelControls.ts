@@ -50,7 +50,7 @@ export function runtimeTaskModelControlOverrides(
     selectedModel: selection.selectedModel,
     selectedModelOptions: selection.selectedModelOptions,
     supportsModelProviderSwitch: selection.supportsModelProviderSwitch,
-    isModelSelectionReady: selection.selectionResolved,
+    isModelSelectionReady: selection.selectionReady,
     setSelectedModel: model => source.setRuntimeTaskSelectedModel(address, model),
     setSelectedModelAndOptions: (model, options) =>
       source.setRuntimeTaskSelectedModelAndOptions(address, model, options),

@@ -111,6 +111,10 @@ export function useWorkbenchModels({
   const [selectedModelOptionsByScope, setSelectedModelOptionsByScope] = useState<
     Record<string, ModelOptions>
   >({})
+  // Panes resolve their own scope through refs, so publish a revision on every
+  // scoped selection or option change to force their consuming context to
+  // re-render even when the focused scope did not change.
+  const [selectionRevision, setSelectionRevision] = useState(0)
   const selectedModel = selectedModelByScope[scopeKey] ?? null
   const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? EMPTY_MODEL_OPTIONS
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
@@ -246,6 +250,7 @@ export function useWorkbenchModels({
       setLocallySelectedReplacementByScope(current =>
         current[scopeKey] ? { ...current, [scopeKey]: false } : current
       )
+      setSelectionRevision(revision => revision + 1)
     },
     [configuredModelFingerprint, scopeKey, traceId]
   )
@@ -284,6 +289,12 @@ export function useWorkbenchModels({
         ...selectedOptionsPatch,
       }
       setSelectedModelOptionsByScope(current => ({ ...current, ...selectedOptionsPatch }))
+    }
+    if (
+      Object.keys(selectedModelPatch).length > 0 ||
+      Object.keys(selectedOptionsPatch).length > 0
+    ) {
+      setSelectionRevision(revision => revision + 1)
     }
   }, [])
 
@@ -438,6 +449,7 @@ export function useWorkbenchModels({
         ...current,
         [targetScopeKey]: !persist && Boolean(model),
       }))
+      setSelectionRevision(revision => revision + 1)
       if (model && persist) {
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
@@ -506,6 +518,7 @@ export function useWorkbenchModels({
       }
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
+      setSelectionRevision(revision => revision + 1)
       if (!persist) return
       if (currentModel) {
         onSelectionChange?.(toSelectionConfig(currentModel, nextOptions))
@@ -554,6 +567,7 @@ export function useWorkbenchModels({
         ...current,
         [targetScopeKey]: restoredSelectionKey,
       }))
+      setSelectionRevision(revision => revision + 1)
       if (persistedSelection) {
         onSelectionChange?.(persistedSelection)
       }
@@ -569,6 +583,18 @@ export function useWorkbenchModels({
   const hasSelectionForScope = useCallback(
     (targetScopeKey: string) =>
       Object.prototype.hasOwnProperty.call(selectedModelRef.current, targetScopeKey),
+    []
+  )
+  // Ref-backed readers stay current within the same event, before React commits
+  // the matching state update. Continuation sends triggered right after a model
+  // change must observe that change.
+  const getSelectedModelForScope = useCallback(
+    (targetScopeKey: string) => selectedModelRef.current[targetScopeKey] ?? null,
+    []
+  )
+  const getSelectedModelOptionsForScope = useCallback(
+    (targetScopeKey: string) =>
+      selectedModelOptionsRef.current[targetScopeKey] ?? EMPTY_MODEL_OPTIONS,
     []
   )
 
@@ -592,8 +618,11 @@ export function useWorkbenchModels({
     getSelectedModel,
     getSelectedModelOptions,
     hasSelectionForScope,
+    getSelectedModelForScope,
+    getSelectedModelOptionsForScope,
     selectedModelByScope,
     selectedModelOptionsByScope,
+    selectionRevision,
     isLoading: enabled && isLoading,
     error: enabled ? error : null,
   }

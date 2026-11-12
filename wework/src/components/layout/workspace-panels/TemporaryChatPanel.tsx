@@ -662,8 +662,9 @@ export function TemporaryChatPanel({
         }
       }
       // A bound conversation never borrows the active pane's model while its
-      // own selection is unresolved or deliberately native.
-      return {}
+      // own selection is unresolved or deliberately native. Stored options
+      // (for example plan mode) still belong to this conversation.
+      return selectedModelExecutionFields(null, taskModelSelection.selectedModelOptions)
     }
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
   }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection, modelControls])

@@ -1511,6 +1511,7 @@ describe('DesktopWorkbenchLayout', () => {
           )
           return {
             selectionResolved: Boolean(taskSelection),
+            selectionReady: true,
             taskSelection,
             selectedModel: taskModel,
             activeModel: taskModel,
@@ -2865,6 +2866,7 @@ describe('DesktopWorkbenchLayout', () => {
             selectedModelOptions: { reasoning_effort: 'high' },
             resolveRuntimeTaskModelSelection: () => ({
               selectionResolved: true,
+              selectionReady: true,
               taskSelection: selectedModel
                 ? {
                     modelName: selectedModel.name,
