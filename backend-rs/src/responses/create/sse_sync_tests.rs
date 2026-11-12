@@ -27,13 +27,7 @@ use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
 
-#[path = "sse_sync_test_mysql.rs"]
-mod test_mysql;
-
-use test_mysql::{Gate, RecordingMysql};
-
-const TASK_ID: i64 = 424_242;
-const SUBTASK_ID: i64 = 424_243;
+use crate::responses::test_mysql::{Gate, RecordingMysql, SUBTASK_ID, TASK_ID};
 
 const CREATED: &str = r#"{"type":"response.created","shell_type":"chat"}"#;
 const DELTA: &str = r#"{"type":"response.output_text.delta","delta":"hello","offset":0}"#;
@@ -369,7 +363,9 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     let (url, _request_received) = spawn_header_stalled_server().await;
     let redis = RecordingRedis::default();
     redis.mark_cancelled();
-    let mysql = RecordingMysql::default().with_terminal_rows().await;
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -432,7 +428,9 @@ fn chat_shell_stream_request_has_no_total_timeout() {
 async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
     let (url, request_received) = spawn_header_stalled_server().await;
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default().with_terminal_rows().await;
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -486,9 +484,9 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
     let (gate, persistence_started) = Gate::new();
     let redis = RecordingRedis::default();
     let mysql = RecordingMysql::gated(gate)
-        .with_terminal_rows()
+        .with_terminal_rows("CANCELLED")
         .await
-        .with_terminal_rows()
+        .with_terminal_rows("COMPLETED")
         .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {
@@ -555,7 +553,7 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
     let (gate, persistence_started) = Gate::new();
     let redis = RecordingRedis::default();
     let mysql = RecordingMysql::gated(gate.clone())
-        .with_terminal_rows()
+        .with_terminal_rows("COMPLETED")
         .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {
@@ -729,7 +727,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     let redis = RecordingRedis::default();
     let (mut started, release) = redis.arm_cancel_gate();
     let (mysql, mut terminal) = RecordingMysql::signaling();
-    let mysql = mysql.with_terminal_rows().await;
+    let mysql = mysql.with_terminal_rows("COMPLETED").await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -792,7 +790,9 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
 async fn a_forwarded_dispatch_publishes_the_chat_frames() {
     let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default().with_terminal_rows().await;
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("COMPLETED")
+        .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {
         package_mode: false,
@@ -862,9 +862,9 @@ async fn parent_status_write_failure_rolls_back_and_does_not_deliver_completion(
     let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
     let redis = RecordingRedis::default();
     let mysql = RecordingMysql::failing_parent_update()
-        .with_terminal_rows()
+        .with_terminal_rows("COMPLETED")
         .await
-        .with_terminal_rows()
+        .with_terminal_rows("COMPLETED")
         .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {

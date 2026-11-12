@@ -21,6 +21,7 @@ type CreateTaskIdResponse = {
 type TaskDetailSubtask = {
   id: number
   role: string
+  status: string
 }
 
 type TaskDetailResponse = {
@@ -50,7 +51,9 @@ test.describe('Remote Workspace', () => {
     }
   })
 
-  test('desktop code task shows disabled entry when sandbox unavailable', async ({ page }) => {
+  test('desktop chat shows a disabled workspace entry when the sandbox is unavailable', async ({
+    page,
+  }) => {
     const teamsResponse = await apiClient.get<TeamListResponse>(
       '/api/teams?page=1&limit=100&scope=all'
     )
@@ -71,7 +74,8 @@ test.describe('Remote Workspace', () => {
       prompt: 'e2e remote workspace unavailable state',
       team_id: teamWithBots?.id,
       type: 'offline',
-      task_type: 'code',
+      // This endpoint leaves device-mode tasks pending for an external callback.
+      task_type: 'task',
       git_url: '',
       git_repo: '',
       git_repo_id: 0,
@@ -87,7 +91,7 @@ test.describe('Remote Workspace', () => {
 
     const subtasks = taskDetailResponse.data?.subtasks ?? []
     const assistantSubtask = subtasks.find(subtask => String(subtask.role) === 'ASSISTANT')
-    expect(assistantSubtask).toBeTruthy()
+    expect(assistantSubtask?.status).toBe('PENDING')
 
     const callbackResponse = await apiClient.post('/api/internal/callback', {
       event_type: 'error',
@@ -110,57 +114,15 @@ test.describe('Remote Workspace', () => {
     // root_path is task-scoped: /workspace/{task_id} when sandbox is unavailable
     expect(statusResponse.data?.root_path).toBe(`/workspace/${taskId}`)
 
-    await page.goto(`/chat?agent=code&taskId=${taskId}`)
-    await page.waitForLoadState('domcontentloaded')
-
-    // Wait for task list to load in sidebar and find the created task
-    // The task should appear in the sidebar after creation
-    const taskListItem = page.locator(
-      `[data-testid="task-item-${taskId}"], [data-task-id="${taskId}"]`
-    )
-    const taskTitleInSidebar = page.locator(`text=e2e remote workspace unavailable state`).first()
-
-    // Try to find and click the task in sidebar to trigger selection
-    // This is necessary because RemoteWorkspaceEntry only renders when selectedTask is set
-    let taskSelected = false
-    try {
-      // First try by task ID
-      if (await taskListItem.isVisible({ timeout: 5000 })) {
-        await taskListItem.click()
-        taskSelected = true
-      }
-    } catch {
-      // Ignore - will try by title
-    }
-
-    if (!taskSelected) {
-      try {
-        // Then try by task title
-        if (await taskTitleInSidebar.isVisible({ timeout: 5000 })) {
-          await taskTitleInSidebar.click()
-          taskSelected = true
-        }
-      } catch {
-        // Ignore - task might not be in visible list
-      }
-    }
-
-    // If task selection failed via sidebar, verify at least the API behavior is correct
-    // The UI part of the test may not work if the task isn't in the visible sidebar list
-    if (!taskSelected) {
-      // API verification already passed above, just skip UI verification
-      // This can happen in CI where the task list might not include the newly created task yet
-      return
-    }
-
-    // Wait for page to update after task selection
-    await page.waitForTimeout(1000)
-
-    const remoteWorkspaceButton = page.getByRole('button', {
-      name: /Remote Workspace|远程工作区|tasks:remote_workspace.button/,
+    await page.goto(`/chat?taskId=${taskId}`, {
+      waitUntil: 'domcontentloaded',
     })
-
+    const remoteWorkspaceButton = page.getByTestId('remote-workspace-button')
     await expect(remoteWorkspaceButton).toBeVisible({ timeout: 20000 })
+    await expect(remoteWorkspaceButton).toHaveAttribute(
+      'title',
+      /Remote sandbox is not running|远程沙箱未运行/
+    )
     await expect(remoteWorkspaceButton).toBeDisabled()
   })
 

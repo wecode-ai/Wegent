@@ -11,7 +11,8 @@ use brz_mysql::{
 };
 use serde_json::json;
 
-use super::{SUBTASK_ID, TASK_ID};
+pub(super) const TASK_ID: i64 = 424_242;
+pub(super) const SUBTASK_ID: i64 = 424_243;
 
 /// Holds the first `fetch_optional` until released and signals that it was
 /// reached, so a test can stop persistence mid-step without a timer.
@@ -61,8 +62,8 @@ pub(super) struct RecordingMysql {
 }
 
 impl RecordingMysql {
-    pub(super) async fn with_terminal_rows(self) -> Self {
-        let rows = TerminalRows::load().await;
+    pub(super) async fn with_terminal_rows(self, terminal_status: &'static str) -> Self {
+        let rows = TerminalRows::load(terminal_status).await;
         self.rows.lock().unwrap().push(rows);
         self
     }
@@ -191,9 +192,9 @@ struct TerminalRows {
 }
 
 impl TerminalRows {
-    async fn load() -> Self {
+    async fn load(terminal_status: &'static str) -> Self {
         use crate::sql_test_support::mysql_rows::{MysqlRows, Value};
-        let fixture = MysqlRows::start(|sql| {
+        let fixture = MysqlRows::start(move |sql| {
             if sql.ends_with("fixture_task") {
                 return vec![
                     ("id", Value::I64(TASK_ID)),
@@ -208,7 +209,7 @@ impl TerminalRows {
                 ];
             }
             let status = if sql.ends_with("fixture_assistant") {
-                "COMPLETED"
+                terminal_status
             } else {
                 "RUNNING"
             };

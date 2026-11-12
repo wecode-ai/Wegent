@@ -9,10 +9,6 @@
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use brz_mysql::{
-    FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,
-    MysqlService, MysqlTransaction,
-};
 use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, SetOptions};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -23,186 +19,12 @@ use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
 
-const TASK_ID: i64 = 424_242;
-const SUBTASK_ID: i64 = 424_243;
+use crate::responses::test_mysql::{RecordingMysql, SUBTASK_ID, TASK_ID};
 
 fn tables() -> Tables {
     Tables {
         tasks: "tasks_0424",
         subtasks: "subtasks_0424",
-    }
-}
-
-/// Records every statement the completion path issues. Reads return no row,
-/// so the terminal update stops after its first read (the production code's
-/// own missing-row branch).
-///
-/// This is why the lifecycle test asserts the routed by-id SELECT instead of a
-/// literal UPDATE: `brz_mysql::MysqlRow` has no public constructor and the
-/// existing fake server only returns parse errors, so the recorder cannot
-/// produce the row that would reach `execute`.
-#[derive(Clone, Default)]
-struct RecordingMysql {
-    statements: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingMysql {
-    fn record(&self, sql: &str) {
-        self.statements
-            .lock()
-            .unwrap()
-            .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-    }
-
-    fn statements(&self) -> Vec<String> {
-        self.statements.lock().unwrap().clone()
-    }
-}
-
-impl Mysql for RecordingMysql {
-    type Transaction = RecordingTransaction;
-
-    fn with_route<R: MysqlRouting + 'static>(&self, _: R) -> MysqlService {
-        panic!("the consumer must reuse the configured handle")
-    }
-
-    fn route<K: MysqlRouteKey>(&self, _: K) -> Self {
-        self.clone()
-    }
-
-    async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(None)
-    }
-
-    async fn fetch_all<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Vec<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(Vec::new())
-    }
-
-    async fn execute<S, A>(&self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(MysqlExecution {
-            rows_affected: 1,
-            last_insert_id: 0,
-        })
-    }
-
-    async fn fetch_one<S, A, T>(&self, _: S, _: A) -> MysqlResult<T>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        Err(brz_mysql::MysqlError::RowNotFound)
-    }
-
-    fn fetch<'a, S, A, T>(
-        &'a self,
-        _: S,
-        _: A,
-    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-    where
-        S: AsRef<str> + Send + 'a,
-        A: MysqlArgs + Send + 'a,
-        T: FromMysqlRow + Send + 'a,
-    {
-        futures_util::stream::empty()
-    }
-
-    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
-    where
-        T: Send,
-        F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
-    {
-        let mut transaction = RecordingTransaction {
-            statements: Arc::clone(&self.statements),
-        };
-        operation(&mut transaction).await
-    }
-}
-
-/// The consumer transaction: records its reads and executes every write.
-struct RecordingTransaction {
-    statements: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingTransaction {
-    fn record(&self, sql: &str) {
-        self.statements
-            .lock()
-            .unwrap()
-            .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-    }
-}
-
-impl MysqlTransaction for RecordingTransaction {
-    async fn execute<S, A>(&mut self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(MysqlExecution {
-            rows_affected: 1,
-            last_insert_id: 0,
-        })
-    }
-
-    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(None)
-    }
-
-    async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<T>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        Err(brz_mysql::MysqlError::RowNotFound)
-    }
-
-    async fn fetch_all<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Vec<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(Vec::new())
-    }
-
-    fn fetch<'a, S, A, T>(
-        &'a mut self,
-        _: S,
-        _: A,
-    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-    where
-        S: AsRef<str> + Send + 'a,
-        A: MysqlArgs + Send + 'a,
-        T: FromMysqlRow + Send + 'a,
-    {
-        futures_util::stream::empty()
     }
 }
 
@@ -615,21 +437,14 @@ async fn wait_for_cancel_dels(redis: &RecordingRedis, expected: usize) {
     .expect("the expected chat:cancel DELs arrive within the bound");
 }
 
-/// The real worker path runs the real SSE consumer: the cancel key is cleared
-/// before the stream (the early DEL), polled during it, content is persisted,
-/// and the key is deleted in the finally (the late DEL).
-///
-/// Persistence limitation: this asserts the routed by-id SELECT that starts the
-/// completion persistence, not a literal UPDATE. `brz_mysql::MysqlRow` has no
-/// public constructor and the existing fake server only returns parse errors,
-/// so the recorder's missing-row branch stops before `execute`; the
-/// APPEND/SET/DEL evidence plus this read prove the consumer ran and reached
-/// persistence.
+/// The background dispatch stores streamed content and commits its terminal state.
 #[tokio::test]
 async fn background_job_runs_the_real_consumer_lifecycle() {
     let server = spawn_server(200, vec![CREATED, DELTA, COMPLETED], vec![]).await;
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("COMPLETED")
+        .await;
     let dispatch = ResponsesDispatch::<RecordingMysql, RecordingRedis>::spawn();
     assert!(dispatch.submit(DispatchJob::ChatShell(Box::new(chat_job(
         &server.url,
@@ -663,14 +478,7 @@ async fn background_job_runs_the_real_consumer_lifecycle() {
         "stream content is persisted: {:?}",
         redis.calls()
     );
-    assert!(
-        mysql
-            .statements()
-            .iter()
-            .any(|statement| statement.contains("subtasks_0424")),
-        "the terminal event reaches the completion persistence read: {:?}",
-        mysql.statements()
-    );
+    assert_terminal_commit(&mysql);
 }
 
 /// Admission returns before the consumer finishes: the supervisor must not
@@ -765,7 +573,7 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
     drop(refused);
     let http = HttpClient::builder().build().unwrap();
     for url in [server.url, refused_url] {
-        let mysql = RecordingMysql::default();
+        let mysql = RecordingMysql::default().with_terminal_rows("FAILED").await;
         let redis = RecordingRedis::default();
         run(
             &http,
@@ -781,12 +589,8 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             },
         )
         .await;
-        assert!(
-            mysql
-                .statements()
-                .iter()
-                .any(|sql| sql.contains("subtasks_0424"))
-        );
+        assert_terminal_commit(&mysql);
+        assert_eq!(redis.count("DEL chat:task_streaming:"), 1);
         let frames: Vec<Value> = redis
             .calls()
             .iter()
@@ -803,4 +607,19 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
         assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
         assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
     }
+}
+
+fn assert_terminal_commit(mysql: &RecordingMysql) {
+    let statements = mysql.statements();
+    let subtask = statements
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE subtasks_0424 "));
+    let task = statements
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE tasks_0424 "));
+    let commit = statements.iter().position(|sql| sql == "COMMIT");
+    assert!(
+        matches!((subtask, task, commit), (Some(subtask), Some(task), Some(commit)) if subtask < task && task < commit),
+        "both terminal writes must precede COMMIT: {statements:?}"
+    );
 }

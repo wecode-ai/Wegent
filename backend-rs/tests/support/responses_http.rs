@@ -5,7 +5,7 @@
 //! Real HTTP gateway, application, authentication, MySQL and Redis coverage.
 
 use brz_mysql::MysqlService;
-use brz_redis::Redis;
+use brz_redis::{Redis, RedisSubscription};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use wegent_backend_rs::{
@@ -270,6 +270,18 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
     let completed = json!({
         "response": {"output": [{"type": "message", "content": [{"type":"output_text", "text":"saved result"}]}]}
     });
+    let channel = format!("callback:channel:{subtask_id}");
+    let mut subscription = redis.subscribe(channel.as_str()).await.unwrap();
+    // Publications on the same channel are ordered. A barrier sent after the
+    // HTTP response detects an unwanted callback without waiting for silence.
+    let barrier = json!({"type": "fixture-barrier"});
+    let assert_no_callback = async |subscription: &mut RedisSubscription| {
+        redis
+            .publish(channel.as_str(), barrier.to_string())
+            .await
+            .unwrap();
+        assert_eq!(next_callback(subscription).await, barrier);
+    };
     let marker = format!("chat:task_streaming:{task_id}");
     redis.set(marker.as_str(), "true").await.unwrap();
     mysql
@@ -292,18 +304,43 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         Some("true")
     );
 
+    assert_no_callback(&mut subscription).await;
+
     mysql
         .execute("ALTER TABLE tasks DROP CHECK reject_terminal_update", ())
         .await
         .unwrap();
     assert_eq!(send("response.completed", completed).await, 200);
     assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
+    let stored_value: String = mysql
+        .fetch_one(
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT(result, '$.value')) FROM subtasks WHERE id = ?",
+            (subtask_id,),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored_value, "saved result");
     assert_eq!(redis.get::<_, String>(marker.as_str()).await.unwrap(), None);
+    let event = next_callback(&mut subscription).await;
+    assert_eq!(event["type"], "done");
+    assert_eq!(event["subtask_id"], subtask_id);
+    assert_eq!(event["result"]["value"], "saved result");
     assert_eq!(send("error", json!({"message": "late error"})).await, 200);
     assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
 
+    assert_no_callback(&mut subscription).await;
+    subscription.close().await.unwrap();
     stop.send(()).unwrap();
     server.await.unwrap();
+}
+
+async fn next_callback(subscription: &mut RedisSubscription) -> Value {
+    let message = tokio::time::timeout(Duration::from_secs(5), subscription.next_message())
+        .await
+        .expect("callback publication")
+        .unwrap()
+        .expect("callback subscription is open");
+    serde_json::from_slice(&message.payload).unwrap()
 }
 
 fn require_loopback_services() {
