@@ -263,6 +263,7 @@ async fn prepare_retry(
             client_origin: "frontend".to_string(),
             device_id,
             task_json,
+            created_git_repository: None,
             executor_name: failed.executor_name.unwrap_or_default(),
             executor_namespace: failed.executor_namespace.unwrap_or_default(),
             assistant_created_at: failed.created_at,
