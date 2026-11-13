@@ -1116,6 +1116,10 @@ path = "/api/v1/deliveries/:delivery_id"
 methods = ["POST"]
 path = "/api/internal/callback"
 
+[[routes]]
+methods = ["POST"]
+path = "/api/internal/tasks/:task_id/subtasks/:subtask_id/executor-binding"
+
 # Authenticated, platform-specific Wework runtime artifact descriptors.
 [[routes]]
 methods = ["POST"]
