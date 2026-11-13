@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 #[path = "project_notifications_im.rs"]
 mod im;
 pub(crate) use im::{
-    DingTalkAccessToken, active_dingtalk_channel_config, dingtalk_access_token,
+    DingTalkAccessToken, active_dingtalk_channel_config, dingtalk_access_token, dingtalk_api_base,
     dingtalk_credentials, send_im, send_text, telegram_message,
 };
 
