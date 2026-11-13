@@ -3213,6 +3213,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 device_id=device_id,
                 logical_device_id=logical_device_id,
                 data=data,
+                personal_task_access_allowed=(
+                    session.get("device_type") != DeviceType.APP.value
+                    or data.get("appRemoteTaskAccessEnabled") is True
+                ),
+                relay_device_id=(
+                    device_id
+                    if session.get("device_type") == DeviceType.APP.value
+                    else None
+                ),
             )
 
     async def _forward_runtime_event(
@@ -3222,10 +3231,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
         device_id: str,
         logical_device_id: str,
         data: dict,
+        personal_task_access_allowed: bool = True,
+        relay_device_id: str | None = None,
     ) -> dict:
         """Persist and relay one runtime event without reordering its socket stream."""
 
         payload = dict(data)
+        payload.pop("appRemoteTaskAccessEnabled", None)
         nested_payload = payload.get("payload")
         if isinstance(nested_payload, dict):
             nested_payload = dict(nested_payload)
@@ -3259,15 +3271,27 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 room=project_chat_room(project_id, str(task_id) if task_id else None),
                 namespace=WEWORK_RUNTIME_NAMESPACE,
             )
-        await get_sio().emit(
-            WEWORK_RUNTIME_EVENT,
-            payload,
-            room=wework_runtime_user_room(user_id),
-            namespace=WEWORK_RUNTIME_NAMESPACE,
-        )
+        relay_payload = payload
+        if relay_device_id:
+            relay_payload = {
+                **payload,
+                "payload": {
+                    **payload["payload"],
+                    "deviceId": relay_device_id,
+                    "device_id": relay_device_id,
+                },
+            }
+        if personal_task_access_allowed or (projected and projected.get("message")):
+            await get_sio().emit(
+                WEWORK_RUNTIME_EVENT,
+                relay_payload,
+                room=wework_runtime_user_room(user_id),
+                namespace=WEWORK_RUNTIME_NAMESPACE,
+            )
         from app.services.wework_api.events import publish_runtime_event
 
-        await publish_runtime_event(user_id, device_id, payload)
+        if personal_task_access_allowed:
+            await publish_runtime_event(user_id, device_id, relay_payload)
         await self._local_task_responses.forward_runtime_event_to_channels(
             device_id=logical_device_id,
             payload=payload["payload"],

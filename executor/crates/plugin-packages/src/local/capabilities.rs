@@ -17,7 +17,10 @@ use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 use toml_edit::{value, DocumentMut, Item};
 
-use crate::{config::device::DeviceConfig, protocol::ExecutionRequest};
+use crate::{
+    config::device::DeviceConfig, protocol::ExecutionRequest,
+    services::workbench::PackageRecoveryError,
+};
 
 use super::personal_marketplace_lock::acquire_personal_marketplace_lock;
 
@@ -112,6 +115,8 @@ pub enum CapabilitySyncError {
     Zip(#[from] zip::result::ZipError),
     #[error("{0}")]
     InvalidPayload(String),
+    #[error("{0}")]
+    PluginPackageBusy(String),
     #[error("Plugin checksum mismatch: expected {expected}, got {actual}")]
     ChecksumMismatch { expected: String, actual: String },
 }
@@ -119,6 +124,15 @@ pub enum CapabilitySyncError {
 impl CapabilitySyncError {
     pub fn invalid_payload(message: impl Into<String>) -> Self {
         Self::InvalidPayload(message.into())
+    }
+}
+
+impl From<PackageRecoveryError> for CapabilitySyncError {
+    fn from(error: PackageRecoveryError) -> Self {
+        match error {
+            busy @ PackageRecoveryError::Busy => Self::PluginPackageBusy(busy.to_string()),
+            PackageRecoveryError::Invalid(message) => Self::invalid_payload(message),
+        }
     }
 }
 
@@ -146,6 +160,9 @@ impl PluginSyncFailure {
     }
 
     fn runtime_metadata(error: CapabilitySyncError) -> Self {
+        if matches!(&error, CapabilitySyncError::PluginPackageBusy(_)) {
+            return Self::new("package", "PLUGIN_PACKAGE_BUSY", true, error);
+        }
         if error.to_string().contains("Invalid Codex config") {
             return Self::new("codex_config", "INVALID_CODEX_CONFIG", false, error);
         }

@@ -1,13 +1,23 @@
 import { base64 } from '@scure/base'
 import { gunzipSync, strFromU8 } from 'fflate'
-import { io, type Socket } from 'socket.io-client'
+import {
+  createSocketClient,
+  type AuthenticatedSocketClient,
+} from '../../../packages/chat-core/src/socket'
+import {
+  createWorkbenchDeviceResolver,
+  AmbiguousExecutorIdentityError,
+} from '../../../packages/chat-core/src/runtime-device-identity'
 
 import type { RuntimeStreamEvent } from '@/domain/chatReducer'
 import { adaptRuntimeWorkListResponse } from '@/domain/runtimeWorkAdapter'
+import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
+import type { RuntimeTranscriptResponse as CoreTranscript } from '../../../packages/chat-core/src/runtime'
 import type {
   RuntimeTaskAddress,
   RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
+  DeviceInfo,
 } from '@/types/runtime'
 import type { RuntimeSessionConfig } from './backendConfig'
 
@@ -35,48 +45,75 @@ interface RuntimeRequestAck<T> {
 let nextRequestId = 1
 
 export class RuntimeStream {
-  private readonly socket: Socket
+  private readonly client: AuthenticatedSocketClient
   private scope: RuntimeTaskAddress | null = null
   private listener: Listener | null = null
   private reconnectListener: (() => void) | null = null
   private lifecycleListener: LifecycleListener | null = null
   private lifecycleReconnectListener: (() => void) | null = null
+  private accessToken: string
   private hasConnected = false
+  private scopedEventCount = 0
 
-  constructor(config: RuntimeSessionConfig) {
-    this.socket = io(`${config.socketBaseUrl.replace(/\/+$/, '')}${RUNTIME_NAMESPACE}`, {
+  constructor(
+    config: RuntimeSessionConfig,
+    private readonly getDevices: () => DeviceInfo[] = () => []
+  ) {
+    this.accessToken = config.accessToken
+    this.client = createSocketClient({
+      socketBaseUrl: () => config.socketBaseUrl,
+      namespace: RUNTIME_NAMESPACE,
       path: config.socketPath,
-      auth: { token: config.accessToken, client_origin: 'wework' },
-      autoConnect: false,
-      reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      transports: ['websocket', 'polling'],
+      getToken: () => this.accessToken,
+      auth: { client_origin: 'wework' },
+      logger: console,
     })
-    this.socket.on(RUNTIME_EVENT, envelope => this.onEvent(envelope))
-    this.socket.on('connect', () => {
-      if (this.hasConnected) {
-        this.reconnectListener?.()
-        this.lifecycleReconnectListener?.()
-      }
-      this.hasConnected = true
+    this.client.socket.on(RUNTIME_EVENT, envelope => this.onEvent(envelope))
+    this.client.subscribe(state => {
+      if (state.isConnected) this.hasConnected = true
+    })
+    this.client.onReconnect(() => {
+      this.reconnectListener?.()
+      this.lifecycleReconnectListener?.()
     })
     // Wework connects its runtime listener before task creation so the first
     // response event cannot race the subscription.
-    this.socket.connect()
+    void this.client.connect()
   }
 
-  subscribe(scope: RuntimeTaskAddress, listener: Listener, onReconnect: () => void): () => void {
+  updateAccessToken(token: string): void {
+    if (this.accessToken === token) return
+    this.accessToken = token
+    if (!this.client.socket.connected) {
+      this.client.disconnect()
+      void this.client.connect(undefined, this.hasConnected)
+    }
+  }
+
+  async subscribe(
+    scope: RuntimeTaskAddress,
+    listener: Listener,
+    onReconnect: () => void
+  ): Promise<() => void> {
     this.scope = scope
+    this.scopedEventCount = 0
+    console.info('[MobileRuntime] Subscribed', { deviceId: scope.deviceId, taskId: scope.taskId })
     this.listener = listener
     this.reconnectListener = onReconnect
 
-    return () => {
+    const unsubscribe = () => {
       if (this.listener === listener) {
         this.scope = null
         this.listener = null
         this.reconnectListener = null
       }
+    }
+    try {
+      await this.client.ensureConnected()
+      return unsubscribe
+    } catch (error) {
+      unsubscribe()
+      throw error
     }
   }
 
@@ -114,8 +151,12 @@ export class RuntimeStream {
   }
 
   dispose(): void {
-    this.socket.removeAllListeners()
-    this.socket.disconnect()
+    this.scope = null
+    this.listener = null
+    this.lifecycleListener = null
+    this.reconnectListener = null
+    this.lifecycleReconnectListener = null
+    this.client.dispose()
   }
 
   private onEvent(envelope: unknown): void {
@@ -124,10 +165,54 @@ export class RuntimeStream {
     const payload = envelope.payload
     if (!name || !isRecord(payload)) return
     const data = isRecord(payload.data) ? payload.data : {}
+    const address = isRecord(payload.address) ? payload.address : {}
     const taskId = idValue(payload.taskId) ?? idValue(data.taskId)
-    const deviceId = idValue(payload.deviceId) ?? idValue(data.deviceId)
+    const rawDeviceId =
+      idValue(payload.deviceId) ??
+      idValue(payload.device_id) ??
+      idValue(address.deviceId) ??
+      idValue(address.device_id) ??
+      idValue(data.deviceId) ??
+      idValue(data.device_id)
+    let deviceId = rawDeviceId
+    const devices = this.getDevices()
+    // Backend execution targets are routing addresses, not preferred aliases
+    // for a runtime that can have multiple persisted registrations.
+    if (rawDeviceId && !devices.some(device => device.execution_target_id === rawDeviceId)) {
+      try {
+        const device = createWorkbenchDeviceResolver(devices).resolve(rawDeviceId)
+        deviceId =
+          device?.device_type === 'app'
+            ? (device.execution_target_id ?? device.device_id)
+            : (device?.device_id ?? rawDeviceId)
+      } catch (error) {
+        if (error instanceof AmbiguousExecutorIdentityError) return
+        throw error
+      }
+    }
     if (!taskId) return
-    const event = { name, payload }
+    if (taskId === this.scope?.taskId) {
+      this.scopedEventCount += 1
+      if (
+        this.scopedEventCount <= 3 ||
+        ['response.completed', 'response.failed', 'response.incomplete'].includes(name)
+      )
+        console.info('[MobileRuntime] Event route', {
+          name,
+          taskId,
+          rawDeviceId,
+          deviceId,
+          selectedDeviceId: this.scope.deviceId,
+          matches: !deviceId || deviceId === this.scope.deviceId,
+        })
+    }
+    const event = {
+      name,
+      payload:
+        deviceId && deviceId !== rawDeviceId
+          ? { ...payload, deviceId, device_id: deviceId }
+          : payload,
+    }
     const resolvedDeviceId =
       deviceId ?? (this.scope?.taskId === taskId ? this.scope.deviceId : undefined)
     if (resolvedDeviceId) {
@@ -138,19 +223,20 @@ export class RuntimeStream {
     this.listener(event)
   }
 
-  private request<T>(
+  private async request<T>(
     method: string,
     params: Record<string, unknown>,
     deviceId: string,
     timeoutMs: number
   ): Promise<T> {
+    await this.client.ensureConnected()
     const requestId = `mobile-runtime-${nextRequestId++}`
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error(`${method} 请求超时`))
       }, timeoutMs)
 
-      this.socket.emit(
+      this.client.socket.emit(
         REQUEST_EVENT,
         {
           type: 'request',
@@ -180,12 +266,12 @@ export class RuntimeStream {
     })
   }
 
-  private requestTranscript(
+  private async requestTranscript(
     address: RuntimeTaskAddress,
     options: { beforeCursor?: string },
     limit: number
   ): Promise<RuntimeTranscriptResponse> {
-    return this.request(
+    const response = await this.request<CoreTranscript & { taskId: string }>(
       'runtime.tasks.transcript',
       {
         ...address,
@@ -195,6 +281,7 @@ export class RuntimeStream {
       address.deviceId,
       TRANSCRIPT_TIMEOUT_MS
     )
+    return projectMobileRuntimeTranscript(response)
   }
 }
 

@@ -180,15 +180,15 @@ describe('ProjectAgentPicker', () => {
     )
     render({ onCreate: undefined })
     expect(get('project-agent-wegent-empty').textContent).toContain(
-      '空间管理员',
+      '分组管理员',
     )
     render({
       scope: 'workspace',
       translate: createCollaborationTranslator('en'),
     })
     expect(container.textContent).toContain(
-      'Projects in this space can reuse this agent',
+      'Projects in this group can reuse this agent',
     )
-    expect(get('project-agent-wegent-create').textContent).toBe('Add to space')
+    expect(get('project-agent-wegent-create').textContent).toBe('Add to group')
   })
 })

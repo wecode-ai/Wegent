@@ -29,8 +29,8 @@ const copy = {
     developer: '成员',
     viewer: '只读成员',
     reporter: '参与者',
-    noMembers: '空间中还没有成员',
-    memberHint: '项目默认继承空间成员；受限项目仅继承空间管理员。',
+    noMembers: '分组中还没有成员',
+    memberHint: '项目默认继承分组成员；受限项目仅继承分组管理员。',
     operationFailed: '操作失败，请稍后重试',
   },
   en: {
@@ -48,7 +48,7 @@ const copy = {
     reporter: 'Reporter',
     noMembers: 'No members in this workspace',
     memberHint:
-      'Projects inherit space members. Restricted projects inherit only space administrators.',
+      'Projects inherit group members. Restricted projects inherit only group administrators.',
     operationFailed: 'Operation failed. Please try again.',
   },
 } as const
@@ -210,7 +210,7 @@ export function WorkspaceMembersConfiguration({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="heading-base text-text-primary">
-                {locale === 'zh-CN' ? '空间成员' : 'Space members'}
+                {locale === 'zh-CN' ? '分组成员' : 'Group members'}
               </h2>
               <span className="rounded-md bg-surface px-2 py-0.5 text-sm text-text-muted">
                 {members.length}
@@ -248,8 +248,8 @@ export function WorkspaceMembersConfiguration({
           >
             <label className="flex flex-wrap items-center gap-3">
               {locale === 'zh-CN'
-                ? '转交空间所有权（你将保留管理员权限）'
-                : 'Transfer space ownership (you remain an administrator)'}
+                ? '转交分组所有权（你将保留管理员权限）'
+                : 'Transfer group ownership (you remain an administrator)'}
               <select
                 className="min-h-11 rounded-md border border-border bg-base px-3 md:min-h-8"
                 data-testid="collaboration-workspace-transfer-user"

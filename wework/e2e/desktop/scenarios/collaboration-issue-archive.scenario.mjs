@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 
 import { createCollaborationBoardIssue as createIssue } from '../modules/collaboration-board-issue.mjs'
@@ -21,6 +22,7 @@ function scoped(selector) {
 }
 
 async function revealIssueCard(control, issueId, title, timeoutMs) {
+  await showAllCollaborationIssues(control, CONTENT)
   const selector = scoped(`[data-testid="collaboration-issue-${issueId}"]`)
   // Restoring removes the archived row before the board snapshot finishes loading.
   await control.command('waitFor', selector, { text: title, timeoutMs })

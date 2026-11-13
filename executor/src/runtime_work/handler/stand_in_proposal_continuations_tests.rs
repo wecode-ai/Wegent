@@ -157,6 +157,69 @@ fn proposal(handler: &RuntimeWorkRpcHandler, identity: &StandInMcpIdentity, resu
 }
 
 #[tokio::test]
+async fn collaboration_owner_inputs_deduplicate_and_resume_configuration_in_the_home_thread() {
+    let (_root, handler, mut identity) = fixture();
+    let mut actor = handler.local_task_link(&identity.task_id).unwrap();
+    identity.task_id.push_str("-collaboration");
+    actor.local_task_id = identity.task_id.clone();
+    actor.runtime_handle["origin"]["conversationScope"] = json!("collaboration");
+    actor.runtime_handle["executionRequest"]["origin"] = actor.runtime_handle["origin"].clone();
+    handler.upsert_local_task(actor.clone());
+    let payload = json!({"taskId":identity.task_id,"message":"Continue my homepage request",
+        "clientUserMessageId":"home-input","queueIfBusy":true,
+        "executionRequest":actor.runtime_handle["executionRequest"]});
+    for _ in 0..2 {
+        assert_eq!(
+            handler.send_message(payload.clone()).await.unwrap()["accepted"],
+            true
+        );
+    }
+    assert_eq!(handler.command_journal.lock().unwrap().len(), 1);
+    let accepted = {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        assert_eq!(scheduler.queued_turns.len(), 1);
+        scheduler.queued_turns[0].request.clone()
+    };
+    handler.store.update_task(&identity.task_id, |link| {
+        store_runtime_execution_request(&mut link.runtime_handle, &accepted)
+    });
+    let draft = proposal(&handler, &identity, true);
+    assert_eq!(draft["willContinueCurrentRequest"], true);
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .resolve_stand_in_proposal(7, "mac", draft["id"].as_str().unwrap(), true, None)
+        .unwrap();
+    let pending = store
+        .pending_stand_in_proposal_continuations("mac")
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["ownerRequest"]["taskId"], identity.task_id);
+    handler
+        .flush_stand_in_proposal_continuations()
+        .await
+        .unwrap();
+    let scheduler = handler.turn_scheduler.lock().unwrap();
+    assert_eq!(scheduler.queued_turns.len(), 2);
+    assert!(scheduler
+        .queued_turns
+        .iter()
+        .all(|turn| turn.local_task_id == identity.task_id));
+    drop(scheduler);
+    for scope in [Value::Null, json!("unknown")] {
+        handler.store.update_task(&identity.task_id, |link| {
+            link.runtime_handle["origin"]["conversationScope"] = scope
+        });
+        assert_eq!(
+            handler
+                .propose_stand_in_profile(&identity, &json!({}))
+                .unwrap_err()
+                .code,
+            "owner_request_changed"
+        );
+    }
+}
+
+#[tokio::test]
 async fn owner_input_without_a_client_command_is_natively_journaled() {
     let (_root, handler, identity) = fixture();
     let request = handler

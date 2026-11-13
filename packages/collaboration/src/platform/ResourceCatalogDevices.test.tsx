@@ -99,7 +99,7 @@ describe("device cleanup catalog", () => {
       ),
     );
     expect(container.textContent).toContain("Product space");
-    expect(container.textContent).toContain("其他 1 个空间");
+    expect(container.textContent).toContain("其他 1 个分组");
     expect(container.textContent).toContain("#42");
   });
   it("offers deletion only for owned offline registrations and keeps equal names distinct", async () => {

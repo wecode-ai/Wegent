@@ -88,7 +88,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       await control.command('waitFor', `${CONTENT} [data-testid="collaboration-platform-root"]`, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME, workbenchReadyTimeoutMs)
+      await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME)
 
       await control.command(
         'clickWhenEnabled',

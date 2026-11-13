@@ -147,6 +147,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugin_auth.run",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.remote_task_access.get",
+    "executor.remote_task_access.update",
     "executor.codex_home.config.read",
     "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
@@ -491,6 +493,14 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        // Consent settings never enter the remotely dispatched runtime namespace.
+        if method == "executor.remote_task_access.get" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env().read();
+        }
+        if method == "executor.remote_task_access.update" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env()
+                .update(params);
+        }
         if method == "executor.protocol.describe" {
             return Ok(self.protocol_description());
         }
@@ -2030,6 +2040,27 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "projects.migration_snapshot" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .project_migration_snapshot(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "projects.archive_migrated" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let fingerprint = required_task_string(&params, "fingerprint")?;
+            let target = required_task_string(&params, "target")?;
+            let version = params
+                .get("version")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .archive_migrated_project(project_id, version, fingerprint, target)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "projects.archive" => {
             let project_id = required_task_string(&params, "project_id")?;
             let version = params
@@ -2379,12 +2410,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task_with_schedule(
+                    .create_task_with_options(
                         project_id,
                         input,
-                        optional_nullable_task_string(todo, "start_at")?.flatten(),
-                        optional_nullable_task_string(todo, "due_at")?.flatten(),
-                        todo["personal_task"].as_bool().unwrap_or(false),
+                        crate::task_runtime::TaskCreateOptions {
+                            start_at: optional_nullable_task_string(todo, "start_at")?.flatten(),
+                            due_at: optional_nullable_task_string(todo, "due_at")?.flatten(),
+                            personal_task: todo["personal_task"].as_bool().unwrap_or(false),
+                            request_id: optional_nullable_task_string(todo, "request_id")?
+                                .flatten(),
+                        },
                     )
                     .await
                     .map_err(task_runtime_error)?,
