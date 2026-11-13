@@ -105,13 +105,30 @@ impl LocalTaskStore {
         due_at: Option<String>,
         personal_task: bool,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_options(project_id, input, super::super::TaskCreateOptions { start_at, due_at, personal_task, request_id: None })
+        self.create_task_with_options(
+            project_id,
+            input,
+            super::super::TaskCreateOptions {
+                start_at,
+                due_at,
+                personal_task,
+                request_id: None,
+            },
+        )
     }
 
     pub fn create_task_with_options(
-        &self, project_id: &str, input: TaskCreate, options: super::super::TaskCreateOptions,
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        options: super::super::TaskCreateOptions,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let super::super::TaskCreateOptions { start_at, due_at, personal_task, request_id } = options;
+        let super::super::TaskCreateOptions {
+            start_at,
+            due_at,
+            personal_task,
+            request_id,
+        } = options;
         validate_name(&input.title, "task title")?;
         validate_priority(&input.priority)?;
         crate::task_runtime::tagging::validate_tags(&input.tags)?;
@@ -147,14 +164,17 @@ impl LocalTaskStore {
         }
         if let Some(request_id) = request_id.as_deref() {
             if request_id.is_empty() || request_id.len() > 64 {
-                return Err(TaskRuntimeError::Invalid("Invalid creation request ID".into()));
+                return Err(TaskRuntimeError::Invalid(
+                    "Invalid creation request ID".into(),
+                ));
             }
             let existing: Option<String> = transaction.query_row(
                 "SELECT id FROM loop_items WHERE resource_type='task' AND cloud_project_id=?1 AND json_extract(metadata, '$.creation_request_id')=?2 LIMIT 1",
                 params![project_id, request_id], |row| row.get(0),
             ).optional()?;
             if let Some(id) = existing {
-                return get_item_from(&transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound);
+                return get_item_from(&transaction, &id, "task")?
+                    .ok_or(TaskRuntimeError::TaskNotFound);
             }
         }
         let sequence = project.next_item_number.unwrap_or(1);
