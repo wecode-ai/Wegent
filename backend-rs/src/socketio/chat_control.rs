@@ -118,6 +118,29 @@ pub(crate) async fn cancel(
                         None,
                     )
                     .await;
+                    // A runtime that never received the turn cannot send a terminal callback.
+                    use crate::internal_callback::{
+                        emitter,
+                        event::{EventType, ExecutionEvent},
+                        session,
+                    };
+                    let event = ExecutionEvent::new(EventType::Cancelled, info.task_id, subtask_id);
+                    if let Err(error) =
+                        session::publish_callback_event(redis, subtask_id, &event).await
+                    {
+                        tracing::warn!(subtask_id, %error, "local cancellation callback failed");
+                    }
+                    if let Err(error) = emitter::emit_terminal_frames(
+                        redis,
+                        &event,
+                        Some(user_id),
+                        &Value::Null,
+                        None,
+                    )
+                    .await
+                    {
+                        tracing::warn!(subtask_id, %error, "local cancellation notification failed");
+                    }
                 }
             }
             tracing::info!(

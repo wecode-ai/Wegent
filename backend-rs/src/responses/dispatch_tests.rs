@@ -22,6 +22,8 @@ use super::*;
 use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
+use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
+use crate::task_store_statements::{subtask_column_index, task_column_index};
 
 const TASK_ID: i64 = 424_242;
 const SUBTASK_ID: i64 = 424_243;
@@ -571,10 +573,7 @@ fn the_executor_start_carries_the_created_task_identity() {
     );
 }
 
-fn consumer(
-    mysql: RecordingMysql,
-    redis: RecordingRedis,
-) -> ConsumerState<RecordingMysql, RecordingRedis> {
+fn consumer<M: Mysql>(mysql: M, redis: RecordingRedis) -> ConsumerState<M, RecordingRedis> {
     ConsumerState {
         mysql,
         redis: Some(redis),
@@ -582,6 +581,43 @@ fn consumer(
         executor_manager: ExecutorManager::new("http://127.0.0.1:1").expect("client"),
         app: Weak::new(),
     }
+}
+
+async fn executor_failure_fixture(status: &'static str) -> MysqlRows {
+    MysqlRows::start_results(move |sql| {
+        if sql.starts_with("UPDATE ") {
+            return (vec![], vec![]);
+        }
+        let mut row: Row;
+        if sql.contains("FROM subtasks_0424") {
+            row = vec![("unused", SqlValue::Null); 23];
+            for (column, value) in [
+                ("id", SqlValue::I64(SUBTASK_ID)),
+                ("user_id", SqlValue::I32(7)),
+                ("task_id", SqlValue::I64(TASK_ID)),
+                ("message_id", SqlValue::I64(2)),
+                ("status", SqlValue::Text("FAILED".into())),
+            ] {
+                row[subtask_column_index(column).unwrap()] = (column, value);
+            }
+        } else if sql.contains("FROM tasks_0424") || sql.contains("FROM `tasks_0424`") {
+            row = vec![("unused", SqlValue::Null); 12];
+            for (column, value) in [
+                ("id", SqlValue::I64(TASK_ID)),
+                ("user_id", SqlValue::I32(7)),
+                (
+                    "json",
+                    SqlValue::Text(json!({"status":{"status":status}}).to_string()),
+                ),
+            ] {
+                row[task_column_index(column).unwrap()] = (column, value);
+            }
+        } else {
+            return (vec![("id", SqlValue::I64(0))], vec![]);
+        }
+        (row.clone(), vec![row])
+    })
+    .await
 }
 
 fn chat_job(
@@ -765,15 +801,15 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
     drop(refused);
     let http = HttpClient::builder().build().unwrap();
     for url in [server.url, refused_url] {
-        let mysql = RecordingMysql::default();
+        let fixture = executor_failure_fixture("RUNNING").await;
         let redis = RecordingRedis::default();
         run(
             &http,
             DispatchJob::Executor {
                 url,
-                body: json!({}),
+                body: ExecutorDispatchBody::Prepared(json!({})),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
-                consumer: Box::new(consumer(mysql.clone(), redis.clone())),
+                consumer: Box::new(consumer(fixture.mysql.clone(), redis.clone())),
                 task_id: TASK_ID,
                 subtask_id: SUBTASK_ID,
                 user_id: 7,
@@ -782,10 +818,10 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
         )
         .await;
         assert!(
-            mysql
-                .statements()
+            fixture
+                .queries()
                 .iter()
-                .any(|sql| sql.contains("subtasks_0424"))
+                .any(|sql| sql.starts_with("UPDATE subtasks_0424"))
         );
         let frames: Vec<Value> = redis
             .calls()
@@ -801,6 +837,64 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             .unwrap_or_else(|| panic!("missing chat:error in {:?}", redis.calls()));
         assert_eq!(error["data"][0]["subtask_id"], SUBTASK_ID);
         assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
+        let callback = frames
+            .iter()
+            .find(|frame| frame["type"] == "error" && frame["subtask_id"] == SUBTASK_ID)
+            .expect("the Responses stream also receives the terminal error");
+        assert_eq!(callback["error_code"], "EXECUTOR_DISPATCH_FAILED");
         assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
+    }
+}
+
+#[tokio::test]
+async fn executor_failure_reaches_mysql_without_redis() {
+    let fixture = executor_failure_fixture("PENDING").await;
+    let mut consumer = consumer(fixture.mysql.clone(), RecordingRedis::default());
+    consumer.redis = None;
+    finalize_executor_failure(
+        &consumer,
+        TASK_ID,
+        SUBTASK_ID,
+        7,
+        Some(2),
+        ("Executor preparation failed", "container_error"),
+    )
+    .await;
+    assert!(
+        fixture
+            .queries()
+            .iter()
+            .any(|sql| sql.starts_with("UPDATE tasks_0424")),
+        "the terminal write must update the task even when Redis is unavailable"
+    );
+}
+
+#[tokio::test]
+async fn executor_failure_does_not_write_or_publish_after_cancellation() {
+    for status in ["CANCELLING", "CANCELLED"] {
+        let fixture = executor_failure_fixture(status).await;
+        let redis = RecordingRedis::default();
+        finalize_executor_failure(
+            &consumer(fixture.mysql.clone(), redis.clone()),
+            TASK_ID,
+            SUBTASK_ID,
+            7,
+            Some(2),
+            ("Executor preparation failed", "container_error"),
+        )
+        .await;
+        assert!(
+            fixture
+                .queries()
+                .iter()
+                .any(|sql| sql.ends_with("FOR UPDATE"))
+        );
+        assert!(
+            !fixture
+                .queries()
+                .iter()
+                .any(|sql| sql.starts_with("UPDATE"))
+        );
+        assert_eq!(redis.count("PUBLISH "), 0);
     }
 }
