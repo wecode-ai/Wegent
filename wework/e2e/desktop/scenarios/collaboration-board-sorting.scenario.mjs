@@ -295,6 +295,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await createLocalCollaborationProject(control, CONTENT, name)
     await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
     await selectBoard(control, uiTimeoutMs)
+    await showAllCollaborationIssues(control, CONTENT)
     const first = await createCollaborationBoardIssue(
       control,
       'Older local card',
@@ -325,6 +326,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command('click', '[data-e2e-anchor-id="local-sorting-project"]')
       await selectBoard(control, uiTimeoutMs)
+      await showAllCollaborationIssues(control, CONTENT)
     }
     await expectRules(control, 'pending', 'priority-desc')
     await editRules(control, 'pending', ['manual'])
