@@ -95,9 +95,8 @@ from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.identity import (
-    device_connection_route_id,
+    active_device_connection,
     record_route_id,
-    resolve_owned_device_alias,
 )
 from app.services.device.presence import (
     PRESENCE_PERSIST_INTERVAL_SECONDS,
@@ -430,16 +429,10 @@ def _registration_runtime_transfer_port(
 
 
 def _heartbeat_registration_is_active(
-    user_id: int, logical_id: str, route_id: str, runtime_instance_id: str | None
+    user_id: int, route_id: str, runtime_instance_id: str | None
 ) -> bool:
     with SessionLocal() as db:
-        device = resolve_owned_device_alias(db, user_id=user_id, device_id=logical_id)
-        return (
-            device is not None
-            and device_connection_route_id(device) == route_id
-            and device.json.get("spec", {}).get("runtimeInstanceId")
-            == runtime_instance_id
-        )
+        return active_device_connection(db, user_id, route_id, runtime_instance_id)
 
 
 def _update_device_heartbeat(
@@ -2102,7 +2095,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             active = await run_sync_in_executor(
                 _heartbeat_registration_is_active,
                 user_id,
-                session.get("logical_device_id") or route_id,
                 route_id,
                 session.get("runtime_instance_id"),
             )
@@ -2571,14 +2563,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
             return {"error": "Device ID mismatch"}
 
         payload.device_id = session["device_id"]
-        online = await device_service.get_device_online_info(user_id, payload.device_id)
-        if not online or online.get("socket_id") != sid:
-            return {"error": "Stale device connection"}
-
-        # Update status in Redis
-        await device_service.update_device_status_in_redis(
-            user_id, payload.device_id, payload.status.value
+        updated = await device_service.update_device_status_in_redis(
+            user_id, payload.device_id, payload.status.value, socket_id=sid
         )
+        if not updated:
+            return {"error": "Stale device connection"}
 
         # Broadcast status change to user room
         await self._broadcast_device_status(

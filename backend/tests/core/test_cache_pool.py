@@ -226,3 +226,31 @@ async def test_failed_subscription_closes_both_owned_objects(
     assert create.call_args.kwargs["max_connections"] == 1
     pubsub.aclose.assert_awaited_once()
     client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", [None, b'{"socket_id":"new"}'])
+async def test_online_json_update_does_not_overwrite_replacement(
+    cache, monkeypatch, replacement
+):
+    original = b'{"socket_id":"old","status":"online"}'
+    execute = AsyncMock(side_effect=[original, 0, replacement])
+    monkeypatch.setattr(Redis, "execute_command", execute)
+
+    def update(document):
+        if document["socket_id"] != "old":
+            return False
+        document["status"] = "busy"
+        return True
+
+    async with managed_cache(cache):
+        assert not await cache.update_json_if_present("online", update, expire=90)
+
+    assert [call.args[0] for call in execute.await_args_list] == ["GET", "EVAL", "GET"]
+    assert execute.await_args_list[1].args[2:] == (
+        1,
+        "online",
+        original,
+        b'{"socket_id":"old","status":"busy"}',
+        90,
+    )

@@ -138,6 +138,22 @@ def resolve_owned_device_alias(
     return _resolve_device_alias(query.all(), submitted)
 
 
+def active_device_connection(
+    db: Session, user_id: int, route_id: str, runtime_instance_id: str | None
+) -> bool:
+    """Look up a connected installation by its transport route and Runtime."""
+    query = _owned_devices_query(db, user_id)
+    record_id = record_id_from_route(route_id)
+    if record_id is not None:
+        query = query.filter_by(id=record_id)
+    return any(
+        device_connection_route_id(device) == route_id
+        and (device.json.get("spec", {}).get("runtimeInstanceId") or None)
+        == (runtime_instance_id or None)
+        for device in query.all()
+    )
+
+
 def owned_device_aliases(db: Session, *, user_id: int, device_id: str) -> set[str]:
     """Expand an address only through aliases identifying the same owned device."""
 

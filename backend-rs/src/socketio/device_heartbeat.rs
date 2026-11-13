@@ -301,28 +301,24 @@ async fn recover_heartbeat(
     host: Option<&str>,
     port: Option<i64>,
 ) -> Result<Option<String>, &'static str> {
-    use crate::device_identity::{device_connection_route_id, resolve_owned_device_alias_on};
     let user_id = snapshot.user_id;
-    let logical_id = snapshot
-        .device
-        .logical_device_id
-        .as_deref()
-        .unwrap_or(route_id);
-    let registration = state
+    let runtime_instance_id = snapshot.device.runtime_instance_id.as_deref();
+    let valid = state
         .mysql
         .with_transaction(async |tx| {
-            resolve_owned_device_alias_on(&mut &mut *tx, user_id, logical_id).await
+            crate::device_identity::active_device_connection_on(
+                &mut &mut *tx,
+                user_id,
+                route_id,
+                runtime_instance_id,
+            )
+            .await
         })
         .await
         .map_err(|error| {
             tracing::warn!(%error, user_id, "heartbeat registration lookup failed");
             "Device identity operation is temporarily unavailable; reconnect to retry"
         })?;
-    let valid = registration.is_some_and(|device| {
-        device_connection_route_id(&device) == route_id
-            && device.json["spec"]["runtimeInstanceId"].as_str()
-                == snapshot.device.runtime_instance_id.as_deref()
-    });
     if !valid {
         return Err("Device is not registered");
     }
@@ -380,7 +376,7 @@ fn first_eight(value: &str) -> &str {
     value.get(..8).unwrap_or(value)
 }
 
-/// `LocalDeviceProvider.refresh_heartbeat` (`GET` then `SET ... EX 90`).
+/// `LocalDeviceProvider.refresh_heartbeat`.
 async fn refresh_heartbeat(
     state: &AppState,
     user_id: i64,
@@ -390,72 +386,58 @@ async fn refresh_heartbeat(
     runtime_transfer_host: Option<&str>,
     runtime_transfer_port: Option<i64>,
 ) -> bool {
-    let Some(online) = device::get_online(state, user_id, device_id).await else {
-        return false;
-    };
-    let Some(mut document) = online.as_object().cloned() else {
-        return false;
-    };
-    if document.get("socket_id").and_then(Value::as_str) != Some(socket_id) {
-        return false;
-    }
-    document.insert(
-        "last_heartbeat".into(),
-        Value::String(device::local_isoformat()),
-    );
-    document.insert(
-        "running_task_ids".into(),
-        Value::Array(
-            payload
-                .running_task_ids
-                .iter()
-                .map(|id| json!(id))
-                .collect(),
-        ),
-    );
-    if let Some(version) = payload.executor_version.as_deref() {
-        document.insert("executor_version".into(), Value::String(version.into()));
-    }
-    if let Some(host) = runtime_transfer_host {
-        document.insert("runtime_transfer_host".into(), Value::String(host.into()));
-    }
-    document.insert(
-        "runtime_transfer_port".into(),
-        runtime_transfer_port
-            .map(Value::from)
-            .unwrap_or(Value::Null),
-    );
-    document.insert(
-        "runtime_instance_id".into(),
-        payload
-            .runtime_instance_id
-            .clone()
-            .map(Value::String)
-            .unwrap_or(Value::Null),
-    );
-    document.insert(
-        "runtime_capacity".into(),
-        payload.runtime_capacity.clone().unwrap_or(Value::Null),
-    );
-    document.insert(
-        "runtime_features".into(),
-        payload.runtime_features.clone().unwrap_or(Value::Null),
-    );
-    let Some(redis) = state.redis.as_ref() else {
-        return false;
-    };
-    let value = serde_json::to_string(&Value::Object(document)).expect("a JSON value serializes");
-    use brz_redis::{Redis, SetExpiration, SetOptions};
-    redis
-        .set_with(
-            crate::device_online_state::online_key(user_id, device_id),
-            value,
-            SetOptions::default()
-                .with_expiration(SetExpiration::Seconds(ONLINE_TTL_SECONDS))
-                .if_present(),
-        )
-        .await
-        .unwrap_or(false)
+    crate::device_online_state::update_online_state(
+        state,
+        user_id,
+        device_id,
+        socket_id,
+        ONLINE_TTL_SECONDS,
+        |document| {
+            document.insert(
+                "last_heartbeat".into(),
+                Value::String(device::local_isoformat()),
+            );
+            document.insert(
+                "running_task_ids".into(),
+                Value::Array(
+                    payload
+                        .running_task_ids
+                        .iter()
+                        .map(|id| json!(id))
+                        .collect(),
+                ),
+            );
+            if let Some(version) = payload.executor_version.as_deref() {
+                document.insert("executor_version".into(), Value::String(version.into()));
+            }
+            if let Some(host) = runtime_transfer_host {
+                document.insert("runtime_transfer_host".into(), Value::String(host.into()));
+            }
+            document.insert(
+                "runtime_transfer_port".into(),
+                runtime_transfer_port
+                    .map(Value::from)
+                    .unwrap_or(Value::Null),
+            );
+            document.insert(
+                "runtime_instance_id".into(),
+                payload
+                    .runtime_instance_id
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            );
+            document.insert(
+                "runtime_capacity".into(),
+                payload.runtime_capacity.clone().unwrap_or(Value::Null),
+            );
+            document.insert(
+                "runtime_features".into(),
+                payload.runtime_features.clone().unwrap_or(Value::Null),
+            );
+        },
+    )
+    .await
 }
 
 /// `_store_device_capabilities_state`.

@@ -178,7 +178,7 @@ class DeviceService:
 
     @staticmethod
     async def update_device_status_in_redis(
-        user_id: int, device_id: str, status: str
+        user_id: int, device_id: str, status: str, *, socket_id: str
     ) -> bool:
         """Update device status in Redis.
 
@@ -195,6 +195,7 @@ class DeviceService:
             user_id=user_id,
             device_id=device_id,
             status=status,
+            socket_id=socket_id,
         )
 
     @staticmethod

@@ -706,3 +706,27 @@ async def test_transient_disconnect_rechecks_device_before_failing_tasks(monkeyp
     set_offline.assert_not_awaited()
     device_namespace.run_sync_in_executor.assert_not_awaited()
     namespace._broadcast_device_offline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rejected_device_status_does_not_broadcast(monkeypatch):
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    update = AsyncMock(return_value=False)
+    monkeypatch.setattr(
+        device_namespace.device_service, "update_device_status_in_redis", update
+    )
+    broadcast = AsyncMock()
+    monkeypatch.setattr(namespace, "_broadcast_device_status", broadcast)
+
+    result = await namespace.on_device_status(
+        "sid-old", {"device_id": "device-1", "status": "busy"}
+    )
+
+    assert result == {"error": "Stale device connection"}
+    update.assert_awaited_once_with(7, "device-1", "busy", socket_id="sid-old")
+    broadcast.assert_not_awaited()

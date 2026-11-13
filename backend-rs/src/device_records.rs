@@ -148,12 +148,20 @@ pub(crate) async fn lock_online_device_for_binding<T: MysqlTransaction>(
             reason: "Device online state is unavailable".into(),
         })?;
     Ok(online
-        .filter(|value| {
-            let runtime = device.json["spec"]["runtimeInstanceId"].as_str();
-            value.as_object().is_some_and(|info| !info.is_empty())
-                && runtime.is_none_or(|id| value["runtime_instance_id"].as_str() == Some(id))
-        })
+        .filter(|value| matches_online_registration(&device, value))
         .map(|_| device))
+}
+
+fn matches_online_registration(device: &DeviceKindRow, online: &Value) -> bool {
+    let spec = &device.json["spec"];
+    let runtime = spec["runtimeInstanceId"]
+        .as_str()
+        .filter(|id| !id.is_empty());
+    online.as_object().is_some_and(|info| !info.is_empty())
+        && match runtime {
+            Some(id) => online["runtime_instance_id"].as_str() == Some(id),
+            None => !crate::device_identity::is_app_device(device),
+        }
 }
 
 /// `db.commit()`'s flush of the dirty `Kind` row: `is_active` and the
@@ -502,6 +510,25 @@ struct ActiveSubtaskRow {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn device_online_match_accepts_legacy_local_but_requires_app_runtime() {
+        let mut device = DeviceKindRow {
+            id: 1,
+            name: "device".into(),
+            json: json!({"spec": {"deviceType": "local", "runtimeInstanceId": ""}}),
+        };
+        let online = json!({"socket_id": "sid"});
+        assert!(matches_online_registration(&device, &online));
+        device.json["spec"]["deviceType"] = json!("app");
+        assert!(!matches_online_registration(&device, &online));
+        device.json["spec"]["runtimeInstanceId"] = json!("runtime");
+        assert!(!matches_online_registration(&device, &online));
+        assert!(matches_online_registration(
+            &device,
+            &json!({"socket_id": "sid", "runtime_instance_id": "runtime"}),
+        ));
+    }
 
     #[test]
     fn admin_delete_is_registered_and_selected_by_the_gateway() {

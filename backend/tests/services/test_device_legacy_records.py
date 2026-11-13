@@ -320,3 +320,23 @@ async def test_offline_only_rejects_active_project_execution(
     assert await record_operations.delete_device_record(
         test_db, device.user_id, device.id, offline_only=True
     )
+
+
+def test_heartbeat_connection_lookup_keeps_same_name_local_device(test_db, records):
+    from app.services.device.identity import active_device_connection
+
+    local = Kind(
+        user_id=records[0].user_id,
+        namespace="default",
+        name=records[0].name,
+        kind="Device",
+        json={"spec": {"deviceType": "local", "runtimeInstanceId": ""}},
+    )
+    test_db.add(local)
+    test_db.commit()
+
+    assert active_device_connection(test_db, local.user_id, local.name, None)
+    assert not active_device_connection(test_db, local.user_id, local.name, "runtime-0")
+    local.is_active = False
+    test_db.commit()
+    assert not active_device_connection(test_db, local.user_id, local.name, None)

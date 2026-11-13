@@ -268,6 +268,38 @@ where
     Ok(resolve_device_alias(&all, submitted).cloned())
 }
 
+/// Match the connection route before considering any logical aliases.
+pub(crate) async fn active_device_connection_on<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    route_id: &str,
+    instance: Option<&str>,
+) -> MysqlResult<bool> {
+    if let Some(record_id) = record_id_from_route(route_id) {
+        let sql = format!("{KINDS_DEVICE_QUERY} AND kinds.id = ?");
+        let device: Option<DeviceKindRow> = query.fetch_optional(sql, (user_id, record_id)).await?;
+        return Ok(
+            device.is_some_and(|device| matches_device_connection(&device, route_id, instance))
+        );
+    }
+    let devices: Vec<DeviceKindRow> = query.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(devices
+        .iter()
+        .any(|device| matches_device_connection(device, route_id, instance)))
+}
+
+fn matches_device_connection(
+    device: &DeviceKindRow,
+    route_id: &str,
+    instance: Option<&str>,
+) -> bool {
+    device_connection_route_id(device) == route_id
+        && device.json["spec"]["runtimeInstanceId"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            == instance.filter(|id| !id.is_empty())
+}
+
 /// Return aliases that unambiguously identify the same user-owned device.
 /// Unknown or ambiguous input retains its existing exact-address semantics.
 pub(crate) async fn owned_device_identity_ids<M>(
@@ -712,6 +744,24 @@ mod tests {
         assert_eq!(record_id_from_route("app-record-abc"), None);
         assert_eq!(record_id_from_route("electron-abc"), None);
         assert_eq!(record_id_from_route(""), None);
+    }
+
+    #[test]
+    fn active_device_connection_matches_local_route_even_with_same_name_app() {
+        let app = app_device(1, "electron-1");
+        let local = DeviceKindRow {
+            id: 2,
+            name: app.name.clone(),
+            json: serde_json::json!({"spec": {"deviceType": "local", "runtimeInstanceId": ""}}),
+        };
+        let route = local.name.clone();
+        assert!(matches_device_connection(&local, &route, None));
+        assert!(!matches_device_connection(&app, &route, None));
+        assert!(!matches_device_connection(
+            &local,
+            &route,
+            Some("old-runtime")
+        ));
     }
 
     #[test]

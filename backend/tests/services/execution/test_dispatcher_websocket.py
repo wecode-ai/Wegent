@@ -394,3 +394,73 @@ async def test_dispatch_websocket_uses_git_credentials_configured_on_device() ->
     assert payload["git_auth_transport"] == GIT_AUTH_TRANSPORT_DEVICE_LOCAL
     assert "git_token" not in payload["user"]
     assert request.user["git_token"] == "encrypted-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("online", [False, True])
+async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, online):
+    from app.models.subtask import Subtask, SubtaskStatus
+    from app.models.task import TaskResource
+
+    task = TaskResource(user_id=9, kind="Task", name="device-turn", json={})
+    test_db.add(task)
+    test_db.flush()
+    subtask = Subtask(
+        user_id=9, task_id=task.id, team_id=1, title="Device turn", bot_ids=[]
+    )
+    test_db.add(subtask)
+    test_db.commit()
+    subtask_id = subtask.id
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=task.id,
+        subtask_id=subtask_id,
+        message_id=1,
+        user={"id": 9},
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        namespace="/local-executor",
+        event="task:execute",
+        room="device:9:device-1",
+    )
+    delivery = AsyncMock(side_effect=RuntimeError("Redis publish failed"))
+    with (
+        patch("app.services.execution.dispatcher.SessionLocal", return_value=test_db),
+        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch(
+            "app.services.chat.storage.session_manager.cleanup_streaming_state",
+            AsyncMock(),
+        ),
+        patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()),
+        patch.object(
+            dispatcher, "_resolve_device_route_id", AsyncMock(return_value="device-1")
+        ),
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_emit_socketio_in_main_loop", delivery),
+        patch(
+            "app.services.execution.dispatcher.lock_online_device_for_binding",
+            return_value="device-1" if online else None,
+        ),
+        patch("app.services.chat.storage.db.db_handler._update_task_status_sync"),
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            AsyncMock(return_value={}),
+        ),
+    ):
+        with pytest.raises(
+            RuntimeError, match="publish failed" if online else "offline"
+        ):
+            await dispatcher.dispatch(
+                request, device_id="device-1", emitter=AsyncMock()
+            )
+
+    subtask = test_db.get(Subtask, subtask_id)
+    assert subtask is not None
+    assert subtask.status == (SubtaskStatus.FAILED if online else SubtaskStatus.PENDING)
+    if online:
+        delivery.assert_awaited_once()
+    else:
+        delivery.assert_not_awaited()
+        assert subtask.executor_name is None
