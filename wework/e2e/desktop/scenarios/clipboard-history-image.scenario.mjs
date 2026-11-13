@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
+import { openProjectBoard } from '../modules/collaboration-board-personal-view.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const CHAT = `${CONTENT} [data-testid="project-space-chat-panel"]`
@@ -75,7 +75,7 @@ function pngDimensions(bytes) {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
 }
 
-export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+export function createDesktopScenario({ executorHome, uiTimeoutMs, workspacePath }) {
   return {
     async verify(control) {
       if (process.platform !== 'darwin') {
@@ -83,12 +83,22 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
         return { skipped: 'macos-only' }
       }
 
+      // The import dialog writes successfully, but a renderer transport loss
+      // can interrupt navigation after the write. Project import has its own
+      // checkpoint; seed this prerequisite through the real local executor.
+      const projectKey = `clipboard-history-image-${process.pid}`
+      const projectId = `local-code-${createHash('sha256').update(projectKey).digest('hex')}`
+      const seeded = JSON.parse(
+        await control.command('seedLocalProject', 'body', {
+          value: JSON.stringify({ projectKey, name: PROJECT_NAME, path: workspacePath }),
+        })
+      )
+      assert.equal(seeded.accepted, true)
       await ensureExperimentalFeaturesEnabled(control)
-      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-platform-root"]`, {
-        timeoutMs: workbenchReadyTimeoutMs,
+      await openProjectBoard(control, selector => `${CONTENT} ${selector}`.trim(), {
+        id: projectId,
+        name: PROJECT_NAME,
       })
-      await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME)
 
       await control.command(
         'clickWhenEnabled',
@@ -163,8 +173,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       })
 
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      const project = (await rpc('projects.list', {})).find(row => row.name === PROJECT_NAME)
-      assert.ok(project, 'The clipboard image fixture project was not persisted')
+      const project = (await rpc('projects.list', {})).find(row => row.id === projectId)
+      assert.equal(project?.name, PROJECT_NAME, 'The clipboard image fixture was not persisted')
       const issue = await waitFor(
         async () => {
           const rows = await rpc('todos.list', { project_id: project.id })
