@@ -194,23 +194,42 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       const restoreOfficial = async name => {
         model.recoverBundle()
-        // A completed task can still have a native composer prediction or read
-        // in flight. Reuse the idle-only restart gate before changing auth modes.
-        const idleRestart = await waitForValue(
-          async () =>
-            JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
-          value => value.restarted === true,
-          'The native Codex process did not become idle before restoring official auth',
-          RECOVERY_TIMEOUT_MS
-        )
-        assert.equal(idleRestart.activeTaskCount, 0)
-        evidence.push({ officialRestore: name, idleRestart })
-        const marker = `${PREFIX}_${name}`
-        model.plan(marker)
-        const taskId = await create(name, { official: true })
-        await completed(taskId, marker)
-        assert.equal(model.diagnostics().requests.at(-1)?.subscription, true)
-        return taskId
+        // The tray and renderer keep reading Codex quota on a timer, and Codex
+        // rejects a LocalSubscription turn while any app-server request is
+        // pending: "Codex authentication mode is busy ... retry after active
+        // turns and requests finish". Retry that documented rejection a bounded
+        // number of times instead of failing the checkpoint on the collision.
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          // A completed task can still have a native composer prediction or read
+          // in flight. Reuse the idle-only restart gate before changing auth modes.
+          const idleRestart = await waitForValue(
+            async () =>
+              JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+            value => value.restarted === true,
+            'The native Codex process did not become idle before restoring official auth',
+            RECOVERY_TIMEOUT_MS
+          )
+          assert.equal(idleRestart.activeTaskCount, 0)
+          evidence.push({ officialRestore: name, idleRestart, attempt })
+          const attemptName = attempt === 1 ? name : `${name}_RETRY_${attempt}`
+          const marker = `${PREFIX}_${attemptName}`
+          model.plan(marker)
+          const offset = (await readFile(logPath, 'utf8')).length
+          const taskId = await create(attemptName, { official: true })
+          try {
+            await completed(taskId, marker)
+            assert.equal(model.diagnostics().requests.at(-1)?.subscription, true)
+            return taskId
+          } catch (error) {
+            const failureLog = (await readFile(logPath, 'utf8')).slice(offset)
+            if (attempt === 3 || !failureLog.includes('Codex authentication mode is busy'))
+              throw error
+            console.warn(
+              `[desktop-e2e] Official restore ${name} hit a transient Codex auth-mode rejection; retrying`
+            )
+          }
+        }
+        throw new Error(`Official restore ${name} never reached a completed official turn`)
       }
 
       await createSingleRootLocalProject(control, workspacePath, 'cloud-config-recovery')
