@@ -3,12 +3,15 @@
 from datetime import datetime
 
 from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.delivery import LoopItem, LoopItemTaskBinding, loop_datetime_is_unset
 from app.models.loop_item_execution import LoopItemExecution
 
 
-def attention_order(user_id: int, assigned_only: bool, order: str = "attention"):
+def attention_order(
+    user_id: int, assigned_only: bool, order: str = "attention"
+) -> tuple[ColumnElement[int], ColumnElement[int], ColumnElement[str]]:
     nodes = LoopItem.__table__.alias("attention_node")
     mine = LoopItem.assignee_user_id == user_id
     request = (
