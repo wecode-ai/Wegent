@@ -126,16 +126,16 @@ impl RecoveryJournal {
         {
             let name = format!("expected-{index}");
             let file = staging.path().join(&name);
-            fs::write(&file, bytes)?;
-            fs::File::open(file)?.sync_all()?;
+            write_synced(&file, &bytes)?;
             expected_files.insert(target, PathBuf::from(name));
         }
         remove_existing_path(&staging.path().join("planned"))?;
-        write_json(
+        write_synced(
             &staging.path().join("journal.json"),
-            &json!({"key":spec.key,"transaction_id":transaction_id,"timestamp":timestamp,"expected_files":expected_files,"snapshots":snapshots}),
+            &serde_json::to_vec_pretty(
+                &json!({"key":spec.key,"transaction_id":transaction_id,"timestamp":timestamp,"expected_files":expected_files,"snapshots":snapshots}),
+            )?,
         )?;
-        fs::File::open(staging.path().join("journal.json"))?.sync_all()?;
         fs::rename(staging.path(), path)?;
         Self::load(store, path, spec)
     }
@@ -351,9 +351,20 @@ fn copy_entry(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
         tree_fingerprint(source)?;
         copy_dir_recursive(source, target)?;
     } else {
-        fs::copy(source, target)?;
-        fs::File::open(target)?.sync_all()?;
+        let mut source_file = fs::File::open(source)?;
+        let mut target_file = fs::File::create(target)?;
+        io::copy(&mut source_file, &mut target_file)?;
+        target_file.sync_all()?;
+        fs::set_permissions(target, source_file.metadata()?.permissions())?;
     }
+    Ok(())
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), CapabilitySyncError> {
+    // Windows requires a writable handle when flushing file buffers.
+    let mut file = fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
     Ok(())
 }
 
