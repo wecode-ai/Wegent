@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -9,20 +10,33 @@ from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 
 
+@pytest.mark.parametrize("default_source", ["legacy", "create", "update"])
 def test_default_space_does_not_adopt_an_existing_business_space(
-    test_client: TestClient, test_db: Session, test_token: str
+    test_client: TestClient, test_db: Session, test_token: str, default_source: str
 ) -> None:
     headers = {"Authorization": f"Bearer {test_token}"}
     response = test_client.post(
-        "/api/v1/workspaces", headers=headers, json={"name": "test"}
+        "/api/v1/workspaces",
+        headers=headers,
+        json={"name": "test", "is_default": default_source == "create"},
     )
     assert response.status_code == 201, response.text
     business = response.json()
-    business_kind = test_db.get(Kind, int(business["id"]))
-    legacy = deepcopy(business_kind.json)
-    legacy["spec"]["isDefault"] = True
-    business_kind.json = legacy
-    test_db.commit()
+    assert business["is_system_default"] is False
+    if default_source == "legacy":
+        business_kind = test_db.get(Kind, int(business["id"]))
+        legacy = deepcopy(business_kind.json)
+        legacy["spec"]["isDefault"] = True
+        business_kind.json = legacy
+        test_db.commit()
+    elif default_source == "update":
+        response = test_client.patch(
+            f"/api/v1/workspaces/{business['id']}",
+            headers=headers,
+            json={"is_default": True, "version": business["version"]},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["is_system_default"] is False
 
     projects = []
     for name in ("First default project", "Second default project"):
@@ -68,6 +82,22 @@ def test_default_space_does_not_adopt_an_existing_business_space(
     assert response.status_code == 200, response.text
     response = test_client.post(
         "/api/v1/cloud-projects", headers=headers, json={"name": "After rename"}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["workspace_id"] == default_id
+
+    # A user preference must not replace or erase the system-default identity.
+    response = test_client.get(f"/api/v1/workspaces/{business['id']}", headers=headers)
+    assert response.status_code == 200, response.text
+    response = test_client.patch(
+        f"/api/v1/workspaces/{business['id']}",
+        headers=headers,
+        json={"is_default": True, "version": response.json()["version"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["is_system_default"] is False
+    response = test_client.post(
+        "/api/v1/cloud-projects", headers=headers, json={"name": "After preference"}
     )
     assert response.status_code == 201, response.text
     assert response.json()["workspace_id"] == default_id

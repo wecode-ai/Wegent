@@ -64,7 +64,6 @@ class WorkspaceLifecycleService:
                 namespace=values.namespace,
                 public_id=public_id,
                 is_default=is_default,
-                is_system_default=is_default,
                 created_by_user_id=user_id,
             ),
             is_active=True,
@@ -243,7 +242,6 @@ class WorkspaceLifecycleService:
             name=values.name,
             description=values.description,
             is_default=next_default,
-            is_system_default=values.is_default,
             execution_environment=(
                 preparing_execution_environment(
                     values.execution_environment.model_dump(),
@@ -341,7 +339,6 @@ class WorkspaceLifecycleService:
         name: str | None = None,
         description: str | None = None,
         is_default: bool | None = None,
-        is_system_default: bool | None = None,
         execution_environment: dict | None = None,
         state: str = "active",
     ) -> None:
@@ -356,11 +353,7 @@ class WorkspaceLifecycleService:
             namespace=current.namespace,
             public_id=current.public_id,
             is_default=(is_default if is_default is not None else current.is_default),
-            is_system_default=(
-                is_system_default
-                if is_system_default is not None
-                else current.is_system_default and is_default is not False
-            ),
+            is_system_default=current.is_system_default,
             execution_environment=(
                 execution_environment
                 if execution_environment is not None
