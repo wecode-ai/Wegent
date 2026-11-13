@@ -3079,7 +3079,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         control.setScenario('late_bound_project_space')
         const lateBoundRequestCount =
           control.scenarioRequests.get('late_bound_project_space')?.length ?? 0
-        await sendPrompt(control, composerSelector, LATE_BOUND_PROJECT_SPACE_PROMPT)
+        // Native admission precedes this four-request tool loop. Reuse its
+        // model-request readiness boundary instead of spending the loop budget
+        // on UI submission and native thread initialization.
+        await sendPromptUntilScenarioRequest(
+          control,
+          composerSelector,
+          LATE_BOUND_PROJECT_SPACE_PROMPT,
+          'late_bound_project_space'
+        )
         await control.awaitScenarioRequestCount(
           'late_bound_project_space',
           lateBoundRequestCount + 4

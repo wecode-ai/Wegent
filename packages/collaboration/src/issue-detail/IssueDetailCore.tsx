@@ -4,6 +4,7 @@
 
 import {
   useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type DragEvent,
@@ -170,13 +171,22 @@ function IssueDetailAttachmentPreview({
 }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const imageAttachment = isImageAttachment(attachment);
+  const loadPreviewRef = useRef(loadPreview);
+  const canLoadPreview = Boolean(loadPreview);
 
   useEffect(() => {
-    if (!loadPreview || !imageAttachment) return undefined;
+    loadPreviewRef.current = loadPreview;
+  }, [loadPreview]);
+
+  useEffect(() => {
+    if (!canLoadPreview || !imageAttachment) return undefined;
 
     let active = true;
     let objectUrl: string | null = null;
-    void loadPreview(attachment.id)
+    const loadPreviewForAttachment = loadPreviewRef.current;
+    if (!loadPreviewForAttachment) return undefined;
+    setPreviewUrl(null);
+    void loadPreviewForAttachment(attachment.id)
       .then((blob) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(blob);
@@ -190,7 +200,7 @@ function IssueDetailAttachmentPreview({
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.id, imageAttachment, loadPreview]);
+  }, [attachment.id, canLoadPreview, imageAttachment]);
 
   return previewUrl ? (
     <img
@@ -199,6 +209,7 @@ function IssueDetailAttachmentPreview({
       src={previewUrl}
       alt=""
       loading="lazy"
+      onError={() => setPreviewUrl(null)}
     />
   ) : (
     <span className="issue-detail-attachment-fallback">{fallback}</span>

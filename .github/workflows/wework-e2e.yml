@@ -26,6 +26,9 @@ permissions:
   contents: read
   packages: read
 
+env:
+  WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: ${{ vars.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD || 'false' }}
+
 defaults:
   run:
     shell: bash
@@ -142,6 +145,12 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Require existing E2E images for Fork pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false')
+        run: |
+          echo '::error::A required E2E image is unavailable. Fork pull requests cannot publish organization images.'
+          exit 1
+
       - name: Set up Docker Buildx
         if: steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
@@ -169,7 +178,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish Wework browser E2E image
-        if: steps.browser-image-check.outputs.exists == 'false'
+        if: steps.browser-image-check.outputs.exists == 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -180,7 +189,7 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
 
       - name: Build and publish Wework desktop E2E image
-        if: steps.desktop-image-check.outputs.exists == 'false'
+        if: steps.desktop-image-check.outputs.exists == 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -261,6 +270,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Build shared real object storage for desktop E2E
         if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile')
@@ -384,6 +396,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
@@ -923,6 +938,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
+
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
@@ -1071,6 +1089,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
@@ -1290,7 +1311,7 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design,clipboard-history-image
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi

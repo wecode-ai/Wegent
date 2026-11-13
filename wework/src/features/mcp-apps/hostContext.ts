@@ -4,6 +4,7 @@ import type {
   McpUiStyles,
 } from '@modelcontextprotocol/ext-apps/app-bridge'
 import type { McpAppDescriptor } from '@/api/mcpApps'
+import { appNavigationTargets } from './appNavigation'
 
 export function appDisplayModes(
   descriptor: McpAppDescriptor | null | undefined
@@ -67,5 +68,7 @@ export function appHostContext(
     // The SDK documents every style variable as optional despite its Record type.
     styles: { variables: variables as McpUiStyles },
     toolInfo: descriptor.tool ? { id: callId, tool: descriptor.tool } : undefined,
+    modelContext: descriptor.modelContext,
+    navigationTargets: appNavigationTargets(),
   }
 }

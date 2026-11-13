@@ -246,6 +246,13 @@ impl RuntimeWorkRpcHandler {
             if self.sync_runtime_task_goal_from_notification(task_id, message) {
                 self.journal_active_goal_turn(task_id, self.active_codex_turn(task_id).as_ref());
             }
+            self.cancel_quota_wait_for_goal_change(
+                task_id,
+                notification
+                    .params
+                    .get("goal")
+                    .filter(|goal| !goal.is_null()),
+            );
             let mut changed = false;
             let link = self.store.update_task(task_id, |link| {
                 let Some(mut state) = native_execution_state(link) else {

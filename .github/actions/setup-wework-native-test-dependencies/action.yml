@@ -1,0 +1,14 @@
+name: Prepare Wework native test dependencies
+description: Add isolated keyring and native dialog tools to the existing desktop image
+
+runs:
+  using: composite
+  steps:
+    - name: Install missing native test tools
+      shell: bash
+      run: |
+        source .github/scripts/lib/apt-packages.sh
+        install_missing_apt_packages gnome-keyring libsecret-tools xdotool
+        for binary in dbus-run-session gnome-keyring-daemon gdbus secret-tool xdotool; do
+          command -v "$binary"
+        done

@@ -18,7 +18,6 @@ RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://mirrors.ed
     build-essential \
     ca-certificates \
     curl \
-    dbus \
     file \
     fontconfig \
     fonts-noto-cjk \
@@ -26,7 +25,6 @@ RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://mirrors.ed
     gnupg \
     gh \
     git \
-    gnome-keyring \
     imagemagick \
     libasound2t64 \
     libatk-bridge2.0-0t64 \
@@ -35,12 +33,9 @@ RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://mirrors.ed
     libdrm2 \
     libgbm1 \
     libgtk-3-0t64 \
-    libglib2.0-bin \
     libmagic1 \
     libnss3 \
     librsvg2-dev \
-    libsecret-1-0 \
-    libsecret-tools \
     libssl-dev \
     libwebkit2gtk-4.1-dev \
     libxshmfence1 \
@@ -56,7 +51,6 @@ RUN sed -i -E 's#http://(archive|security)\.ubuntu\.com/ubuntu#http://mirrors.ed
     sqlite3 \
     umoci \
     x11-utils \
-    xdotool \
     xdg-utils \
     xvfb \
     zstd \

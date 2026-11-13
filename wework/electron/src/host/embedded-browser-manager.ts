@@ -25,6 +25,7 @@ import {
 import { BrowserAgentApprovals, type BrowserApprovalDecision } from './browser-agent-approvals.js'
 import { isGeneratedLocalFilePreview, prepareLocalFileNavigation } from './local-file-preview.js'
 import { withDebuggerSession } from './debugger-session.js'
+import { BrowserScriptEvaluator } from './browser-script-evaluator.js'
 import {
   BrowserDeviceMetricsController,
   type BrowserDeviceMetrics,
@@ -72,6 +73,8 @@ interface BrowserEntry {
   historyGeneration: number
   initialNavigation: boolean
   navigationCompletion: Promise<void>
+  pendingLocalNavigation?: symbol
+  scripts: BrowserScriptEvaluator
 }
 
 interface BrowserOpenInput {
@@ -237,14 +240,28 @@ export class EmbeddedBrowserManager {
         return
       }
       event.preventDefault()
-      void this.navigate(entry.label, url).catch(error => {
-        this.recordNavigationFailure(
-          entry,
-          -2,
-          error instanceof Error ? error.message : String(error),
-          url
-        )
-      })
+      const navigation = entry.navigationCompletion
+      const request = Symbol('local-navigation')
+      entry.pendingLocalNavigation = request
+      void entry.scripts
+        .afterActions(async () => {
+          if (
+            this.entries.get(entry.label) !== entry ||
+            entry.navigationCompletion !== navigation ||
+            entry.pendingLocalNavigation !== request
+          )
+            return
+          delete entry.pendingLocalNavigation
+          await this.navigate(entry.label, url)
+        })
+        .catch(error => {
+          this.recordNavigationFailure(
+            entry,
+            -2,
+            error instanceof Error ? error.message : String(error),
+            url
+          )
+        })
     }
     entry.contents.on('will-navigate', handleNavigation)
     entry.contents.on('will-redirect', handleNavigation)
@@ -462,6 +479,7 @@ export class EmbeddedBrowserManager {
       historyGeneration: this.historyGeneration,
       initialNavigation: true,
       navigationCompletion: Promise.resolve(),
+      scripts: new BrowserScriptEvaluator(contents),
     }
     contents.on('before-input-event', (event, input) => {
       const isBareF12 =
@@ -650,18 +668,7 @@ export class EmbeddedBrowserManager {
   ): Promise<unknown> {
     // Hidden guests can execute Electron's script while leaving its isolated-world
     // reply Promise pending. Return the main-world result through Chromium instead.
-    return withDebuggerSession(this.required(label).contents, async target => {
-      const { result, exceptionDetails } = await target.sendCommand('Runtime.evaluate', {
-        expression,
-        returnByValue: true,
-        awaitPromise: options.awaitPromise ?? true,
-        userGesture: true,
-      })
-      if (exceptionDetails) {
-        throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text)
-      }
-      return result.value
-    })
+    return this.required(label).scripts.evaluate(expression, options)
   }
 
   async uploadFiles(

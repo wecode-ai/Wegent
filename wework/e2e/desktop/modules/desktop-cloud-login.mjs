@@ -1,19 +1,6 @@
 import assert from 'node:assert/strict'
-import { posix, win32 } from 'node:path'
-import { commandOutputAsync } from './shared.mjs'
+import { commandOutputAsync, redisCliBinary } from './shared.mjs'
 import { pluginApi, testId, until } from './plugin-regression-fixture.mjs'
-
-export function redisCliBinary(
-  serverBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim(),
-  platform = process.platform
-) {
-  if (!serverBinary) return 'redis-cli'
-  const paths = platform === 'win32' ? win32 : posix
-  return paths.join(
-    paths.dirname(serverBinary),
-    platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'
-  )
-}
 
 export async function disconnectDesktopCloud(control) {
   await control.command('navigate', 'body', { value: '/settings/connections' })

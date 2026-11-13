@@ -95,10 +95,16 @@ export function releaseUpgradeChannels(targetChannel, sourceVersion) {
   return targetChannel === 'stable' ? ['stable', 'beta'] : ['beta']
 }
 
+export function validateReleaseUpgradeTarget(target) {
+  if (compareVersions(target.minSourceVersion, target.version) > 0)
+    throw new Error(
+      `The minimum upgrade source cannot be newer than the target: ${target.minSourceVersion} > ${target.version}`
+    )
+}
+
 /** Select candidates automatically; only real-package E2E may authorize their edges. */
 export function releaseUpgradePlan(catalogs, target, channel) {
-  if (compareVersions(target.minSourceVersion, target.version) > 0)
-    throw new Error('The minimum upgrade source cannot be newer than the target')
+  validateReleaseUpgradeTarget(target)
   const published = catalogs.filter(Boolean).map(validateUpgradeCatalog)
   const selectedCatalogs =
     channel === 'stable' ? published.filter(catalog => catalog.channel === 'stable') : published

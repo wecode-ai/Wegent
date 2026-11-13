@@ -59,6 +59,7 @@ export const HOST_CAPABILITIES = [
   'browser.setBounds',
   'browser.setDeviceMetrics',
   'browser.setZoom',
+  'clipboard.convertImageToPng',
   'clipboard.readWorkspacePaths',
   'clipboard.writeText',
   'isolatedClipboard.activate',
