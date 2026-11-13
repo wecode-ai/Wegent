@@ -486,7 +486,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         if not self._status_updated:
             error_code = kwargs.get("error_code")
             await self._update_status_failed(error, error_code=error_code)
-        if self._terminal_event_deferred:
+        if self._terminal_event_deferred or self._terminal_transition_lost:
             return
         await self._wrapped.emit_error(task_id, subtask_id, error, **kwargs)
 
@@ -668,6 +668,8 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
                 exc_info=True,
             )
+            if self._expected_status is not None and not self._status_updated:
+                raise
             return None
 
     async def _update_status_cancelled(self) -> Optional[Dict[str, Any]]:
