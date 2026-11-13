@@ -237,7 +237,8 @@ impl RuntimeWorkRpcHandler {
         for work in &mut items {
             self.reconcile_connection_dispatch(&store, user, work)?;
             work["task"] = self
-                .local_task_link(work["taskId"].as_str().unwrap_or_default())
+                .store
+                .get_task_summary(work["taskId"].as_str().unwrap_or_default())
                 .map(local_task_json)
                 .unwrap_or(Value::Null);
         }
@@ -689,6 +690,54 @@ mod authorization_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inbox_polling_uses_task_summaries_without_copying_conversation_history() {
+        let root = tempfile::tempdir().unwrap();
+        let handler = RuntimeWorkRpcHandler {
+            store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
+            task_store_path: Arc::new(root.path().join("tasks.sqlite")),
+            ..RuntimeWorkRpcHandler::new("mac", "unused")
+        };
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let work = store
+            .ingest_stand_in_message(
+                7,
+                "review",
+                &json!({"id":"group","kind":"group","profile":"corp:user"}),
+                &json!({"id":"one","text":"Review"}),
+                None,
+            )
+            .unwrap();
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: work["taskId"].as_str().unwrap().to_owned(),
+            title: "Review".into(),
+            runtime_handle: json!({"origin":{"initiatedBy":"stand_in","standInId":"review"},"cloudTranscript":{"transcriptId":"transcript","messages":[{"content":"history".repeat(100_000)}]}}),
+            ..Default::default()
+        });
+        let reads = handler.store.full_task_read_count();
+        let result = handler
+            .list_connection_stand_in_work(json!({"userId":7}))
+            .unwrap();
+        assert_eq!(
+            handler.store.full_task_read_count(),
+            reads,
+            "Polling must not clone the full task history"
+        );
+        assert_eq!(result["items"][0]["task"]["title"], "Review");
+        assert_eq!(
+            result["items"][0]["task"]["runtimeHandle"]["origin"]["standInId"],
+            "review"
+        );
+        assert_eq!(
+            result["items"][0]["task"]["runtimeHandle"]["cloudTranscript"]["transcriptId"],
+            "transcript"
+        );
+        assert!(
+            result.to_string().len() < 8_192,
+            "List response must not grow with conversation length"
+        );
+    }
 
     #[test]
     fn automatic_dispatch_is_limited_to_selected_immutable_records() {

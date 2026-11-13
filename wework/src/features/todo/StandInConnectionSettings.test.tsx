@@ -196,7 +196,7 @@ it('shows pending connection changes until the saved configuration catches up', 
   const view = render(
     <StandInConnectionSettings {...props} role={role} savedConfiguration={savedConfiguration} />
   )
-  expect(screen.getByTestId('stand-in-connections-pending')).toHaveTextContent('保存分身设置后生效')
+  expect(screen.getByTestId('stand-in-connections-pending')).toHaveTextContent('保存助理设置后生效')
   view.rerender(<StandInConnectionSettings {...props} role={role} savedConfiguration={role} />)
   expect(screen.queryByTestId('stand-in-connections-pending')).not.toBeInTheDocument()
 })
@@ -242,7 +242,7 @@ it('allows preparing the all-project scope before joining a project without a mi
   render(<StandInConnectionSettings {...props} role={role} />)
   await user.click(screen.getByTestId('stand-in-add-projects-connection'))
   expect(screen.getByText('目前没有可选项目，之后加入的项目会自动纳入此范围。')).toBeVisible()
-  expect(screen.queryByText('先创建或加入一个项目，再配置分身。')).not.toBeInTheDocument()
+  expect(screen.queryByText('先创建或加入一个项目，再配置助理。')).not.toBeInTheDocument()
 })
 
 it.each([true, false])(

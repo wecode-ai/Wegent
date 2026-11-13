@@ -1049,12 +1049,7 @@ impl CodexAppServerClient {
 
     async fn mark_thread_active_under_admission(&self, thread_id: &str) {
         let mut state = self.state.lock().await;
-        let generation = state.next_thread_generation;
-        state.next_thread_generation += 1;
-        state
-            .thread_generations
-            .insert(thread_id.to_owned(), generation);
-        state.idle_thread_generations.remove(thread_id);
+        state.renew_thread_generation(thread_id);
         *state
             .active_threads
             .entry(thread_id.to_owned())

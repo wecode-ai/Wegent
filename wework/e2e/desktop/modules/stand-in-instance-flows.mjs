@@ -16,8 +16,12 @@ export async function finishStandInOnboarding(control) {
 }
 
 export async function stopBoundStandIn(control, timeoutMs) {
-  if ((await control.command('getElementCount', testId('stand-in-instance-stop'))) === '0')
+  if ((await control.command('getElementCount', testId('stand-in-instance-stop'))) === '0') {
+    if (Number(await control.command('getElementCount', testId('stand-in-close'))) > 0)
+      await control.command('clickWhenEnabled', testId('stand-in-close'))
+    await control.command('clickWhenEnabled', testId('stand-in-primary-open'))
     await openStandInSettings(control)
+  }
   await control.command('clickWhenEnabled', testId('stand-in-instance-stop'))
   await control.command('clickWhenEnabled', testId('stand-in-instance-stop-confirm'))
   await control.command('waitFor', testId('stand-in-instance-stopped'))

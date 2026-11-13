@@ -4,10 +4,16 @@
 
 import {
   useCallback,
+  createContext,
+  createElement,
+  useContext,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type SetStateAction,
+  type ReactNode,
 } from "react";
 
 import type { CollaborationPriority } from "../types";
@@ -21,6 +27,7 @@ export type IssueAssigneeTarget =
   | `team:${number}`;
 
 export interface IssueDetailDraftSource<TWorkflow = unknown> {
+  cloud_project_id?: string | number;
   id: string;
   version: number;
   title: string;
@@ -66,6 +73,31 @@ export interface IssueDetailDraftOptions<TWorkflow = unknown> {
   normalizeDescription?: (description: string) => string;
   startDateFromSource?: (startAt: string | null) => string;
   dueDateFromSource?: (dueAt: string | null) => string;
+}
+
+type CachedIssueDraft = {
+  source: IssueDetailDraftSource;
+  draft: IssueDetailDraftValue;
+};
+const IssueDraftCacheContext = createContext<Map<
+  string,
+  CachedIssueDraft
+> | null>(null);
+
+/** Keep draft data without keeping inactive editors, subscriptions or requests mounted. */
+export function IssueDetailDraftProvider({
+  scope,
+  children,
+}: {
+  scope: unknown;
+  children: ReactNode;
+}) {
+  const cache = useMemo(() => new Map<string, CachedIssueDraft>(), [scope]);
+  return createElement(
+    IssueDraftCacheContext.Provider,
+    { value: cache },
+    children,
+  );
 }
 
 export function issueAssigneeTarget(
@@ -142,6 +174,19 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
   startDateFromSource = defaultDueDate,
   dueDateFromSource = defaultDueDate,
 }: IssueDetailDraftOptions<TWorkflow>) {
+  const cache = useContext(IssueDraftCacheContext);
+  const cacheKey = source
+    ? JSON.stringify([source.cloud_project_id ?? null, source.id])
+    : null;
+  const cached = cacheKey ? cache?.get(cacheKey) : undefined;
+  const [restoredContentDirty] = useState(() =>
+    Boolean(
+      cached &&
+      (cached.draft.title !== cached.source.title ||
+        cached.draft.description !==
+          normalizeDescription(cached.source.description ?? "")),
+    ),
+  );
   const initialValue: IssueDetailDraftValue<TWorkflow> = {
     title: initial.title,
     description: initial.description,
@@ -155,18 +200,43 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
     workflow: initial.workflow ?? null,
   };
   const [draft, setDraft] = useState<IssueDetailDraftValue<TWorkflow>>(() =>
-    source
-      ? draftFromSource(
-          source,
-          normalizeDescription,
-          startDateFromSource,
-          dueDateFromSource,
-        )
-      : initialValue,
+    cached
+      ? (cached.draft as IssueDetailDraftValue<TWorkflow>)
+      : source
+        ? draftFromSource(
+            source,
+            normalizeDescription,
+            startDateFromSource,
+            dueDateFromSource,
+          )
+        : initialValue,
   );
   const syncedSourceRef = useRef<IssueDetailDraftSource<TWorkflow> | null>(
-    source,
+    (cached?.source as IssueDetailDraftSource<TWorkflow> | undefined) ?? source,
   );
+
+  useLayoutEffect(() => {
+    if (source && cacheKey && cache) {
+      const baseline = syncedSourceRef.current ?? source;
+      const clean = draftFromSource(
+        baseline,
+        normalizeDescription,
+        startDateFromSource,
+        dueDateFromSource,
+      );
+      if (JSON.stringify(clean) === JSON.stringify(draft))
+        cache.delete(cacheKey);
+      else cache.set(cacheKey, { source: baseline, draft });
+    }
+  }, [
+    cache,
+    cacheKey,
+    source,
+    draft,
+    normalizeDescription,
+    startDateFromSource,
+    dueDateFromSource,
+  ]);
 
   useEffect(() => {
     if (!source) return;
@@ -274,7 +344,7 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
     [],
   );
 
-  return { draft, setDraft, setField, dirty };
+  return { draft, setDraft, setField, dirty, restoredContentDirty };
 }
 
 export interface PersistIssueDetailDraftPort<TIssue> {
