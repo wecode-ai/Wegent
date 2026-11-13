@@ -141,6 +141,10 @@ impl RuntimeWorkRpcHandler {
             if !reserved && !self.is_active_local_task(&task) && (removed || queue_cancelled) {
                 self.finish_queue_run(
                     &task,
+                    &self
+                        .local_task_link(&task)
+                        .map(|link| runtime_event_request_from_link(&link))
+                        .unwrap_or_default(),
                     AutomationRunStatus::Cancelled,
                     Some("Project coordination was cancelled before Native execution".into()),
                     None,

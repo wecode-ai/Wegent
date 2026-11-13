@@ -1975,6 +1975,10 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
+        if let Some(failure) = self.guidance_conversation_context_failure(&local_task_id, &payload)
+        {
+            return Ok(failure);
+        }
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
@@ -2010,6 +2014,11 @@ impl RuntimeWorkRpcHandler {
                         &turn_id,
                         error,
                     ));
+                }
+                if let Some(failure) =
+                    self.guidance_conversation_context_failure(&local_task_id, &payload)
+                {
+                    return Ok(failure);
                 }
                 log_executor_event(
                     "runtime guidance active turn corrected",
@@ -2061,6 +2070,17 @@ impl RuntimeWorkRpcHandler {
                 error,
             )),
         }
+    }
+
+    fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {
+        let private = self.runtime_task_is_private_discussion(task);
+        (private != (payload["conversationContext"] == "private_discussion")).then(|| {
+            json!({
+                "success":false,"accepted":false,"taskId":task,"runtime":"codex",
+                "code":"conversation_context_mismatch",
+                "error":"This message has a different conversation context from the active turn. Queue it or interrupt to start a new turn."
+            })
+        })
     }
 
     pub(super) async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {

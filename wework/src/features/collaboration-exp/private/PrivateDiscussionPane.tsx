@@ -187,6 +187,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                 beginSubmission: discussionDraft.beginSubmission,
               }}
               sendEphemeral={false}
+              runtimeContext={{ conversationContext: 'private_discussion' }}
               nativeConversation
               coordinateUserInput
               active={active}

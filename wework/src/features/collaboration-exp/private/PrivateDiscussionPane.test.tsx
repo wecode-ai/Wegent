@@ -101,6 +101,7 @@ describe('private discussion pane', () => {
       expect.objectContaining({
         historySource: { turnId: 'turn-1', userMessageIds: ['native-user-1'] },
         controlledAddress: { deviceId: 'device-1', taskId: 'task-1' },
+        runtimeContext: { conversationContext: 'private_discussion' },
       })
     )
     fireEvent.click(screen.getByTestId('collaboration-exp-private-close'))

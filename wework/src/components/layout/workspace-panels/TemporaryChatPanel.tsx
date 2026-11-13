@@ -128,7 +128,10 @@ interface TemporaryChatPanelProps {
     options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
-  runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+  runtimeContext?: Pick<
+    RuntimeSendRequest,
+    'cloudProjectId' | 'origin' | 'additionalContext' | 'conversationContext'
+  >
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
@@ -835,13 +838,16 @@ export function TemporaryChatPanel({
         return sendRuntimePaneGuidance({
           address,
           message: request.message,
+          ...(runtimeContext?.conversationContext
+            ? { conversationContext: runtimeContext.conversationContext }
+            : {}),
           clientGuidanceId: message.id,
           ...(request.attachmentIds ? { attachmentIds: request.attachmentIds } : {}),
           ...(request.attachments ? { attachments: request.attachments } : {}),
         })
       },
     }),
-    [address, lifecycleStore, sendConversationMessage, sendRuntimePaneGuidance, t]
+    [address, lifecycleStore, runtimeContext, sendConversationMessage, sendRuntimePaneGuidance, t]
   )
 
   useEffect(() => {
@@ -903,6 +909,9 @@ export function TemporaryChatPanel({
             ? await sendRuntimePaneGuidance({
                 address,
                 message,
+                ...(runtimeContext?.conversationContext
+                  ? { conversationContext: runtimeContext.conversationContext }
+                  : {}),
                 clientGuidanceId: queuedMessage.id,
                 attachments: localRuntimeAttachments(currentAttachments),
                 attachmentIds: remoteAttachmentIds(currentAttachments),

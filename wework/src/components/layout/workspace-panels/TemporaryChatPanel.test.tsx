@@ -760,6 +760,21 @@ describe('TemporaryChatPanel', () => {
     { preference: 'queue', action: 'guide-current-turn-option', delivery: 'guide' },
     { preference: 'guide', action: 'send-after-turn-option', delivery: 'send' },
     { preference: 'queue', action: 'interrupt-and-send-option', delivery: 'interrupt' },
+    { preference: 'queue', action: 'primary', delivery: 'send', private: true },
+    { preference: 'guide', action: 'primary', delivery: 'guide', private: true },
+    {
+      preference: 'queue',
+      action: 'interrupt-and-send-option',
+      delivery: 'interrupt',
+      private: true,
+    },
+    {
+      preference: 'guide',
+      action: 'primary',
+      delivery: 'guide',
+      private: true,
+      rejection: 'conversation_context_mismatch',
+    },
     {
       preference: 'guide',
       action: 'primary',
@@ -777,6 +792,7 @@ describe('TemporaryChatPanel', () => {
     async entry => {
       const { preference, action, delivery } = entry
       const rejection = 'rejection' in entry ? entry.rejection : null
+      const privateDiscussion = 'private' in entry && entry.private
       mocks.realComposer = true
       mocks.busy = true
       mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
@@ -809,6 +825,9 @@ describe('TemporaryChatPanel', () => {
               initialInput="Progress follow-up"
               instanceId={`native-${preference}-${action}`}
               nativeConversation
+              {...(privateDiscussion
+                ? { runtimeContext: { conversationContext: 'private_discussion' as const } }
+                : {})}
             />
           </WorkbenchContext.Provider>
         </I18nextProvider>
@@ -830,6 +849,7 @@ describe('TemporaryChatPanel', () => {
         address: nativeAddress,
         message: 'Progress follow-up',
         ...(delivery === 'send' ? { queueIfBusy: true } : {}),
+        ...(privateDiscussion ? { conversationContext: 'private_discussion' } : {}),
       })
       expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(delivery === 'send' ? 1 : 0)
       expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledTimes(delivery === 'guide' ? 1 : 0)

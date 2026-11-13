@@ -406,6 +406,23 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn project_runtime_link_status_at(&self, link: &RuntimeTaskLink, observed_at_ms: i64) {
+        let queued_private = (!link.running
+            && matches!(link.status.as_str(), "queued" | "pending"))
+        .then(|| {
+            self.turn_scheduler
+                .lock()
+                .expect("runtime turn scheduler poisoned")
+                .queued_turns
+                .iter()
+                .find(|turn| turn.local_task_id == link.local_task_id)
+                .map(|turn| super::super::util::is_private_discussion(&turn.request))
+        })
+        .flatten();
+        if queued_private.unwrap_or_else(|| {
+            super::super::util::is_private_discussion(&runtime_event_request_from_link(link))
+        }) {
+            return;
+        }
         let execution_status = if link.status == "archived" {
             Some("archived")
         } else if link.running || link.status == "running" {
@@ -425,7 +442,21 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn project_queue_progress(&self, local_task_id: &str, content: &str) {
+    pub(super) fn runtime_task_is_private_discussion(&self, local_task_id: &str) -> bool {
+        self.store.read_task(local_task_id, |link| {
+            super::super::util::is_private_discussion(&runtime_event_request_from_link(link))
+        }) == Some(true)
+    }
+
+    pub(super) fn project_queue_progress(
+        &self,
+        local_task_id: &str,
+        content: &str,
+        private_discussion: bool,
+    ) {
+        if private_discussion {
+            return;
+        }
         if self.store.read_task(local_task_id, |link| {
             link.runtime_handle["origin"]["projectStore"] == "local"
         }) != Some(true)
@@ -445,7 +476,10 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn start_queue_run(&self, local_task_id: &str) {
+    pub(super) fn start_queue_run(&self, local_task_id: &str, request: &ExecutionRequest) {
+        if super::super::util::is_private_discussion(request) {
+            return;
+        }
         if let Err(error) = LocalTaskStore::open(self.task_store_path.as_ref())
             .and_then(|store| store.mark_runtime_running(local_task_id))
         {
@@ -467,10 +501,14 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn finish_queue_run(
         &self,
         local_task_id: &str,
+        request: &ExecutionRequest,
         status: AutomationRunStatus,
         error: Option<String>,
         result_content: Option<String>,
     ) {
+        if super::super::util::is_private_discussion(request) {
+            return;
+        }
         let result = (|| {
             let store = LocalTaskStore::open(self.task_store_path.as_ref())?;
             let result_text = result_content.unwrap_or_default();

@@ -3279,6 +3279,13 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
 
+        from app.services.runtime_event_context import (
+            runtime_event_is_private_discussion,
+        )
+
+        if runtime_event_is_private_discussion(payload):
+            return None
+
         # Thread metadata, Goal and lifecycle notifications can retain the
         # previous request's turn identity while a continuation starts. Per-turn
         # response events establish the execution binding and renew its lease.
