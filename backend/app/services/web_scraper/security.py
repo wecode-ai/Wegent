@@ -4,10 +4,12 @@
 
 """URL safety guard for web scraping."""
 
+import re
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
 from app.services.url_metadata import _validate_url_for_ssrf
 from app.services.web_scraper.models import ERROR_INVALID_URL, ERROR_SSRF_BLOCKED
+from shared.utils.sensitive_data_masker import mask_string
 
 
 class WebScraperSecurityError(Exception):
@@ -109,3 +111,17 @@ def redact_url_for_logging(url: str) -> str:
     query = "<redacted>" if parsed.query else ""
     fragment = "<redacted>" if parsed.fragment else ""
     return urlunparse((parsed.scheme, netloc, parsed.path, "", query, fragment))
+
+
+def redact_scraper_text(text: str) -> str:
+    """Redact URLs embedded in third-party messages before any output sink."""
+
+    def redact(match: re.Match[str]) -> str:
+        try:
+            return redact_url_for_logging(match.group())
+        except ValueError:
+            return "<invalid-url>"
+
+    return mask_string(
+        re.sub(r"(?:https?|wss?)://[^\s\"'`]+", redact, text, flags=re.IGNORECASE)
+    )

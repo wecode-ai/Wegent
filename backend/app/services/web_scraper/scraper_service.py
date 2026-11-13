@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import traceback
 from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -43,6 +44,7 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_scraper_text,
     redact_url_for_logging,
 )
 from app.services.web_scraper.strategies.crawl4ai_strategy import Crawl4AIScrapeStrategy
@@ -147,6 +149,8 @@ class WebScraperService:
 
             from crawl4ai import AsyncWebCrawler, BrowserConfig
 
+            from app.services.web_scraper.crawler_logging import RedactingCrawlerLogger
+
             browser_config = BrowserConfig(
                 headless=True,
                 browser_type="chromium",
@@ -154,7 +158,9 @@ class WebScraperService:
                 use_managed_browser=True,
                 extra_args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
-            crawler = AsyncWebCrawler(config=browser_config)
+            crawler = AsyncWebCrawler(
+                config=browser_config, logger=RedactingCrawlerLogger()
+            )
             configure_crawler_security(crawler, self._guard)
             try:
                 await crawler.start()
@@ -186,9 +192,16 @@ class WebScraperService:
         except WebScraperSecurityError as exc:
             return self._error_result(url, exc.error_code, exc.message)
         except Exception as exc:
-            logger.exception("Web scraping failed for %s", redact_url_for_logging(url))
+            logger.error(
+                "Web scraping failed for %s (%s): %s",
+                redact_url_for_logging(url),
+                type(exc).__name__,
+                redact_scraper_text("".join(traceback.format_exception(exc))),
+            )
             return self._error_result(
-                url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(exc)}"
+                url,
+                ERROR_FETCH_FAILED,
+                f"Failed to scrape page: {redact_scraper_text(str(exc))}",
             )
 
     async def _scrape_url_impl(self, url: str) -> ScrapedContent:
@@ -276,7 +289,7 @@ class WebScraperService:
             logger.warning(
                 "Failed to resolve scrape timeout for %s; using default: %s",
                 redact_url_for_logging(url),
-                exc,
+                redact_scraper_text(str(exc)),
             )
             return DEFAULT_TOTAL_TIMEOUT_SECONDS
 
@@ -319,7 +332,7 @@ class WebScraperService:
             content_length=0,
             success=False,
             error_code=error_code,
-            error_message=error_message,
+            error_message=redact_scraper_text(error_message),
         )
 
     async def close(self) -> None:

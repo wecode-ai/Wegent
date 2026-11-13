@@ -25,6 +25,7 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_scraper_text,
     redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
@@ -202,9 +203,13 @@ class Crawl4AIScrapeStrategy:
             )
         except Exception as exc:
             logger.warning(
-                "Crawl4AI scrape failed for %s: %s", redact_url_for_logging(url), exc
+                "Crawl4AI scrape failed for %s: %s",
+                redact_url_for_logging(url),
+                redact_scraper_text(str(exc)),
             )
-            return InternalScrapeResult(url=url, success=False, error_message=str(exc))
+            return InternalScrapeResult(
+                url=url, success=False, error_message=redact_scraper_text(str(exc))
+            )
 
     async def _validate_redirect_chain(
         self,
@@ -286,6 +291,7 @@ class Crawl4AIScrapeStrategy:
             or original_url
         )
         guard.validate_final_url(original_url, final_url)
+        error_message = getattr(result, "error_message", None)
 
         return InternalScrapeResult(
             url=original_url,
@@ -296,7 +302,7 @@ class Crawl4AIScrapeStrategy:
             content_type=self._get_content_type(headers),
             status_code=getattr(result, "status_code", None),
             success=bool(getattr(result, "success", False)),
-            error_message=getattr(result, "error_message", None),
+            error_message=redact_scraper_text(error_message) if error_message else None,
             response_headers=headers,
             extraction_method="crawl4ai",
             quality_level="structured",

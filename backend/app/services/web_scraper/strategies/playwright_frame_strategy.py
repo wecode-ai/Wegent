@@ -22,6 +22,7 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_scraper_text,
     redact_url_for_logging,
 )
 
@@ -80,7 +81,9 @@ class PlaywrightFrameExtractionStrategy:
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
-            return InternalScrapeResult(url=url, success=False, error_message=str(exc))
+            return InternalScrapeResult(
+                url=url, success=False, error_message=redact_scraper_text(str(exc))
+            )
 
         attempted_method = "playwright_html"
         try:
@@ -102,9 +105,11 @@ class PlaywrightFrameExtractionStrategy:
             logger.warning(
                 "Playwright frame extraction failed for %s: %s",
                 redact_url_for_logging(url),
-                exc,
+                redact_scraper_text(str(exc)),
             )
-            return InternalScrapeResult(url=url, success=False, error_message=str(exc))
+            return InternalScrapeResult(
+                url=url, success=False, error_message=redact_scraper_text(str(exc))
+            )
 
     async def _scrape_with_proxy_plan(
         self,

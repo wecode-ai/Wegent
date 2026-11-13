@@ -15,6 +15,7 @@ from app.services.web_scraper.proxy import ProxyPlan
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    redact_scraper_text,
     redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
@@ -84,7 +85,7 @@ class PdfExtractor:
                 url=pdf_url,
                 final_url=str(exc.response.url),
                 success=False,
-                error_message=str(exc),
+                error_message=redact_scraper_text(str(exc)),
                 content_type=exc.response.headers.get("content-type"),
                 status_code=exc.response.status_code,
                 extraction_method="pdf",
@@ -94,7 +95,7 @@ class PdfExtractor:
             return InternalScrapeResult(
                 url=pdf_url,
                 success=False,
-                error_message=str(exc),
+                error_message=redact_scraper_text(str(exc)),
                 extraction_method="pdf",
                 quality_level="degraded",
             )
@@ -102,12 +103,12 @@ class PdfExtractor:
             logger.warning(
                 "Failed to extract PDF content from %s: %s",
                 redact_url_for_logging(pdf_url),
-                exc,
+                redact_scraper_text(str(exc)),
             )
             return InternalScrapeResult(
                 url=pdf_url,
                 success=False,
-                error_message=str(exc),
+                error_message=redact_scraper_text(str(exc)),
                 extraction_method="pdf",
                 quality_level="degraded",
             )
