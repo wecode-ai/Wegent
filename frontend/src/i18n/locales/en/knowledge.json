@@ -1021,6 +1021,7 @@
       "searchLibraryFilters": "Search space names or identifiers",
       "noMatchingFilters": "No matching filters",
       "typeAndSort": "Type and sort",
+      "allOrganizations": "All organizations",
       "companySpace": "Company space",
       "manageTeams": "Manage teams"
     },

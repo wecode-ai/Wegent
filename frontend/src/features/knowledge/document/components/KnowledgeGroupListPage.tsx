@@ -14,7 +14,14 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER, getListedPermission } from '../navigation'
+import {
+  COMPANY_SPACE_FILTER,
+  PERSONAL_SPACE_FILTER,
+  ORGANIZATION_SPACE_FILTER,
+  UNKNOWN_SPACE_FILTER,
+  matchesKnowledgeOwnershipFilter,
+  getListedPermission,
+} from '../navigation'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
@@ -177,15 +184,6 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
   }
 }
 
-function matchesSpaceFilter(kb: KbDataItem, spaceId: string): boolean {
-  const level = 'namespace_level' in kb ? kb.namespace_level : null
-  if (spaceId === COMPANY_SPACE_FILTER) return level === 'organization'
-  if (spaceId === PERSONAL_SPACE_FILTER) {
-    return level ? level === 'personal' : kb.namespace === 'default'
-  }
-  return (!level || level === 'group') && kb.namespace === spaceId.replace(/^group-/, '')
-}
-
 export function KnowledgeGroupListPage({
   mobile = false,
   onViewPermissions,
@@ -332,13 +330,16 @@ export function KnowledgeGroupListPage({
     () =>
       (availableGroups ?? []).map(group => ({
         ...group,
-        kbCount: candidateKbs.filter(kb => matchesSpaceFilter(kb, group.id)).length,
+        kbCount: candidateKbs.filter(kb => matchesKnowledgeOwnershipFilter(kb, group.id)).length,
       })),
     [availableGroups, candidateKbs]
   )
 
   const filteredKbs = useMemo(
-    () => sortKbs(candidateKbs.filter(kb => !spaceFilter || matchesSpaceFilter(kb, spaceFilter))),
+    () =>
+      sortKbs(
+        candidateKbs.filter(kb => !spaceFilter || matchesKnowledgeOwnershipFilter(kb, spaceFilter))
+      ),
     [candidateKbs, spaceFilter, sortKbs]
   )
   const hasActiveFilters = Boolean(searchQuery || category !== 'all' || spaceFilter)
@@ -790,11 +791,25 @@ export function KnowledgeGroupListPage({
               <KnowledgeLibraryFilter
                 groups={filterGroups}
                 personalCount={
-                  candidateKbs.filter(kb => matchesSpaceFilter(kb, PERSONAL_SPACE_FILTER)).length
+                  candidateKbs.filter(kb =>
+                    matchesKnowledgeOwnershipFilter(kb, PERSONAL_SPACE_FILTER)
+                  ).length
+                }
+                organizationCount={
+                  candidateKbs.filter(kb =>
+                    matchesKnowledgeOwnershipFilter(kb, ORGANIZATION_SPACE_FILTER)
+                  ).length
+                }
+                unknownCount={
+                  candidateKbs.filter(kb =>
+                    matchesKnowledgeOwnershipFilter(kb, UNKNOWN_SPACE_FILTER)
+                  ).length
                 }
                 companyCount={
                   showCompanySpace
-                    ? candidateKbs.filter(kb => matchesSpaceFilter(kb, COMPANY_SPACE_FILTER)).length
+                    ? candidateKbs.filter(kb =>
+                        matchesKnowledgeOwnershipFilter(kb, COMPANY_SPACE_FILTER)
+                      ).length
                     : undefined
                 }
                 value={spaceFilter ?? null}

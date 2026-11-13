@@ -16,7 +16,12 @@ import {
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
-import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER } from '../navigation'
+import {
+  COMPANY_SPACE_FILTER,
+  PERSONAL_SPACE_FILTER,
+  ORGANIZATION_SPACE_FILTER,
+  UNKNOWN_SPACE_FILTER,
+} from '../navigation'
 
 export interface KnowledgeTeamOption {
   id: string
@@ -28,14 +33,18 @@ export interface KnowledgeTeamOption {
 export function KnowledgeLibraryFilter({
   groups,
   personalCount,
+  organizationCount,
   companyCount,
+  unknownCount,
   value,
   onValueChange,
   mobile,
 }: {
   groups: KnowledgeTeamOption[]
   personalCount: number
+  organizationCount: number
   companyCount?: number
+  unknownCount: number
   value: string | null
   onValueChange: (value: string | null) => void
   mobile: boolean
@@ -53,6 +62,12 @@ export function KnowledgeLibraryFilter({
       displayName: t('document.navigation.personalSpace'),
       kbCount: personalCount,
     },
+    {
+      id: ORGANIZATION_SPACE_FILTER,
+      key: 'organization',
+      displayName: t('document.navigation.allOrganizations'),
+      kbCount: organizationCount,
+    },
     ...(companyCount === undefined
       ? []
       : [
@@ -63,6 +78,12 @@ export function KnowledgeLibraryFilter({
             kbCount: companyCount,
           },
         ]),
+    {
+      id: UNKNOWN_SPACE_FILTER,
+      key: 'unknown',
+      displayName: t('document.navigation.unknownSpace'),
+      kbCount: unknownCount,
+    },
   ]
   const selected = [...spaces, ...groups].find(option => option.id === value)
   const anyScope = t('document.navigation.anyScope')

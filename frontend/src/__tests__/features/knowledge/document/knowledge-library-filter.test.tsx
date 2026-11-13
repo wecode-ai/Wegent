@@ -30,6 +30,8 @@ it('shows nonempty teams by default and finds empty teams by name or identifier'
       <KnowledgeLibraryFilter
         mobile
         personalCount={1}
+        organizationCount={0}
+        unknownCount={0}
         groups={groups}
         value={value}
         onValueChange={next => {
@@ -66,7 +68,14 @@ it('shows nonempty teams by default and finds empty teams by name or identifier'
 })
 
 it('shows a local empty search state and updates counts when the supplied data changes', async () => {
-  const props = { personalCount: 0, mobile: false, value: null, onValueChange: jest.fn() }
+  const props = {
+    personalCount: 0,
+    organizationCount: 0,
+    unknownCount: 0,
+    mobile: false,
+    value: null,
+    onValueChange: jest.fn(),
+  }
   const { rerender } = render(<KnowledgeLibraryFilter {...props} groups={groups} />)
   const user = userEvent.setup()
   await user.click(screen.getByTestId('knowledge-team-filter'))
@@ -93,6 +102,8 @@ it('selects personal space with its count, including zero, and clears the filter
       <KnowledgeLibraryFilter
         groups={groups}
         personalCount={0}
+        organizationCount={0}
+        unknownCount={0}
         value={value}
         mobile={false}
         onValueChange={next => {
@@ -130,6 +141,8 @@ it.each(['', 'missing'])(
       <KnowledgeLibraryFilter
         groups={[]}
         personalCount={0}
+        organizationCount={0}
+        unknownCount={0}
         value={null}
         mobile
         onValueChange={changed}
@@ -153,6 +166,8 @@ it('returns focus to the filter on Escape without navigating', async () => {
     <KnowledgeLibraryFilter
       groups={groups}
       personalCount={1}
+      organizationCount={0}
+      unknownCount={0}
       value="group-core"
       mobile
       onValueChange={jest.fn()}
@@ -163,4 +178,32 @@ it('returns focus to the filter on Escape without navigating', async () => {
   await user.keyboard('{Escape}')
   await waitFor(() => expect(screen.getByTestId('knowledge-team-filter')).toHaveFocus())
   expect(mockPush).not.toHaveBeenCalled()
+})
+
+it('keeps aggregate ownership options searchable and selectable alongside concrete organizations', async () => {
+  const changed = jest.fn()
+  render(
+    <KnowledgeLibraryFilter
+      groups={groups}
+      personalCount={1}
+      organizationCount={2}
+      companyCount={3}
+      unknownCount={4}
+      value={null}
+      mobile
+      onValueChange={changed}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-organization')).toHaveTextContent('2')
+  expect(screen.getByTestId('knowledge-space-count-unknown')).toHaveTextContent('4')
+  await user.type(screen.getByTestId('knowledge-team-search'), 'allOrganizations')
+  expect(screen.queryByTestId('knowledge-team-option-group-core')).not.toBeInTheDocument()
+  await user.keyboard('{ArrowDown}{Enter}')
+  expect(changed).toHaveBeenLastCalledWith('space:organization')
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.type(screen.getByTestId('knowledge-team-search'), 'unknownSpace')
+  await user.click(screen.getByTestId('knowledge-space-option-unknown'))
+  expect(changed).toHaveBeenLastCalledWith('space:unknown')
 })
