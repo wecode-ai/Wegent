@@ -28,6 +28,18 @@ describe('runtime interaction evidence', () => {
 
   it('rejects incomplete evidence instead of accepting legacy messages', () => {
     expect(() => runtimeTranscriptBlocks({ messages: [] })).toThrow('native turns')
-    expect(() => runtimeTranscriptBlocks({ turns: [], messages: [] })).toThrow('runtime overlays')
+    expect(() => runtimeTranscriptBlocks({ turns: [], runtimeTurns: {} })).toThrow(
+      'runtime overlays'
+    )
+  })
+
+  it.each([undefined, null, []])('reads native turns with optional overlays %j', runtimeTurns => {
+    const question = block('turn-1', 'pending')
+    expect(
+      runtimeTranscriptBlocks({
+        turns: [{ id: 'turn-1', items: [question] }],
+        ...(runtimeTurns !== undefined ? { runtimeTurns } : {}),
+      })
+    ).toEqual([question.block])
   })
 })
