@@ -5,7 +5,7 @@
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use brz_mysql::{Json, Mysql, MysqlTransaction};
+use brz_mysql::{Json, MysqlTransaction};
 use brz_redis::{Redis, RedisService};
 use serde_json::Value;
 use tokio::task::JoinSet;
