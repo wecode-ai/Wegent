@@ -9,6 +9,26 @@ from typing import Any
 CONTROL_METHODS = {"callback", "disconnect", "enter_room", "leave_room", "close_room"}
 
 
+def publish_callback_probe(case: Any) -> None:
+    """Keep a real unrelated ACK on the shared channel before business events."""
+    case.assertGreater(
+        case.redis.publish(
+            "socketio",
+            json.dumps(
+                {
+                    "method": "callback",
+                    "host_id": case.marker,
+                    "sid": case.marker,
+                    "namespace": "/",
+                    "id": 1,
+                    "args": [],
+                }
+            ),
+        ),
+        0,
+    )
+
+
 def intermediate_frame(
     frame: object, *, task_id: int, user_id: int
 ) -> tuple[str, dict[str, Any]] | None:

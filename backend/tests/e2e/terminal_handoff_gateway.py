@@ -32,6 +32,7 @@ from app.models.user import User
 from tests.e2e.terminal_handoff_frames import (
     assert_intermediate_frames,
     assert_recovered_terminal_frames,
+    publish_callback_probe,
 )
 
 T = TypeVar("T")
@@ -427,22 +428,7 @@ class TerminalHandoffGateway(unittest.TestCase):
         self._wait_for(lambda: socket_messages.get_message(timeout=0.1))
         if rust:
             # The shared channel also carries ACK probes unrelated to this task.
-            self.assertGreater(
-                self.redis.publish(
-                    "socketio",
-                    json.dumps(
-                        {
-                            "method": "callback",
-                            "host_id": self.marker,
-                            "sid": self.marker,
-                            "namespace": "/",
-                            "id": 1,
-                            "args": [],
-                        }
-                    ),
-                ),
-                0,
-            )
+            publish_callback_probe(self)
 
         with self._reject_handoff_write(task_id):
             self._callback(task_id, subtask_id, answer, rust=rust, fail=True)
