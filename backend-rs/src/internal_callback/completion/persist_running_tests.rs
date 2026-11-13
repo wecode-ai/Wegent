@@ -153,6 +153,16 @@ fn the_running_transition_statements_keep_the_recorded_order_and_predicates() {
     );
 }
 
+#[test]
+fn the_dispatch_claim_checks_both_states_in_the_update() {
+    let claim = normalize(&super::sql::claim_running_subtask(tables()));
+    assert!(claim.contains("s.id = ? AND s.status IN ('PENDING', 'RUNNING')"));
+    assert!(claim.contains("t.id = s.task_id AND t.is_active IN (1, 2)"));
+    assert!(claim.contains(
+        "JSON_UNQUOTE(JSON_EXTRACT(t.json, '$.status.status')) IN ('PENDING', 'RUNNING')"
+    ));
+}
+
 /// The RUNNING transition's first statement is the subtask read by primary key
 /// against the routed shard table, with the ORM's labeled full projection and
 /// `LIMIT 1`. The prepared statement reaches the server before any status
@@ -183,7 +193,7 @@ async fn the_running_transition_reads_the_subtask_from_its_shard_first() {
         // The fake server answers prepared statements with a SQL error, so the
         // read fails and the transition stops before the contexts read and the
         // status write.
-        mark_subtask_running(&ctx, 801_406_538_674_542).await;
+        assert!(!mark_subtask_running(&ctx, 801_406_538_674_542, false).await);
 
         stop.send(()).unwrap();
         let queries = server.await.unwrap();
