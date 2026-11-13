@@ -1025,6 +1025,8 @@
       "manageTeams": "Manage teams"
     },
     "creation": {
+      "refreshingLocations": "Refreshing creation locations…",
+      "refreshLocationsFailed": "Could not refresh creation locations. Please retry.",
       "created": "Library created",
       "createdDescription": "You can authorize people or teams now, or finish later. The library is already saved.",
       "authorize": "Authorize",
