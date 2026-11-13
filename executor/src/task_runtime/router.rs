@@ -252,19 +252,13 @@ impl TaskRuntime {
         &self,
         limit: usize,
         cursor: Option<&str>,
-        assigned_only: bool,
+        scope: &str,
         include_completed: bool,
         viewer_ids: &[i64],
         order: &str,
     ) -> Result<Value, TaskRuntimeError> {
-        self.local_store.my_work_page(
-            limit,
-            cursor,
-            assigned_only,
-            include_completed,
-            viewer_ids,
-            order,
-        )
+        self.local_store
+            .my_work_page(limit, cursor, scope, include_completed, viewer_ids, order)
     }
 
     // Native DingTalk AI Table operations (dynamic schema, records, fields).

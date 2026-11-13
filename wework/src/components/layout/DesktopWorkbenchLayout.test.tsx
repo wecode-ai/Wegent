@@ -548,8 +548,14 @@ vi.mock('@/config/runtime', () => ({
   stripAppBasePath: (path: string) => path,
 }))
 
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
+vi.mock('@/api/http', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/http')>()),
+  createHttpClient: vi.fn(() => ({
+    get: vi.fn(async (path: string) => {
+      if (path.startsWith('/v1/personal-issues?')) return { items: [], next_cursor: null }
+      throw new Error(`Unexpected HTTP client request: ${path}`)
+    }),
+  })),
 }))
 
 vi.mock('@/api/devices', () => ({
@@ -2127,6 +2133,16 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
     expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
+  })
+
+  test('keeps sibling dialog identities distinct when dialogs are closed', () => {
+    const errors = vi.spyOn(console, 'error')
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      expect(errors.mock.calls.filter(args => String(args[0]).includes('same key'))).toEqual([])
+    } finally {
+      errors.mockRestore()
+    }
   })
 
   test('returns to the previous page after opening settings through direct navigation', async () => {

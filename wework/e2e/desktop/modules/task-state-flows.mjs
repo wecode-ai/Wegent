@@ -11,8 +11,10 @@ import { inputUserMessageTexts } from './desktop-server.mjs'
 import { assertConversationTextOrder } from './conversation-navigation.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { findRuntimeWorkTask, waitForForkTaskRow } from './runtime-task-evidence.mjs'
 import {
+  expandAllReadConversations,
   verifyActiveConversationSurvivesCollapse,
   verifyCollapseReadConversations,
 } from './read-conversation-flows.mjs'
@@ -66,6 +68,165 @@ import {
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
+const PINNED_SECTION = '[data-testid="sidebar-pinned-section"]'
+const PINNED_TASK_LIST = '[data-testid="pinned-runtime-task-sortable-list"]'
+
+async function readTrackedPinnedTaskOrder(control, trackedRows) {
+  const order =
+    Number(await control.command('getElementCount', PINNED_TASK_LIST)) === 0
+      ? []
+      : JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST))
+  return order.filter(testId => trackedRows.includes(testId))
+}
+
+async function waitForPinnedTaskOrder(control, trackedRows, expectedRows, stableMs = 500) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let stableSince = null
+  let lastOrder = []
+  while (Date.now() < deadline) {
+    lastOrder = await readTrackedPinnedTaskOrder(control, trackedRows)
+    if (lastOrder.join(',') === expectedRows.join(',')) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= stableMs) return
+    } else {
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Pinned task order did not remain ${JSON.stringify(expectedRows)}; last order ${JSON.stringify(lastOrder)}`
+  )
+}
+
+async function waitForPinnedTaskOrderToSettle(control, trackedRows, stableMs = 1500) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let stableOrder = []
+  let stableSince = null
+  while (Date.now() < deadline) {
+    const order = await readTrackedPinnedTaskOrder(control, trackedRows)
+    const containsEveryTrackedTask =
+      order.length === trackedRows.length && trackedRows.every(row => order.includes(row))
+    if (containsEveryTrackedTask && order.join(',') === stableOrder.join(',')) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= stableMs) return order
+    } else {
+      stableOrder = order
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Pinned task order did not settle at ${stableMs}ms; last order ${JSON.stringify(stableOrder)}`
+  )
+}
+
+async function refreshRuntimeWorkAndWait(control, gates, gateId) {
+  await gates.arm({
+    id: gateId,
+    kind: 'response',
+    name: 'runtime.tasks.list',
+    where: [{ path: 'params.pendingOnly', equals: undefined }],
+    hold: false,
+  })
+  await control.command('refreshRuntimeWork', 'body', { value: '{}' })
+  const response = await gates.wait(gateId)
+  assert.equal(response.deliveries, 1, `Runtime work refresh ${gateId} was not delivered`)
+  assert.notEqual(response.deliveredAt, undefined, `Runtime work refresh ${gateId} stayed held`)
+}
+
+async function pinRuntimeTask(control, taskId) {
+  const row = `runtime-local-task-row-${taskId}`
+  await ensureTaskRowVisible(control, row)
+  await control.command('hover', `[data-testid="${row}"]`)
+  await control.command('waitFor', `[data-testid="runtime-local-task-mark-${taskId}"]`, {
+    enabled: true,
+  })
+  await control.command('click', `[data-testid="runtime-local-task-mark-${taskId}"]`)
+  await control.command('waitFor', `${PINNED_SECTION} [data-testid="${row}"]`)
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+    1,
+    'Pinning duplicated a runtime task across the project and pinned projections'
+  )
+}
+
+async function unpinRuntimeTask(control, taskId) {
+  const row = `runtime-local-task-row-${taskId}`
+  await control.command('hover', `${PINNED_SECTION} [data-testid="${row}"]`)
+  await control.command(
+    'click',
+    `${PINNED_SECTION} [data-testid="runtime-local-task-mark-${taskId}"]`
+  )
+  await control.command('waitFor', `${PINNED_SECTION} [data-testid="${row}"]`, { visible: false })
+  await ensureTaskRowVisible(control, row)
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+    1,
+    'Unpinning duplicated or removed the runtime task'
+  )
+}
+
+async function verifyPinnedTaskRefresh({
+  composerSelector,
+  control,
+  existingTaskId,
+  newTaskButtonSelector,
+}) {
+  const secondTaskRow = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    newTaskButtonSelector
+  )
+  const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
+  const taskIds = [existingTaskId, secondTaskId]
+  const taskRows = taskIds.map(taskId => `runtime-local-task-row-${taskId}`)
+  const gates = runtimeTransportGates(control)
+
+  try {
+    await pinRuntimeTask(control, taskIds[0])
+    await pinRuntimeTask(control, taskIds[1])
+    const initialOrder = await waitForPinnedTaskOrderToSettle(control, taskRows)
+
+    await refreshRuntimeWorkAndWait(control, gates, 'pinned-refresh-both')
+    await waitForPinnedTaskOrder(control, taskRows, initialOrder)
+    for (const row of taskRows) {
+      assert.equal(
+        Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+        1,
+        'Refreshing duplicated a pinned task across work projections'
+      )
+    }
+
+    await unpinRuntimeTask(control, taskIds[0])
+    await refreshRuntimeWorkAndWait(control, gates, 'pinned-refresh-one')
+    await waitForPinnedTaskOrder(control, taskRows, [taskRows[1]])
+    await unpinRuntimeTask(control, taskIds[1])
+    await refreshRuntimeWorkAndWait(control, gates, 'pinned-refresh-none')
+    await waitForPinnedTaskOrder(control, taskRows, [])
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot => snapshot.workbench?.runtimeWorkSummary?.totalTasks === taskRows.length,
+      'Unpinning changed the number of runtime tasks in the merged work view'
+    )
+    await expandAllReadConversations(control)
+    for (const row of taskRows) {
+      await ensureTaskRowVisible(control, row)
+      assert.equal(
+        Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+        1,
+        'Refreshing an unpinned task duplicated or removed it across work projections'
+      )
+    }
+    await control.command('click', `[data-testid="${taskRows[0]}"]`)
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === taskIds[0],
+      'The pinned refresh regression did not restore the original current task'
+    )
+  } finally {
+    await gates.reset()
+  }
+}
 
 async function verifyPriorityFilter({ composerSelector, control, projectRowSelector }) {
   let requestInputResponseReleased = false
@@ -240,6 +401,14 @@ async function verifyPriorityFilter({ composerSelector, control, projectRowSelec
       'The priority shortcut did not restore the regular sidebar'
     )
     await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
+    await verifyPinnedTaskRefresh({
+      composerSelector,
+      control,
+      existingTaskId: requestInputTaskId,
+      newTaskButtonSelector: projectRowSelector
+        ? `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+        : '[data-testid="new-chat-button"]',
+    })
     await verifyCollapseReadConversations({
       composerSelector,
       control,
