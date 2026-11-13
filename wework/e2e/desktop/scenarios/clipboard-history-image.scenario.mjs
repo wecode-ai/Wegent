@@ -83,9 +83,12 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workspacePath
         return { skipped: 'macos-only' }
       }
 
-      // The import dialog writes successfully, but a renderer transport loss
-      // can interrupt navigation after the write. Project import has its own
-      // checkpoint; seed this prerequisite through the real local executor.
+      // In the failed run (07:17:14.942 UTC), executor.log records project import
+      // succeeding at 07:18:49.752. In app.log, Chromium restarted its network
+      // service at 07:18:53.785 and the renderer's RPC and event requests aborted.
+      // The sidebar lookup then failed before any paste (see failure.txt).
+      // https://github.com/wecode-ai/Wegent/actions/runs/43382146308/artifacts/14018626553
+      // Project import has its own checkpoint; seed through the local Executor.
       const projectKey = `clipboard-history-image-${process.pid}`
       const projectId = `local-code-${createHash('sha256').update(projectKey).digest('hex')}`
       const seeded = JSON.parse(
