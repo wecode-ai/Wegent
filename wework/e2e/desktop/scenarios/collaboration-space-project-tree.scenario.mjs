@@ -39,6 +39,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       '[data-testid="collaboration-project-create-confirm"]',
       { timeoutMs: uiTimeoutMs }
     )
+    await control.command('waitFor', '[data-testid="collaboration-project-create-dialog"]', {
+      visible: false,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', sidebar('collaboration-project-group-cloud'), {
       text: name,
       timeoutMs: uiTimeoutMs,
@@ -46,6 +50,13 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
     const result = await request('/api/v1/cloud-projects')
     const project = result.items.find(item => item.name === name)
     assert.ok(project, 'UI creation must persist a real cloud project')
+    await control.command(
+      'waitFor',
+      `${sidebar(`collaboration-workspace-project-${project.id}`)}[aria-current="page"]`,
+      {
+        timeoutMs: uiTimeoutMs,
+      }
+    )
     projects.push(project)
     return project
   }
