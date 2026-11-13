@@ -298,6 +298,7 @@ pub struct SocketRuntime {
     registrations: RegistrationDebounce,
     callback_ids: Arc<CallbackIds>,
     event_order: super::runtime_event_order::RuntimeEventOrder,
+    response_event_order: super::runtime_event_order::RuntimeEventOrder<i64>,
     /// The callback registry shared with the sequencer, installed before the
     /// adapter sink accepts its first inbound `runtime:rpc` call.
     in_flight: std::sync::OnceLock<Arc<super::callback_sequencer::InFlightRegistry>>,
@@ -314,6 +315,12 @@ impl SocketRuntime {
     #[must_use]
     pub fn runtime_event_order(&self) -> &super::runtime_event_order::RuntimeEventOrder {
         &self.event_order
+    }
+
+    pub(super) fn response_event_order(
+        &self,
+    ) -> &super::runtime_event_order::RuntimeEventOrder<i64> {
+        &self.response_event_order
     }
 }
 
@@ -389,6 +396,7 @@ impl SocketRuntime {
                 registrations: RegistrationDebounce::default(),
                 callback_ids: Arc::new(CallbackIds::default()),
                 event_order: super::runtime_event_order::RuntimeEventOrder::default(),
+                response_event_order: super::runtime_event_order::RuntimeEventOrder::default(),
                 in_flight: std::sync::OnceLock::new(),
             }),
             SocketRuntimeWorkers {
