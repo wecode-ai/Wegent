@@ -156,10 +156,12 @@ function recoveryWindowAssertion(evidencePath) {
           return
         }
         clearInterval(timer)
+        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
+        // Close native windows before quitting so Chromium can drain renderer/GPU teardown.
+        await new Promise(resolve => { window.once('closed', resolve); window.close() })
         companion.destroy()
         companion = null
-        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
-        app.exit(0)
+        app.quit()
       } catch (error) {
         clearInterval(timer)
         fs.writeFileSync(output, JSON.stringify({error:error.stack}))
