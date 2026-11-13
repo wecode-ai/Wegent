@@ -352,11 +352,23 @@ fn copy_entry(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
         copy_dir_recursive(source, target)?;
     } else {
         let mut source_file = fs::File::open(source)?;
-        let mut target_file = fs::File::create(target)?;
-        io::copy(&mut source_file, &mut target_file)?;
-        target_file.sync_all()?;
-        fs::set_permissions(target, source_file.metadata()?.permissions())?;
+        let permissions = source_file.metadata()?.permissions();
+        copy_file_synced(&mut source_file, target, permissions)?;
     }
+    Ok(())
+}
+
+fn copy_file_synced(
+    source: &mut impl io::Read,
+    target: &Path,
+    permissions: fs::Permissions,
+) -> Result<(), CapabilitySyncError> {
+    // Partial configuration stays private until the complete snapshot is durable.
+    let mut file = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
+    io::copy(source, &mut file)?;
+    file.as_file().sync_all()?;
+    fs::set_permissions(file.path(), permissions)?;
+    file.persist(target).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -379,3 +391,7 @@ fn entries_match(left: &Path, right: &Path) -> Result<bool, CapabilitySyncError>
     }
     Ok(left.is_file() && right.is_file() && fs::read(left)? == fs::read(right)?)
 }
+
+#[cfg(test)]
+#[path = "runtime_recovery_journal_tests.rs"]
+mod tests;
