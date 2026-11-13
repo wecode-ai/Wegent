@@ -130,3 +130,30 @@ test('refuses changed package identity, changed cache bytes, and incomplete snap
   await rm(join(source.cache, 'snapshot.json'))
   await assert.rejects(restoreInstalledSourceSnapshot(target), { code: 'ENOENT' })
 })
+
+test('rebuilds snapshots without relocation origins', async t => {
+  const source = await fixture(t)
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
+  for (const key of ['slot', 'dataDirectory']) {
+    const metadata = JSON.parse(await readFile(join(source.cache, 'snapshot.json'), 'utf8'))
+    delete metadata[key]
+    await writeFile(join(source.cache, 'snapshot.json'), JSON.stringify(metadata))
+    assert.equal(await canReuseInstalledSourceSnapshot(source), false)
+    assert.equal(await saveInstalledSourceSnapshot(source), true)
+    assert.equal(await canReuseInstalledSourceSnapshot(source), true)
+  }
+})
+
+test('rebuilds cache roots and slots that are not directories', async t => {
+  const source = await fixture(t)
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
+  await rm(source.cache, { recursive: true })
+  await writeFile(source.cache, 'not a cache directory')
+  assert.equal(await canReuseInstalledSourceSnapshot(source), false)
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
+  await rm(join(source.cache, 'slot'), { recursive: true })
+  await writeFile(join(source.cache, 'slot'), 'not a prepared slot')
+  assert.equal(await canReuseInstalledSourceSnapshot(source), false)
+  assert.equal(await saveInstalledSourceSnapshot(source), true)
+  assert.equal(await canReuseInstalledSourceSnapshot(source), true)
+})

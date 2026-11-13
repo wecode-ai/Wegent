@@ -1014,13 +1014,7 @@ export async function createDesktopScenario(options) {
             })
           assert.equal(alive, false, 'The upgraded application did not exit during cleanup')
         }
-        if (passed)
-          await fs.rm(root, {
-            recursive: true,
-            force: true,
-            maxRetries: 20,
-            retryDelay: 100,
-          })
+        if (passed) await fs.rm(root, { recursive: true, force: true })
         if (legacyDataDirectory) {
           const legacy = await lstat(legacyDataDirectory).catch(error => {
             if (error.code !== 'ENOENT') throw error

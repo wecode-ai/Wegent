@@ -13,7 +13,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { relocateLinks, relocatePath } from './installed-source-preparation.mjs'
 
@@ -74,25 +74,33 @@ async function treeHash(root) {
   return hash.digest('hex')
 }
 
+function isMissingOrMalformedCacheEntry(error) {
+  return ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(error?.code)
+}
+
 async function readReusableInstalledSourceSnapshot({ cache, identity }) {
   let metadata
   try {
     metadata = JSON.parse(await readFile(join(cache, 'snapshot.json'), 'utf8'))
   } catch (error) {
-    if (error.code === 'ENOENT' || error instanceof SyntaxError) return null
+    if (isMissingOrMalformedCacheEntry(error) || error instanceof SyntaxError) return null
     throw error
   }
   if (
     !metadata ||
     typeof metadata !== 'object' ||
     metadata.schemaVersion !== 1 ||
+    typeof metadata.slot !== 'string' ||
+    !isAbsolute(metadata.slot) ||
+    typeof metadata.dataDirectory !== 'string' ||
+    !isAbsolute(metadata.dataDirectory) ||
     !isDeepStrictEqual(metadata.identity, identity)
   )
     return null
   try {
     if ((await treeHash(join(cache, 'slot'))) !== metadata.sha256) return null
   } catch (error) {
-    if (error.code === 'ENOENT') return null
+    if (isMissingOrMalformedCacheEntry(error)) return null
     throw error
   }
   return metadata
