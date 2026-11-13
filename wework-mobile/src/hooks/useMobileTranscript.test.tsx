@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeStream } from '@/services/runtimeStream'
 import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
 import { useMobileTranscript } from './useMobileTranscript'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const first = { deviceId: 'device-1', taskId: 'task-1' }
@@ -272,7 +271,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
         ...page(''),
         messages: [
           {
-            id: 'assistant-turn',
+            id: 'runtime-view:turn:assistant',
             role: 'assistant',
             subtaskId: 'turn',
             content: 'Complete',
@@ -305,7 +304,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
         ...page(''),
         messages: [
           {
-            id: 'assistant-turn',
+            id: 'runtime-view:turn:assistant',
             role: 'assistant',
             subtaskId: 'turn',
             content: 'Hello',

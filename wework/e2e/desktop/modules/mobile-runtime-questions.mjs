@@ -5,6 +5,7 @@ import { DEFAULT_MODEL_ID } from './shared.mjs'
 import { hasUserReplyAfterToolOutput } from './desktop-server.mjs'
 import { setNativeCatalogOverride } from './model-catalog-recovery.mjs'
 import { until } from './plugin-regression-fixture.mjs'
+import { runtimeTranscriptBlocks } from './runtime-transcript-evidence.mjs'
 import {
   assistantMessage,
   createSse,
@@ -26,13 +27,11 @@ const decode = value =>
     ? JSON.parse(gunzipSync(Buffer.from(value.payload, 'base64')).toString('utf8'))
     : value
 const questionBlocks = (transcript, kind) =>
-  (transcript.messages ?? [])
-    .flatMap(message => message.blocks ?? [])
-    .filter(
-      block =>
-        block.render_payload?.kind === 'request_user_input' &&
-        block.render_payload.questions?.some(item => item.question === question(kind))
-    )
+  runtimeTranscriptBlocks(transcript).filter(
+    block =>
+      block.render_payload?.kind === 'request_user_input' &&
+      block.render_payload.questions?.some(item => item.question === question(kind))
+  )
 
 // Exercise Mobile's HTTP contract through the existing real cloud/APP runtime.
 // Only responses from the model are simulated, as in the surrounding checkpoint.
@@ -229,11 +228,22 @@ export function createMobileRuntimeQuestions() {
             modelSelection,
           })
         }
-        const restored = await until(
+        await until(
           () => transcript(address),
           value => JSON.stringify(value).includes(completion(kind)),
           `The native model did not receive the mobile ${kind} answer`,
           timeoutMs
+        )
+        await until(
+          () => task(address),
+          value => value && value.running === false,
+          'The mobile question task did not finish',
+          timeoutMs
+        )
+        const restored = await transcript(address)
+        assert.ok(
+          JSON.stringify(restored).includes(completion(kind)),
+          'The completed canonical transcript lost the model reply'
         )
         if (kind === 'blocking') {
           assert.ok(
@@ -251,12 +261,6 @@ export function createMobileRuntimeQuestions() {
             'The async answer was not persisted as a user message'
           )
         }
-        await until(
-          () => task(address),
-          value => value && value.running === false,
-          'The mobile question task did not finish',
-          timeoutMs
-        )
       }
     },
     cleanup() {

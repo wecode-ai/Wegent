@@ -11,6 +11,8 @@ import {
 
 import type { RuntimeStreamEvent } from '@/domain/chatReducer'
 import { adaptRuntimeWorkListResponse } from '@/domain/runtimeWorkAdapter'
+import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
+import type { RuntimeTranscriptResponse as CoreTranscript } from '../../../packages/chat-core/src/runtime'
 import type {
   RuntimeTaskAddress,
   RuntimeTranscriptResponse,
@@ -264,12 +266,12 @@ export class RuntimeStream {
     })
   }
 
-  private requestTranscript(
+  private async requestTranscript(
     address: RuntimeTaskAddress,
     options: { beforeCursor?: string },
     limit: number
   ): Promise<RuntimeTranscriptResponse> {
-    return this.request(
+    const response = await this.request<CoreTranscript & { taskId: string }>(
       'runtime.tasks.transcript',
       {
         ...address,
@@ -279,6 +281,7 @@ export class RuntimeStream {
       address.deviceId,
       TRANSCRIPT_TIMEOUT_MS
     )
+    return projectMobileRuntimeTranscript(response)
   }
 }
 

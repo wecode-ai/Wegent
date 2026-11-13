@@ -15,6 +15,7 @@ import {
 } from './requestUserInput'
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
+import { runtimeAssistantViewId } from '../../../packages/chat-core/src/runtime-turn-projection'
 
 export interface RuntimeStreamEvent {
   name: string
@@ -35,6 +36,7 @@ export type ChatAction =
 interface StreamIdentity {
   taskId?: string
   subtaskId: string
+  itemId?: string
 }
 
 interface BlockUpdates {
@@ -610,14 +612,22 @@ function updateAssistant(
   identity: StreamIdentity,
   update: (message: ChatMessage) => ChatMessage
 ): ChatMessage[] {
-  const index = state.findIndex(
-    message => message.role === 'assistant' && message.subtaskId === identity.subtaskId
-  )
+  const ownsTurn = (message: ChatMessage) =>
+    message.role === 'assistant' && message.subtaskId === identity.subtaskId
+  const owner = identity.itemId
+    ? state.findIndex(
+        message =>
+          ownsTurn(message) &&
+          (message.textItems?.some(item => item.id === identity.itemId) ||
+            message.blocks?.some(block => block.id === identity.itemId))
+      )
+    : -1
+  const index = owner >= 0 ? owner : state.findLastIndex(ownsTurn)
   if (index < 0) {
     return [
       ...state,
       update({
-        id: `assistant-${identity.subtaskId}`,
+        id: runtimeAssistantViewId(identity.subtaskId),
         taskId: identity.taskId,
         subtaskId: identity.subtaskId,
         role: 'assistant',
@@ -662,6 +672,14 @@ function streamIdentity(payload: Record<string, unknown>): StreamIdentity | null
   return {
     subtaskId,
     taskId: idValue(payload.taskId) ?? idValue(data.taskId),
+    itemId:
+      idValue(data.itemId) ??
+      idValue(data.item_id) ??
+      idValue(data.blockId) ??
+      idValue(data.block_id) ??
+      idValue(record(data.block).id) ??
+      idValue(record(data.item).id) ??
+      idValue(data.call_id),
   }
 }
 

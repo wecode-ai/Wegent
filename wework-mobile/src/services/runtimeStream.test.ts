@@ -167,6 +167,8 @@ describe('RuntimeStream', () => {
           taskId: 'task-1',
           workspacePath: '/work',
           runtime: 'codex',
+          turns: [],
+          runtimeTurns: [],
           messages: [{ id: 'user-1', role: 'user', content: 'pwd' }],
         },
       })
@@ -196,6 +198,8 @@ describe('RuntimeStream', () => {
           taskId: 'task-1',
           workspacePath: '/work',
           runtime: 'codex',
+          turns: [],
+          runtimeTurns: [],
           messages: [{ id: 'user-older', role: 'user', content: 'older' }],
           hasMoreBefore: true,
           beforeCursor: 'offset:10',
@@ -211,6 +215,109 @@ describe('RuntimeStream', () => {
       )
     ).resolves.toMatchObject({ beforeCursor: 'offset:10' })
   })
+
+  it.each(['inProgress', 'completed'])(
+    'projects native history with the answered runtime interaction when the turn is %s',
+    async status => {
+      const response = {
+        requestId: 0,
+        interactionScope: 'turn-1',
+        answers: { direction: { answers: ['Complete'] } },
+      }
+      const question = {
+        id: 'request-user-input-0',
+        type: 'tool',
+        tool_name: 'request_user_input',
+        status: 'pending',
+        render_payload: {
+          kind: 'request_user_input',
+          requestId: 0,
+          interactionScope: 'turn-1',
+          interactionStatus: 'pending',
+          questions: [{ id: 'direction', question: 'Continue?' }],
+        },
+      }
+      emit.mockImplementation((_name, _payload, acknowledge) => {
+        acknowledge({
+          ok: true,
+          result: {
+            taskId: 'task-1',
+            workspacePath: '/work',
+            runtime: 'codex',
+            running: status === 'inProgress',
+            // Native messages do not own the executor's settled answer.
+            messages: [{ id: 'native', role: 'assistant', content: 'Done' }],
+            turns: [
+              {
+                id: 'turn-1',
+                status,
+                items: [
+                  { id: question.id, type: 'block', block: question },
+                  { id: 'reply', type: 'assistant_text', content: 'Done' },
+                ],
+              },
+              {
+                id: 'turn-2',
+                status: 'inProgress',
+                items: [
+                  {
+                    id: question.id,
+                    type: 'block',
+                    block: {
+                      ...question,
+                      render_payload: { ...question.render_payload, interactionScope: 'turn-2' },
+                    },
+                  },
+                ],
+              },
+            ],
+            runtimeTurns: [
+              {
+                id: 'turn-1',
+                status,
+                items: [
+                  {
+                    id: question.id,
+                    type: 'block',
+                    block: {
+                      ...question,
+                      status: 'done',
+                      render_payload: {
+                        ...question.render_payload,
+                        interactionStatus: 'answered',
+                        response,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+            hasMoreBefore: true,
+            beforeCursor: 'native-cursor',
+          },
+        })
+      })
+      const stream = await createStream(config)
+      const transcript = await stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })
+      expect(transcript).toMatchObject({ hasMoreBefore: true, beforeCursor: 'native-cursor' })
+      const answered = transcript.messages.find(message => message.subtaskId === 'turn-1')
+      expect(answered).toMatchObject({
+        content: 'Done',
+        blocks: [
+          {
+            status: 'done',
+            renderPayload: { interactionStatus: 'answered', response },
+          },
+        ],
+        runtimeItems: [{ id: 'reply', type: 'assistant_text', content: 'Done' }],
+      })
+      const next = transcript.messages.find(message => message.subtaskId === 'turn-2')
+      expect(next?.blocks?.[0]).toMatchObject({
+        status: 'pending',
+        renderPayload: { interactionStatus: 'pending', interactionScope: 'turn-2' },
+      })
+    }
+  )
 
   it('loads only the selected device work through the Mac runtime protocol', async () => {
     emit.mockImplementation((name, payload, acknowledge) => {
@@ -258,6 +365,8 @@ describe('RuntimeStream', () => {
       taskId: 'task-1',
       workspacePath: '/work',
       runtime: 'codex',
+      turns: [],
+      runtimeTurns: [],
       messages: [{ id: 'assistant-1', role: 'assistant', content: '历史消息'.repeat(1000) }],
     }
     emit.mockImplementation((_name, _payload, acknowledge) => {
@@ -271,9 +380,9 @@ describe('RuntimeStream', () => {
     })
     const stream = await createStream(config)
 
-    await expect(stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })).resolves.toEqual(
-      transcript
-    )
+    await expect(
+      stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })
+    ).resolves.toMatchObject(transcript)
   })
 
   it('retries an oversized five-turn page as one turn with the same cursor', async () => {
@@ -300,6 +409,8 @@ describe('RuntimeStream', () => {
             taskId: 'task-1',
             workspacePath: '/work',
             runtime: 'codex',
+            turns: [],
+            runtimeTurns: [],
             messages: [{ id: 'assistant-1', role: 'assistant', content: 'latest' }],
             beforeCursor: 'offset:14',
           },
@@ -317,6 +428,17 @@ describe('RuntimeStream', () => {
       beforeCursor: 'offset:14',
     })
     expect(emit).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a transcript without canonical turns like PC', async () => {
+    emit.mockImplementation((_name, _payload, acknowledge) => {
+      acknowledge({ ok: true, result: { messages: [] } })
+    })
+    const stream = await createStream(config)
+    await expect(stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })).rejects.toThrow(
+      'missing canonical turns'
+    )
+    expect(emit).toHaveBeenCalledOnce()
   })
 
   it('surfaces runtime acknowledgement errors', async () => {
