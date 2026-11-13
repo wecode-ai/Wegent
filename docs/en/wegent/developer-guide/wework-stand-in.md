@@ -14,6 +14,8 @@ Before each actual Codex or Claude model turn, recall searches with the current 
 
 Storage belongs to the execution device: local assistants use local history, while cloud assistants use their executor's history. Recalled evidence also has a 12KB total budget. Existing history snapshots use gzip compression and content-hash deduplication, expire after 24 hours, and are cleaned during writes and history transfers. There is currently no hard total snapshot disk quota. Original conversation retention is unchanged; recall does not automatically delete history, which continues to grow with usage.
 
+Continuation cursors retain the original query, so subsequent calls may supply only `cursor`; an explicitly supplied `query` must match the initial query. Automatic recall emits only this continuation cursor instead of copying the current user request into context again, preventing retrieval metadata from becoming another apparent user request in the native conversation.
+
 ## Persistent Issue collaboration conversations
 
 Project stand-ins reuse one native conversation per user, role, project store, project and Issue.
