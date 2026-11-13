@@ -90,6 +90,35 @@ describe('LocalAttachmentStore', () => {
     await expect(readFile(firstPath, 'utf8')).resolves.toBe('a')
   })
 
+  test('reuses a client upload id and ignores a replayed append chunk', async () => {
+    const root = await temporaryDirectory()
+    const store = new LocalAttachmentStore(root)
+    const uploadId = '00000000-0000-4000-8000-000000000001'
+    const appendId = '00000000-0000-4000-8000-000000000002'
+
+    const [first, retried] = await Promise.all([
+      store.begin('retry.bin', 1, uploadId),
+      store.begin('retry.bin', 1, uploadId),
+    ])
+    expect(retried).toEqual(first)
+    await expect(store.begin('different.bin', 1, uploadId)).rejects.toThrow(
+      'Attachment upload id was reused for a different file'
+    )
+
+    const [firstOffset, retriedOffset] = await Promise.all([
+      store.append(uploadId, 0, 'YQ==', appendId),
+      store.append(uploadId, 0, 'YQ==', appendId),
+    ])
+    expect([firstOffset, retriedOffset]).toEqual([1, 1])
+    expect(await store.append(uploadId, 0, 'YQ==', appendId)).toBe(1)
+    await expect(store.append(uploadId, 0, 'Yg==', appendId)).rejects.toThrow(
+      'Attachment append retry does not match the original chunk'
+    )
+
+    const path = await store.finish(uploadId)
+    await expect(readFile(path, 'utf8')).resolves.toBe('a')
+  })
+
   test('rejects offsets, oversized chunks and incomplete uploads', async () => {
     const root = await temporaryDirectory()
     const store = new LocalAttachmentStore(root)

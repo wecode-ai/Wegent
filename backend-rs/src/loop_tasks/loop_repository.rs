@@ -29,6 +29,7 @@ pub struct ProjectMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct BindingMetadata {
+    pub stand_in_pending: Option<bool>,
     pub stand_in_conversation_id: Option<String>,
     pub workflow_node_id: Option<String>,
     pub model_selection: Option<serde_json::Value>,
@@ -412,6 +413,11 @@ impl BindingRow {
         self.metadata
             .as_ref()
             .and_then(|json| json.0.value.as_ref())
+    }
+
+    pub fn stand_in_pending(&self) -> Option<bool> {
+        self.metadata()
+            .and_then(|metadata| metadata.stand_in_pending)
     }
 
     pub fn stand_in_conversation_id(&self) -> Option<String> {

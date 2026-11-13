@@ -695,7 +695,7 @@ export function createDesktopScenario({
         assignmentId: notification.payload.assignmentId,
       })
       await captureScreenshot(control, 'assignment-02-human-work-pending.png', CONTENT)
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'), {
         visible: true,
       })
       await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
@@ -731,7 +731,7 @@ export function createDesktopScenario({
       runtimeTaskId = binding.task_id
       assert.equal(
         binding.device_id,
-        currentApp.app_device_id ?? currentApp.device_id,
+        currentApp.execution_target_id,
         'Human AI assistance must run on the current computer even when the project environment is remote'
       )
       assert.equal(binding.assignment_id, notification.payload.assignmentId)
@@ -822,7 +822,7 @@ export function createDesktopScenario({
       assert.equal(binding.modelSelection?.modelName, MODEL)
       // Change the new-chat default without sending, then reopen the bound personal
       // task through the Issue drawer. Its model must come from the binding.
-      await control.command('click', scoped('[data-testid="cloud-todo-personal-task-start"]'), {
+      await control.command('click', scoped('[data-testid="cloud-todo-create-task"]'), {
         visible: true,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, taskPanel)

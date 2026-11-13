@@ -81,6 +81,8 @@ interface CompactChatComposerProps {
   placeholder: string
   inputTestId?: string
   submitButtonTestId?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   attachments?: Attachment[]
   codeComments?: CodeCommentContext[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
@@ -136,6 +138,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       placeholder,
       inputTestId,
       submitButtonTestId = 'send-message-button',
+      showSubmitButton = true,
+      showAttachmentActions = true,
       attachments = [],
       codeComments = [],
       uploadingFiles = new Map(),
@@ -430,17 +434,19 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             }
           }}
         >
-          <button
-            type="button"
-            data-testid="add-context-button"
-            onClick={() => !disabled && setContextSheetOpen(true)}
-            disabled={disabled}
-            className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[26px] border border-border bg-background p-0 text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.08)] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            aria-expanded={contextSheetOpen}
-            aria-label={t('workbench.add_context', '添加上下文')}
-          >
-            <Plus className="h-6 w-6" />
-          </button>
+          {showAttachmentActions && (
+            <button
+              type="button"
+              data-testid="add-context-button"
+              onClick={() => !disabled && setContextSheetOpen(true)}
+              disabled={disabled}
+              className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[26px] border border-border bg-background p-0 text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.08)] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              aria-expanded={contextSheetOpen}
+              aria-label={t('workbench.add_context', '添加上下文')}
+            >
+              <Plus className="h-6 w-6" />
+            </button>
+          )}
           <QuickPhraseMenu
             compact
             disabled={disabled}
@@ -512,85 +518,88 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 <Maximize2 className="h-4 w-4" />
               </button>
             )}
-            {isStreaming && !canSend ? (
-              <button
-                type="button"
-                data-testid="pause-response-button"
-                onClick={onPause}
-                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background hover:bg-text-primary/90"
-                aria-label={t('workbench.pause_response', '暂停回复')}
-              >
-                <Square className="h-4 w-4 fill-current" />
-              </button>
-            ) : isStreaming && canSend ? (
-              <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
+            {showSubmitButton &&
+              (isStreaming && !canSend ? (
+                <button
+                  type="button"
+                  data-testid="pause-response-button"
+                  onClick={onPause}
+                  className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background hover:bg-text-primary/90"
+                  aria-label={t('workbench.pause_response', '暂停回复')}
+                >
+                  <Square className="h-4 w-4 fill-current" />
+                </button>
+              ) : isStreaming && canSend ? (
+                <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-text-primary text-background">
+                  <button
+                    type="submit"
+                    data-testid={submitButtonTestId}
+                    className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
+                    aria-label={primaryBusyLabel}
+                  >
+                    <ArrowUp className="h-5 w-5" />
+                  </button>
+                  <ActionMenu
+                    ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+                    testId="send-mode-menu-button"
+                    icon={ChevronDown}
+                    triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
+                    items={[
+                      {
+                        label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                        icon: Clock3,
+                        testId: 'send-after-turn-option',
+                        onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
+                        shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
+                      },
+                      {
+                        label:
+                          modelChangePending && activeModelLabel
+                            ? t(
+                                'workbench.guide_current_turn_with_model',
+                                'Guide current response · {{model}}',
+                                { model: activeModelLabel }
+                              )
+                            : t('workbench.guide_current_turn', '引导当前回复'),
+                        icon: CornerDownRight,
+                        testId: 'guide-current-turn-option',
+                        onSelect: () =>
+                          onSubmit(composerRef.current?.getValue() ?? value, {
+                            guideWhenBusy: true,
+                          }),
+                        shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
+                      },
+                      {
+                        label:
+                          modelChangePending && selectedModelLabel
+                            ? t(
+                                'workbench.interrupt_and_send_with_model',
+                                'Interrupt and use {{model}}',
+                                { model: selectedModelLabel }
+                              )
+                            : t('workbench.interrupt_and_send', '打断并立即发送'),
+                        icon: Zap,
+                        testId: 'interrupt-and-send-option',
+                        onSelect: () =>
+                          onSubmit(composerRef.current?.getValue() ?? value, {
+                            interruptWhenBusy: true,
+                          }),
+                        shortcut: 'Command+Shift+Enter',
+                      },
+                    ]}
+                  />
+                </div>
+              ) : (
                 <button
                   type="submit"
                   data-testid={submitButtonTestId}
-                  className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-text-primary/90"
-                  aria-label={primaryBusyLabel}
+                  disabled={!canSend}
+                  className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background disabled:bg-text-muted"
+                  aria-label={t('workbench.send_message', '发送消息')}
                 >
                   <ArrowUp className="h-5 w-5" />
                 </button>
-                <ActionMenu
-                  ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
-                  testId="send-mode-menu-button"
-                  icon={ChevronDown}
-                  triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-background/20 hover:bg-text-primary/90"
-                  items={[
-                    {
-                      label: t('workbench.send_after_turn', '当前回复结束后发送'),
-                      icon: Clock3,
-                      testId: 'send-after-turn-option',
-                      onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
-                      shortcut: followUpBehavior === 'queue' ? primarySendShortcut : undefined,
-                    },
-                    {
-                      label:
-                        modelChangePending && activeModelLabel
-                          ? t(
-                              'workbench.guide_current_turn_with_model',
-                              'Guide current response · {{model}}',
-                              { model: activeModelLabel }
-                            )
-                          : t('workbench.guide_current_turn', '引导当前回复'),
-                      icon: CornerDownRight,
-                      testId: 'guide-current-turn-option',
-                      onSelect: () =>
-                        onSubmit(composerRef.current?.getValue() ?? value, { guideWhenBusy: true }),
-                      shortcut: followUpBehavior === 'guide' ? primarySendShortcut : undefined,
-                    },
-                    {
-                      label:
-                        modelChangePending && selectedModelLabel
-                          ? t(
-                              'workbench.interrupt_and_send_with_model',
-                              'Interrupt and use {{model}}',
-                              { model: selectedModelLabel }
-                            )
-                          : t('workbench.interrupt_and_send', '打断并立即发送'),
-                      icon: Zap,
-                      testId: 'interrupt-and-send-option',
-                      onSelect: () =>
-                        onSubmit(composerRef.current?.getValue() ?? value, {
-                          interruptWhenBusy: true,
-                        }),
-                      shortcut: 'Command+Shift+Enter',
-                    },
-                  ]}
-                />
-              </div>
-            ) : (
-              <button
-                type="submit"
-                data-testid={submitButtonTestId}
-                disabled={!canSend}
-                className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-text-primary p-0 text-background disabled:bg-text-muted"
-                aria-label={t('workbench.send_message', '发送消息')}
-              >
-                <ArrowUp className="h-5 w-5" />
-              </button>
-            )}
+              ))}
           </div>
         </form>
         {contextSheetOpen && (

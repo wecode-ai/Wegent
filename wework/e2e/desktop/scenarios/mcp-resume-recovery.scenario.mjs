@@ -61,6 +61,21 @@ export function createDesktopScenario({
     retainedProcesses.set(name, identity)
   }
 
+  async function retainReadyClient(name) {
+    const identity = await waitForValue(
+      async () => {
+        const identities = await Promise.all(
+          (await starts(name)).map(pid => collectProcessInstanceIdentity(Number(pid)))
+        )
+        return identities.filter(Boolean)
+      },
+      live => live.length === 1 && live[0],
+      `The original ${name} MCP client did not remain uniquely identifiable after prediction forks exited`,
+      uiTimeoutMs
+    )
+    retainedProcesses.set(name, identity)
+  }
+
   async function assertRetained(names) {
     for (const name of names) {
       const expected = retainedProcesses.get(name)
@@ -170,7 +185,7 @@ export function createDesktopScenario({
       for (const name of NAMES.slice(1, 3)) {
         const pids = await starts(name)
         assert.ok(pids.length >= 1, `The real ${name} MCP did not start after recovery`)
-        await retain(name, pids[0])
+        await retainReadyClient(name)
       }
       await run(control, 'stable')
       const recoveredLog = await readFile(log, 'utf8')

@@ -75,10 +75,14 @@ describe('local attachment API', () => {
     desktopMocks.invoke.mockRejectedValueOnce(new Error('disk full'))
 
     await expect(createLocalAttachmentApi().uploadAttachment(file)).rejects.toThrow('disk full')
-    expect(desktopMocks.invoke).toHaveBeenCalledExactlyOnceWith('attachment.begin', {
-      filename: 'generated.txt',
-      size: file.size,
-    })
+    expect(desktopMocks.invoke).toHaveBeenCalledExactlyOnceWith(
+      'attachment.begin',
+      expect.objectContaining({
+        filename: 'generated.txt',
+        size: file.size,
+        uploadId: expect.any(String),
+      })
+    )
   })
 
   test('streams uploaded files to Electron in bounded chunks', async () => {
@@ -107,22 +111,27 @@ describe('local attachment API', () => {
     const attachment = await createLocalAttachmentApi().uploadAttachment(file, progress)
 
     expect(desktopMocks.invoke.mock.calls).toEqual([
-      ['attachment.begin', { filename: 'photo.png', size: 3 }],
       [
-        'attachment.append',
-        {
-          uploadId: 'upload-1',
-          offset: 0,
-          chunkBase64: 'AQI=',
-        },
+        'attachment.begin',
+        expect.objectContaining({ filename: 'photo.png', size: 3, uploadId: expect.any(String) }),
       ],
       [
         'attachment.append',
-        {
+        expect.objectContaining({
+          uploadId: 'upload-1',
+          offset: 0,
+          chunkBase64: 'AQI=',
+          appendId: expect.any(String),
+        }),
+      ],
+      [
+        'attachment.append',
+        expect.objectContaining({
           uploadId: 'upload-1',
           offset: 2,
           chunkBase64: 'Aw==',
-        },
+          appendId: expect.any(String),
+        }),
       ],
       ['attachment.finish', { uploadId: 'upload-1' }],
     ])
@@ -176,6 +185,39 @@ describe('local attachment API', () => {
     expect(
       desktopMocks.invoke.mock.calls.filter(([name]) => name === 'attachment.finish')
     ).toHaveLength(2)
+  })
+
+  test('retries an attachment chunk with the same append id after a lost response', async () => {
+    vi.useFakeTimers()
+    const transportError = Object.assign(new Error('Electron host response was interrupted'), {
+      name: 'DesktopHostTransportError',
+    })
+    let appendAttempts = 0
+    desktopMocks.invoke.mockImplementation(async (capability: string, params) => {
+      if (capability === 'attachment.begin') {
+        return { uploadId: params.uploadId, chunkSize: 2 }
+      }
+      if (capability === 'attachment.append') {
+        appendAttempts += 1
+        if (appendAttempts === 1) throw transportError
+        return 1
+      }
+      if (capability === 'attachment.finish') return '/draft/recovered.bin'
+      throw new Error(`Unexpected capability: ${capability}`)
+    })
+
+    const upload = createLocalAttachmentApi().uploadAttachment(
+      new File([new Uint8Array([1])], 'recovered.bin')
+    )
+    await vi.advanceTimersByTimeAsync(100)
+
+    await expect(upload).resolves.toMatchObject({ local_path: '/draft/recovered.bin' })
+    const appends = desktopMocks.invoke.mock.calls.filter(
+      ([capability]) => capability === 'attachment.append'
+    )
+    expect(appends).toHaveLength(2)
+    expect(appends[0][1].appendId).toBe(appends[1][1].appendId)
+    expect(appends[0][1].uploadId).toBe(appends[1][1].uploadId)
   })
 
   test('reports staging totals once without changing repeated progress or logging file data', async () => {

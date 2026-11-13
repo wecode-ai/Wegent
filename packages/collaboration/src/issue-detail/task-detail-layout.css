@@ -929,6 +929,11 @@
   color: rgb(var(--color-text-secondary));
 }
 
+.task-detail-persistent-action > .task-detail-personal-task {
+  margin-top: 0;
+  padding: 4px 0;
+}
+
 .task-detail-personal-task-icon {
   display: inline-flex;
   width: 24px;
@@ -1171,23 +1176,30 @@
 
 .task-detail-workspace-description .task-detail-desc-footer {
   display: flex;
+  flex-wrap: wrap;
   min-height: 28px;
   align-items: center;
   gap: 12px;
 }
 
 .task-detail-workspace-description .task-detail-desc-hint {
+  flex: 1 1 240px;
+  min-width: 0;
   margin: 0;
 }
 
 .task-detail-workspace-description .task-detail-desc-actions {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .task-detail-workspace-description .task-detail-desc-actions > button {
+  flex: none;
+  white-space: nowrap;
   min-height: 28px;
   border-radius: 8px;
   padding: 0 10px;

@@ -13,6 +13,7 @@ import {
   Settings,
   SquarePen,
   UsersRound,
+  UserRound,
 } from "lucide-react";
 import { ActionMenu } from "../controls/ActionMenu";
 import { Tooltip } from "../issue-detail/Tooltip";
@@ -177,8 +178,8 @@ export function CollaborationPlatformNavigation({
                 })
               }
             >
-              <Plus aria-hidden="true" />
-              <span>{messages.home}</span>
+              {host.renderPersonalHome ? <UserRound aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              <span>{host.renderPersonalHome ? messages.personalHome : messages.home}</span>
             </button>
             {host.renderStandInPage && (
               <button

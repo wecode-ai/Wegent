@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { inCollaborationSidebar } from './workspace-flows.mjs'
+import { openCollaborationIssueCreation } from './collaboration-personal-home.mjs'
 
 // Invoked by collaboration-shared-core after its real project/agent fixtures exist.
 export async function verifyCollaborationIssueHome(
@@ -26,10 +27,7 @@ export async function verifyCollaborationIssueHome(
   )
   const ownerButton = scoped('[data-testid="collaboration-issue-owner"]')
   const openComposer = async () => {
-    await control.command(
-      'click',
-      inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
-    )
+    await openCollaborationIssueCreation(control, scoped)
     await control.command('waitFor', input)
     await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
     await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
@@ -142,9 +140,7 @@ export async function verifyCollaborationIssueHome(
       'clickWhenEnabled',
       scoped('[data-testid="collaboration-home-create-issue"]')
     )
-    await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
-      text: project.name,
-    })
+    await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'))
     const created = (await request(`/api/v1/cloud-projects/${project.id}/loop-items`)).items.find(
       item => item.description?.includes(marker)
     )
@@ -172,7 +168,7 @@ export async function verifyCollaborationIssueHome(
   await control.command('waitFor', ownerButton, { text: group.name })
   await control.command('click', ownerButton)
   await control.command('click', '[data-testid="collaboration-issue-owner-none"]')
-  assert.equal((await control.command('getText', ownerButton)).trim(), '')
+  assert.equal((await control.command('getText', ownerButton)).trim(), '分配给')
   await control.command('fill', input, { value: '' })
   const issueCard = scoped(`[data-testid="cloud-todo-card-${issue.id}"]`)
   await control.command('click', projectRow)

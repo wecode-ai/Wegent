@@ -83,10 +83,16 @@ export interface WorkspaceProjectUpdateInput {
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
+  attention_order?: [number, number, string] | null;
   project_key: string;
   project_name: string;
   has_active_task: boolean;
   is_unread?: boolean;
+  task_bindings?: WorkspaceTaskBinding[];
+  assignment_context?: Pick<
+    CollaborationAssignment,
+    "body" | "created_by_user_name" | "created_at"
+  > | null;
 }
 
 export interface WorkspaceMessageImportInput {
@@ -112,6 +118,7 @@ export interface WorkspaceIssuePageInput {
 }
 
 export interface WorkspaceTaskBinding {
+  standInPending?: boolean | null;
   id: string;
   projectId: string;
   issueId: string | null;
@@ -141,6 +148,7 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  personalTask?: boolean;
   milestoneId?: string | null;
   title: string;
   description?: string;
@@ -486,6 +494,14 @@ export interface SharedWorkspaceProjectsApi {
 
 export interface SharedWorkspaceMyWorkApi {
   list(): Promise<WorkspaceMyWorkItem[]>;
+  page?(input?: {
+    cursor?: string;
+    limit?: number;
+    scope?: "assigned" | "participating";
+    includeCompleted?: boolean;
+    order?: "recent" | "attention" | "activity" | "assignment" | "priority";
+    viewerIds?: readonly (string | number)[];
+  }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
 }
 
 export interface SharedWorkspaceIssuesApi {

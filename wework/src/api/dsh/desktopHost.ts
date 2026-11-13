@@ -47,6 +47,7 @@ const desktopHostEventHistory: DesktopHostEvent[] = []
 const MAX_DESKTOP_HOST_EVENT_HISTORY = 1024
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
 const DESKTOP_HOST_EVENT_POLL_INTERVAL_MS = 500
+const ATTACHMENT_REQUEST_TIMEOUT_MS = 15_000
 let desktopHostEventAfter = loadDesktopHostEventCursor()
 let desktopHostEventLoop: Promise<void> | null = null
 let desktopHostEventLoopGeneration = 0
@@ -69,6 +70,11 @@ export async function invokeDesktopHost<Result>(
     )
   }
   const pendingDiagnostic = e2e ? setTimeout(() => diagnostic('pending'), 1_000) : undefined
+  const attachmentRequest = capability.startsWith('attachment.')
+  const abortController = attachmentRequest ? new AbortController() : undefined
+  const requestTimeout = abortController
+    ? setTimeout(() => abortController.abort(), ATTACHMENT_REQUEST_TIMEOUT_MS)
+    : undefined
   try {
     let response: Response
     try {
@@ -76,6 +82,7 @@ export async function invokeDesktopHost<Result>(
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ capability, params }),
+        ...(abortController ? { signal: abortController.signal } : {}),
       })
     } catch (error) {
       throw new DesktopHostTransportError(
@@ -124,6 +131,7 @@ export async function invokeDesktopHost<Result>(
       : result
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
+    if (requestTimeout !== undefined) clearTimeout(requestTimeout)
   }
 }
 

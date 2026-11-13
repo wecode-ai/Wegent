@@ -7,6 +7,7 @@ import {
 } from './IssueAssignmentReceipts'
 import { issueAssignmentRevision, sameIssueAssignment } from './issueAssignmentReceiptScope'
 import { issueActivityTimeline } from './issueActivityTimeline'
+import { collapsedIssueActivity } from './collapsedIssueActivity'
 import { useIssueActivityHistory } from './useIssueActivityHistory'
 import { issueActivityRole, isPublicStandInMessage } from './issueActivityRole'
 import { useActivityExecutionBinding } from './useActivityExecutionStatus'
@@ -523,6 +524,8 @@ export function TaskActivityView({
   const cancellingMessageId = cancellation.stoppingMessageId
   const [error, setError] = useState<string | null>(null)
   const [readError, setReadError] = useState<string | null>(null)
+  const [expandedActivityScope, setExpandedActivityScope] = useState<string | null>(null)
+  const activityScope = `${project.project_store}:${project.id}:${task.id}`
   const executionBinding = useActivityExecutionBinding(messages, executionDetail?.messageId)
   const compact = rail || linear
   const readScope = useRef<object | null>(null)
@@ -567,6 +570,7 @@ export function TaskActivityView({
       // A visible visit must still acknowledge them through the shared read API.
       unreadRevision: task.content_revision ?? task.version,
       readRequestKey: focusedCommentRequestKey,
+      visibilityRevision: expandedActivityScope,
       onReadSequence: issueTimeline && projectDeliveryApi ? markActivityRead : undefined,
       linear,
       compact,
@@ -776,6 +780,27 @@ export function TaskActivityView({
     [activityHistory, commentCards, issueTimeline, task.created_at]
   )
   const latestAssignment = activityEntries.findLast(activity => activity.kind === 'assignment')
+  const visibleActivity = useMemo(
+    () =>
+      collapsedIssueActivity(
+        activityEntries,
+        expandedActivityScope === activityScope ||
+          Boolean(notificationCommentId ?? focusedCommentId) ||
+          Boolean(replyTarget),
+        activity =>
+          activity.kind === 'comment'
+            ? [activity.card.root, ...activity.card.replies].map(message => message.sequenceNumber)
+            : []
+      ),
+    [
+      activityEntries,
+      activityScope,
+      expandedActivityScope,
+      notificationCommentId,
+      focusedCommentId,
+      replyTarget,
+    ]
+  )
   const currentReceipts = sameIssueAssignment(
     assignmentReceipts,
     task.id,
@@ -1375,7 +1400,29 @@ export function TaskActivityView({
       >
         {linear ? (
           <div className="flex flex-col">
-            {activityEntries.map(activity => {
+            {visibleActivity.map(row => {
+              if (row.kind === 'collapsed')
+                return (
+                  <div
+                    key="collapsed-middle"
+                    className="my-3 flex items-center gap-3"
+                    data-testid="issue-collapsed-activity"
+                    data-activity-collapsed-first-sequence={row.firstSequence}
+                    data-activity-collapsed-last-sequence={row.lastSequence}
+                  >
+                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                    <button
+                      type="button"
+                      data-testid="issue-expand-activity"
+                      onClick={() => setExpandedActivityScope(activityScope)}
+                      className="min-h-11 shrink-0 rounded-lg border border-border px-3 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
+                    >
+                      {t('personalHome.expandActivity', { count: row.count })}
+                    </button>
+                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                  </div>
+                )
+              const activity = row.activity
               if (activity.kind === 'created') {
                 return (
                   <div

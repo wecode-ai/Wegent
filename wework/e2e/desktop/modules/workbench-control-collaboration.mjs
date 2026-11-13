@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { requestExecutor } from './executor-rpc.mjs'
+import { requestExecutor, writeCodexModelConfig } from './executor-rpc.mjs'
 import { readMcpToolOutput } from './mcp-tool-results.mjs'
 import { isCollaborationSubagentRequest } from './subagent-request.mjs'
+import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from './shared.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import {
   assistantMessage,
@@ -155,10 +156,31 @@ export function createWorkbenchControlCollaboration({
     async verify(control, workspacePath) {
       active = true
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      const model = (await rpc('runtime.runner.catalog', {})).models.find(
-        model => model.runtime === 'codex' && model.is_default
+      await writeCodexModelConfig(
+        control,
+        { provider: MODEL_PROVIDER_ID, model: DEFAULT_MODEL_ID },
+        uiTimeoutMs
       )
-      assert.ok(model, 'Native collaboration requires the configured Codex model')
+      await waitForValue(
+        () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
+        value => value.restarted === true,
+        'Native collaboration could not reload the local E2E model provider',
+        uiTimeoutMs
+      )
+      const models = (await rpc('runtime.runner.catalog', {})).models
+      const model = models.find(
+        model =>
+          model.runtime === 'codex' && model.provider === MODEL_PROVIDER_ID && model.is_default
+      )
+      assert.ok(
+        model,
+        `Native collaboration requires the local Codex model: ${JSON.stringify(models)}`
+      )
+      assert.equal(
+        model.local_model_id,
+        DEFAULT_MODEL_ID,
+        'Native collaboration did not load the configured E2E model'
+      )
       const taskId = `native-collaboration-${randomUUID()}`
       const execution = {
         task_id: taskId,
@@ -177,7 +199,10 @@ export function createWorkbenchControlCollaboration({
       const selection = {
         modelName: model.local_model_id,
         modelType: 'runtime',
-        options: { collaborationMode: 'default' },
+        options: {
+          collaborationMode: 'default',
+          runnerModelProvider: MODEL_PROVIDER_ID,
+        },
       }
       const waitDone = id =>
         waitForValue(
