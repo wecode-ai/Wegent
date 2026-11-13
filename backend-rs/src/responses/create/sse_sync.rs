@@ -208,7 +208,9 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
             if let Some(event) = terminal {
                 // A terminal image row makes its subtask ID available for retry.
                 // All old cancel-key operations must finish before that handoff.
-                complete(ctx, &event).await.map_err(|error| error.message)?;
+                Box::pin(complete(ctx, &event))
+                    .await
+                    .map_err(|error| error.message)?;
                 if event.event_type == "error" {
                     return Err(event.error.unwrap_or_else(|| "Unknown error".to_string()));
                 }
@@ -217,7 +219,7 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
         }
         Err(failure) => {
             if failure.persist {
-                complete_failure(ctx, request, &failure).await;
+                Box::pin(complete_failure(ctx, request, &failure)).await;
             }
             Err(failure.message)
         }

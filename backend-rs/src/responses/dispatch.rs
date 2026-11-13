@@ -534,13 +534,14 @@ where
         created_task: job.created_task.clone(),
         owner_user_id: job.forward.then_some(job.request.user_id),
     };
-    let result = sse_sync::collect(
+    // Keep the streaming state machine off the dispatch worker's stack.
+    let result = Box::pin(sse_sync::collect(
         &consumer,
         &job.target_url,
         &job.request,
         &job.request_id,
         job.request.message_id,
-    )
+    ))
     .await;
     match &result {
         Ok(collected) => tracing::info!(
