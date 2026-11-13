@@ -419,6 +419,7 @@ async function addressFor(request: APIRequestContext, executor: ExecutorBinding)
   const { executor_name, executor_namespace } = executor
   return json<ExecutorAddress>(
     request.get(`${MANAGER}/executor/address`, {
+      headers: createBackendRequestHeaders(),
       params: { executor_name, executor_namespace },
     })
   )
