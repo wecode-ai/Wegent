@@ -1,0 +1,48 @@
+:root {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: var(--font-text-md-size, medium);
+  color-scheme: light dark;
+  --background: var(--color-background-primary, Canvas);
+  --foreground: var(--color-text-primary, CanvasText);
+  --card: var(--background);
+  --card-foreground: var(--foreground);
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+  --secondary: var(--color-background-secondary, Canvas);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--secondary);
+  --muted-foreground: var(--color-text-secondary, GrayText);
+  --accent: var(--secondary);
+  --accent-foreground: var(--foreground);
+  --border: var(--color-border-primary, ButtonBorder);
+  --input: var(--border);
+  --ring: var(--color-text-info, Highlight);
+  --destructive: var(--color-text-danger, light-dark(#b42318, #ff9186));
+  --font-size-base: var(--font-text-md-size, medium);
+  --viz-series-1: var(--ring);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+  color: var(--foreground);
+  background: var(--background);
+}
+body {
+  margin: 0;
+  line-height: 1.5;
+}
+* {
+  box-sizing: border-box;
+}
+#interaction-shell {
+  display: flow-root;
+}
+#interaction-error {
+  color: var(--destructive);
+  white-space: pre-wrap;
+  margin: 12px;
+}
+[hidden] {
+  display: none !important;
+}

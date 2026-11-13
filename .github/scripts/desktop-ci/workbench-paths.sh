@@ -127,6 +127,15 @@ classify_workbench_path() {
       select_target "core:collaboration-issue-attachment-preview"
       return
       ;;
+    wework/src/lib/clipboard-images* | \
+      wework/src/features/todo/TaskDescriptionEditor* | \
+      wework/src/components/chat/composer/desktopComposerServices* | \
+      wework/electron/src/host/clipboard-image-conversion* | \
+      wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs)
+      select_target "core:clipboard-history-image"
+      macos_inspector_e2e=true
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-notification.scenario.mjs | \
       wework/e2e/desktop/scenarios/issue-notification-read.scenario.mjs)
       select_target "core:collaboration-issue-comment-notification"

@@ -4,6 +4,39 @@ import { describe, expect, test } from 'vitest'
 import { resolveReleaseVersion } from './resolve-release-version.mjs'
 
 describe('resolveReleaseVersion', () => {
+  test('rejects a stable minimum newer than the selected Beta before building', () => {
+    expect(() =>
+      resolveReleaseVersion({
+        tags: ['wework-v0.6.7', 'wework-v0.6.8-beta.5'],
+        inputChannel: 'beta',
+        minSourceVersion: '0.6.8',
+      })
+    ).toThrow('0.6.8 > 0.6.8-beta.6')
+  })
+
+  test('accepts the published Beta minimum for the next Beta and stable release', () => {
+    for (const inputChannel of ['beta', 'stable']) {
+      expect(
+        resolveReleaseVersion({
+          tags: ['wework-v0.6.7', 'wework-v0.6.8-beta.5'],
+          inputChannel,
+          minSourceVersion: '0.6.8-beta.5',
+        }).version
+      ).toBe(inputChannel === 'beta' ? '0.6.8-beta.6' : '0.6.8')
+    }
+  })
+
+  test('validates tagged and explicitly selected targets against the minimum', () => {
+    for (const options of [
+      { inputVersion: '0.6.7' },
+      { githubRef: 'refs/tags/wework-v0.6.8-beta.4', githubRefName: 'wework-v0.6.8-beta.4' },
+    ]) {
+      expect(() =>
+        resolveReleaseVersion({ tags: [], minSourceVersion: '0.6.8-beta.5', ...options })
+      ).toThrow('minimum upgrade source cannot be newer')
+    }
+  })
+
   test('starts the next patch Beta without a version input', () => {
     expect(
       resolveReleaseVersion({

@@ -18,7 +18,7 @@ const independent = new Set([
 const expectedCounts: Record<string, number> = {
   'global-setup.ts': 1,
   'global-teardown.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 21,
+  'tasks/agent-conversation-regression.spec.ts': 22,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
   'tasks/pipeline-session-archive.spec.ts': 5,
@@ -113,6 +113,11 @@ describe('Executor scheduling boundaries', () => {
         )
       ).toBe(true)
     }
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:device ClaudeCode preserves streamed text order after completion and reload'
+      )
+    ).toBe(true)
     expect(
       identities.has(
         'tasks/claude-background-lifecycle.spec.ts:ClaudeCode persists a child message above 1 MiB and completes after a real background notification'
