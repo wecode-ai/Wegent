@@ -25,9 +25,11 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 
 ## Stand-in chat and desktop notifications
 
+From **Collaboration → My work**, the right-hand **Stand-in** tab lists work by role. Select work to continue its original task conversation inline. The home only lists Issue-related work and exposes **Assistant settings**; general chat remains in **My assistant**. Board connection guidance remains until an enabled identity connects an accessible board. The home keeps the assistant tab and one Issue detail tab; opening another Issue replaces the current detail, while reopening preserves drafts and private chat is not automatically published to Issues.
+
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 
-This presentation applies only to primary and role conversations on the **My Stand-in** page. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
+This presentation applies to primary and role conversations on the **My Stand-in** page and the embedded primary conversation on the collaboration home. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
 Only stand-in identity conversations enable native subagent v2 for mailbox waits that wake on new user input. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents, including when resuming an existing v2 conversation. Native permission, source-scope and approval constraints remain unchanged.
 

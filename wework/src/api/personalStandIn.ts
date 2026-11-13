@@ -136,12 +136,18 @@ export function newStandInRole(deviceId: string, id: string = crypto.randomUUID(
   }
 }
 
-export function roleIncludesProject(role: StandInRole, project: StandInProjectRef): boolean {
+export function roleIncludesProject(
+  role: Pick<StandInRole, 'collaboration'>,
+  project: StandInProjectRef
+): boolean {
   return role.collaboration.enabled && roleSelectsProject(role, project)
 }
 
 /** Check the saved project scope and exclusions independently of source enablement. */
-export function roleSelectsProject(role: StandInRole, project: StandInProjectRef): boolean {
+export function roleSelectsProject(
+  role: Pick<StandInRole, 'collaboration'>,
+  project: StandInProjectRef
+): boolean {
   const matches = (value: StandInProjectRef) =>
     value.id === project.id && value.store === project.store
   return (

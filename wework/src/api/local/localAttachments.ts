@@ -29,7 +29,8 @@ function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   const stride = 32 * 1024
   for (let offset = 0; offset < bytes.byteLength; offset += stride) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + stride))
+    const block = bytes.subarray(offset, offset + stride)
+    binary += Reflect.apply(String.fromCharCode, undefined, block)
   }
   return btoa(binary)
 }
