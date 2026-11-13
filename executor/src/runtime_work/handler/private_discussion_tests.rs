@@ -319,9 +319,17 @@ fn late_private_writeback_cannot_modify_a_subsequently_admitted_public_execution
     store_runtime_execution_request(&mut link.runtime_handle, &public);
     handler.upsert_local_task(link);
     let snapshot = || {
+        // The active-runtime lookup excludes completed rows; inspect this exact
+        // persisted execution throughout both active and terminal states.
+        let persisted_execution = store
+            .list_executions(&project, None, None, true)
+            .unwrap()
+            .into_iter()
+            .find(|candidate| candidate.id == execution.id)
+            .expect("the original execution must remain persisted");
         json!({
             "issue":store.get_task(&project, &issue).unwrap(),
-            "execution":store.execution_by_runtime_task_id(task).unwrap(),
+            "execution":persisted_execution,
             "comments":store.list_comments(&project, &issue, 0).unwrap()
         })
     };
@@ -380,6 +388,7 @@ fn late_private_writeback_cannot_modify_a_subsequently_admitted_public_execution
     );
     let after = snapshot();
     assert_eq!(after["execution"]["status"], "completed");
+    assert!(store.execution_by_runtime_task_id(task).unwrap().is_none());
     assert!(after["comments"]
         .as_array()
         .unwrap()
