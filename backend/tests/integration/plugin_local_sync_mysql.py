@@ -1,4 +1,4 @@
-"""Verify recovery using only existing Kind tables and an unchanged migration head."""
+"""Verify plugin recovery across a schema upgrade without plugin-specific tables."""
 
 import os
 import uuid
@@ -14,6 +14,7 @@ from alembic import command
 from alembic.config import Config
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.subtask import Subtask
 from app.models.user import User
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
@@ -79,13 +80,21 @@ def verify(engine, url):
     with patch.object(
         settings, "DATABASE_URL", url.render_as_string(hide_password=False)
     ):
-        # Model a preexisting deployment with the unchanged migration head.
+        # Build the relevant pre-upgrade tables, including the unindexed
+        # subtask table expected by the next migration.
         User.__table__.create(engine)
         Kind.__table__.create(engine)
+        Subtask.__table__.create(engine)
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "DROP INDEX ix_subtasks_user_executor_status ON subtasks"
+            )
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names()) == tables
+        indexes = {index["name"] for index in inspect(engine).get_indexes("subtasks")}
+        assert "ix_subtasks_user_executor_status" in indexes
         assert "plugin_local_sync_operations" not in tables
         assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)
@@ -114,7 +123,7 @@ def verify(engine, url):
             assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
         assert set(inspect(engine).get_table_names()) == tables
     print(
-        "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
+        "MySQL: schema upgrade, existing account marker recovery and identity isolation passed"
     )
 
 
