@@ -143,6 +143,7 @@ pub(crate) fn start_event<R: Redis>(
 
 /// Input to an executor dispatch job.
 pub(crate) enum ExecutorDispatchBody {
+    #[cfg(test)]
     Prepared(Value),
     Recover(Box<ExecutionRequest>),
 }
@@ -404,6 +405,7 @@ where
             message_id,
         } => {
             let body = match body {
+                #[cfg(test)]
                 ExecutorDispatchBody::Prepared(body) => body,
                 ExecutorDispatchBody::Recover(mut request) => {
                     let Some(app) = consumer.app.upgrade() else {
