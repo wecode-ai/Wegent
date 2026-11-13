@@ -509,16 +509,18 @@ async fn assert_app_conflicts(
     // The old disconnect must leave the new socket's presence intact when
     // another socket registers during its two-second grace period.
     let replacement = connect().await;
-    contender.post(&format!("41{NAMESPACE},")).await.unwrap();
     let namespace = transport.of(NAMESPACE).unwrap();
-    let disconnected = contender.socket_id().parse().unwrap();
+    let disconnected = namespace
+        .get_socket(contender.socket_id().parse().unwrap())
+        .expect("the original transport is connected");
+    contender.post(&format!("41{NAMESPACE},")).await.unwrap();
     timeout(Duration::from_secs(1), async {
-        while namespace.get_socket(disconnected).is_some() {
+        while disconnected.connected() {
             sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .expect("the namespace must remove the disconnected socket");
+    .expect("the Socket.IO disconnect must reach the server");
     let registered = timeout(
         Duration::from_millis(1500),
         event_ack(

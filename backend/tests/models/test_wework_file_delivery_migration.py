@@ -12,12 +12,15 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
 from alembic.config import Config
+from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
 
 REVISION = "a9c4e7b2d610"
 PREDECESSOR = "f3a7c9e1b2d4"
+DEVICE_INDEX_REVISION = "a2d59b84f731"
+DEVICE_INDEX = "ix_subtasks_user_executor_status"
 VERSION_TABLE = "artifact_retired_revision_test"
 
 
@@ -48,6 +51,15 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
         sa.Column("json", sa.JSON),
         prefixes=["TEMPORARY"],
     )
+    subtasks = sa.Table(
+        "subtasks",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("user_id", sa.Integer),
+        sa.Column("executor_name", sa.String(100)),
+        sa.Column("status", sa.String(32)),
+        prefixes=["TEMPORARY"],
+    )
     versions = sa.Table(
         VERSION_TABLE,
         metadata,
@@ -55,13 +67,15 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
         prefixes=["TEMPORARY"],
     )
     with engine.begin() as connection:
-        # Both tables are connection-local, never application tables or tracking.
+        # Use connection-local tables, independent of application data.
         kinds.create(connection)
+        subtasks.create(connection)
         versions.create(connection)
         try:
             yield connection, kinds
         finally:
             versions.drop(connection)
+            subtasks.drop(connection)
             kinds.drop(connection)
     engine.dispose()
 
@@ -69,7 +83,8 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
 def test_withdrawn_revision_is_absent_from_the_version_chain(
     scripts: ScriptDirectory,
 ) -> None:
-    assert scripts.get_heads() == [PREDECESSOR]
+    assert scripts.get_heads() == [DEVICE_INDEX_REVISION]
+    assert scripts.get_revision(DEVICE_INDEX_REVISION).down_revision == PREDECESSOR
     assert not list(Path(scripts.versions).glob(f"*{REVISION}*"))
     with pytest.raises(CommandError, match=REVISION):
         scripts.get_revision(REVISION)
@@ -106,9 +121,10 @@ def _advance(
     context = MigrationContext.configure(
         connection, opts={"version_table": VERSION_TABLE, "fn": migrations}
     )
-    context.run_migrations()
+    with Operations.context(context):
+        context.run_migrations()
     assert context.get_current_revision() == (
-        PREDECESSOR if target == "head" else target
+        DEVICE_INDEX_REVISION if target == "head" else target
     )
 
 
@@ -159,7 +175,28 @@ def test_upgrade_and_rollback_preserve_prompts_and_reject_withdrawn_version(
     finally:
         sa.event.remove(connection, "before_cursor_execute", capture)
     assert dict(connection.execute(sa.select(kinds)).mappings().one()) == before
-    assert context.get_current_revision() == starting_revision
+    assert context.get_current_revision() == (
+        DEVICE_INDEX_REVISION if starting_revision == PREDECESSOR else starting_revision
+    )
     assert statements
-    assert all(VERSION_TABLE.upper() in statement for statement in statements)
+    data_statements = [
+        statement
+        for statement in statements
+        if not statement.startswith(("CREATE INDEX ", "DROP INDEX "))
+    ]
+    assert data_statements
+    assert all(VERSION_TABLE.upper() in statement for statement in data_statements)
     assert not any("KINDS" in statement for statement in statements)
+    index_statements = [
+        statement
+        for statement in statements
+        if statement.startswith(("CREATE INDEX ", "DROP INDEX "))
+    ]
+    if starting_revision == PREDECESSOR:
+        create_index = f"CREATE INDEX {DEVICE_INDEX.upper()} ON SUBTASKS (USER_ID, EXECUTOR_NAME, STATUS)"
+        drop_index = f"DROP INDEX {DEVICE_INDEX.upper()}"
+        if connection.dialect.name == "mysql":
+            drop_index += " ON SUBTASKS"
+        assert index_statements == [create_index, drop_index, create_index]
+    else:
+        assert index_statements == []
