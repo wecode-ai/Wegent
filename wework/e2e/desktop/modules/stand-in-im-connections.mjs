@@ -206,6 +206,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify(previousWindowSize),
       })
+      await control.command('focusMainWindow')
       await closeConnections()
       const chatMode = await fixture({
         operation: 'send',
