@@ -192,7 +192,9 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
 def list_my_work(
     limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
     cursor: str | None = Query(default=None, max_length=2048),
-    scope: Literal["assigned", "participating"] = Query(default="participating"),
+    scope: Literal["assigned", "created", "participating"] = Query(
+        default="participating"
+    ),
     include_completed: bool = Query(default=True),
     order: Literal["recent", "attention", "activity", "assignment", "priority"] = Query(
         default="recent"
@@ -206,6 +208,7 @@ def list_my_work(
         limit=limit,
         cursor=cursor,
         assigned_only=scope == "assigned",
+        created_only=scope == "created",
         include_completed=include_completed,
         attention=order == "attention",
         order=order,

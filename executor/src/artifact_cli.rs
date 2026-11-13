@@ -18,8 +18,9 @@ const COMMAND_PREFIX: &str = "artifact";
 const RESULT_MARKER: &str = "[WEGENT_ARTIFACT]";
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(2)];
 
-pub const AGENT_INSTRUCTIONS: &str = "When you create a user-facing deliverable file, declare it before the final response by running `$WEGENT_EXECUTOR_BINARY artifact declare --path <file>`. Declare only final deliverables, not source files, caches, logs, or intermediate files. The file remains in the Task workspace on the execution device. For local conversations the command validates the file and returns local_path without contacting Backend; include a Markdown file link to that local_path in the final response so the existing file card can open it. For Backend Tasks, declaration registers an artifact. The command sends metadata only; mention the declared filename in the final response so the user can use its artifact card.";
+pub const AGENT_INSTRUCTIONS: &str = "When you create a user-facing deliverable file, declare it before the final response by running `$WEGENT_EXECUTOR_BINARY artifact declare --path <file>`. Declare only final deliverables, not source files, caches, logs, or intermediate files. The file remains in the Task workspace on the execution device. For local conversations the command validates the file and returns local_path without contacting Backend; include a Markdown file link to that local_path in the final response so the existing file card can open it. For Backend Tasks, declaration registers an artifact. The command sends metadata only and handles transient retries within the invocation. If it fails, report the file delivery failure in the final response. Do not start background retries or wait for publication. On success, mention the filename so the user can use its artifact card.";
 
 pub fn is_artifact_command() -> bool {
     env::args().nth(1).as_deref() == Some(COMMAND_PREFIX)
@@ -90,15 +91,26 @@ fn local_reference_path(workspace_root: &str, relative_path: &str) -> String {
 async fn declare_backend(task_id: &str, payload: &Value) -> Result<Value, String> {
     let backend = backend_url()?;
     let token = auth_token()?;
-    let response = http_client()?
-        .post(format!(
-            "{backend}/api/tasks/{task_id}/remote-workspace/artifacts"
-        ))
-        .bearer_auth(token)
-        .json(payload)
-        .send()
-        .await
-        .map_err(|error| format!("declare artifact failed: {error}"))?;
+    let client = http_client()?;
+    let url = format!("{backend}/api/tasks/{task_id}/remote-workspace/artifacts");
+    let mut delays = RETRY_DELAYS.into_iter();
+    let response = loop {
+        let result = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(payload)
+            .send()
+            .await;
+        let retryable = match &result {
+            Ok(response) => retryable_status(response.status()),
+            Err(error) => error.is_timeout() || error.is_connect(),
+        };
+        if let (true, Some(delay)) = (retryable, delays.next()) {
+            tokio::time::sleep(delay).await;
+            continue;
+        }
+        break result.map_err(|error| format!("declare artifact failed: {error}"))?;
+    };
     let status = response.status();
     let body = response
         .text()
@@ -287,6 +299,13 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("build artifact declaration HTTP client failed: {error}"))
 }
 
+fn retryable_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
 fn ensure_success(status: StatusCode, body: &str) -> Result<(), String> {
     if status.is_success() {
         return Ok(());
@@ -300,6 +319,14 @@ fn ensure_success(status: StatusCode, body: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn binding_conflicts_are_not_retried() {
+        assert!(!retryable_status(StatusCode::CONFLICT));
+        assert!(!retryable_status(StatusCode::FORBIDDEN));
+        assert!(retryable_status(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(retryable_status(StatusCode::GATEWAY_TIMEOUT));
+    }
 
     #[test]
     fn local_references_use_markdown_safe_windows_drive_and_unc_paths() {

@@ -3190,6 +3190,7 @@ class LoopItemService:
         limit: int = MY_WORK_ITEM_LIMIT,
         cursor: str | None = None,
         assigned_only: bool = False,
+        created_only: bool = False,
         include_completed: bool = True,
         attention: bool = False,
         order: str | None = None,
@@ -3224,6 +3225,8 @@ class LoopItemService:
             loop_datetime_is_unset(LoopItem.deleted_at),
             related_item_filter(user_id),
         ]
+        if created_only:
+            my_work_filters.append(LoopItem.created_by_user_id == user_id)
         if assigned_only:
             my_work_filters.append(LoopItem.assignee_user_id == user_id)
         if not include_completed:

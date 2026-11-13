@@ -3,21 +3,20 @@
 
 import { useMemo, useState } from "react";
 import {
-  Bot,
   ChevronRight,
   Ellipsis,
   FolderOpen,
   FolderPlus,
-  Monitor,
   Plus,
   Settings,
   SquarePen,
-  UsersRound,
-  UserRound,
 } from "lucide-react";
 import { ActionMenu } from "../controls/ActionMenu";
 import { Tooltip } from "../issue-detail/Tooltip";
-import { StandInIcon } from "../StandInIcon";
+import {
+  CollaborationPrimaryNavigation,
+  CollaborationManagementNavigation,
+} from "./CollaborationPrimaryNavigation";
 import { canAccessCollaborationProjectView } from "../permissions";
 import type {
   CollaborationProject,
@@ -339,196 +338,18 @@ export function CollaborationPlatformNavigation({
           <div className="collaboration-platform-brand">
             {messages.collaborationHome}
           </div>
-          <nav
-            className="collaboration-primary-navigation"
-            aria-label={messages.collaborationSpaces}
-          >
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId &&
-                (host.location.rootView ?? "home") === "home"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId &&
-                (host.location.rootView ?? "home") === "home"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-home"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "home",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              {host.renderPersonalHome ? <UserRound aria-hidden="true" /> : <Plus aria-hidden="true" />}
-              <span>{host.renderPersonalHome ? messages.personalHome : messages.home}</span>
-            </button>
-            {host.renderStandInPage && (
-              <button
-                type="button"
-                data-testid="collaboration-primary-stand-in"
-                className={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "stand-in"
-                    ? "active"
-                    : undefined
-                }
-                aria-current={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "stand-in"
-                    ? "page"
-                    : undefined
-                }
-                onClick={() =>
-                  host.navigate({
-                    platformView: "spaces",
-                    collaborationDomain: domain,
-                    rootView: "stand-in",
-                    workspaceId: null,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                <StandInIcon />
-                <span>{messages.standIn}</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId &&
-                host.location.rootView === "agents"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId &&
-                host.location.rootView === "agents"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-agents"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "agents",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <Bot aria-hidden="true" />
-              <span>{messages.agents}</span>
-            </button>
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId && host.location.rootView === "teams"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId && host.location.rootView === "teams"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-teams"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "teams",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <UsersRound aria-hidden="true" />
-              <span>{messages.teams}</span>
-            </button>
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId &&
-                host.location.rootView === "devices"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId &&
-                host.location.rootView === "devices"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-devices"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "devices",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <Monitor aria-hidden="true" />
-              <span>{messages.devices}</span>
-            </button>
-            {host.templateStore && host.templateNavigation && (
-              <button
-                type="button"
-                className={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "templates"
-                    ? "active"
-                    : undefined
-                }
-                aria-current={
-                  host.location.rootView === "templates" ? "page" : undefined
-                }
-                data-testid="collaboration-primary-templates"
-                onClick={() =>
-                  host.navigate({
-                    ...host.location,
-                    platformView: "spaces",
-                    rootView: "templates",
-                    workspaceId: null,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                <UsersRound aria-hidden="true" />
-                <span>{messages.templates}</span>
-              </button>
-            )}
-          </nav>
+          <CollaborationPrimaryNavigation
+            domain={domain}
+            host={host}
+            messages={messages}
+          />
+          {host.renderIssueList ? (
+            <div className="collaboration-workspace-section-heading">
+              <span className="collaboration-workspace-section-title">
+                {messages.projects}
+              </span>
+            </div>
+          ) : null}
         </>
       ) : null}
       {!projectFirst ? (
@@ -710,6 +531,13 @@ export function CollaborationPlatformNavigation({
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(renderWorkspaceGroup)}
         </div>
+      ) : null}
+      {fullSidebar ? (
+        <CollaborationManagementNavigation
+          domain={domain}
+          host={host}
+          messages={messages}
+        />
       ) : null}
       {footer ? (
         <div className="collaboration-platform-sidebar-footer">{footer}</div>

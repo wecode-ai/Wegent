@@ -83,6 +83,24 @@ export function createOrdinaryMcpRegression({ uiTimeoutMs, modelResponseTimeoutM
       const discover = () =>
         requestExecutor(control, 'runtime.mcp_apps.request', { address, callId }, uiTimeoutMs)
       assert.equal(await discover(), null)
+      const messages = JSON.parse(
+        await control.command('getRuntimeConversationMessages', 'body', {
+          value: JSON.stringify(address),
+        })
+      )
+      const containsCall = blocks =>
+        (blocks ?? []).some(block => block.id === callId || containsCall(block.children))
+      const turnId = messages.find(message => containsCall(message.blocks))?.turnId
+      assert.ok(turnId, 'Native MCP calls must retain their owning turn for bounded discovery')
+      assert.equal(
+        await requestExecutor(
+          control,
+          'runtime.mcp_apps.request',
+          { address, callId, turnId, method: 'discover' },
+          uiTimeoutMs
+        ),
+        null
+      )
       assert.equal(Number(await control.command('getElementCount', '[data-testid="mcp-app"]')), 0)
 
       // Remove the real server from this isolated session's configuration, then

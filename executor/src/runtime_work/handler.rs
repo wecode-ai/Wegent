@@ -150,6 +150,7 @@ mod git_source_workspace;
 mod git_webhook_setup;
 mod hooks;
 pub(super) mod lifecycle;
+mod mcp_app_source;
 mod mcp_approval_context;
 mod mcp_apps;
 mod notifications;

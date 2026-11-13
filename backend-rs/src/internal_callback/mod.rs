@@ -144,18 +144,26 @@ pub(crate) async fn process_execution_event(
             tables: tables(state),
             executor_manager: &state.executor_manager,
         };
-        let (final_result, user_id, auto_advance) = completion::complete_terminal_with_advance(
-            &ctx,
-            event.task_id,
-            event.subtask_id,
-            status,
-            event.result.as_ref(),
-            event.error.as_deref(),
-            event.error_code.as_deref(),
-            executor_name,
-            executor_namespace,
-        )
-        .await;
+        let Some((final_result, user_id, auto_advance)) =
+            completion::complete_terminal_with_advance(
+                &ctx,
+                event.task_id,
+                event.subtask_id,
+                status,
+                event.result.as_ref(),
+                event.error.as_deref(),
+                event.error_code.as_deref(),
+                executor_name,
+                executor_namespace,
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, task_id = event.task_id, subtask_id = event.subtask_id, "terminal callback persistence failed");
+                FastApiError::internal()
+            })?
+        else {
+            return Ok(());
+        };
         // `_update_task_status_sync` only schedules the next turn when
         // `get_auto_advance_info` produced an intent; every other completion,
         // including a non-pipeline team, stops after persisting its status.

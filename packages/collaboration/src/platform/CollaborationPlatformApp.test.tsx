@@ -3349,7 +3349,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.querySelector('[data-testid="template-use"]')).toBeNull();
   });
 
-  it("opens the host Stand-in settings page from the sidebar", async () => {
+  it("opens the host Stand-in settings page by an explicit route without a duplicate sidebar entry", async () => {
     const { api } = createApi();
     const renderStandInPage = vi.fn(({ projects, onClose }) => (
       <div data-testid="stand-in-settings-page">
@@ -3360,15 +3360,13 @@ describe("CollaborationPlatformApp real component flow", () => {
       </div>
     ));
     await render(
-      <PlatformHarness api={api} renderStandInPage={renderStandInPage} />,
+      <PlatformHarness api={api} renderStandInPage={renderStandInPage} start={{ ...initialLocation, rootView: "stand-in" }} />,
     );
-    await click(byTestId("collaboration-primary-stand-in"));
+    expect(container.querySelector('[data-testid="collaboration-primary-stand-in"]')).toBeNull();
     expect(byTestId("stand-in-settings-page").textContent).toContain(
       project.name,
     );
-    expect(
-      byTestId("collaboration-primary-stand-in").getAttribute("aria-current"),
-    ).toBe("page");
+    expect(renderStandInPage).toHaveBeenCalled();
   });
 
   it("passes accessible projects without workspace membership to personal Stand-in settings", async () => {
@@ -3390,9 +3388,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       </div>
     ));
     await render(
-      <PlatformHarness api={api} renderStandInPage={renderStandInPage} />,
+      <PlatformHarness api={api} renderStandInPage={renderStandInPage} start={{ ...initialLocation, rootView: "stand-in" }} />,
     );
-    await click(byTestId("collaboration-primary-stand-in"));
+    expect(container.querySelector('[data-testid="collaboration-primary-stand-in"]')).toBeNull();
     expect(byTestId("stand-in-settings-page").textContent).toContain(
       project.name,
     );
@@ -3410,10 +3408,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       <PlatformHarness
         api={api}
         refreshKey="active"
+        start={{ ...initialLocation, rootView: "stand-in" }}
         renderStandInPage={renderStandInPage}
       />,
     );
-    await click(byTestId("collaboration-primary-stand-in"));
+    expect(container.querySelector('[data-testid="collaboration-primary-stand-in"]')).toBeNull();
     const editor = byTestId("stand-in-draft") as HTMLInputElement;
     editor.value = "unsaved";
     let finishRefresh!: (value: CollaborationWorkspace[]) => void;
@@ -3427,6 +3426,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       <PlatformHarness
         api={api}
         refreshKey="inactive"
+        start={{ ...initialLocation, rootView: "stand-in" }}
         renderStandInPage={renderStandInPage}
       />,
     );
@@ -4179,7 +4179,7 @@ describe("CollaborationPlatformApp real component flow", () => {
         />,
       );
       expect(byTestId("collaboration-primary-home").textContent).toContain(
-        "我的",
+        "首页",
       );
       await click(byTestId("test-my-home-open"));
       expect(JSON.parse(byTestId("test-location").textContent!)).toMatchObject({

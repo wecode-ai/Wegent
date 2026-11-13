@@ -133,10 +133,10 @@
   padding: 0 6px 14px;
 }
 
-.collaboration-primary-navigation > button {
+.collaboration-primary-navigation button {
   display: flex;
   width: 100%;
-  height: 34px;
+  height: 30px;
   align-items: center;
   gap: 10px;
   padding: 0 10px;
@@ -149,20 +149,20 @@
   cursor: pointer;
 }
 
-.collaboration-primary-navigation > button:hover,
-.collaboration-primary-navigation > button.active {
+.collaboration-primary-navigation button:hover,
+.collaboration-primary-navigation button.active {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-hover));
 }
 
 :where(html:not([data-input-modality="pointer"]))
   .collaboration-primary-navigation
-  > button:focus-visible {
+  button:focus-visible {
   outline: 2px solid rgb(var(--color-primary));
   outline-offset: 2px;
 }
 
-.collaboration-primary-navigation > button > svg {
+.collaboration-primary-navigation button > svg {
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
@@ -5048,4 +5048,31 @@
   .collaboration-resource-summary {
     min-width: calc(100% - 44px);
   }
+}
+
+.collaboration-management {
+  margin-top: auto;
+  padding-top: 12px;
+}
+.collaboration-management-navigation {
+  padding-left: 12px;
+}
+.collaboration-management-navigation[hidden] {
+  display: none;
+}
+.collaboration-management-navigation button {
+  width: 100%;
+}
+
+.collaboration-management-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.collaboration-management > button > svg:last-child {
+  margin-left: auto;
+}
+
+.collaboration-management + .collaboration-platform-sidebar-footer {
+  margin-top: 0;
 }

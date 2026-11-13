@@ -1,3 +1,6 @@
+import { IndependentIssuesProvider } from './IndependentIssuesProvider'
+import { createPersonalIssuesApi } from '@/api/personalIssues'
+import { PersonalIssuesView } from './PersonalIssuesView'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
 import { usePersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
@@ -1507,7 +1510,28 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       ? cloudConnection.user.id
       : Number(props.user.id)
   const templateBackend = cloudConnection.apiBaseUrl ?? getRuntimeConfig().apiBaseUrl
+  const [independentSelection, setIndependentSelection] = useState<{
+    scope: string
+    selection: string | null | undefined
+  }>({ scope: '', selection: undefined })
+  const personalIssuesApi = useMemo(
+    () =>
+      cloudConnection.isConnected
+        ? createPersonalIssuesApi(
+            createHttpClient({
+              baseUrl: templateBackend,
+              getToken: () => cloudConnection.token,
+              redirectOnUnauthorized: false,
+            })
+          )
+        : null,
+    [cloudConnection.isConnected, cloudConnection.token, templateBackend]
+  )
   const templateScope = `${templateBackend}:${cloudConnection.user?.id ? 'account' : 'local'}:${templateOwnerId}`
+  const independentIssueSelection =
+    independentSelection.scope === templateScope ? independentSelection.selection : undefined
+  const setIndependentIssueSelection = (selection: string | null | undefined) =>
+    setIndependentSelection({ scope: templateScope, selection })
   const templateStore = useMemo(
     () =>
       new CollaborationTemplateStore({
@@ -1801,6 +1825,48 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     )
   }
 
+  const navigatePlatform = (nextLocation: CollaborationPlatformLocation) => {
+    const navigationRevision = ++navigationRequestRevisionRef.current
+    if (
+      !nextLocation.projectId &&
+      !nextLocation.workspaceId &&
+      (nextLocation.rootView ?? 'home') === 'home'
+    ) {
+      setPersonalHomeEntryKey(value => value + 1)
+    }
+    if (props.onActiveProjectChange) {
+      pendingNavigationProjectIdRef.current = nextLocation.projectId
+        ? String(nextLocation.projectId)
+        : null
+    }
+    setLocation({
+      ...nextLocation,
+      projectSettingsSection:
+        nextLocation.projectView === 'manage'
+          ? (nextLocation.projectSettingsSection ?? null)
+          : null,
+    })
+    if (!nextLocation.projectId) {
+      publishActiveProject(null)
+      return
+    }
+    const requestedProjectId = String(nextLocation.projectId)
+    void platformApi.projects
+      .get(requestedProjectId)
+      .then(project => {
+        if (navigationRequestRevisionRef.current !== navigationRevision) return
+        publishActiveProject({
+          ...project,
+          location: project.project_store === 'local' ? 'local' : 'cloud',
+        })
+      })
+      .catch(() => {
+        if (navigationRequestRevisionRef.current !== navigationRevision) return
+        pendingNavigationProjectIdRef.current = undefined
+        setNavigationSyncRevision(value => value + 1)
+      })
+  }
+
   return (
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
       {cloudLoginOpen && (
@@ -1814,435 +1880,423 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           }}
         />
       )}
-      <CollaborationPlatformApp
-        api={platformApi}
-        refreshKey={String(Boolean(props.startupActive))}
-        navigationApis={navigationApis}
-        locale={locale}
-        onReady={handleReady}
-        normalizePastedFiles={normalizeClipboardImageFiles}
-        host={{
-          accountScope: templateScope,
-          templateStore,
-          templateNavigation: true,
-          renderPersonalHome: home => (
-            <WeworkPersonalHome
-              key={templateScope}
-              entryRequestKey={personalHomeEntryKey}
-              userId={Number(props.user.id)}
-              localUserIds={
-                props.services.localParticipationIdentity?.viewerUserIds ?? [LOCAL_USER.id]
-              }
-              active={props.workspaceActive ?? true}
-              {...home}
-              sources={navigationApis}
-              draftScope={personalHomeTaskDrafts}
-              renderIssueDetail={context => {
-                const projectApi = context.project.project_store === 'local' ? localProjectApi : api
-                if (!projectApi) return null
-                return (
-                  <WeworkSharedProject
-                    api={projectApi}
-                    project={context.project}
-                    personalIssue={{
-                      ...context,
-                      onOpenInProject: () => {
-                        const projectId = String(context.project.id)
-                        navigationRequestRevisionRef.current += 1
-                        pendingNavigationProjectIdRef.current = props.onActiveProjectChange
-                          ? projectId
-                          : undefined
-                        setLocation({
-                          ...routeProjectLocation(
-                            { projectStore: context.project.project_store, projectId },
-                            context.issue.id
-                          )!,
-                          workspaceId:
-                            context.project.project_store === 'local'
-                              ? LOCAL_WORKSPACE_ID
-                              : (context.project.workspace_id ?? null),
-                          projectSettingsSection: null,
-                        })
-                        publishActiveProject({
-                          ...context.project,
-                          location: context.project.project_store === 'local' ? 'local' : 'cloud',
-                        } as LocatedProjectSpace)
-                      },
-                    }}
-                    projectCatalogApi={platformApi.projects}
-                    detailServices={
-                      props.services.projectSpaceDetailServices?.[
-                        context.project.project_store === 'local' ? 'local' : 'cloud'
-                      ]
-                    }
-                    devices={props.devices}
-                    localProjects={props.localProjects}
-                    locale={locale}
-                    location={location}
-                    setLocation={setLocation}
-                    userId={props.user.id}
-                    services={props.services}
-                    workspace={{
-                      id: context.project.workspace_id ?? '',
-                      public_id: '',
-                      location: 'cloud',
-                      name: context.project.name,
-                    }}
-                    runtimePort={issueRuntimePort(context.project.project_store, props.services)}
-                    runtimeWork={props.runtimeWork}
-                    runtimeTaskLifecycle={props.runtimeTaskLifecycle}
-                    onOpenRuntimeTask={props.onOpenRuntimeTask}
-                    onOpenSettings={props.onOpenSettings}
-                  />
-                )
-              }}
-              conversation={(active, collaborationWork) => (
-                <PersonalStandInWorkspace
-                  homeProjects={home.projects}
-                  collaborationWork={collaborationWork}
-                  services={props.services}
-                  user={props.user}
-                  devices={props.devices ?? []}
-                  active={active}
-                  contentRoute="/stand-in"
-                  embedded
-                  onClose={() => {}}
-                  onOpenTask={props.onOpenRuntimeTask}
-                />
-              )}
-            />
-          ),
-          openProjectConversation,
-          renderProjectSidebarBadge: project => {
-            const enabled = standInProjects.has(
-              `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
-            )
-            if (!enabled) return null
-
-            return (
-              <span
-                className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
-                title={t('standIn.project_enabled')}
-                aria-label={t('standIn.project_enabled')}
-                data-testid={`stand-in-project-${project.id}`}
-              >
-                <StandInIcon enabled className="h-4 w-4" />
-              </span>
-            )
-          },
-          currentUser: {
-            id: Number(props.user.id),
-            name: collaborationUserName,
-          },
-          cloudAccess: {
-            authenticated: cloudConnection.isConnected,
-            requestLogin: () => setCloudLoginOpen(true),
-          },
-          renderIssueComposer: composerProps => (
-            <WeworkIssueHomeComposer
-              {...composerProps}
-              renderTaskComposer={draft => {
-                const project = draft.projects.find(item => item.id === draft.projectId)
-                const taskApi = project?.project_store === 'local' ? localProjectApi : api
-                return taskApi ? (
-                  <PersonalHomeTaskComposer
-                    draft={draft}
-                    api={taskApi}
-                    services={props.services}
-                    drafts={personalHomeTaskDrafts}
-                  />
-                ) : null
-              }}
-            />
-          ),
-          loadProjectCollaborationGroupGenerationModels: async () => {
-            const response = await props.services.modelApi.listModels()
-            const models = response.data.filter(
-              model => model.isActive !== false && !model.compatibilityDisabled
-            )
-            const defaultSelection =
-              getNewChatModelSelection(props.user) ?? defaultNewChatModelSelection(models)
-            return {
-              models: models.map(model => ({
-                modelName: model.name,
-                modelType: model.type,
-                displayName: getModelDisplayLabel(model),
-                options: {
-                  ...getDefaultModelOptions(model),
-                  ...modelSelectionIdentityOptions(model),
-                },
-              })),
-              defaultSelection,
-            }
-          },
-          generateProjectCollaborationGroupDraft: (input, onProgress, onEvent) =>
-            generateCollaborationGroupDraft({
-              input,
-              textGenerationApi: props.services.textGenerationApi,
-              onProgress,
-              onEvent,
-            }),
-          location,
-          capabilities: {
-            automation: true,
-            dingtalkAitable: true,
-            projectLocation: location.workspaceId === LOCAL_WORKSPACE_ID ? 'local' : 'cloud',
-            workspaceLocations: ['local', 'cloud'],
-            sidebarPresentation: 'full',
-            projectNavigation: 'projects',
-          },
-          navigate: nextLocation => {
-            const navigationRevision = ++navigationRequestRevisionRef.current
-            if (
-              !nextLocation.projectId &&
-              !nextLocation.workspaceId &&
-              (nextLocation.rootView ?? 'home') === 'home'
-            ) {
-              setPersonalHomeEntryKey(value => value + 1)
-            }
-            if (props.onActiveProjectChange) {
-              pendingNavigationProjectIdRef.current = nextLocation.projectId
-                ? String(nextLocation.projectId)
-                : null
-            }
-            setLocation({
-              ...nextLocation,
-              projectSettingsSection:
-                nextLocation.projectView === 'manage'
-                  ? (nextLocation.projectSettingsSection ?? null)
-                  : null,
-            })
-            if (!nextLocation.projectId) {
-              publishActiveProject(null)
-              return
-            }
-            const requestedProjectId = String(nextLocation.projectId)
-            void platformApi.projects
-              .get(requestedProjectId)
-              .then(project => {
-                if (navigationRequestRevisionRef.current !== navigationRevision) return
-                publishActiveProject({
-                  ...project,
-                  location: project.project_store === 'local' ? 'local' : 'cloud',
-                })
-              })
-              .catch(() => {
-                if (navigationRequestRevisionRef.current !== navigationRevision) return
-                pendingNavigationProjectIdRef.current = undefined
-                setNavigationSyncRevision(value => value + 1)
-              })
-          },
-          manageResource: (kind, resourceId, source) => {
-            if (kind === 'environments') {
-              props.onOpenSettings?.(resolveDeviceResourceSettingsOptions(resourceId, source))
-              return
-            }
-            setLocation(current => ({
-              ...current,
-              collaborationDomain: source ?? current.collaborationDomain,
-              rootView: current.workspaceId ? current.rootView : 'agents',
-              workspaceView: current.workspaceId ? 'agents' : 'home',
-              projectId: null,
-              projectSettingsSection: null,
-              issueId: null,
-            }))
-          },
-          renderDeviceCreator: ({ source, workspaceId, hasCloudDevice, onClose, onCreated }) =>
-            source === 'cloud' && workspaceId && api?.workspaces?.registerRunner ? (
-              <WorkspaceRunnerRegistrationDialog
-                workspaceId={workspaceId}
-                register={api.workspaces.registerRunner}
-                onClose={onClose}
-                onDone={() => onCreated()}
+      <IndependentIssuesProvider
+        key={templateScope}
+        api={personalIssuesApi}
+        userId={Number(cloudConnection.user?.id ?? props.user.id)}
+        selection={independentIssueSelection}
+        onSelect={setIndependentIssueSelection}
+        onLogin={() => setCloudLoginOpen(true)}
+        onOpenProjectIssue={(projectId, issueId) => {
+          const next = routeProjectLocation({ projectStore: 'backend', projectId }, issueId)
+          if (next) navigatePlatform(next)
+        }}
+      >
+        <CollaborationPlatformApp
+          api={platformApi}
+          refreshKey={String(Boolean(props.startupActive))}
+          navigationApis={navigationApis}
+          locale={locale}
+          onReady={handleReady}
+          normalizePastedFiles={normalizeClipboardImageFiles}
+          host={{
+            accountScope: templateScope,
+            templateStore,
+            templateNavigation: true,
+            createIndependentIssue: () =>
+              personalIssuesApi ? setIndependentIssueSelection(null) : setCloudLoginOpen(true),
+            renderIssueList: list => (
+              <PersonalIssuesView
+                key={list.scope}
+                {...list}
+                sources={navigationApis}
+                userId={Number(props.user.id)}
+                localUserIds={
+                  props.services.localParticipationIdentity?.viewerUserIds ?? [LOCAL_USER.id]
+                }
+                active={props.workspaceActive ?? true}
               />
-            ) : source === 'cloud' ? (
-              <AddCloudDeviceDialog
-                open
-                cloudConnection={cloudConnection}
-                hasCloudDevice={hasCloudDevice}
-                onClose={onClose}
-                onCreated={(_devices, createdDeviceId) => onCreated(createdDeviceId)}
-              />
-            ) : (
-              <div
-                className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4"
-                data-testid="local-device-resource-dialog"
-                role="presentation"
-                onClick={event => {
-                  if (event.target === event.currentTarget) onClose()
-                }}
-              >
-                <section
-                  aria-modal="true"
-                  className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
-                  role="dialog"
-                >
-                  <h2 className="text-sm font-semibold text-text-primary">
-                    {locale === 'zh-CN' ? '本地设备' : 'Local device'}
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-text-secondary">
-                    {locale === 'zh-CN'
-                      ? '当前设备已自动加入本地空间，无需重复创建。安装并启用本机执行环境后，智能体和协作小组即可在这台设备上运行。'
-                      : 'This device is already part of the local space. Install and enable its execution environments to run Agents and teams locally.'}
-                  </p>
-                  <div className="mt-5 flex justify-end">
-                    <button
-                      className="inline-flex h-8 items-center rounded-md bg-text-primary px-4 text-sm text-background"
-                      data-testid="local-device-resource-confirm"
-                      onClick={onClose}
-                      type="button"
-                    >
-                      {locale === 'zh-CN' ? '知道了' : 'Done'}
-                    </button>
-                  </div>
-                </section>
-              </div>
             ),
-          renderProjectImporter: props.renderLocalProjectImporter
-            ? ({ mode, projects: collaborationProjects, onClose, onImported }) => {
-                const importedRuntimeProjectKeys = new Set(
-                  collaborationProjects.flatMap(project => {
-                    const key = project.metadata?.code_project_key
-                    return typeof key === 'string' ? [key] : []
-                  })
-                )
-                const importedWorkspaceRoots = new Set(
-                  collaborationProjects.flatMap(projectWorkspaceRoots)
-                )
-                const runtimeProjectIdentitiesById = new Map(
-                  (props.runtimeWork?.projects ?? []).map(projectWork => [
-                    runtimeProjectUiId(projectWork.project),
-                    {
-                      key: projectWork.project.key,
-                      roots: Array.from(
-                        new Set([
-                          ...(projectWork.project.roots ?? []).map(root => root.path),
-                          ...projectWork.deviceWorkspaces
-                            .filter(workspace => workspace.workspaceKind !== 'chat')
-                            .map(workspace => workspace.workspacePath),
-                        ])
-                      )
-                        .map(normalizeWorkspaceRoot)
-                        .filter(Boolean),
-                    },
-                  ])
-                )
-                const availableProjects = props.localProjects.filter(project => {
-                  const runtimeProject = runtimeProjectIdentitiesById.get(project.id)
-                  if (runtimeProject && importedRuntimeProjectKeys.has(runtimeProject.key)) {
-                    return false
-                  }
-                  const workspacePath =
-                    project.config?.workspace?.source === 'local_path' &&
-                    typeof project.config.workspace.localPath === 'string'
-                      ? normalizeWorkspaceRoot(project.config.workspace.localPath)
-                      : null
-                  const workspaceRoots = new Set([
-                    ...(runtimeProject?.roots ?? []),
-                    ...(workspacePath ? [workspacePath] : []),
-                  ])
-                  return ![...workspaceRoots].some(root => importedWorkspaceRoots.has(root))
-                })
-                return props.renderLocalProjectImporter!({
-                  mode,
-                  projects: availableProjects,
-                  onClose,
-                  onCreated: async (runtimeProjectKey, projectName, workspaceRoots) => {
-                    const localDeliveryApi = props.services.projectSpaceApis?.local
-                    if (!localDeliveryApi?.importLocalCodeProject) {
-                      throw new Error(
-                        locale === 'zh-CN'
-                          ? '本地协作服务当前不可用'
-                          : 'The local collaboration service is unavailable'
-                      )
-                    }
-                    const importedProject = await localDeliveryApi.importLocalCodeProject({
-                      runtimeProjectKey,
-                      name: projectName,
-                      roots: workspaceRoots,
-                    })
-                    if (!localProjectApi) {
-                      throw new Error(
-                        locale === 'zh-CN'
-                          ? '本地协作服务当前不可用'
-                          : 'The local collaboration service is unavailable'
-                      )
-                    }
-                    const currentProject = await localProjectApi.projects.get(
-                      String(importedProject.id)
-                    )
-                    await onImported({
-                      ...currentProject,
-                      workspace_id: LOCAL_WORKSPACE_ID,
-                    })
+            renderPersonalHome: home => (
+              <WeworkPersonalHome
+                key={templateScope}
+                entryRequestKey={personalHomeEntryKey}
+                userId={Number(props.user.id)}
+                localUserIds={
+                  props.services.localParticipationIdentity?.viewerUserIds ?? [LOCAL_USER.id]
+                }
+                active={props.workspaceActive ?? true}
+                {...home}
+                sources={navigationApis}
+                draftScope={personalHomeTaskDrafts}
+                renderIssueDetail={context => {
+                  const projectApi =
+                    context.project.project_store === 'local' ? localProjectApi : api
+                  if (!projectApi) return null
+                  return (
+                    <WeworkSharedProject
+                      api={projectApi}
+                      project={context.project}
+                      personalIssue={{
+                        ...context,
+                        onOpenInProject: () => {
+                          const projectId = String(context.project.id)
+                          navigationRequestRevisionRef.current += 1
+                          pendingNavigationProjectIdRef.current = props.onActiveProjectChange
+                            ? projectId
+                            : undefined
+                          setLocation({
+                            ...routeProjectLocation(
+                              { projectStore: context.project.project_store, projectId },
+                              context.issue.id
+                            )!,
+                            workspaceId:
+                              context.project.project_store === 'local'
+                                ? LOCAL_WORKSPACE_ID
+                                : (context.project.workspace_id ?? null),
+                            projectSettingsSection: null,
+                          })
+                          publishActiveProject({
+                            ...context.project,
+                            location: context.project.project_store === 'local' ? 'local' : 'cloud',
+                          } as LocatedProjectSpace)
+                        },
+                      }}
+                      projectCatalogApi={platformApi.projects}
+                      detailServices={
+                        props.services.projectSpaceDetailServices?.[
+                          context.project.project_store === 'local' ? 'local' : 'cloud'
+                        ]
+                      }
+                      devices={props.devices}
+                      localProjects={props.localProjects}
+                      locale={locale}
+                      location={location}
+                      setLocation={setLocation}
+                      userId={props.user.id}
+                      services={props.services}
+                      workspace={{
+                        id: context.project.workspace_id ?? '',
+                        public_id: '',
+                        location: 'cloud',
+                        name: context.project.name,
+                      }}
+                      runtimePort={issueRuntimePort(context.project.project_store, props.services)}
+                      runtimeWork={props.runtimeWork}
+                      runtimeTaskLifecycle={props.runtimeTaskLifecycle}
+                      onOpenRuntimeTask={props.onOpenRuntimeTask}
+                      onOpenSettings={props.onOpenSettings}
+                    />
+                  )
+                }}
+                conversation={(active, collaborationWork) => (
+                  <PersonalStandInWorkspace
+                    homeProjects={home.projects}
+                    collaborationWork={collaborationWork}
+                    services={props.services}
+                    user={props.user}
+                    devices={props.devices ?? []}
+                    active={active}
+                    contentRoute="/stand-in"
+                    embedded
+                    onClose={() => {}}
+                    onOpenTask={props.onOpenRuntimeTask}
+                  />
+                )}
+              />
+            ),
+            openProjectConversation,
+            renderProjectSidebarBadge: project => {
+              const enabled = standInProjects.has(
+                `${project.project_store === 'local' ? 'local' : 'cloud'}:${project.id}`
+              )
+              if (!enabled) return null
+
+              return (
+                <span
+                  className="collaboration-project-sidebar-badge flex shrink-0 text-text-secondary"
+                  title={t('standIn.project_enabled')}
+                  aria-label={t('standIn.project_enabled')}
+                  data-testid={`stand-in-project-${project.id}`}
+                >
+                  <StandInIcon enabled className="h-4 w-4" />
+                </span>
+              )
+            },
+            currentUser: {
+              id: Number(props.user.id),
+              name: collaborationUserName,
+            },
+            cloudAccess: {
+              authenticated: cloudConnection.isConnected,
+              requestLogin: () => setCloudLoginOpen(true),
+            },
+            renderIssueComposer: composerProps => (
+              <WeworkIssueHomeComposer
+                {...composerProps}
+                renderTaskComposer={draft => {
+                  const project = draft.projects.find(item => item.id === draft.projectId)
+                  const taskApi = project?.project_store === 'local' ? localProjectApi : api
+                  return taskApi ? (
+                    <PersonalHomeTaskComposer
+                      draft={draft}
+                      api={taskApi}
+                      services={props.services}
+                      drafts={personalHomeTaskDrafts}
+                    />
+                  ) : null
+                }}
+              />
+            ),
+            loadProjectCollaborationGroupGenerationModels: async () => {
+              const response = await props.services.modelApi.listModels()
+              const models = response.data.filter(
+                model => model.isActive !== false && !model.compatibilityDisabled
+              )
+              const defaultSelection =
+                getNewChatModelSelection(props.user) ?? defaultNewChatModelSelection(models)
+              return {
+                models: models.map(model => ({
+                  modelName: model.name,
+                  modelType: model.type,
+                  displayName: getModelDisplayLabel(model),
+                  options: {
+                    ...getDefaultModelOptions(model),
+                    ...modelSelectionIdentityOptions(model),
                   },
-                })
+                })),
+                defaultSelection,
               }
-            : undefined,
-          workspaceOwnerOptions,
-          projectAgentConfiguration,
-        }}
-        sidebarFooter={
-          props.onOpenSettings && props.onLogout ? (
-            <DesktopSidebarAccount
-              user={props.user}
-              onOpenSettings={props.onOpenSettings}
-              onLogout={props.onLogout}
-            />
-          ) : null
-        }
-        renderProject={({ project, workspace }) => {
-          const projectApi = project.project_store === 'local' ? localProjectApi : api
-          if (!projectApi) return null
-          const runtimePort = issueRuntimePort(project.project_store, props.services)
-          return (
-            <WeworkSharedProject
-              api={projectApi}
-              projectCatalogApi={platformApi?.projects}
-              detailServices={
-                props.services.projectSpaceDetailServices?.[
-                  project.project_store === 'local' ? 'local' : 'cloud'
-                ]
+            },
+            generateProjectCollaborationGroupDraft: (input, onProgress, onEvent) =>
+              generateCollaborationGroupDraft({
+                input,
+                textGenerationApi: props.services.textGenerationApi,
+                onProgress,
+                onEvent,
+              }),
+            location,
+            capabilities: {
+              automation: true,
+              dingtalkAitable: true,
+              projectLocation: location.workspaceId === LOCAL_WORKSPACE_ID ? 'local' : 'cloud',
+              workspaceLocations: ['local', 'cloud'],
+              sidebarPresentation: 'full',
+              projectNavigation: 'projects',
+            },
+            navigate: navigatePlatform,
+            manageResource: (kind, resourceId, source) => {
+              if (kind === 'environments') {
+                props.onOpenSettings?.(resolveDeviceResourceSettingsOptions(resourceId, source))
+                return
               }
-              devices={props.devices}
-              focusedCommentId={props.focusedCommentId}
-              focusedCommentRequestKey={props.focusedCommentRequestKey}
-              focusedItemId={props.focusedItemId}
-              localProjects={props.localProjects}
-              locale={locale}
-              location={location}
-              onFocusedItemHandled={props.onFocusedItemHandled}
-              onOpenSettings={props.onOpenSettings}
-              onOpenStandInSettings={(roleId, deviceId) => {
-                const query = new URLSearchParams({
-                  profileId: roleId,
-                  deviceId,
-                  settingsRequest: crypto.randomUUID(),
-                })
-                navigateTo(`/stand-in?${query}`)
-              }}
-              onOpenRuntimeTask={props.onOpenRuntimeTask}
-              sendRuntimePaneMessage={props.sendRuntimePaneMessage}
-              project={project}
-              onOpenProjectConversation={() => openProjectConversation(project)}
-              conversationRequestKey={
-                conversationRequest?.projectId === project.id &&
-                conversationRequest.projectStore === project.project_store &&
-                conversationRequest.accountScope === templateScope
-                  ? conversationRequest.key
-                  : undefined
-              }
-              runtimeTaskLifecycle={props.runtimeTaskLifecycle}
-              runtimeWork={props.runtimeWork}
-              runtimePort={runtimePort}
-              services={props.services}
-              setLocation={setLocation}
-              userId={props.user.id}
-              workspace={workspace}
-            />
-          )
-        }}
-      />
+              setLocation(current => ({
+                ...current,
+                collaborationDomain: source ?? current.collaborationDomain,
+                rootView: current.workspaceId ? current.rootView : 'agents',
+                workspaceView: current.workspaceId ? 'agents' : 'home',
+                projectId: null,
+                projectSettingsSection: null,
+                issueId: null,
+              }))
+            },
+            renderDeviceCreator: ({ source, workspaceId, hasCloudDevice, onClose, onCreated }) =>
+              source === 'cloud' && workspaceId && api?.workspaces?.registerRunner ? (
+                <WorkspaceRunnerRegistrationDialog
+                  workspaceId={workspaceId}
+                  register={api.workspaces.registerRunner}
+                  onClose={onClose}
+                  onDone={() => onCreated()}
+                />
+              ) : source === 'cloud' ? (
+                <AddCloudDeviceDialog
+                  open
+                  cloudConnection={cloudConnection}
+                  hasCloudDevice={hasCloudDevice}
+                  onClose={onClose}
+                  onCreated={(_devices, createdDeviceId) => onCreated(createdDeviceId)}
+                />
+              ) : (
+                <div
+                  className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4"
+                  data-testid="local-device-resource-dialog"
+                  role="presentation"
+                  onClick={event => {
+                    if (event.target === event.currentTarget) onClose()
+                  }}
+                >
+                  <section
+                    aria-modal="true"
+                    className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
+                    role="dialog"
+                  >
+                    <h2 className="text-sm font-semibold text-text-primary">
+                      {locale === 'zh-CN' ? '本地设备' : 'Local device'}
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-text-secondary">
+                      {locale === 'zh-CN'
+                        ? '当前设备已自动加入本地空间，无需重复创建。安装并启用本机执行环境后，智能体和协作小组即可在这台设备上运行。'
+                        : 'This device is already part of the local space. Install and enable its execution environments to run Agents and teams locally.'}
+                    </p>
+                    <div className="mt-5 flex justify-end">
+                      <button
+                        className="inline-flex h-8 items-center rounded-md bg-text-primary px-4 text-sm text-background"
+                        data-testid="local-device-resource-confirm"
+                        onClick={onClose}
+                        type="button"
+                      >
+                        {locale === 'zh-CN' ? '知道了' : 'Done'}
+                      </button>
+                    </div>
+                  </section>
+                </div>
+              ),
+            renderProjectImporter: props.renderLocalProjectImporter
+              ? ({ mode, projects: collaborationProjects, onClose, onImported }) => {
+                  const importedRuntimeProjectKeys = new Set(
+                    collaborationProjects.flatMap(project => {
+                      const key = project.metadata?.code_project_key
+                      return typeof key === 'string' ? [key] : []
+                    })
+                  )
+                  const importedWorkspaceRoots = new Set(
+                    collaborationProjects.flatMap(projectWorkspaceRoots)
+                  )
+                  const runtimeProjectIdentitiesById = new Map(
+                    (props.runtimeWork?.projects ?? []).map(projectWork => [
+                      runtimeProjectUiId(projectWork.project),
+                      {
+                        key: projectWork.project.key,
+                        roots: Array.from(
+                          new Set([
+                            ...(projectWork.project.roots ?? []).map(root => root.path),
+                            ...projectWork.deviceWorkspaces
+                              .filter(workspace => workspace.workspaceKind !== 'chat')
+                              .map(workspace => workspace.workspacePath),
+                          ])
+                        )
+                          .map(normalizeWorkspaceRoot)
+                          .filter(Boolean),
+                      },
+                    ])
+                  )
+                  const availableProjects = props.localProjects.filter(project => {
+                    const runtimeProject = runtimeProjectIdentitiesById.get(project.id)
+                    if (runtimeProject && importedRuntimeProjectKeys.has(runtimeProject.key)) {
+                      return false
+                    }
+                    const workspacePath =
+                      project.config?.workspace?.source === 'local_path' &&
+                      typeof project.config.workspace.localPath === 'string'
+                        ? normalizeWorkspaceRoot(project.config.workspace.localPath)
+                        : null
+                    const workspaceRoots = new Set([
+                      ...(runtimeProject?.roots ?? []),
+                      ...(workspacePath ? [workspacePath] : []),
+                    ])
+                    return ![...workspaceRoots].some(root => importedWorkspaceRoots.has(root))
+                  })
+                  return props.renderLocalProjectImporter!({
+                    mode,
+                    projects: availableProjects,
+                    onClose,
+                    onCreated: async (runtimeProjectKey, projectName, workspaceRoots) => {
+                      const localDeliveryApi = props.services.projectSpaceApis?.local
+                      if (!localDeliveryApi?.importLocalCodeProject) {
+                        throw new Error(
+                          locale === 'zh-CN'
+                            ? '本地协作服务当前不可用'
+                            : 'The local collaboration service is unavailable'
+                        )
+                      }
+                      const importedProject = await localDeliveryApi.importLocalCodeProject({
+                        runtimeProjectKey,
+                        name: projectName,
+                        roots: workspaceRoots,
+                      })
+                      if (!localProjectApi) {
+                        throw new Error(
+                          locale === 'zh-CN'
+                            ? '本地协作服务当前不可用'
+                            : 'The local collaboration service is unavailable'
+                        )
+                      }
+                      const currentProject = await localProjectApi.projects.get(
+                        String(importedProject.id)
+                      )
+                      await onImported({
+                        ...currentProject,
+                        workspace_id: LOCAL_WORKSPACE_ID,
+                      })
+                    },
+                  })
+                }
+              : undefined,
+            workspaceOwnerOptions,
+            projectAgentConfiguration,
+          }}
+          sidebarFooter={
+            props.onOpenSettings && props.onLogout ? (
+              <DesktopSidebarAccount
+                user={props.user}
+                onOpenSettings={props.onOpenSettings}
+                onLogout={props.onLogout}
+              />
+            ) : null
+          }
+          renderProject={({ project, workspace }) => {
+            const projectApi = project.project_store === 'local' ? localProjectApi : api
+            if (!projectApi) return null
+            const runtimePort = issueRuntimePort(project.project_store, props.services)
+            return (
+              <WeworkSharedProject
+                api={projectApi}
+                projectCatalogApi={platformApi?.projects}
+                detailServices={
+                  props.services.projectSpaceDetailServices?.[
+                    project.project_store === 'local' ? 'local' : 'cloud'
+                  ]
+                }
+                devices={props.devices}
+                focusedCommentId={props.focusedCommentId}
+                focusedCommentRequestKey={props.focusedCommentRequestKey}
+                focusedItemId={props.focusedItemId}
+                localProjects={props.localProjects}
+                locale={locale}
+                location={location}
+                onFocusedItemHandled={props.onFocusedItemHandled}
+                onOpenSettings={props.onOpenSettings}
+                onOpenStandInSettings={(roleId, deviceId) => {
+                  const query = new URLSearchParams({
+                    profileId: roleId,
+                    deviceId,
+                    settingsRequest: crypto.randomUUID(),
+                  })
+                  navigateTo(`/stand-in?${query}`)
+                }}
+                onOpenRuntimeTask={props.onOpenRuntimeTask}
+                sendRuntimePaneMessage={props.sendRuntimePaneMessage}
+                project={project}
+                onOpenProjectConversation={() => openProjectConversation(project)}
+                conversationRequestKey={
+                  conversationRequest?.projectId === project.id &&
+                  conversationRequest.projectStore === project.project_store &&
+                  conversationRequest.accountScope === templateScope
+                    ? conversationRequest.key
+                    : undefined
+                }
+                runtimeTaskLifecycle={props.runtimeTaskLifecycle}
+                runtimeWork={props.runtimeWork}
+                runtimePort={runtimePort}
+                services={props.services}
+                setLocation={setLocation}
+                userId={props.user.id}
+                workspace={workspace}
+              />
+            )
+          }}
+        />
+      </IndependentIssuesProvider>
       <WeworkCollaborationEmbeddedBrowserHost workspaceActive={props.workspaceActive ?? true} />
     </div>
   )

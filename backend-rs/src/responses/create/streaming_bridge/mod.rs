@@ -439,7 +439,7 @@ impl Bridge {
                 BridgeFailure::generic(
                     error
                         .detail_message()
-                        .unwrap_or("Executor recovery failed")
+                        .unwrap_or("Execution could not start")
                         .to_owned(),
                 )
             })?;

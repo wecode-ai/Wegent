@@ -342,7 +342,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn review_reports_missing_artifact() {
+        let _guard = crate::test_env::lock();
         let home = tempfile::tempdir().expect("temporary directory should be created");
         let workspace = tempfile::tempdir().expect("temporary directory should be created");
         let result = turn_file_changes(
@@ -358,7 +360,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn review_returns_verified_diff() {
+        let _guard = crate::test_env::lock();
         let home = tempfile::tempdir().expect("temporary directory should be created");
         let workspace = tempfile::tempdir().expect("temporary directory should be created");
         let artifact_id = "turn-file-changes/task-1/sub-2";
@@ -389,7 +393,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn review_rejects_checksum_mismatch() {
+        let _guard = crate::test_env::lock();
         let home = tempfile::tempdir().expect("temporary directory should be created");
         let workspace = tempfile::tempdir().expect("temporary directory should be created");
         let artifact_id = "turn-file-changes/task-1/sub-2";

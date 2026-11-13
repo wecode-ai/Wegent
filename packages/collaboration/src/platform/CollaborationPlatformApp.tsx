@@ -1380,7 +1380,13 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     host.location.rootView === "templates" &&
     Boolean(host.templateStore);
-  const ownsPageRequests = isDevicePage || isStandInPage || isTemplatePage;
+  const isPersonalIssuesPage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    Boolean(host.renderIssueList) &&
+    Boolean(host.location.rootView?.startsWith("issues-"));
+  const ownsPageRequests =
+    isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -2233,6 +2239,17 @@ function CollaborationPlatformAppContent({
           }}
           onManageResource={manageRootResource}
         />
+      ) : rootView.startsWith("issues-") && host.renderIssueList ? (
+        host.renderIssueList({
+          scope:
+            rootView === "issues-created"
+              ? "created"
+              : rootView === "issues-assigned"
+                ? "assigned"
+                : "participating",
+          projects: state.navigationProjects,
+          onOpenIssue: openMyWorkItem,
+        })
       ) : rootView === "inbox" ? (
         <WorkItemsPage
           title={messages.inbox}

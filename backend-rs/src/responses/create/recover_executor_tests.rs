@@ -150,6 +150,8 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
             let mut row = vec![("unused", SqlValue::Null); 23];
             for (column, value) in [
                 ("task_id", SqlValue::I64(100)),
+                ("role", SqlValue::Text("ASSISTANT".into())),
+                ("status", SqlValue::Text("PENDING".into())),
                 ("executor_name", SqlValue::Text("old-executor".into())),
                 ("executor_namespace", SqlValue::Text("old-namespace".into())),
                 ("executor_deleted_at", SqlValue::I8(0)),
@@ -159,11 +161,17 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
             row
         } else {
             assert!(sql.contains("FROM tasks"), "{sql}");
-            vec![
+            let mut row = vec![("unused", SqlValue::Null); 12];
+            for (column, value) in [
                 ("id", SqlValue::I64(100)),
                 ("user_id", SqlValue::I32(7)),
+                ("kind", SqlValue::Text("Task".into())),
                 ("json", SqlValue::Text(task_json.to_string())),
-            ]
+                ("is_active", SqlValue::I64(1)),
+            ] {
+                row[crate::task_store::task_column_index(column).unwrap()] = (column, value);
+            }
+            row
         };
         (row.clone(), vec![row])
     })
@@ -182,11 +190,19 @@ async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_pa
     assert_eq!(writes.len(), 2);
     assert!(writes[0].contains("executor_deleted_at = true"));
     assert!(writes[1].contains("executor_deleted_at = false"));
-    assert!(
-        queries
-            .iter()
-            .any(|sql| sql.contains("s.status IN ('PENDING', 'RUNNING')"))
-    );
+    let lock = queries
+        .iter()
+        .position(|sql| sql.contains("FROM tasks") && sql.ends_with("FOR UPDATE"))
+        .expect("dispatch locks the parent task");
+    let subtask = queries
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE subtasks SET status="))
+        .expect("dispatch transitions the subtask to RUNNING");
+    let parent = queries
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE tasks SET json="))
+        .expect("dispatch transitions the parent to RUNNING");
+    assert!(lock < subtask && subtask < parent);
 }
 
 #[tokio::test]
@@ -213,7 +229,7 @@ async fn recover_missing_executor(
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
-    let fixture = recovery_fixture(json!({})).await;
+    let fixture = recovery_fixture(json!({"status": {"status": "PENDING"}})).await;
     let mut app = crate::app_test_support::app(fixture.mysql.clone());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -234,6 +250,7 @@ async fn recover_missing_executor(
             let mut request_line = String::new();
             connection.read_line(&mut request_line).await.unwrap();
             let mut length = 0;
+            let mut has_binding_credential = false;
             loop {
                 let mut header = String::new();
                 assert!(connection.read_line(&mut header).await.unwrap() > 0);
@@ -243,6 +260,9 @@ async fn recover_missing_executor(
                 if let Some(value) = header.to_ascii_lowercase().strip_prefix("content-length:") {
                     length = value.trim().parse().unwrap();
                 }
+                has_binding_credential |= header
+                    .to_ascii_lowercase()
+                    .starts_with("authorization: wegentexecutorbinding ");
             }
             let (status, body) = if path.ends_with("/address") {
                 assert!(request_line.starts_with(&format!("GET {path}?")));
@@ -257,6 +277,7 @@ async fn recover_missing_executor(
                 connection.read_exact(&mut body).await.unwrap();
                 let body: Value = serde_json::from_slice(&body).unwrap();
                 if path.ends_with("/responses") {
+                    assert!(has_binding_credential);
                     assert_eq!(body["metadata"]["executor_name"], "replacement");
                     assert_eq!(body["metadata"]["executor_namespace"], "replacement-ns");
                     ("200 OK", json!({"id": "resp_100", "status": "queued"}))

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { KnowledgeDetailPanel } from '@/features/knowledge/document/components/KnowledgeDetailPanel'
 import type { KnowledgeBase } from '@/types/knowledge'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
@@ -218,4 +218,27 @@ it('exits the classic permission view when the list confirms management downgrad
   expect(screen.queryByTestId('knowledge-detail-permissions-tab')).not.toBeInTheDocument()
   expect(screen.queryByTestId('mock-classic-permissions')).not.toBeInTheDocument()
   expect(mockFetchPermission.mock.calls.length).toBeGreaterThan(calls)
+})
+
+it('renders the current chat actions and clears them when switching libraries', () => {
+  const action = jest.fn()
+  const { rerender } = render(
+    <KnowledgeDetailPanel selectedKb={knowledgeBase} currentView="notebook" />
+  )
+  const oldChat = mockChatArea.mock.calls.at(-1)![0]
+  expect(oldChat.onShareButtonRender).toEqual(expect.any(Function))
+  act(() => oldChat.onShareButtonRender(<button onClick={action}>Export current chat</button>))
+  fireEvent.click(screen.getByRole('button', { name: 'Export current chat' }))
+  expect(action).toHaveBeenCalledTimes(1)
+  act(() => oldChat.onShareButtonRender(<button>Export next conversation</button>))
+  expect(screen.queryByText('Export current chat')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Export next conversation' })).toBeInTheDocument()
+  act(() => oldChat.onShareButtonRender(null))
+  expect(screen.queryByTestId('knowledge-chat-actions')).not.toBeInTheDocument()
+  rerender(
+    <KnowledgeDetailPanel selectedKb={{ ...knowledgeBase, id: 99 }} currentView="notebook" />
+  )
+  expect(screen.queryByRole('button', { name: 'Export current chat' })).not.toBeInTheDocument()
+  act(() => oldChat.onShareButtonRender(<button>Obsolete export</button>))
+  expect(screen.queryByText('Obsolete export')).not.toBeInTheDocument()
 })

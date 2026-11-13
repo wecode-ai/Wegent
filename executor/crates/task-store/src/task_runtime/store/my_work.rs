@@ -6,11 +6,16 @@ impl LocalTaskStore {
         &self,
         limit: usize,
         cursor: Option<&str>,
-        assigned_only: bool,
+        scope: &str,
         include_completed: bool,
         viewer_ids: &[i64],
         order: &str,
     ) -> Result<Value, TaskRuntimeError> {
+        let assigned_only = scope == "assigned";
+        let created_only = scope == "created";
+        if !["assigned", "created", "participating"].contains(&scope) {
+            return Err(TaskRuntimeError::Invalid("Invalid My work scope".into()));
+        }
         if !(1..=100).contains(&limit) {
             return Err(TaskRuntimeError::Invalid(
                 "My work limit must be 1..100".into(),
@@ -67,6 +72,7 @@ impl LocalTaskStore {
                AND p.resource_type='project' AND p.deleted_at IS NULL AND p.status='active'
                AND p.id<>?1 AND COALESCE(json_extract(p.metadata,'$.task_provider'),'local')='local'
                AND json_extract(t.metadata,'$.archived_at') IS NULL
+               AND (?11=0 OR COALESCE(t.created_by_user_id,0) IN (SELECT value FROM json_each(?7)))
                AND (?2=0 OR t.assignee_user_id IN (SELECT value FROM json_each(?7)))
                AND (COALESCE(t.created_by_user_id,0) IN (SELECT value FROM json_each(?7))
                  OR t.assignee_user_id IN (SELECT value FROM json_each(?7))
@@ -103,7 +109,8 @@ impl LocalTaskStore {
                     json!(viewer_ids).to_string(),
                     sort_mode,
                     before.as_ref().map(|value| value.0),
-                    before.as_ref().map(|value| value.1)
+                    before.as_ref().map(|value| value.1),
+                    created_only
                 ],
                 |row| {
                     Ok((
@@ -163,6 +170,62 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn created_scope_filters_before_pagination_and_preserves_identity_aliases() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("created.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Created"})).unwrap())
+            .unwrap();
+        let mut mine = Vec::new();
+        for creator in [0, 7, 9] {
+            let item = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":"Work"})).unwrap(),
+                )
+                .unwrap();
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_items SET created_by_user_id=?1,assignee_user_id=7 WHERE id=?2",
+                    params![creator, item.id],
+                )
+                .unwrap();
+            if creator != 9 {
+                mine.push(item.id);
+            }
+        }
+        let first = store
+            .my_work_page(1, None, "created", true, &[0, 7], "recent")
+            .unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 1);
+        assert!(
+            first["next_cursor"].is_string(),
+            "Expected another creator page; page={first}; expected={mine:?}; persisted={:?}",
+            store.list_tasks(&project.id).unwrap()
+        );
+        let next = first["next_cursor"].as_str().unwrap();
+        let second = store
+            .my_work_page(1, Some(next), "created", true, &[0, 7], "recent")
+            .unwrap();
+        let mut actual = vec![
+            first["items"][0]["issue"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            second["items"][0]["issue"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        ];
+        actual.sort();
+        mine.sort();
+        assert_eq!(actual, mine);
+        assert!(second["next_cursor"].is_null());
+    }
 
     #[test]
     fn participating_filters_relations_before_pagination_and_excludes_expired_relations() {
@@ -273,7 +336,7 @@ mod tests {
         let mut actual = Vec::new();
         loop {
             let page = store
-                .my_work_page(1, cursor.as_deref(), false, true, &[7], "recent")
+                .my_work_page(1, cursor.as_deref(), "participating", true, &[7], "recent")
                 .unwrap();
             actual.extend(
                 page["items"]
@@ -289,13 +352,13 @@ mod tests {
         }
         assert_eq!(actual, ids[..5].iter().rev().cloned().collect::<Vec<_>>());
         let assigned = store
-            .my_work_page(30, None, true, true, &[7], "recent")
+            .my_work_page(30, None, "assigned", true, &[7], "recent")
             .unwrap();
         assert_eq!(assigned["items"].as_array().unwrap().len(), 1);
         assert_eq!(assigned["items"][0]["issue"]["id"], ids[1]);
         for viewers in [vec![8], vec![]] {
             assert!(store
-                .my_work_page(30, None, false, true, &viewers, "recent")
+                .my_work_page(30, None, "participating", true, &viewers, "recent")
                 .unwrap()["items"]
                 .as_array()
                 .unwrap()
@@ -329,19 +392,19 @@ mod tests {
             params![issue.id, now()],
         ).unwrap();
         let page = store
-            .my_work_page(1, None, false, false, &[7], "attention")
+            .my_work_page(1, None, "participating", false, &[7], "attention")
             .unwrap();
         assert_eq!(page["items"].as_array().unwrap().len(), 1);
         assert_eq!(page["items"][0]["issue"]["id"], issue.id);
         assert_eq!(page["items"][0]["attention_order"][0], 0);
         assert!(store
-            .my_work_page(1, None, false, false, &[8], "attention")
+            .my_work_page(1, None, "participating", false, &[8], "attention")
             .unwrap()["items"]
             .as_array()
             .unwrap()
             .is_empty());
         assert!(store
-            .my_work_page(1, None, true, false, &[7], "attention")
+            .my_work_page(1, None, "assigned", false, &[7], "attention")
             .unwrap()["items"]
             .as_array()
             .unwrap()
@@ -380,7 +443,7 @@ mod tests {
             let mut actual = Vec::new();
             for _ in 0..3 {
                 let page = store
-                    .my_work_page(1, cursor.as_deref(), true, false, &[0], order)
+                    .my_work_page(1, cursor.as_deref(), "assigned", false, &[0], order)
                     .unwrap();
                 actual.push(page["items"][0]["issue"]["id"].as_str().unwrap().to_owned());
                 cursor = page["next_cursor"].as_str().map(str::to_owned);
@@ -389,13 +452,13 @@ mod tests {
             assert!(cursor.is_none());
         }
         let first = store
-            .my_work_page(1, None, true, false, &[0], "assignment")
+            .my_work_page(1, None, "assigned", false, &[0], "assignment")
             .unwrap();
         assert!(store
             .my_work_page(
                 1,
                 first["next_cursor"].as_str(),
-                true,
+                "assigned",
                 false,
                 &[0],
                 "priority"
@@ -435,7 +498,7 @@ mod tests {
         let mut actual = Vec::new();
         for _ in 0..3 {
             let page = store
-                .my_work_page(2, cursor.as_deref(), true, true, &[0], "attention")
+                .my_work_page(2, cursor.as_deref(), "assigned", true, &[0], "attention")
                 .unwrap();
             actual.extend(
                 page["items"]
@@ -449,7 +512,7 @@ mod tests {
         assert_eq!(actual, ids);
         assert!(cursor.is_none());
         let page = store
-            .my_work_page(30, None, false, true, &[0], "attention")
+            .my_work_page(30, None, "participating", true, &[0], "attention")
             .unwrap();
         let actual = page["items"]
             .as_array()
@@ -481,11 +544,11 @@ mod tests {
             }
         }
         let first = store
-            .my_work_page(30, None, false, true, &[0], "recent")
+            .my_work_page(30, None, "participating", true, &[0], "recent")
             .unwrap();
         let next = first["next_cursor"].as_str().unwrap();
         let second = store
-            .my_work_page(30, Some(next), false, true, &[0], "recent")
+            .my_work_page(30, Some(next), "participating", true, &[0], "recent")
             .unwrap();
         let ids = first["items"]
             .as_array()
@@ -499,10 +562,10 @@ mod tests {
         assert_eq!(ids.len(), 36);
         assert!(second["next_cursor"].is_null());
         assert!(store
-            .my_work_page(101, None, false, true, &[0], "recent")
+            .my_work_page(101, None, "participating", true, &[0], "recent")
             .is_err());
         assert!(store
-            .my_work_page(30, Some("invalid"), false, true, &[0], "recent")
+            .my_work_page(30, Some("invalid"), "participating", true, &[0], "recent")
             .is_err());
     }
 
@@ -535,7 +598,7 @@ mod tests {
                 .unwrap();
         }
         let page = store
-            .my_work_page(30, None, true, false, &[0, 7], "recent")
+            .my_work_page(30, None, "assigned", false, &[0, 7], "recent")
             .unwrap();
         assert_eq!(page["items"].as_array().unwrap().len(), 2);
         assert!(page["items"]
@@ -545,7 +608,7 @@ mod tests {
             .all(|row| [json!(0), json!(7)].contains(&row["issue"]["assignee_user_id"])));
         assert_eq!(
             store
-                .my_work_page(30, None, false, true, &[0], "recent")
+                .my_work_page(30, None, "participating", true, &[0], "recent")
                 .unwrap()["items"]
                 .as_array()
                 .unwrap()

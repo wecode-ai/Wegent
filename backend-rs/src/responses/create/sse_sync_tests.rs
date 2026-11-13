@@ -904,16 +904,21 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
         redis.calls()
     );
-    let subtask_reads = mysql
-        .statements()
+    let statements = mysql.statements();
+    let result_reads = statements
         .iter()
         .filter(|statement| statement.contains("subtasks_0424"))
         .count();
+    let parent_locks = statements
+        .iter()
+        .filter(|statement| {
+            statement.contains("FROM tasks_0424") && statement.ends_with("FOR UPDATE")
+        })
+        .count();
     assert_eq!(
-        subtask_reads,
-        2,
-        "only the terminal completion runs; an in-drain cancel has no effect: {:?}",
-        mysql.statements()
+        (result_reads, parent_locks),
+        (1, 1),
+        "the terminal collects once and locks its parent once; the in-drain cancel must not persist: {statements:?}",
     );
 }
 

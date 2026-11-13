@@ -129,8 +129,7 @@ where
     ///
     /// The route id uniquely identifies the persisted Device record for the
     /// current Runtime registration, even when historical records share this
-    /// device's submitted id. `Ok(None)` means the backend rejected the
-    /// registration.
+    /// device's submitted id. An unrecognized rejection returns `Ok(None)`.
     pub async fn register_device(&self, timeout: Duration) -> Result<Option<String>, String> {
         if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
             return Err(
@@ -142,7 +141,14 @@ where
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
             .await?;
         if !ack_success(&response) {
-            return Ok(None);
+            // Other registration failures can contain raw database diagnostics.
+            match ack_payload(&response).and_then(|payload| payload.get("error")).and_then(Value::as_str) {
+                Some(message @ (
+                    "Registration failed: App device identity changed; reconnect using the original installation identity"
+                    | "Registration failed: Device name is already registered; configure a unique persistent device ID for this installation"
+                )) => return Err(message.to_owned()),
+                _ => return Ok(None),
+            }
         }
         let route_id = ack_payload(&response)
             .and_then(|payload| payload.get("device_route_id"))

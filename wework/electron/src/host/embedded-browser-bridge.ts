@@ -504,7 +504,7 @@ export class EmbeddedBrowserBridge {
           )
         )
       } catch (error) {
-        if (!isUnavailableBrowserError(error, label)) throw error
+        if (!isRetryableWaitError(error, label)) throw error
         await new Promise(resolve => setTimeout(resolve, pollMs))
         continue
       }
@@ -630,8 +630,12 @@ export class EmbeddedBrowserBridge {
   }
 }
 
-function isUnavailableBrowserError(error: unknown, label: string): boolean {
-  return errorMessage(error) === `Embedded browser is unavailable: ${label}`
+function isRetryableWaitError(error: unknown, label: string): boolean {
+  const message = errorMessage(error)
+  return (
+    message === `Embedded browser is unavailable: ${label}` ||
+    message === 'Inspected target navigated or closed'
+  )
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {

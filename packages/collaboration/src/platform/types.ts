@@ -24,6 +24,9 @@ export type CollaborationPlatformView = "spaces" | "resources";
 export type CollaborationDomain = "local" | "cloud";
 export type CollaborationPlatformRootView =
   | "home"
+  | "issues-assigned"
+  | "issues-created"
+  | "issues-participating"
   | "agents"
   | "teams"
   | "devices"
@@ -74,6 +77,14 @@ export interface CollaborationPlatformHostAdapter {
       task?: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress;
     };
     onCreatedIssueHandled?(key: string): void;
+    onOpenIssue(
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
+    ): void;
+  }): ReactNode;
+  createIndependentIssue?(): void;
+  renderIssueList?(props: {
+    scope: "assigned" | "created" | "participating";
+    projects: CollaborationProject[];
     onOpenIssue(
       issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
     ): void;

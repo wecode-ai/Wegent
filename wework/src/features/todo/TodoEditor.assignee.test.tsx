@@ -174,6 +174,40 @@ describe('workspace Issue assignee', () => {
     expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('张三')
   })
 
+  it('restores the saved owner on a routing rejection and retries the intended assignment', async () => {
+    const api = setup()
+    api.assignLoopItem.mockRejectedValueOnce(
+      Object.assign(new Error('Runner conflict'), {
+        detail: {
+          error_code: 'ISSUE_RUNNER_CONFLICT',
+          routing_context: {
+            reason: 'policy_mismatch',
+            agent_name: 'Conflicting Agent',
+            bound_environment: { id: '1', name: 'Original device' },
+            policy_environment: { id: '2', name: 'Other device' },
+          },
+        },
+      })
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await user.click(await screen.findByRole('option', { name: '张三' }))
+    const alert = await screen.findByTestId('cloud-todo-save-error')
+    for (const text of [
+      'Conflicting Agent',
+      'Original device (1)',
+      'Other device (2)',
+      'ISSUE_RUNNER_CONFLICT',
+    ])
+      expect(alert).toHaveTextContent(text)
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('Codex 工程师')
+    expect(api.updateLoopItem).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() => expect(api.assignLoopItem).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('cloud-todo-state-assignee')).toHaveTextContent('张三')
+    expect(screen.queryByTestId('cloud-todo-save-error')).toBeNull()
+  })
+
   it.each([
     { canViewDetail: false, role: 'Owner' },
     { canViewDetail: true, role: 'Viewer' },

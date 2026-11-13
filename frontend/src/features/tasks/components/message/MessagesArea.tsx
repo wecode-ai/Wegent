@@ -1169,6 +1169,7 @@ function MessagesArea({
     if (onShareButtonRender) {
       onShareButtonRender(shareButton)
     }
+    return () => onShareButtonRender?.(null)
   }, [onShareButtonRender, shareButton])
 
   // Convert DisplayMessage to Message format for MessageBubble

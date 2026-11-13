@@ -588,6 +588,10 @@ async fn executor_failure_fixture(status: &'static str) -> MysqlRows {
         if sql.starts_with("UPDATE ") {
             return (vec![], vec![]);
         }
+        if sql.starts_with("SELECT id FROM subtasks_0424") {
+            let row = vec![("id", SqlValue::I64(SUBTASK_ID))];
+            return (row.clone(), vec![row]);
+        }
         let mut row: Row;
         if sql.contains("FROM subtasks_0424") {
             row = vec![("unused", SqlValue::Null); 23];
@@ -596,7 +600,17 @@ async fn executor_failure_fixture(status: &'static str) -> MysqlRows {
                 ("user_id", SqlValue::I32(7)),
                 ("task_id", SqlValue::I64(TASK_ID)),
                 ("message_id", SqlValue::I64(2)),
-                ("status", SqlValue::Text("FAILED".into())),
+                (
+                    "status",
+                    SqlValue::Text(
+                        if sql.ends_with("FOR UPDATE") {
+                            status
+                        } else {
+                            "FAILED"
+                        }
+                        .into(),
+                    ),
+                ),
             ] {
                 row[subtask_column_index(column).unwrap()] = (column, value);
             }
@@ -807,7 +821,12 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             &http,
             DispatchJob::Executor {
                 url,
-                body: ExecutorDispatchBody::Prepared(json!({})),
+                body: ExecutorDispatchBody::Prepared(Ok(
+                    crate::executor_binding::DispatchRequest {
+                        body: json!({}),
+                        binding_token: "test-binding".into(),
+                    },
+                )),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
                 consumer: Box::new(consumer(fixture.mysql.clone(), redis.clone())),
                 task_id: TASK_ID,

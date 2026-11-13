@@ -28,7 +28,7 @@ mod text_value;
 #[path = "tests.rs"]
 mod tests;
 
-use brz_mysql::Mysql;
+use brz_mysql::{Mysql, MysqlResult};
 use brz_redis::Redis;
 use serde_json::Value;
 
@@ -37,9 +37,10 @@ use crate::executor_manager::ExecutorManager;
 pub(crate) use collect::collect_completed_result;
 pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{
-    claim_running_subtask, mark_subtask_running, persist_completed_result, update_task_status,
+    commit_subtask_running, mark_subtask_running, persist_completed_result, update_task_status,
 };
 pub(crate) use sql::Tables;
+pub(crate) use sql::{dispatchable_task_status, is_active_task, latest_assistant_id};
 
 pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
     mysql: &M,
@@ -153,7 +154,7 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> (Option<Value>, Option<i64>) {
-    let (final_result, user_id, _) = complete_terminal_with_advance(
+    complete_terminal_with_advance(
         ctx,
         task_id,
         subtask_id,
@@ -164,8 +165,13 @@ pub(crate) async fn complete_terminal<M: Mysql, R: Redis>(
         executor_name,
         executor_namespace,
     )
-    .await;
-    (final_result, user_id)
+    .await
+    .inspect_err(
+        |error| tracing::error!(%error, task_id, subtask_id, "terminal persistence failed"),
+    )
+    .ok()
+    .flatten()
+    .map_or((None, None), |(result, user_id, _)| (result, user_id))
 }
 
 /// [`complete_terminal`] plus the `PipelineAutoAdvanceIntent` the terminal
@@ -181,13 +187,13 @@ pub(crate) async fn complete_terminal_with_advance<M: Mysql, R: Redis>(
     error_code: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-) -> (Option<Value>, Option<i64>, bool) {
+) -> MysqlResult<Option<(Option<Value>, Option<i64>, bool)>> {
     // `callback.py:145 _get_task_status_user_id`: the owner of the single
     // active state, read before the event is emitted so the Socket.IO status
     // frame can address `user:{id}`. The source reads it before the emit step;
     // that step is Redis-only here, so the read keeps its wire position.
     let user_id = task_status_user_id(ctx.mysql, ctx.tables, task_id).await;
-    let (final_result, auto_advance) = finish_terminal(
+    let finished = finish_terminal(
         ctx,
         task_id,
         subtask_id,
@@ -198,9 +204,9 @@ pub(crate) async fn complete_terminal_with_advance<M: Mysql, R: Redis>(
         executor_name,
         executor_namespace,
     )
-    .await;
+    .await?;
 
-    (final_result, user_id, auto_advance)
+    Ok(finished.map(|(result, auto_advance)| (result, user_id, auto_advance)))
 }
 
 /// `StatusUpdatingEmitter`'s terminal branch without the callback's owner
@@ -235,7 +241,12 @@ pub(crate) async fn complete_terminal_event<M: Mysql, R: Redis>(
         executor_namespace,
     )
     .await
-    .0
+    .inspect_err(
+        |error| tracing::error!(%error, task_id, subtask_id, "terminal persistence failed"),
+    )
+    .ok()
+    .flatten()
+    .and_then(|(result, _)| result)
 }
 
 /// The shared terminal steps: collect, persist, publish `TaskCompletedEvent`.
@@ -252,21 +263,25 @@ async fn finish_terminal<M: Mysql, R: Redis>(
     error_code: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-) -> (Option<Value>, bool) {
+) -> MysqlResult<Option<(Option<Value>, bool)>> {
     let final_result =
         collect::collect_completed_result(ctx, subtask_id, status, result, error, error_code).await;
 
-    let auto_advance = persist::persist_completed_result(
+    let Some(auto_advance) = persist::persist_completed_result(
         ctx,
         task_id,
         subtask_id,
         status,
         final_result.as_ref(),
         error,
+        error_code,
         executor_name,
         executor_namespace,
     )
-    .await;
+    .await?
+    else {
+        return Ok(None);
+    };
 
     events::publish_task_completed(
         ctx,
@@ -278,5 +293,5 @@ async fn finish_terminal<M: Mysql, R: Redis>(
     )
     .await;
 
-    (final_result, auto_advance)
+    Ok(Some((final_result, auto_advance)))
 }

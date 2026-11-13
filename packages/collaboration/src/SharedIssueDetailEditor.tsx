@@ -793,11 +793,21 @@ export function TodoEditor(props: TodoEditorProps) {
       return;
     if (field === "assigneeTarget") {
       void fieldSaves.save(field, async (source) => {
-        const updated = await persistAssignee(
-          source,
-          next as IssueAssigneeTarget,
-          notifyAssignee,
-        );
+        let updated;
+        try {
+          updated = await persistAssignee(
+            source,
+            next as IssueAssigneeTarget,
+            notifyAssignee,
+          );
+        } catch (error) {
+          const latest = latestItemRef.current;
+          if (runnerEnvironmentError(error, t) && latest?.id === source.id)
+            setIssueDraftField("assigneeTarget", (current) =>
+              current === next ? issueAssigneeTarget(latest) : current,
+            );
+          throw error;
+        }
         if (latestItemRef.current?.id === source.id) {
           setIssueDraftField("assigneeTarget", (current) =>
             current === next ? issueAssigneeTarget(updated) : current,
