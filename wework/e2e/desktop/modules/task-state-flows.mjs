@@ -75,9 +75,12 @@ async function waitForPinnedTaskOrder(control, expectedRows, stableMs = 500) {
   let stableSince = null
   let lastOrder = []
   while (Date.now() < deadline) {
-    lastOrder = JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST)).filter(
-      testId => expectedRows.includes(testId)
-    )
+    lastOrder =
+      Number(await control.command('getElementCount', PINNED_TASK_LIST)) === 0
+        ? []
+        : JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST)).filter(testId =>
+            expectedRows.includes(testId)
+          )
     if (lastOrder.join(',') === expectedRows.join(',')) {
       stableSince ??= Date.now()
       if (Date.now() - stableSince >= stableMs) return
