@@ -62,6 +62,17 @@ export async function verifyLocalProjectMigration(control, request, timeoutMs) {
   assert.equal(files.length, 1)
   assert.equal(files[0].display_name, 'migration.txt')
   assert.notEqual(files[0].id, attachment.id)
+  assert.equal(
+    await request(
+      `/api/v1/loop-item-attachments/${files[0].id}/content`,
+      'GET',
+      undefined,
+      undefined,
+      200,
+      'text'
+    ),
+    'shared file bytes'
+  )
   const sourceSnapshot = await rpc('projects.migration_snapshot', { project_id: source.id })
   assert.equal(sourceSnapshot.archived, true)
   assert.equal(sourceSnapshot.migration_target, String(target.id))

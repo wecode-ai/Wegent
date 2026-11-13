@@ -13,43 +13,45 @@ sidebar_position: 3
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
-## Collaboration spaces and global resource catalogs
+## Collaboration groups and global resource catalogs
 
 <a id="workspace-resource-controls"></a>
 
-Open **top + → Collaboration**. The sidebar title is **Collaboration**. One **Projects** area retains both local and cloud projects without separate storage-location sections. Space projects appear under their space, with the personal space first. Local and cloud projects outside business spaces appear together under Personal group; each project appears once.
+Open **top + → Collaboration**. The sidebar title is **Collaboration**. One **Projects** area retains both local and cloud projects without separate storage-location sections. Projects appear under their group, with the personal group first. Local and cloud projects outside business groups appear together under Personal group; each project appears once.
 
-Personal group is the current account’s personal space. Choose **Personal group → … → New project** to create a local project when disconnected or a cloud project when connected. **Personal group → … → Group settings** opens the actual personal space owned by the account: the cloud personal space when connected, or the local personal space when disconnected. The Projects heading and individual project rows have no plus buttons. Project storage and execution devices are separate.
+Personal group is the current account’s personal group. Choose **Personal group → … → New project** to create a local project when disconnected or a cloud project when connected. **Personal group → … → Group settings** opens the actual personal group owned by the account: the cloud personal group when connected, or the local personal group when disconnected. The Projects heading and individual project rows have no plus buttons. Project storage and execution devices are separate.
 
-Spaces collapse and expand independently. Only the project region scrolls; My issues above it and Collaboration management pinned below remain visible. **Collaboration management** starts collapsed; expand it to access devices, templates, Agents and Teams. The home project picker fits the available window height and scrolls internally. Membership inheritance, project roles and administration permissions continue to apply. Seeing a parent space name does not grant space access.
+Groups collapse and expand independently. Only the project region scrolls; personal Issue entries above it and Collaboration management pinned below remain visible. **Collaboration management** starts collapsed; expand it to access devices, templates, Agents and Teams. The home project picker fits the available window height and scrolls internally. Membership inheritance, project roles and administration permissions continue to apply. Seeing a parent group name does not grant group access.
 
-For remote projects, **Choose a workspace** initially selects **Personal group**, or you can choose an existing space. The first use creates an independent personal space, which later requests reuse. Existing business spaces and their projects are not adopted or moved. The add-folder button beside Projects creates a group. Switching spaces preserves the project name and description and clears the previous space's member, agent, and template selections; configure these again in the target space before creating.
+For remote projects, **Choose a group** initially selects **Personal group**, or you can choose an existing group. The first use creates an independent personal group, which later requests reuse. Existing business groups and their projects are not adopted or moved. The add-folder button beside Projects creates a group. Switching groups preserves the project name and description and clears the previous group's member, agent, and template selections; configure these again in the target group before creating.
 
-Global catalogs, space settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace space membership management.
+Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Agents / Teams / Devices catalogs | Select the left navigation item, search/filter All, Created by me or Team shared; create with the appropriate owner and save the form        | Not the project member list; creation/deletion depends on resource type and permission                                      |
-| Add resource to space             | Resource row → Add to space → choose space → confirm; Settings opens its configuration                                                       | Does not expand all project members' permissions or move code directories                                                   |
-| Space name/description            | Space-name … → Group settings → Basic information → edit → Save                                                                              | Requires space management permission; not project renaming                                                                  |
-| Cloud space members               | Group settings → Collaboration members → Members → Invite → search/choose role → click result                                                | Clicking submits; role/removal actions request immediately and remain constrained by inherited membership/management rights |
-| Transfer ownership                | Owner selects a new owner on the space members page, reviews and transfers                                                                   | Previous owner retains administrator permissions; unrelated to assigning an Issue                                           |
-| Space agents/teams                | Group settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
-| Space execution environment       | Group settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
+| Add resource to group             | Resource row → Add to group → choose group → confirm; Settings opens its configuration                                                       | Does not expand all project members' permissions or move code directories                                                   |
+| Group name/description            | Group-name … → Group settings → Basic information → edit → Save                                                                              | Requires group management permission; not project renaming                                                                  |
+| Cloud group members               | Group settings → Collaboration members → Members → Invite → search/choose role → click result                                                | Clicking submits; role/removal actions request immediately and remain constrained by inherited membership/management rights |
+| Transfer ownership                | Owner selects a new owner on the group members page, reviews and transfers                                                                   | Previous owner retains administrator permissions; unrelated to assigning an Issue                                           |
+| Group agents/teams                | Group settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
+| Group execution environment       | Group settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
 
 ### Clean up offline device registrations
 
 <a id="offline-device-cleanup"></a>
 
-Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected spaces, then confirm.
+Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected groups, then confirm.
 
-You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those spaces and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
+You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those groups and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
 
-### Register a space Runner
+<a id="register-a-space-runner"></a>
 
-When supported for a cloud space, use the create action under **Group settings → Execution environment** to open **Register workspace runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.
+### Register a group Runner
 
-Credentials are shown only this time. Do not put their values in chat, documents or screenshots; retain them through your organization's secure process before closing. Removing a public space environment revokes its credentials. Registration does not prove the process started, and cloud connection status does not establish Runner availability.
+When supported for a cloud group, use the create action under **Group settings → Execution environment** to open **Register group runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.
+
+Credentials are shown only this time. Do not put their values in chat, documents or screenshots; retain them through your organization's secure process before closing. Removing a public group environment revokes its credentials. Registration does not prove the process started, and cloud connection status does not establish Runner availability.
 
 ## Collaboration templates and configuration sharing
 

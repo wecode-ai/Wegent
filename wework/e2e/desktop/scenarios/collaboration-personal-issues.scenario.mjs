@@ -22,7 +22,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     group
   const title = `Independent Issue ${process.pid}`
   const sidebar = id => inCollaborationSidebar(`[data-testid="${id}"]`)
-  async function request(path, method = 'GET', body, token = cloud.authToken, expected = 200) {
+  async function request(
+    path,
+    method = 'GET',
+    body,
+    token = cloud.authToken,
+    expected = 200,
+    format = 'json'
+  ) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -30,7 +37,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
     const text = await response.text()
     assert.equal(response.status, expected, `${method} ${path}: ${response.status} ${text}`)
-    return text ? JSON.parse(text) : null
+    return format === 'text' ? text : text ? JSON.parse(text) : null
   }
   async function click(control, id) {
     const target = `[data-testid="${id}"]`

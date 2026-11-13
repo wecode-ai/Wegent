@@ -71,6 +71,25 @@ fn migration_archive_is_atomic_and_records_durable_recovery_without_deleting_sha
     let (_directory, store, project) = chat_agent_store();
     let issue = migration_issue(&store, &project.id);
     migration_comment(&store, &project.id, &issue.id);
+    store
+        .bind_task(
+            &project.id,
+            Some(&issue.id),
+            None,
+            RuntimeTaskAddress {
+                device_id: "local-device".into(),
+                task_id: "private-session".into(),
+                task_title: Some("Private work".into()),
+                backend_task_id: None,
+                model_selection: Some(json!({"modelName":"private-local-model"})),
+                execution_context: Some(json!({"workspacePath":"/local/private-worktree"})),
+                workflow_node_id: None,
+            },
+            None,
+        )
+        .unwrap();
+    let private_binding =
+        serde_json::to_value(store.list_task_bindings(&issue.id).unwrap()).unwrap();
     let snapshot = store.project_migration_snapshot(&project.id).unwrap();
     store
         .archive_migrated_project(
@@ -93,6 +112,10 @@ fn migration_archive_is_atomic_and_records_durable_recovery_without_deleting_sha
             .unwrap()
             .len(),
         1
+    );
+    assert_eq!(
+        serde_json::to_value(store.list_task_bindings(&issue.id).unwrap()).unwrap(),
+        private_binding
     );
     let connection = store.connection().unwrap();
     let deleted: Option<String> = connection

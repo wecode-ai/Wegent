@@ -2741,7 +2741,7 @@ describe('Wework collaboration workspace API', () => {
     expect(workspaces).toEqual([
       expect.objectContaining({
         id: 'wework-local-workspace',
-        name: '本地空间',
+        name: '个人分组',
       }),
     ])
     expect(projects).toEqual([
