@@ -585,6 +585,10 @@ mod tests {
             if sql.starts_with("UPDATE ") {
                 return (vec![], vec![]);
             }
+            if sql.contains("ORDER BY message_id DESC, id DESC LIMIT 1") {
+                let row = vec![("id", SqlValue::I64(20))];
+                return (row.clone(), vec![row]);
+            }
             let mut row: Row;
             if sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`") {
                 row = vec![("unused", SqlValue::Null); 23];
@@ -592,7 +596,17 @@ mod tests {
                     ("id", SqlValue::I64(20)),
                     ("task_id", SqlValue::I64(10)),
                     ("user_id", SqlValue::I32(7)),
-                    ("status", SqlValue::Text("FAILED".into())),
+                    (
+                        "status",
+                        SqlValue::Text(
+                            if sql.ends_with("FOR UPDATE") {
+                                "PENDING"
+                            } else {
+                                "FAILED"
+                            }
+                            .into(),
+                        ),
+                    ),
                 ] {
                     row[subtask_column_index(column).unwrap()] = (column, value);
                 }
@@ -623,15 +637,17 @@ mod tests {
         finalize_retry_failure(&state, 10, 20, 7, 2, &error).await;
 
         let queries = fixture.queries();
+        let subtask_lock = queries.iter().position(|sql| {
+            sql.contains("FROM subtasks") && sql.trim_end().ends_with("FOR UPDATE")
+        });
+        let subtask_write = queries
+            .iter()
+            .position(|sql| sql.starts_with("UPDATE subtasks"));
+        let task_write = queries
+            .iter()
+            .position(|sql| sql.starts_with("UPDATE tasks"));
         assert!(
-            queries.iter().any(|sql| {
-                sql.starts_with("UPDATE subtasks")
-                    && sql.contains("status IN ('PENDING', 'RUNNING')")
-            }),
-            "{queries:?}"
-        );
-        assert!(
-            queries.iter().any(|sql| sql.starts_with("UPDATE tasks")),
+            matches!((subtask_lock, subtask_write, task_write), (Some(lock), Some(subtask), Some(task)) if lock < subtask && subtask < task),
             "{queries:?}"
         );
     }

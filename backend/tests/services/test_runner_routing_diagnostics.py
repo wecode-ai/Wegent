@@ -11,6 +11,7 @@ from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy
 from app.services.runner_routing import (
     _candidates,
     resolve_group_routing,
+    resolve_routing,
     validate_agent_policies,
 )
 from tests.services.test_runner_routing import MODEL, routing_setup  # noqa: F401
@@ -24,6 +25,129 @@ def diagnostic_events(caplog):
         for record in caplog.records
         if record.name.startswith("app.services.runner_routing")
     ]
+
+
+def test_conflicting_history_reports_history_repair_with_a_fixed_policy(
+    test_db, routing_setup
+):
+    user, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding_conflict": True}
+    with pytest.raises(HTTPException) as error:
+        resolve_routing(
+            test_db,
+            config={
+                "runtime": "codex",
+                "execution_policy": {
+                    "mode": "fixed",
+                    "environment_id": str(devices[0].id),
+                },
+                "model_policy": {"mode": "fixed", "model": MODEL},
+            },
+            project_id=issue.cloud_project_id,
+            issue_id=issue.id,
+            user_id=user.id,
+            selection=None,
+        )
+    assert error.value.detail["error_code"] == "ISSUE_RUNNER_CONFIGURATION_REQUIRED"
+    assert (
+        error.value.detail["routing_context"]["reason"]
+        == "history_requires_configuration"
+    )
+
+
+def test_routing_context_does_not_reveal_an_unshared_device_name(
+    test_db, routing_setup
+):
+    from app.models.kind import Kind
+
+    user, devices, issue = routing_setup
+    private = Kind(
+        kind="Device",
+        namespace="default",
+        user_id=user.id + 1000,
+        name="PRIVATE-DEVICE-MUST-NOT-LEAK",
+        is_active=True,
+        json={},
+    )
+    test_db.add(private)
+    test_db.flush()
+    issue.metadata_json = {"runner_binding": {"environment_id": str(private.id)}}
+    with pytest.raises(HTTPException) as error:
+        resolve_routing(
+            test_db,
+            config={
+                "runtime": "codex",
+                "execution_policy": {"mode": "project_pool"},
+                "model_policy": {"mode": "fixed", "model": MODEL},
+            },
+            project_id=issue.cloud_project_id,
+            issue_id=issue.id,
+            user_id=user.id,
+            selection=None,
+        )
+    context = error.value.detail["routing_context"]
+    assert context["bound_environment"] == {"id": str(private.id), "name": None}
+    assert "PRIVATE-DEVICE-MUST-NOT-LEAK" not in json.dumps(error.value.detail)
+
+
+@pytest.mark.parametrize("missing_scope", [None, "workspace", "project"])
+def test_issue_runner_denial_explains_exact_policy_or_grant_and_recovers(
+    test_db, routing_setup, missing_scope
+):
+    user, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
+    grant = None
+    if missing_scope:
+        grant = (
+            test_db.query(ResourceMember)
+            .filter_by(
+                resource_type="Device",
+                resource_id=devices[0].id,
+                entity_type=missing_scope,
+            )
+            .one()
+        )
+        grant.status = "rejected"
+    test_db.flush()
+    config = {
+        "runtime": "codex",
+        "execution_policy": {
+            "mode": "fixed",
+            "environment_id": str(devices[0 if missing_scope else 1].id),
+        },
+        "model_policy": {"mode": "fixed", "model": MODEL},
+    }
+    with pytest.raises(HTTPException) as error:
+        resolve_routing(
+            test_db,
+            config=config,
+            project_id=issue.cloud_project_id,
+            issue_id=issue.id,
+            user_id=user.id,
+            selection=None,
+        )
+    context = error.value.detail["routing_context"]
+    assert context["bound_environment"]["id"] == str(devices[0].id)
+    assert context["reason"] == (
+        f"{missing_scope}_authorization_missing" if missing_scope else "policy_mismatch"
+    )
+    assert context["policy_environment"]["id"] == str(
+        devices[0 if missing_scope else 1].id
+    )
+    if grant:
+        grant.status = "approved"
+    config["execution_policy"]["environment_id"] = str(devices[0].id)
+    test_db.flush()
+    result = resolve_routing(
+        test_db,
+        config=config,
+        project_id=issue.cloud_project_id,
+        issue_id=issue.id,
+        user_id=user.id,
+        selection=None,
+    )
+    assert result.candidates == [devices[0]]
+    assert issue.metadata_json["runner_binding"]["environment_id"] == str(devices[0].id)
 
 
 @pytest.mark.parametrize("scope", ["workspace", "project"])
@@ -179,11 +303,18 @@ def test_group_denial_identifies_member_or_disjoint_devices(
         assert group_event["agent_name"] == agents[1].name
         assert group_event["execution_policy"]["environment_id"] == str(devices[1].id)
         assert events[0]["agent_id"] == agents[1].id
+        assert error.value.detail["routing_context"]["agent_name"] == agents[1].name
+        assert error.value.detail["routing_context"]["group_id"] == "diagnostic-group"
     else:
         assert error.value.detail["error_code"] == "ISSUE_RUNNER_CONFLICT"
         assert group_event["event"] == "group_runner_intersection_empty"
         assert group_event["member_candidate_environment_ids"] == {
             agent.id: [device.id] for agent, device in zip(agents, devices)
+        }
+        context = error.value.detail["routing_context"]
+        assert context["reason"] == "group_no_common_environment"
+        assert {row["agent_name"] for row in context["members"]} == {
+            row.name for row in agents
         }
 
 
