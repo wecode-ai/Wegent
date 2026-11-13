@@ -101,12 +101,14 @@ import { writeCachedRemoteRuntimeWork, workbenchCacheScope } from './remoteRunti
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import {
   applyRuntimeConversationAction,
+  archiveRuntimeConversation,
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
   getRuntimeConversationMetadata,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  isRuntimeConversationArchived,
   setRuntimeConversationGoal,
 } from './runtimeConversationCache'
 import { resetRuntimeConversationQueueControllersForTests } from './runtimeConversationQueueController'
@@ -2930,6 +2932,32 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
     await act(async () => pending.resolve(createRuntimeWork()))
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(3))
+  })
+
+  test('clears archive ownership after a confirmed restoration from any tool', async () => {
+    const address = { deviceId: 'device-1', taskId: 'restored-task' }
+    const other = { deviceId: 'device-2', taskId: 'restored-task' }
+    archiveRuntimeConversation(address)
+    archiveRuntimeConversation(other)
+    let onChanged: ChatStreamHandlers['onRuntimeWorkChanged']
+    const services = createWorkbenchServices({
+      chatStream: {
+        subscribe: (handlers: ChatStreamHandlers) => {
+          if (handlers.onRuntimeWorkChanged) onChanged = handlers.onRuntimeWorkChanged
+          return vi.fn()
+        },
+      } as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<ProjectSendProbe />, services)
+    await waitFor(() => expect(onChanged).toBeDefined())
+    act(() => onChanged?.({ ...address }))
+    expect(isRuntimeConversationArchived(address)).toBe(true)
+    act(() => onChanged?.({ taskId: address.taskId, archived: false }))
+    expect(isRuntimeConversationArchived(address)).toBe(true)
+    act(() => onChanged?.({ ...address, archived: false }))
+    expect(isRuntimeConversationArchived(address)).toBe(false)
+    expect(isRuntimeConversationArchived(other)).toBe(true)
+    clearRuntimeConversationCacheForTests()
   })
 
   test('publishes background archive cleanup failures outside the settings page', async () => {

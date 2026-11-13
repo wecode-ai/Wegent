@@ -446,19 +446,40 @@ pub(crate) async fn handle_request_with_context(
                 .pointer("/params/protocolVersion")
                 .and_then(Value::as_str)
                 .unwrap_or("2025-06-18");
-            result_response(
-                id,
-                json!({
-                    "protocolVersion": protocol_version,
-                    "capabilities": {"tools": {"listChanged": false}},
-                    "serverInfo": {
-                        "name": context.server_name(),
-                        "version": env!("CARGO_PKG_VERSION")
-                    }
-                }),
-            )
+            let mut initialized = json!({
+                "protocolVersion": protocol_version,
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {
+                    "name": context.server_name(),
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            });
+            if context.control.is_some() {
+                initialized["capabilities"]["resources"] = json!({});
+                initialized["instructions"] = json!(crate::workbench_control::INSTRUCTIONS);
+            }
+            result_response(id, initialized)
         }),
         "ping" => id.map(|id| result_response(id, json!({}))),
+        "resources/list" if context.control.is_some() => id.map(|id| {
+            result_response(
+                id,
+                json!({"resources": crate::workbench_control::apps::resources()}),
+            )
+        }),
+        "resources/templates/list" if context.control.is_some() => {
+            id.map(|id| result_response(id, json!({"resourceTemplates":[]})))
+        }
+        "resources/read" if context.control.is_some() => id.map(|id| {
+            let resource = request
+                .pointer("/params/uri")
+                .and_then(Value::as_str)
+                .and_then(crate::workbench_control::apps::read_resource);
+            match resource {
+                Some(resource) => result_response(id, resource),
+                None => error_response(id, -32602, "Unknown Wework control resource"),
+            }
+        }),
         "tools/list" => id.map(|id| {
             let tools = visible_tools(runtime, context);
             let names = tools

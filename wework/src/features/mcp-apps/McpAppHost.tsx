@@ -20,6 +20,11 @@ import { appDocumentOrigin, appDocumentTransport } from './transport'
 import { legacyWidgetDocument } from './legacyBridge'
 import { appDisplayModes, appHostContext, appInitialDisplayMode } from './hostContext'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { openAppNavigation } from './appNavigation'
+import {
+  forwardVisualizationWheel,
+  withVisualizationWheel,
+} from '@/components/chat/inlineVisualizationScroll'
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -85,6 +90,7 @@ export function McpAppHost({
   const [height, setHeight] = useState(400)
   const frame = useRef<HTMLIFrameElement>(null)
   const [document, setDocument] = useState<AppDocument>()
+  const [wheelToken] = useState(() => crypto.randomUUID())
   const [initializedDocument, setInitializedDocument] = useState<string>()
   const bridge = useRef<AppBridge>(null)
   const teardownSent = useRef(false)
@@ -229,7 +235,10 @@ export function McpAppHost({
       const initialMode = appInitialDisplayMode(descriptor)
       if (!initialMode) throw new Error(t('mcp_apps.unsupported_display_mode'))
       created = await createAppDocument(
-        content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
+        withVisualizationWheel(
+          content.mimeType === 'text/html+skybridge' ? legacyWidgetDocument(html) : html,
+          wheelToken
+        ),
         metadata,
         descriptor.sessionId
       )
@@ -250,7 +259,7 @@ export function McpAppHost({
           console.info('[Wework] MCP App document release failed', { name: error.name })
         })
     }
-  }, [descriptor, closed, t])
+  }, [descriptor, closed, t, wheelToken])
 
   const synchronizeToolData = useEffectEvent(async () => {
     const app = bridge.current
@@ -313,6 +322,7 @@ export function McpAppHost({
     app.onlistresources = params => request('resources/list', params)
     app.onlistresourcetemplates = params => request('resources/templates/list', params)
     app.onopenlink = async ({ url }) => {
+      if (url.startsWith('wework://')) return { isError: !openAppNavigation(url) }
       if (!['https:', 'http:'].includes(new URL(url).protocol)) return { isError: true }
       return { isError: !requestEmbeddedBrowserOpen(url) }
     }
@@ -388,8 +398,20 @@ export function McpAppHost({
       if (active) setFailure(error.message)
     }
     const element = frame.current
+    const origin = appDocumentOrigin(document.url)
+    const onWheel = (event: MessageEvent) => {
+      if (
+        element.isConnected &&
+        latest().mode === 'inline' &&
+        event.source === element.contentWindow &&
+        event.origin === origin
+      ) {
+        forwardVisualizationWheel(element, event.data, wheelToken)
+      }
+    }
+    window.addEventListener('message', onWheel)
     void app
-      .connect(appDocumentTransport(element.contentWindow!, appDocumentOrigin(document.url)))
+      .connect(appDocumentTransport(element.contentWindow!, origin))
       .then(() => {
         // Listen before loading a document that can initialize immediately.
         if (active && element.src !== document.url) element.src = document.url
@@ -413,6 +435,7 @@ export function McpAppHost({
       sentResult.current = undefined
       observer.disconnect()
       resize.disconnect()
+      window.removeEventListener('message', onWheel)
       bridge.current = null
       if (teardownSent.current) void app.close()
       else
@@ -421,7 +444,7 @@ export function McpAppHost({
           .catch(() => {})
           .finally(() => app.close())
     }
-  }, [document, descriptor, block.id, t, hasMessage, hasContext, closeApp])
+  }, [document, descriptor, block.id, t, hasMessage, hasContext, closeApp, wheelToken])
 
   useEffect(() => {
     void synchronizeToolData().catch(error => setFailure(error.message))
@@ -434,7 +457,10 @@ export function McpAppHost({
 
   if (!app) return null
   const availableModes = appDisplayModes(descriptor)
-  const title = app.tool?.title ?? app.server ?? t('mcp_apps.title')
+  const resultTitle = [block.toolOutput, descriptor?.result]
+    .map(result => record(record(result).structuredContent).title)
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const title = resultTitle ?? app.tool?.title ?? app.server ?? t('mcp_apps.title')
   const metadata = record(descriptor?.resource.contents[0]?._meta)
   const prefersBorder =
     (record(metadata.ui).prefersBorder ?? metadata['openai/widgetPrefersBorder']) !== false

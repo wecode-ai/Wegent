@@ -6,6 +6,7 @@ import {
   captureVerificationScreenshot,
   completeLocalCollaborationFolderImport,
   inCollaborationSidebar,
+  expandCollaborationSpaces,
   configureFirstProjectExecutionEnvironment,
   openProjectAgentCreator,
   selectProjectRunnerModel,
@@ -132,6 +133,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       await control.command('waitFor', scoped('[data-testid="collaboration-platform-root"]'), {
         timeoutMs: uiTimeoutMs,
       })
+      await expandCollaborationSpaces(control, ACTIVE_WORKBENCH_SELECTOR)
       await control.command(
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
