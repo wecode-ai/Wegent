@@ -65,3 +65,32 @@ test('rejects an ambiguous native confirmation before sending any key', async ()
   ).rejects.toThrow('unambiguous')
   expect(native.execute).toHaveBeenCalledOnce()
 })
+
+test('retains a failed native search and records real X11 properties before cleanup', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const original = new Error('Native modal search timed out')
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  native.execute.mockImplementation(async (command, args) => {
+    if (command === 'xdotool') throw original
+    if (args[0] === '-root') return { stdout: '_NET_CLIENT_LIST(WINDOW): window id # 0x123' }
+    return {
+      stdout: '_NET_WM_PID(CARDINAL) = 123\n_NET_WM_NAME(UTF8_STRING) = "Core 插件安装确认"',
+    }
+  })
+  try {
+    await expect(
+      withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+    ).rejects.toBe(original)
+    expect(native.execute.mock.calls.map(([command]) => command)).toEqual([
+      'xdotool',
+      'xprop',
+      'xprop',
+    ])
+    expect(log).toHaveBeenCalledWith(
+      '[native-plugin-window-diagnostics]',
+      expect.stringContaining('_NET_WM_NAME(UTF8_STRING)')
+    )
+  } finally {
+    log.mockRestore()
+  }
+})

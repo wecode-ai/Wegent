@@ -4,7 +4,10 @@ import {
 } from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { hasNativeModelReference } from '../../../electron/src/host/model-interface-runtime'
+import {
+  hasNativeModelReference,
+  isNativeModelRuntimeMethod,
+} from '../../../electron/src/host/model-interface-runtime'
 import {
   assertLocalRuntimeSidebarIdentity,
   qualifyLocalRuntimeWork,
@@ -377,7 +380,7 @@ export function createHybridWorkbenchServices(
       deviceId?: string,
       timeoutMs?: number
     ): Promise<T> =>
-      hasNativeModelReference(params)
+      isNativeModelRuntimeMethod(method) && hasNativeModelReference(params)
         ? invokeDesktopHost<T>('modelConfiguration.requestRuntime', {
             method,
             params,

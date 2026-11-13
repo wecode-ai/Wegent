@@ -166,6 +166,52 @@ test('redacts a runtime error that echoes private credentials', async () => {
   ).rejects.toThrow('Remote rejected [redacted]')
 })
 
+test('preserves response identities and text when saved credentials overlap with public data', async () => {
+  await save([
+    { ...provider, api_key: 'a' },
+    {
+      ...provider,
+      id: 'unused',
+      api_key: 'task',
+      models: [{ ...provider.models[0], id: 'unused-assistant' }],
+    },
+  ])
+  const response = {
+    taskId: 'task-a12',
+    executionId: 'execution-data',
+    text: 'A task can retain its data',
+    profiles: [{ modelConfig: { ...reference, api_key: 'a' } }],
+  }
+  local.request.mockResolvedValue(response)
+
+  await expect(
+    runtime.request({ method: 'runtime.tasks.create', params: { modelConfig: reference } })
+  ).resolves.toEqual({
+    ...response,
+    profiles: [{ modelConfig: { ...reference, api_key: '[redacted]' } }],
+  })
+  expect(response.profiles[0].modelConfig.api_key).toBe('a')
+})
+
+test('does not use credentials from unrelated providers to alter runtime errors', async () => {
+  await save([
+    provider,
+    {
+      ...provider,
+      id: 'unused',
+      api_key: 'task',
+      models: [{ ...provider.models[0], id: 'unused-assistant' }],
+    },
+  ])
+  local.request.mockRejectedValue(
+    Object.assign(new Error('The task failed native-primary-secret'), { code: 'task_failed' })
+  )
+
+  await expect(
+    runtime.request({ method: 'runtime.tasks.create', params: { modelConfig: reference } })
+  ).rejects.toMatchObject({ message: 'The task failed [redacted]', code: 'task_failed' })
+})
+
 test('preserves error codes and sanitized diagnostics throughout a runtime cause chain', async () => {
   const error = Object.assign(
     new Error('Request failed native-primary-secret', {

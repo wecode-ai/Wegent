@@ -1689,7 +1689,7 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
-    if (desktopScenario?.requiresNativeCloudAuthorization) {
+    if (usesNativeCloudInspector) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
         cloudEnvironment,

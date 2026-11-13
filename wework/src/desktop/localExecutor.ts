@@ -12,7 +12,10 @@ import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { flushDesktopLocalStoragePersistence } from './localStoragePersistence'
-import { hasNativeModelReference } from '../../electron/src/host/model-interface-runtime'
+import {
+  hasNativeModelReference,
+  isNativeModelRuntimeMethod,
+} from '../../electron/src/host/model-interface-runtime'
 
 export type UnlistenFn = () => void
 
@@ -734,7 +737,7 @@ export function requestLocalExecutor<T = unknown>(
       return Promise.reject(new Error(failure.message))
     }
     const send = async (query: Record<string, unknown>) => {
-      if (hasNativeModelReference(query)) {
+      if (isNativeModelRuntimeMethod(method) && hasNativeModelReference(query)) {
         await flushDesktopLocalStoragePersistence()
         requestOptions?.signal?.throwIfAborted()
         return invokeDesktopHost<T>('modelConfiguration.requestRuntime', { method, params: query })

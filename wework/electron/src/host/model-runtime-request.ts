@@ -1,27 +1,10 @@
 import {
   modelInterfaceRunnerModels,
   hasNativeModelReference,
+  isNativeModelRuntimeMethod,
   modelHarnessUpstream,
 } from './model-interface-runtime.js'
 import type { ModelConfigurationStore } from './model-configuration-store.js'
-
-const MODEL_METHODS = new Set([
-  'runtime.tasks.create',
-  'runtime.tasks.send',
-  'runtime.tasks.rollback',
-  'runtime.tasks.interrupt_and_send',
-  'runtime.tasks.fork_at_turn',
-  'runtime.tasks.compact',
-  'runtime.tasks.supervisor.set',
-  'runtime.models.sync_creation_profiles',
-  'runtime.automations.create',
-  'runtime.automations.update',
-  'runtime.text.generate',
-  'runtime.text.predict_reply',
-  'runtime.harness_proxy.register',
-  'runtime.collaboration.dispatch',
-  'executions.enqueue',
-])
 
 export interface ModelRuntimeTransport {
   request(method: string, params: Record<string, unknown>, deviceId?: string): Promise<unknown>
@@ -41,7 +24,7 @@ export class ModelRuntimeRequest {
 
   async request(input: Record<string, unknown>): Promise<unknown> {
     const { method, params, deviceId } = input
-    if (typeof method !== 'string' || !MODEL_METHODS.has(method))
+    if (typeof method !== 'string' || !isNativeModelRuntimeMethod(method))
       throw new Error('Unsupported native model operation')
     if (!params || typeof params !== 'object' || Array.isArray(params))
       throw new Error('Native model parameters are required')
@@ -49,19 +32,18 @@ export class ModelRuntimeRequest {
     // Validate remote ownership and the configured destination before reading any model secret.
     const transport = input.target ? await this.remote(input) : this.local
     const models = modelInterfaceRunnerModels((await this.store.runtime()).models)
-    const secrets = models.flatMap(model => credentialValues(model.modelConfig))
     const prepared = (await this.materialize(params, models, !input.target)) as Record<
       string,
       unknown
     >
+    const secrets = credentialValues(prepared)
     try {
-      return redactPrivateValues(
+      return publicRuntimeResponse(
         await transport.request(
           method,
           prepared,
           typeof deviceId === 'string' ? deviceId : undefined
-        ),
-        secrets
+        )
       )
     } catch (error) {
       throw privateRuntimeError(error, secrets)
@@ -120,10 +102,27 @@ export class ModelRuntimeRequest {
   }
 }
 
-function credentialValues(config: Record<string, unknown>): string[] {
-  const sidecar = config.vision_sidecar as Record<string, unknown> | undefined
-  return [config.api_key, sidecar?.api_key].filter(
-    (value): value is string => typeof value === 'string' && value !== '' && value !== 'dummy'
+function credentialValues(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(credentialValues)
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).flatMap(([key, item]) =>
+    key === 'api_key' && typeof item === 'string'
+      ? item && item !== 'dummy'
+        ? [item]
+        : []
+      : credentialValues(item)
+  )
+}
+
+/** Credentials are fields in runtime configuration, not substrings of public task data. */
+function publicRuntimeResponse(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(publicRuntimeResponse)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      key === 'api_key' ? '[redacted]' : publicRuntimeResponse(item),
+    ])
   )
 }
 

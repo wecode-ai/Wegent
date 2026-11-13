@@ -12,6 +12,8 @@ const storage = vi.hoisted(() => ({
 }))
 vi.mock('electron', () => ({ safeStorage: storage }))
 afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.resetAllMocks()
   vi.unstubAllGlobals()
 })
@@ -74,6 +76,58 @@ test('keeps the event loop responsive while native authorization is pending', as
   expect(storage.encryptStringAsync).not.toHaveBeenCalled()
   authorize(true)
   await expect(encryption).resolves.toBe(Buffer.from('protected:private-value').toString('base64'))
+})
+
+test('reports stalled availability separately without timing out the native operation', async () => {
+  vi.useFakeTimers()
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+  let authorize!: (available: boolean) => void
+  storage.isAsyncEncryptionAvailable.mockReturnValue(
+    new Promise(resolve => {
+      authorize = resolve
+    })
+  )
+  const encryption = systemSecretProtection.encrypt('private-value')
+
+  await vi.advanceTimersByTimeAsync(1_000)
+  expect(log).toHaveBeenCalledWith('[secret-protection]', {
+    operation: 'availability',
+    status: 'pending',
+    elapsedMs: 1_000,
+  })
+  expect(storage.encryptStringAsync).not.toHaveBeenCalled()
+  authorize(true)
+  await expect(encryption).resolves.toBe(Buffer.from('protected:private-value').toString('base64'))
+  expect(JSON.stringify(log.mock.calls)).not.toContain('private-value')
+})
+
+test('identifies slow encryption and preserves the original native error without logging it', async () => {
+  vi.useFakeTimers()
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+  let reject!: (error: Error) => void
+  storage.encryptStringAsync.mockReturnValue(
+    new Promise((_resolve, failure) => {
+      reject = failure
+    })
+  )
+  const failure = new Error('private-value')
+  const encryption = systemSecretProtection.encrypt('private-value')
+  const expectedFailure = expect(encryption).rejects.toBe(failure)
+
+  await vi.advanceTimersByTimeAsync(1_000)
+  expect(log).toHaveBeenCalledWith('[secret-protection]', {
+    operation: 'encrypt',
+    status: 'pending',
+    elapsedMs: 1_000,
+  })
+  reject(failure)
+  await expectedFailure
+  expect(log).toHaveBeenCalledWith('[secret-protection]', {
+    operation: 'encrypt',
+    status: 'failed',
+    elapsedMs: 1_000,
+  })
+  expect(JSON.stringify(log.mock.calls)).not.toContain('private-value')
 })
 
 test('propagates native protection failures without substituting a weaker format', async () => {

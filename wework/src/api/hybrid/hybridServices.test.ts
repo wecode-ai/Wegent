@@ -1242,6 +1242,39 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('keeps remote history reads on their authorized transport when an address retains model metadata', async () => {
+    const invoke = vi.spyOn(desktopHost, 'invokeDesktopHost')
+    const request = {
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+      query: 'needle',
+      runtimeHandle: {
+        modelConfig: {
+          wework_model_kind: 'model-interface',
+          wework_local_model_id: 'local-model:deleted',
+          model_provider: 'local-deleted',
+        },
+      },
+    }
+    const result = { matches: [], totalMatches: 0, isCapped: false }
+    mocks.cloudRuntimeIpcRequest.mockReset().mockResolvedValue(result)
+    try {
+      await expect(
+        createServices().runtimeWorkApi!.searchRuntimeTranscript(request)
+      ).resolves.toEqual(result)
+      expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledExactlyOnceWith(
+        'runtime.tasks.transcript.search',
+        request,
+        'cloud-device'
+      )
+      expect(
+        invoke.mock.calls.some(([capability]) => capability === 'modelConfiguration.requestRuntime')
+      ).toBe(false)
+    } finally {
+      invoke.mockRestore()
+    }
+  })
+
   it('routes native model references with the selected cloud destination, account and device', async () => {
     const invoke = vi
       .spyOn(desktopHost, 'invokeDesktopHost')

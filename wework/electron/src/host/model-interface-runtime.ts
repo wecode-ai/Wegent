@@ -1,5 +1,28 @@
 import type { ProviderModel, ResolvedProviderModel } from './model-configuration-contract.js'
 
+const MODEL_RUNTIME_METHODS = new Set([
+  'runtime.tasks.create',
+  'runtime.tasks.send',
+  'runtime.tasks.rollback',
+  'runtime.tasks.interrupt_and_send',
+  'runtime.tasks.fork_at_turn',
+  'runtime.tasks.compact',
+  'runtime.tasks.supervisor.set',
+  'runtime.models.sync_creation_profiles',
+  'runtime.automations.create',
+  'runtime.automations.update',
+  'runtime.text.generate',
+  'runtime.text.predict_reply',
+  'runtime.harness_proxy.register',
+  'runtime.collaboration.dispatch',
+  'executions.enqueue',
+])
+
+/** Only execution/configuration commands need to materialize a saved model reference. */
+export function isNativeModelRuntimeMethod(method: string): boolean {
+  return MODEL_RUNTIME_METHODS.has(method)
+}
+
 /** Default configured APIs to portable tools; native tools require an explicit selection. */
 export function modelInterfaceToolProfile(config: {
   apiFormat: string

@@ -119,7 +119,10 @@ throw 'The isolated app did not display its native Core plugin decision'
       `^(${TITLES.join('|')})$`,
     ],
     options
-  )
+  ).catch(async error => {
+    if (!signal.aborted) await recordNativeWindowDiagnostics(pid)
+    throw error
+  })
   const windows = stdout.trim().split(/\s+/)
   assert.equal(windows.length, 1, 'Native plugin confirmation must be unambiguous')
   await execute(
@@ -134,4 +137,37 @@ throw 'The isolated app did not display its native Core plugin decision'
     ],
     options
   )
+}
+
+async function recordNativeWindowDiagnostics(pid) {
+  // Capture the real X11 ownership/title properties before fixture cleanup destroys the dialog.
+  const options = { timeout: 2_000, encoding: 'utf8' }
+  try {
+    const { stdout } = await execute('xprop', ['-root', '_NET_CLIENT_LIST'], options)
+    const windows = stdout.match(/0x[0-9a-f]+/gi) ?? []
+    const properties = await Promise.all(
+      windows.map(async window => {
+        const { stdout } = await execute(
+          'xprop',
+          [
+            '-id',
+            window,
+            '_NET_WM_PID',
+            '_NET_WM_NAME',
+            'WM_NAME',
+            'WM_TRANSIENT_FOR',
+            '_NET_WM_WINDOW_TYPE',
+          ],
+          options
+        )
+        return { window, properties: stdout }
+      })
+    )
+    console.error(
+      '[native-plugin-window-diagnostics]',
+      JSON.stringify({ pid, windows: properties })
+    )
+  } catch (error) {
+    console.error('[native-plugin-window-diagnostics]', String(error))
+  }
 }

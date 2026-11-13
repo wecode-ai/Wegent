@@ -20,7 +20,7 @@ function requireProtectedCiphertext(value: Buffer): Buffer {
 async function nativeStorage() {
   const { safeStorage } = await import('electron')
   if (
-    !(await safeStorage.isAsyncEncryptionAvailable()) ||
+    !(await observeNativeStorage('availability', () => safeStorage.isAsyncEncryptionAvailable())) ||
     (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
   ) {
     throw new HostCapabilityError(
@@ -31,13 +31,34 @@ async function nativeStorage() {
   return safeStorage
 }
 
+/** Identify a stalled OS operation without logging credentials or changing its outcome. */
+async function observeNativeStorage<T>(operation: string, action: () => Promise<T>): Promise<T> {
+  const started = Date.now()
+  const report = (status: string) =>
+    console.info('[secret-protection]', { operation, status, elapsedMs: Date.now() - started })
+  const pending = setTimeout(() => report('pending'), 1_000)
+  pending.unref()
+  let status = 'failed'
+  try {
+    const result = await action()
+    status = 'completed'
+    return result
+  } finally {
+    clearTimeout(pending)
+    if (Date.now() - started >= 1_000) report(status)
+  }
+}
+
 export const systemSecretProtection: SecretProtection = {
   async encrypt(value) {
     const storage = await nativeStorage()
-    return requireProtectedCiphertext(await storage.encryptStringAsync(value)).toString('base64')
+    const encrypted = await observeNativeStorage('encrypt', () => storage.encryptStringAsync(value))
+    return requireProtectedCiphertext(encrypted).toString('base64')
   },
   async decrypt(value) {
     const storage = await nativeStorage()
-    return storage.decryptStringAsync(requireProtectedCiphertext(Buffer.from(value, 'base64')))
+    return observeNativeStorage('decrypt', () =>
+      storage.decryptStringAsync(requireProtectedCiphertext(Buffer.from(value, 'base64')))
+    )
   },
 }
