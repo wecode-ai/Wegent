@@ -763,7 +763,10 @@ export async function createDesktopScenario(options) {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })
         await about()
-        if (checkpoint === 'app-rollback') await intervalProbe.verify(control, resultDir)
+        if (checkpoint === 'app-rollback') {
+          await routeRunningUpgradeRequests(inspectorPort, control, origin)
+          await intervalProbe.verify(control, resultDir)
+        }
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
         const beforeRollback = control.readyCount

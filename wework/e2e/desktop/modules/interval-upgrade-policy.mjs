@@ -50,6 +50,11 @@ export function createIntervalUpgradeProbe(pair, origin, requests) {
   return {
     handleManifest(response) {
       if (!policy) return false
+      console.log('[upgrade-e2e] Serving interval discovery fixture', {
+        from: policy.edges[0].from,
+        to: policy.edges[0].to,
+        revoked: policy.edges[0].revoked,
+      })
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ schemaVersion: 1, upgradePolicy: policy }))
       return true
@@ -68,6 +73,10 @@ export function createIntervalUpgradeProbe(pair, origin, requests) {
         assert.equal(offered.version, target)
         assert.equal(offered.targetVersion, target)
         assert.deepEqual(offered.path, [target])
+        assert.ok(
+          requests.slice(start).some(request => request.path.startsWith('/components-')),
+          'The upgraded host must read the isolated interval manifest'
+        )
 
         policy.edges[0].revoked = true
         await control.command('clickWhenEnabled', button)
