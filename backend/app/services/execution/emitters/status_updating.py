@@ -101,6 +101,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
         expected_status: Optional[str] = None,
+        expected_device: tuple[int, str] | None = None,
     ):
         """Initialize the status updating emitter.
 
@@ -120,6 +121,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._executor_name = executor_name
         self._executor_namespace = executor_namespace
         self._expected_status = expected_status
+        self._expected_device = expected_device
         self._status_updated = False
         self._terminal_event_deferred = False
         self._terminal_transition_lost = False
@@ -643,6 +645,11 @@ class StatusUpdatingEmitter(ResultEmitter):
                 executor_name=self._executor_name,
                 executor_namespace=self._executor_namespace,
                 expected_status=self._expected_status,
+                **(
+                    {"expected_device": self._expected_device}
+                    if self._expected_device is not None
+                    else {}
+                ),
             )
             if persisted is False:
                 self._terminal_transition_lost = True

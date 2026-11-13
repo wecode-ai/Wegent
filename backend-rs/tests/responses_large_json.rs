@@ -184,3 +184,90 @@ async fn terminal_callback_rolls_back_retries_and_ignores_a_late_error() {
     http_e2e::assert_terminal_callback_atomic(&fixture.mysql, task_id, subtask_id).await;
     fixture.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]
+async fn pipeline_retry_resumes_the_committed_pair_without_inserting_again() {
+    let fixture = fixture::Fixture::new().await;
+    let mysql = &fixture.mysql;
+    let (task_id, subtask_id, user_id) = (151, 152, 7);
+    http_e2e::seed_task(mysql, "tasks", task_id, user_id).await;
+    fixture
+        .seed_running_subtask(task_id, subtask_id, user_id)
+        .await;
+    mysql
+        .execute(
+            "CREATE TABLE kinds (
+            id BIGINT PRIMARY KEY, user_id INT, kind VARCHAR(20), name VARCHAR(100),
+            namespace VARCHAR(100), json JSON, is_active TINYINT,
+            created_at DATETIME, updated_at DATETIME)",
+            (),
+        )
+        .await
+        .unwrap();
+    let team = serde_json::json!({"spec":{
+        "collaborationModel":"pipeline",
+        "members":[
+            {"botRef":{"name":"stage-one"},"contextPassing":"previous_bot"},
+            {"botRef":{"name":"stage-two"}}
+        ]
+    }});
+    mysql
+        .execute(
+            "INSERT INTO kinds (id,user_id,kind,name,namespace,json,is_active) VALUES
+         (81,?,'Team','fixture-pipeline','default',?,1),
+         (82,?,'Bot','stage-one','default',JSON_OBJECT(),1),
+         (83,?,'Bot','stage-two','default',JSON_OBJECT(),1)",
+            (user_id, team.to_string(), user_id, user_id),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute(
+            "UPDATE tasks SET json = JSON_SET(json, '$.spec', JSON_OBJECT(
+            'teamRef',JSON_OBJECT('name','fixture-pipeline','namespace','default','user_id',?),
+            'currentStage',0)) WHERE id = ?",
+            (user_id, task_id),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute(
+            "UPDATE subtasks SET status='COMPLETED',bot_ids=JSON_ARRAY(82),
+            result=JSON_OBJECT('value','first stage output') WHERE id=?",
+            (subtask_id,),
+        )
+        .await
+        .unwrap();
+    let store = DefaultTaskStore::new(mysql.clone());
+    let advance = async || {
+        store
+            .advance_pipeline_stage(mysql, task_id, subtask_id)
+            .await
+            .unwrap()
+    };
+    let first = advance().await.unwrap();
+    let retry = advance().await.unwrap();
+    assert_eq!(first.pair.user_subtask_id, retry.pair.user_subtask_id);
+    assert_eq!(
+        first.pair.assistant_subtask_id,
+        retry.pair.assistant_subtask_id
+    );
+    assert_eq!(first.message, "Previous stage output:\nfirst stage output");
+    assert_eq!(first.message, retry.message);
+    assert_eq!(retry.task_json["spec"]["currentStage"], 1);
+    let count: i64 = mysql
+        .fetch_one("SELECT COUNT(*) FROM subtasks WHERE task_id=?", (task_id,))
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+    mysql
+        .execute(
+            "UPDATE subtasks SET status='RUNNING' WHERE id=?",
+            (retry.pair.assistant_subtask_id,),
+        )
+        .await
+        .unwrap();
+    assert!(advance().await.is_none());
+    fixture.close().await;
+}

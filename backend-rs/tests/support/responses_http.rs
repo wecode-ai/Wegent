@@ -314,18 +314,61 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         .execute("ALTER TABLE tasks DROP CHECK reject_terminal_update", ())
         .await
         .unwrap();
-    assert_eq!(send("response.completed", completed).await, 200);
+    // A MySQL trigger fails only the post-commit acknowledgement, preserving
+    // the committed result and pending delivery across the failed request.
+    let label_path = format!("$.metadata.labels.\"terminal-delivery-callback-{subtask_id}\"");
+    mysql.execute(
+        format!("CREATE TRIGGER reject_delivery_ack BEFORE UPDATE ON tasks FOR EACH ROW
+            BEGIN
+                IF JSON_CONTAINS_PATH(OLD.json, 'one', '{label_path}')
+                    AND NOT JSON_CONTAINS_PATH(NEW.json, 'one', '{label_path}') THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected delivery acknowledgement failure';
+                END IF;
+            END"),
+        (),
+    ).await.unwrap();
+    assert_eq!(send("response.completed", completed).await, 500);
     assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
-    let stored_result: Json<Value> = mysql
-        .fetch_one("SELECT result FROM subtasks WHERE id = ?", (subtask_id,))
+    let first_delivery = next_callback(&mut subscription).await;
+    assert_eq!(first_delivery["result"]["value"], "saved result");
+
+    let stored: (Json<Value>, chrono::NaiveDateTime) = mysql
+        .fetch_one(
+            "SELECT result, completed_at FROM subtasks WHERE id = ?",
+            (subtask_id,),
+        )
         .await
         .unwrap();
-    assert_eq!(stored_result.0["value"], "saved result");
+    assert_eq!(stored.0.0["value"], "saved result");
     assert_eq!(redis.get::<_, String>(marker.as_str()).await.unwrap(), None);
+    mysql
+        .execute("DROP TRIGGER reject_delivery_ack", ())
+        .await
+        .unwrap();
+
+    // Concurrent retries must deliver once and use the original committed
+    // payload even if the retried callback contains a different result.
+    let retry = json!({
+        "response": {"output": [{"type":"message","content":[{"type":"output_text","text":"retry payload"}]}]}
+    });
+    let (first, second) = tokio::join!(
+        send("response.completed", retry.clone()),
+        send("response.completed", retry),
+    );
+    assert_eq!((first, second), (200, 200));
     let event = next_callback(&mut subscription).await;
     assert_eq!(event["type"], "done");
     assert_eq!(event["subtask_id"], subtask_id);
     assert_eq!(event["result"]["value"], "saved result");
+    let after_retry: (Json<Value>, chrono::NaiveDateTime) = mysql
+        .fetch_one(
+            "SELECT result, completed_at FROM subtasks WHERE id = ?",
+            (subtask_id,),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.0.0, after_retry.0.0);
+    assert_eq!(stored.1, after_retry.1);
     assert_eq!(send("error", json!({"message": "late error"})).await, 200);
     assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
 

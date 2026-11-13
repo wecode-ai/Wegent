@@ -21,6 +21,7 @@ pub mod task_store_listing;
 pub mod task_store_maintenance;
 pub mod task_store_personal;
 pub mod task_store_pipeline;
+pub use task_store_pipeline::clear_pending_pipeline_handoff;
 pub mod task_store_project;
 pub mod task_store_project_count;
 pub mod task_store_projects;

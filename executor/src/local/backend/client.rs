@@ -296,7 +296,32 @@ where
     pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {
         let event_type = event.event_type.clone();
         let payload = backend_event_payload(event)?;
-        self.transport.emit(&event_type, payload).await
+        if !matches!(
+            event_type.as_str(),
+            "response.completed" | "response.incomplete" | "error"
+        ) {
+            return self.transport.emit(&event_type, payload).await;
+        }
+
+        const TERMINAL_ACK_TIMEOUT: Duration = Duration::from_secs(45);
+        for attempt in 0..3 {
+            match self
+                .call_raw_event(&event_type, payload.clone(), TERMINAL_ACK_TIMEOUT)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(
+                    error @ RawEventCallError::Rejected {
+                        retryable: false, ..
+                    },
+                ) => {
+                    return Err(error.to_string());
+                }
+                Err(error) if attempt == 2 => return Err(error.to_string()),
+                Err(_) => tokio::time::sleep(Duration::from_millis(200 * (1 << attempt))).await,
+            }
+        }
+        unreachable!("the final delivery attempt returns")
     }
 
     pub async fn emit_raw_event(&self, event: &str, payload: Value) -> Result<(), String> {

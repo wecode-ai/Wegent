@@ -63,11 +63,11 @@ impl Fixture {
             .execute(
                 format!(
                     "CREATE TABLE {table} (
-                id BIGINT PRIMARY KEY, user_id INT NOT NULL, task_id BIGINT NOT NULL,
+                id BIGINT PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, task_id BIGINT NOT NULL,
                 team_id BIGINT DEFAULT 0, title VARCHAR(100) DEFAULT '',
                 bot_ids JSON, role VARCHAR(20) DEFAULT 'ASSISTANT',
                 executor_namespace VARCHAR(100) DEFAULT '',
-                executor_name VARCHAR(100) DEFAULT '', executor_deleted_at DATETIME,
+                executor_name VARCHAR(100) DEFAULT '', executor_deleted_at TINYINT DEFAULT 0,
                 prompt TEXT, message_id BIGINT, parent_id BIGINT DEFAULT 0,
                 status VARCHAR(20) DEFAULT 'COMPLETED', progress INT DEFAULT 100,
                 result JSON, error_message TEXT,

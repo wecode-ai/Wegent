@@ -45,59 +45,64 @@ pub(super) async fn dispatch_next(
     let task_id = advance.task_id;
     let subtask_id = advance.pair.assistant_subtask_id;
     let user_id = advance.user_id;
-    if let Err(error) = dispatch_execution(state, advance).await {
-        tracing::error!(
-            ?error,
+    let error = match prepare_dispatch(state, &advance).await {
+        Ok(job) => return claim_and_dispatch(state, &advance, job).await,
+        Err(error) => error,
+    };
+    if error.status().is_server_error() {
+        return Err(error);
+    }
+    tracing::error!(
+        ?error,
+        task_id,
+        subtask_id,
+        "pipeline next-stage dispatch failed"
+    );
+    if let Some(redis) = state.redis.as_ref() {
+        let ctx = super::completion::Completion {
+            app: Some(state),
+            mysql: &state.mysql,
+            redis,
+            tables: super::tables(state),
+            executor_manager: &state.executor_manager,
+        };
+        let persisted = super::completion::persist_completed_result(
+            &ctx,
             task_id,
             subtask_id,
-            "pipeline next-stage dispatch failed"
-        );
-        if let Some(redis) = state.redis.as_ref() {
-            let ctx = super::completion::Completion {
-                app: Some(state),
-                mysql: &state.mysql,
-                redis,
-                tables: super::tables(state),
-                executor_manager: &state.executor_manager,
-            };
-            let persisted = super::completion::persist_completed_result(
-                &ctx,
-                task_id,
-                subtask_id,
-                "FAILED",
-                None,
-                Some("Pipeline stage dispatch failed"),
-                None,
-                None,
-            )
-            .await;
-            match persisted {
-                Ok(Some(_)) => {}
-                Ok(None) => return Ok(()),
-                Err(error) => {
-                    tracing::error!(%error, task_id, subtask_id, "pipeline failure could not be saved");
-                    return Err(FastApiError::internal());
-                }
+            "FAILED",
+            None,
+            Some("Pipeline stage dispatch failed"),
+            None,
+            None,
+        )
+        .await;
+        match persisted {
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                tracing::error!(%error, task_id, subtask_id, "pipeline failure could not be saved");
+                return Err(FastApiError::internal());
             }
-            if let Err(error) = super::socketio::publish_emit_in_room(
-                redis,
-                "task:status",
-                &format!("user:{user_id}"),
-                json!({"task_id":task_id,"status":"FAILED","progress":null}),
-            )
-            .await
-            {
-                tracing::error!(%error, task_id, "pipeline dispatch-failure status emit failed");
-            }
+        }
+        if let Err(error) = super::socketio::publish_emit_in_room(
+            redis,
+            "task:status",
+            &format!("user:{user_id}"),
+            json!({"task_id":task_id,"status":"FAILED","progress":null}),
+        )
+        .await
+        {
+            tracing::error!(%error, task_id, "pipeline dispatch-failure status emit failed");
         }
     }
     Ok(())
 }
 
-async fn dispatch_execution(
+async fn prepare_dispatch(
     state: &AppState,
-    mut advance: PipelineStageAdvance,
-) -> Result<(), FastApiError> {
+    advance: &PipelineStageAdvance,
+) -> Result<DefaultDispatchJob, FastApiError> {
     let bot_ids = [advance.bot.id];
     let request_id = format!(
         "pipeline-{}-{}",
@@ -176,32 +181,6 @@ async fn dispatch_execution(
             .get("protocol")
             .and_then(Value::as_str),
     });
-    let tables = state
-        .task_store
-        .message_edit_tables(advance.task_id)
-        .await
-        .map_err(dependency)?;
-    let mysql = state
-        .mysql
-        .route(crate::task_routing::ByTaskId(advance.task_id as u64));
-    let running = mysql.with_transaction(async |transaction| {
-        let task: Option<MysqlRow> = transaction.fetch_optional(
-            crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
-        let current = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
-        if current.as_ref().and_then(|json| json.0.pointer("/spec/currentStage")) != advance.task_json.pointer("/spec/currentStage") { return Ok(false); }
-        let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
-        let changed = transaction.execute(
-            format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
-            (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
-        if changed.rows_affected == 0 { return Ok(false); }
-        advance.task_json["status"]["status"] = json!("RUNNING");
-        transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
-            (crate::json_compat::python_json_value(&advance.task_json), now, advance.task_id)).await?;
-        Ok(true)
-    }).await.map_err(dependency)?;
-    if !running {
-        return Ok(());
-    }
     if routing::supports_streaming(&target) || target.mode == routing::CommunicationMode::Inprocess
     {
         let url = target.url.as_deref().ok_or_else(FastApiError::internal)?;
@@ -216,28 +195,67 @@ async fn dispatch_execution(
             start_data: serde_json::Value::Null,
             created_task: None,
         };
-        state
-            .responses_dispatch
-            .submit(DefaultDispatchJob::ChatShell(Box::new(job)));
+        Ok(DefaultDispatchJob::ChatShell(Box::new(job)))
     } else {
         let url = target.url.as_deref().ok_or_else(FastApiError::internal)?;
-        state
-            .responses_dispatch
-            .submit(DefaultDispatchJob::Executor {
-                consumer: Box::new(crate::responses::dispatch::ConsumerState::from_app(state)),
-                task_id: execution.task_id,
-                subtask_id: execution.subtask_id,
-                user_id: execution.user_id,
-                message_id: execution.message_id,
-                url: executor_client::executor_responses_url(url),
-                body: serde_json::to_value(dispatch::assemble(&execution, false, true))
-                    .map_err(|_| FastApiError::internal())?,
-                start: state
-                    .redis
-                    .clone()
-                    .map(|redis| crate::responses::dispatch::start_event(redis, &execution, None)),
-            });
+        Ok(DefaultDispatchJob::Executor {
+            consumer: Box::new(crate::responses::dispatch::ConsumerState::from_app(state)),
+            task_id: execution.task_id,
+            subtask_id: execution.subtask_id,
+            user_id: execution.user_id,
+            message_id: execution.message_id,
+            url: executor_client::executor_responses_url(url),
+            body: serde_json::to_value(dispatch::assemble(&execution, false, true))
+                .map_err(|_| FastApiError::internal())?,
+            start: state
+                .redis
+                .clone()
+                .map(|redis| crate::responses::dispatch::start_event(redis, &execution, None)),
+        })
     }
+}
+
+async fn claim_and_dispatch(
+    state: &AppState,
+    advance: &PipelineStageAdvance,
+    job: DefaultDispatchJob,
+) -> Result<(), FastApiError> {
+    let permit = state.responses_dispatch.reserve().ok_or_else(|| {
+        tracing::warn!(
+            task_id = advance.task_id,
+            subtask_id = advance.pair.assistant_subtask_id,
+            "pipeline dispatch queue unavailable"
+        );
+        FastApiError::internal()
+    })?;
+    let tables = state
+        .task_store
+        .message_edit_tables(advance.task_id)
+        .await
+        .map_err(dependency)?;
+    let mysql = state
+        .mysql
+        .route(crate::task_routing::ByTaskId(advance.task_id as u64));
+    let running = mysql.with_transaction(async |transaction| {
+        let task: Option<MysqlRow> = transaction.fetch_optional(
+            crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
+        let Some(Json(mut current)) = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
+        if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage") { return Ok(false); }
+        let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
+        let changed = transaction.execute(
+            format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
+            (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
+        if changed.rows_affected == 0 { return Ok(false); }
+        current["status"]["status"] = json!("RUNNING");
+        wegent_task_store::clear_pending_pipeline_handoff(&mut current);
+        transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
+            (crate::json_compat::python_json_value(&current), now, advance.task_id)).await?;
+        Ok(true)
+    }).await.map_err(dependency)?;
+    if !running {
+        return Ok(());
+    }
+    permit.send(job);
     Ok(())
 }
 

@@ -472,9 +472,16 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    let result =
-        completion::collect_completed_result(&ctx, subtask_id, "FAILED", None, Some(message), None)
-            .await;
+    let result = completion::collect_completed_result(
+        &ctx,
+        task_id,
+        subtask_id,
+        "FAILED",
+        None,
+        Some(message),
+        None,
+    )
+    .await;
     let persisted = completion::persist_completed_result(
         &ctx,
         task_id,

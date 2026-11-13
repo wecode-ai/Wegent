@@ -304,6 +304,10 @@ where
 }
 
 impl<M: Mysql, R: Redis> ResponsesDispatch<M, R> {
+    pub(crate) fn reserve(&self) -> Option<mpsc::Permit<'_, DispatchJob<M, R>>> {
+        self.sender.try_reserve().ok()
+    }
+
     /// Admit one background job.
     ///
     /// The bounded queue is admission. When it is full the job is rejected

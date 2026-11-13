@@ -97,6 +97,7 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | None = None,
+        expected_device: tuple[int, str] | None = None,
     ) -> bool:
         """Update subtask status asynchronously.
 
@@ -112,6 +113,7 @@ class DatabaseHandler:
             executor_name,
             executor_namespace,
             expected_status,
+            expected_device,
         )
         if update_result is None:
             return False
@@ -134,6 +136,7 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | None = None,
+        expected_device: tuple[int, str] | None = None,
     ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
@@ -169,6 +172,16 @@ class DatabaseHandler:
                         or subtask.status == SubtaskStatus.DELETE
                     ):
                         return None
+
+                    if expected_device is not None:
+                        owner, device_id = expected_device
+                        if (
+                            task.user_id != owner
+                            or subtask.user_id != owner
+                            or subtask.executor_name != f"device-{device_id}"
+                            or subtask.executor_namespace != f"user-{owner}"
+                        ):
+                            return None
 
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 

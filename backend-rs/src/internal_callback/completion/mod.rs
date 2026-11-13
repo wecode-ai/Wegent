@@ -18,6 +18,7 @@
 //! the event bus dispatches handlers with `asyncio.gather`, so they are part of
 //! the request rather than detached work.
 mod collect;
+mod delivery;
 mod events;
 mod handlers;
 mod persist;
@@ -35,6 +36,7 @@ use serde_json::Value;
 use crate::executor_manager::ExecutorManager;
 
 pub(crate) use collect::collect_completed_result;
+pub(crate) use delivery::{Delivery, acknowledge_delivery, with_delivery_lock};
 pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
 pub(crate) use sql::Tables;
@@ -99,6 +101,74 @@ pub(crate) struct TerminalCompletion {
     pub(crate) result: Option<Value>,
     pub(crate) user_id: Option<i64>,
     pub(crate) auto_advance: bool,
+    pub(crate) replay_error: Option<Option<String>>,
+}
+
+/// Terminal delivery can be retried independently of the database transition.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn complete_with_delivery<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    event: &super::event::ExecutionEvent,
+    status: &str,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+    delivery: Delivery,
+) -> MysqlResult<Option<TerminalCompletion>> {
+    let user_id = task_status_user_id(ctx.mysql, ctx.tables, event.task_id).await;
+    let result = finish_terminal_event(
+        ctx,
+        event.task_id,
+        event.subtask_id,
+        status,
+        event.result.as_ref(),
+        event.error.as_deref(),
+        event.error_code.as_deref(),
+        executor_name,
+        executor_namespace,
+        None,
+        Some(delivery),
+    )
+    .await?;
+    Ok(result.map(|completion| TerminalCompletion {
+        user_id,
+        ..completion
+    }))
+}
+
+/// Device binding observed by the heartbeat scan and rechecked under the writer lock.
+pub(crate) struct DeviceAttempt<'a> {
+    pub(crate) owner_id: i64,
+    pub(crate) name: &'a str,
+    pub(crate) namespace: &'a str,
+}
+
+pub(crate) async fn complete_device_timeout<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    attempt: &DeviceAttempt<'_>,
+    error: &str,
+) -> MysqlResult<Option<TerminalCompletion>> {
+    finish_terminal_event(
+        ctx,
+        task_id,
+        subtask_id,
+        "FAILED",
+        None,
+        Some(error),
+        None,
+        None,
+        None,
+        Some(attempt),
+        None,
+    )
+    .await
+    .map(|completion| {
+        completion.map(|value| TerminalCompletion {
+            user_id: Some(attempt.owner_id),
+            ..value
+        })
+    })
 }
 
 /// Complete an event whose Socket.IO status frame requires the task owner.
@@ -158,10 +228,42 @@ pub(crate) async fn complete_terminal_event<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
-    let final_result =
-        collect::collect_completed_result(ctx, subtask_id, status, result, error, error_code).await;
+    finish_terminal_event(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        result,
+        error,
+        error_code,
+        executor_name,
+        executor_namespace,
+        None,
+        None,
+    )
+    .await
+}
 
-    let committed = persist::persist_completed_result(
+#[allow(clippy::too_many_arguments)]
+async fn finish_terminal_event<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+    error_code: Option<&str>,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+    device_attempt: Option<&DeviceAttempt<'_>>,
+    delivery: Option<Delivery>,
+) -> MysqlResult<Option<TerminalCompletion>> {
+    let final_result = collect::collect_completed_result(
+        ctx, task_id, subtask_id, status, result, error, error_code,
+    )
+    .await;
+
+    let committed = persist::persist_terminal_transition(
         ctx,
         task_id,
         subtask_id,
@@ -170,9 +272,11 @@ pub(crate) async fn complete_terminal_event<M: Mysql, R: Redis>(
         error,
         executor_name,
         executor_namespace,
+        device_attempt,
+        delivery,
     )
     .await;
-    let Some(auto_advance) = committed.inspect_err(|failure| {
+    let Some(transition) = committed.inspect_err(|failure| {
         tracing::error!(%failure, task_id, subtask_id, status, "terminal persistence failed");
     })?
     else {
@@ -185,19 +289,30 @@ pub(crate) async fn complete_terminal_event<M: Mysql, R: Redis>(
         return Ok(None);
     };
 
-    events::publish_task_completed(
-        ctx,
-        task_id,
-        subtask_id,
-        status,
-        final_result.as_ref(),
-        error,
-    )
-    .await;
+    let (auto_advance, final_result, replay_error) = match transition {
+        persist::Transition::Committed(auto_advance) => (auto_advance, final_result, None),
+        persist::Transition::Replay {
+            auto_advance,
+            result,
+            error,
+        } => (auto_advance, result, Some(error)),
+    };
+    if replay_error.is_none() {
+        events::publish_task_completed(
+            ctx,
+            task_id,
+            subtask_id,
+            status,
+            final_result.as_ref(),
+            error,
+        )
+        .await;
+    }
 
     Ok(Some(TerminalCompletion {
         result: final_result,
         user_id: None,
         auto_advance,
+        replay_error,
     }))
 }

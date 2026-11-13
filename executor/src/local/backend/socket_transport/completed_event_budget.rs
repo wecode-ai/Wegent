@@ -10,6 +10,8 @@ use super::NAMESPACE;
 // Match backend/app/core/socketio.py. Count the Engine.IO / Socket.IO prefix
 // and the serialized [event, payload], including JSON string escaping.
 const MAX_PACKET_BYTES: usize = 1_000_000;
+// Socket.IO uses an i32 acknowledgement id for device terminal calls.
+const ACK_ID_BYTES: usize = 11;
 const SNAPSHOT_KEYS: [&str; 2] = ["file_changes", "task_file_changes"];
 
 struct InlineDiff {
@@ -191,7 +193,7 @@ fn prefix_within_json_budget(text: &str, available: usize) -> Result<usize, Stri
 }
 
 fn packet_bytes(event: &str, payload: &Value) -> Result<usize, String> {
-    Ok(2 + NAMESPACE.len() + 1 + encoded_bytes(&(event, payload))?)
+    Ok(2 + NAMESPACE.len() + 1 + ACK_ID_BYTES + encoded_bytes(&(event, payload))?)
 }
 
 fn encoded_bytes(value: &(impl serde::Serialize + ?Sized)) -> Result<usize, String> {

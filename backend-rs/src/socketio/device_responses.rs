@@ -108,7 +108,7 @@ pub(crate) async fn handle(
 
     // The Source writes the execution event back before the local-task branch.
     if let Some(task_id) = task_id.filter(|task_id| *task_id != 0) {
-        write_back(
+        let _ = write_back(
             state, runtime, user_id, &device_id, task_id, event_name, &object,
         )
         .await;
@@ -185,7 +185,7 @@ async fn process_remote_event(
         "response.completed" | "response.incomplete" | "error"
     );
     if !raw_terminal {
-        write_back(
+        let _ = write_back(
             state, runtime, user_id, device_id, task_id, event_name, data,
         )
         .await;
@@ -202,38 +202,105 @@ async fn process_remote_event(
     let Some(mut event) = parsed.map_err(|error| error.0)? else {
         return Ok(());
     };
-    if !emit_event_chain(state, user_id, &mut event).await? {
-        return Ok(());
-    }
-    if raw_terminal {
-        write_back(
-            state, runtime, user_id, device_id, task_id, event_name, data,
+    let status = completion::terminal_status(&event.event_type);
+    let Some(redis) = state.redis.as_ref() else {
+        return if status.is_some() {
+            Err("Device terminal delivery requires Redis".into())
+        } else {
+            Ok(())
+        };
+    };
+    if let Some(status) = status {
+        return completion::with_delivery_lock(
+            redis,
+            subtask_id,
+            completion::Delivery::Device,
+            || "Device terminal delivery lock unavailable".to_owned(),
+            deliver_remote_terminal(
+                state, runtime, user_id, device_id, event_name, data, &room, &mut event, status,
+            ),
         )
         .await;
-        emit_response_api_event(
-            state,
-            event_name,
-            response_api_payload(data, device_id),
-            &room,
-        )
-        .await?;
     }
 
-    let Some(redis) = state.redis.as_ref() else {
-        return Ok(());
-    };
+    let mut emitter = StatusUpdatingEmitter::new(redis.clone(), task_id, subtask_id);
+    let result = emitter.emit(&mut event).await;
+    emitter.close().await;
+    result.map_err(|error| error.to_string())?;
     if let Err(error) = publish_callback_event(redis, subtask_id, &event).await {
         tracing::warn!(%error, subtask_id, "Responses callback event publish failed");
     }
     channel::forward_event_to_channel_callbacks(redis, task_id, &event).await;
-
-    if is_terminal(&event.event_type) {
-        publish_task_completed(
-            state, runtime, user_id, device_id, task_id, subtask_id, &event,
-        )
-        .await;
-    }
     Ok(())
+}
+
+/// Replay delivery of a committed terminal event until its effects succeed.
+#[allow(clippy::too_many_arguments)]
+async fn deliver_remote_terminal(
+    state: &AppState,
+    runtime: &SocketRuntime,
+    user_id: i64,
+    device_id: &str,
+    event_name: &str,
+    data: &Map<String, Value>,
+    room: &str,
+    event: &mut crate::internal_callback::event::ExecutionEvent,
+    status: &str,
+) -> Result<(), String> {
+    let redis = state.redis.as_ref().ok_or("Device Redis unavailable")?;
+    let task_id = event.task_id;
+    let subtask_id = event.subtask_id;
+    let delivery = completion::Delivery::Device;
+    let ctx = completion::Completion {
+        app: Some(state),
+        mysql: &state.mysql,
+        redis,
+        tables: crate::internal_callback::tables(state),
+        executor_manager: &state.executor_manager,
+    };
+    let Some(committed) =
+        completion::complete_with_delivery(&ctx, event, status, None, None, delivery)
+            .await
+            .map_err(|error| error.to_string())?
+    else {
+        return Ok(());
+    };
+    if let Some(error) = committed.replay_error {
+        event.error = error;
+    }
+    event.result = committed.result;
+    let result = event.result.clone().unwrap_or_else(|| json!({}));
+    let contexts = if status == "COMPLETED" {
+        Some(
+            crate::responses::create::contexts::context_briefs(&state.mysql, subtask_id)
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    write_back(
+        state, runtime, user_id, device_id, task_id, event_name, data,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    emitter::emit_terminal_frames(redis, event, Some(user_id), &result, contexts.as_ref())
+        .await
+        .map_err(|error| error.to_string())?;
+    emit_response_api_event(
+        state,
+        event_name,
+        response_api_payload(data, device_id),
+        room,
+    )
+    .await?;
+    publish_callback_event(redis, subtask_id, event)
+        .await
+        .map_err(|error| error.to_string())?;
+    device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await?;
+    completion::acknowledge_delivery(&ctx, task_id, subtask_id, delivery)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// `_execution_runtime_event_sync` through the shared projection.
@@ -245,7 +312,7 @@ async fn write_back(
     task_id: i64,
     event_name: &str,
     data: &Map<String, Value>,
-) {
+) -> brz_mysql::MysqlResult<()> {
     let payload = Value::Object(data.clone());
     let identity = RuntimeIdentity {
         event_name,
@@ -253,110 +320,7 @@ async fn write_back(
         payload: &payload,
     };
     runtime_projection::write_back_execution_event(state, runtime, user_id, device_id, &identity)
-        .await;
-}
-
-/// `StatusUpdatingEmitter` wrapping `WebSocketResultEmitter`, including the
-/// terminal collection/persistence/`TaskCompletedEvent` step.
-async fn emit_event_chain(
-    state: &AppState,
-    user_id: i64,
-    event: &mut crate::internal_callback::event::ExecutionEvent,
-) -> Result<bool, String> {
-    let Some(redis) = state.redis.as_ref() else {
-        return Ok(true);
-    };
-    let status = completion::terminal_status(&event.event_type);
-    let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
-    if status.is_none() {
-        emitter
-            .emit(event)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    emitter.close().await;
-    let Some(status) = status else {
-        return Ok(true);
-    };
-
-    let ctx = completion::Completion {
-        app: Some(state),
-        mysql: &state.mysql,
-        redis,
-        tables: crate::internal_callback::tables(state),
-        executor_manager: &state.executor_manager,
-    };
-    let committed = completion::complete_terminal_event(
-        &ctx,
-        event.task_id,
-        event.subtask_id,
-        status,
-        event.result.as_ref(),
-        event.error.as_deref(),
-        event.error_code.as_deref(),
-        None,
-        None,
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(committed) = committed else {
-        return Ok(false);
-    };
-    if let Some(result) = committed.result {
-        event.result = Some(result);
-    }
-    let result = event
-        .result
-        .clone()
-        .unwrap_or_else(|| Value::Object(Map::new()));
-    let contexts = if status == "COMPLETED" {
-        Some(
-            crate::responses::create::contexts::context_briefs(&state.mysql, event.subtask_id)
-                .await
-                .map_err(|error| error.to_string())?,
-        )
-    } else {
-        None
-    };
-    emitter::emit_terminal_frames(redis, event, Some(user_id), &result, contexts.as_ref())
         .await
-        .map_err(|error| error.to_string())?;
-    Ok(true)
-}
-
-/// `DeviceNamespace._publish_task_completed_event` plus the slot broadcast.
-async fn publish_task_completed(
-    state: &AppState,
-    runtime: &SocketRuntime,
-    user_id: i64,
-    device_id: &str,
-    task_id: i64,
-    subtask_id: i64,
-    event: &crate::internal_callback::event::ExecutionEvent,
-) {
-    let (status, result, error) = match event.event_type.as_str() {
-        "done" => ("COMPLETED", event.result.as_ref(), None),
-        "error" => (
-            "FAILED",
-            None,
-            Some(event.error.as_deref().unwrap_or("Unknown error")),
-        ),
-        _ => ("CANCELLED", None, None),
-    };
-    if let Some(redis) = state.redis.as_ref() {
-        let ctx = completion::Completion {
-            app: Some(state),
-            mysql: &state.mysql,
-            redis,
-            tables: crate::internal_callback::tables(state),
-            executor_manager: &state.executor_manager,
-        };
-        completion::publish_task_completed_for_owner(
-            &ctx, task_id, subtask_id, user_id, status, result, error,
-        )
-        .await;
-    }
-    device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await;
 }
 
 /// `emit_response_api_event`: the raw Responses event on the `/chat` namespace.

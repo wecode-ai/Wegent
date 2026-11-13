@@ -643,10 +643,17 @@ impl Bridge {
         if let Some(mut emitter) = self.emitter.take() {
             emitter.close().await;
         }
-        if !matches!(
-            self.complete("CANCELLED", None, None, None).await,
-            Ok(Some(_))
-        ) {
+        let persisted = self.complete("CANCELLED", None, None, None).await;
+        self.finish_cancel(persisted).await;
+    }
+
+    async fn finish_cancel(
+        &mut self,
+        persisted: brz_mysql::MysqlResult<Option<completion::TerminalCompletion>>,
+    ) {
+        // The cancel endpoint can commit the partial result before the
+        // stream observes the flag. Only a database error fails the stream.
+        if persisted.is_err() {
             self.finish_persistence_error("Could not save the cancellation")
                 .await;
             return;

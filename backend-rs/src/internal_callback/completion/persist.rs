@@ -9,9 +9,9 @@ use brz_redis::Redis;
 use chrono::NaiveDateTime;
 use serde_json::{Map, Value};
 
-use super::Completion;
 use super::sql;
 use super::task_column;
+use super::{Completion, Delivery, DeviceAttempt, delivery};
 use crate::internal_callback::py_json::python_dumps;
 use crate::internal_callback::session;
 use crate::task_store::subtask_column_index;
@@ -22,7 +22,7 @@ mod persist_status;
 mod persist_terminal;
 pub(crate) use persist_status::update_task_status_on;
 use persist_status::{lock_task, update_locked_task_status};
-use persist_terminal::update_subtask_status_on;
+use persist_terminal::{lock_subtask, update_subtask_status_on};
 
 /// `TaskStatus`'s field order (`app/schemas/kind.py`), used to render the task
 /// CRD's `status` object the way `model_dump(mode="json")` does.
@@ -180,6 +180,52 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> MysqlResult<Option<bool>> {
+    Ok(persist_terminal_transition(
+        ctx,
+        task_id,
+        subtask_id,
+        status,
+        result,
+        error,
+        executor_name,
+        executor_namespace,
+        None,
+        None,
+    )
+    .await?
+    .map(|transition| match transition {
+        Transition::Committed(auto_advance) => auto_advance,
+        Transition::Replay { auto_advance, .. } => auto_advance,
+    }))
+}
+
+pub(super) enum Transition {
+    Committed(bool),
+    Replay {
+        auto_advance: bool,
+        result: Option<Value>,
+        error: Option<String>,
+    },
+}
+
+enum PendingTransition {
+    Written(MysqlRow, Option<String>, bool),
+    Replay(Transition),
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    status: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+    executor_name: Option<&str>,
+    executor_namespace: Option<&str>,
+    device_attempt: Option<&DeviceAttempt<'_>>,
+    delivery: Option<Delivery>,
+) -> MysqlResult<Option<Transition>> {
     let normalized_status = status.to_uppercase();
     let mysql = ctx
         .mysql
@@ -190,26 +236,54 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
         let Some(task) = lock_task(transaction, ctx.tables.tasks, task_id).await? else {
             return Ok(None);
         };
+        let Some(row) = lock_subtask(transaction, ctx.tables, subtask_id).await? else {
+            return Ok(None);
+        };
+        if subtask_column::<i64>(&row, "task_id") != Some(task_id)
+            || device_attempt.is_some_and(|attempt| {
+                task_column::<i64>(&task, "user_id") != Some(attempt.owner_id)
+            })
+        {
+            return Ok(None);
+        }
+        if let Some(delivery) = delivery
+            && subtask_column::<String>(&row, "status").as_deref() == Some(&normalized_status)
+            && let Some(Json(task_json)) = task_column::<Json<Value>>(&task, "json")
+            && let Some(marker) =
+                task_json["metadata"]["labels"][delivery.label(subtask_id)].as_str()
+        {
+            return Ok(Some(PendingTransition::Replay(Transition::Replay {
+                auto_advance: marker == "advance",
+                result: subtask_column::<Json<Value>>(&row, "result").map(|value| value.0),
+                error: subtask_column::<String>(&row, "error_message"),
+            })));
+        }
         let Some((row, metrics_message)) = update_subtask_status_on(
             ctx,
             transaction,
-            task_id,
+            row,
             subtask_id,
             &normalized_status,
             result,
             error,
             executor_name,
             executor_namespace,
+            device_attempt,
         )
         .await?
         else {
             return Ok(None);
         };
-        let auto_advance = update_locked_task_status(ctx, transaction, task, task_id, subtask_id)
-            .await?
-            .ok_or(MysqlError::RowNotFound)?;
+        let auto_advance =
+            update_locked_task_status(ctx, transaction, task, task_id, subtask_id, delivery)
+                .await?
+                .ok_or(MysqlError::RowNotFound)?;
         ready_to_commit.store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok(Some((row, metrics_message, auto_advance)))
+        Ok(Some(PendingTransition::Written(
+            row,
+            metrics_message,
+            auto_advance,
+        )))
     };
     let committed = match crate::transaction_outcome::run_mysql_with_deadlock_retry(
         &mysql, operation,
@@ -231,8 +305,10 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
         }
         outcome => outcome?,
     };
-    let Some((row, metrics_message, auto_advance)) = committed else {
-        return Ok(None);
+    let (row, metrics_message, auto_advance) = match committed {
+        None => return Ok(None),
+        Some(PendingTransition::Replay(transition)) => return Ok(Some(transition)),
+        Some(PendingTransition::Written(row, message, advance)) => (row, message, advance),
     };
     publish_task_run_metrics(ctx, &row, subtask_id, &normalized_status, metrics_message).await;
     if normalized_status == "COMPLETED" {
@@ -243,7 +319,39 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
     {
         tracing::warn!(%failure, task_id, subtask_id, "callback streaming cleanup failed");
     }
-    Ok(Some(auto_advance))
+    Ok(Some(Transition::Committed(auto_advance)))
+}
+
+pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    task_id: i64,
+    subtask_id: i64,
+    delivery: Delivery,
+) -> MysqlResult<()> {
+    let mysql = ctx
+        .mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64));
+    mysql
+        .with_transaction(async |transaction| {
+            let Some(task) = lock_task(transaction, ctx.tables.tasks, task_id).await? else {
+                return Ok(());
+            };
+            let Some(Json(mut task)) = task_column::<Json<Value>>(&task, "json") else {
+                return Ok(());
+            };
+            if let Some(labels) = delivery::labels(&mut task).as_object_mut()
+                && labels.shift_remove(&delivery.label(subtask_id)).is_some()
+            {
+                transaction
+                    .execute(
+                        format!("UPDATE {} SET json=? WHERE id=?", ctx.tables.tasks),
+                        (python_dumps(&task), task_id),
+                    )
+                    .await?;
+            }
+            Ok(())
+        })
+        .await
 }
 
 /// `TaskRunMetricHooks._after_commit` (`app/services/task_run_metric_hooks.py:157-175`):

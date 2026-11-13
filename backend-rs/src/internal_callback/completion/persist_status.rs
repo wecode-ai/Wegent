@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 
 use super::sql;
 use super::{
-    Completion, collaboration_status, complete_task_model, local_datetime, local_isoformat,
-    render_task_crd, subtask_column, task_column,
+    Completion, Delivery, collaboration_status, complete_task_model, delivery, local_datetime,
+    local_isoformat, render_task_crd, subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
 
@@ -25,7 +25,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let Some(task) = lock_task(mysql, ctx.tables.tasks, task_id).await? else {
         return Ok(None);
     };
-    update_locked_task_status(ctx, mysql, task, task_id, changed_subtask_id).await
+    update_locked_task_status(ctx, mysql, task, task_id, changed_subtask_id, None).await
 }
 
 pub(super) async fn lock_task<T: MysqlTransaction>(
@@ -46,6 +46,7 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
     task: MysqlRow,
     task_id: i64,
     changed_subtask_id: i64,
+    pending_delivery: Option<Delivery>,
 ) -> MysqlResult<Option<bool>> {
     let task_table = ctx.tables.tasks;
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
@@ -126,7 +127,16 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
     payload.insert("status".into(), Value::Object(updated));
 
     complete_task_model(&mut payload);
-    let json_text = python_dumps(&Value::Object(render_task_crd(payload)));
+    let mut document = Value::Object(render_task_crd(payload));
+    if let Some(pending) = pending_delivery {
+        let marker = if decision.auto_advance {
+            "advance"
+        } else {
+            "notify"
+        };
+        delivery::labels(&mut document)[pending.label(changed_subtask_id)] = json!(marker);
+    }
+    let json_text = python_dumps(&document);
     let row_updated_at = local_datetime();
     let sql = sql::update_task_json_statement(task_table);
     mysql

@@ -271,6 +271,15 @@ async fn drain(bridge: &mut Bridge) -> String {
     String::from_utf8(body).expect("utf8 sse")
 }
 
+#[tokio::test]
+async fn already_persisted_cancellation_finishes_the_stream_without_failure() {
+    let (mut bridge, _) = callback_bridge(Vec::new());
+    bridge.finish_cancel(Ok(None)).await;
+    let body = drain(&mut bridge).await;
+    assert!(body.contains("event: response.completed"));
+    assert!(!body.contains("event: response.failed"));
+}
+
 /// The recorded case's event shape: `start`/`chunk`/`done` callback pushes
 /// produce the same SSE frames the chat-shell source produces, and the
 /// terminal event closes the dedicated subscription.

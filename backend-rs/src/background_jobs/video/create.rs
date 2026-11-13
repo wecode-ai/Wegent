@@ -53,14 +53,15 @@ pub(crate) async fn dispatch(state: &AppState, request: &ExecutionRequest) -> Re
                 emit(state,request,"chat:chunk",json!({"type":"chunk","content":"","offset":0,"result":{"blocks":[poll::video_block(id,0,"error",false)]}})).await?;
             }
         }
-        finish(state, request, "FAILED", None, Some(&error.to_string())).await?;
-        emit(
-            state,
-            request,
-            "chat:error",
-            json!({"type":"error","error":error.to_string()}),
-        )
-        .await?;
+        if finish(state, request, "FAILED", None, Some(&error.to_string())).await? {
+            emit(
+                state,
+                request,
+                "chat:error",
+                json!({"type":"error","error":error.to_string()}),
+            )
+            .await?;
+        }
     }
     result
 }
@@ -263,7 +264,7 @@ pub(super) async fn finish(
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
-) -> Result<()> {
+) -> Result<bool> {
     let redis = state
         .redis
         .as_ref()
@@ -275,7 +276,7 @@ pub(super) async fn finish(
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    crate::internal_callback::completion::complete_terminal(
+    let committed = crate::internal_callback::completion::complete_terminal(
         &context,
         request.task_id,
         request.subtask_id,
@@ -287,5 +288,5 @@ pub(super) async fn finish(
         None,
     )
     .await?;
-    Ok(())
+    Ok(committed.is_some())
 }
