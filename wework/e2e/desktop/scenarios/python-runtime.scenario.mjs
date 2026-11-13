@@ -233,19 +233,23 @@ export async function createDesktopScenario({
           text: '准备失败',
         })
         await captureScreenshot(control, 'python-runtime-publication-failed.png', 'body')
+        // Resolving the download descriptor is bounded to 200ms, so a loaded
+        // machine can fail the automatic attempt there, before uv reports a
+        // publication failure. Count failed attempts so the no-loop invariant
+        // holds whichever step failed.
         assert.equal(
-          (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+          (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-failed')
             .length - 1,
           1,
           'A failed startup preparation must not loop'
         )
-        const failedAttempts = (await readFile(appLog, 'utf8')).split(
-          'python-runtime-install-started'
+        const attemptedPreparations = (await readFile(appLog, 'utf8')).split(
+          'python-runtime-ensure-started'
         ).length
         await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
         assert.equal(
-          (await readFile(appLog, 'utf8')).split('python-runtime-install-started').length,
-          failedAttempts,
+          (await readFile(appLog, 'utf8')).split('python-runtime-ensure-started').length,
+          attemptedPreparations,
           'Signing in again retried a failed automatic preparation'
         )
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
