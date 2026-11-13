@@ -25,15 +25,17 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
   async function createProject(control, name, workspaceId = '') {
     await control.command(
       'clickWhenEnabled',
-      '[data-testid="collaboration-project-create-default"]',
-      {
-        timeoutMs: uiTimeoutMs,
-      }
+      sidebar('collaboration-project-tree') +
+        ' > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="collaboration-workspace-nav-create-project"]'
     )
     const select = '[data-testid="collaboration-project-workspace-select"]'
     await control.command('waitFor', select, { visible: true, timeoutMs: uiTimeoutMs })
-    assert.ok((await control.command('getText', select)).includes('默认空间'))
-    assert.equal((await control.command('getText', select)).includes('尚未加入空间'), false)
+    assert.ok((await control.command('getText', select)).includes('个人分组'))
+    assert.equal((await control.command('getText', select)).includes('尚未加入分组'), false)
     if (workspaceId) await control.command('select', select, { value: workspaceId })
     await control.command('fill', '[data-testid="collaboration-project-name-input"]', {
       value: name,
@@ -107,7 +109,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       assert.notEqual(first.workspace_id, business.id)
       assert.equal(second.workspace_id, first.workspace_id)
       const defaultSpace = await request(`/api/v1/workspaces/${first.workspace_id}`)
-      assert.equal(defaultSpace.name, '默认空间')
+      assert.equal(defaultSpace.name, '个人分组')
       const explicit = await createProject(control, `指定空间项目-${process.pid}`, business.id)
       assert.equal(explicit.workspace_id, business.id)
       assert.equal((await request(`/api/v1/workspaces/${business.id}`)).name, business.name)

@@ -566,3 +566,33 @@ def test_cp14_child_creation_never_widens_parent_or_project_visibility(
             json={"title": "Hidden parent", "parent_id": source["id"]},
         )
         assert denied.status_code == 404
+
+
+def test_comment_child_creation_request_is_idempotent_and_checks_current_access(
+    test_client, scope
+):
+    invite(test_client, scope, "Developer")
+    url = f"/api/v1/cloud-projects/{scope['project']['id']}/loop-items"
+    parent = test_client.post(
+        url, headers=scope["owner"], json={"title": "Parent"}
+    ).json()
+    payload = {
+        "title": "Child",
+        "parent_id": parent["id"],
+        "request_id": "comment-child-operation",
+    }
+    first = test_client.post(url, headers=scope["owner"], json=payload)
+    assert first.status_code == 201, first.text
+    repeated = test_client.post(url, headers=scope["owner"], json=payload)
+    assert repeated.status_code == 201, repeated.text
+    assert repeated.json()["id"] == first.json()["id"]
+    next_issue = test_client.post(url, headers=scope["owner"], json={"title": "Next"})
+    assert next_issue.json()["sequence_number"] == first.json()["sequence_number"] + 1
+    restricted = test_client.patch(
+        f"/api/v1/loop-items/{parent['id']}",
+        headers=scope["owner"],
+        json={"version": parent["version"], "security_level": "related"},
+    )
+    assert restricted.status_code == 200, restricted.text
+    denied = test_client.post(url, headers=scope["member"], json=payload)
+    assert denied.status_code == 404, denied.text

@@ -411,8 +411,8 @@ export function IssueActivityPanel({
                       assignment={commentAssignment}
                       translate={translate}
                       onComment={async text => {
-                        await api.comments.create(issue.id, text)
-                        onCommentsChange(await api.comments.list(issue.id))
+                        const saved = await api.comments.create(issue.id, text)
+                        onCommentsChange([...comments, saved])
                       }}
                     />
                   ) : null}

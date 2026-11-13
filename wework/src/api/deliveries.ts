@@ -997,6 +997,7 @@ export function createDeliveryApi(client: HttpClient) {
     createLoopItem(
       projectId: CloudProjectIdInput,
       data: {
+        request_id?: string
         title: string
         milestone_id?: string | null
         description?: string

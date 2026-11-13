@@ -6077,6 +6077,85 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(container.textContent).toContain("Sep");
   });
 
+  it("waits for the required local group before enabling offline project creation", async () => {
+    const { api } = createApi({ initialWorkspaces: [], initialProjects: [] });
+    const ready = deferred<CollaborationWorkspace[]>();
+    api.workspaces!.list = vi.fn(() => ready.promise);
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectNavigation: "projects",
+          projectLocation: "local",
+        }}
+        start={{ ...initialLocation, collaborationDomain: "local" }}
+      />,
+    );
+    await click(
+      byTestId(
+        "collaboration-workspace-actions-collaboration-default-workspace",
+      ),
+    );
+    expect(
+      (
+        portalByTestId(
+          "collaboration-workspace-nav-create-project",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    await act(async () => ready.resolve([localWorkspace]));
+    await click(
+      byTestId("collaboration-workspace-actions-wework-local-workspace"),
+    );
+    expect(
+      (
+        portalByTestId(
+          "collaboration-workspace-nav-create-project",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("preserves the stored personal group name when saving its description", async () => {
+    const personal = {
+      ...workspace,
+      is_system_default: true,
+      name: "Stored personal identity",
+    };
+    const { api } = createApi({ initialWorkspaces: [personal] });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          workspaceId: personal.id,
+          workspaceView: "settings",
+        }}
+      />,
+    );
+    expect(
+      (
+        container.querySelector(
+          ".collaboration-workspace-settings input",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("个人分组");
+    await change(
+      container.querySelector(
+        ".collaboration-workspace-settings textarea",
+      ) as HTMLTextAreaElement,
+      "Updated description",
+    );
+    await click(byTestId("collaboration-workspace-settings-save"));
+    expect(api.workspaces?.update).toHaveBeenCalledWith(personal.id, {
+      version: personal.version,
+      name: personal.name,
+      description: "Updated description",
+    });
+  });
+
   it.each(["Owner", "Maintainer"] as const)(
     "allows %s to view and save workspace settings",
     async (role) => {

@@ -178,3 +178,19 @@ it('resolves a committed source archive with a lost response without reading or 
   await expect(migrateLocalProject(input)).resolves.toMatchObject({ id: 'cloud-p' })
   expect(input.targetApi.projects.archive).not.toHaveBeenCalled()
 })
+
+it('does not post a changed source into a completed import after a final read failure', async () => {
+  const input = fixture()
+  vi.mocked(input.targetApi.projects.get).mockRejectedValueOnce(new Error('Read unavailable'))
+  await expect(migrateLocalProject(input)).rejects.toThrow('Read unavailable')
+  input.sourceGuard.read.mockResolvedValue({
+    version: 2,
+    fingerprint: 'changed',
+    archived: false,
+    migration_target: null,
+    migration_fingerprint: null,
+  })
+  await expect(migrateLocalProject(input)).rejects.toThrow('local_project_changed_during_migration')
+  expect(input.http.post).toHaveBeenCalledOnce()
+  expect(input.sourceGuard.archive).not.toHaveBeenCalled()
+})

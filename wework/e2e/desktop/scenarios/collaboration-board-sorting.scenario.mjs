@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -100,6 +101,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
   }
 
   async function expectOrder(control, lane, ids) {
+    await showAllCollaborationIssues(control, CONTENT)
     await control.command('waitFor', laneSelector(lane), { timeoutMs: uiTimeoutMs })
     await waitForValue(
       async () =>

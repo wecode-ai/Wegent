@@ -323,7 +323,7 @@ pub(crate) async fn prepare_assignment(
         context["manager_display_name"] = group["name"].clone();
         context["collaboration_group"] = group.clone();
         context["execution_prompt"] = json!(manager_message(project, &issue, &group)?);
-        context["system_prompt"] = json!(MANAGER_INSTRUCTIONS);
+        context["system_prompt"] = json!(manager_system_prompt(&config));
         let routed = requirements.as_object().is_some_and(|map| !map.is_empty());
         if routed {
             let route = requirements
@@ -481,9 +481,27 @@ fn human_instructions(project: &Node, issue: &Node, group: &Value) -> Result<Str
     ))
 }
 
+fn manager_system_prompt(config: &Value) -> String {
+    let configured = config["system_prompt"].as_str().unwrap_or_default().trim();
+    if configured.is_empty() {
+        MANAGER_INSTRUCTIONS.to_owned()
+    } else {
+        format!("{configured}\n\n{MANAGER_INSTRUCTIONS}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manager_retains_configured_agent_instructions_and_coordination_contract() {
+        let prompt =
+            manager_system_prompt(&json!({"system_prompt":"Template coordinator instructions"}));
+        assert!(prompt.starts_with("Template coordinator instructions\n\n"));
+        assert!(prompt.ends_with(MANAGER_INSTRUCTIONS));
+        assert_eq!(manager_system_prompt(&json!({})), MANAGER_INSTRUCTIONS);
+    }
 
     #[test]
     fn group_reply_requires_the_current_group_and_assignment() {

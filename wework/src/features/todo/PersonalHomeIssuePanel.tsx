@@ -153,7 +153,7 @@ export function PersonalHomeIssuePanel({
             data-testid="cloud-todo-detail-close"
             aria-label={t('independentIssues.close')}
             onClick={onClose}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 hover:bg-muted"
           >
             <X className="h-4 w-4" />
           </button>

@@ -169,6 +169,10 @@ export function CollaborationPlatformNavigation({
           label: messages.addProject,
           icon: Plus,
           testId: "collaboration-workspace-nav-create-project",
+          disabled:
+            isDefault &&
+            (host.capabilities.projectLocation ?? domain) === "local" &&
+            !localWorkspace,
           ...(isDefault
             ? {
                 onSelect: () =>

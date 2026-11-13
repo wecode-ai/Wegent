@@ -19,12 +19,15 @@ export function IndependentIssueTaskButton({
     resource => resource.team_id != null
   )
   const assigned = issue.metadata.assignee_resource
-  const [selected, setSelected] = useState(() => {
-    const target =
-      resources.find(resource => resource.kind === assigned?.kind && resource.id === assigned.id) ??
-      resources[0]
-    return target ? target.kind + ':' + target.id : ''
-  })
+  const [selection, setSelected] = useState('')
+  const preferred =
+    resources.find(resource => resource.kind === assigned?.kind && resource.id === assigned.id) ??
+    resources[0]
+  const selected = resources.some(resource => resource.kind + ':' + resource.id === selection)
+    ? selection
+    : preferred
+      ? preferred.kind + ':' + preferred.id
+      : ''
   const create = async () => {
     if (pending) return
     setPending(true)

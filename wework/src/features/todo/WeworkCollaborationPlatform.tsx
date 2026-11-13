@@ -1270,7 +1270,7 @@ export function WeworkSharedProject({
               )}
               aria-pressed={detailExpanded}
               onClick={() => setDetailExpanded(!detailExpanded)}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 text-text-secondary hover:bg-muted hover:text-text-primary"
             >
               {detailExpanded ? (
                 <Minimize2 aria-hidden="true" className="h-4 w-4" />
@@ -1286,7 +1286,7 @@ export function WeworkSharedProject({
               aria-label={t('personalHome.openInProject')}
               title={t('personalHome.openInProject')}
               onClick={personalIssue.onOpenInProject}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 text-text-secondary hover:bg-muted hover:text-text-primary"
             >
               <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
             </button>

@@ -25,3 +25,11 @@ export async function dragBoardCard(control, source, target, timeoutMs) {
     timeoutMs,
   })
 }
+
+export async function showAllCollaborationIssues(control, contentSelector) {
+  const filter = `${contentSelector} [data-testid="project-needs-my-input-filter"]`
+  await control.command('waitFor', filter, { visible: true })
+  if ((await control.command('getAttribute', filter, { value: 'aria-pressed' })) === 'true')
+    await control.command('clickWhenEnabled', filter)
+  await control.command('waitFor', `${filter}[aria-pressed="false"]`)
+}

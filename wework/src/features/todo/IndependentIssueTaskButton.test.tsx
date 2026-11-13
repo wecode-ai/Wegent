@@ -65,3 +65,35 @@ it('does not launch a resource removed since the dialog opened', async () => {
   await waitFor(() => expect(error).toHaveBeenCalled())
   expect(launch).not.toHaveBeenCalled()
 })
+
+it.each(['added', 'replaced'])(
+  'selects the current invited resource when it is %s',
+  async transition => {
+    const initial =
+      transition === 'added' ? { ...issue, metadata: { resource_participants: [] } } : issue
+    const next = {
+      ...issue,
+      metadata: {
+        resource_participants: [{ kind: 'agent', id: 22, name: 'New reviewer', team_id: 22 }],
+      },
+    } as IndependentIssue
+    const processingResource = vi.fn().mockResolvedValue({ name: 'New reviewer', team_id: 22 })
+    const api = {
+      get: vi.fn().mockResolvedValue(next),
+      processingResource,
+    } as unknown as PersonalIssuesApi
+    const { rerender } = render(
+      <IndependentIssueTaskButton api={api} issue={initial as IndependentIssue} onError={vi.fn()} />
+    )
+    rerender(<IndependentIssueTaskButton api={api} issue={next} onError={vi.fn()} />)
+    expect(screen.getByTestId('independent-issue-processing-agent')).toHaveValue('agent:22')
+    fireEvent.click(screen.getByTestId('independent-issue-create-task'))
+    await waitFor(() => expect(processingResource).toHaveBeenCalledWith('i1', 'agent', 22))
+    await waitFor(() =>
+      expect(launch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ wegentTeamId: 22 })
+      )
+    )
+  }
+)

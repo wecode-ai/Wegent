@@ -925,6 +925,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         }}
       >
         <div className="collaboration-project-create-body">
+          {props.importActions}
           {props.workspaceSelection && (
             <label className="collaboration-project-create-field">
               <span>{props.workspaceSelection.label}</span>

@@ -224,7 +224,7 @@ export function IndependentIssueEditor({
             placeholder={t('issue_creation.title_placeholder')}
             value={draft.title}
             onChange={event => set('title', event.target.value)}
-            className="min-h-11 w-full border-0 bg-transparent text-heading-sm font-medium outline-none placeholder:text-text-muted md:min-h-8"
+            className="min-h-11 w-full border-0 bg-transparent text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-muted md:min-h-8"
           />
         </label>
         <IssueParticipantPicker

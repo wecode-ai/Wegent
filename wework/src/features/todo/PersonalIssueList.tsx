@@ -151,7 +151,7 @@ export function PersonalIssueList({
               <button
                 type="button"
                 data-testid={`personal-issues-project-${project.id}`}
-                className="truncate text-left hover:underline"
+                className="min-h-11 min-w-11 truncate text-left hover:underline md:min-h-0 md:min-w-0"
                 onClick={() => onOpenProject(project)}
               >
                 {project.name}

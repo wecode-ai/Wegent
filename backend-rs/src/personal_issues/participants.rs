@@ -65,10 +65,10 @@ pub(super) async fn resolve<T: MysqlTransaction>(
                 .flatten()
                 .chain(std::iter::once(leader))
             {
-                if member["kind"] == "human" {
-                    if let Some(id) = member["id"].as_str().and_then(|id| id.parse().ok()) {
-                        participant.human_ids.push(id);
-                    }
+                if member["kind"] == "human"
+                    && let Some(id) = member["id"].as_str().and_then(|id| id.parse().ok())
+                {
+                    participant.human_ids.push(id);
                 }
             }
         }

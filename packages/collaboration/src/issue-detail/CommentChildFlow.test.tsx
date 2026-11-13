@@ -25,7 +25,7 @@ it('persists the parent comment before creating a child and retries without rese
     flow = useCommentAssignment(
       'Please implement this',
       { options: [{ value: '7', label: 'Owner' }], assign, createChild: child },
-      send
+      send,
     )
     return null
   }
@@ -38,7 +38,9 @@ it('persists the parent comment before creating a child and retries without rese
   expect(send).toHaveBeenCalledWith('Please implement this', [], {
     commentOnly: true,
   })
-  expect(send.mock.invocationCallOrder[0]).toBeLessThan(child.mock.invocationCallOrder[0])
+  expect(send.mock.invocationCallOrder[0]).toBeLessThan(
+    child.mock.invocationCallOrder[0],
+  )
   expect(flow.error).toBe('Assignment unavailable')
   const request = child.mock.calls[0][0]
   await act(() => flow.submit(''))
@@ -53,7 +55,11 @@ it('does not create a child when its parent comment fails', async () => {
     send = vi.fn().mockResolvedValue(false)
   let flow!: ReturnType<typeof useCommentAssignment>
   function Harness() {
-    flow = useCommentAssignment('Work', { options: [], assign: vi.fn(), createChild: child }, send)
+    flow = useCommentAssignment(
+      'Work',
+      { options: [], assign: vi.fn(), createChild: child },
+      send,
+    )
     return null
   }
   act(() => root.render(<Harness />))
@@ -89,7 +95,7 @@ it('creates one child across assignment failure, keeps the parent unchanged, and
       port: { issues: { create, get } as never },
       project: { id: 'p', project_store: 'local' } as CollaborationProject,
       parent,
-      resolveTarget: async target => target,
+      resolveTarget: async (target) => target,
       assign,
       onCreated: vi.fn(),
     })
@@ -111,11 +117,39 @@ it('creates one child across assignment failure, keeps the parent unchanged, and
   expect(create).toHaveBeenCalledWith(
     'p',
     expect.objectContaining({
+      request_id: 'operation-1',
       parent_id: 'parent',
       assignee_user_id: 7,
       description: expect.stringContaining(input.body),
-    })
+    }),
   )
-  expect(assign.mock.calls.every(([source]) => source.id === 'child')).toBe(true)
+  expect(assign.mock.calls.every(([source]) => source.id === 'child')).toBe(
+    true,
+  )
   expect(parent.assignee_user_id).toBe(9)
+})
+
+it('submits normal replies when child assignment becomes unavailable', async () => {
+  const send = vi.fn().mockResolvedValue(true)
+  let flow!: ReturnType<typeof useCommentAssignment>
+  function Harness({ replies = false }: { replies?: boolean }) {
+    flow = useCommentAssignment(
+      'Reply',
+      replies
+        ? undefined
+        : {
+            options: [],
+            assign: vi.fn(),
+            createChild: vi.fn(),
+          },
+      send,
+    )
+    return null
+  }
+  act(() => root.render(<Harness />))
+  act(() => flow.setMode('child'))
+  act(() => root.render(<Harness replies />))
+  expect(flow.mode).toBe('current')
+  await act(() => flow.submit('Reply'))
+  expect(send).toHaveBeenCalledWith('Reply', [])
 })

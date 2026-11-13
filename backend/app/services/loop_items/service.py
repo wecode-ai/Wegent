@@ -630,10 +630,30 @@ class LoopItemService:
             .populate_existing()
             .one()
         )
+        if values.request_id:
+            existing = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == cloud_project_id,
+                    LoopItem.created_by_user_id == user_id,
+                    LoopItem.metadata_json["creation_request_id"].as_string()
+                    == values.request_id,
+                )
+                .with_for_update()
+                .first()
+            )
+            if existing is not None:
+                self._require_item_access(db, existing, user_id)
+                return existing
         sequence = project.next_item_number
         project.next_item_number += 1
         payload = values.model_dump(
-            exclude={"notify_assignee", "runner_selection", "personal_task"}
+            exclude={
+                "notify_assignee",
+                "runner_selection",
+                "personal_task",
+                "request_id",
+            }
         )
         runner_selection = (
             values.runner_selection.model_dump(exclude_none=True)
@@ -654,6 +674,8 @@ class LoopItemService:
         collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict[str, Any] = {}
+        if values.request_id:
+            task_metadata["creation_request_id"] = values.request_id
         if milestone_id is not None:
             task_metadata["milestone_id"] = milestone_id
         task_metadata["security_level"] = (

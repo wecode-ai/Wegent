@@ -89,7 +89,7 @@ async fn import_local_project(
         }
         metadata["local_project_import"] = json!({"source":body.source,"sha256":digest,"actor":user.0.id,"complete":true});
         let next_number = body.issues.iter().map(|issue| issue.sequence_number).max().unwrap_or(0) + 1;
-        tx.execute("UPDATE loop_items SET name=?,description=?,metadata=?,next_item_number=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", (body.name.as_str(), body.description.as_str(), Json(metadata), next_number, project_id)).await?;
+        tx.execute("UPDATE loop_items SET name=?,description=?,metadata=?,next_item_number=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", (body.name.as_str(), body.rewrite(project_id, &body.description), Json(metadata), next_number, project_id)).await?;
         Ok(true)
     }).await.map_err(storage)?;
     if !imported {
@@ -357,7 +357,7 @@ async fn insert_milestones<T: MysqlTransaction>(
                 mapped_id(project, "milestone", &milestone.id),
                 project,
                 milestone.title.as_str(),
-                milestone.description.as_str(),
+                body.rewrite(project, &milestone.description),
                 milestone.state.as_str(),
                 user,
                 Json(json!({"due_on":milestone.due_on,"migration_source_id":milestone.id})),

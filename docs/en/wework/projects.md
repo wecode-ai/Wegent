@@ -210,11 +210,7 @@ After enabling **Settings → General → Experimental features**, open **Edit p
 
 ### Create a local or cloud project space
 
-The Collaboration page always shows the current device's **Local space** in
-the sidebar. When it is empty, the guide offers **Add folder**. After you choose
-a directory and confirm the project name, Wework registers it as a Task project
-and adds it to the local space. Cloud projects are still created inside a cloud
-space, and the creation UI identifies the actual storage location:
+The sidebar places projects without another group under **Personal group**. Open its **… → Create project** action. New projects default to the current device while disconnected and to the cloud while connected. **Add folder** and **Import existing project** in the creation dialog remain available for adding projects from this device:
 
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
@@ -302,8 +298,7 @@ DingTalk controls access to AI Table records. Wework project roles control entry
 ### Import more projects into the local space
 
 Wework automatically adds local Task projects to the local space during initial
-setup. To add more projects later, open the local space's **…** menu or the
-project page's **Add project** menu:
+setup. To add more projects, open **Personal group → … → Create project**, then select an import action. These actions remain available when connected to the cloud:
 
 - **Import existing project** lists projects that already exist on the Tasks
   page but are not yet in the local space. Wework deduplicates them by runtime
@@ -568,6 +563,6 @@ Independent Issue details show invited Agents and Teams. Before **Ask AI to help
 
 ## Create child Issues from comments
 
-In the Issue comment composer, select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created.
+In the Issue comment composer, select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
 
 Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.

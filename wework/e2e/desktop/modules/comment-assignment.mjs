@@ -138,9 +138,10 @@ export async function verifyCommentAssignment(
     'clickWhenEnabled',
     `[data-testid="issue-comment-child-confirm-${original.id}"]`
   )
-  await control.command('waitFor', `[data-testid="issue-comment-child-form-${original.id}"]`, {
-    visible: false,
-  })
+  await control.command(
+    'waitFor',
+    `[data-testid="issue-comment-create-child-${original.id}"][data-state="closed"]`
+  )
   const laterChildren = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
   const copied = laterChildren.items.find(
     item => item.parent_id === issue.id && item.title === childBody && item.id !== createdChild.id
@@ -149,6 +150,30 @@ export async function verifyCommentAssignment(
   assert.equal(copied.security_level, 'related')
   await memberRequest(`/api/v1/loop-items/${copied.id}`, 404)
   assert.equal(String(copied.assignee_user_id), String(owner.id))
+  const retryInput = {
+    title: 'Child request recovery',
+    parent_id: issue.id,
+    request_id: 'comment-child-recovery-' + issue.id,
+    notify_assignee: false,
+  }
+  const [firstAttempt, concurrent] = await Promise.all(
+    [0, 1].map(() =>
+      request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
+        method: 'POST',
+        body: JSON.stringify(retryInput),
+      })
+    )
+  )
+  assert.equal(concurrent.id, firstAttempt.id, 'Concurrent child creation retries must be atomic')
+  const recovered = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
+    method: 'POST',
+    body: JSON.stringify(retryInput),
+  })
+  assert.equal(
+    recovered.id,
+    firstAttempt.id,
+    'Retrying a committed child request must reuse its persisted Issue'
+  )
   const childComments = await request(
     `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
   )

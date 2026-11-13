@@ -18,6 +18,7 @@ export async function revealCollaborationSidebarElement(
   )
   if (management) {
     const toggle = `${selector.slice(0, management.index)}[data-testid="collaboration-management-toggle"]`
+    await control.command('waitFor', toggle, { visible: true, timeoutMs })
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false') {
       await control.command('click', toggle)
       await control.command('waitFor', `${toggle}[aria-expanded="true"]`, { timeoutMs })

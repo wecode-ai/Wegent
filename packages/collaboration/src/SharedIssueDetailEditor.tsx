@@ -710,6 +710,14 @@ export function TodoEditor(props: TodoEditorProps) {
     item !== null && editProps?.project?.task_provider === "dingtalk_aitable";
   const project = createProps?.project ?? editProps?.project;
   const [commentChildren, setCommentChildren] = useState<CloudLoopItem[]>([]);
+  useEffect(() => {
+    setCommentChildren((current) => {
+      const pending = current.filter(
+        (child) => !allItems.some((item) => item.id === child.id),
+      );
+      return pending.length === current.length ? current : pending;
+    });
+  }, [allItems]);
   const createCommentChild = useCommentChildIssue({
     port: editorPort,
     project,
@@ -1504,7 +1512,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const childItems = item
     ? [
         ...new Map(
-          [...allItems, ...commentChildren].map((child) => [child.id, child]),
+          [...commentChildren, ...allItems].map((child) => [child.id, child]),
         ).values(),
       ].filter(
         (candidate) =>
@@ -2584,6 +2592,22 @@ export function TodoEditor(props: TodoEditorProps) {
   );
   // Two-column layout keeps secondary metadata in the expandable rail.
   // Assignee, priority, and due date stay editable in the primary header.
+  const resourceParticipants = Boolean(item?.resource_participants?.length) && (
+    <div
+      className="my-2 flex flex-wrap gap-2"
+      data-testid="issue-resource-participants"
+    >
+      {item?.resource_participants?.map((resource) => (
+        <span
+          key={resource.kind + ":" + resource.id}
+          className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+        >
+          <UsersRound className="h-4 w-4" aria-hidden="true" />
+          {resource.name}
+        </span>
+      ))}
+    </div>
+  );
   const railProps = (
     <>
       <RailProp
@@ -2635,12 +2659,14 @@ export function TodoEditor(props: TodoEditorProps) {
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
-          {collaborators.length === 0 ? (
+          {collaborators.length === 0 &&
+          !item?.resource_participants?.length ? (
             <span className="ml-2 text-text-muted">
               {t("todo.none", "暂无")}
             </span>
           ) : null}
         </span>
+        {resourceParticipants}
       </RailProp>
       {editable && addingCollaborator ? (
         <div className="col-span-full flex items-center gap-2 px-2 pb-1">
@@ -3455,7 +3481,13 @@ export function TodoEditor(props: TodoEditorProps) {
               {item && props.onOpenRelatedIssue ? (
                 <IssueHierarchySummary
                   item={item}
-                  allItems={allItems}
+                  allItems={[
+                    ...allItems,
+                    ...childItems.filter(
+                      (child) =>
+                        !allItems.some((current) => current.id === child.id),
+                    ),
+                  ]}
                   onOpen={props.onOpenRelatedIssue}
                   onAddChild={editable ? editProps?.onAddChild : undefined}
                   translate={t}
@@ -3835,25 +3867,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           </button>
                         </div>
                       )}
-                      {Boolean(item.resource_participants?.length) && (
-                        <div
-                          className="my-2 flex flex-wrap gap-2"
-                          data-testid="issue-resource-participants"
-                        >
-                          {item.resource_participants?.map((resource) => (
-                            <span
-                              key={resource.kind + ":" + resource.id}
-                              className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
-                            >
-                              <UsersRound
-                                className="h-4 w-4"
-                                aria-hidden="true"
-                              />
-                              {resource.name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      {resourceParticipants}
                       {collaborators.length === 0 ? (
                         <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
                           {t("todo.no_collaborators", "暂无参与者")}

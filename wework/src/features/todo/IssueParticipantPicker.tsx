@@ -29,12 +29,20 @@ export function IssueParticipantPicker({
   const requestKey = JSON.stringify([tab, query, revision])
   const [response, setResponse] = useState<{
     key: string
+    api?: PersonalIssuesApi
+    collaborationApi?: SharedWorkspaceApi
+    userId?: number
     items: IssueParticipant[]
     error: string
   }>({ key: '', items: [], error: '' })
-  const results = response.key === requestKey ? response.items : []
-  const error = response.key === requestKey ? response.error : ''
-  const busy = open && response.key !== requestKey
+  const currentResponse =
+    response.key === requestKey &&
+    response.api === api &&
+    response.collaborationApi === collaborationApi &&
+    response.userId === userId
+  const results = currentResponse ? response.items : []
+  const error = currentResponse ? response.error : ''
+  const busy = open && !currentResponse
   const generation = useRef(0)
   useEffect(() => {
     if (!open) return
@@ -93,12 +101,22 @@ export function IssueParticipantPicker({
         void load().then(
           rows => {
             if (current === generation.current)
-              setResponse({ key: requestKey, items: rows, error: '' })
+              setResponse({
+                key: requestKey,
+                api,
+                collaborationApi,
+                userId,
+                items: rows,
+                error: '',
+              })
           },
           reason => {
             if (current === generation.current)
               setResponse({
                 key: requestKey,
+                api,
+                collaborationApi,
+                userId,
                 items: [],
                 error: reason instanceof Error ? reason.message : String(reason),
               })

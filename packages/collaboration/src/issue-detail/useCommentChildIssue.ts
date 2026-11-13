@@ -38,6 +38,7 @@ export function useCommentChildIssue({
     if (!child) {
       const draft = issueDraftFromText(input.body)
       child = await port.issues.create(project.id, {
+        request_id: input.requestId,
         title: Array.from(draft.title).slice(0, 255).join(''),
         description: `${draft.description}\n\n[$#${parent.sequence_number} ${parent.title.replaceAll('[', '').replaceAll(']', '')}](wework-issue://${encodeURIComponent(project.id)}/${encodeURIComponent(parent.id)})`,
         parent_id: parent.id,

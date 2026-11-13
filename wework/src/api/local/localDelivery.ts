@@ -1301,6 +1301,7 @@ export function createLocalDeliveryApi(
     async createLoopItem(
       projectId: CloudProjectId,
       data: {
+        request_id?: string
         title: string
         milestone_id?: string | null
         description?: string
@@ -1332,6 +1333,7 @@ export function createLocalDeliveryApi(
       const record = await request<LocalLoopItemRecord>('todos.create', {
         project_id: projectId,
         todo: {
+          request_id: data.request_id,
           milestone_id: data.milestone_id,
           title: data.title,
           ...(data.personal_task !== undefined ? { personal_task: data.personal_task } : {}),

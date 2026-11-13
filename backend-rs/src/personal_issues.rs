@@ -217,7 +217,7 @@ async fn valid_people<T: MysqlTransaction>(
                 (*user,),
             )
             .await?;
-        if !row.is_some_and(|row| row.id == *user) {
+        if row.is_none_or(|row| row.id != *user) {
             return Ok(false);
         }
     }

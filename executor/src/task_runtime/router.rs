@@ -533,14 +533,42 @@ impl TaskRuntime {
         due_at: Option<String>,
         personal_task: bool,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let project = self.local_store.get_project(project_id)?;
-        match task_provider(&project)? {
-            TaskProviderKind::Local => self.local_store.create_task_with_schedule(
-                project_id,
-                input,
+        self.create_task_with_options(
+            project_id,
+            input,
+            super::TaskCreateOptions {
                 start_at,
                 due_at,
                 personal_task,
+                request_id: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn create_task_with_options(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        options: super::TaskCreateOptions,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let super::TaskCreateOptions {
+            start_at,
+            due_at,
+            personal_task,
+            request_id,
+        } = options;
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self.local_store.create_task_with_options(
+                project_id,
+                input,
+                super::TaskCreateOptions {
+                    start_at,
+                    due_at,
+                    personal_task,
+                    request_id,
+                },
             ),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 if start_at.is_some() || due_at.is_some() {

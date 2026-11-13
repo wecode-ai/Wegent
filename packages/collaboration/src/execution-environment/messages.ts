@@ -213,7 +213,7 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_preparation_default':
       'Uses a blank working directory. Add repositories and initialization commands as needed.',
     'todo.execution_environment_setup_directory': 'Working directory (blank uses the default)',
-    'todo.workspace_policy': 'Task group',
+    'todo.workspace_policy': 'Task workspace',
     'todo.workspace_policy_isolated': 'Isolated worktree (recommended)',
     'todo.workspace_policy_shared': 'Shared project directory',
     'todo.workspace_policy_description':

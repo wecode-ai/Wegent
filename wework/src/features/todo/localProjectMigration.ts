@@ -238,6 +238,8 @@ export async function migrateLocalProject({
     localStorage.removeItem(journalKey)
     return target
   }
+  if (journal.targetId && journal.fingerprint !== before.fingerprint)
+    throw new Error('local_project_changed_during_migration')
   const snapshot = await readLocalProjectImport(sourceApi, chat, project, source, userId)
   if ((await sourceGuard.read()).fingerprint !== before.fingerprint)
     throw new Error('local_project_changed_during_migration')

@@ -27,9 +27,7 @@ export async function fillTemplateRoleBindings(control, count) {
   ) {
     await control.command('click', testId('template-customize-main'))
   }
-  await control.command('waitFor', testId('template-role-main-role-0'), {
-    text: '当前设备智能体',
-  })
+  await control.command('waitFor', testId('template-role-main-role-0') + ' option[value^="human:"]')
   // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
   const human = await control.command(
     'getAttribute',
@@ -38,12 +36,8 @@ export async function fillTemplateRoleBindings(control, count) {
   )
   await control.command('select', testId('template-role-main-role-0'), { value: human })
   for (let index = 1; index < count; index++) {
-    await control.command('waitFor', testId(`template-role-main-role-${index}`), {
-      text: '当前设备智能体',
-    })
     await control.command('select', testId(`template-role-main-role-${index}`), {
-      by: 'label',
-      value: '当前设备智能体',
+      value: `agent:template-agent:main-role-${index}`,
     })
   }
 }

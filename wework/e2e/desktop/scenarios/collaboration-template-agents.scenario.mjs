@@ -37,6 +37,7 @@ export function createDesktopScenario({
   let importedTemplateId
   let unavailableTemplateId
   let authorId
+  let cloudRequest
   return {
     requiresCloudEnvironment: true,
     async prepareApp({ appEnvironment }) {
@@ -81,6 +82,7 @@ export function createDesktopScenario({
         assert.ok(response.ok, `${method} ${path}: ${response.status} ${JSON.stringify(data)}`)
         return data
       }
+      cloudRequest = request
       await request('/api/admin/setup-complete', 'POST')
       const user_name = `template-author-${process.pid}`
       const password = `template-test-${process.pid}`
@@ -261,7 +263,7 @@ export function createDesktopScenario({
         catalog.models.some(model => model.runtime === 'claude_code' && model.is_default),
         false
       )
-      const before = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+      const before = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items
       await control.command('clickWhenEnabled', selector('collaboration-project-create-confirm'))
       await control.command('waitFor', `${CONTENT} .collaboration-project-create-error`, {
         text: '请先为当前执行环境设置默认模型',
@@ -300,7 +302,7 @@ export function createDesktopScenario({
         error.bottom <= confirm.top && confirm.bottom <= dialog.bottom,
         `The error and create action must be readable together without scrolling: ${layout}`
       )
-      const after = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+      const after = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items
       assert.equal(
         after.length,
         before.length,
@@ -346,21 +348,23 @@ export function createDesktopScenario({
       })
       await control.command('waitFor', selector('cloud-project-header-title'), { text: copiedName })
       await control.command('waitFor', selector('board-view-picker'), { text: '项目阶段' })
-      const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
+      const projects = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items
       assert.equal(projects.filter(project => project.name === copiedName).length, 1)
       const copied = projects.find(project => project.name === copiedName)
-      const copiedAgents = await requestExecutor(
-        control,
-        'chat_agents.list',
-        { project_id: copied.id },
-        uiTimeoutMs
+      const copiedAgents = await cloudRequest(
+        `/api/v1/cloud-projects/${copied.id}/chat-agents`,
+        'GET'
+      )
+      const copiedGroups = await cloudRequest(
+        `/api/v1/cloud-projects/${copied.id}/collaboration-groups`,
+        'GET'
       )
       for (const definition of definitions.agents) {
         const recreated = copiedAgents.filter(
           agent => agent.name === definition.name || agent.display_name === definition.name
         )
         assert.equal(recreated.length, 1)
-        assert.equal(recreated[0].system_prompt, definition.systemPrompt)
+        assert.equal(recreated[0].systemPrompt, definition.systemPrompt)
         assert.notEqual(recreated[0].id, agents.find(agent => agent.name === definition.name).id)
       }
       await captureScreenshot(control, 'template-agents-06-reapplied-with-stage-board.png', CONTENT)
@@ -373,16 +377,14 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', selector('cloud-todo-create-confirm'))
       await waitForBoardValue(
         async () => {
-          const items = await requestExecutor(
-            control,
-            'todos.list',
-            { project_id: copied.id },
-            uiTimeoutMs
+          const { items } = await cloudRequest(
+            `/api/v1/cloud-projects/${copied.id}/loop-items`,
+            'GET'
           )
           return items.some(
             item =>
               item.title === executionMarker &&
-              item.metadata?.collaboration_group?.id === copied.metadata.collaboration_groups[0].id
+              String(item.metadata?.collaboration_group?.id) === String(copiedGroups.items[0].id)
           )
         },
         true,
@@ -406,7 +408,7 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="appearance-mode-dark"]')
       await control.command('waitFor', 'html[data-theme="dark"]')
       await control.command('openWeworkScheme', 'body', {
-        value: `wework://boards/local/${copied.id}`,
+        value: `wework://boards/${copied.id}`,
       })
       await control.command('waitFor', selector('cloud-project-header-title'), { text: copiedName })
       await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
@@ -459,20 +461,18 @@ export function createDesktopScenario({
         text: reducedName,
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      const reduced = (await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)).find(
+      const reduced = (await cloudRequest('/api/v1/cloud-projects', 'GET')).items.find(
         project => project.name === reducedName
       )
       assert.ok(reduced, 'The reduced template must create a project')
-      const reducedAgents = await requestExecutor(
-        control,
-        'chat_agents.list',
-        {
-          project_id: reduced.id,
-        },
-        uiTimeoutMs
+      const reducedAgents = await cloudRequest(
+        `/api/v1/cloud-projects/${reduced.id}/chat-agents`,
+        'GET'
       )
       assert.equal(reducedAgents.length, 1, 'Removed roles must not create Agents')
-      const reducedGroup = reduced.metadata.collaboration_groups[0]
+      const reducedGroup = (
+        await cloudRequest(`/api/v1/cloud-projects/${reduced.id}/collaboration-groups`, 'GET')
+      ).items[0]
       assert.equal(reducedGroup.members.length, 1)
       assert.equal(reducedGroup.leader.id, reducedAgents[0].id)
       assert.deepEqual(

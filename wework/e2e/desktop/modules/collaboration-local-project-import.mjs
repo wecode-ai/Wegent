@@ -85,7 +85,7 @@ export async function verifyCollaborationLocalProjectImport(
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     const localWorkspace = inCollaborationSidebar(
-      '[data-testid="collaboration-local-project-actions"]'
+      '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]'
     )
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`

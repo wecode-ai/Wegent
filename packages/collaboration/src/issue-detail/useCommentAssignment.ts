@@ -42,6 +42,7 @@ export function useCommentAssignment(
   const [mode, setMode] = useState<'current' | 'child'>(
     assignment?.canAssignCurrent === false ? 'child' : 'current'
   )
+  const effectiveMode = assignment?.createChild ? mode : 'current'
   const [pendingChild, setPendingChild] = useState<CommentChildInput | null>(null)
   const [sentSuggestion, setSentSuggestion] = useState('')
   const [dismissedSuggestion, setDismissedSuggestion] = useState('')
@@ -89,12 +90,12 @@ export function useCommentAssignment(
   async function submit(draft: string) {
     if (submitting.current) return
     const { body, mentions } = issueCommentSubmission(draft)
-    if (mode === 'child' ? !body && !pendingChild : !body && !target) return
+    if (effectiveMode === 'child' ? !body && !pendingChild : !body && !target) return
     submitting.current = true
     setBusy(true)
     setError(null)
     try {
-      if (mode === 'child') {
+      if (effectiveMode === 'child') {
         if (!assignment?.createChild) return
         let operation = pendingChild
         if (!operation) {
@@ -130,7 +131,7 @@ export function useCommentAssignment(
   }
 
   return {
-    mode,
+    mode: effectiveMode,
     setMode,
     pendingChild,
     options,

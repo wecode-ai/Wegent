@@ -131,7 +131,7 @@ export function BrowserIssueCommentComposer({
     try {
       if (!submission?.commentOnly && !serverExecution && agent && !execution.target)
         throw new Error(t('activity.comment_execution_target_required'))
-      if (!serverExecution && agent && !execution.modelsReady)
+      if (!submission?.commentOnly && !serverExecution && agent && !execution.modelsReady)
         throw new Error(execution.error ?? t('activity.comment_models_loading'))
       if (
         !submission?.commentOnly &&

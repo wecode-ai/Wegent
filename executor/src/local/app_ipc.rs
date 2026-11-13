@@ -2410,12 +2410,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task_with_schedule(
+                    .create_task_with_options(
                         project_id,
                         input,
-                        optional_nullable_task_string(todo, "start_at")?.flatten(),
-                        optional_nullable_task_string(todo, "due_at")?.flatten(),
-                        todo["personal_task"].as_bool().unwrap_or(false),
+                        crate::task_runtime::TaskCreateOptions {
+                            start_at: optional_nullable_task_string(todo, "start_at")?.flatten(),
+                            due_at: optional_nullable_task_string(todo, "due_at")?.flatten(),
+                            personal_task: todo["personal_task"].as_bool().unwrap_or(false),
+                            request_id: optional_nullable_task_string(todo, "request_id")?
+                                .flatten(),
+                        },
                     )
                     .await
                     .map_err(task_runtime_error)?,

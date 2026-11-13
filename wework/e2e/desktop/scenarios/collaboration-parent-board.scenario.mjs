@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
@@ -95,6 +96,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         },
       })
       await reloadMainWindow(control, 'Parent board fixtures did not reload')
+      await showAllCollaborationIssues(control, CONTENT)
       await wait(`cloud-todo-card-${fixture.parent.id}`, fixture.parent.title)
       assert.equal(
         Number(

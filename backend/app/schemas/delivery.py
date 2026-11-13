@@ -27,6 +27,7 @@ from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    request_id: str | None = Field(default=None, min_length=1, max_length=64)
     personal_task: bool = False
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
