@@ -89,6 +89,7 @@ runs:
     - name: Verify complete Windows desktop package
       shell: bash
       run: |
+        node --test wework/scripts/windows-native-runtime.test.mjs
         test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
         test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
         test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe

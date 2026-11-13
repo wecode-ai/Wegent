@@ -350,6 +350,10 @@ assertion budget.
 
 `wework/upgrade-policy.json` declares only the product's minimum source constraint; no per-release source list is maintained. For each platform, architecture, and target channel, release jobs read the published catalog and retain the previous release's `minSourceVersion` as the fixed baseline X, bounded below by the repository constraint. Stable catalogs contain only Stable versions and floors. Beta catalogs may contain both Stable and Beta and can bootstrap from Stable when Beta has no history. Stable never imports Beta sources or edges.
 
+Release preparation validates that the minimum source is no newer than the target before building,
+including explicit version overrides and tag triggers. A stable version sorts after its matching Beta,
+so a Beta release cannot use its matching stable version as the minimum source.
+
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
 | Fixed baseline X                        | Previous release | Publication decision                                                                       |

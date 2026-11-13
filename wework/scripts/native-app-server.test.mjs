@@ -24,7 +24,7 @@ vi.mock('node:child_process', async importOriginal => {
           })
         `,
             ],
-            options
+            { ...options, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } }
           )
         : original.spawn(command, args, options),
   }

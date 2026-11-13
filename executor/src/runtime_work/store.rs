@@ -48,6 +48,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "standInPublicTurn",
     "standInIssueReplies",
     "overloadRecoveryTurnIds",
+    "quotaWait",
     "runtime",
     "supersededTranscriptTurnIds",
     "threadPath",
