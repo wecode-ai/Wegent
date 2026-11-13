@@ -112,6 +112,13 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      // Reply prediction forks can start short-lived clients with the same MCP configuration.
+      const preferences = JSON.parse(
+        await control.command('setAppPreferences', 'body', {
+          value: JSON.stringify({ replyPredictionsEnabled: false }),
+        })
+      )
+      assert.equal(preferences.replyPredictionsEnabled, false)
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
@@ -164,8 +171,6 @@ export function createDesktopScenario({
       }
       await run(control, 'recovered')
       assert.equal(await processId(), pid, 'MCP recovery restarted the shared Codex process')
-      // Prediction forks may start independent clients. Verify the original
-      // connection's OS creation identity rather than counting all processes.
       await assertRetained([NAMES[0]])
       for (const name of NAMES.slice(1, 3)) {
         const pids = await starts(name)
@@ -205,9 +210,7 @@ export function createDesktopScenario({
         'The disconnected MCP did not start a replacement process'
       )
       // The model-visible catalog proves the replacement connection is ready.
-      // Startup records also contain short-lived prediction clients, whose PID
-      // cannot identify the recovered parent connection. Keep identity checks
-      // scoped to the unaffected clients and bound recovery by native reloads.
+      // Verify the unaffected clients and bound recovery by native reloads.
       await run(control, 'transport-stable')
       await assertRetained([NAMES[0], NAMES[2]])
       assert.equal(
