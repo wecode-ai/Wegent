@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.knowledge_deletion_responses import (
+    check_batch_deletion_response,
     cleanup_failure_response,
     confirmation_required_response,
     deletion_response,
@@ -33,6 +34,7 @@ from app.api.knowledge_document_side_effects import (
 )
 from app.core.security import AuthContext, get_auth_context
 from app.schemas.knowledge import (
+    BatchDeletionResult,
     BatchDocumentIds,
     BatchDocumentMoveRequest,
     BatchOperationResult,
@@ -613,7 +615,7 @@ async def search_documents_open(
 
 @router.post(
     "/documents/batch/delete",
-    response_model=BatchOperationResult,
+    response_model=BatchDeletionResult,
 )
 @trace_sync("batch_delete_documents_open", "knowledge.api")
 def batch_delete_documents_open(
@@ -621,13 +623,20 @@ def batch_delete_documents_open(
     background_tasks: BackgroundTasks,
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
-) -> BatchOperationResult:
+    continue_on_external_engine_failure: bool = False,
+    include_cleanup_result: bool = False,
+) -> BatchDeletionResult:
     """Batch delete multiple documents from accessible knowledge bases."""
     current_user = auth_context.user
     batch_result = KnowledgeService.batch_delete_documents(
         db=db,
         document_ids=data.document_ids,
         user_id=current_user.id,
+        **(
+            {"continue_on_external_engine_failure": True}
+            if continue_on_external_engine_failure
+            else {}
+        ),
     )
     result = batch_result.result
     kb_ids = batch_result.kb_ids
@@ -642,26 +651,9 @@ def batch_delete_documents_open(
         },
     )
 
-    if result.success_count == 0 and result.failed_count > 0:
-        error_msg = result.message.lower() if result.message else ""
-        if "not found" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=result.message,
-            )
-        if (
-            "permission" in error_msg
-            or "access denied" in error_msg
-            or "owner or maintainer" in error_msg
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=result.message,
-            )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.message,
-        )
+    check_batch_deletion_response(
+        result, include_cleanup_result or continue_on_external_engine_failure
+    )
 
     schedule_kb_summary_updates_after_deletion(
         background_tasks,

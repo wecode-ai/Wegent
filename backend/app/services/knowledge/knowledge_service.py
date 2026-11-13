@@ -45,6 +45,7 @@ from app.schemas.knowledge import (
     AllGroupedPersonal,
     AllGroupedSummary,
     AllGroupedTeamGroup,
+    BatchDeletionResult,
     BatchOperationResult,
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
@@ -193,7 +194,7 @@ class BatchDeleteResult:
     for triggering KB summary updates.
     """
 
-    result: BatchOperationResult
+    result: BatchDeletionResult
     kb_ids: list[int]  # Unique KB IDs from successfully deleted documents
 
 
@@ -3594,92 +3595,20 @@ class KnowledgeService:
     # ============== Batch Document Operations ==============
 
     @staticmethod
-    def _build_batch_delete_message(
-        success_count: int,
-        failed_ids: list[int],
-        failure_messages: list[str],
-    ) -> str:
-        """Build a batch delete message that preserves the failure class."""
-        message = (
-            f"Successfully deleted {success_count} documents, {len(failed_ids)} failed"
-        )
-        if success_count > 0 or not failed_ids:
-            return message
-        if len(failure_messages) != len(failed_ids):
-            return message
-
-        lower_messages = [
-            failure_message.lower() for failure_message in failure_messages
-        ]
-        if lower_messages and all("not found" in msg for msg in lower_messages):
-            return "Document not found"
-        if any(
-            "permission" in msg
-            or "access denied" in msg
-            or "owner or maintainer" in msg
-            for msg in lower_messages
-        ):
-            return (
-                "Only Owner or Maintainer can delete documents from this knowledge base"
-            )
-        if len(failure_messages) == 1:
-            return failure_messages[0]
-        return message
-
-    @staticmethod
     def batch_delete_documents(
         db: Session,
         document_ids: list[int],
         user_id: int,
+        continue_on_external_engine_failure: bool = False,
     ) -> BatchDeleteResult:
-        """
-        Batch delete multiple documents.
+        """Delete each requested document through the single-delete policy."""
+        from app.services.knowledge.batch_deletion import delete_documents
 
-        Args:
-            db: Database session
-            document_ids: List of document IDs to delete
-            user_id: Requesting user ID
-
-        Returns:
-            BatchDeleteResult with operation result and KB IDs for summary updates
-        """
-        success_count = 0
-        failed_ids = []
-        failure_messages = []
-        kb_ids = set()  # Collect unique KB IDs from deleted documents
-
-        requested_ids = list(dict.fromkeys(document_ids))
-
-        for doc_id in requested_ids:
-            try:
-                result = KnowledgeService.delete_document(db, doc_id, user_id)
-                if result.success:
-                    success_count += 1
-                    if result.kb_id is not None:
-                        kb_ids.add(result.kb_id)
-                else:
-                    failed_ids.append(doc_id)
-                    failure_messages.append(result.error or "Document not found")
-            except ValueError as exc:
-                failed_ids.append(doc_id)
-                failure_messages.append(str(exc))
-            except Exception as exc:  # noqa: BLE001 - continue deleting remaining docs
-                failed_ids.append(doc_id)
-                failure_messages.append(str(exc))
-                batch_logger.exception("Unexpected error deleting document %s", doc_id)
-
-        operation_result = BatchOperationResult(
-            success_count=success_count,
-            failed_count=len(failed_ids),
-            failed_ids=failed_ids,
-            message=KnowledgeService._build_batch_delete_message(
-                success_count, failed_ids, failure_messages
-            ),
-        )
-
-        return BatchDeleteResult(
-            result=operation_result,
-            kb_ids=list(kb_ids),
+        return delete_documents(
+            db,
+            document_ids,
+            user_id,
+            continue_on_external_engine_failure=continue_on_external_engine_failure,
         )
 
     @staticmethod

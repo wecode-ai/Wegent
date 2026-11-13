@@ -7,6 +7,7 @@
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
 
+from app.schemas.knowledge import BatchDeletionResult
 from app.services.knowledge.deletion_cleanup import IndexCleanupConfirmationRequired
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from shared.knowledge_cleanup import EXTERNAL_CLEANUP_ERROR, ContentDeletionOutcome
@@ -21,11 +22,7 @@ def confirmation_required_response(
         detail={
             "code": EXTERNAL_CLEANUP_ERROR,
             "message": str(error),
-            **ContentDeletionOutcome(
-                index_cleanup="unconfirmed",
-                can_continue=True,
-                error_code=EXTERNAL_CLEANUP_ERROR,
-            ).model_dump(),
+            **error.outcome.model_dump(),
         },
     )
 
@@ -55,3 +52,18 @@ def cleanup_failure_response(error: RemoteRagGatewayError) -> HTTPException:
             },
         )
     return HTTPException(status_code=error.status_code or 502, detail=str(error))
+
+
+def check_batch_deletion_response(
+    result: BatchDeletionResult, include_result: bool
+) -> None:
+    """Legacy errors are derived from item codes, never human-readable messages."""
+    if include_result or result.success_count or not result.failed_count:
+        return
+    codes = {item.error_code for item in result.items}
+    status = 502
+    if codes == {"document_not_found"}:
+        status = 404
+    elif codes and codes <= {"permission_denied", "deletion_rejected"}:
+        status = 403
+    raise HTTPException(status_code=status, detail=result.message)

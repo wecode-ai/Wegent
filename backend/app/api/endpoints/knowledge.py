@@ -33,6 +33,7 @@ from app.api.endpoints._knowledge_multimodal import (
 )
 from app.api.endpoints.knowledge_code_wiki import router as code_wiki_router
 from app.api.knowledge_deletion_responses import (
+    check_batch_deletion_response,
     cleanup_failure_response,
     confirmation_required_response,
     deletion_response,
@@ -49,6 +50,7 @@ from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     AllGroupedKnowledgeResponse,
+    BatchDeletionResult,
     BatchDocumentIds,
     BatchOperationResult,
     ContentOrigin,
@@ -1420,25 +1422,32 @@ async def get_document_detail_standalone(
         _raise_document_detail_http_error(error)
 
 
-@document_router.post("/batch/delete", response_model=BatchOperationResult)
+@document_router.post("/batch/delete", response_model=BatchDeletionResult)
 @trace_sync("batch_delete_documents", "knowledge.api")
 def batch_delete_documents(
     data: BatchDocumentIds,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
+    continue_on_external_engine_failure: bool = False,
+    include_cleanup_result: bool = False,
 ):
     """
     Batch delete multiple documents.
 
     Deletes all specified documents that the user has permission to delete.
     Returns a summary of successful and failed operations.
-    Raises 403 if all operations fail due to permission issues.
+    Each item retains its own deletion and cleanup outcome.
     """
     batch_result = KnowledgeService.batch_delete_documents(
         db=db,
         document_ids=data.document_ids,
         user_id=current_user.id,
+        **(
+            {"continue_on_external_engine_failure": True}
+            if continue_on_external_engine_failure
+            else {}
+        ),
     )
 
     result = batch_result.result
@@ -1455,11 +1464,9 @@ def batch_delete_documents(
     )
 
     # If all operations failed, raise an error
-    if result.success_count == 0 and result.failed_count > 0:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Owner or Maintainer can delete documents from this knowledge base",
-        )
+    check_batch_deletion_response(
+        result, include_cleanup_result or continue_on_external_engine_failure
+    )
 
     # Trigger KB summary update ONCE for each affected KB after all deletions complete
     if kb_ids:

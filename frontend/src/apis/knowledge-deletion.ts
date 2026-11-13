@@ -11,6 +11,10 @@ export interface ContentDeletionOutcome {
   can_continue: boolean
 }
 
+export interface BatchDocumentDeletionOutcome extends ContentDeletionOutcome {
+  document_id: number
+}
+
 export function isContinuableDeletionError(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 502) return false
   const detail = error.detail

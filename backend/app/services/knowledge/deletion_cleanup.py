@@ -25,6 +25,14 @@ class IndexCleanupConfirmationRequired(RemoteRagGatewayError):
             status_code=502,
         )
 
+    @property
+    def outcome(self) -> ContentDeletionOutcome:
+        return ContentDeletionOutcome(
+            index_cleanup="unconfirmed",
+            error_code=EXTERNAL_CLEANUP_ERROR,
+            can_continue=True,
+        )
+
 
 def requires_index_cleanup(spec: dict[str, Any]) -> bool:
     """Absent indexing is legitimate; a broken stored configuration is not."""

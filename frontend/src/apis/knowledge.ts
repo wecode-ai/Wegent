@@ -6,7 +6,7 @@
  * Knowledge base and document API client
  */
 
-import type { ContentDeletionOutcome } from './knowledge-deletion'
+import type { ContentDeletionOutcome, BatchDocumentDeletionOutcome } from './knowledge-deletion'
 import { apiClient } from './client'
 import type {
   AccessibleKnowledgeResponse,
@@ -386,13 +386,24 @@ export interface BatchOperationResult {
   message: string
 }
 
+export interface BatchDeletionResult extends BatchOperationResult {
+  items: BatchDocumentDeletionOutcome[]
+  unconfirmed_count: number
+}
+
 /**
  * Batch delete multiple documents
  */
-export async function batchDeleteDocuments(documentIds: number[]): Promise<BatchOperationResult> {
-  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/delete', {
-    document_ids: documentIds,
-  })
+export async function batchDeleteDocuments(
+  documentIds: number[],
+  continueOnExternalFailure = false
+): Promise<BatchDeletionResult> {
+  return apiClient.post<BatchDeletionResult>(
+    `/knowledge-documents/batch/delete?include_cleanup_result=true&continue_on_external_engine_failure=${continueOnExternalFailure}`,
+    {
+      document_ids: documentIds,
+    }
+  )
 }
 
 // ============== Accessible Knowledge API ==============
