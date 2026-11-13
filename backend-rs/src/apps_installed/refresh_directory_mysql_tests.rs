@@ -264,7 +264,7 @@ async fn installed_directory_rejection_expires_the_used_grant() {
             let apps = [oauth_app_at(&url)];
             let listing = tokio::spawn({
                 let mysql = mysql.clone();
-                async move { service::installed_apps(&mysql, &apps, &user()).await }
+                async move { service::installed_apps(&mysql, &apps, &user(), false).await }
             });
             attempted.await.unwrap();
             release.send(()).unwrap();
@@ -347,7 +347,7 @@ async fn directory_transport_failure_keeps_the_grant_connected() {
             let apps = [oauth_app_at(&url)];
             let listing = tokio::spawn({
                 let mysql = mysql.clone();
-                async move { service::installed_apps(&mysql, &apps, &user()).await }
+                async move { service::installed_apps(&mysql, &apps, &user(), false).await }
             });
             attempted.await.unwrap();
             release.send(()).unwrap();

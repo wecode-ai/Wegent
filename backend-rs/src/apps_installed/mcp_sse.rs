@@ -229,9 +229,24 @@ fn resolve_endpoint(base: &str, data: &str) -> Result<String, McpError> {
         ));
     }
     let base = url::Url::parse(base).map_err(|error| McpError::Transport(error.to_string()))?;
-    base.join(data)
-        .map(|url| url.to_string())
-        .map_err(|error| McpError::Transport(error.to_string()))
+    let endpoint = base
+        .join(data)
+        .map_err(|error| McpError::Transport(error.to_string()))?;
+    // Session credentials belong only to the configured origin. An upstream
+    // endpoint event must not redirect authenticated JSON-RPC to another host.
+    if endpoint.origin() != base.origin()
+        || !endpoint.username().is_empty()
+        || endpoint
+            .as_str()
+            .split('/')
+            .nth(2)
+            .is_some_and(|authority| authority.contains('@'))
+    {
+        return Err(McpError::Transport(
+            "SSE endpoint origin does not match connection origin".to_string(),
+        ));
+    }
+    Ok(endpoint.to_string())
 }
 
 /// `POST` one JSON-RPC message to the session's message URL.
@@ -616,6 +631,67 @@ mod tests {
     fn an_empty_endpoint_event_is_a_transport_failure() {
         let error = resolve_endpoint("https://mcp.example.test/sse", "").unwrap_err();
         assert!(matches!(error, McpError::Transport(_)));
+    }
+
+    #[test]
+    fn endpoint_events_cannot_change_origin_or_embed_credentials() {
+        for endpoint in [
+            "https://other.example.test/messages",
+            "//other.example.test/messages",
+            "http://mcp.example.test/messages",
+            "https://mcp.example.test:8443/messages",
+            "https://user:password@mcp.example.test/messages",
+        ] {
+            let error = resolve_endpoint("https://mcp.example.test/sse", endpoint).unwrap_err();
+            assert!(
+                error.to_string().contains("origin does not match"),
+                "{endpoint}"
+            );
+        }
+        assert_eq!(
+            resolve_endpoint(
+                "https://mcp.example.test/sse",
+                "https://mcp.example.test:443/messages"
+            )
+            .unwrap(),
+            "https://mcp.example.test/messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_origin_endpoint_receives_no_session_requests() {
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let source = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/sse", source.local_addr().unwrap());
+        let endpoint = format!("http://{}/messages", target.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = source.accept().await.unwrap();
+            read_request(&mut stream).await.unwrap();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n\
+                         event: endpoint\r\ndata: {endpoint}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let error = list_tools_with_headers(
+            &url,
+            &[("Authorization".to_string(), "Bearer synthetic".to_string())],
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("origin does not match"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), target.accept())
+                .await
+                .is_err(),
+            "The untrusted endpoint must receive neither requests nor credentials"
+        );
+        server.await.unwrap();
     }
 
     #[test]

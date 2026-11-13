@@ -107,6 +107,37 @@ fn mcp_child_uses_the_executor_instance_home() {
 }
 
 #[test]
+fn lazy_catalog_validates_only_compact_entries_and_mode_changes_invalidate_skills() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut apps = vec![json!({
+        "slug": "records", "name": "Records", "toolLoadingMode": "lazy",
+        "tools": [{"name": "records__lookup"}],
+    })];
+    let compact = mcp_tools(&json!({"tools": [], "deferred_tools": [
+        {"name": "_wegent_discover__records", "_meta": {"connectorId": "records"}},
+        {"name": "_wegent_call__records", "_meta": {"connectorId": "records"}},
+    ]}));
+    validate_tool_catalog(&apps, &compact).unwrap();
+    let raw = mcp_tools(&json!({"tools": [
+        {"name": "records__lookup", "connector_id": "records"}
+    ]}));
+    assert!(validate_tool_catalog(&apps, &raw).is_err());
+    materialize_skills(temp.path(), &apps, &compact, &mut false).unwrap();
+    let path = temp.path().join("wegent-connector-records/SKILL.md");
+    let lazy = fs::read_to_string(&path).unwrap();
+    assert!(lazy.contains("_wegent_discover__records"));
+    apps[0]["toolLoadingMode"] = json!("static");
+    validate_tool_catalog(&apps, &raw).unwrap();
+    assert!(validate_tool_catalog(&apps, &compact).is_err());
+    let mut changed = false;
+    materialize_skills(temp.path(), &apps, &raw, &mut changed).unwrap();
+    assert!(changed);
+    assert!(!fs::read_to_string(&path)
+        .unwrap()
+        .contains("_wegent_discover__records"));
+}
+
+#[test]
 fn skill_materialization_is_scoped_and_removes_only_managed_stale_dirs() {
     let temp = tempfile::tempdir().expect("temporary directory should be created");
     let skills_root = temp.path().join("skills");

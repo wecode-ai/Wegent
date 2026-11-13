@@ -9,7 +9,7 @@ const FIELD = '`?(?:connectorSlug|pluginKey)`?\\s*[=:]\\s*`?[A-Za-z0-9_.:-]+`?'
 const TOKEN = `(?:\`?connector_auth_required\`?|\`?need_login\`?|${FIELD})`
 const PROTOCOL_LINE = new RegExp(`^[ \\t]*(?:[-*+>]\\s*)*${TOKEN}(?:[ \\t]+${TOKEN})*[ \\t]*$`)
 const INLINE_MARKER = new RegExp(
-  `\\bconnector_auth_required\\b(?:[ \\t]+(?:${FIELD}|need_login))*`,
+  `\\bconnector_auth_required\\b(?:[ \\t]+need_login)?[ \\t]+${FIELD}(?:[ \\t]+(?:${FIELD}|need_login))*`,
   'g'
 )
 const SLUG = /connectorSlug`?\s*[=:]\s*`?([A-Za-z0-9_.:-]+)`?/
@@ -65,6 +65,7 @@ function authorizationMarkers(text: string): { content: string; slug: string | n
     } else {
       let cleaned = line.original
       const matches = [...line.visible.matchAll(INLINE_MARKER)]
+      if (!matches.length) continue
       matches.forEach(match => captureSlug(match[0]))
       for (const match of matches.reverse()) {
         const start = match.index ?? 0

@@ -20,6 +20,8 @@ use crate::connector_gateway::{load_connector_gateway_config, ConnectorGatewayEr
 
 const WEGENT_SITES_SAVE_SOURCE_REVISION: &str = "wegent-sites__save_source_revision";
 const WEGENT_SITES_SUBMIT_MINIAPP_VERSION: &str = "wegent-sites__submit_miniapp_version";
+mod lazy;
+use lazy::{call_deferred_tool, CALL_PREFIX, DISCOVER_PREFIX};
 const MAX_SOURCE_ARCHIVE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_SOURCE_FILE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_SOURCE_FILES: usize = 20_000;
@@ -104,6 +106,12 @@ async fn handle_request(request: &Value) -> Option<Value> {
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            if name.starts_with(DISCOVER_PREFIX) || name.starts_with(CALL_PREFIX) {
+                return Some(result_response(
+                    id,
+                    call_deferred_tool(name, &arguments).await,
+                ));
+            }
             let arguments = match normalize_tool_arguments(name, arguments) {
                 Ok(arguments) => arguments,
                 Err(error) => return Some(result_response(id, text_result(error, true))),
@@ -147,6 +155,14 @@ pub(crate) fn mcp_tools(value: &Value) -> Vec<Value> {
                 }
             }))
         })
+        .chain(
+            value
+                .get("deferred_tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .cloned(),
+        )
         .collect()
 }
 

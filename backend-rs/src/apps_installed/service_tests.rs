@@ -195,7 +195,7 @@ fn expired_connection_stays_visible_with_cached_tools() {
         last_error: None,
     };
 
-    let item = installed_app_projection(&app, Some(&stored), None).unwrap();
+    let item = installed_app_projection(&app, Some(&stored), None, false).unwrap();
 
     assert_eq!(item.connection.status, "expired");
     assert!(!item.callable);
@@ -228,7 +228,7 @@ fn cached_tools_respect_the_current_allowlist_for_connected_and_expired_grants()
                 ]
             }),
         ));
-        let item = installed_app_projection(&app, Some(&stored), None).unwrap();
+        let item = installed_app_projection(&app, Some(&stored), None, false).unwrap();
         assert_eq!(item.connection.status, status);
         assert_eq!(item.tool_summaries.len(), 1);
         assert_eq!(item.tool_summaries[0].name, "dingtalk__read_doc");
@@ -251,7 +251,7 @@ fn a_removed_cached_tool_cannot_keep_an_app_callable() {
             "toolSummaries": [{"name": "dingtalk__old_tool", "rawToolName": "old_tool"}]
         }),
     ));
-    let item = installed_app_projection(&app, Some(&stored), None).unwrap();
+    let item = installed_app_projection(&app, Some(&stored), None, false).unwrap();
     assert!(!item.callable);
     assert!(item.tool_summaries.is_empty());
     assert!(item.runtime_name.is_none());
@@ -272,7 +272,7 @@ fn a_successful_empty_discovery_does_not_restore_cached_tools() {
             "toolSummaries": [{"name": "dingtalk__removed", "rawToolName": "removed"}]
         }),
     ));
-    let item = installed_app_projection(&app, Some(&stored), Some(&[])).unwrap();
+    let item = installed_app_projection(&app, Some(&stored), Some(&[]), false).unwrap();
     assert!(item.tool_summaries.is_empty());
     assert!(!item.callable);
 }
@@ -310,7 +310,7 @@ fn live_tools_win_over_the_connection_cache() {
         input_schema: None,
     }];
 
-    let item = installed_app_projection(&app, Some(&stored), Some(&live)).unwrap();
+    let item = installed_app_projection(&app, Some(&stored), Some(&live), false).unwrap();
 
     assert!(item.callable);
     assert_eq!(
@@ -327,7 +327,55 @@ fn disconnected_apps_are_not_projected() {
         serde_json::json!({"authType": "oauth2", "transport": "streamable-http"}),
     ));
 
-    assert!(installed_app_projection(&app, None, None).is_none());
+    assert!(installed_app_projection(&app, None, None, false).is_none());
+}
+
+#[tokio::test]
+async fn compact_installed_catalog_never_contacts_lazy_upstreams() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut app = row_to_app(&app_row(
+        13,
+        "lazy-records",
+        serde_json::json!({
+            "authType": "none", "toolLoadingMode": "lazy",
+            "mcpUrl": format!("http://{}/mcp", listener.local_addr().unwrap()),
+        }),
+    ));
+    let mysql = crate::sql_test_support::KindQueryCapture::default();
+    let catalog = installed_apps(&mysql, std::slice::from_ref(&app), &user(), true)
+        .await
+        .unwrap();
+    assert_eq!(catalog.apps.len(), 1);
+    assert!(catalog.apps[0].callable);
+    assert!(catalog.apps[0].tool_summaries.is_empty());
+    assert!(mysql.queries().is_empty());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err(),
+        "Compact synchronization must not connect to a lazy upstream"
+    );
+    app.auth_type = "oauth2".to_string();
+    assert!(installed_app_projection(&app, None, None, true).is_none());
+}
+
+#[test]
+fn compact_lazy_catalog_retains_refreshable_grants_but_not_unusable_grants() {
+    let app = row_to_app(&app_row(
+        14,
+        "records",
+        serde_json::json!({"authType": "oauth2", "toolLoadingMode": "lazy"}),
+    ));
+    for refresh in [None, Some("encrypted-refresh")] {
+        let stored = ConnectorConnection::from_row(&app_row(
+            15,
+            "records",
+            serde_json::json!({"status": "expired", "refreshTokenEncrypted": refresh}),
+        ));
+        let item = installed_app_projection(&app, Some(&stored), None, true).unwrap();
+        assert_eq!(item.callable, refresh.is_some());
+        assert!(item.tool_summaries.is_empty());
+    }
 }
 
 #[tokio::test]

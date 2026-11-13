@@ -23,6 +23,7 @@
 
 mod auth;
 mod handler;
+pub(crate) mod loading;
 mod models;
 mod service;
 mod token;

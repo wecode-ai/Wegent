@@ -866,7 +866,7 @@ spec:
 
 `providerHeadersEncrypted` 必须是加密后的 JSON 字符串。管理 API 接收明文 `provider_headers` 后会负责加密；手写 YAML 时不要提交明文 API Key、服务令牌或请求头。
 
-`toolLoadingMode: static` 会把该应用的工具加入共享 `wegent-connectors` MCP；`toolLoadingMode: lazy` 会生成 `wegent-connector-<slug>` Skill，只有 Skill 被选中、`keywords` 命中或加载后才连接该应用。`keywords` 按子串匹配，含空格的词组要求所有词同时出现。旧资源缺少该字段时按 `static` 处理；旧值 `direct`/`skill` 会分别兼容为 `static`/`lazy`。
+`toolLoadingMode: static` 会把该应用的工具加入共享 `wegent-connectors` MCP。`lazy` 在 Chat 中通过 Skill 选择、关键词命中或 `load_skill` 挂载完整工具；云端编码类 Shell 和桌面即使没有命中关键词，也保留轻量 discover/call 入口，按需读取上游 schema。显式选择文档 Provider 会挂载其可用 App。`keywords` 按子串匹配，含空格的词组要求所有词同时出现。旧资源缺少该字段时按 `static` 处理；旧值 `direct`/`skill` 会分别兼容为 `static`/`lazy`。
 
 ---
 

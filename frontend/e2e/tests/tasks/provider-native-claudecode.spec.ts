@@ -3,6 +3,10 @@ import { test, expect, executorMockUrl } from '../../fixtures/executor-test'
 import { PROVIDER_NATIVE_MARKERS } from '../../fixtures/provider-native-knowledge'
 import { ProviderNativeKnowledgePage } from '../../pages/tasks/provider-native-knowledge.page'
 import {
+  CONNECTOR_OAUTH_HIDDEN_TOOL,
+  CONNECTOR_OAUTH_TOOL_RESULT,
+} from '../../utils/mock-connector-oauth-provider'
+import {
   authHeaders,
   clearToolScenario,
   collectTaskToolCalls,
@@ -176,6 +180,104 @@ test.describe('Provider-native ClaudeCode access', () => {
       'get_document_content',
     ])
     expect(extractTaskAnswer(task)).toBe('DING-D1-NATIVE-2026')
+  })
+
+  test('cloud ClaudeCode discovers and invokes static and lazy connector tools without keywords', async ({
+    page,
+    request,
+  }) => {
+    const slug = `${TEST_PREFIX}-connector`
+    const created = await request.post(`${PROVIDER_NATIVE_API_URL}/api/admin/connector-apps`, {
+      headers: authHeaders(resources.token),
+      data: {
+        slug,
+        name: 'Cloud coding connector',
+        transport: 'sse',
+        mcp_url: `${PROVIDER_NATIVE_MOCK_URL}/connector-oauth/sse`,
+        auth_type: 'none',
+        tool_allowlist: ['echo'],
+        keywords: [],
+      },
+    })
+    expect(created.status(), await created.text()).toBe(201)
+    const appId = ((await created.json()) as { id: number }).id
+    try {
+      for (const mode of ['static', 'lazy'] as const) {
+        const updated = await request.patch(
+          `${PROVIDER_NATIVE_API_URL}/api/admin/connector-apps/${appId}`,
+          {
+            headers: authHeaders(resources.token),
+            data: { tool_loading_mode: mode },
+          }
+        )
+        expect(updated.ok(), await updated.text()).toBe(true)
+        await openClaudeChat(page)
+        const prompt = `${TEST_PREFIX} connector ${mode}: invoke echo once.`
+        activePrompt = prompt
+        const marker = `CLOUD_CONNECTOR_COMPLETED_${mode}_${slug}`
+        await configureToolScenario(request, prompt, [
+          ...(mode === 'lazy'
+            ? [
+                { toolCalls: [{ toolName: `_wegent_discover__${slug}`, arguments: {} }] },
+                {
+                  toolCalls: [
+                    {
+                      toolName: `_wegent_call__${slug}`,
+                      arguments: { name: 'echo', arguments: { value: prompt } },
+                    },
+                  ],
+                },
+              ]
+            : [{ toolCalls: [{ toolName: `${slug}__echo`, arguments: { value: prompt } }] }]),
+          { responseContent: marker },
+        ])
+        const conversation = new ProviderNativeKnowledgePage(page)
+        await conversation.sendMessage(prompt)
+        const taskId = await conversation.waitForTaskId()
+        await waitForTaskTerminal(resources.token, taskId, /^COMPLETED$/)
+        const task = await getTask(request, resources.token, taskId)
+        const bodies = await getScenarioModelBodies(request, prompt)
+        expect(bodies.length).toBeGreaterThanOrEqual(mode === 'lazy' ? 3 : 2)
+        const initial = modelRequestText(bodies.slice(0, 1))
+        if (mode === 'lazy') {
+          expect(initial).not.toContain(`${slug}__echo`)
+          expect(initial).toContain(`_wegent_discover__${slug}`)
+          const discovery = collectTaskToolCalls(task).filter(call =>
+            call.name.endsWith(`_wegent_discover__${slug}`)
+          )
+          expect(discovery).toHaveLength(1)
+          const output = JSON.stringify(discovery[0].output)
+          expect(output).toContain(`${slug}__echo`)
+          expect(output).toContain('inputSchema')
+          expect(output).not.toContain(CONNECTOR_OAUTH_HIDDEN_TOOL)
+        } else {
+          expect(initial).toContain(`${slug}__echo`)
+        }
+        const invoked = collectTaskToolCalls(task).filter(call =>
+          call.name.endsWith(mode === 'lazy' ? `_wegent_call__${slug}` : `${slug}__echo`)
+        )
+        expect(invoked).toHaveLength(1)
+        expect(JSON.stringify(invoked[0].output)).toContain(CONNECTOR_OAUTH_TOOL_RESULT)
+        const provider = await request.get(`${PROVIDER_NATIVE_MOCK_URL}/connector-oauth/_state`)
+        expect(provider.ok(), await provider.text()).toBe(true)
+        const calls = (
+          (await provider.json()) as {
+            toolCalls: Array<{ name: string; arguments: { value?: string } }>
+          }
+        ).toolCalls.filter(call => call.arguments.value === prompt)
+        expect(calls).toEqual([{ name: 'echo', arguments: { value: prompt } }])
+        expect(extractTaskAnswer(task)).toContain(marker)
+        await expect(page.getByTestId('messages-container')).toContainText(marker)
+        await clearToolScenario(request, prompt)
+        activePrompt = ''
+      }
+    } finally {
+      const removed = await request.delete(
+        `${PROVIDER_NATIVE_API_URL}/api/admin/connector-apps/${appId}`,
+        { headers: authHeaders(resources.token) }
+      )
+      expect(removed.status(), await removed.text()).toBe(204)
+    }
   })
 
   async function createClaudeResources(request: APIRequestContext): Promise<number> {

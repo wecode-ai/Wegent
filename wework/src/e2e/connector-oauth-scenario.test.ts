@@ -58,6 +58,47 @@ function codeModeBody(input: string, output: string, callId: string, includeExec
   }
 }
 
+test('lazy discovery takes priority over a static call in conversation history', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  expect(
+    await scenario.handleHttp(
+      request({
+        tools: [execDeclaration],
+        input: [
+          { role: 'user', content: prompt },
+          { role: 'user', content: 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_CALL' },
+        ],
+      }),
+      modelResponse,
+      url
+    )
+  ).toBe(true)
+  const discovery = itemWithType(events(modelResponse), 'custom_tool_call')
+  expect(discovery).toMatchObject({ call_id: 'connector-lazy-discover-search', name: 'exec' })
+  expect(discovery?.input).toContain('_wegent_discover__desktop_connector_oauth')
+  expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
+})
+
+test.each([
+  ['CONNECTOR-OAUTH-ECHO-OK', true],
+  ['connector_auth_required', false],
+])('lazy completion requires the actual upstream result: %s', async (output, successful) => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const modelResponse = response()
+  const body = codeModeBody('unused', output, 'connector-lazy-echo', false)
+  body.input[0].content = 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_CALL'
+  if (successful) {
+    expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+    expect(itemWithType(events(modelResponse), 'message')?.content[0].text).toBe(
+      'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_COMPLETED'
+    )
+  } else {
+    await expect(scenario.handleHttp(request(body), modelResponse, url)).rejects.toThrow()
+    expect(modelResponse.end).not.toHaveBeenCalled()
+  }
+})
+
 test('the first connector tool request emits native discovery instead of falling through', async () => {
   const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
   const modelResponse = response()
@@ -179,14 +220,12 @@ test('a different connector echo cannot satisfy the authorized connector invocat
     `${callId}-search`
   )
 
-  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
-
-  expect(itemWithType(events(modelResponse), 'custom_tool_call')).toMatchObject({
-    call_id: `${callId}-search`,
-    name: 'exec',
-  })
-  expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
-  expect(scenario.diagnostics().toolRequestDiagnostics[0].responseMode).toBe('search')
+  await expect(scenario.handleHttp(request(body), modelResponse, url)).rejects.toThrow(
+    'Native discovery did not expose mcp__wegent_apps__desktop_connector_oauth__echo'
+  )
+  expect(modelResponse.writeHead).not.toHaveBeenCalled()
+  expect(modelResponse.end).not.toHaveBeenCalled()
+  expect(scenario.diagnostics().toolRequestDiagnostics[0].responseMode).toBe('failure')
 })
 
 test('the real connector tool result completes the checkpoint', async () => {
@@ -255,7 +294,13 @@ test('tool discovery diagnostics identify failures without exposing raw output',
     `${callId}-search`
   )
 
-  expect(await scenario.handleHttp(request(body), modelResponse, url)).toBe(true)
+  const failed = scenario.handleHttp(request(body), modelResponse, url)
+  await expect(failed).rejects.toThrow(
+    'Native discovery did not expose mcp__wegent_apps__desktop_connector_oauth__echo'
+  )
+  await expect(failed).rejects.not.toThrow('fixture-private-value')
+  expect(modelResponse.writeHead).not.toHaveBeenCalled()
+  expect(modelResponse.end).not.toHaveBeenCalled()
 
   const diagnostic = scenario.diagnostics().toolRequestDiagnostics[0]
   expect(diagnostic).toMatchObject({
@@ -266,8 +311,8 @@ test('tool discovery diagnostics identify failures without exposing raw output',
     searchOutputSignals: [failure],
     discoveredNamespaces: [],
     invocationOutputPresent: false,
-    responseMode: 'search',
-    responseItems: [{ type: 'custom_tool_call', name: 'exec', namespace: 'functions' }],
+    responseMode: 'failure',
+    responseItems: [],
   })
   expect(JSON.stringify(diagnostic)).not.toContain('fixture-private-value')
 })

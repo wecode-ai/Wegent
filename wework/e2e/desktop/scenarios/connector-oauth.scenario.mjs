@@ -26,7 +26,12 @@ import {
   startConnectorOAuthProvider,
 } from '../modules/connector-oauth-provider.mjs'
 import { verifyConnectorAccountSwitch } from '../modules/connector-account-switch.mjs'
-import { openPlugin, testId, until } from '../modules/plugin-regression-fixture.mjs'
+import {
+  openPlugin,
+  requestPluginExecutor,
+  testId,
+  until,
+} from '../modules/plugin-regression-fixture.mjs'
 import {
   assistantMessage,
   codexRequestKind,
@@ -46,6 +51,10 @@ const RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_RESUMED'
 const TOOL_PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_CALL'
 const TOOL_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
 const TOOL_CALL_ID = 'connector-oauth-real-echo'
+const LAZY_PROMPT = 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_CALL'
+const LAZY_COMPLETION = 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_COMPLETED'
+const LAZY_DISCOVERY_ID = 'connector-lazy-discover'
+const LAZY_CALL_ID = 'connector-lazy-echo'
 // Native Code Mode exposes this hyphenated connector slug with underscores.
 const CONNECTOR_TOOL_NAME = `mcp__wegent_apps__${CONNECTOR_OAUTH_SLUG.replaceAll('-', '_')}__echo`
 const CONNECTOR_PLUGIN_SLUG = 'desktop-connector-oauth-plugin'
@@ -173,6 +182,42 @@ export function createDesktopScenario({
       modelRequests.push(body)
       const text = lastInputText(body)
       replySequence += 1
+      if (JSON.stringify(body).includes(LAZY_PROMPT)) {
+        if (requestContainsToolOutput(body, LAZY_CALL_ID)) {
+          assert.ok(toolOutputText(body, LAZY_CALL_ID)?.includes('CONNECTOR-OAUTH-ECHO-OK'))
+          writeReply(response, `connector-lazy-${replySequence}`, LAZY_COMPLETION)
+          return true
+        }
+        const discovered = requestContainsToolOutput(body, LAZY_DISCOVERY_ID)
+        if (discovered) {
+          const output = toolOutputText(body, LAZY_DISCOVERY_ID)
+          assert.ok(output?.includes(`${CONNECTOR_OAUTH_SLUG}__echo`))
+          assert.ok(output.includes('inputSchema'))
+          assert.ok(output.includes('string'), 'Discovery must preserve the actual argument schema')
+          assert.equal(
+            provider.toolCalls.filter(call => call.arguments.value === LAZY_PROMPT).length,
+            0
+          )
+        }
+        const toolName = `${discovered ? '_wegent_call__' : '_wegent_discover__'}${CONNECTOR_OAUTH_SLUG.replaceAll('-', '_')}`
+        const selection = mcpToolRequestEvents(body, {
+          toolName,
+          argumentsValue: discovered ? { name: 'echo', arguments: { value: LAZY_PROMPT } } : {},
+          directToolName: `mcp__wegent_apps__${toolName}`,
+          searchCallId: `${discovered ? LAZY_CALL_ID : LAZY_DISCOVERY_ID}-search`,
+          toolCallId: discovered ? LAZY_CALL_ID : LAZY_DISCOVERY_ID,
+        })
+        const responseId = `connector-lazy-${replySequence}`
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([
+            responseCreated(responseId),
+            ...selection.events,
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (JSON.stringify(body).includes(TOOL_PROMPT)) {
         const diagnostic = toolRequestDiagnostic(body, replySequence)
         toolRequestDiagnostics.push(diagnostic)
@@ -186,14 +231,20 @@ export function createDesktopScenario({
           return true
         }
         const responseId = `connector-oauth-tool-${replySequence}`
-        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-        const selection = mcpToolRequestEvents(body, {
-          toolName: 'echo',
-          argumentsValue: { value: TOOL_PROMPT },
-          directToolName: CONNECTOR_TOOL_NAME,
-          searchCallId: `${TOOL_CALL_ID}-search`,
-          toolCallId: TOOL_CALL_ID,
-        })
+        let selection
+        try {
+          selection = mcpToolRequestEvents(body, {
+            toolName: 'echo',
+            argumentsValue: { value: TOOL_PROMPT },
+            directToolName: CONNECTOR_TOOL_NAME,
+            searchCallId: `${TOOL_CALL_ID}-search`,
+            toolCallId: TOOL_CALL_ID,
+          })
+        } catch (error) {
+          diagnostic.responseMode = 'failure'
+          diagnostic.responseItems = []
+          throw error
+        }
         diagnostic.responseMode = selection.mode
         diagnostic.responseItems = selection.events
           .filter(event => event.type === 'response.output_item.done')
@@ -202,6 +253,7 @@ export function createDesktopScenario({
             name: event.item.name,
             namespace: event.item.namespace ?? null,
           }))
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
         response.end(
           createSse([
             responseCreated(responseId),
@@ -490,6 +542,46 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.deepEqual(provider.toolCalls, [{ name: 'echo', arguments: { value: TOOL_PROMPT } }])
+
+      const synchronizeMode = async mode => {
+        await api(`/api/admin/connector-apps/${connectorAppId}`, {
+          method: 'PATCH',
+          body: { tool_loading_mode: mode },
+        })
+        await control.command('navigate', 'body', { value: '/settings/connections' })
+        await control.command('waitFor', testId(`connector-refresh-${CONNECTOR_OAUTH_SLUG}`))
+        await control.command(
+          'clickWhenEnabled',
+          testId(`connector-refresh-${CONNECTOR_OAUTH_SLUG}`)
+        )
+        await until(
+          async () => {
+            const status = await requestPluginExecutor(control, 'runtime.connectors.status')
+            assert.equal(status.status, 200)
+            assert.equal(status.payload.ok, true)
+            return status.payload.result.apps.find(app => app.slug === CONNECTOR_OAUTH_SLUG)
+          },
+          app => app?.toolLoadingMode === mode,
+          `The local connector never applied ${mode} mode`
+        )
+      }
+      await synchronizeMode('lazy')
+      await control.command('navigate', 'body', { value: '/' })
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: LAZY_PROMPT })
+      await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: LAZY_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.deepEqual(
+        provider.toolCalls.filter(call => call.arguments.value === LAZY_PROMPT),
+        [{ name: 'echo', arguments: { value: LAZY_PROMPT } }]
+      )
+      await synchronizeMode('static')
+      await control.command('navigate', 'body', { value: '/' })
 
       await captureScreenshot(control, 'connector-oauth.png', ACTIVE_WORKBENCH_SELECTOR)
       assert.ok(connectorAppId > 0)

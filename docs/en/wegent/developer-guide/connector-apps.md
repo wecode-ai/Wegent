@@ -25,9 +25,13 @@ Administrators choose a loading mode through `Kind.json.spec.toolLoadingMode`. T
 | Mode | Behavior | Best for |
 | --- | --- | --- |
 | `static` | Every authorized app's tools join the shared `wegent-connectors` MCP and are visible to every task (Static loading) | A few frequently used apps |
-| `lazy` | The app gets a `wegent-connector-<slug>` Skill; its MCP connects only after the Skill is selected, a keyword matches, or `load_skill` runs (Lazy loading) | Many, tool-heavy, or infrequently used apps |
+| `lazy` | Upstream schemas load on demand: Chat uses a connector Skill, while coding shells and desktop use compact discovery/invocation tools | Many, tool-heavy, or infrequently used apps |
 
-`lazy` apps stay out of the shared MCP. They use a scoped MCP endpoint identified by the `X-Connector-App` header. That endpoint lists and invokes only the named app's tools, while the shared `wegent-connectors` surface returns only `static` apps. A lazy app's `keywords` are matched against the user message; each keyword is a substring, and a phrase with spaces requires every word to be present (for example `DingTalk table`). A match writes that app's scoped MCP into the request's `mcp_servers` and preloads the connector Skill prompt, so tools are ready at task startup. Unmatched lazy apps connect only when `load_skill` runs. Unauthorized apps are prompted in the conversation on demand; Wework keeps the `connector_auth_required` card.
+`lazy` apps stay out of the shared MCP. They use a scoped MCP endpoint identified by the `X-Connector-App` header, which lists and invokes only the named app's tools. The shared `wegent-connectors` surface returns only `static` apps. Keywords use substring matching; a phrase with spaces requires every word to be present (for example `DingTalk table`). A match preloads the Skill and mounts its full scoped MCP. Unauthorized apps are prompted in the conversation on demand; Wework keeps the `connector_auth_required` card.
+
+- In Chat, unmatched lazy apps mount through `load_skill`. Explicit document-provider selection mounts its authorized, visible, enabled app directly; a missing mount cannot be reported as ready.
+- In cloud Codex/ClaudeCode, lazy apps without matching keywords still expose `_wegent_discover__<slug>` and `_wegent_call__<slug>`. `X-Connector-Loading: lazy` avoids upstream discovery during catalog loading. Discovery returns actual allowlisted tools and schemas; invocation accepts `{name, arguments}` and preserves the existing permission checks.
+- Desktop synchronization requests installed apps and the Runtime catalog with `X-Connector-Loading: compact`. It receives static tools and compact lazy entries, connecting to lazy upstreams only on discovery. Settings retain the full directory by default; mode changes update both the local Skill and tool catalog.
 
 When creating an app in the admin console, `keywords` defaults to the display name and the identifier; `-` and `_` in the identifier become spaces (for example slug `dingtalk_ai_table` yields `dingtalk ai table`). Once an administrator edits the keywords manually, they no longer follow later name changes.
 
@@ -59,6 +63,8 @@ Administrators can configure encrypted fixed headers, such as an internal API ke
 An expired grant that still holds a refresh token counts as usable: the runtime renews it before the next upstream call and the conversation guidance does not claim authorization is missing. The refresh token is dropped only when the token endpoint rejects it, which returns the app to "needs authorization" with a fresh link. Python tool discovery and the Rust `/api/connector-runtime/tools` both apply this rule and perform the renewal.
 
 A stored credential that the current `GIT_TOKEN_AES_KEY`/`GIT_TOKEN_AES_IV` cannot decrypt is a configuration fault, not a missing grant: the runtime answers 503 and records the reason in the connection's `lastError` instead of asking the user to authorize again or sending the ciphertext upstream. When several local worktrees share one MySQL instance, they must use the same key pair; otherwise the instance that wrote a credential can read it and the others cannot.
+
+An upstream 401/403 for an `auth_type: none` app is an administrator credential or permission error, not a user OAuth problem. It neither expires a user grant nor prompts for re-authorization. SSE endpoint events must resolve to the configured origin without URL user information, preventing authenticated messages from reaching another host.
 
 ## Deployment configuration
 
@@ -99,7 +105,7 @@ The paths below use the default `API_PREFIX=/api`; replace `/api` with your depl
 - `/api/apps/list`, `/api/apps/read`, `/api/apps/installed`: Wework/Codex app projections.
 - `/api/connector-runtime/token`: exchanges a normal cloud session for a least-privilege short token.
 - `/api/connector-runtime/tools` and `/call`: accept only connector JWTs and are used by the Executor MCP proxy.
-- `/api/mcp/connectors/sse`: dynamic MCP endpoint for the Chat Shell. It resolves the caller from the task token, returns only visible tools inside the administrator's allowlist from `tools/list`, and reuses `ConnectorRuntimeService` for `tools/call` (user token, refresh, fixed headers, allowlist). Without `X-Connector-App` it exposes only `static` apps; with that header it exposes only the named `lazy` app. The backend injects the shared endpoint into `mcp_servers` only when the user has an authorized `static` app and the Bot uses the `Chat` shell. `lazy` apps load through synthesized Skills with deferred MCP connection. Coding shells keep the device-local `wegent_apps` proxy so tools are not exposed twice.
+- `/api/mcp/connectors/sse`: dynamic MCP endpoint for Chat and cloud coding shells. Task tokens identify the caller; listing and invocation both enforce visibility, authorization, and the allowlist. Without `X-Connector-App`, only static apps are exposed; scoped requests address the named app and may use `X-Connector-Loading: lazy` for compact entries. Desktop coding tasks use the device-local `wegent_apps` proxy without duplicating the cloud endpoint.
 
 ## Built-in DingTalk connector apps
 

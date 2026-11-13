@@ -761,8 +761,16 @@ function mcpToolRequestEvents(
     searchCallId &&
     requestContainsToolOutput(request, searchCallId)
   ) {
+    const output = toolOutputText(request, searchCallId) ?? ''
+    const signal = [
+      'Native discovery execution failed',
+      'Native discovery requires one exact capability',
+      'Discovery must select between one and eight real native capabilities',
+      'ReferenceError',
+      'SyntaxError',
+    ].find(signal => output.includes(signal))
     assert.fail(
-      `Native discovery did not expose ${directToolName ?? toolName}: ${String(toolOutputText(request, searchCallId)).slice(0, 3000)}`
+      `Native discovery did not expose ${directToolName ?? toolName}${signal ? `: ${signal}` : ''}`
     )
   }
   return {

@@ -135,9 +135,12 @@ export function listWegentConnectorApps(
 
 export function listWegentInstalledConnectorApps(
   apiBaseUrl: string,
-  token: string
+  token: string,
+  options: { compact?: boolean } = {}
 ): Promise<WegentInstalledConnectorResponse> {
-  return client(apiBaseUrl, token).get<WegentInstalledConnectorResponse>('/apps/installed')
+  return client(apiBaseUrl, token).get<WegentInstalledConnectorResponse>('/apps/installed', {
+    headers: options.compact ? { 'X-Connector-Loading': 'compact' } : undefined,
+  })
 }
 
 export function createConnectorOAuthSession(

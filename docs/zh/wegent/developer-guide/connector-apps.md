@@ -25,9 +25,13 @@ Connector Apps 让 Wework 在不修改 Codex 源码、也不依赖 ChatGPT 登�
 | 方式 | 行为 | 适用场景 |
 | --- | --- | --- |
 | `static` | 所有已授权 App 的工具进入共享 `wegent-connectors` MCP，每个任务都能直接看到（Static loading / 静态全局加载） | App 少、使用频率高 |
-| `lazy` | 为 App 生成 `wegent-connector-<slug>` Skill；只有 Skill 被选中、关键词命中或 `load_skill` 加载后才连接该 App 的 MCP（Lazy loading / 按需加载） | App 多、工具重或低频使用 |
+| `lazy` | 上游工具 schema 按需加载；Chat 使用 connector Skill，编码类 Shell 和桌面使用轻量发现/调用入口 | App 多、工具重或低频使用 |
 
-`lazy` 模式不进入共享 MCP，而是使用带 `X-Connector-App` 请求头的 scoped MCP 端点。该端点只列出并允许调用指定 App 的工具；共享 `wegent-connectors` 只返回 `static` App。`lazy` App 的 `keywords` 用于消息命中：每条关键词按子串匹配，包含空格的词组要求所有词同时出现（例如 `钉钉 表格`）；命中后会把该 App 的 scoped MCP 写入请求的 `mcp_servers`，同时 preload 对应 connector Skill 提示，任务启动时即可使用工具。未命中的 lazy App 仍只在 `load_skill` 时连接 MCP。未授权 App 在对话内按需提示授权，Wework 继续使用 `connector_auth_required` 卡片。
+`lazy` 模式不进入共享 MCP，而是使用带 `X-Connector-App` 请求头的 scoped MCP 端点。该端点只列出并允许调用指定 App 的工具；共享 `wegent-connectors` 只返回 `static` App。`keywords` 按子串匹配，包含空格的词组要求所有词同时出现（例如 `钉钉 表格`）；命中后会 preload 对应 Skill 并挂载完整 scoped MCP。未授权 App 在对话内按需提示授权，Wework 继续使用 `connector_auth_required` 卡片。
+
+- Chat 中未命中的 lazy App 通过 `load_skill` 挂载 MCP；显式选择文档 Provider 时直接挂载其已授权、可见且启用的 App，未挂载时不能标记为 ready。
+- 云端 Codex/ClaudeCode 中，即使没有关键词或没有命中，lazy App 仍提供 `_wegent_discover__<slug>` 和 `_wegent_call__<slug>` 两个轻量工具。请求头 `X-Connector-Loading: lazy` 让目录不探测上游；discover 返回实际白名单工具及 schema，call 接收 `{name, arguments}` 并执行原有权限检查。
+- 桌面同步使用 `X-Connector-Loading: compact` 读取已安装应用和 Runtime 目录。目录只含 static 工具和 lazy 轻量入口，lazy 上游仅在 discover 时连接。设置页仍默认读取完整目录；模式切换会更新本地 Skill 和工具目录。
 
 管理后台新增应用时，`keywords` 默认填入应用的显示名和标识名；标识名中的 `-`、`_` 会替换为空格（例如 slug `dingtalk_ai_table` 生成 `dingtalk ai table`）。管理员手动修改关键词后，不会再随名称自动变化。
 
@@ -55,6 +59,8 @@ Connector 当前支持以下 App 认证方式：
 | `oauth2` | 上游要求用户级 OAuth 授权 | 用户 access/refresh token 加密存储在 `ConnectorConnection` |
 
 管理员可配置加密固定请求头，例如内部 API Key 或服务令牌，而无需每个用户单独连接。固定请求头不会通过管理 API 回显；管理 API 只返回是否已配置以及请求头名称。OAuth 2.0 授权使用 `/api/connector-apps/{slug}/oauth/sessions` 和 `/api/connector-apps/oauth/callback`；用户凭据只加密存储在 `ConnectorConnection`，不会通过任何 API 返回。
+
+`none` App 的上游 401/403 是管理员凭据或权限故障，不会过期用户 OAuth 连接，也不会提示用户重新授权。SSE `endpoint` 事件只能使用与配置地址同源、且不含 URL 用户信息的消息地址，防止认证请求被转发到其他主机。
 
 过期但仍有 refresh token 的授权仍视为可用：运行时在下次访问上游前自动续期，对话引导不会误报"需要授权"；只有当 token 端点明确拒绝该 refresh token 时才会清除它，此时连接回到"需要授权"并由对话给出授权链接。Python 工具发现与 Rust 的 `/api/connector-runtime/tools` 都执行这套判定与续期。
 
@@ -99,7 +105,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 - `/api/apps/list`、`/api/apps/read`、`/api/apps/installed`：Wework/Codex app 投影。
 - `/api/connector-runtime/token`：用普通云端会话签发最小权限短凭证。
 - `/api/connector-runtime/tools`、`/call`：仅接受 Connector 专用 JWT，供 Executor MCP 代理调用。
-- `/api/mcp/connectors/sse`：面向 Chat Shell 的动态 MCP 端点。它按 task token 解析调用者，`tools/list` 只返回可见且在管理员白名单内的工具，`tools/call` 复用 `ConnectorRuntimeService`（用户 token、刷新、固定请求头、白名单校验）。不带 `X-Connector-App` 时只暴露 `static` App；带该请求头时只暴露对应 `lazy` App。后端仅在用户存在 `static` 已授权应用、且 Bot 使用 `Chat` Shell 时，把共享端点注入请求的 `mcp_servers`；`lazy` App 通过合成 Skill 延迟加载；编码类 Shell 继续使用设备本地的 `wegent_apps` 代理，避免工具重复暴露。
+- `/api/mcp/connectors/sse`：面向 Chat 和云端编码类 Shell 的动态 MCP 端点，按 task token 解析调用者，列表与调用均检查可见性、授权和白名单。不带 `X-Connector-App` 时只暴露 `static` App；带该请求头时限定为指定 App，可用 `X-Connector-Loading: lazy` 请求轻量入口。桌面编码任务使用设备本地 `wegent_apps` 代理，不重复挂载云端端点。
 
 ## 内置钉钉 Connector Apps
 

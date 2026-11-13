@@ -8,9 +8,9 @@ import {
   CHECKPOINT_RESOURCES,
   CHECKPOINT_SCENARIO_MODULES,
   SCENARIO_ONLY_CHECKPOINTS,
-  CLOUD_ONLY_CHECKPOINTS,
   DESKTOP_CHECKPOINTS,
   DESKTOP_CHECKPOINT_GROUPS,
+  desktopCheckpointArgs,
   expandDesktopCheckpoints,
 } from './checkpoints.mjs'
 import {
@@ -337,13 +337,8 @@ function parallelCheckpointLimit() {
 }
 
 function parallelCheckpointArgs(checkpoint) {
-  // Scenario modules declare their own cloud prerequisites. Cloud is a shard
-  // scope here, not a second mutually exclusive task-flow execution mode.
-  if (SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)) return ['--segment', checkpoint]
   const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
-  if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
-  if (scope === 'core') return ['--segment', checkpoint]
-  throw new Error('WEWORK_E2E_PARALLEL_SCOPE must be "cloud" or "core"')
+  return desktopCheckpointArgs(checkpoint, scope)
 }
 
 async function runRequestedArgs() {
@@ -476,9 +471,7 @@ async function runCheckpoints(checkpoints) {
   for (const checkpoint of checkpoints) {
     const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
     console.log(`\n[desktop-e2e] START ${checkpoint}`)
-    const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
-      ? ['--cloud-only', '--segment', checkpoint]
-      : ['--segment', checkpoint]
+    const args = desktopCheckpointArgs(checkpoint)
     const result = await runTaskFlow(args, env, checkpoint)
 
     if (result.code === 0) {

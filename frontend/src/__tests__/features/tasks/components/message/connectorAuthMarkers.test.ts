@@ -42,6 +42,16 @@ describe('stripConnectorAuthMarkers', () => {
     expect(stripConnectorAuthMarkers(text)).toBe(text)
   })
 
+  test.each([
+    'The connector_auth_required flag is set.',
+    'Both connector_auth_required need_login flags are documented.',
+    '普通正文 connector_auth_required 后面的内容需要保留。',
+    'Keep  connector_auth_required  and every space.\nconnectorSlug=example',
+  ])('preserves ordinary mentions byte-exact: %s', text => {
+    expect(stripConnectorAuthMarkers(text)).toBe(text)
+    expect(connectorAuthSlug(text)).toBeNull()
+  })
+
   test('extracts the app slug for a deterministic authorization link', () => {
     expect(
       connectorAuthSlug('暂时不可用。\n\nconnector_auth_required connectorSlug=dingding_todo')

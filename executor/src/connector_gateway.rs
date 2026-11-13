@@ -49,6 +49,18 @@ impl ConnectorGatewayConfig {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, ConnectorGatewayError> {
+        self.request_scoped(method, path, body, None, path == "tools")
+            .await
+    }
+
+    pub(crate) async fn request_scoped(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        app_scope: Option<&str>,
+        compact: bool,
+    ) -> Result<Value, ConnectorGatewayError> {
         if self.expires_at_ms <= now_ms() + 5_000 {
             return Err(ConnectorGatewayError::new(
                 "connector_token_expired",
@@ -66,6 +78,12 @@ impl ConnectorGatewayConfig {
             .request(method, &url)
             .bearer_auth(&self.connector_token)
             .timeout(Duration::from_secs(75));
+        if let Some(slug) = app_scope {
+            request = request.header("X-Connector-App", slug);
+        }
+        if compact {
+            request = request.header("X-Connector-Loading", "compact");
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }

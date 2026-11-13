@@ -3,6 +3,7 @@ import { afterEach, onTestFinished, describe, expect, test, vi } from 'vitest'
 import {
   authorizeWegentConnector,
   ConnectorAuthorizationError,
+  listWegentInstalledConnectorApps,
   waitForConnectorToolCatalog,
 } from './connectorApps'
 
@@ -10,6 +11,24 @@ describe('connector OAuth client', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  test('requests a compact installed catalog only for synchronization', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ apps: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await listWegentInstalledConnectorApps('https://backend.example.test/api', 'cloud-token')
+    await listWegentInstalledConnectorApps('https://backend.example.test/api', 'cloud-token', {
+      compact: true,
+    })
+    const requests = fetchMock.mock.calls.map(([, options]) => new Headers(options.headers))
+    expect(requests[0].has('X-Connector-Loading')).toBe(false)
+    expect(requests[1].get('X-Connector-Loading')).toBe('compact')
   })
 
   test.each(['success', 'failed', 'declined'] as const)(

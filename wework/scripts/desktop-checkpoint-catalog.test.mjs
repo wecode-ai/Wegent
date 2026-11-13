@@ -11,11 +11,32 @@ import {
   loadDesktopCheckpointCatalog,
   readDesktopCheckpointDefinitions,
 } from '../e2e/desktop/checkpoint-catalog.mjs'
-import { expandDesktopCheckpoints } from '../e2e/desktop/checkpoints.mjs'
+import { desktopCheckpointArgs, expandDesktopCheckpoints } from '../e2e/desktop/checkpoints.mjs'
 import { UPGRADE_CHECKPOINTS } from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = new URL('../../', import.meta.url)
 const definitions = readDesktopCheckpointDefinitions()
+
+test('sequential and parallel cloud scenarios never receive conflicting only modes', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  for (const checkpoint of ['connector-oauth', 'connector-account-switch']) {
+    assert.ok(catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint))
+    assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has(checkpoint))
+    assert.deepEqual(desktopCheckpointArgs(checkpoint), ['--segment', checkpoint])
+    assert.deepEqual(desktopCheckpointArgs(checkpoint, 'cloud'), ['--segment', checkpoint])
+  }
+  const ordinaryCloud = [...catalog.CLOUD_ONLY_CHECKPOINTS].find(
+    checkpoint => !catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+  )
+  assert.ok(ordinaryCloud)
+  assert.deepEqual(desktopCheckpointArgs(ordinaryCloud), [
+    '--cloud-only',
+    '--segment',
+    ordinaryCloud,
+  ])
+  assert.deepEqual(desktopCheckpointArgs(ordinaryCloud, 'core'), ['--segment', ordinaryCloud])
+  assert.throws(() => desktopCheckpointArgs(ordinaryCloud, 'unknown'), /scope must be/)
+})
 
 test('Connector account isolation is selectable and runs inside the existing cloud OAuth checkpoint', () => {
   const catalog = loadDesktopCheckpointCatalog()

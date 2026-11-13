@@ -506,11 +506,23 @@ class TestUserScopedMcpInjection:
         assert "configuration_required" not in skill_data
 
     def test_authorized_connector_takes_over_from_the_personal_url(
-        self, test_db, test_user
+        self, test_db, test_user, test_admin_user
     ):
         """Once OAuth is granted the connector surface wins, avoiding duplicates."""
+        from app.schemas.connector import ConnectorAppWrite
+        from app.services.connector_apps import connector_app_service
         from app.services.connector_connections import connector_connection_service
 
+        connector_app_service.create_app(
+            test_db,
+            ConnectorAppWrite(
+                slug="dingtalk_docs",
+                name="Documents",
+                auth_type="oauth2",
+                mcp_url="https://example.test/mcp",
+            ),
+            test_admin_user,
+        )
         connector_connection_service.save_oauth_connection(
             test_db,
             slug="dingtalk_docs",

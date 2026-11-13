@@ -424,7 +424,14 @@ fn materialize_skills(
             .collect::<Vec<_>>();
         tool_names.sort();
         tool_names.dedup();
-        let tool_section = if tool_names.is_empty() {
+        let lazy = app.get("toolLoadingMode").and_then(Value::as_str) == Some("lazy");
+        let tool_section = if lazy {
+            format!(
+                "\nTools load on demand. First use `_wegent_discover__{slug}` to read this app's tool schemas, \
+                 then invoke `_wegent_call__{slug}` with the discovered tool name and an arguments object. \
+                 Preserve every argument's declared JSON type.\n"
+            )
+        } else if tool_names.is_empty() {
             String::new()
         } else {
             format!(
@@ -461,6 +468,7 @@ fn materialize_skills(
         materialized.push(json!({
             "slug": slug,
             "skillPath": skill_path.display().to_string(),
+            "toolLoadingMode": if lazy { "lazy" } else { "static" },
         }));
     }
     remove_inactive_skills(skills_root, &active_dirs, changed)?;
@@ -471,13 +479,26 @@ fn validate_tool_catalog(apps: &[Value], tools: &[Value]) -> Result<(), AppIpcEr
     let expected: HashSet<_> = apps
         .iter()
         .flat_map(|app| {
+            let Some(slug) = app.get("slug").and_then(Value::as_str) else {
+                return vec![];
+            };
+            let lazy = app.get("toolLoadingMode").and_then(Value::as_str) == Some("lazy")
+                && !app
+                    .get("authorizationRequired")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            if lazy {
+                return vec![
+                    (slug, format!("_wegent_discover__{slug}")),
+                    (slug, format!("_wegent_call__{slug}")),
+                ];
+            }
             app.get("tools")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(move |tool| {
-                    Some((app.get("slug")?.as_str()?, tool.get("name")?.as_str()?))
-                })
+                .filter_map(move |tool| Some((slug, tool.get("name")?.as_str()?.to_owned())))
+                .collect::<Vec<_>>()
         })
         .collect();
     let discovered = tools
@@ -485,7 +506,7 @@ fn validate_tool_catalog(apps: &[Value], tools: &[Value]) -> Result<(), AppIpcEr
         .map(|tool| {
             Some((
                 tool.pointer("/_meta/connectorId")?.as_str()?,
-                tool.get("name")?.as_str()?,
+                tool.get("name")?.as_str()?.to_owned(),
             ))
         })
         .collect::<Option<HashSet<_>>>();

@@ -63,6 +63,7 @@ async fn connectors_sse_post(
     #[header("mcp-protocol-version")] protocol_version: Option<&str>,
     #[header("authorization")] authorization: Option<&str>,
     #[header("x-connector-app")] app_scope: Option<&str>,
+    #[header("x-connector-loading")] loading: Option<&str>,
     body: &[u8],
 ) -> Response {
     let message = match transport::prepare_message(accept, content_type, protocol_version, body) {
@@ -78,14 +79,22 @@ async fn connectors_sse_post(
     let app_scope = app_scope.map(str::trim).filter(|slug| !slug.is_empty());
     match request.method.as_str() {
         "tools/list" => {
-            let tools = list_tools(state, authorization, app_scope).await;
+            let tools = if loading == Some("lazy") {
+                list_deferred_tools(state, authorization, app_scope).await
+            } else {
+                list_tools(state, authorization, app_scope).await
+            };
             transport::json_response(
                 StatusCode::OK,
                 protocol::success_body(&request.id, &json!({ "tools": tools })),
             )
         }
         "tools/call" => {
-            let result = call_tool(state, authorization, app_scope, request.params.as_ref()).await;
+            let result = if loading == Some("lazy") {
+                call_deferred_tool(state, authorization, app_scope, request.params.as_ref()).await
+            } else {
+                call_tool(state, authorization, app_scope, request.params.as_ref()).await
+            };
             transport::json_response(StatusCode::OK, protocol::success_body(&request.id, &result))
         }
         _ => transport::json_response(StatusCode::OK, dispatch(&request)),
@@ -115,6 +124,89 @@ fn connector_capabilities() -> Value {
         "experimental": {},
         "tools": { "listChanged": false },
     })
+}
+
+async fn list_deferred_tools(
+    state: &AppState,
+    authorization: Option<&str>,
+    app_scope: Option<&str>,
+) -> Vec<Value> {
+    let Some(user) = resolve_user(state, authorization).await else {
+        return vec![];
+    };
+    let Ok(rows) = db::list_connector_app_kinds(&state.mysql).await else {
+        return vec![];
+    };
+    let catalog = rows.iter().map(service::row_to_app).collect::<Vec<_>>();
+    let Ok(connected) = service::connected_apps(&state.mysql, &catalog, &user).await else {
+        return vec![];
+    };
+    connected
+        .into_iter()
+        .filter(|app| {
+            app.tool_loading_mode == "lazy" && app_scope.is_none_or(|slug| app.slug == slug)
+        })
+        .flat_map(crate::connector_runtime::loading::deferred_tools)
+        .collect()
+}
+
+async fn call_deferred_tool(
+    state: &AppState,
+    authorization: Option<&str>,
+    app_scope: Option<&str>,
+    params: Option<&Value>,
+) -> Value {
+    use crate::connector_runtime::loading::{CALL_PREFIX, DISCOVER_PREFIX};
+    let name = params
+        .and_then(|p| p.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let (discover, slug) = if let Some(slug) = name.strip_prefix(DISCOVER_PREFIX) {
+        (true, slug)
+    } else if let Some(slug) = name.strip_prefix(CALL_PREFIX) {
+        (false, slug)
+    } else {
+        return failure("Invalid deferred connector tool");
+    };
+    if app_scope.is_some_and(|scope| scope != slug) {
+        return failure("Connector tool is outside this app scope");
+    }
+    if discover {
+        let Some(user) = resolve_user(state, authorization).await else {
+            return failure("Connector user unavailable");
+        };
+        let Some(app) = visible_app(state, &user, slug).await else {
+            return failure("Connector app not found");
+        };
+        if let Err(error) = service::session_headers(&state.mysql, &app, &user).await {
+            return match error {
+                SessionError::AuthorizationRequired => failure(connector_auth_required(slug)),
+                other => failure(other.to_string()),
+            };
+        }
+        let tools = list_tools(state, authorization, Some(slug)).await;
+        if tools.is_empty() {
+            return failure("Connector discovery returned no available tools");
+        }
+        return json!({"content": [{"type": "text", "text": json!({"tools": tools}).to_string()}], "isError": false});
+    }
+    let args = params.and_then(|p| p.get("arguments"));
+    let Some(tool) = args
+        .and_then(|a| a.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+    else {
+        return failure("Connector call requires an upstream tool name");
+    };
+    let Some(arguments) = args
+        .and_then(|a| a.get("arguments"))
+        .filter(|a| a.is_object())
+    else {
+        return failure("Connector call arguments must be an object");
+    };
+    let tool = tool.strip_prefix(&format!("{slug}__")).unwrap_or(tool);
+    let params = json!({"name": format!("{slug}__{tool}"), "arguments": arguments});
+    call_tool(state, authorization, Some(slug), Some(&params)).await
 }
 
 /// `_active_user`: the caller of the task token, when still active.
@@ -195,10 +287,14 @@ where
             }
             continue;
         }
-        let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
-            .await
-            .ok()
-            .flatten();
+        let row = if app.auth_type == "none" {
+            None
+        } else {
+            db::find_connector_connection(mysql, &app.slug, user.users_id)
+                .await
+                .ok()
+                .flatten()
+        };
         let stored = row.as_ref().map(connection::ConnectorConnection::from_row);
         if let Some(cached) = stored
             .as_ref()
@@ -346,7 +442,14 @@ async fn call_tool(
         return match call_http_tool(&app, upstream_name, &arguments, &headers).await {
             HttpToolOutcome::Result(result) => result,
             HttpToolOutcome::Unauthorized(message) => {
-                unauthorized(state, &app, &user, &message, attempted_access).await
+                unauthorized(
+                    &state.mysql,
+                    &app,
+                    user.users_id,
+                    &message,
+                    attempted_access,
+                )
+                .await
             }
         };
     }
@@ -361,7 +464,14 @@ async fn call_tool(
     {
         Ok(call) => success(&call),
         Err(mcp::McpError::Unauthorized(message)) => {
-            unauthorized(state, &app, &user, &message, attempted_access).await
+            unauthorized(
+                &state.mysql,
+                &app,
+                user.users_id,
+                &message,
+                attempted_access,
+            )
+            .await
         }
         Err(error) => {
             tracing::warn!(connector = %app.slug, %error, "connector tool call failed");
@@ -409,22 +519,26 @@ enum HttpToolOutcome {
 /// The upstream rejected a still-unexpired credential: flip the connection to
 /// `expired` so the desktop offers re-authorization, and report the structured
 /// hint the agent is instructed to surface.
-async fn unauthorized(
-    state: &AppState,
+async fn unauthorized<M: brz_mysql::Mysql>(
+    mysql: &M,
     app: &ConnectorApp,
-    user: &UserRow,
+    user_id: i64,
     message: &str,
     attempted_access: Option<String>,
 ) -> Value {
     tracing::warn!(connector = %app.slug, %message, "connector rejected its credential");
-    if let Some(row) = db::find_connector_connection(&state.mysql, &app.slug, user.users_id)
+    if app.auth_type == "none" {
+        // Fixed administrator headers have no user OAuth grant to repair.
+        return failure("Connector upstream rejected administrator credentials or permissions");
+    }
+    if let Some(row) = db::find_connector_connection(mysql, &app.slug, user_id)
         .await
         .ok()
         .flatten()
         && let Some(expected_access) = attempted_access
     {
         let _ = refresh::reject_credential_if_current(
-            &state.mysql,
+            mysql,
             row.kinds_id,
             &expected_access,
             Some(message),
@@ -702,5 +816,24 @@ mod tests {
             value["message"],
             json!("Connector 'erp' requires authorization")
         );
+    }
+
+    #[tokio::test]
+    async fn administrator_credential_rejection_never_requests_user_oauth_or_reads_a_grant() {
+        for transport in ["http", "streamable-http", "sse"] {
+            for status in [401, 403] {
+                let mysql = crate::sql_test_support::KindQueryCapture::default();
+                let mut app = app("records", "static");
+                app.auth_type = "none".to_string();
+                app.transport = transport.to_string();
+                let result =
+                    unauthorized(&mysql, &app, 7, &format!("Upstream status {status}"), None).await;
+                assert_eq!(result["isError"], true);
+                let text = result["content"][0]["text"].as_str().unwrap();
+                assert!(text.contains("administrator credentials or permissions"));
+                assert!(!text.contains("connector_auth_required"));
+                assert!(mysql.queries().is_empty(), "No user grant exists to expire");
+            }
+        }
     }
 }

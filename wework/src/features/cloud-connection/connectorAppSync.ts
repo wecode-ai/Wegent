@@ -82,7 +82,7 @@ export async function synchronizeConnectorApps({
   })
   checkCurrent()
   onConfigured?.({ expiresAtMs, expiresInSeconds: connectorToken.expires_in })
-  const installed = await listWegentInstalledConnectorApps(apiBaseUrl, token)
+  const installed = await listWegentInstalledConnectorApps(apiBaseUrl, token, { compact: true })
   checkCurrent()
   // Guidance for unauthorized apps is additive: a catalog failure must not
   // stop the authorized apps from syncing.
@@ -94,6 +94,7 @@ export async function synchronizeConnectorApps({
       slug: app.slug,
       name: app.runtime_name ?? app.slug,
       description: app.description ?? '',
+      toolLoadingMode: app.tool_loading_mode ?? 'static',
       tools: app.tool_summaries ?? [],
       authorizationRequired: false,
     }))
@@ -111,6 +112,7 @@ export async function synchronizeConnectorApps({
       slug: app.slug,
       name: app.name,
       description: app.description ?? '',
+      toolLoadingMode: app.tool_loading_mode,
       tools: [],
       authorizationRequired: true,
     }))

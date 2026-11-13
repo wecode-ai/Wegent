@@ -882,7 +882,7 @@ spec:
 
 `providerHeadersEncrypted` must be an encrypted JSON string. The administrator API accepts plaintext `provider_headers` and encrypts them before storage; do not commit plaintext API keys, service tokens, or headers in hand-written YAML.
 
-`toolLoadingMode: static` adds the app's tools to the shared `wegent-connectors` MCP. `toolLoadingMode: lazy` creates a `wegent-connector-<slug>` Skill and connects the app only after the Skill is selected, a keyword matches, or the Skill is loaded. Keywords are substring matches; a phrase with spaces requires every word to be present. Existing resources without this field default to `static`; legacy `direct`/`skill` values normalize to `static`/`lazy`.
+`toolLoadingMode: static` adds the app's tools to the shared `wegent-connectors` MCP. In Chat, lazy apps mount their full tool surface through Skill selection, keyword matching, or `load_skill`. Cloud coding shells and desktop retain compact discover/call entries even without matching keywords and load upstream schemas on demand. Explicit document-provider selection mounts its available app. Keywords are substring matches; a phrase with spaces requires every word to be present. Existing resources without this field default to `static`; legacy `direct`/`skill` values normalize to `static`/`lazy`.
 
 ---
 

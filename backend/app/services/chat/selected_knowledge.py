@@ -142,8 +142,9 @@ def activate_provider_native_knowledge(
         if not valid_servers:
             runtime_service = get_mcp_service_by_skill_name(skill_name)
             if runtime_service and runtime_service[1].get("connector_slug"):
-                # Connector-managed services expose tools through the shared
-                # `wegent-connectors` MCP bridge, not a per-skill server.
+                # An explicit provider selection must have its own mounted
+                # app scope; an unrelated/static bridge is not proof of access.
+                invalid_mcp_skills.append(skill_name)
                 continue
             if runtime_service and runtime_service[0]["configuration_mode"] == "user":
                 continue

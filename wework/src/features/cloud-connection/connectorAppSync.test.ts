@@ -122,9 +122,36 @@ describe('synchronizeConnectorApps', () => {
     })
 
     expect(deadlines).toEqual([5_000 + 900_000])
+    expect(mocks.listInstalled).toHaveBeenCalledWith(
+      'https://cloud.example.test/api',
+      'cloud-token',
+      {
+        compact: true,
+      }
+    )
     expect(mocks.request).toHaveBeenCalledWith(
       'runtime.connectors.configure',
       expect.objectContaining({ expiresAtMs: 5_000 + 900_000 })
+    )
+  })
+
+  test('preserves lazy mode across the cloud-to-executor boundary', async () => {
+    const installed = await mocks.listInstalled()
+    installed.apps[0].tool_loading_mode = 'lazy'
+    mocks.listInstalled.mockResolvedValue(installed)
+    await synchronizeConnectorApps({
+      apiBaseUrl: 'https://cloud.example.test/api',
+      token: 'cloud-token',
+      isCurrent: () => true,
+    })
+    expect(mocks.request).toHaveBeenCalledWith(
+      'runtime.connectors.apps.sync',
+      expect.objectContaining({
+        apps: expect.arrayContaining([
+          expect.objectContaining({ slug: 'ready-app', toolLoadingMode: 'lazy' }),
+          expect.objectContaining({ slug: 'pending-app', toolLoadingMode: 'static' }),
+        ]),
+      })
     )
   })
 

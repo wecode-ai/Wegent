@@ -7,6 +7,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -309,8 +310,8 @@ def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> No
     }
 
 
-def test_coding_shell_skips_unmatched_lazy_apps(monkeypatch) -> None:
-    """Lazy apps stay out of a coding shell until the message asks for them."""
+def test_coding_shell_can_discover_unmatched_lazy_apps(monkeypatch) -> None:
+    """An unmatched app keeps a compact, app-scoped discovery entry."""
     builder = TaskRequestBuilder(MagicMock())
     monkeypatch.setattr(
         TaskRequestBuilder,
@@ -330,4 +331,99 @@ def test_coding_shell_skips_unmatched_lazy_apps(monkeypatch) -> None:
         bot_config, user=SimpleNamespace(id=6), auth_token="t", message="写周报"
     )
 
-    assert bot_config["mcp_servers"] == []
+    assert len(bot_config["mcp_servers"]) == 1
+    assert bot_config["mcp_servers"][0]["headers"] == {
+        "Authorization": "Bearer ${{task_token}}",
+        "X-Connector-App": "dingding_log",
+        "X-Connector-Loading": "lazy",
+    }
+
+
+@pytest.mark.parametrize("shell_type", ["Chat", "Codex", "ClaudeCode"])
+def test_selected_provider_mounts_its_authorized_scope_without_keywords(
+    shell_type,
+) -> None:
+    from app.services.chat.selected_knowledge import activate_provider_native_knowledge
+    from app.services.execution.skill_mcp import extract_skill_mcp_servers
+    from shared.models import ExecutionRequest
+
+    skills = [
+        {
+            "name": "dingtalk-docs",
+            "connector_slug": "documents",
+            "connector_available": True,
+        }
+    ]
+    TaskRequestBuilder._attach_selected_connector_skill_servers(
+        skills, ["dingtalk-docs"]
+    )
+    servers = extract_skill_mcp_servers(skills)
+    request = ExecutionRequest(
+        bot=[{"shell_type": shell_type, "mcp_servers": servers}],
+        skill_names=["dingtalk-docs"],
+        skill_configs=skills,
+    )
+    activate_provider_native_knowledge(request, ["dingtalk-docs"])
+    assert request.provider_native_knowledge is True
+    assert len(servers) == 1
+    assert servers[0]["headers"]["X-Connector-App"] == "documents"
+    assert "X-Connector-Loading" not in servers[0]["headers"]
+
+
+def test_available_but_unselected_provider_keeps_its_tools_deferred() -> None:
+    skills = [
+        {
+            "name": "dingtalk-docs",
+            "connector_slug": "documents",
+            "connector_available": True,
+        }
+    ]
+    TaskRequestBuilder._attach_selected_connector_skill_servers(skills, [])
+    assert "mcpServers" not in skills[0]
+
+
+def test_unavailable_selected_provider_does_not_get_a_scoped_server() -> None:
+    skills = [
+        {
+            "name": "dingtalk-docs",
+            "connector_slug": "documents",
+            "connector_available": False,
+        }
+    ]
+    TaskRequestBuilder._attach_selected_connector_skill_servers(
+        skills, ["dingtalk-docs"]
+    )
+    assert "mcpServers" not in skills[0]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_selected_provider_checks_app_availability_not_just_a_user_grant(
+    test_db: Session, test_admin_user: User, test_user: User, enabled: bool
+) -> None:
+    from app.schemas.connector import ConnectorAppUpdate
+
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="dingtalk_docs",
+        auth_type="none",
+        tool_loading_mode="lazy",
+    )
+    if not enabled:
+        connector_app_service.update_app(
+            test_db, app, ConnectorAppUpdate(enabled=False)
+        )
+    skill = SimpleNamespace(
+        id=101,
+        user_id=0,
+        json={
+            "kind": "Skill",
+            "metadata": {"name": "dingtalk-docs", "namespace": "default"},
+            "spec": {"description": "Documents", "prompt": "Use documents."},
+        },
+    )
+    builder = TaskRequestBuilder(test_db)
+    data = builder._build_skill_data(skill, user=test_user)
+    builder._attach_selected_connector_skill_servers([data], ["dingtalk-docs"])
+    assert data["connector_available"] is enabled
+    assert ("mcpServers" in data) is enabled

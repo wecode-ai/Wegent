@@ -1168,7 +1168,7 @@ def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:
 
 
 @pytest.mark.parametrize("shell_type", ["Chat", "Codex", "ClaudeCode"])
-def test_activate_provider_native_knowledge_allows_user_config_guidance(
+def test_activate_provider_native_knowledge_rejects_unmounted_connector(
     shell_type: str,
 ) -> None:
     request = ExecutionRequest(
@@ -1182,9 +1182,11 @@ def test_activate_provider_native_knowledge_allows_user_config_guidance(
         ],
     )
 
-    activate_provider_native_knowledge(request, ["dingtalk-docs"])
-
-    assert request.provider_native_knowledge is True
+    with pytest.raises(HTTPException) as exc_info:
+        activate_provider_native_knowledge(request, ["dingtalk-docs"])
+    assert exc_info.value.status_code == 503
+    assert "no enabled MCP URL" in exc_info.value.detail
+    assert request.provider_native_knowledge is False
 
 
 @pytest.mark.parametrize(

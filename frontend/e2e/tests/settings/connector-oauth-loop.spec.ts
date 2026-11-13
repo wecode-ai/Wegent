@@ -1,6 +1,12 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
+import {
+  configureToolScenario,
+  getScenarioModelBodies,
+  waitForTaskTerminal,
+} from '../../utils/provider-native-test-support'
 import {
   CONNECTOR_OAUTH_ALLOWED_TOOL,
   CONNECTOR_OAUTH_HIDDEN_TOOL,
@@ -444,6 +450,145 @@ test.describe('Connector app OAuth loop', () => {
           headers: authHeaders(adminToken),
         })
         expect(removed.status()).toBe(204)
+      }
+    }
+  })
+
+  test('Chat invokes static and lazy SSE tools without keyword preloading', async ({ request }) => {
+    test.setTimeout(90_000)
+    const slug = `${SLUG}-chat`
+    const resources: Array<{ path: string; status: number }> = []
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => API_URL,
+      getToken: () => adminToken,
+      namespace: '/chat',
+    })
+    const post = async (path: string, data: unknown) => {
+      const response = await request.post(`${API_URL}${path}`, {
+        headers: authHeaders(adminToken),
+        data,
+      })
+      expect(response.status(), await response.text()).toBe(201)
+      return response.json()
+    }
+    try {
+      const app = await post('/api/admin/connector-apps', {
+        slug,
+        name: 'Chat connector protocol fixture',
+        transport: 'sse',
+        mcp_url: `${MOCK_URL}/connector-oauth/sse`,
+        auth_type: 'none',
+        tool_allowlist: [CONNECTOR_OAUTH_ALLOWED_TOOL],
+        keywords: [],
+      })
+      resources.push({ path: `/api/admin/connector-apps/${app.id}`, status: 204 })
+      await post('/api/v1/namespaces/default/models', {
+        kind: 'Model',
+        metadata: { name: slug, namespace: 'default' },
+        spec: {
+          modelConfig: {
+            env: {
+              model: 'openai',
+              model_id: 'mock-connector-chat',
+              api_key: 'mock-api-key',
+              base_url: `${MOCK_URL}/v1`,
+            },
+          },
+        },
+      })
+      resources.push({ path: `/api/v1/namespaces/default/models/${slug}`, status: 200 })
+      const bot = await post('/api/bots', {
+        name: slug,
+        namespace: 'default',
+        shell_name: 'Chat',
+        agent_config: { bind_model: slug, bind_model_type: 'user' },
+        system_prompt: 'Discover and invoke the requested connector tool.',
+      })
+      resources.push({ path: `/api/bots/${bot.id}`, status: 200 })
+      const team = await post('/api/teams', {
+        name: slug,
+        namespace: 'default',
+        bind_mode: ['chat'],
+        requires_workspace: false,
+        bots: [{ bot_id: bot.id, bot_prompt: '', role: 'worker' }],
+      })
+      resources.push({ path: `/api/v1/namespaces/default/teams/${slug}`, status: 200 })
+      await client.ensureConnected()
+      for (const mode of ['static', 'lazy'] as const) {
+        const updated = await request.patch(`${API_URL}/api/admin/connector-apps/${app.id}`, {
+          headers: authHeaders(adminToken),
+          data: { tool_loading_mode: mode },
+        })
+        expect(updated.ok(), await updated.text()).toBe(true)
+        const compact = await request.get(`${API_URL}/api/apps/installed`, {
+          headers: { ...authHeaders(adminToken), 'X-Connector-Loading': 'compact' },
+        })
+        expect(compact.ok(), await compact.text()).toBe(true)
+        const installed = ((await compact.json()) as { apps: InstalledAppView[] }).apps.find(
+          item => item.slug === slug
+        )
+        expect(installed?.callable).toBe(true)
+        if (mode === 'lazy') expect(installed?.tool_summaries).toEqual([])
+        const prompt = `Invoke the connector for ${slug}-${mode}.`
+        const marker = `CHAT_CONNECTOR_COMPLETED_${mode}_${slug}`
+        const load =
+          mode === 'lazy'
+            ? [
+                {
+                  toolCalls: [
+                    {
+                      toolName: 'load_skill',
+                      arguments: { skill_name: `wegent-connector-${slug}` },
+                    },
+                  ],
+                },
+              ]
+            : []
+        await configureToolScenario(request, prompt, [
+          ...load,
+          { toolCalls: [{ toolName: `${slug}__echo`, arguments: { value: prompt } }] },
+          { responseContent: marker },
+        ])
+        const ack = (await client.getRawSocket()!.timeout(10_000).emitWithAck('chat:send', {
+          team_id: team.id,
+          task_type: 'chat',
+          message: prompt,
+        })) as { task_id: number; error?: string }
+        expect(ack.error).toBeUndefined()
+        expect(ack.task_id).toBeGreaterThan(0)
+        resources.push({ path: `/api/tasks/${ack.task_id}`, status: 200 })
+        await waitForTaskTerminal(adminToken, ack.task_id, /^COMPLETED$/)
+        const bodies = await getScenarioModelBodies(request, prompt)
+        expect(bodies.length).toBeGreaterThanOrEqual(mode === 'lazy' ? 3 : 2)
+        if (mode === 'lazy') {
+          expect(JSON.stringify(bodies[0])).not.toContain(`${slug}__echo`)
+          expect(JSON.stringify(bodies[1])).toContain(`${slug}__echo`)
+        } else {
+          expect(JSON.stringify(bodies[0])).toContain(`${slug}__echo`)
+        }
+        const provider = await request.get(`${MOCK_URL}/connector-oauth/_state`)
+        expect(provider.ok(), await provider.text()).toBe(true)
+        const calls = (
+          (await provider.json()) as {
+            toolCalls: Array<{ name: string; arguments: { value?: string } }>
+          }
+        ).toolCalls.filter(call => call.arguments.value === prompt)
+        expect(calls).toEqual([{ name: 'echo', arguments: { value: prompt } }])
+        const task = await request.get(`${API_URL}/api/tasks/${ack.task_id}`, {
+          headers: authHeaders(adminToken),
+        })
+        expect(task.ok(), await task.text()).toBe(true)
+        expect(await task.text()).toContain(marker)
+      }
+    } finally {
+      client.disconnect()
+      for (const resource of resources.reverse()) {
+        const response = await request.delete(`${API_URL}${resource.path}`, {
+          headers: authHeaders(adminToken),
+        })
+        expect(response.status(), `${resource.path}: ${await response.text()}`).toBe(
+          resource.status
+        )
       }
     }
   })

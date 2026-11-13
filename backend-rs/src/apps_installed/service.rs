@@ -533,12 +533,20 @@ pub async fn installed_apps<M>(
     mysql: &M,
     apps: &[ConnectorApp],
     user: &UserRow,
+    compact: bool,
 ) -> MysqlResult<InstalledResponse>
 where
     M: Mysql,
 {
     // `_tool_summaries_by_app` runs discovery before the projection loop.
-    let tools = list_tools(mysql, apps, user).await?;
+    // Desktop synchronization must not contact lazy upstreams before an
+    // agent requests discovery. Settings keep the full directory by default.
+    let discovery_apps = apps
+        .iter()
+        .filter(|app| !compact || app.tool_loading_mode != "lazy")
+        .cloned()
+        .collect::<Vec<_>>();
+    let tools = list_tools(mysql, &discovery_apps, user).await?;
     let tools_by_app: HashMap<String, Vec<ToolSummary>> = tools
         .into_iter()
         .map(|(slug, tools)| {
@@ -572,7 +580,7 @@ where
                 .map(ConnectorConnection::from_row)
         };
         let live_tools = tools_by_app.get(app.slug.as_str()).map(Vec::as_slice);
-        if let Some(item) = installed_app_projection(app, stored.as_ref(), live_tools) {
+        if let Some(item) = installed_app_projection(app, stored.as_ref(), live_tools, compact) {
             items.push(item);
         }
     }
@@ -588,6 +596,7 @@ fn installed_app_projection(
     app: &ConnectorApp,
     stored: Option<&ConnectorConnection>,
     live_tools: Option<&[ToolSummary]>,
+    compact: bool,
 ) -> Option<InstalledApp> {
     let connection = if app.auth_type == "none" {
         connected_no_auth()
@@ -612,14 +621,22 @@ fn installed_app_projection(
                 .is_some_and(|name| app.tool_allowlist.contains(name))
         });
     }
-    let callable = connected && !app_tools.is_empty();
+    let deferred = compact && app.tool_loading_mode == "lazy";
+    let callable = if deferred {
+        app.auth_type == "none" || connection::is_usable(stored)
+    } else {
+        connected && !app_tools.is_empty()
+    };
+    if deferred {
+        app_tools.clear();
+    }
     Some(InstalledApp {
         id: app.slug.clone(),
         slug: app.slug.clone(),
         name: app.name.clone(),
         description: app.description.clone(),
         icon_url: app.icon_url.clone(),
-        runtime_name: (!app_tools.is_empty()).then(|| app.name.clone()),
+        runtime_name: (callable || !app_tools.is_empty()).then(|| app.name.clone()),
         enabled: app.enabled,
         callable,
         connection,

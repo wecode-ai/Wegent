@@ -92,9 +92,13 @@ where
         }
         // `_upstream_tools` wraps `_server_config` and session failures into a
         // 502 `HTTPException`, which `list_tools` skips.
-        let row = db::find_connector_connection(mysql, &app.slug, user.users_id)
-            .await
-            .map_err(|_| FastApiError::internal())?;
+        let row = if app.auth_type == "none" {
+            None
+        } else {
+            db::find_connector_connection(mysql, &app.slug, user.users_id)
+                .await
+                .map_err(|_| FastApiError::internal())?
+        };
         let (headers, attempted_access) = match apps::session_headers(mysql, app, user).await {
             Ok(headers) => headers,
             Err(error) => {
