@@ -33,6 +33,7 @@ const KEY_TYPE_SERVICE: &str = "service";
 struct ApiKeyRow {
     id: i32,
     user_id: i32,
+    name: String,
     key_type: String,
     /// `DATETIME` decoded as the driver's datetime type; compared against
     /// the current naive-UTC timestamp like the source.
@@ -45,6 +46,7 @@ impl ApiKeyRow {
         Ok(Self {
             id: row.get_required("api_keys_id")?,
             user_id: row.get_required("api_keys_user_id")?,
+            name: row.get_required("api_keys_name")?,
             key_type: row.get_required("api_keys_key_type")?,
             expires_at: row.get_required("api_keys_expires_at")?,
         })
@@ -163,6 +165,10 @@ fn api_key_expired(expires_at: chrono::NaiveDateTime) -> bool {
 /// immediately in [`get_current_user_flexible`].
 pub(crate) struct AuthenticatedKey {
     pub api_key_id: i64,
+    /// The `api_keys.name` selected during authentication. The create path
+    /// keeps this value even when it defers the source's post-commit refresh,
+    /// so a newly provisioned service user records the same key marker and
+    /// Task label as the source.
     pub api_key_name: Option<String>,
     /// Hex SHA-256 of the presented key, reused by the Wework endpoint's
     /// second personal-key verification.
@@ -279,9 +285,12 @@ pub(crate) async fn authenticate_api_key(
         .transpose()
         .map_err(AuthError::dependency)?;
 
-    // `AuthContext.api_key_name` is `api_key_record.name`; `create_response`
-    // writes it into the Task CRD's `metadata.labels.api_key_name`.
-    let api_key_name = reload.map(|row| row.name);
+    // `AuthContext.api_key_name` is `api_keys.name`, and `create_response`
+    // writes it into the Task CRD's `metadata.labels.api_key_name`. Keep the
+    // value from authentication even when the post-commit refresh is deferred;
+    // the create path still performs the refresh for its deleted-key failure
+    // semantics.
+    let api_key_name = reload.map(|row| row.name).or(Some(record.name));
 
     if record.key_type == KEY_TYPE_PERSONAL {
         return Ok(AuthenticatedKey {
@@ -460,66 +469,16 @@ fn require_active_user(
     }
 }
 
-/// The by-name lookup outcome: an inactive user is `UserInactive`.
-fn by_name_user_fields(
-    user: Option<UserRecord>,
-    target_username: &str,
-) -> Result<(i32, String, serde_json::Value, String), AuthError> {
-    match user {
-        Some(user) if !user.is_active => Err(AuthError::UserInactive(target_username.to_string())),
-        Some(user) => Ok(user_fields(&user)),
-        None => Err(AuthError::UserNotFoundOrInactive),
-    }
-}
-
-/// `cached_user_by_id` + the personal-key outcome: a miss or an inactive owner
-/// is `UserNotFoundOrInactive`.
-pub(super) async fn resolve_personal_user(
-    user_reader: &dyn UserByIdReader,
-    user_id: i64,
-) -> Result<(i32, String, serde_json::Value, String), AuthError> {
-    require_active_user(cached_user_by_id(user_reader, user_id).await?)
-}
-
-/// `cached_user_by_name` + the service-key outcomes: an inactive user is
-/// `UserInactive`, and an unknown one repeats the source's follow-up read
-/// (the source auto-creates the user; the replay has no write and re-selects).
-pub(super) async fn resolve_service_user(
-    user_reader: &dyn UserByIdReader,
-    mysql: &brz_mysql::MysqlService,
-    target_username: &str,
-) -> Result<(i32, String, serde_json::Value, String), AuthError> {
-    if let Some(user) = cached_user_by_name(user_reader, target_username).await? {
-        return by_name_user_fields(Some(user), target_username);
-    }
-    let created: Option<brz_mysql::MysqlRow> = mysql
-        .fetch_optional(&user_by_name_literal(target_username), ())
-        .await
-        .map_err(AuthError::dependency)?;
-    let created = created
-        .as_ref()
-        .map(UserRecord::from_mysql_row)
-        .transpose()
-        .map_err(AuthError::dependency)?;
-    require_active_user(created)
-}
-
 /// The `users` row an authenticated API key still needs, read on the caller's
 /// request transaction.
-///
-/// `POST /api/v1/responses` records this read inside the session transaction
-/// (`get_auth_context` calls `userReader` with the request's session), so the
-/// extractor must not resolve it on a pooled connection first. The read still
-/// goes through the deployment's reader, including its cache: only the SQL the
-/// reader issues on a cache miss moves onto `sql`.
 pub(crate) async fn resolve_authenticated_key_on(
     user_reader: &dyn UserByIdReader,
     sql: &mut dyn RequestSql,
     key: AuthenticatedKey,
 ) -> Result<super::CurrentUser, AuthError> {
-    let (id, user_name, git_info, preferences) = match &key.lookup {
-        UserLookup::ById(user_id) => personal_user_on(user_reader, sql, *user_id).await?,
-        UserLookup::ByName(user_name) => service_user_on(user_reader, sql, user_name).await?,
+    let (id, user_name, git_info, preferences) = match key.lookup {
+        UserLookup::ById(user_id) => personal_user_on(user_reader, sql, user_id).await?,
+        UserLookup::ByName(user_name) => service_user_on(user_reader, sql, &user_name).await?,
     };
     Ok(super::CurrentUser {
         id,
@@ -552,8 +511,8 @@ async fn service_user_on(
         .get_by_name_on(sql, target_username)
         .await
         .map_err(super::reader_failure)?;
-    if found.is_some() {
-        return by_name_user_fields(found, target_username);
+    if let Some(user) = found {
+        return by_name_user_fields(Some(user), target_username);
     }
     let created = sql
         .fetch_optional_row(
@@ -561,6 +520,49 @@ async fn service_user_on(
             &user_by_name_literal(target_username),
             Vec::new(),
         )
+        .await
+        .map_err(AuthError::dependency)?;
+    let created = created
+        .as_ref()
+        .map(UserRecord::from_mysql_row)
+        .transpose()
+        .map_err(AuthError::dependency)?;
+    require_active_user(created)
+}
+
+/// The by-name lookup outcome: an inactive user is `UserInactive`.
+fn by_name_user_fields(
+    user: Option<UserRecord>,
+    target_username: &str,
+) -> Result<(i32, String, serde_json::Value, String), AuthError> {
+    match user {
+        Some(user) if !user.is_active => Err(AuthError::UserInactive(target_username.to_string())),
+        Some(user) => Ok(user_fields(&user)),
+        None => Err(AuthError::UserNotFoundOrInactive),
+    }
+}
+
+/// `cached_user_by_id` + the personal-key outcome: a miss or an inactive owner
+/// is `UserNotFoundOrInactive`.
+pub(super) async fn resolve_personal_user(
+    user_reader: &dyn UserByIdReader,
+    user_id: i64,
+) -> Result<(i32, String, serde_json::Value, String), AuthError> {
+    require_active_user(cached_user_by_id(user_reader, user_id).await?)
+}
+
+/// `cached_user_by_name` + the service-key outcome: an inactive user is
+/// `UserInactive`, and an unknown user is `UserNotFoundOrInactive`.
+pub(super) async fn resolve_service_user(
+    user_reader: &dyn UserByIdReader,
+    mysql: &brz_mysql::MysqlService,
+    target_username: &str,
+) -> Result<(i32, String, serde_json::Value, String), AuthError> {
+    if let Some(user) = cached_user_by_name(user_reader, target_username).await? {
+        return by_name_user_fields(Some(user), target_username);
+    }
+    let created: Option<brz_mysql::MysqlRow> = mysql
+        .fetch_optional(&user_by_name_literal(target_username), ())
         .await
         .map_err(AuthError::dependency)?;
     let created = created
