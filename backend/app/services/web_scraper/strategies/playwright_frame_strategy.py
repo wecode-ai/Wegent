@@ -5,9 +5,13 @@
 """Playwright frame extraction fallback strategy."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.web_scraper.browser_security import (
+    BrowserNavigation,
+    install_browser_guard,
+)
 from app.services.web_scraper.markdown.cleaner import MarkdownCleaner
 from app.services.web_scraper.markdown.html_to_markdown import HtmlToMarkdownConverter
 from app.services.web_scraper.models import InternalScrapeResult, SourcePart
@@ -48,6 +52,7 @@ class PlaywrightResources:
     browser: Any = None
     context: Any = None
     page: Any = None
+    navigation: BrowserNavigation = field(default_factory=BrowserNavigation)
 
 
 class PlaywrightFrameExtractionStrategy:
@@ -170,6 +175,7 @@ class PlaywrightFrameExtractionStrategy:
             await self._close_quietly(resources.page)
             await self._close_quietly(resources.context)
             await self._close_quietly(resources.browser)
+            resources.navigation.raise_if_blocked()
 
     async def _perform_playwright_scrape(
         self,
@@ -188,16 +194,21 @@ class PlaywrightFrameExtractionStrategy:
 
         resources.browser = await playwright.chromium.launch(**launch_kwargs)
         resources.context = await resources.browser.new_context(
-            **self._context_kwargs(profile)
+            **self._context_kwargs(profile), service_workers="block"
         )
-        await self._install_guard_route(resources.context, guard)
+        installed = await install_browser_guard(resources.context, guard)
 
         resources.page = await resources.context.new_page()
-        response = await resources.page.goto(
-            url,
-            wait_until=self._normalize_wait_until(policy.wait_until),
-            timeout=policy.page_timeout_ms,
-        )
+        navigation = resources.navigation
+        await installed.begin_navigation(resources.context, resources.page, navigation)
+        try:
+            response = await resources.page.goto(
+                url,
+                wait_until=self._normalize_wait_until(policy.wait_until),
+                timeout=policy.page_timeout_ms,
+            )
+        finally:
+            navigation.raise_if_blocked()
         guard.validate_final_url(url, resources.page.url)
 
         if policy.wait_for:
@@ -213,6 +224,7 @@ class PlaywrightFrameExtractionStrategy:
             await self._scroll_frame(resources.page)
 
         source_parts = await self._extract_source_parts(resources.page, policy, guard)
+        navigation.raise_if_blocked()
         page_title = await resources.page.title()
         markdown = self._combine_source_parts(
             page_title=page_title,
@@ -237,17 +249,6 @@ class PlaywrightFrameExtractionStrategy:
             quality_level=quality_level,
             source_parts=source_parts,
         )
-
-    async def _install_guard_route(
-        self, context: Any, guard: WebScraperUrlGuard
-    ) -> None:
-        async def guard_route(route: Any, request: Any) -> None:
-            if guard.is_allowed_fetch_url(request.url):
-                await route.continue_()
-            else:
-                await route.abort()
-
-        await context.route("**/*", guard_route)
 
     async def _extract_source_parts(
         self,

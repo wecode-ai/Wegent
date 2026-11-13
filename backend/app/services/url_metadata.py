@@ -68,7 +68,7 @@ def _is_host_blocked(hostname: str) -> bool:
     Performs DNS resolution and validates all resolved IPs.
     """
     # Check against blocked hostnames
-    hostname_lower = hostname.lower()
+    hostname_lower = hostname.lower().rstrip(".")
     for blocked_host in BLOCKED_HOSTS:
         if hostname_lower == blocked_host or hostname_lower.endswith(
             "." + blocked_host
@@ -108,23 +108,25 @@ def _validate_url_for_ssrf(url: str) -> bool:
     """
     try:
         parsed = urlparse(url)
+        # Reject malformed and out-of-range ports before resolving the host.
+        _ = parsed.port
 
         # Only allow http and https schemes
         if parsed.scheme not in ("http", "https"):
-            logger.warning(f"Blocked URL with invalid scheme: {url}")
+            logger.warning("Blocked URL with invalid scheme: %s", parsed.scheme)
             return False
 
         # Get hostname
         hostname = parsed.hostname
         if not hostname:
-            logger.warning(f"Blocked URL with no hostname: {url}")
+            logger.warning("Blocked URL with no hostname")
             return False
 
         # Check if hostname is an IP address
         try:
             ip = ipaddress.ip_address(hostname)
             if _is_ip_blocked(str(ip)):
-                logger.warning(f"Blocked URL with internal IP: {url}")
+                logger.warning("Blocked URL with internal IP: %s", hostname)
                 return False
         except ValueError:
             # Not an IP address, it's a hostname - resolve it
@@ -133,5 +135,5 @@ def _validate_url_for_ssrf(url: str) -> bool:
 
         return True
     except Exception as e:
-        logger.warning(f"Error validating URL {url}: {e}")
+        logger.warning("Error validating URL: %s", type(e).__name__)
         return False

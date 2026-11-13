@@ -889,6 +889,25 @@ jobs:
         if: matrix.dingtalkOAuth
         run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
+      - name: Verify browser scraper request security
+        if: matrix.dingtalkOAuth
+        timeout-minutes: 3
+        working-directory: ./backend
+        env:
+          PYTHONPATH: ..:.
+          HTTP_PROXY: ""
+          HTTPS_PROXY: ""
+          ALL_PROXY: ""
+          NO_PROXY: "11.255.255.254,11.255.255.253,127.0.0.1,localhost"
+        run: |
+          # Reuse the existing NET_ADMIN shard and its public-IP fixture.
+          ip addr add 11.255.255.253/32 dev lo
+          trap 'ip addr del 11.255.255.253/32 dev lo' EXIT
+          E2E_CHROMIUM_EXECUTABLE="$(find /ms-playwright -type f -name chrome -perm -111 -print -quit)"
+          test -n "$E2E_CHROMIUM_EXECUTABLE"
+          export E2E_CHROMIUM_EXECUTABLE
+          uv run --no-sync python e2e_checks/web_scraper_network.py
+
       - name: Start backend server
         env:
           PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.:tests/e2e', github.workspace) || '..:.:tests/e2e' }}

@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 import httpx
 
+from app.services.web_scraper.browser_security import BrowserNavigation
 from app.services.web_scraper.classifier import ScrapeResultClassifier
 from app.services.web_scraper.models import (
     ERROR_SSRF_BLOCKED,
@@ -179,7 +180,12 @@ class Crawl4AIScrapeStrategy:
             await self._validate_redirect_chain(url, proxy_plan, guard, use_proxy)
             crawler = await self._crawler_provider()
             run_config = self._build_run_config(policy, profile, proxy_config)
-            result = await crawler.arun(url=url, config=run_config)
+            navigation = BrowserNavigation()
+            run_config._wegent_navigation = navigation
+            try:
+                result = await crawler.arun(url=url, config=run_config)
+            finally:
+                navigation.raise_if_blocked()
             return self._to_internal_result(url, result, guard)
         except WebScraperSecurityError as exc:
             return InternalScrapeResult(
@@ -274,7 +280,11 @@ class Crawl4AIScrapeStrategy:
     ) -> InternalScrapeResult:
         metadata = result.metadata or {}
         headers = getattr(result, "response_headers", None) or {}
-        final_url = str(result.url) if getattr(result, "url", None) else original_url
+        final_url = str(
+            getattr(result, "redirected_url", None)
+            or getattr(result, "url", None)
+            or original_url
+        )
         guard.validate_final_url(original_url, final_url)
 
         return InternalScrapeResult(

@@ -95,3 +95,49 @@ def test_redact_url_for_logging_removes_secrets() -> None:
     )
 
     assert redacted == "https://example.com:8443/path?<redacted>#<redacted>"
+
+
+@pytest.mark.parametrize("port", ["70000", "not-a-port", "-1"])
+def test_invalid_ports_are_blocked_before_dns(
+    monkeypatch: pytest.MonkeyPatch, port: str
+) -> None:
+    from unittest.mock import Mock
+
+    from app.services import url_metadata
+
+    dns = Mock(return_value=[])
+    monkeypatch.setattr(url_metadata.socket, "getaddrinfo", dns)
+    assert not url_metadata._validate_url_for_ssrf(
+        f"https://example.com:{port}/?secret=token"
+    )
+    dns.assert_not_called()
+
+
+def test_blocked_hostname_with_trailing_dot_does_not_rely_on_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import Mock
+
+    from app.services import url_metadata
+
+    dns = Mock(return_value=[])
+    monkeypatch.setattr(url_metadata.socket, "getaddrinfo", dns)
+    assert not url_metadata._validate_url_for_ssrf("https://metadata.google.internal./")
+    dns.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd?secret=token",
+        "http://127.0.0.1/?secret=token",
+        "https://:invalid/?secret=token",
+    ],
+)
+def test_validation_logs_do_not_include_url_secrets(
+    caplog: pytest.LogCaptureFixture, url: str
+) -> None:
+    from app.services.url_metadata import _validate_url_for_ssrf
+
+    assert not _validate_url_for_ssrf(url)
+    assert "secret=token" not in caplog.text

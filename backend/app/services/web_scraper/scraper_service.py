@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.services.web_scraper.browser_security import configure_crawler_security
 from app.services.web_scraper.classifier import ScrapeResultClassifier
 from app.services.web_scraper.models import (
     ERROR_AUTH_REQUIRED,
@@ -154,6 +155,7 @@ class WebScraperService:
                 extra_args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
             crawler = AsyncWebCrawler(config=browser_config)
+            configure_crawler_security(crawler, self._guard)
             try:
                 await crawler.start()
             except Exception:
