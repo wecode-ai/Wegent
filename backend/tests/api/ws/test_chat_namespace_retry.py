@@ -24,6 +24,14 @@ from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
 
 
+@pytest.fixture(autouse=True)
+def chat_shell_type(monkeypatch):
+    # Keep this unit boundary independent of other modules' import order.
+    monkeypatch.setattr(
+        chat_namespace, "get_team_first_bot_shell_type", Mock(return_value="Chat")
+    )
+
+
 def test_retry_restores_image_generation_size() -> None:
     user_subtask = SimpleNamespace(
         result={"image_config": {"model": "gpt-image", "size": "1512x648"}}
@@ -145,7 +153,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
@@ -166,6 +174,9 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     assert task.json["metadata"]["labels"] == {}
     mock_task_store.update_json.assert_called_once_with(
         db, task=task, payload=task.json
@@ -207,7 +218,7 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
@@ -227,6 +238,9 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     mock_trigger.assert_awaited_once()
 
 
@@ -237,7 +251,7 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
     namespace._check_token_expiry = AsyncMock(return_value=False)
 
     db = _RetryDbMock(user=SimpleNamespace(id=1))
-    assistant_subtask = SimpleNamespace(id=42)
+    assistant_subtask = SimpleNamespace(id=42, answer_generation_id="a" * 32)
     dispatch_args = {
         "task": SimpleNamespace(id=100),
         "assistant_subtask": assistant_subtask,
@@ -375,7 +389,7 @@ async def test_chat_retry_restores_persisted_video_generation_params():
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch(
             "app.api.ws.chat_namespace.extract_display_prompt",
             return_value="Generate a video",
@@ -399,6 +413,9 @@ async def test_chat_retry_restores_persisted_video_generation_params():
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     generate_params = mock_trigger.await_args.kwargs["payload"].generate_params
     assert generate_params.resolution == "1080p"
     assert generate_params.ratio == "16:9"
@@ -449,7 +466,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
             "app.api.ws.chat_namespace.fetch_retry_context",
             return_value=(failed_ai_subtask, task, team, user_subtask),
         ),
-        patch("app.api.ws.chat_namespace.reset_subtask_for_retry"),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
         patch("app.api.ws.chat_namespace.extract_display_prompt", return_value="Hello"),
         patch("app.api.ws.chat_namespace.get_device_id", return_value=None),
         patch(
@@ -470,6 +487,9 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
         )
 
     assert result == {"success": True}
+    mock_reset.assert_called_once_with(
+        db, failed_ai_subtask, task, protect_attempt=True
+    )
     assert task.json["metadata"]["labels"] == {
         "modelId": "new-model",
         "forceOverrideBotModel": "true",
@@ -535,3 +555,42 @@ async def test_chat_retry_rejects_running_subtask_without_dispatching():
     assert result == {"error": "Cannot retry subtask in RUNNING state"}
     mock_reset.assert_not_called()
     mock_trigger.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_preparation_and_session_lifecycle_do_not_block_loop(
+    monkeypatch,
+):
+    import asyncio
+    import threading
+
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    release = threading.Event()
+    threads = {}
+    db = Mock()
+    db.rollback.side_effect = lambda: threads.update(rollback=threading.get_ident())
+    db.close.side_effect = lambda: threads.update(close=threading.get_ident())
+
+    def create_session():
+        threads["create"] = threading.get_ident()
+        return db
+
+    def prepare(*args):
+        threads["prepare"] = threading.get_ident()
+        loop.call_soon_threadsafe(release.set)
+        assert release.wait(1), "retry preparation blocked the event loop"
+        return {"error": "prepared without blocking"}
+
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+    monkeypatch.setattr(chat_namespace, "SessionLocal", create_session)
+    monkeypatch.setattr(chat_namespace, "_prepare_chat_retry_dispatch", prepare)
+    monkeypatch.setattr(chat_namespace, "can_access_task", AsyncMock(return_value=True))
+
+    result = await namespace.on_chat_retry("sid", {"task_id": 100, "subtask_id": 42})
+
+    assert result == {"error": "prepared without blocking"}
+    assert threads["prepare"] != loop_thread
+    assert set(threads.values()) == {threads["prepare"]}

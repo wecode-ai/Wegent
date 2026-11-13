@@ -892,5 +892,14 @@
     "wikispaceNotConfigured": "同步需要同时配置钉钉知识库 MCP 和钉钉文档 MCP",
     "wikispaceLastSynced": "上次同步: {{time}}",
     "wikispaceNeverSynced": "从未同步"
+  },
+  "evidence": {
+    "title": "回答时的证据片段",
+    "unavailable": "证据不可用",
+    "close": "关闭",
+    "read_failed": "证据读取失败，请关闭后重试",
+    "loading": "正在读取证据…",
+    "open_original": "打开当前原文",
+    "original_failed": "当前原文读取失败，请重试"
   }
 }

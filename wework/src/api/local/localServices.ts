@@ -3884,12 +3884,15 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     }
   ) => {
     const startedAt = performance.now()
+    const traceId = createModelLoadingTrace()
     const tracePhase = (phase: string) => {
       if (data.command_key !== 'home_dir' && data.command_key !== 'ls_dirs') return
+      const elapsedMs = Math.round(performance.now() - startedAt)
+      logModelLoading(traceId, `directory.${data.command_key}.${phase}`, { elapsedMs })
       console.debug('[Wework] Device directory command phase', {
         commandKey: data.command_key,
         phase,
-        elapsedMs: Math.round(performance.now() - startedAt),
+        elapsedMs,
       })
     }
     try {

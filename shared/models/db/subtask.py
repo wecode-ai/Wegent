@@ -24,7 +24,7 @@ class Subtask(Base):
 
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True, index=True)
     user_id = Column(Integer, nullable=False)
-    task_id = Column(big_integer_id_type(), nullable=False)
+    task_id = Column(big_integer_id_type(), nullable=False, index=True)
     team_id = Column(Integer, nullable=False)
     title = Column(String(256), nullable=False)
     bot_ids = Column(JSON, nullable=False)
@@ -39,6 +39,7 @@ class Subtask(Base):
         SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING
     )
     progress = Column(Integer, nullable=False, default=0)
+    answer_generation_id = Column(String(32), nullable=True)
     result = Column(JSON)
     error_message = Column(Text)
     created_at = Column(DateTime, default=func.now())

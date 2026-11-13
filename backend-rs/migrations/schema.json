@@ -1,5 +1,5 @@
 {
-  "revision": "f3a7c9e1b2d4",
+  "revision": "a91e7c42d803",
   "tables": [
     {
       "table": "background_executions",
@@ -335,8 +335,9 @@
     {
       "table": "subtasks",
       "statements": [
-        "CREATE TABLE subtasks (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\ttask_id BIGINT NOT NULL, \n\tteam_id INTEGER NOT NULL, \n\ttitle VARCHAR(256) NOT NULL, \n\tbot_ids JSON NOT NULL, \n\t`role` ENUM('USER','ASSISTANT') NOT NULL, \n\texecutor_namespace VARCHAR(100), \n\texecutor_name VARCHAR(100), \n\texecutor_deleted_at BOOL NOT NULL, \n\tprompt TEXT, \n\tmessage_id INTEGER NOT NULL, \n\tparent_id BIGINT, \n\tstatus ENUM('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED','DELETE','PENDING_CONFIRMATION') NOT NULL, \n\tprogress INTEGER NOT NULL, \n\tresult JSON, \n\terror_message TEXT, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tcompleted_at DATETIME NOT NULL, \n\tsender_type VARCHAR(20) NOT NULL, \n\tsender_user_id INTEGER NOT NULL, \n\treply_to_subtask_id BIGINT NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
-        "CREATE INDEX ix_subtasks_id ON subtasks (id)"
+        "CREATE TABLE subtasks (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tuser_id INTEGER NOT NULL, \n\ttask_id BIGINT NOT NULL, \n\tteam_id INTEGER NOT NULL, \n\ttitle VARCHAR(256) NOT NULL, \n\tbot_ids JSON NOT NULL, \n\t`role` ENUM('USER','ASSISTANT') NOT NULL, \n\texecutor_namespace VARCHAR(100), \n\texecutor_name VARCHAR(100), \n\texecutor_deleted_at BOOL NOT NULL, \n\tprompt TEXT, \n\tmessage_id INTEGER NOT NULL, \n\tparent_id BIGINT, \n\tstatus ENUM('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED','DELETE','PENDING_CONFIRMATION') NOT NULL, \n\tprogress INTEGER NOT NULL, \n\tanswer_generation_id VARCHAR(32), \n\tresult JSON, \n\terror_message TEXT, \n\tcreated_at DATETIME, \n\tupdated_at DATETIME, \n\tcompleted_at DATETIME NOT NULL, \n\tsender_type VARCHAR(20) NOT NULL, \n\tsender_user_id INTEGER NOT NULL, \n\treply_to_subtask_id BIGINT NOT NULL, \n\tPRIMARY KEY (id)\n)CHARSET=utf8mb4 ENGINE=InnoDB COLLATE utf8mb4_unicode_ci",
+        "CREATE INDEX ix_subtasks_id ON subtasks (id)",
+        "CREATE INDEX ix_subtasks_task_id ON subtasks (task_id)"
       ]
     },
     {
@@ -465,6 +466,12 @@
         "CREATE INDEX ix_wiki_contents_generation_id ON wiki_contents (generation_id)",
         "CREATE INDEX ix_wiki_contents_id ON wiki_contents (id)",
         "CREATE INDEX ix_wiki_contents_type ON wiki_contents (type)"
+      ]
+    },
+    {
+      "table": "knowledge_citations",
+      "statements": [
+        "CREATE TABLE knowledge_citations (\n\tid BIGINT NOT NULL AUTO_INCREMENT, \n\tknowledge_base_id INTEGER NOT NULL, \n\tdocument_id INTEGER NOT NULL, \n\ttitle VARCHAR(1024) NOT NULL, \n\tcontent VARCHAR(5000) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tcaller_context JSON NOT NULL, \n\tsource_chunk_id VARCHAR(255) NOT NULL DEFAULT '', \n\tcreated_at DATETIME NOT NULL DEFAULT now(), \n\tPRIMARY KEY (id)\n)ENGINE=InnoDB CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci"
       ]
     }
   ]

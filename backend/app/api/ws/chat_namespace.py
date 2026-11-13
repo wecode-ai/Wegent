@@ -76,6 +76,10 @@ from app.services.chat.operations import (
 )
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
+from app.services.chat.storage.answer_attempt import (
+    ANSWER_SAVE_UNCONFIRMED_MESSAGE,
+    AnswerSaveResult,
+)
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.task_device_resolution import (
     resolve_chat_task_device_id,
@@ -173,7 +177,8 @@ async def _finalize_failed_ai_trigger(
     assistant_subtask_id: int,
     error_message: str,
     error_code: str,
-) -> None:
+    generation_id: str | None = None,
+) -> AnswerSaveResult:
     """Persist a failed async AI trigger so follow-up messages are not blocked."""
     final_result = await collect_completed_result(
         assistant_subtask_id,
@@ -181,7 +186,9 @@ async def _finalize_failed_ai_trigger(
         error_message=error_message,
         error_code=error_code,
     )
-    await persist_completed_result(
+    return await persist_completed_result(
+        generation_id=generation_id,
+        expected_status="PENDING",
         subtask_id=assistant_subtask_id,
         task_id=task_id,
         status="FAILED",
@@ -1232,6 +1239,19 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # retrieve both attachments and knowledge bases from the
                 # user_subtask's associated contexts.
 
+                accepted_generation_id = None
+                if (
+                    not params.device_id
+                    and get_team_first_bot_shell_type(db, team) == "Chat"
+                ):
+                    from app.services.chat.storage.answer_attempt import (
+                        accept_answer_attempt,
+                    )
+
+                    accepted_generation_id = accept_answer_attempt(
+                        db, assistant_subtask
+                    )
+
                 # Refresh objects to load all attributes before making them transient
                 # This ensures all lazy-loaded attributes are loaded from the database
                 db.refresh(task)
@@ -1243,6 +1263,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 make_transient(task)
                 make_transient(team)
                 make_transient(assistant_subtask)
+                assistant_subtask.answer_generation_id = accepted_generation_id
                 make_transient(user)
 
                 # Extract user_subtask_id and device_id before closing session
@@ -1291,10 +1312,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                         error_code = classify_error(e)
                         error_message = format_error_message(e)
 
+                        persisted = AnswerSaveResult.UNCONFIRMED
                         try:
-                            await _finalize_failed_ai_trigger(
+                            persisted = await _finalize_failed_ai_trigger(
                                 task_id=task.id,
                                 assistant_subtask_id=assistant_subtask.id,
+                                generation_id=assistant_subtask.answer_generation_id,
                                 error_message=error_message,
                                 error_code=error_code,
                             )
@@ -1307,6 +1330,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                                 finalize_error,
                                 exc_info=True,
                             )
+
+                        if persisted is AnswerSaveResult.REJECTED:
+                            return
+                        if persisted is AnswerSaveResult.UNCONFIRMED:
+                            error_message = ANSWER_SAVE_UNCONFIRMED_MESSAGE
+                            error_code = "answer_save_unconfirmed"
 
                         # Emit error to frontend so user sees the failure
                         await self.emit(
@@ -1499,6 +1528,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 bot=[{"shell_type": payload.shell_type or "Chat"}],
                 user={"id": user_id},
                 executor_name=executor_name,
+                answer_generation_id=subtask_info["answer_generation_id"],
             )
 
             logger.info(
@@ -1508,10 +1538,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"executor_name={executor_name}"
             )
 
-            await run_sync_in_executor(
+            accepted_cancel = await run_sync_in_executor(
                 _mark_task_and_board_cancelling,
                 payload.subtask_id,
+                subtask_info["answer_generation_id"],
             )
+
+            if not accepted_cancel:
+                return {"error": "Answer attempt is no longer cancellable"}
 
             # Deliver the cancellation intent. Terminal status remains owned by
             # the Runtime callback rather than this request path.
@@ -1530,7 +1564,9 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             if not await is_stream_alive(subtask_info["task_id"], payload.subtask_id):
                 finalized_subtask_ids = await run_sync_in_executor(
-                    _finalize_stuck_cancellation, payload.subtask_id
+                    _finalize_stuck_cancellation,
+                    payload.subtask_id,
+                    subtask_info["answer_generation_id"],
                 )
                 if finalized_subtask_ids is not None:
                     await publish_task_cancelled_events(
@@ -1691,9 +1727,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Access denied"}
 
-        db = SessionLocal()
         try:
-            dispatch_args_or_error = _prepare_chat_retry_dispatch(db, payload, user_id)
+            dispatch_args_or_error = await run_sync_in_executor(
+                _prepare_chat_retry_with_session, payload, user_id
+            )
         except ValueError as e:
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
@@ -1722,9 +1759,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 else f"Internal server error: {str(e)}"
             )
             return {"error": error_msg}
-        finally:
-            db.rollback()
-            db.close()
 
         if "error" in dispatch_args_or_error:
             return dispatch_args_or_error
@@ -1744,12 +1778,18 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
             try:
-                await _finalize_failed_ai_trigger(
-                    task_id=payload.task_id,
-                    assistant_subtask_id=dispatch_args_or_error["assistant_subtask"].id,
-                    error_message=format_error_message(e),
-                    error_code=classify_error(e),
-                )
+                if not getattr(e, "_frontend_error_emitted", False):
+                    await _finalize_failed_ai_trigger(
+                        task_id=payload.task_id,
+                        assistant_subtask_id=dispatch_args_or_error[
+                            "assistant_subtask"
+                        ].id,
+                        generation_id=dispatch_args_or_error[
+                            "assistant_subtask"
+                        ].answer_generation_id,
+                        error_message=format_error_message(e),
+                        error_code=classify_error(e),
+                    )
             except Exception as finalize_error:
                 logger.error(
                     "[WS] chat:retry failed to persist trigger error: "
@@ -1961,6 +2001,18 @@ def _is_code_wiki_task(task: TaskResource) -> bool:
     return isinstance(labels, dict) and labels.get("source") == "code_wiki"
 
 
+def _prepare_chat_retry_with_session(
+    payload: ChatRetryPayload, user_id: int
+) -> dict[str, Any]:
+    """Own the retry session entirely in the existing database worker pool."""
+    db = SessionLocal()
+    try:
+        return _prepare_chat_retry_dispatch(db, payload, user_id)
+    finally:
+        db.rollback()
+        db.close()
+
+
 def _prepare_chat_retry_dispatch(
     db: Session,
     payload: ChatRetryPayload,
@@ -2037,8 +2089,6 @@ def _prepare_chat_retry_dispatch(
 
     # Reset the failed AI subtask to PENDING status using service module.
     # Also pass task to reset Task status so executor_manager can pick it up.
-    reset_subtask_for_retry(db, failed_ai_subtask, task)
-
     from app.models.user import User
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -2130,6 +2180,14 @@ def _prepare_chat_retry_dispatch(
         is_group_chat=False,
     )
 
+    accepted_generation_id = reset_subtask_for_retry(
+        db,
+        failed_ai_subtask,
+        task,
+        protect_attempt=get_team_first_bot_shell_type(db, team) == "Chat"
+        and not get_device_id(task),
+    )
+
     dispatch_args = {
         "task": task,
         "assistant_subtask": failed_ai_subtask,
@@ -2149,6 +2207,7 @@ def _prepare_chat_retry_dispatch(
         assistant_subtask=failed_ai_subtask,
         user=user,
     )
+    failed_ai_subtask.answer_generation_id = accepted_generation_id
     return dispatch_args
 
 
@@ -2283,6 +2342,7 @@ def _get_subtask_for_cancel(subtask_id: int) -> Optional[dict]:
             "task_id": subtask.task_id,
             "status": subtask.status,
             "executor_name": subtask.executor_name,
+            "answer_generation_id": subtask.answer_generation_id,
         }
 
 
@@ -2293,19 +2353,27 @@ def _subtask_belongs_to_task(subtask_id: int, task_id: int) -> bool:
         return subtask is not None and subtask.task_id == task_id
 
 
-def _mark_task_and_board_cancelling(subtask_id: int) -> None:
+def _mark_task_and_board_cancelling(
+    subtask_id: int, generation_id: str | None = None
+) -> bool:
     """Persist native and board cancellation intent before Runtime delivery."""
     with get_db_session() as db:
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
-            return
+            return False
+        db.refresh(subtask, with_for_update=True)
+        if subtask.answer_generation_id != generation_id or subtask.status not in (
+            SubtaskStatus.PENDING,
+            SubtaskStatus.RUNNING,
+        ):
+            return False
 
         # Persist intent only. Runtime callback owns the terminal transition.
         task = task_stores.task_store.get_regular_active_task(
             db, task_id=subtask.task_id
         )
         if not task or not task.json:
-            return
+            return False
 
         task_crd = Task.model_validate(task.json)
         if task_crd.status:
@@ -2317,9 +2385,12 @@ def _mark_task_and_board_cancelling(subtask_id: int) -> None:
         task_stores.task_store.update_json(
             db, task=task, payload=task_crd.model_dump(mode="json")
         )
+        return True
 
 
-def _finalize_stuck_cancellation(subtask_id: int) -> Optional[list[int]]:
+def _finalize_stuck_cancellation(
+    subtask_id: int, generation_id: str | None = None
+) -> Optional[list[int]]:
     """Finalize cancellation locally when the streaming runtime is gone."""
     from app.services.chat.operations.cancel import finalize_stuck_cancellation
 
@@ -2327,7 +2398,9 @@ def _finalize_stuck_cancellation(subtask_id: int) -> Optional[list[int]]:
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
         if not subtask:
             return None
-        return finalize_stuck_cancellation(db, task_id=subtask.task_id)
+        return finalize_stuck_cancellation(
+            db, task_id=subtask.task_id, attempts={subtask_id: generation_id}
+        )
 
 
 def _get_device_info_for_close_session(task_id: int, user_id: int) -> Optional[dict]:

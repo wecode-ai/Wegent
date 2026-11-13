@@ -51,6 +51,7 @@ class StalledRunningSubtask:
     executor_name: str
     executor_namespace: str
     updated_at: datetime
+    answer_generation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -930,6 +931,8 @@ class SubtaskStore(Protocol):
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
+        for_update: bool = False,
+        nowait: bool = False,
     ) -> list[Subtask]: ...
 
     def list_not_executor_deleted_by_task(
@@ -1052,6 +1055,16 @@ class SubtaskStore(Protocol):
     def update_fields(
         self, db: Session, *, subtask: Subtask, **fields: Any
     ) -> Subtask: ...
+
+    def update_fields_if_attempt(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        generation_id: str | None,
+        from_statuses: tuple[SubtaskStatus, ...],
+        **fields: Any,
+    ) -> bool: ...
 
     def update_fields_if_status(
         self,

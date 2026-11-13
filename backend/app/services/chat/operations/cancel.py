@@ -77,7 +77,8 @@ def update_subtask_on_cancel(
     subtask: Subtask,
     partial_content: Optional[str] = None,
     result: Optional[dict[str, Any]] = None,
-) -> None:
+    generation_id: str | None = None,
+) -> bool:
     """
     Update subtask status and result on cancellation.
 
@@ -89,9 +90,11 @@ def update_subtask_on_cancel(
     """
     now = datetime.now()
     result_payload = result if result is not None else {"value": partial_content or ""}
-    subtask_store.update_fields(
+    return subtask_store.update_fields_if_attempt(
         db,
         subtask=subtask,
+        generation_id=generation_id,
+        from_statuses=(SubtaskStatus.PENDING, SubtaskStatus.RUNNING),
         status=SubtaskStatus.CANCELLED,
         progress=100,
         completed_at=now,
@@ -157,7 +160,72 @@ async def is_stream_alive(task_id: int, subtask_id: Optional[int] = None) -> boo
     return idle_seconds <= settings.CANCELLING_STUCK_TIMEOUT_SECONDS
 
 
-def finalize_stuck_cancellation(db: Session, *, task_id: int) -> List[int]:
+def capture_cancellation_attempts(
+    db: Session, *, task_id: int
+) -> dict[int, str | None]:
+    """Capture server-owned identities once when accepting a cancel request."""
+    return {
+        subtask.id: subtask.answer_generation_id
+        for subtask in subtask_store.list_by_task_statuses(
+            db,
+            task_id=task_id,
+            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+        )
+        if subtask.role == SubtaskRole.ASSISTANT
+    }
+
+
+def _has_active_assistant(db: Session, task_id: int, *, nowait: bool = False) -> bool:
+    """Read current attempts within the indexed task range."""
+    active = subtask_store.list_by_task_statuses(
+        db,
+        task_id=task_id,
+        statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+        for_update=True,
+        nowait=nowait,
+    )
+    return any(row.role == SubtaskRole.ASSISTANT for row in active)
+
+
+def finalize_empty_cancellation(db: Session, *, task_id: int, user_id: int) -> bool:
+    """Repair an idle task projection without adopting any answer attempt."""
+    from fastapi import HTTPException
+
+    try:
+        task = task_store.get_owned_active_task(db, task_id=task_id, user_id=user_id)
+        if not task:
+            return False
+        # A current locking read fences retries and new rows under InnoDB RR.
+        if _has_active_assistant(db, task_id):
+            db.rollback()
+            return False
+        db.refresh(task, with_for_update=True)
+        task_crd = Task.model_validate(task.json)
+        if not task_crd.status or task_crd.status.status in _TASK_FINAL_STATES:
+            db.rollback()
+            return False
+        # RC has no gap fence. Recheck without waiting in the reverse retry order.
+        if _has_active_assistant(db, task_id, nowait=True):
+            db.rollback()
+            return False
+        update_task_on_cancel(db, task)
+        db.commit()
+        return True
+    except Exception as exc:
+        db.rollback()
+        logger.error(
+            "Empty cancellation save unconfirmed: task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503, detail="取消保存状态未确认，请刷新历史核对。"
+        ) from None
+
+
+def finalize_stuck_cancellation(
+    db: Session, *, task_id: int, attempts: dict[int, str | None]
+) -> List[int]:
     """
     Finalize cancellation locally when no runtime callback will arrive.
 
@@ -168,10 +236,11 @@ def finalize_stuck_cancellation(db: Session, *, task_id: int) -> List[int]:
     Args:
         db: Database session
         task_id: Task ID to finalize
+        attempts: Identities captured when accepting cancellation; never adopted here
 
     Returns:
         IDs of subtasks marked CANCELLED. Empty when the task was already in
-        a final state.
+        a final state or any active attempt changed.
     """
     task = task_store.get_regular_active_task(db, task_id=task_id)
     if not task or not task.json:
@@ -190,9 +259,16 @@ def finalize_stuck_cancellation(db: Session, *, task_id: int) -> List[int]:
     for subtask in stuck_subtasks:
         if subtask.role != SubtaskRole.ASSISTANT:
             continue
-        update_subtask_on_cancel(db, subtask)
+        if subtask.id not in attempts or not update_subtask_on_cancel(
+            db, subtask, generation_id=attempts[subtask.id]
+        ):
+            db.rollback()
+            return []
         finalized.append(subtask.id)
 
+    if not finalized:
+        db.rollback()
+        return []
     update_task_on_cancel(db, task)
     db.commit()
 

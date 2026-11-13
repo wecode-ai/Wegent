@@ -13,6 +13,7 @@
  */
 
 import * as http from 'http'
+import { resolveEvidenceResponseContent } from './mock-answer-evidence'
 import { writePhaseChangingMessage, type PhaseChangingMessage } from './mock-responses-phase'
 import { handlePreviewFileSource } from './preview-file-source'
 import { startMockServer } from './mock-server-lifecycle'
@@ -589,7 +590,19 @@ const server = http.createServer((req, res) => {
     body += chunk
   })
 
-  req.on('end', () => withMockScope(scope, handleRequest))
+  req.on('end', () => {
+    void withMockScope(scope, handleRequest).catch(writeScenarioError)
+  })
+
+  function writeScenarioError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error(`Mock tool scenario failed: ${message}`)
+    if (res.headersSent) {
+      res.destroy()
+      return
+    }
+    writeJson(res, 500, { error: { message, type: 'tool_scenario_error' } })
+  }
 
   async function handleRequest(): Promise<void> {
     const { capturedRequests, streamRules, responseGates, toolScenarios, servedToolRuleCounts } =
@@ -687,12 +700,17 @@ const server = http.createServer((req, res) => {
       toolScenario.capturedHeaders.push({ ...req.headers })
     }
     let scenarioStep: ToolScenarioStep | undefined
+    let scenarioResponseContent: string | undefined
     try {
       scenarioStep = nextScenarioStep(toolScenario, parsedBody)
+      if (!scenarioStep?.toolCalls?.length) {
+        scenarioResponseContent = resolveEvidenceResponseContent(
+          scenarioStep?.responseContent,
+          parsedBody
+        )
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`Mock tool scenario failed: ${message}`)
-      writeJson(res, 500, { error: { message, type: 'tool_scenario_error' } })
+      writeScenarioError(error)
       return
     }
 
@@ -711,7 +729,7 @@ const server = http.createServer((req, res) => {
         }
       }
       const responseContent =
-        scenarioStep?.responseContent ||
+        scenarioResponseContent ||
         streamRule?.responseContent ||
         buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-codex'
@@ -742,7 +760,7 @@ const server = http.createServer((req, res) => {
         }
       }
       const responseContent =
-        scenarioStep?.responseContent ||
+        scenarioResponseContent ||
         streamRule?.responseContent ||
         buildContextAwareResponseContent(parsedBody)
       console.log(`Mock response content: ${truncateForLog(responseContent)}`)
@@ -818,7 +836,7 @@ const server = http.createServer((req, res) => {
         }
       }
       const responseContent =
-        scenarioStep?.responseContent ||
+        scenarioResponseContent ||
         streamRule?.responseContent ||
         buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-claude'

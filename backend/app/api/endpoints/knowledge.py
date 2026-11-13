@@ -31,6 +31,7 @@ from app.api.endpoints._knowledge_multimodal import (
     multimodal_create_kwargs,
     multimodal_update_kwargs,
 )
+from app.api.endpoints.knowledge_citations import router as citations_router
 from app.api.endpoints.knowledge_code_wiki import router as code_wiki_router
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
@@ -108,6 +109,7 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.include_router(citations_router)
 
 # Registered before any route defined here, which is load-bearing rather than tidy:
 # code wiki paths sit under the same prefix, and `/{knowledge_base_id}` below would

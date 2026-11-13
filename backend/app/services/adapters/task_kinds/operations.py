@@ -42,6 +42,7 @@ from app.services.task_status import (
     mark_task_pending_payload,
 )
 from app.stores.tasks.interfaces import TaskIdAllocationError
+from shared.telemetry.decorators import trace_async
 
 from .converters import convert_to_task_dict
 from .helpers import create_subtasks
@@ -1179,6 +1180,7 @@ class TaskOperationsMixin:
             idle_seconds = (datetime.now() - updated_at).total_seconds()
         return idle_seconds > settings.CANCELLING_STUCK_TIMEOUT_SECONDS
 
+    @trace_async("task.cancel", tracer_name="backend.chat")
     async def cancel_task(
         self,
         db: Session,
@@ -1215,11 +1217,31 @@ class TaskOperationsMixin:
                     f"{settings.CANCELLING_STUCK_TIMEOUT_SECONDS}s, finalizing locally"
                 )
                 from app.services.chat.operations.cancel import (
+                    capture_cancellation_attempts,
+                    finalize_empty_cancellation,
                     finalize_stuck_cancellation,
                     publish_task_cancelled_events,
                 )
 
-                finalized_subtask_ids = finalize_stuck_cancellation(db, task_id=task_id)
+                attempts = capture_cancellation_attempts(db, task_id=task_id)
+                if not attempts and self._is_chat_shell_task(db, task_id):
+                    if finalize_empty_cancellation(
+                        db, task_id=task_id, user_id=user_id
+                    ):
+                        return {
+                            "message": "Task cancellation finalized",
+                            "status": "CANCELLED",
+                        }
+                    raise HTTPException(
+                        status_code=409, detail="取消目标已变化，请刷新后重试。"
+                    )
+                finalized_subtask_ids = finalize_stuck_cancellation(
+                    db, task_id=task_id, attempts=attempts
+                )
+                if not finalized_subtask_ids:
+                    raise HTTPException(
+                        status_code=409, detail="取消目标已变化，请刷新后重试。"
+                    )
                 await publish_task_cancelled_events(
                     task_id, finalized_subtask_ids, user_id
                 )
@@ -1238,8 +1260,13 @@ class TaskOperationsMixin:
         logger.info(f"Task {task_id} is_chat_shell={is_chat_shell}")
 
         if is_chat_shell:
+            from app.services.chat.operations.cancel import (
+                capture_cancellation_attempts,
+            )
+
+            attempts = capture_cancellation_attempts(db, task_id=task_id)
             return await self._cancel_chat_shell_task(
-                db, task_id, user_id, background_task_runner
+                db, task_id, user_id, background_task_runner, attempts=attempts
             )
         else:
             return await self._cancel_executor_task(
@@ -1263,53 +1290,79 @@ class TaskOperationsMixin:
         task_id: int,
         user_id: int,
         background_task_runner: Optional[Callable],
+        *,
+        attempts: dict[int, str | None],
     ) -> Dict[str, Any]:
-        """Cancel a Chat Shell task."""
-        running_subtask = task_stores.subtask_store.get_running_assistant_for_user(
-            db, task_id=task_id, user_id=user_id
+        """Commit a captured Chat cancellation before scheduling runtime delivery."""
+        from app.services.chat.operations.cancel import (
+            finalize_empty_cancellation,
+            update_task_on_cancel,
         )
 
-        if running_subtask:
-            if background_task_runner:
-                background_task_runner(self._call_chat_shell_cancel, running_subtask.id)
-
-            task_stores.subtask_store.update_fields(
+        try:
+            if not attempts:
+                if finalize_empty_cancellation(db, task_id=task_id, user_id=user_id):
+                    return {
+                        "message": "Chat stopped successfully",
+                        "status": "CANCELLED",
+                    }
+                raise HTTPException(
+                    status_code=409, detail="取消目标已变化，请刷新后重试。"
+                )
+            running_subtask = (
+                task_stores.subtask_store.get_latest_assistant_for_user_by_statuses(
+                    db,
+                    task_id=task_id,
+                    user_id=user_id,
+                    statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+                )
+            )
+            if not running_subtask or running_subtask.id not in attempts:
+                raise HTTPException(
+                    status_code=409, detail="取消目标已变化，请刷新后重试。"
+                )
+            subtask_id = running_subtask.id
+            generation_id = attempts[subtask_id]
+            if not task_stores.subtask_store.update_fields_if_attempt(
                 db,
                 subtask=running_subtask,
+                generation_id=generation_id,
+                from_statuses=(SubtaskStatus.PENDING, SubtaskStatus.RUNNING),
                 status=SubtaskStatus.CANCELLED,
                 progress=100,
                 completed_at=datetime.now(),
                 error_message="",
+            ):
+                raise HTTPException(
+                    status_code=409, detail="取消目标已变化，请刷新后重试。"
+                )
+            task = task_stores.task_store.get_owned_active_task(
+                db, task_id=task_id, user_id=user_id
             )
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            db.refresh(task, with_for_update=True)
+            update_task_on_cancel(db, task)
             db.commit()
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            logger.error(
+                "Cancel save unconfirmed: task_id=%s error_type=%s",
+                task_id,
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503, detail="取消保存状态未确认，请刷新历史核对。"
+            ) from None
 
-            try:
-                self.update_task(
-                    db=db,
-                    task_id=task_id,
-                    obj_in=TaskUpdate(status="CANCELLED"),
-                    user_id=user_id,
-                )
-                logger.info(
-                    f"Chat Shell task {task_id} cancelled and marked as CANCELLED"
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to update Chat Shell task {task_id} status: {str(e)}"
-                )
-            return {"message": "Chat stopped successfully", "status": "CANCELLED"}
-        else:
-            try:
-                self.update_task(
-                    db=db,
-                    task_id=task_id,
-                    obj_in=TaskUpdate(status="COMPLETED"),
-                    user_id=user_id,
-                )
-            except Exception as e:
-                logger.error(f"Failed to update task {task_id} status: {str(e)}")
-
-            return {"message": "No running stream to cancel", "status": "COMPLETED"}
+        if background_task_runner:
+            background_task_runner(
+                self._call_chat_shell_cancel, subtask_id, generation_id
+            )
+        return {"message": "Chat stopped successfully", "status": "CANCELLED"}
 
     async def _cancel_executor_task(
         self,
@@ -1367,24 +1420,52 @@ class TaskOperationsMixin:
                 f"Error calling executor_manager to cancel task {task_id}: {str(e)}"
             )
 
-    async def _call_chat_shell_cancel(self, subtask_id: int):
-        """Background task to cancel Chat Shell streaming."""
-        try:
-            from app.services.chat.storage import session_manager
+    @trace_async("task.cancel_chat_stream", tracer_name="backend.chat")
+    async def _call_chat_shell_cancel(
+        self, subtask_id: int, generation_id: str | None
+    ) -> None:
+        """Publish under the captured row lock without blocking the event loop."""
+        from app.services.chat.storage.db import run_sync_in_executor
 
-            success = await session_manager.cancel_stream(subtask_id)
-            if success:
-                logger.info(
-                    f"Chat Shell stream cancelled successfully for subtask {subtask_id}"
-                )
-            else:
-                logger.warning(
-                    f"Failed to cancel Chat Shell stream for subtask {subtask_id}"
-                )
-        except Exception as e:
-            logger.error(
-                f"Error cancelling Chat Shell stream for subtask {subtask_id}: {str(e)}"
+        try:
+            await run_sync_in_executor(
+                self._cancel_captured_chat_stream,
+                subtask_id,
+                generation_id,
+                asyncio.get_running_loop(),
             )
+        except Exception as exc:
+            logger.error(
+                "Chat cancel delivery failed: subtask_id=%s error_type=%s",
+                subtask_id,
+                type(exc).__name__,
+            )
+
+    def _cancel_captured_chat_stream(
+        self,
+        subtask_id: int,
+        generation_id: str | None,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Keep retry excluded until the existing cancellation signal is sent."""
+        from app.db.session import SessionLocal
+        from app.services.chat.storage import session_manager
+
+        with SessionLocal() as db:
+            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+            if not subtask:
+                return
+            db.refresh(subtask, with_for_update=True)
+            if (
+                subtask.answer_generation_id != generation_id
+                or subtask.status != SubtaskStatus.CANCELLED
+            ):
+                return
+            success = session_manager.cancel_stream_from_sync(subtask_id, loop)
+            if not success:
+                logger.warning(
+                    "Chat cancel flag not confirmed: subtask_id=%s", subtask_id
+                )
 
     def get_pipeline_stage_info(
         self,

@@ -31,6 +31,7 @@ from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
 from app.services.adapters.collaboration_strategy import CollaborationStrategy
+from app.services.chat.storage.answer_attempt import AnswerSaveResult
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,12 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | None = None,
-    ) -> bool:
+        generation_id: str | None = None,
+    ) -> AnswerSaveResult:
         """Update subtask status asynchronously.
 
-        Returns False when ``expected_status`` was supplied and the subtask no
-        longer has that status, so the caller can drop a stale terminal event.
+        Return a confirmed commit, a rejected attempt, or an uncertain save.
+        Attempt identity and expected status are compared by one atomic update.
         """
         update_result = await self._run_in_executor(
             self._update_subtask_sync,
@@ -108,18 +110,28 @@ class DatabaseHandler:
             executor_name,
             executor_namespace,
             expected_status,
+            generation_id,
         )
+        if isinstance(update_result, AnswerSaveResult):
+            return update_result
         if update_result is None:
-            return False
+            return AnswerSaveResult.REJECTED
         if update_result and update_result.auto_advance:
             from app.services.chat.pipeline_advance import (
                 advance_pipeline_stage_from_auto_completion,
             )
 
-            await advance_pipeline_stage_from_auto_completion(
-                update_result.auto_advance
-            )
-        return True
+            try:
+                await advance_pipeline_stage_from_auto_completion(
+                    update_result.auto_advance
+                )
+            except Exception as exc:
+                logger.error(
+                    "Post-commit pipeline advance failed: id=%s error_type=%s",
+                    subtask_id,
+                    type(exc).__name__,
+                )
+        return AnswerSaveResult.COMMITTED
 
     def _update_subtask_sync(
         self,
@@ -130,7 +142,8 @@ class DatabaseHandler:
         executor_name: str | None = None,
         executor_namespace: str | None = None,
         expected_status: str | None = None,
-    ) -> Optional[TaskStatusUpdateResult]:
+        generation_id: str | None = None,
+    ) -> TaskStatusUpdateResult | AnswerSaveResult | None:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import SubtaskStatus
         from app.utils.thinking_sanitizer import sanitize_result_for_storage
@@ -141,7 +154,31 @@ class DatabaseHandler:
                 if not subtask:
                     return None
 
+                db.refresh(subtask, with_for_update=True)
+                if expected_status and subtask.status != SubtaskStatus(expected_status):
+                    return AnswerSaveResult.REJECTED
+                if subtask.answer_generation_id != generation_id or (
+                    generation_id is not None
+                    and subtask.status
+                    not in (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
+                ):
+                    return AnswerSaveResult.REJECTED
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
+                original_result = result
+                if result is not None:
+                    from app.services.knowledge.answer_evidence import (
+                        bind_answer_evidence,
+                        public_result,
+                    )
+
+                    result = (
+                        bind_answer_evidence(db, subtask, result)
+                        if status == "COMPLETED"
+                        and (
+                            "_answer_evidence" in result or subtask.answer_generation_id
+                        )
+                        else public_result(result)
+                    )
 
                 if result is not None:
                     # Preserve silent_exit fields if they were set by MCP tool
@@ -206,32 +243,37 @@ class DatabaseHandler:
                         executor_namespace,
                     )
 
-                if expected_status is not None:
-                    changed = task_stores.subtask_store.update_fields_if_status(
-                        db,
-                        subtask=subtask,
-                        from_status=SubtaskStatus(expected_status),
-                        **fields,
+                allowed = (
+                    (SubtaskStatus(expected_status),)
+                    if expected_status
+                    else (
+                        (subtask.status,)
+                        if generation_id is None
+                        else (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
                     )
-                    if not changed:
-                        logger.info(
-                            "[DB] Skipped %s transition for subtask %s: "
-                            "current status is no longer %s",
-                            status,
-                            subtask_id,
-                            expected_status,
-                        )
-                        return None
-                else:
-                    task_stores.subtask_store.update_fields(
-                        db, subtask=subtask, **fields
-                    )
+                )
+                if not task_stores.subtask_store.update_fields_if_attempt(
+                    db,
+                    subtask=subtask,
+                    generation_id=generation_id,
+                    from_statuses=allowed,
+                    **fields,
+                ):
+                    db.rollback()
+                    return AnswerSaveResult.REJECTED
                 task_id = subtask.task_id
+            if original_result is not None and result is not None:
+                original_result.clear()
+                original_result.update(result)
             # Context manager commits here, then update task status
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
-        except Exception:
-            logger.exception("Error updating subtask %s status", subtask_id)
-            return None
+        except Exception as exc:
+            logger.error(
+                "Answer save unconfirmed: id=%s error_type=%s",
+                subtask_id,
+                type(exc).__name__,
+            )
+            return AnswerSaveResult.UNCONFIRMED
 
     def _update_task_status_sync(
         self, task_id: int, changed_subtask_id: int | None = None
@@ -311,8 +353,12 @@ class DatabaseHandler:
                     db, task=task, payload=task_crd.model_dump(mode="json")
                 )
 
-        except Exception:
-            logger.exception("Error updating task %s status", task_id)
+        except Exception as exc:
+            logger.error(
+                "Task projection failed: id=%s error_type=%s",
+                task_id,
+                type(exc).__name__,
+            )
             return TaskStatusUpdateResult()
 
         return update_result
@@ -358,15 +404,23 @@ class DatabaseHandler:
             status_obj.errorMessage = last_subtask.error_message
 
     async def save_partial_response(
-        self, subtask_id: int, content: str, is_streaming: bool = True
+        self,
+        subtask_id: int,
+        content: str,
+        is_streaming: bool = True,
+        generation_id: str | None = None,
     ) -> None:
         """Save partial response during streaming."""
         await self._run_in_executor(
-            self._save_partial_sync, subtask_id, content, is_streaming
+            self._save_partial_sync, subtask_id, content, is_streaming, generation_id
         )
 
     def _save_partial_sync(
-        self, subtask_id: int, content: str, is_streaming: bool
+        self,
+        subtask_id: int,
+        content: str,
+        is_streaming: bool,
+        generation_id: str | None = None,
     ) -> None:
         """Synchronous partial response save."""
         try:
@@ -374,9 +428,13 @@ class DatabaseHandler:
                 if subtask := task_stores.subtask_store.get_by_id(
                     db, subtask_id=subtask_id
                 ):
-                    task_stores.subtask_store.update_result(
+                    from app.models.subtask import SubtaskStatus
+
+                    task_stores.subtask_store.update_fields_if_attempt(
                         db,
                         subtask=subtask,
+                        generation_id=generation_id,
+                        from_statuses=(SubtaskStatus.RUNNING,),
                         result={"value": content, "streaming": is_streaming},
                     )
         except Exception:

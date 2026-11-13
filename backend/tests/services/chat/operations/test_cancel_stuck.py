@@ -93,14 +93,17 @@ class TestFinalizeStuckCancellation:
         )
         subtask_store = SimpleNamespace(
             list_by_task_statuses=MagicMock(return_value=subtasks),
-            update_fields=MagicMock(),
+            update_fields_if_attempt=MagicMock(return_value=True),
         )
         return task_store, subtask_store
 
     def test_finalizes_running_assistant_and_task(self):
         task = SimpleNamespace(id=1, user_id=7, json=_task_json("CANCELLING"))
         assistant = SimpleNamespace(
-            id=100, role=SubtaskRole.ASSISTANT, status=SubtaskStatus.RUNNING
+            id=100,
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.RUNNING,
+            answer_generation_id=None,
         )
         user_subtask = SimpleNamespace(
             id=99, role=SubtaskRole.USER, status=SubtaskStatus.RUNNING
@@ -114,12 +117,14 @@ class TestFinalizeStuckCancellation:
             patch.object(cancel_ops, "subtask_store", subtask_store),
         ):
             db = MagicMock()
-            finalized = finalize_stuck_cancellation(db, task_id=1)
+            finalized = finalize_stuck_cancellation(db, task_id=1, attempts={100: None})
 
         assert finalized == [100]
         # Only the assistant subtask is cancelled
-        assert subtask_store.update_fields.call_count == 1
-        kwargs = subtask_store.update_fields.call_args.kwargs
+        assert subtask_store.update_fields_if_attempt.call_count == 1
+        kwargs = subtask_store.update_fields_if_attempt.call_args.kwargs
+        assert kwargs["generation_id"] is None
+        assert kwargs["from_statuses"] == (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
         assert kwargs["subtask"] is assistant
         assert kwargs["status"] == SubtaskStatus.CANCELLED
         # Task is written as CANCELLED
@@ -136,7 +141,7 @@ class TestFinalizeStuckCancellation:
             patch.object(cancel_ops, "subtask_store", subtask_store),
         ):
             db = MagicMock()
-            finalized = finalize_stuck_cancellation(db, task_id=1)
+            finalized = finalize_stuck_cancellation(db, task_id=1, attempts={100: None})
 
         assert finalized == []
         subtask_store.list_by_task_statuses.assert_not_called()
@@ -151,7 +156,7 @@ class TestFinalizeStuckCancellation:
             patch.object(cancel_ops, "subtask_store", subtask_store),
         ):
             db = MagicMock()
-            finalized = finalize_stuck_cancellation(db, task_id=1)
+            finalized = finalize_stuck_cancellation(db, task_id=1, attempts={100: None})
 
         assert finalized == []
         task_store.update_json.assert_not_called()
@@ -175,16 +180,22 @@ class TestRestCancelStuckRecovery:
 
         with (
             patch.object(
+                cancel_ops,
+                "capture_cancellation_attempts",
+                MagicMock(return_value={100: "a" * 32}),
+            ),
+            patch.object(
                 cancel_ops, "finalize_stuck_cancellation", MagicMock(return_value=[100])
             ) as mock_finalize,
             patch.object(
                 cancel_ops, "publish_task_cancelled_events", AsyncMock()
             ) as mock_publish,
         ):
-            result = await svc.cancel_task(db=MagicMock(), task_id=1, user_id=7)
+            db = MagicMock()
+            result = await svc.cancel_task(db=db, task_id=1, user_id=7)
 
         assert result["status"] == "CANCELLED"
-        mock_finalize.assert_called_once()
+        mock_finalize.assert_called_once_with(db, task_id=1, attempts={100: "a" * 32})
         mock_publish.assert_awaited_once_with(1, [100], 7)
 
     @pytest.mark.asyncio

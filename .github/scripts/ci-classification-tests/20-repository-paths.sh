@@ -32,7 +32,11 @@ for path in backend-rs/src/cloud_projects.rs \
   backend-rs/src/cloud_projects/environment_authorization.rs \
   backend-rs/src/cloud_projects/normalization.rs \
   backend-rs/src/loop_item_executions/device.rs \
-  backend-rs/config/routes.toml; do
+  backend-rs/config/routes.toml \
+  backend-rs/migrations/revisions/a91e7c42d803.json \
+  backend-rs/migrations/reference/versions/20261110_a91e7c42d803_add_answer_attempt_and_citations.py \
+  backend-rs/migrations/schema.json \
+  backend-rs/src/migrations/assets.rs; do
   assert_case "Rust permission changes run Rust, backend, and E2E guards: $path" \
     "$rust_permission_expected" "$path"
 done
@@ -204,3 +208,9 @@ assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
 shared_rust_expected="${backend_rs_expected/executor=false/executor=true}"
 assert_case "shared Rust libraries run both consumers" "$shared_rust_expected" \
   "shared/rust/crypto/src/lib.rs"
+
+answer_evidence_expected="${platform_e2e_expected/backend=false/backend=true}"
+answer_evidence_expected="${answer_evidence_expected/wegent_cli=false/wegent_cli=true}"
+assert_case "answer evidence Python transport and reads run platform checks" "$answer_evidence_expected" \
+  "backend/app/services/knowledge/answer_evidence.py" \
+  "chat_shell/chat_shell/services/answer_evidence.py"

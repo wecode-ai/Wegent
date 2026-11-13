@@ -154,6 +154,7 @@ class StreamingState:
     context_metrics: Optional[dict[str, Any]] = None
     context_compactions: list[dict[str, Any]] = field(default_factory=list)
     termination_reason: Optional[str] = None
+    answer_evidence: list[dict] = field(default_factory=list)
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -582,6 +583,7 @@ class StreamingCore:
             context_compactions=result.get("context_compactions"),
             termination_reason=result.get("termination_reason"),
             retrieval_summary=result.get("retrieval_summary"),
+            _answer_evidence=self.state.answer_evidence,
         )
 
         return result

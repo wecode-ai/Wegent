@@ -892,5 +892,14 @@
     "wikispaceNotConfigured": "Sync requires both DingTalk Knowledge Base MCP and DingTalk Docs MCP",
     "wikispaceLastSynced": "Last synced: {{time}}",
     "wikispaceNeverSynced": "Never synced"
+  },
+  "evidence": {
+    "title": "Evidence at answer time",
+    "unavailable": "Evidence unavailable",
+    "close": "Close",
+    "read_failed": "Unable to read evidence. Close and try again.",
+    "loading": "Loading evidence…",
+    "open_original": "Open current document",
+    "original_failed": "Unable to open the current document. Try again."
   }
 }

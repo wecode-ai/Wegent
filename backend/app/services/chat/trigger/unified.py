@@ -392,6 +392,9 @@ async def build_execution_request(
         )
 
         apply_provider_configuration_guidance(request)
+        request.answer_generation_id = getattr(
+            assistant_subtask, "answer_generation_id", None
+        )
         return request
 
     finally:

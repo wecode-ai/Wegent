@@ -53,7 +53,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 50);
+    assert_eq!(tables.len(), 51);
     assert!(
         !tables
             .iter()
@@ -200,4 +200,34 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
     let grants:Count=mysql.fetch_one("SELECT COUNT(*) AS n FROM resource_members WHERE resource_type='CloudProject' AND resource_id=101 AND entity_type='authenticated_users' AND entity_id='*'",()).await?;
     assert_eq!(grants.n, 0);
     Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated schema"]
+async fn answer_attempt_upgrade_and_destructive_rollback_preserve_old_answers() -> Result<()> {
+    isolated(async |mysql| {
+        upgrade(mysql).await?;
+        check(mysql).await?;
+        mysql.execute("INSERT INTO subtasks (id,user_id,task_id,team_id,title,bot_ids,role,message_id,status,progress,completed_at,sender_type,sender_user_id,reply_to_subtask_id,executor_deleted_at) VALUES (987,7,9,1,'old answer','[]','ASSISTANT',1,'COMPLETED',100,'1970-01-01','','0',0,0)", ()).await?;
+        mysql.execute("INSERT INTO knowledge_documents (id,kind_id,attachment_id,name,file_extension,file_size,status,user_id,is_active,index_status,index_generation,splitter_config,source_type,source_config,folder_id,created_at,updated_at,chunks) VALUES (987,1,0,'old document','txt',3,'enabled',7,1,'not_indexed',0,'{}','file','{}',0,NOW(),NOW(),'[{\"content\":\"original\"}]')", ()).await?;
+        mysql.execute("INSERT INTO knowledge_citations (knowledge_base_id,document_id,title,content,user_id,caller_context) VALUES (1,987,'old snapshot','snapshot',7,'{\"answer_evidence\":{\"answer_id\":\"987\",\"generation_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"local_id\":\"e1\"}}')", ()).await?;
+        downgrade(mysql, "f3a7c9e1b2d4").await?;
+        let missing: Vec<Name> = mysql.fetch_all("SELECT CAST(COLUMN_NAME AS CHAR) AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='subtasks' AND COLUMN_NAME='answer_generation_id'", ()).await?;
+        assert!(missing.is_empty());
+        let indexes: Vec<Name> = mysql.fetch_all("SELECT CAST(INDEX_NAME AS CHAR) AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='subtasks' AND INDEX_NAME='ix_subtasks_task_id'", ()).await?;
+        assert!(indexes.is_empty());
+        let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_citations'", ()).await?;
+        assert!(tables.is_empty());
+        let answer: Name = mysql.fetch_one("SELECT title AS name FROM subtasks WHERE id=987", ()).await?;
+        assert_eq!(answer.name, "old answer");
+        upgrade(mysql).await?;
+        check(mysql).await?;
+        let preserved: Name = mysql.fetch_one("SELECT CAST(COALESCE(answer_generation_id,'legacy-null') AS CHAR) AS name FROM subtasks WHERE id=987", ()).await?;
+        assert_eq!(preserved.name, "legacy-null");
+        let document: Name = mysql.fetch_one("SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(chunks,'$[0].content')) AS CHAR) AS name FROM knowledge_documents WHERE id=987", ()).await?;
+        assert_eq!(document.name, "original");
+        let snapshots: Vec<Name> = mysql.fetch_all("SELECT title AS name FROM knowledge_citations", ()).await?;
+        assert!(snapshots.is_empty());
+        Ok(())
+    }).await
 }
