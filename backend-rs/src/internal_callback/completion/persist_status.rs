@@ -53,9 +53,9 @@ pub(super) async fn write_derived_task_status<T: MysqlTransaction>(
 ) -> Option<bool> {
     // `task_store.get_task_by_states(...).first()`: the active two-state task
     // read through the ORM's labeled projection, with no row lock.
-    let task: Option<MysqlRow> = read_status(
+    let task = read_status(
         mysql
-            .fetch_optional(
+            .fetch_optional::<_, _, MysqlRow>(
                 sql::active_task_projection_statement(tables.tasks),
                 (task_id,),
             )
