@@ -145,11 +145,14 @@ impl RuntimeWorkRpcHandler {
         let Some(user) = origin["userId"].as_i64().filter(|id| *id >= 0) else {
             return;
         };
-        if task
-            != super::stand_in_conversations::conversation_task_id(
-                user,
-                origin["standInId"].as_str(),
-            )
+        if super::stand_in_conversations::scoped_conversation_task_id(
+            user,
+            origin["standInId"].as_str(),
+            &origin["conversationScope"],
+        )
+        .ok()
+        .as_deref()
+            != Some(task.as_str())
         {
             return;
         }
@@ -192,12 +195,14 @@ impl RuntimeWorkRpcHandler {
         identity: &StandInMcpIdentity,
         args: &Value,
     ) -> Result<Value, AppIpcError> {
-        let task = super::stand_in_conversations::conversation_task_id(
-            identity.user,
-            identity.role.as_deref(),
-        );
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
+        let task = super::stand_in_conversations::scoped_conversation_task_id(
+            identity.user,
+            identity.role.as_deref(),
+            &origin["conversationScope"],
+        )
+        .map_err(|_| denied())?;
         if identity.task_id != task
             || identity.device != self.device_id
             || identity.work.is_some()
