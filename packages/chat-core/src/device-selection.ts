@@ -22,7 +22,11 @@ export function isCloudDevice(device: SelectableDevice): boolean {
 }
 
 export function isLocalStandaloneDevice(device: Pick<SelectableDevice, 'device_type'>): boolean {
-  return device.device_type !== 'cloud' && device.device_type !== 'remote'
+  return (
+    device.device_type !== 'cloud' &&
+    device.device_type !== 'remote' &&
+    device.device_type !== 'app'
+  )
 }
 
 export function isWeWorkSelectableStandaloneDevice(device: SelectableDevice): boolean {

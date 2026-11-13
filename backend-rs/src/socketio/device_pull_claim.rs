@@ -17,7 +17,7 @@ use brz_mysql::{FromMysqlRow, MysqlError, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
-use crate::background_jobs::project::{authority, routing, store};
+use crate::background_jobs::project::{authority, device_access::personal_owner, routing, store};
 use crate::background_jobs::robot::{authority as robot_authority, model};
 use crate::device_identity::{
     DeviceKindRow, owned_device_identity_ids, resolve_owned_device_alias,
@@ -236,7 +236,8 @@ pub(super) async fn reserve(
         let environments = authority::execution_environment_ids_on(
             &mut query, &row.cloud_project_id, &row.agent_id,
         ).await.map_err(claim_error)?;
-        if !environments.contains(&runner.id) {
+        if !environments.contains(&runner.id)
+            && !execution.permits_personal_device(personal_owner(command.owner_user_id, &runner.json), runner.id) {
             return Ok(false);
         }
         let runner_id = runner.id.to_string();
@@ -252,6 +253,7 @@ pub(super) async fn reserve(
             for (agent, snapshot) in model::runner_routes(&row.agent_id, &execution.selection()) {
                 let candidates = routing::candidates_for_snapshot_on(
                     &mut query, &row.cloud_project_id, agent, snapshot,
+                    execution.assigner_user_id, execution.automatic(),
                 ).await.map_err(claim_error)?;
                 if !candidates.contains(&runner.id) {
                     return Ok(false);
@@ -540,7 +542,10 @@ async fn claimable_by_device(
     // aggregate `routing::allowed_devices` starts with.
     let environments =
         authority::execution_environment_ids(app, &row.cloud_project_id, &row.agent_id).await?;
-    if !environments.contains(&runner.id) {
+    if !environments.contains(&runner.id)
+        && !execution
+            .permits_personal_device(personal_owner(owner_user_id, &runner.json), runner.id)
+    {
         return Ok(false);
     }
     if execution.routed() {
@@ -583,6 +588,8 @@ async fn eligible_runner(
             &execution.cloud_project_id,
             agent_id,
             route,
+            execution.assigner_user_id,
+            execution.automatic(),
         )
         .await
         {

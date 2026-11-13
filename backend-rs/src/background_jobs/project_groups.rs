@@ -232,7 +232,8 @@ pub(crate) async fn runner_requirements(
         )
         .await?;
         let candidates =
-            routing::candidates_for_snapshot(state, project_id, &agent.id, &route).await?;
+            routing::candidates_for_snapshot(state, project_id, &agent.id, &route, user, automatic)
+                .await?;
         intersection = Some(match intersection {
             None => candidates,
             Some(current) => current.intersection(&candidates).copied().collect(),

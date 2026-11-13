@@ -24,7 +24,8 @@ export function usePersonalHomeIssues(
   assignedOnly: boolean,
   includeCompleted: boolean,
   viewerIds: readonly (string | number)[],
-  order: PersonalHomeIssueOrder = 'attention'
+  order: PersonalHomeIssueOrder = 'attention',
+  scope: 'assigned' | 'created' | 'participating' = assignedOnly ? 'assigned' : 'participating'
 ) {
   const [snapshots, setSnapshots] = useState<SourceSnapshot[]>([])
   const [revision, setRevision] = useState(0)
@@ -32,7 +33,7 @@ export function usePersonalHomeIssues(
   const pendingPages = useRef(new Set<SharedWorkspaceApi>())
   const pendingFirstPages = useRef(new Map<SharedWorkspaceApi, number>())
   const viewers = JSON.stringify(viewerIds)
-  const scopeKey = JSON.stringify([assignedOnly, includeCompleted, viewers, order])
+  const scopeKey = JSON.stringify([scope, includeCompleted, viewers, order])
   const queryKey = JSON.stringify([revision, scopeKey])
   const reload = useCallback(() => setRevision(value => value + 1), [])
   useEffect(() => {
@@ -43,7 +44,7 @@ export function usePersonalHomeIssues(
     const input = {
       limit: 30,
       order,
-      scope: assignedOnly ? ('assigned' as const) : ('participating' as const),
+      scope,
       includeCompleted,
       viewerIds: JSON.parse(viewers) as (string | number)[],
     }
@@ -124,7 +125,18 @@ export function usePersonalHomeIssues(
       unsubscribeContext()
       window.removeEventListener('focus', reload)
     }
-  }, [sources, queryKey, scopeKey, active, assignedOnly, includeCompleted, viewers, order, reload])
+  }, [
+    sources,
+    queryKey,
+    scopeKey,
+    active,
+    assignedOnly,
+    includeCompleted,
+    viewers,
+    order,
+    scope,
+    reload,
+  ])
   const current = sources.map(api => {
     const snapshot = snapshots.find(
       snapshot => snapshot.api === api && snapshot.scopeKey === scopeKey
@@ -161,7 +173,7 @@ export function usePersonalHomeIssues(
               cursor: snapshot.nextCursor!,
               limit: 30,
               order,
-              scope: assignedOnly ? 'assigned' : 'participating',
+              scope,
               includeCompleted,
               viewerIds,
             })

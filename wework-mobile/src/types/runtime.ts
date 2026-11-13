@@ -1,23 +1,11 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
-export type ModelType = 'public' | 'user' | 'group' | 'runtime' | string
-export type ModelOptions = Record<string, string>
-
-export interface UnifiedModel {
-  name: string
-  type: ModelType
-  displayName?: string | null
-  provider?: string | null
-  modelId?: string | null
-  contextWindow?: number | null
-  maxOutputTokens?: number | null
-  namespace?: string
-  resourceUserId?: number
-  config?: Record<string, unknown>
-  runtime?: { family?: string | null; provider?: string | null } | null
-  isActive?: boolean
-  compatibilityDisabled?: boolean
-  compatibilityDisabledReason?: string
-}
+import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
+export type { ModelType, ModelOptions, UnifiedModel }
+export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
+export type {
+  RequestUserInputPayload,
+  RequestUserInputResponse,
+} from '../../../packages/chat-core/src/runtime'
 
 export interface UnifiedModelListResponse {
   data: UnifiedModel[]
@@ -38,11 +26,21 @@ export interface ModelExecutionFields {
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
+  runtime_instance_id?: string | null
+  app_device_id?: string | null
+  socket_device_id?: string | null
+  runtime_routes?: import('../../../packages/chat-core/src/execution-project').DeviceRuntimeRoute[]
   name: string
   status: DeviceStatus
   device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
+  runtime_features?: {
+    schemaVersion: number
+    remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
+    [feature: string]: unknown
+  } | null
 }
 
 export interface DeviceListResponse {
@@ -125,6 +123,10 @@ export interface RuntimeTranscriptMessage {
   errorType?: string | null
   error_type?: string | null
   blocks?: RuntimeChatBlock[] | null
+  runtimeItems?: (
+    | { id: string; type: 'assistant_text'; content: string; createdAt?: string | number | null }
+    | { id: string; type: 'block'; block: RuntimeChatBlock }
+  )[]
   fileChanges?: RuntimeFileChangesSummary | null
   file_changes?: RuntimeFileChangesSummary | null
   createdAt?: string | number | null
@@ -147,7 +149,8 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeCreateRequest {
   schemaVersion: 2
   deviceId: string
-  workspacePath: string
+  workspacePath?: string
+  standaloneChatWorkspace?: boolean
   taskId: string
   runtime: 'codex'
   message: string
@@ -272,14 +275,18 @@ export interface RuntimeWorktreePreflightResponse {
 
 export interface ConversationItem {
   address: RuntimeTaskAddress
+  sourceWorkspacePath: string
   title: string
   deviceName: string
   projectName: string | null
   updatedAt: number
   running: boolean
+  pinned?: boolean
+  pinnedOrder?: number | null
 }
 
 export interface ChatMessage {
+  pendingDelivery?: boolean
   id: string
   taskId?: string
   subtaskId?: string

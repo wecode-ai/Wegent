@@ -147,6 +147,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugin_auth.run",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.remote_task_access.get",
+    "executor.remote_task_access.update",
     "executor.codex_home.config.read",
     "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
@@ -491,6 +493,14 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        // Consent settings never enter the remotely dispatched runtime namespace.
+        if method == "executor.remote_task_access.get" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env().read();
+        }
+        if method == "executor.remote_task_access.update" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env()
+                .update(params);
+        }
         if method == "executor.protocol.describe" {
             return Ok(self.protocol_description());
         }
@@ -2311,7 +2321,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             .my_work_page(
                 params["limit"].as_u64().unwrap_or(30) as usize,
                 params["cursor"].as_str(),
-                params["scope"].as_str() == Some("assigned"),
+                params["scope"].as_str().unwrap_or("participating"),
                 params["include_completed"].as_bool().unwrap_or(true),
                 &params["assignee_user_ids"]
                     .as_array()

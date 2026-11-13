@@ -147,7 +147,15 @@ async fn require_on(
             )
             .await?
             .context("Device unavailable")?;
-            if !environments.contains(&device.id) {
+            if !environments.contains(&device.id)
+                && !row.permits_personal_device(
+                    super::super::project::device_access::personal_owner(
+                        row.executor_owner_user_id,
+                        &device.json,
+                    ),
+                    device.id,
+                )
+            {
                 bail!("Device authorization revoked")
             }
         }

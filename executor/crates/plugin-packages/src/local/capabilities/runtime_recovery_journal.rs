@@ -126,16 +126,16 @@ impl RecoveryJournal {
         {
             let name = format!("expected-{index}");
             let file = staging.path().join(&name);
-            fs::write(&file, bytes)?;
-            fs::File::open(file)?.sync_all()?;
+            write_synced(&file, &bytes)?;
             expected_files.insert(target, PathBuf::from(name));
         }
         remove_existing_path(&staging.path().join("planned"))?;
-        write_json(
+        write_synced(
             &staging.path().join("journal.json"),
-            &json!({"key":spec.key,"transaction_id":transaction_id,"timestamp":timestamp,"expected_files":expected_files,"snapshots":snapshots}),
+            &serde_json::to_vec_pretty(
+                &json!({"key":spec.key,"transaction_id":transaction_id,"timestamp":timestamp,"expected_files":expected_files,"snapshots":snapshots}),
+            )?,
         )?;
-        fs::File::open(staging.path().join("journal.json"))?.sync_all()?;
         fs::rename(staging.path(), path)?;
         Self::load(store, path, spec)
     }
@@ -351,9 +351,34 @@ fn copy_entry(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
         tree_fingerprint(source)?;
         copy_dir_recursive(source, target)?;
     } else {
-        fs::copy(source, target)?;
-        fs::File::open(target)?.sync_all()?;
+        let mut source_file = fs::File::open(source)?;
+        let permissions = source_file.metadata()?.permissions();
+        copy_file_synced(&mut source_file, target, permissions)?;
     }
+    Ok(())
+}
+
+fn copy_file_synced(
+    source: &mut impl io::Read,
+    target: &Path,
+    permissions: fs::Permissions,
+) -> Result<(), CapabilitySyncError> {
+    // Partial configuration stays private until the complete snapshot is durable.
+    let mut file = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
+    io::copy(source, &mut file)?;
+    fs::set_permissions(file.path(), permissions)?;
+    file.as_file().sync_all()?;
+    file.persist(target).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    fs::File::open(target.parent().unwrap())?.sync_all()?;
+    Ok(())
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), CapabilitySyncError> {
+    // Windows requires a writable handle when flushing file buffers.
+    let mut file = fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -368,3 +393,7 @@ fn entries_match(left: &Path, right: &Path) -> Result<bool, CapabilitySyncError>
     }
     Ok(left.is_file() && right.is_file() && fs::read(left)? == fs::read(right)?)
 }
+
+#[cfg(test)]
+#[path = "runtime_recovery_journal_tests.rs"]
+mod tests;

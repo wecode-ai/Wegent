@@ -195,6 +195,8 @@ pub struct RuntimeFeatures {
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_sync: Option<RuntimePluginSyncFeatures>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_task_access: Option<RuntimeRemoteTaskAccessFeatures>,
     #[serde(flatten)]
     pub extensions: serde_json::Map<String, serde_json::Value>,
 }
@@ -223,6 +225,14 @@ impl RuntimePluginSyncFeatures {
             .filter(|version| *version >= 1)
             .map(|protocol_version| Self { protocol_version })
     }
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRemoteTaskAccessFeatures {
+    pub version: i64,
+    pub enabled: bool,
+    pub task_creation: bool,
 }
 
 /// The configured cloud device store's contribution to one listing entry:
@@ -331,6 +341,8 @@ struct RuntimeFeatureInput {
     project_editing: Option<OpaqueJson>,
     #[serde(rename = "pluginSync")]
     plugin_sync: Option<OpaqueJson>,
+    #[serde(rename = "remoteTaskAccess")]
+    remote_task_access: Option<OpaqueJson>,
 }
 
 fn present_project_editing<'de, D>(deserializer: D) -> Result<Option<OpaqueJson>, D::Error>
@@ -779,6 +791,25 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .filter(|_| valid_header)
             .and_then(|value| RuntimePluginSyncFeatures::from_value(&value.to_value())),
         extensions: serde_json::Map::new(),
+        remote_task_access: features
+            .remote_task_access
+            .as_ref()
+            .filter(|_| valid_header)
+            .and_then(|value| {
+                let value = value.to_value();
+                let version = value
+                    .get("version")?
+                    .as_i64()
+                    .filter(|version| *version == 1)?;
+                Some(RuntimeRemoteTaskAccessFeatures {
+                    version,
+                    enabled: value.get("enabled")?.as_bool()?,
+                    task_creation: match value.get("taskCreation") {
+                        Some(value) => value.as_bool()?,
+                        None => false,
+                    },
+                })
+            }),
     })
 }
 

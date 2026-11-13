@@ -537,3 +537,25 @@ Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-de
 Open an Issue in a cloud project space and click **Copy web link** in its detail header to copy its address on the connected Wegent website. The button confirms success with **Copied**; if copying fails, click again to retry. Recipients still need to sign in and have access to the project.
 
 Local project space Issues have no corresponding Wegent webpage, so this action is hidden. It is also hidden until the cloud website address is available.
+
+<a id="independent-issues"></a>
+
+## Independent Issues and My issues
+
+<!-- ui-source: src/features/todo/IndependentIssueDialog.tsx -->
+<!-- ui-source: src/features/todo/IndependentIssueEditor.tsx -->
+<!-- ui-source: src/features/todo/PersonalIssuesView.tsx -->
+
+The collaboration sidebar separates **My issues** from **Projects**. **Assigned to me**, **Created by me**, and **Participating** query the current account's local and cloud project Issues and cloud independent Issues. Home keeps its existing composer, project-grouped list and assistant workspace. Project navigation retains local projects, remote projects and space grouping.
+
+Connect a cloud account, choose **Collaboration → New Issue**, complete the title, description, status, priority, assignee and due date, and save. Independent Issues have no project or space. They are visible only to their creator until colleagues are explicitly invited.
+
+The creator searches for colleagues under **Edit → Participants**, adds invitations or removes existing participants. Participants can read, edit, comment and work on the Issue, but cannot change invitations or delete it. Removing a participant also clears their assignment. Every subsequent read and write rechecks the current invitation. Assignment grants no access; assignees must be the creator or an invited participant.
+
+Open an Issue to discuss, edit or archive it. **Show archived independent issues** lists archived records for restoration. Only the creator can confirm deletion. Saves require the observed version; a concurrent change preserves the draft and reports a conflict so the current content can be reviewed before resubmitting.
+
+The creator can **Associate project** after reviewing the permission change: project permissions will apply and existing participants receive no automatic project membership. One transaction preserves the Issue and comments, allocates a project sequence number, and opens the existing project detail. Target-project edit permission is required; project operations and permissions apply afterwards.
+
+**Ask AI to help** creates a personal task from the currently authorized Issue content using the task page's selected device, workspace and model. It does not automatically change the Issue status or publish results; add the shareable conclusions as comments. Independent Issues are cloud-shared; cloud connection failures do not block local projects or the rest of the workbench.
+
+Existing catalogs are grouped under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. The group can be expanded or collapsed. The duplicate personal assistant sidebar entry is removed while the assistant remains in Home's right workspace.

@@ -513,7 +513,7 @@ def _execution_is_claimable_by_device(
 
     from app.services.collaboration_revocation import execution_authorized
     from app.services.device.identity import resolve_owned_device_alias
-    from app.services.runner_routing import execution_environment_ids
+    from app.services.runner_routing import execution_device_authorized
 
     if execution.assignment_pending:
         return False
@@ -524,10 +524,7 @@ def _execution_is_claimable_by_device(
     if (
         not execution_authorized(db, execution)
         or runner is None
-        or runner.id
-        not in execution_environment_ids(
-            db, execution.cloud_project_id, execution.agent_id
-        )
+        or not execution_device_authorized(db, execution, runner)
     ):
         return False
     if execution.uses_runner_routing:
