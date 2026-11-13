@@ -401,6 +401,12 @@ class CloudProjectLocalBinding(LoopNode):
 
 
 class LoopItemTaskBinding(LoopNode):
+    @property
+    def stand_in_pending(self) -> bool | None:
+        metadata = self.metadata_json
+        value = metadata.get("stand_in_pending") if isinstance(metadata, dict) else None
+        return value if isinstance(value, bool) else None
+
     __mapper_args__ = {"polymorphic_identity": "execution"}
 
     @property

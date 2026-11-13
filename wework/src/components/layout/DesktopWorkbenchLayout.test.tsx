@@ -4627,13 +4627,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton.parentElement).toHaveClass(
       'absolute',
       'right-1',
-      'opacity-0',
+      'opacity-100',
+      'md:opacity-0',
+      '[@media(pointer:coarse)]:opacity-100',
       'group-hover/tab:opacity-100',
       'focus-within:opacity-100'
     )
     expect(closeButton).toHaveClass(
-      'h-[18px]',
-      'w-[18px]',
+      'h-11',
+      'w-11',
+      'md:h-6',
+      'md:w-6',
       'rounded-full',
       'hover:bg-text-primary/70',
       'hover:text-background'
@@ -5224,13 +5228,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton.parentElement).toHaveClass(
       'absolute',
       'right-1',
-      'opacity-0',
+      'opacity-100',
+      'md:opacity-0',
+      '[@media(pointer:coarse)]:opacity-100',
       'group-hover/tab:opacity-100',
       'focus-within:opacity-100'
     )
     expect(closeButton).toHaveClass(
-      'h-[18px]',
-      'w-[18px]',
+      'h-11',
+      'w-11',
+      'md:h-6',
+      'md:w-6',
       'rounded-full',
       'hover:bg-text-primary/70',
       'hover:text-background'

@@ -37,7 +37,7 @@ import { StandInDetailsPopover } from './StandInDetailsPopover'
 import { StandInScheduleDialog } from './StandInScheduleDialog'
 import { Tooltip } from '@/components/ui/tooltip'
 import { StandInWorkList } from './StandInWorkList'
-import { standInWorkRole } from './standInWork'
+import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
@@ -45,7 +45,7 @@ import { StandInOnboarding } from './StandInOnboarding'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
 import { useStandInProcessingStatus } from './useStandInProcessingStatus'
-import { inboxRuntimeItem, useStandInInbox } from './useStandInInbox'
+import { useStandInInbox } from './useStandInInbox'
 import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
@@ -265,26 +265,13 @@ export function StandInOverviewPage({
     roleId ? 'role' : 'primary',
     active && profile !== 'role' && profile !== 'create'
   )
-  const merged = new Map(
-    (workbench?.runtimeTaskReminders.items ?? []).map(item => {
-      const origin = standInOrigin(item)
-      const project = props.projects.find(
-        project =>
-          project.id === origin?.cloudProjectId &&
-          (project.project_store === 'local' ? 'local' : 'cloud') ===
-            (origin?.projectStore === 'local' ? 'local' : 'cloud')
-      )
-      return [item.key, { ...item, projectName: project?.name || item.projectName }]
-    })
-  )
   const visibleInbox = inbox.items.filter(work => work.messageCount > 0 || work.task)
-  if (deviceId)
-    for (const work of visibleInbox)
-      merged.set(
-        `${deviceId}\0${work.taskId}`,
-        inboxRuntimeItem(work, deviceId, merged.get(`${deviceId}\0${work.taskId}`))
-      )
-  const items = [...merged.values()]
+  const items = mergeStandInWorkItems(
+    workbench?.runtimeTaskReminders.items ?? [],
+    inbox.items,
+    deviceId,
+    props.projects
+  )
     .filter(
       item =>
         standInWorkRole(item) !== null &&
@@ -673,7 +660,14 @@ export function StandInOverviewPage({
             userId={props.userId}
             deviceId={deviceId}
             onRefresh={inbox.refresh}
-            onOpenTask={onOpenTask}
+            onOpenTask={
+              onOpenTask
+                ? async address => {
+                    await onOpenTask(address)
+                    setReview(null)
+                  }
+                : undefined
+            }
             onRestoreTask={
               props.services.runtimeWorkApi
                 ? async address => {

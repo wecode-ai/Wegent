@@ -634,7 +634,7 @@ describe('TaskActivityView', () => {
         })
       )
       expect(within(latest).getByText(/本人已读/)).toBeInTheDocument()
-      expect(within(latest).getByText(/分身已接收/)).toBeInTheDocument()
+      expect(within(latest).getByText(/助理已接收/)).toBeInTheDocument()
       rerender(view({ ...state, error: true }))
       expect(within(latest).getByText('回执同步失败')).toBeInTheDocument()
       rerender(view())

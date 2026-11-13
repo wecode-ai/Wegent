@@ -18,6 +18,7 @@ import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 
 const guard = vi.hoisted(() => vi.fn((action: () => void) => action()))
 const projectList = vi.hoisted(() => vi.fn(async () => []))
+const projectCatalog = vi.hoisted(() => ({ available: true }))
 afterEach(() => {
   cleanup()
   localStorage.clear()
@@ -25,11 +26,23 @@ afterEach(() => {
   guard.mockImplementation(action => action())
   projectList.mockReset()
   projectList.mockResolvedValue([])
+  projectCatalog.available = true
 })
 vi.mock('./weworkPlatformApi', () => ({
-  createWeworkPlatformApi: () => ({ projects: { list: projectList } }),
+  createWeworkPlatformApi: () =>
+    projectCatalog.available ? { projects: { list: projectList } } : null,
 }))
 vi.mock('./localWorkspaceApi', () => ({ createLocalWorkspaceApi: () => null }))
+vi.mock('./StandInHomeSetup', () => ({
+  StandInHomeSetup: ({ children }: { children: (settings: unknown) => React.ReactNode }) =>
+    children({}),
+  StandInHomeSetupPrompt: () => <div>Set up assistant</div>,
+}))
+vi.mock('./StandInHomeWorkspace', () => ({
+  StandInHomeWorkspace: ({ userId, deviceId }: { userId: number; deviceId: string }) => (
+    <div data-testid="embedded-stand-in" data-owner={userId} data-device={deviceId} />
+  ),
+}))
 vi.mock('./StandInOverviewPage', () => ({
   StandInOverviewPage: ({
     userId,
@@ -133,6 +146,17 @@ function fixture(
   )
   return { props, workspace, binding, lifecycle, identity, personalGet }
 }
+
+it('embeds the bound personal conversation without loading the project catalog or role directory', async () => {
+  projectCatalog.available = false
+  const f = fixture()
+  render(<PersonalStandInWorkspace {...f.props} embedded />)
+  const conversation = await screen.findByTestId('embedded-stand-in')
+  expect(conversation).toHaveAttribute('data-owner', '7')
+  expect(conversation).toHaveAttribute('data-device', 'mac')
+  expect(projectList).not.toHaveBeenCalled()
+  expect(screen.queryByTestId('retained-role-draft')).not.toBeInTheDocument()
+})
 
 it('reads the authoritative primary binding again when the workspace is explicitly reopened', async () => {
   const f = fixture()
