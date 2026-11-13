@@ -1049,6 +1049,13 @@ export function useCollaborationPlatformController({
           workspaceId: workspaceId ?? undefined,
         });
         registerProject(project);
+        if (
+          project.workspace_id &&
+          !navigationCacheRef.current.workspaces.some(
+            (workspace) => workspace.id === project.workspace_id,
+          )
+        )
+          void activeLoadRef.current(true);
         return project;
       },
       registerProject,

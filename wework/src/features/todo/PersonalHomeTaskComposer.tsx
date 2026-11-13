@@ -162,7 +162,12 @@ function ProjectTaskComposer({
   const cacheDraft = (value: string) => {
     if (!projectKey || draft.active === false) return
     if (completed.current !== null) {
-      if (!value.trim() || value === completed.current) return
+      const resetApplied =
+        !value.trim() &&
+        attachments.attachments.length === 0 &&
+        attachments.uploadingFiles.size === 0 &&
+        !draft.pendingFiles?.length
+      if (!resetApplied && (!value.trim() || value === completed.current)) return
       completed.current = null
     }
     const previous = drafts.get(projectKey)
