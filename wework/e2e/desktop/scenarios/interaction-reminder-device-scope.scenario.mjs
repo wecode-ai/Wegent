@@ -355,9 +355,9 @@ export function createDesktopScenario({
       await control.command('waitFor', pendingCountSelector(3), {
         timeoutMs: uiTimeoutMs * 4,
       })
-      assert.deepEqual(
-        await taskSystemNotifications(control),
-        [],
+      await assertNotificationsRemain(
+        control,
+        notifications => notifications.length === 0,
         'A remote-only question produced a system reminder on the current device'
       )
 
@@ -377,11 +377,6 @@ export function createDesktopScenario({
           notifications[0].url?.startsWith(prefix) && notifications[0].url.slice(prefix.length)
         )
       }
-      await assertNotificationsRemain(
-        control,
-        notifications => notifications.length === 0,
-        'A remote-only question produced a system reminder on the current device'
-      )
       const alerts = await waitForValue(
         () => taskSystemNotifications(control),
         localSystemNotification,
