@@ -15,7 +15,7 @@ struct LocalPluginInstallTarget {
     codex_home: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct LocalPluginUninstallTarget {
     plugin_key: String,
     cache_root: PathBuf,
@@ -129,31 +129,41 @@ impl RuntimeWorkRpcHandler {
         T: Send + 'static,
         F: FnOnce() -> Result<T, String> + Send + 'static,
     {
-        // Native marketplace edits and complete config rewrites share this boundary.
-        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
-        // Prevent a turn from starting while the app-server configuration changes.
-        let _turn_admission = self.turn_queue_operation.lock().await;
-        self.codex_app_server
-            .mutate_configuration_if_idle(|| async move {
-                let value = tokio::task::spawn_blocking(mutation).await.map_err(|error| {
-                    format!("failed to join local plugin configuration mutation: {error}")
-                })??;
-                Ok((value, true))
-            })
-            .await
-            .map_err(|error| match error {
-                CodexIdleMutationError::Busy {
-                    active_turn_count,
-                    pending_request_count,
-                } => AppIpcError::new(
-                    error_code,
-                    format!(
-                        "cannot change local plugins while Codex work is active \
-                         ({active_turn_count} active turns, {pending_request_count} pending requests)"
+        loop {
+            // Native marketplace edits and complete config rewrites share this boundary.
+            let configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
+            // Prevent a turn from starting while background terminal state is checked.
+            let turn_admission = self.turn_queue_operation.lock().await;
+            let background_terminal_wake = self.background_terminal_wake.notified();
+            if self.background_terminal_count() > 0 {
+                drop(turn_admission);
+                drop(configuration);
+                background_terminal_wake.await;
+                continue;
+            }
+            return self
+                .codex_app_server
+                .mutate_configuration_if_idle(|| async move {
+                    let value = tokio::task::spawn_blocking(mutation).await.map_err(|error| {
+                        format!("failed to join local plugin configuration mutation: {error}")
+                    })??;
+                    Ok((value, true))
+                })
+                .await
+                .map_err(|error| match error {
+                    CodexIdleMutationError::Busy {
+                        active_turn_count,
+                        pending_request_count,
+                    } => AppIpcError::new(
+                        error_code,
+                        format!(
+                            "cannot change local plugins while Codex work is active \
+                             ({active_turn_count} active turns, {pending_request_count} pending requests)"
+                        ),
                     ),
-                ),
-                CodexIdleMutationError::Update(error) => AppIpcError::new(error_code, error),
-            })
+                    CodexIdleMutationError::Update(error) => AppIpcError::new(error_code, error),
+                });
+        }
     }
 
     pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -524,6 +534,99 @@ mod tests {
             &target.cache_root
         )
         .unwrap());
+    }
+
+    #[tokio::test]
+    async fn local_plugin_changes_wait_for_background_terminal_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        fs::create_dir_all(&codex_home).unwrap();
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home: codex_home.clone(),
+        };
+        let handler = local_plugin_background_terminal_handler(root.path());
+
+        record_background_terminal(&handler, "turn-1", "command-1");
+        let installing =
+            handler.mutate_local_plugin_configuration("local_plugin_install_failed", {
+                let target = target.clone();
+                move || install_local_plugin_files(&target)
+            });
+        tokio::pin!(installing);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(500), &mut installing)
+                .await
+                .is_err()
+        );
+        assert!(!target.cache_root.exists());
+        complete_background_terminal(&handler, "command-1");
+        tokio::time::timeout(std::time::Duration::from_secs(5), installing)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
+
+        let uninstall_target = LocalPluginUninstallTarget {
+            plugin_key: target.plugin_key.clone(),
+            cache_root: target.cache_root.parent().unwrap().to_path_buf(),
+            codex_home: codex_home.clone(),
+        };
+        record_background_terminal(&handler, "turn-2", "command-2");
+        let uninstalling =
+            handler.mutate_local_plugin_configuration("local_plugin_uninstall_failed", {
+                let target = uninstall_target.clone();
+                move || uninstall_local_plugin_files(&target)
+            });
+        tokio::pin!(uninstalling);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(500), &mut uninstalling)
+                .await
+                .is_err()
+        );
+        assert!(target.cache_root.exists());
+        complete_background_terminal(&handler, "command-2");
+        tokio::time::timeout(std::time::Duration::from_secs(5), uninstalling)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
+        assert!(!target.cache_root.exists());
+    }
+
+    fn local_plugin_background_terminal_handler(root: &Path) -> RuntimeWorkRpcHandler {
+        let mut handler =
+            RuntimeWorkRpcHandler::new("local-plugin-background-terminal", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.join("index.json"));
+        let mut link =
+            RuntimeTaskLink::new_pending("task-1".into(), "/project".into(), "Task".into());
+        link.thread_id = Some("thread-1".into());
+        handler.upsert_local_task(link);
+        handler
+    }
+
+    fn record_background_terminal(
+        handler: &RuntimeWorkRpcHandler,
+        turn_id: &str,
+        command_id: &str,
+    ) {
+        handler.persist_completed_codex_turn_from_notification("task-1", &json!({
+            "method": "turn/completed", "params": {"threadId": "thread-1", "turn": {
+                "id": turn_id, "status": "completed", "items": [{"id": command_id, "type": "commandExecution", "command": "sleep 30", "status": "inProgress", "processId": "42"}]
+            }}
+        }));
+        assert_eq!(handler.background_terminal_count(), 1);
+    }
+
+    fn complete_background_terminal(handler: &RuntimeWorkRpcHandler, command_id: &str) {
+        handler.record_background_terminal_notification("task-1", &json!({
+            "method": "item/completed", "params": {"item": {"id": command_id, "type": "commandExecution", "command": "sleep 30", "status": "completed", "exitCode": 0}}
+        }));
+        assert_eq!(handler.background_terminal_count(), 0);
     }
 
     #[tokio::test]

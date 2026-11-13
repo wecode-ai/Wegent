@@ -76,6 +76,7 @@ impl RuntimeWorkRpcHandler {
             update_completed_command(&mut link.runtime_handle, &update.0, &update.1);
         });
         drop(active_items);
+        self.background_terminal_wake.notify_waiters();
     }
 
     pub(super) async fn clean_background_terminals(
@@ -97,6 +98,7 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("background_terminals_clean_failed", error))?;
+        self.background_terminal_wake.notify_waiters();
         Ok(task_action_success(&link))
     }
 }

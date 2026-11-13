@@ -5,17 +5,52 @@ import {
   requestAdvertisesShellTool,
 } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const PANE = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const PROMPT = 'WEWORK_DESKTOP_E2E_BACKGROUND_TERMINALS'
 const COMPLETE = 'WEWORK_BACKGROUND_TERMINALS_STARTED'
 const MARKERS = ['WEWORK_BACKGROUND_PROCESS_ONE', 'WEWORK_BACKGROUND_PROCESS_TWO']
+const PLUGIN_PROMPT = 'WEWORK_DESKTOP_E2E_PLUGIN_BACKGROUND_TERMINAL'
+const PLUGIN_COMPLETE = 'WEWORK_PLUGIN_BACKGROUND_TERMINAL_STARTED'
+const PLUGIN_MARKER = 'WEWORK_BACKGROUND_PLUGIN_TERMINAL'
+const PLUGIN_NAME = 'background-terminal-plugin'
+const PLUGIN_ID = `${PLUGIN_NAME}@wework-personal`
 const SECTION = '[data-testid="environment-background-terminals-section"]'
 const SUMMARY_BUTTON = '[data-testid="environment-info-button"]'
+
+async function preparePluginFixture(marketplaceRoot) {
+  const pluginRoot = join(marketplaceRoot, 'plugins', PLUGIN_NAME)
+  await mkdir(join(marketplaceRoot, '.agents', 'plugins'), { recursive: true })
+  await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
+  await mkdir(join(pluginRoot, 'skills', 'background-terminal'), { recursive: true })
+  await writeFile(
+    join(marketplaceRoot, '.agents', 'plugins', 'marketplace.json'),
+    JSON.stringify({
+      name: 'wework-personal',
+      plugins: [
+        {
+          name: PLUGIN_NAME,
+          version: '1.0.0',
+          source: { source: 'local', path: `./plugins/${PLUGIN_NAME}` },
+        },
+      ],
+    })
+  )
+  await writeFile(
+    join(pluginRoot, '.codex-plugin', 'plugin.json'),
+    JSON.stringify({ name: PLUGIN_NAME, version: '1.0.0', skills: './skills' })
+  )
+  await writeFile(
+    join(pluginRoot, 'skills', 'background-terminal', 'SKILL.md'),
+    '---\nname: background-terminal\ndescription: Exercise plugin changes around live terminals\n---\n'
+  )
+}
 
 function events(id, items) {
   return [
@@ -61,6 +96,32 @@ async function waitForIdle(control, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('The AI turn did not finish while its background processes remained running')
+}
+
+async function waitForExecutorMethod(logPath, method, offset, timeoutMs) {
+  await waitForValue(
+    async () => {
+      try {
+        return (await readFile(logPath, 'utf8')).slice(offset).includes(`method=${method}`)
+      } catch (error) {
+        if (error?.code === 'ENOENT') return false
+        throw error
+      }
+    },
+    started => started,
+    `The real executor did not start ${method}`,
+    timeoutMs
+  )
+}
+
+async function waitForBackgroundTerminalCount(control, expected, timeoutMs) {
+  await waitForValue(
+    () =>
+      control.command('getElementCount', `${SECTION} [data-testid^="open-background-terminal-"]`),
+    count => Number(count) === expected,
+    `Background terminal count did not become ${expected}`,
+    timeoutMs
+  )
 }
 
 async function changeTheme(control, mode) {
@@ -120,19 +181,39 @@ export function createDesktopScenario({
   captureScreenshot,
   resultDir,
   workspacePath,
+  executorHome,
   uiTimeoutMs,
   modelResponseTimeoutMs,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, 'body')
+  const pluginMarketplaceRoot = join(resultDir, 'background-terminal-plugin')
+  const pluginMarketplacePath = join(
+    pluginMarketplaceRoot,
+    '.agents',
+    'plugins',
+    'marketplace.json'
+  )
+  const pluginCacheRoot = join(
+    executorHome,
+    'codex',
+    'plugins',
+    'cache',
+    'wework-personal',
+    PLUGIN_NAME
+  )
   const captureTerminalKeys = async (control, name) => {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     await writeFile(join(resultDir, name), JSON.stringify(snapshot.nativeTerminalKeys, null, 2))
   }
   let active = false
   let launched = false
+  let pluginLaunched = false
   const toolResults = []
   return {
     appEnvironment: { WEWORK_E2E_RENDERER_CPU_PROFILE_DIRECTORY: resultDir },
+    async prepareApp() {
+      await preparePluginFixture(pluginMarketplaceRoot)
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -152,6 +233,7 @@ export function createDesktopScenario({
       )
       const id = `background-terminals-${Date.now()}`
       const items = []
+      const pluginPrompt = JSON.stringify(body).includes(PLUGIN_PROMPT)
       if (!launched && JSON.stringify(body).includes(PROMPT)) {
         assert.ok(
           requestAdvertisesShellTool(body),
@@ -167,6 +249,15 @@ export function createDesktopScenario({
           })
           items.push(...selectedToolCall(`background_${index}`, tool, index))
         }
+      } else if (!pluginLaunched && pluginPrompt) {
+        pluginLaunched = true
+        const tool = selectTool(body, 'exec_command', {
+          cmd: `node -e "console.log('${PLUGIN_MARKER}'); let tick=0; setInterval(()=>console.log('${PLUGIN_MARKER}_TICK_'+ ++tick), 250)"`,
+          workdir: workspacePath,
+          yield_time_ms: 1000,
+          max_output_tokens: 200,
+        })
+        items.push(...selectedToolCall('plugin_background_terminal', tool, 0))
       } else {
         items.push({
           type: 'response.output_item.done',
@@ -175,7 +266,13 @@ export function createDesktopScenario({
             type: 'message',
             role: 'assistant',
             phase: 'final_answer',
-            content: [{ type: 'output_text', text: COMPLETE, annotations: [] }],
+            content: [
+              {
+                type: 'output_text',
+                text: pluginPrompt ? PLUGIN_COMPLETE : COMPLETE,
+                annotations: [],
+              },
+            ],
           },
         })
       }
@@ -279,6 +376,40 @@ export function createDesktopScenario({
       await captureTerminalKeys(control, 'background-terminal-keys-restored.json')
       await capture(control, 'background-terminals-04b-restored-output.png')
       await showSummary(control)
+
+      const executorLogPath = join(resultDir, 'executor.log')
+      const pluginParams = {
+        marketplacePath: pluginMarketplacePath,
+        pluginName: PLUGIN_NAME,
+      }
+      const installLogOffset = (await readFile(executorLogPath, 'utf8')).length
+      let installFinished = false
+      const installing = requestExecutor(
+        control,
+        'runtime.codex.plugin.install_local_first',
+        pluginParams,
+        modelResponseTimeoutMs
+      ).finally(() => {
+        installFinished = true
+      })
+      await waitForExecutorMethod(
+        executorLogPath,
+        'runtime.codex.plugin.install_local_first',
+        installLogOffset,
+        uiTimeoutMs
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
+        { text: `${MARKERS[0]}_TICK_20`, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        installFinished,
+        false,
+        'Local plugin installation stopped the shared Codex process while background terminals were active'
+      )
+      await capture(control, 'background-terminals-05-plugin-install-pending.png')
+      await showSummary(control)
       await control.command('hover', `${SECTION} [data-testid^="open-background-terminal-"]`)
       const stopSelector = `${SECTION} [data-testid^="stop-background-terminals-"]`
       const stopTestId = await control.command('getAttribute', stopSelector, {
@@ -292,24 +423,92 @@ export function createDesktopScenario({
         }
       )
       assert.equal(await control.command('getActiveElementTestId', 'body'), stopTestId)
-      await capture(control, 'background-terminals-05-stop-action.png')
+      await capture(control, 'background-terminals-06-stop-action.png')
       await control.command('click', stopSelector)
-      const deadline = Date.now() + uiTimeoutMs
-      while (Date.now() < deadline) {
-        if (Number(await control.command('getElementCount', SECTION)) === 0) {
-          await capture(control, 'background-terminals-06-stopped.png')
-          await control.command('click', SUMMARY_BUTTON)
-          await control.command(
-            'waitFor',
-            '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-            { text: MARKERS[0] }
-          )
-          await capture(control, 'background-terminals-07-retained-output.png')
-          return
-        }
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-      throw new Error('Stopping background terminals did not remove both running processes')
+      await waitForBackgroundTerminalCount(control, 0, uiTimeoutMs)
+      const installed = await installing
+      assert.equal(installed.localCommitted, true)
+      await access(join(pluginCacheRoot, '1.0.0'))
+      assert.ok(
+        (await readFile(join(executorHome, 'codex', 'config.toml'), 'utf8')).includes(PLUGIN_ID)
+      )
+      await capture(control, 'background-terminals-07-plugin-installed.png')
+      await control.command('click', SUMMARY_BUTTON)
+      await control.command(
+        'waitFor',
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
+        { text: MARKERS[0] }
+      )
+      await capture(control, 'background-terminals-08-retained-output.png')
+
+      await control.command('waitFor', composer)
+      await control.command('fill', composer, { value: PLUGIN_PROMPT })
+      await control.command('press', composer, { key: 'Enter' })
+      await control.command('waitFor', `${PANE} [data-testid="message-assistant"]`, {
+        text: PLUGIN_COMPLETE,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await waitForIdle(control, uiTimeoutMs)
+      await showSummary(control)
+      await waitForBackgroundTerminalCount(control, 1, uiTimeoutMs)
+      await control.command(
+        'click',
+        `${SECTION} [data-testid^="open-background-terminal-"][title*="${PLUGIN_MARKER}"]`
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
+        { text: `${PLUGIN_MARKER}_TICK_12`, timeoutMs: uiTimeoutMs }
+      )
+
+      const uninstallLogOffset = (await readFile(executorLogPath, 'utf8')).length
+      let uninstallFinished = false
+      const uninstalling = requestExecutor(
+        control,
+        'runtime.codex.plugin.uninstall_local',
+        { pluginName: PLUGIN_NAME },
+        modelResponseTimeoutMs
+      ).finally(() => {
+        uninstallFinished = true
+      })
+      await waitForExecutorMethod(
+        executorLogPath,
+        'runtime.codex.plugin.uninstall_local',
+        uninstallLogOffset,
+        uiTimeoutMs
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
+        { text: `${PLUGIN_MARKER}_TICK_20`, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        uninstallFinished,
+        false,
+        'Local plugin uninstall stopped the shared Codex process while a background terminal was active'
+      )
+      await capture(control, 'background-terminals-09-plugin-uninstall-pending.png')
+      await showSummary(control)
+      await control.command(
+        'hover',
+        `${SECTION} [data-testid^="open-background-terminal-"][title*="${PLUGIN_MARKER}"]`
+      )
+      await control.command('click', stopSelector)
+      await waitForBackgroundTerminalCount(control, 0, uiTimeoutMs)
+      const uninstalled = await uninstalling
+      assert.equal(uninstalled.localCommitted, true)
+      await assert.rejects(access(pluginCacheRoot), { code: 'ENOENT' })
+      assert.ok(
+        !(await readFile(join(executorHome, 'codex', 'config.toml'), 'utf8')).includes(PLUGIN_ID)
+      )
+      await capture(control, 'background-terminals-10-plugin-uninstalled.png')
+      await control.command('click', SUMMARY_BUTTON)
+      await control.command(
+        'waitFor',
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
+        { text: PLUGIN_MARKER }
+      )
+      await capture(control, 'background-terminals-11-plugin-terminal-retained.png')
     },
   }
 }
