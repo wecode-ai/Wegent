@@ -109,6 +109,27 @@ describe('connector authorization window', () => {
     expect(mocks.window.close).toHaveBeenCalledTimes(1)
   })
 
+  test('isolates provider cookies between concurrent authorization attempts', async () => {
+    await openConnectorAuthorizationWindow({
+      url: 'https://provider.example/authorize',
+      parent,
+      requestId: 'account-a',
+    })
+    await openConnectorAuthorizationWindow({
+      url: 'https://provider.example/authorize',
+      parent,
+      requestId: 'account-b',
+    })
+
+    const [first, second] = mocks.fromPartition.mock.calls.slice(-2)
+    expect(first[0]).toMatch(/^connector-authorization-/)
+    expect(second[0]).toMatch(/^connector-authorization-/)
+    expect(first[0]).not.toBe(second[0])
+    expect(first[0]).not.toMatch(/^persist:/)
+    expect(first[1]).toEqual({ cache: false })
+    expect(second[1]).toEqual({ cache: false })
+  })
+
   test('reports the attempt as open until its window closes', async () => {
     const closedAttempts: string[] = []
     await openConnectorAuthorizationWindow({

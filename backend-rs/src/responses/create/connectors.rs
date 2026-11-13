@@ -158,15 +158,15 @@ fn update_provider_skills(
 ) -> HashSet<String> {
     let mut explicit = HashSet::new();
     let coding = request.bot[0]["shell_type"] != "Chat";
-    let backend = if coding {
-        "${{backend_url}}".into()
-    } else {
-        request.backend_url.clone()
-    };
     let token = if coding {
         "${{task_token}}".into()
     } else {
         request.auth_token.clone()
+    };
+    let connector_url = if coding {
+        "${{backend_api_url}}/mcp/connectors/sse".into()
+    } else {
+        connector_mcp_url(&request.backend_url)
     };
     for skill in &mut request.skill_configs {
         let Some(slug) = skill["connector_slug"].as_str().map(str::to_owned) else {
@@ -184,7 +184,7 @@ fn update_provider_skills(
                 && app.is_some_and(|app| app.config.tool_loading_mode == "lazy")
             {
                 skill["mcpServers"] = json!({
-                    (format!("wegent-connector-{slug}")): scoped_skill_server(&backend, &token, &slug)
+                    (format!("wegent-connector-{slug}")): scoped_skill_server(&connector_url, &token, &slug)
                 });
                 explicit.insert(slug);
             }
@@ -209,27 +209,38 @@ fn server(
     if lazy {
         headers["X-Connector-Loading"] = json!("lazy");
     }
-    let url = if chat {
-        format!(
-            "{}/api/mcp/connectors/sse",
-            request.backend_url.trim_end_matches('/')
-        )
-    } else {
-        "${{backend_url}}/api/mcp/connectors/sse".into()
-    };
-    let mut entry = json!({"name": name, "type": "streamable-http", "url": url, "timeout": 180});
+    let mut entry = json!({
+        "name": name,
+        "type": "streamable-http",
+        "url": if chat { connector_mcp_url(&request.backend_url) } else { "${{backend_api_url}}/mcp/connectors/sse".into() },
+        "timeout": 180
+    });
     entry[if chat { "auth" } else { "headers" }] = headers;
     entry
 }
 
-fn skill_server(request: &ExecutionRequest, slug: &str) -> Value {
-    scoped_skill_server(&request.backend_url, &request.auth_token, slug)
+/// The connector MCP endpoint on the backend that owns it.
+///
+/// Chat receives concrete URLs; coding uses the normalized runtime API context
+/// so the executor can rebind the backend for its own network position.
+fn connector_mcp_url(backend: &str) -> String {
+    let base = backend.trim_end_matches('/');
+    let root = base.strip_suffix("/api").unwrap_or(base);
+    format!("{root}/api/mcp/connectors/sse")
 }
 
-fn scoped_skill_server(backend: &str, token: &str, slug: &str) -> Value {
+fn skill_server(request: &ExecutionRequest, slug: &str) -> Value {
+    scoped_skill_server(
+        &connector_mcp_url(&request.backend_url),
+        &request.auth_token,
+        slug,
+    )
+}
+
+fn scoped_skill_server(url: &str, token: &str, slug: &str) -> Value {
     json!({
         "type": "streamable-http",
-        "url": format!("{}/api/mcp/connectors/sse", backend.trim_end_matches('/')),
+        "url": url,
         "headers": {"Authorization": format!("Bearer {token}"), "X-Connector-App": slug},
         "timeout": 180
     })

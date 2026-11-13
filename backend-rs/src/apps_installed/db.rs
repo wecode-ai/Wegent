@@ -30,7 +30,7 @@ pub struct UserRow {
     #[allow(dead_code)]
     pub users_email: Option<String>,
     #[allow(dead_code)]
-    pub users_git_info: Json<brz_json::OpaqueJson>,
+    pub users_git_info: Option<Json<brz_json::OpaqueJson>>,
     pub users_is_active: bool,
     pub users_role: String,
     #[allow(dead_code)]

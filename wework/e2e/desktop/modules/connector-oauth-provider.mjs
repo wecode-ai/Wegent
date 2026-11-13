@@ -58,6 +58,7 @@ export async function startConnectorOAuthProvider() {
     accessTokens: new Set(),
     refreshTokens: new Set(),
     toolCalls: [],
+    cookieProbes: [],
   }
 
   const server = createServer(async (request, response) => {
@@ -65,6 +66,20 @@ export async function startConnectorOAuthProvider() {
     const url = new URL(request.url ?? '/', base)
     const path = url.pathname
     const method = (request.method ?? 'GET').toUpperCase()
+
+    if (path === '/cookie-probe') {
+      state.cookieProbes.push({
+        attempt: url.searchParams.get('attempt'),
+        cookie: request.headers.cookie ?? null,
+      })
+      const body = '<!doctype html><title>Consent isolation probe</title>'
+      response.writeHead(200, {
+        'content-type': 'text/html',
+        'set-cookie': 'consent-probe=synthetic; Path=/; SameSite=Lax',
+      })
+      response.end(body)
+      return
+    }
 
     if (path === '/mcp') {
       const bearer = (request.headers.authorization ?? '').replace(/^Bearer\s+/i, '')
@@ -252,6 +267,9 @@ export async function startConnectorOAuthProvider() {
     url: `http://127.0.0.1:${port}`,
     get authorizeRequests() {
       return state.authorizeRequests
+    },
+    get cookieProbes() {
+      return state.cookieProbes
     },
     get tokenRequests() {
       return state.tokenRequests

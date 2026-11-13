@@ -16,10 +16,11 @@
  * user gets "window closed" even though the grant is about to land.
  */
 
+import { randomUUID } from 'node:crypto'
 import { BrowserWindow, session } from 'electron'
 
 /** Throwaway partition: nothing survives the consent flow. */
-export const CONNECTOR_AUTHORIZATION_PARTITION = 'connector-authorization'
+const CONNECTOR_AUTHORIZATION_PARTITION = 'connector-authorization'
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 
@@ -88,7 +89,9 @@ export interface ConnectorAuthorizationWindowOptions {
 export async function openConnectorAuthorizationWindow(
   options: ConnectorAuthorizationWindowOptions
 ): Promise<void> {
-  const isolated = session.fromPartition(CONNECTOR_AUTHORIZATION_PARTITION, { cache: false })
+  const isolated = session.fromPartition(`${CONNECTOR_AUTHORIZATION_PARTITION}-${randomUUID()}`, {
+    cache: false,
+  })
   const window = new BrowserWindow({
     width: 520,
     height: 760,

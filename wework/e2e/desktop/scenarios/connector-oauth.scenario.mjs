@@ -310,6 +310,22 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      if (checkpoint === 'connector-oauth') {
+        assert.equal(
+          await control.command('verifyConnectorAuthorizationIsolation', 'body', {
+            value: provider.url,
+          }),
+          'true'
+        )
+        assert.deepEqual(
+          provider.cookieProbes,
+          [
+            { attempt: '0', cookie: null },
+            { attempt: '1', cookie: null },
+          ],
+          'Concurrent consent windows shared provider cookies'
+        )
+      }
       // Prediction requests also carry the conversation text; keep the model
       // fixture answering only real turns.
       await control.command('setAppPreferences', 'body', {

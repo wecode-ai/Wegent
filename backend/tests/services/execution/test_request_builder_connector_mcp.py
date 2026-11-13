@@ -303,11 +303,52 @@ def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> No
     servers = bot_config["mcp_servers"]
     assert [server["name"] for server in servers] == ["wegent-connector-dingding_log"]
     assert servers[0]["type"] == "http"
-    assert servers[0]["url"] == "${{backend_url}}/api/mcp/connectors/sse"
+    assert servers[0]["url"] == "${{backend_api_url}}/mcp/connectors/sse"
     assert servers[0]["headers"] == {
         "Authorization": "Bearer ${{task_token}}",
         "X-Connector-App": "dingding_log",
     }
+
+
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        "http://backend.example:8000",
+        "http://backend.example:8000/",
+        "http://backend.example:8000/api",
+        "http://backend.example:8000/api/",
+    ],
+)
+def test_cloud_coding_shell_does_not_double_an_api_prefix(
+    monkeypatch, backend_url: str
+) -> None:
+    from shared.models.execution import ExecutionRequest
+    from shared.utils.mcp_utils import replace_mcp_server_variables
+
+    builder = TaskRequestBuilder(MagicMock())
+    monkeypatch.setattr(
+        TaskRequestBuilder,
+        "_user_has_callable_connectors",
+        lambda self, user: False,
+    )
+    monkeypatch.setattr(
+        TaskRequestBuilder,
+        "_authorized_lazy_connector_apps",
+        lambda self, user: [SimpleNamespace(slug="dingding_log", keywords=[])],
+    )
+    bot_config: dict = {"shell_type": "ClaudeCode", "mcp_servers": []}
+
+    builder._attach_connector_mcp_for_coding_shell(
+        bot_config, user=SimpleNamespace(id=6), auth_token="t", message=""
+    )
+
+    assert (
+        bot_config["mcp_servers"][0]["url"] == "${{backend_api_url}}/mcp/connectors/sse"
+    )
+    request = ExecutionRequest(backend_url=backend_url, auth_token="synthetic")
+    resolved = replace_mcp_server_variables(bot_config["mcp_servers"], request)
+    assert resolved[0]["url"] == "http://backend.example:8000/api/mcp/connectors/sse"
+    assert resolved[0]["headers"]["Authorization"] == "Bearer synthetic"
 
 
 def test_coding_shell_can_discover_unmatched_lazy_apps(monkeypatch) -> None:
@@ -346,6 +387,7 @@ def test_selected_provider_mounts_its_authorized_scope_without_keywords(
     from app.services.chat.selected_knowledge import activate_provider_native_knowledge
     from app.services.execution.skill_mcp import extract_skill_mcp_servers
     from shared.models import ExecutionRequest
+    from shared.utils.mcp_utils import replace_mcp_server_variables
 
     skills = [
         {
@@ -359,6 +401,8 @@ def test_selected_provider_mounts_its_authorized_scope_without_keywords(
     )
     servers = extract_skill_mcp_servers(skills)
     request = ExecutionRequest(
+        backend_url="https://backend.example/api/",
+        auth_token="synthetic",
         bot=[{"shell_type": shell_type, "mcp_servers": servers}],
         skill_names=["dingtalk-docs"],
         skill_configs=skills,
@@ -368,6 +412,9 @@ def test_selected_provider_mounts_its_authorized_scope_without_keywords(
     assert len(servers) == 1
     assert servers[0]["headers"]["X-Connector-App"] == "documents"
     assert "X-Connector-Loading" not in servers[0]["headers"]
+    resolved = replace_mcp_server_variables(servers, request)
+    assert resolved[0]["url"] == "https://backend.example/api/mcp/connectors/sse"
+    assert resolved[0]["headers"]["Authorization"] == "Bearer synthetic"
 
 
 def test_available_but_unselected_provider_keeps_its_tools_deferred() -> None:

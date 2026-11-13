@@ -64,6 +64,10 @@ fn chat_mounts_static_and_defers_lazy_without_keywords() {
         request.skill_configs[0]["mcpServers"]["wegent-connector-lazy-app"]["headers"]["X-Connector-App"],
         "lazy-app"
     );
+    assert_eq!(
+        request.skill_configs[0]["mcpServers"]["wegent-connector-lazy-app"]["url"],
+        "http://backend:8000/api/mcp/connectors/sse"
+    );
     assert!(request.bot[0]["mcp_servers"].as_array().unwrap().is_empty());
 }
 
@@ -89,7 +93,7 @@ fn cloud_coding_mounts_static_and_compact_lazy_with_preserved_headers() {
             servers[1]["headers"]["Authorization"],
             "Bearer ${{task_token}}"
         );
-        assert_eq!(servers[1]["url"], "${{backend_url}}/api/mcp/connectors/sse");
+        assert_eq!(servers[1]["url"], "${{backend_api_url}}/mcp/connectors/sse");
         assert_eq!(
             servers[1]["type"],
             if shell == "ClaudeCode" {
@@ -98,6 +102,36 @@ fn cloud_coding_mounts_static_and_compact_lazy_with_preserved_headers() {
                 "streamable-http"
             }
         );
+    }
+}
+
+#[test]
+fn connector_urls_normalize_an_existing_api_prefix() {
+    for backend in [
+        "http://backend:8000",
+        "http://backend:8000/",
+        "http://backend:8000/api",
+        "http://backend:8000/api/",
+    ] {
+        for shell in ["Chat", "Codex"] {
+            let mut request = request(shell);
+            request.backend_url = backend.into();
+            assemble(&mut request, &[app("static-app", "static", true)], false);
+            let servers = if shell == "Chat" {
+                &request.mcp_servers
+            } else {
+                request.bot[0]["mcp_servers"].as_array().unwrap()
+            };
+            assert_eq!(
+                servers[0]["url"],
+                if shell == "Chat" {
+                    "http://backend:8000/api/mcp/connectors/sse"
+                } else {
+                    "${{backend_api_url}}/mcp/connectors/sse"
+                },
+                "backend={backend} shell={shell}"
+            );
+        }
     }
 }
 
@@ -166,6 +200,14 @@ fn selected_provider_skill_gets_one_scope_and_supersedes_personal_mcp() {
         assert_eq!(
             servers["wegent-connector-lazy-app"]["headers"]["X-Connector-App"],
             "lazy-app"
+        );
+        assert_eq!(
+            servers["wegent-connector-lazy-app"]["url"],
+            if shell == "Chat" {
+                "http://backend:8000/api/mcp/connectors/sse"
+            } else {
+                "${{backend_api_url}}/mcp/connectors/sse"
+            }
         );
         assert!(request.mcp_servers.is_empty());
         assert_eq!(request.bot[0]["mcp_servers"], json!([]));
@@ -256,7 +298,7 @@ async fn catalog_and_grant_reads_enforce_identity_visibility_and_no_upstream_pro
             let row = vec![
                 ("users_id", SqlValue::I64(7)), ("users_user_name", SqlValue::Text("connector-test".into())),
                 ("users_password_hash", SqlValue::Text("unused".into())), ("users_email", SqlValue::Text("".into())),
-                ("users_git_info", SqlValue::Text("{}".into())), ("users_is_active", SqlValue::I8(1)),
+                ("users_git_info", SqlValue::Null), ("users_is_active", SqlValue::I8(1)),
                 ("users_role", SqlValue::Text("user".into())), ("users_auth_source", SqlValue::Text("test".into())),
                 ("users_preferences", SqlValue::Text("{}".into())), ("users_created_at", SqlValue::DateTime),
                 ("users_updated_at", SqlValue::DateTime),

@@ -6,6 +6,32 @@ from shared.models.execution import ExecutionRequest
 from shared.utils.mcp_utils import replace_mcp_server_variables
 
 
+def test_connector_api_url_normalizes_prefix_and_rebinds():
+    for backend in [
+        "http://backend.example:8000",
+        "http://backend.example:8000/",
+        "http://backend.example:8000/api",
+        "http://backend.example:8000/api/",
+    ]:
+        request = ExecutionRequest(backend_url=backend, auth_token="synthetic")
+        servers = {
+            "connector": {
+                "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"},
+            }
+        }
+        result = replace_mcp_server_variables(servers, request)
+        assert result["connector"]["url"] == (
+            "http://backend.example:8000/api/mcp/connectors/sse"
+        )
+        assert result["connector"]["headers"]["Authorization"] == "Bearer synthetic"
+        request.backend_url = "https://other.example/deployment/api/"
+        result = replace_mcp_server_variables(servers, request)
+        assert result["connector"]["url"] == (
+            "https://other.example/deployment/api/mcp/connectors/sse"
+        )
+
+
 def test_replace_mcp_server_variables_replaces_backend_url_and_task_token():
     mcp_servers = {
         "wegent-knowledge": {

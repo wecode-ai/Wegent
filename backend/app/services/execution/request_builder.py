@@ -2872,7 +2872,7 @@ class TaskRequestBuilder:
             skill["mcpServers"] = {
                 f"wegent-connector-{slug}": {
                     "type": "streamable-http",
-                    "url": "${{backend_url}}/mcp/connectors/sse",
+                    "url": "${{backend_api_url}}/mcp/connectors/sse",
                     "headers": {
                         "Authorization": "Bearer ${{task_token}}",
                         "X-Connector-App": slug,
@@ -2956,7 +2956,7 @@ class TaskRequestBuilder:
         headers = {"Authorization": "Bearer ${{task_token}}"}
         # Compact lazy discovery belongs to the Rust-owned public MCP route,
         # not the Python internal alias, which exposes direct tools only.
-        connector_url = "${{backend_url}}/api/mcp/connectors/sse"
+        connector_url = "${{backend_api_url}}/mcp/connectors/sse"
         servers: list[dict] = []
         if self._user_has_callable_connectors(user):
             servers.append(

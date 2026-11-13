@@ -134,22 +134,38 @@ async fn list_deferred_tools(
     app_scope: Option<&str>,
 ) -> Vec<Value> {
     let Some(user) = resolve_user(state, authorization).await else {
+        tracing::warn!("deferred connector MCP listing could not resolve its user");
         return vec![];
     };
-    let Ok(rows) = db::list_connector_app_kinds(&state.mysql).await else {
-        return vec![];
+    let rows = match db::list_connector_app_kinds(&state.mysql).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::error!(%error, "deferred connector MCP catalog read failed");
+            return vec![];
+        }
     };
     let catalog = rows.iter().map(service::row_to_app).collect::<Vec<_>>();
-    let Ok(connected) = service::connected_apps(&state.mysql, &catalog, &user).await else {
-        return vec![];
+    let connected = match service::connected_apps(&state.mysql, &catalog, &user).await {
+        Ok(connected) => connected,
+        Err(error) => {
+            tracing::error!(%error, "deferred connector MCP grant read failed");
+            return vec![];
+        }
     };
-    connected
+    let tools: Vec<_> = connected
         .into_iter()
         .filter(|app| {
             app.tool_loading_mode == "lazy" && app_scope.is_none_or(|slug| app.slug == slug)
         })
         .flat_map(crate::connector_runtime::loading::deferred_tools)
-        .collect()
+        .collect();
+    tracing::info!(
+        user_id = user.users_id,
+        app_scope,
+        tool_count = tools.len(),
+        "deferred connector MCP listing completed"
+    );
+    tools
 }
 
 async fn call_deferred_tool(
@@ -214,9 +230,13 @@ async fn call_deferred_tool(
 /// `_active_user`: the caller of the task token, when still active.
 async fn resolve_user(state: &AppState, authorization: Option<&str>) -> Option<UserRow> {
     let identity = task_token::verify(&state.auth, authorization)?;
-    let user = db::find_user_by_id(&state.mysql, identity.user_id)
-        .await
-        .ok()??;
+    let user = match db::find_user_by_id(&state.mysql, identity.user_id).await {
+        Ok(user) => user?,
+        Err(error) => {
+            tracing::error!(%error, "connector MCP user lookup failed");
+            return None;
+        }
+    };
     user.users_is_active.then_some(user)
 }
 

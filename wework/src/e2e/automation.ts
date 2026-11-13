@@ -93,6 +93,7 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
@@ -2184,6 +2185,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'verifyConnectorAuthorizationIsolation':
+      await verifyConnectorAuthorizationIsolation(command.value ?? '')
+      return 'true'
     case 'crashRenderer':
       rendererCrashStore.trigger()
       return 'Renderer crash requested'

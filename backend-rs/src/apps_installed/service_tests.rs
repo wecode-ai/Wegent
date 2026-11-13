@@ -64,7 +64,7 @@ fn user() -> UserRow {
         users_user_name: "xiangji".to_string(),
         users_password_hash: String::new(),
         users_email: None,
-        users_git_info: brz_mysql::Json(Value::Null.into()),
+        users_git_info: None,
         users_is_active: true,
         users_role: "user".to_string(),
         users_auth_source: "oidc".to_string(),

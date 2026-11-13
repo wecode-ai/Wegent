@@ -201,6 +201,54 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn connector_api_templates_rebind_backend_and_credentials_on_each_turn() {
+        let mut servers = BTreeMap::from([(
+            "connector".to_owned(),
+            json!({
+                "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {
+                    "Authorization": "Bearer ${{task_token}}",
+                    "X-Connector-App": "records",
+                    "X-Connector-Loading": "lazy",
+                },
+            }),
+        )]);
+        for (backend, token, expected) in [
+            (
+                "https://first.example/api/",
+                "first",
+                "https://first.example/api/mcp/connectors/sse",
+            ),
+            (
+                "https://second.example/deployment/",
+                "second",
+                "https://second.example/deployment/api/mcp/connectors/sse",
+            ),
+        ] {
+            let request = ExecutionRequest {
+                backend_url: Some(backend.into()),
+                auth_token: Some(token.into()),
+                ..Default::default()
+            };
+            let mut environment = BTreeMap::new();
+            bind_context(&mut servers, &request, &mut environment).unwrap();
+            let mut resolved = servers["connector"].clone();
+            resolve_context(&mut resolved, &environment).unwrap();
+            assert_eq!(resolved["url"], expected);
+            assert_eq!(
+                resolved["headers"]["Authorization"],
+                format!("Bearer {token}")
+            );
+            assert_eq!(resolved["headers"]["X-Connector-App"], "records");
+            assert_eq!(resolved["headers"]["X-Connector-Loading"], "lazy");
+            assert!(!servers["connector"]["url"]
+                .as_str()
+                .unwrap()
+                .contains("https://"));
+        }
+    }
+
+    #[test]
     fn unconfigured_user_mcps_do_not_block_other_services_or_bind_partial_credentials() {
         let path = "task_data.user_mcps.example.services.storage.credentials.url";
         for url in [Value::Null, json!(""), json!(" \t")] {
