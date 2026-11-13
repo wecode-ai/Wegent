@@ -142,7 +142,7 @@ export function createDesktopScenario({ modelResponseTimeoutMs }) {
         'The owner mention did not complete on the unshared device',
         modelResponseTimeoutMs
       )
-      assert.equal(completed.items[0].runtime_device_id, device.execution_target_id)
+      assert.equal(completed.items[0].runtimeDeviceId, device.execution_target_id)
       assert.equal(modelRequests, 1)
       assert.deepEqual(
         (await request(projectEnvironments)).items,
@@ -175,7 +175,7 @@ export function createDesktopScenario({ modelResponseTimeoutMs }) {
         'Another member must be denied the owners unshared device',
         10_000
       )
-      assert.match(denied.error_message, /RUNNER_ENVIRONMENT_UNAVAILABLE/)
+      assert.match(denied.errorMessage, /RUNNER_ENVIRONMENT_UNAVAILABLE/)
       assert.equal(modelRequests, 1, 'Another member must not start a model on the owners device')
     },
     diagnostics() {
