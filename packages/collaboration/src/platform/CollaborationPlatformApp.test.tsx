@@ -1265,6 +1265,40 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.workspaces!.create).not.toHaveBeenCalled();
   });
 
+  it("keeps folder import available beside the flat local project heading", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectNavigation: "projects",
+        }}
+        renderProjectImporter={({ workspace, mode }) => (
+          <div data-testid="flat-local-importer">
+            {workspace.id}:{mode}
+          </div>
+        )}
+      />,
+    );
+    await click(
+      byTestId(`collaboration-workspace-actions-${localWorkspace.id}`),
+    );
+    await click(portalByTestId("collaboration-workspace-nav-create-project"));
+    await click(portalByTestId("collaboration-workspace-nav-add-folder"));
+    expect(byTestId("flat-local-importer").textContent).toBe(
+      `${localWorkspace.id}:folder`,
+    );
+    expect(api.projects.create).not.toHaveBeenCalled();
+    expect(
+      byTestId("collaboration-project-group-local").textContent,
+    ).not.toContain("本地空间");
+  });
+
   it("selects the existing personal default once without exposing an unassigned option", async () => {
     const defaultSpace = {
       ...workspace,

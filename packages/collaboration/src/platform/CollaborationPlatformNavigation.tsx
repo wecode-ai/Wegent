@@ -143,6 +143,76 @@ export function CollaborationPlatformNavigation({
       </span>
     </button>
   ) : null;
+  const renderWorkspaceActions = (
+    candidate: ReturnType<
+      typeof buildWorkspaceNavigation
+    >["workspaces"][number]["workspace"],
+  ) => (
+    <ActionMenu
+      ariaLabel={messages.settings}
+      icon={Ellipsis}
+      items={[
+        {
+          label: messages.addProject,
+          icon: Plus,
+          testId: "collaboration-workspace-nav-create-project",
+          children: [
+            {
+              label: messages.blankProject,
+              icon: SquarePen,
+              testId: "collaboration-workspace-nav-create-blank-project",
+              onSelect: () => onCreateProject(candidate.id, "blank"),
+            },
+            ...(candidate.location === "local" && host.renderProjectImporter
+              ? [
+                  {
+                    label: messages.addFolder,
+                    icon: FolderPlus,
+                    testId: "collaboration-workspace-nav-add-folder",
+                    onSelect: () => onCreateProject(candidate.id, "folder"),
+                  },
+                  {
+                    label: messages.importExistingProject,
+                    icon: FolderOpen,
+                    testId:
+                      "collaboration-workspace-nav-import-existing-project",
+                    onSelect: () => onCreateProject(candidate.id, "existing"),
+                  },
+                ]
+              : []),
+          ],
+        },
+        {
+          separator: true,
+          label: "",
+          testId: "collaboration-workspace-nav-project-separator",
+        },
+        {
+          label: messages.settings,
+          icon: Settings,
+          testId: "collaboration-workspace-nav-settings",
+          onSelect: () => {
+            host.navigate({
+              platformView: "spaces",
+              workspaceId: candidate.id,
+              workspaceView: "settings",
+              projectId: null,
+              projectView: "board",
+              issueId: null,
+            });
+          },
+        },
+      ]}
+      placement="bottom-end"
+      showTriggerTooltip={false}
+      testId={
+        host.location.workspaceId === candidate.id
+          ? "collaboration-workspace-actions"
+          : `collaboration-workspace-actions-${candidate.id}`
+      }
+      triggerClassName="collaboration-workspace-action-trigger"
+    />
+  );
   const renderWorkspaceGroup = ({
     workspace: candidate,
     canOpen,
@@ -219,74 +289,7 @@ export function CollaborationPlatformNavigation({
           )}
           {canManageWorkspace ? (
             <div className="collaboration-workspace-actions">
-              <ActionMenu
-                ariaLabel={messages.settings}
-                icon={Ellipsis}
-                items={[
-                  {
-                    label: messages.addProject,
-                    icon: Plus,
-                    testId: "collaboration-workspace-nav-create-project",
-                    children: [
-                      {
-                        label: messages.blankProject,
-                        icon: SquarePen,
-                        testId:
-                          "collaboration-workspace-nav-create-blank-project",
-                        onSelect: () => onCreateProject(candidate.id, "blank"),
-                      },
-                      ...(candidate.location === "local" &&
-                      host.renderProjectImporter
-                        ? [
-                            {
-                              label: messages.addFolder,
-                              icon: FolderPlus,
-                              testId: "collaboration-workspace-nav-add-folder",
-                              onSelect: () =>
-                                onCreateProject(candidate.id, "folder"),
-                            },
-                            {
-                              label: messages.importExistingProject,
-                              icon: FolderOpen,
-                              testId:
-                                "collaboration-workspace-nav-import-existing-project",
-                              onSelect: () =>
-                                onCreateProject(candidate.id, "existing"),
-                            },
-                          ]
-                        : []),
-                    ],
-                  },
-                  {
-                    separator: true,
-                    label: "",
-                    testId: "collaboration-workspace-nav-project-separator",
-                  },
-                  {
-                    label: messages.settings,
-                    icon: Settings,
-                    testId: "collaboration-workspace-nav-settings",
-                    onSelect: () => {
-                      host.navigate({
-                        platformView: "spaces",
-                        workspaceId: candidate.id,
-                        workspaceView: "settings",
-                        projectId: null,
-                        projectView: "board",
-                        issueId: null,
-                      });
-                    },
-                  },
-                ]}
-                placement="bottom-end"
-                showTriggerTooltip={false}
-                testId={
-                  host.location.workspaceId === candidate.id
-                    ? "collaboration-workspace-actions"
-                    : `collaboration-workspace-actions-${candidate.id}`
-                }
-                triggerClassName="collaboration-workspace-action-trigger"
-              />
+              {renderWorkspaceActions(candidate)}
             </div>
           ) : null}
           {candidateProjects.length > 0 ? (
@@ -613,6 +616,11 @@ export function CollaborationPlatformNavigation({
                   )}
                   <div className="collaboration-workspace-section-actions">
                     {location === "cloud" ? createWorkspaceButton : null}
+                    {location === "local" &&
+                    localWorkspace &&
+                    ["Owner", "Maintainer"].includes(localWorkspace.access_role)
+                      ? renderWorkspaceActions(localWorkspace)
+                      : null}
                     <button
                       type="button"
                       className="collaboration-workspace-section-create"
