@@ -5,7 +5,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
 from pydantic import Field, SecretStr, field_validator
@@ -16,6 +16,9 @@ from pydantic_settings import (
 )
 from pydantic_settings.sources import DotEnvSettingsSource
 from pydantic_settings.sources.utils import parse_env_vars
+
+if TYPE_CHECKING:
+    from shared.event_reporting.config import EventReporterConfig
 
 
 class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
@@ -776,6 +779,40 @@ class Settings(BaseSettings):
     #          chat_shell/knowledge_runtime -> Backend internal API
     # Generate using: openssl rand -hex 32
     INTERNAL_SERVICE_TOKEN: str = ""
+
+    # Knowledge event reporting. These fields are part of Settings so local
+    # backend/.env values reach the reporter without mutating os.environ.
+    # Preserve raw optional values: malformed telemetry must not break Settings.
+    EVENT_REPORTING_ENABLED: Any = False
+    EVENT_KAFKA_ADV_ATTRIBUTION_ENABLED: Any = False
+    EVENT_KAFKA_ADV_READ_WIKI_ENABLED: Any = False
+    EVENT_KAFKA_ADV_MODEL_STORAGE_ENABLED: Any = False
+    EVENT_KAFKA_ADV_QUALITY_DETAIL_ENABLED: Any = False
+    EVENT_KAFKA_ADV_RESULT_DETAIL_LIMIT: Any = 10
+    EVENT_KAFKA_BOOTSTRAP_SERVERS: Any = ""
+    EVENT_KAFKA_TOPIC: Any = "knowledge-events-v1"
+    EVENT_KAFKA_ENVIRONMENT: Any = ""
+    EVENT_KAFKA_CLIENT_ID: Any = ""
+    EVENT_KAFKA_ACKS: Any = "all"
+    EVENT_KAFKA_COMPRESSION_TYPE: Any = "lz4"
+    EVENT_KAFKA_LINGER_MS: Any = 20
+    EVENT_KAFKA_REQUEST_TIMEOUT_MS: Any = 5_000
+    EVENT_KAFKA_DELIVERY_TIMEOUT_MS: Any = 5_000
+    EVENT_KAFKA_QUEUE_MAX_BYTES: Any = 16 * 1024 * 1024
+    EVENT_KAFKA_EVENT_MAX_BYTES: Any = 8 * 1024
+    EVENT_KAFKA_SHUTDOWN_TIMEOUT_MS: Any = 8_000
+    EVENT_KAFKA_SECURITY_PROTOCOL: Any = "PLAINTEXT"
+    EVENT_KAFKA_SASL_MECHANISM: Any = "PLAIN"
+    EVENT_KAFKA_SASL_USERNAME: Any = Field(default="", repr=False)
+    EVENT_KAFKA_SASL_PASSWORD: Any = Field(default="", repr=False)
+    EVENT_KAFKA_SSL_CAFILE: Any = ""
+
+    def event_reporter_config(self, service_name: str) -> "EventReporterConfig":
+        """Build reporter config from the same sources as Backend settings."""
+        from shared.event_reporting.config import EventReporterConfig
+
+        return EventReporterConfig.from_mapping(self.__dict__, service_name)
+
     # Knowledge runtime service URL. RAG execution always happens there.
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
     # Kill switch for auto route selection of direct injection.

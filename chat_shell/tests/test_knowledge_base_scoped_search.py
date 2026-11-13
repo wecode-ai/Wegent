@@ -157,6 +157,7 @@ async def test_http_mode_forwards_document_names_and_ids():
                 }
             ),
         ),
+        patch.object(tool, "_build_runtime_context", return_value={}),
     ):
         post = AsyncMock(return_value=mock_response)
         mock_client.return_value.__aenter__.return_value.post = post
@@ -170,6 +171,7 @@ async def test_http_mode_forwards_document_names_and_ids():
 
     payload = post.call_args.kwargs["json"]
     assert payload["document_ids"] == [101]
+    assert "client_surface" not in payload
     assert payload["document_names"] == ["release.md"]
 
 

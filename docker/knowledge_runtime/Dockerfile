@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Copy and install shared module first
 COPY shared /app/shared
-RUN uv pip install --system --no-cache /app/shared
+RUN uv pip install --system --no-cache "/app/shared[event-reporting]"
 
 # Copy and install knowledge_engine module with the retrieval extra used here
 COPY knowledge_engine /app/knowledge_engine

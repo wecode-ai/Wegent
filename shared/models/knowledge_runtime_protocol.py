@@ -17,10 +17,7 @@ from shared.knowledge_contracts.runtime_config import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
-from shared.knowledge_contracts.search_hints import (
-    MAX_SEARCH_QUERY_LENGTH,
-    SearchHints,
-)
+from shared.knowledge_contracts.search_hints import MAX_SEARCH_QUERY_LENGTH, SearchHints
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):

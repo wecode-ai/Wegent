@@ -222,6 +222,20 @@ def test_remote_query_request_carries_no_execution_config() -> None:
         )
 
 
+def test_remote_query_request_rejects_usage_reporting_identity() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(ValidationError, match="invocation_id"):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001],
+                "user_id": 42,
+                "query": "release checklist",
+                "invocation_id": "usage-1",
+            }
+        )
+
+
 def test_remote_query_request_accepts_retrieval_scope_and_compatible_document_ids() -> (
     None
 ):

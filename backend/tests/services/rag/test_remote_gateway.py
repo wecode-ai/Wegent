@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -270,6 +271,9 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     gateway = RemoteRagGateway(
         base_url="http://knowledge-runtime",
     )
+    report_document_usage = mocker.patch(
+        "app.services.rag.reporting.report_document_usage_for_result"
+    )
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="release checklist",
@@ -321,6 +325,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
             "value": "kb",
         },
     }
+    report_document_usage.assert_not_called()
 
 
 @pytest.mark.asyncio

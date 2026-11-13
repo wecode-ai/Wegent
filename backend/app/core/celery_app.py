@@ -33,6 +33,7 @@ from celery.signals import (
     task_postrun,
     task_prerun,
     worker_process_init,
+    worker_process_shutdown,
     worker_shutdown,
     worker_shutting_down,
 )
@@ -247,6 +248,25 @@ def log_worker_database_pool_configuration(*args, **kwargs):
     log_registered_pool_configurations()
 
 
+@worker_process_init.connect
+def initialize_event_reporter(*args, **kwargs):
+    """Create one reporter after Celery forks each worker process."""
+    from shared.event_reporting import init_event_reporter
+
+    init_event_reporter(
+        "backend_celery",
+        config=settings.event_reporter_config("backend_celery"),
+    )
+
+
+@worker_process_shutdown.connect
+def shutdown_event_reporter_for_worker(*args, **kwargs):
+    """Flush the per-process reporter without delaying worker shutdown forever."""
+    from shared.event_reporting import shutdown_event_reporter
+
+    shutdown_event_reporter()
+
+
 @task_prerun.connect
 def clear_stale_request_context_before_task(*args, **kwargs):
     """Prevent a worker thread from leaking request IDs between Celery tasks."""
@@ -276,3 +296,6 @@ def mark_celery_worker_local_shutdown(*args, **kwargs):
 # Import dead letter queue handlers to register signal handlers
 # This must be done after celery_app is created
 import app.core.dead_letter_queue  # noqa: E402, F401
+from shared.event_reporting.celery import install_task_logging
+
+install_task_logging()

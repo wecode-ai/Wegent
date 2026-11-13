@@ -11,10 +11,7 @@ import pytest
 from app.api.dependencies import get_db
 from app.api.endpoints.internal.rag import RetrieveRecord
 from app.core.config import settings
-from app.services.rag.runtime_specs import (
-    DirectInjectionBudget,
-    QueryRuntimeSpec,
-)
+from app.services.rag.runtime_specs import DirectInjectionBudget, QueryRuntimeSpec
 from app.services.rag.sources import (
     ExternalKnowledgeDocument,
     ExternalKnowledgeDocumentListResult,
@@ -22,10 +19,7 @@ from app.services.rag.sources import (
     RetrievalSourceSummary,
     retrieval_source_registry,
 )
-from shared.models import (
-    RemoteAuthorizedRetrievalResources,
-    RetrievalScope,
-)
+from shared.models import RemoteAuthorizedRetrievalResources, RetrievalScope
 
 
 @pytest.fixture(autouse=True)
@@ -96,6 +90,7 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
         "user_id": 7,
         "query": "What risks do you see?",
         "knowledge_base_ids": [1],
+        "client_surface": "knowledge_web",
         "runtime_context": {
             "context_window": 10000,
             "used_context_tokens": 100,
@@ -162,6 +157,10 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
                 "total_estimated_tokens": 33,
             },
         ) as mock_transform,
+        patch(
+            "app.services.rag.reporting.observe",
+            side_effect=lambda name, factory: factory(),
+        ) as mock_report,
     ):
         response = test_client.post(
             "/api/internal/rag/retrieve",
@@ -176,6 +175,12 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
     assert "source_summaries" not in body
     mock_persist.assert_called_once()
     mock_transform.assert_awaited_once()
+    fields = mock_report.call_args.args[1]()
+    assert fields["data"]["entrypoint"] == "chat"
+    assert fields["data"]["client_surface"] == "chat_shell"
+    assert fields["data"]["route_mode"] == "restricted_safe_summary"
+    assert fields["data"]["restricted_mode"] is True
+    assert fields["data"]["result_count"] == 1
 
 
 @contextmanager
@@ -407,6 +412,68 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
     mock_persist.assert_called_once()
 
 
+def test_internal_retrieve_reports_resolved_task_identity(test_client):
+    payload = {
+        "user_id": 7,
+        "query": "How should we proceed?",
+        "knowledge_base_ids": [1],
+        "persistence_context": {"user_subtask_id": 11},
+    }
+
+    async def run_with_reporting(**kwargs):
+        assert kwargs["actor_user_id"] == 7
+        assert kwargs["task_id"] == 42
+        assert kwargs["subtask_id"] == 11
+        return await kwargs["execute"]()
+
+    with (
+        patch(
+            "app.api.endpoints.internal.rag._resolve_read_identity",
+            return_value=(7, 42),
+        ) as resolve_identity,
+        patch(
+            "app.api.endpoints.internal.rag.report_retrieval_request",
+            new_callable=AsyncMock,
+            side_effect=run_with_reporting,
+        ),
+        patch(
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+            return_value=_make_runtime_spec(knowledge_base_ids=[1]),
+        ),
+        patch(
+            "app.api.endpoints.internal.rag._execute_query",
+            new_callable=AsyncMock,
+            return_value={
+                "mode": "rag_retrieval",
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ),
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
+
+    assert response.status_code == 200
+    resolve_identity.assert_called_once()
+
+
+def test_internal_retrieve_identity_failure_preserves_error_detail(test_client):
+    payload = {"user_id": 7, "query": "test", "knowledge_base_ids": [1]}
+    with patch(
+        "app.api.endpoints.internal.rag._resolve_read_identity",
+        side_effect=RuntimeError("identity lookup failed"),
+    ):
+        response = test_client.post(
+            "/api/internal/rag/retrieve", json=payload, headers=_internal_headers()
+        )
+    assert response.status_code == 500
+    assert response.json()["detail"] == "identity lookup failed"
+
+
 def test_internal_retrieve_resolves_document_names_before_query(test_client):
     with (
         patch(
@@ -619,7 +686,12 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
                 "provider": "fake",
                 "mode": "explicit",
                 "id": "external-kb-1",
-            }
+            },
+            {
+                "provider": "fake",
+                "mode": "explicit",
+                "id": "external-kb-2",
+            },
         ],
         "route_mode": "direct_injection",
         "persistence_context": {
@@ -674,11 +746,15 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
                     RetrievalSourceSummary(
                         provider="fake",
                         searched_source_ids=["external-kb-1"],
-                        ignored_source_ids=[],
+                        ignored_source_ids=["external-kb-2"],
                     )
                 ],
             ),
         ) as mock_external_retrieve,
+        patch(
+            "app.services.rag.reporting.observe",
+            side_effect=lambda name, factory: factory(),
+        ) as mock_report,
         patch(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
@@ -703,6 +779,10 @@ def test_internal_retrieve_mixed_external_records_uses_rag_response_mode(
     mock_persist.assert_called_once()
     assert mock_persist.call_args.kwargs["mode"] == "direct_injection"
     assert mock_persist.call_args.kwargs["records"] == internal_records
+    fields = mock_report.call_args.args[1]()
+    assert fields["data"]["route_mode"] == "rag_retrieval"
+    assert fields["data"]["result_count"] == 2
+    assert fields["status"] == "success"
 
 
 def test_internal_retrieve_requires_user_id_for_external_refs(test_client):
@@ -1180,6 +1260,7 @@ def test_read_docs_preserves_scope_and_reader_identity(test_client, persist):
         knowledge_base_ids=[1],
         user_id=7,
         user_subtask_id=11 if persist else None,
+        entrypoint="kb_head",
     )
 
 

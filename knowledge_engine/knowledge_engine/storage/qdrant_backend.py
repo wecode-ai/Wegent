@@ -40,6 +40,7 @@ from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.qdrant_vector_store import (
     ReadyQdrantVectorStore as QdrantVectorStore,
 )
+from shared.event_reporting.operations import storage_fact
 from shared.knowledge_contracts import RetrievalScope
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class QdrantBackend(BaseStorageBackend):
         STORAGE_BACKEND_SPECS["qdrant"].retrieval_methods
     )
     supports_retrieval_scope: ClassVar[bool] = True
+    event_storage_type: ClassVar[str] = "qdrant"
 
     # Override INDEX_PREFIX for Qdrant collections
     INDEX_PREFIX: ClassVar[str] = "collection"
@@ -119,6 +121,7 @@ class QdrantBackend(BaseStorageBackend):
             collection_name=collection_name,
         )
 
+    @storage_fact("qdrant", "index")
     def index_with_metadata(
         self,
         nodes: List[BaseNode],
@@ -162,6 +165,7 @@ class QdrantBackend(BaseStorageBackend):
             "status": "success",
         }
 
+    @storage_fact("qdrant", "retrieve")
     def retrieve(
         self,
         knowledge_id: str,
@@ -330,6 +334,7 @@ class QdrantBackend(BaseStorageBackend):
 
         return {"records": results}
 
+    @storage_fact("qdrant", "delete_document")
     def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Delete document from Qdrant using LlamaIndex API.

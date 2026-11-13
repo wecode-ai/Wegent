@@ -3321,7 +3321,10 @@ class TaskRequestBuilder:
         )
 
     def _generate_auth_token(
-        self, task: TaskResource, subtask: Subtask, user: User
+        self,
+        task: TaskResource,
+        subtask: Subtask,
+        user: User,
     ) -> str:
         """Generate authentication token for task execution.
 

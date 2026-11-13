@@ -13,6 +13,13 @@ from knowledge_engine.retrieval.filters import parse_metadata_filters
 from shared.models import RetrievalScope
 
 
+@pytest.fixture(autouse=True)
+def mock_qdrant_transport():
+    """Constructing a client must not probe a real server in these unit tests."""
+    with patch("knowledge_engine.storage.qdrant_backend.QdrantClient"):
+        yield
+
+
 class TestProcessQueryResults:
     @patch("knowledge_engine.storage.qdrant_backend.QdrantClient")
     def test_process_query_results_returns_display_text(self, mock_client_class):

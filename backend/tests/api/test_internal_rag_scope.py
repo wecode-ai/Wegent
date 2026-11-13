@@ -100,6 +100,8 @@ async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_tota
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
+        read_user_id=7,
+        task_id=None,
     )
 
     assert result["records"] == []
@@ -129,10 +131,12 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
     def mock_build_query_runtime_spec(_self, **kwargs):
         assert kwargs["knowledge_base_ids"] == [1]
         assert kwargs["scope"].document_ids == [101]
+        assert kwargs["user_id"] == 7
         return runtime_spec
 
     async def mock_execute_query(spec, db, *, task_id=None):
         assert spec is runtime_spec
+        assert task_id == 42
         return {
             "mode": "rag_retrieval",
             "records": [{"content": "hit", "score": 0.9, "title": "Doc"}],
@@ -155,6 +159,8 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
+        read_user_id=7,
+        task_id=42,
     )
 
     assert result["total"] == 1
@@ -205,6 +211,72 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
+        read_user_id=7,
+        task_id=None,
     )
 
     assert result["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scoped_delivery_reports_only_the_final_top_document(monkeypatch, mocker):
+    from app.services.rag.reporting import report_retrieval_request
+
+    request = InternalRetrieveRequest(
+        user_id=7,
+        query="q",
+        max_results=1,
+        knowledge_base_scopes=[
+            KnowledgeBaseScopePayload(
+                knowledge_base_id=1, scope_restricted=True, document_ids=[11]
+            ),
+            KnowledgeBaseScopePayload(
+                knowledge_base_id=2, scope_restricted=True, document_ids=[22]
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+        lambda **kw: kw["knowledge_base_ids"][0],
+    )
+    monkeypatch.setattr(
+        "app.api.endpoints.internal.rag._finalize_query_runtime_spec",
+        lambda spec, db, context: spec,
+    )
+
+    async def execute_query(spec, db, *, task_id=None):
+        return {
+            "mode": "rag_retrieval",
+            "records": [
+                {
+                    "knowledge_base_id": spec,
+                    "document_id": spec * 11,
+                    "score": 0.9 if spec == 2 else 0.2,
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.api.endpoints.internal.rag._execute_query", execute_query)
+    usage = mocker.patch("app.services.rag.reporting.report_document_usage")
+
+    result = await report_retrieval_request(
+        entrypoint="chat",
+        requested_kb_ids=[1, 2],
+        effective_kb_ids=[1, 2],
+        route_mode="rag_retrieval",
+        invocation_id="test-invocation",
+        execute=lambda: _execute_scoped_retrieve(
+            request=request,
+            db=MagicMock(),
+            scopes=request.knowledge_base_scopes,
+            resolved_document_ids=[],
+            runtime_context=None,
+            restricted_mode=False,
+            read_user_id=7,
+            task_id=42,
+        ),
+    )
+
+    assert [record["document_id"] for record in result["records"]] == [22]
+    assert usage.call_count == 1
+    assert [record["document_id"] for record in usage.call_args.args[0]] == [22]

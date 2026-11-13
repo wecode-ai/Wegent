@@ -374,6 +374,31 @@ class TestTryDirectInjection:
         )
 
     @pytest.mark.asyncio
+    async def test_does_not_report_documents_before_final_selection(self):
+        records = [_injection_record(), _injection_record("second chunk")]
+
+        with (
+            patch.object(
+                direct_injection,
+                "get_original_documents_from_knowledge_base",
+                AsyncMock(return_value=records),
+            ),
+            patch(
+                "app.services.rag.reporting.report_document_usage_for_result"
+            ) as report_usage,
+        ):
+            await direct_injection.try_direct_injection(
+                knowledge_base_ids=[123],
+                scope=None,
+                db=MagicMock(),
+                route_mode="direct_injection",
+                available_injection_tokens=10000,
+                max_direct_chunks=500,
+            )
+
+        report_usage.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_rejects_when_document_cap_exceeded(self):
         db = MagicMock()
         records = [_injection_record(), _injection_record("second document")]

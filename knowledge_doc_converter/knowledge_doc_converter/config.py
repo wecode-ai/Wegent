@@ -5,9 +5,14 @@ All conversion-related settings that were previously in backend config.py
 now live here.
 """
 
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
+
+if TYPE_CHECKING:
+    from shared.event_reporting.config import EventReporterConfig
 
 
 def _inject_redis_password(url: str, password: str) -> str:
@@ -103,6 +108,26 @@ class ConverterSettings(BaseSettings):
     PROMETHEUS_PORT: int = 9090  # Port for Prometheus metrics endpoint
     PROMETHEUS_PATH: str = "/metrics"  # URL path for Prometheus metrics endpoint
 
+    # ---- Knowledge Event Reporting ----
+    EVENT_REPORTING_ENABLED: Any = False
+    EVENT_KAFKA_BOOTSTRAP_SERVERS: Any = ""
+    EVENT_KAFKA_TOPIC: Any = "knowledge-events-v1"
+    EVENT_KAFKA_ENVIRONMENT: Any = ""
+    EVENT_KAFKA_CLIENT_ID: Any = ""
+    EVENT_KAFKA_ACKS: Any = "all"
+    EVENT_KAFKA_COMPRESSION_TYPE: Any = "lz4"
+    EVENT_KAFKA_LINGER_MS: Any = 20
+    EVENT_KAFKA_REQUEST_TIMEOUT_MS: Any = 5_000
+    EVENT_KAFKA_DELIVERY_TIMEOUT_MS: Any = 5_000
+    EVENT_KAFKA_QUEUE_MAX_BYTES: Any = 16 * 1024 * 1024
+    EVENT_KAFKA_EVENT_MAX_BYTES: Any = 8 * 1024
+    EVENT_KAFKA_SHUTDOWN_TIMEOUT_MS: Any = 8_000
+    EVENT_KAFKA_SECURITY_PROTOCOL: Any = "PLAINTEXT"
+    EVENT_KAFKA_SASL_MECHANISM: Any = "PLAIN"
+    EVENT_KAFKA_SASL_USERNAME: Any = Field(default="", repr=False)
+    EVENT_KAFKA_SASL_PASSWORD: Any = Field(default="", repr=False)
+    EVENT_KAFKA_SSL_CAFILE: Any = ""
+
     # ---- Multimodal Analysis (video/image → Gemini → Markdown) ----
     # One pipeline, one model: media_type (video|image) distinguishes inside the
     # task. Video always stages via a MediaStagingProvider; image uses inline
@@ -149,6 +174,12 @@ class ConverterSettings(BaseSettings):
                 self.CELERY_RESULT_BACKEND, pwd
             )
             self.REDIS_URL = _inject_redis_password(self.REDIS_URL, pwd)
+
+    def event_reporter_config(self, service_name: str) -> "EventReporterConfig":
+        """Build reporter config from the converter's resolved settings."""
+        from shared.event_reporting.config import EventReporterConfig
+
+        return EventReporterConfig.from_mapping(self.__dict__, service_name)
 
 
 settings = ConverterSettings()

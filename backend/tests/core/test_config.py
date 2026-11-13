@@ -11,6 +11,17 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from app.core.config import Settings, load_git_token_crypto_environment, settings
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_optional_kafka_config_cannot_break_settings(enabled):
+    config = build_settings(
+        EVENT_REPORTING_ENABLED=enabled,
+        EVENT_KAFKA_REQUEST_TIMEOUT_MS="not-a-number",
+    )
+    assert config.event_reporter_config("backend").validation_error() == (
+        "invalid_event_configuration"
+    )
+
+
 def build_settings(**kwargs) -> Settings:
     """Create settings using only explicit init values."""
 
@@ -213,6 +224,47 @@ class TestSettings:
 
         assert os.environ["GIT_TOKEN_AES_KEY"] == "dotenv-key"
         assert os.environ["GIT_TOKEN_AES_IV"] == "process-iv"
+
+    def test_event_reporter_config_uses_backend_dotenv_without_process_env(
+        self, monkeypatch, tmp_path
+    ):
+        """Local backend/.env values must reach the shared reporter."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "EVENT_REPORTING_ENABLED=true\n"
+            "EVENT_KAFKA_ADV_ATTRIBUTION_ENABLED=true\n"
+            "EVENT_KAFKA_ADV_RESULT_DETAIL_LIMIT=7\n"
+            "EVENT_KAFKA_BOOTSTRAP_SERVERS=kafka-a:9092,kafka-b:9092\n"
+            "EVENT_KAFKA_ENVIRONMENT=dev\n"
+            "EVENT_KAFKA_SECURITY_PROTOCOL=SASL_PLAINTEXT\n"
+            "EVENT_KAFKA_SASL_USERNAME=user\n"
+            "EVENT_KAFKA_SASL_PASSWORD=password\n",
+            encoding="utf-8",
+        )
+        for name in (
+            "EVENT_REPORTING_ENABLED",
+            "EVENT_KAFKA_ADV_ATTRIBUTION_ENABLED",
+            "EVENT_KAFKA_ADV_RESULT_DETAIL_LIMIT",
+            "EVENT_KAFKA_BOOTSTRAP_SERVERS",
+            "EVENT_KAFKA_ENVIRONMENT",
+            "EVENT_KAFKA_SECURITY_PROTOCOL",
+            "EVENT_KAFKA_SASL_USERNAME",
+            "EVENT_KAFKA_SASL_PASSWORD",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+        local_settings = Settings(_env_file=env_file)
+        config = local_settings.event_reporter_config("backend")
+
+        assert config.enabled is True
+        assert config.adv_attribution_enabled is True
+        assert config.adv_result_detail_limit == 7
+        assert config.bootstrap_servers == "kafka-a:9092,kafka-b:9092"
+        assert config.environment == "dev"
+        assert config.sasl_username == "user"
+        assert config.sasl_password == "password"
+        assert config.client_id == "backend-event-reporter"
+        assert config.validation_error() is None
 
     def test_settings_database_url(self):
         """Test database URL configuration"""

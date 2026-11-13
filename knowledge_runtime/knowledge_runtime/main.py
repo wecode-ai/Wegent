@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,6 +19,7 @@ from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
 from knowledge_runtime.middleware.auth import require_internal_service_token_configured
+from shared.event_reporting import init_event_reporter, shutdown_event_reporter
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)
@@ -48,8 +50,14 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"knowledge_runtime starting on {settings.host}:{settings.port}",
     )
-    yield
-    logger.info("knowledge_runtime shutting down")
+    init_event_reporter(
+        "knowledge_runtime", config=settings.event_reporter_config("knowledge_runtime")
+    )
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(shutdown_event_reporter)
+        logger.info("knowledge_runtime shutting down")
 
 
 app = FastAPI(
