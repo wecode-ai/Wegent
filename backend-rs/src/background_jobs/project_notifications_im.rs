@@ -9,6 +9,14 @@ use brz_mysql::{FromMysqlRow, Json};
 use brz_redis::{Redis, RedisBytes};
 use serde_json::{Value, json};
 
+pub(crate) fn dingtalk_api_base(config: &Value) -> &str {
+    config["api_base_url"]
+        .as_str()
+        .map(|value| value.trim_end_matches('/'))
+        .filter(|value| !value.is_empty())
+        .unwrap_or("https://api.dingtalk.com")
+}
+
 pub(crate) async fn send_im(
     state: &AppState,
     user: i64,
@@ -138,9 +146,18 @@ pub(crate) async fn dingtalk_access_token(
     client_id: &str,
     client_secret: &str,
 ) -> Result<DingTalkAccessToken> {
+    dingtalk_access_token_at(client, client_id, client_secret, "https://api.dingtalk.com").await
+}
+
+async fn dingtalk_access_token_at(
+    client: &brz_http::Client,
+    client_id: &str,
+    client_secret: &str,
+    api: &str,
+) -> Result<DingTalkAccessToken> {
     let access = http_json(
         client,
-        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+        &format!("{api}/v1.0/oauth2/accessToken"),
         None,
         &json!({"appKey":client_id,"appSecret":client_secret}),
     )
@@ -541,8 +558,10 @@ pub(crate) async fn send_text(state: &AppState, session: &Value, text: &str) -> 
             let (id, secret) =
                 dingtalk_credentials(&config).context("Missing DingTalk credentials")?;
             let recipient = dingtalk_recipient(state, session).await?;
-            let access = dingtalk_access_token(&client, id, secret).await?;
-            http_json(&client, "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",
+            // Honor the same channel endpoint configuration as subscription delivery.
+            let api = dingtalk_api_base(&config);
+            let access = dingtalk_access_token_at(&client, id, secret, api).await?;
+            http_json(&client, &format!("{api}/v1.0/robot/oToMessages/batchSend"),
                 Some((&access.token, "x-acs-dingtalk-access-token")),
                 &json!({"robotCode":id,"userIds":[recipient],"msgKey":"sampleText","msgParam":json!({"content":text}).to_string()})).await
         }
@@ -633,6 +652,20 @@ fn telegram_request(chat_id: i64, message_id: Option<i64>, text: &str) -> (&'sta
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dingtalk_endpoint_matches_subscription_channel_configuration() {
+        for config in [
+            json!({}),
+            json!({"api_base_url": ""}),
+            json!({"api_base_url": "/"}),
+        ] {
+            assert_eq!(dingtalk_api_base(&config), "https://api.dingtalk.com");
+        }
+        assert_eq!(
+            dingtalk_api_base(&json!({"api_base_url": "http://127.0.0.1:1234///"})),
+            "http://127.0.0.1:1234"
+        );
+    }
     #[test]
     fn notifications_escape_member_markdown_without_changing_plain_punctuation() {
         assert_eq!(escape("[x] *a* - 2026"), "\\[x\\] \\*a\\* - 2026");

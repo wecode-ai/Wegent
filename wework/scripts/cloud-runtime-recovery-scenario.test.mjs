@@ -13,6 +13,14 @@ const state = vi.hoisted(() => ({
   disconnected: false,
 }))
 
+vi.mock('../e2e/desktop/modules/runtime-notification-reconnect.mjs', () => ({
+  createRuntimeNotificationReconnect: () => ({
+    handleHttp: async () => false,
+    verify: async () => {},
+    cleanup: async () => {},
+  }),
+}))
+
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
   ...(await importOriginal()),
   fetchJson: state.fetchJson,
@@ -45,7 +53,10 @@ beforeEach(() => {
   state.disconnected = false
 })
 
-async function fixture(summary, { assistantCount = 1, completedCopies = 1, userMessageCount = 1 } = {}) {
+async function fixture(
+  summary,
+  { assistantCount = 1, completedCopies = 1, userMessageCount = 1 } = {}
+) {
   const root = await mkdtemp(join(tmpdir(), 'cloud-recovery-scenario-'))
   onTestFinished(() => rm(root, { recursive: true, force: true }))
   const scenario = createDesktopScenario({ modelResponseTimeoutMs: 1000, uiTimeoutMs: 1000 })
@@ -154,7 +165,10 @@ test.each([
 })
 
 test.each([0, 2])('rejects recovery with %i original user messages', async count => {
-  const { scenario, control } = await fixture({ status: 'done', running: false }, { userMessageCount: count })
+  const { scenario, control } = await fixture(
+    { status: 'done', running: false },
+    { userMessageCount: count }
+  )
   await assert.rejects(scenario.verify(control), /Recovery duplicated the original user message/)
   assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
 })
