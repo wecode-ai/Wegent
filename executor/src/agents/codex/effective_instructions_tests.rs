@@ -3,6 +3,26 @@ use super::*;
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 
 #[test]
+fn task_recovery_routing_reaches_native_start_fork_and_resume_instructions() {
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_fork_params("source", None, &request, &launch),
+        thread_resume_params("source", &request, &launch),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("Standalone Wework tasks are conversations"));
+        assert!(instructions.contains("conversations skill and wework_control"));
+        assert!(instructions.contains("Discover those tools before claiming they are unavailable"));
+    }
+    let skill = include_str!("../../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-runtime/skills/conversations/SKILL.md");
+    assert!(skill.contains("`include_archived: true`"));
+    assert!(skill.contains("`list_conversations`"));
+    assert!(skill.contains("unarchive_conversation"));
+}
+
+#[test]
 fn execution_context_discards_stale_context_and_requires_complete_runtime_identity() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(

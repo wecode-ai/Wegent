@@ -1,6 +1,5 @@
 import type { RuntimeConversationTurn } from '@wegent/chat-core/runtime-conversation'
 import {
-  EMPTY_RUNTIME_LIVE_ACTIVITY,
   getLatestRuntimeLiveActivityFromTurns,
   type RuntimeLiveToolActivity,
 } from '@wegent/chat-core/runtime-thinking'
@@ -15,7 +14,7 @@ import { getInputField } from '../conversation/blocks/toolBlockKinds'
 
 export function runtimeTaskProgress(turns: RuntimeConversationTurn[], active: boolean) {
   return {
-    activity: active ? getLatestRuntimeLiveActivityFromTurns(turns) : EMPTY_RUNTIME_LIVE_ACTIVITY,
+    activity: getLatestRuntimeLiveActivityFromTurns(turns),
     responsePreview: getRuntimeTaskResponsePreview(turns, active) || null,
   }
 }

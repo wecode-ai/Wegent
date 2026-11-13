@@ -438,6 +438,10 @@ pub(crate) async fn verify_reconnect_projection(
         (ISSUE, PROJECT, AGENT),
     ).await?;
     let execution_id = inserted.last_insert_id as i64;
+    mysql.execute(
+        "UPDATE loop_items SET metadata=JSON_OBJECT('ai_state', JSON_OBJECT('run_id', 'fixture-run', 'status', 'running', 'project_chat_message_id', 'missing-activity', 'runtime_task_id', 'fixture-conversation')) WHERE id=?",
+        (ISSUE,),
+    ).await?;
     let effects = mysql
         .with_transaction(async |tx| {
             let execution = runtime_projection::reload_execution(tx, execution_id)
@@ -464,6 +468,7 @@ pub(crate) async fn verify_reconnect_projection(
     );
     assert_eq!(effects.messages.len(), 1);
     assert_eq!(effects.messages[0].status, "completed");
+    assert_eq!(effects.messages[0].metadata.0["run_id"], "fixture-run");
     assert!(effects.messages[0].metadata.0["runtime_completed_at"].is_string());
     let issue = crate::background_jobs::project::store::get(mysql, "task", ISSUE)
         .await?

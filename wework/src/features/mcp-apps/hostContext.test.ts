@@ -16,6 +16,15 @@ afterEach(() => {
 })
 
 describe('MCP App host context', () => {
+  it('returns the source card saved model context separately from its original tool input', () => {
+    const frame = document.createElement('iframe')
+    const app = descriptor()
+    expect(appHostContext(frame, 'inline', app, 'call').modelContext).toBeUndefined()
+    app.arguments = { title: 'Generated form', html: '<form></form>', tools: [] }
+    app.modelContext = { structuredContent: { state: { view: 'results' } } }
+    expect(appHostContext(frame, 'inline', app, 'call').modelContext).toEqual(app.modelContext)
+    expect(app.arguments).toEqual({ title: 'Generated form', html: '<form></form>', tools: [] })
+  })
   it('reports the right panel bounds instead of the whole window', () => {
     const frame = document.createElement('iframe')
     vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({ width: 640, height: 480 } as DOMRect)

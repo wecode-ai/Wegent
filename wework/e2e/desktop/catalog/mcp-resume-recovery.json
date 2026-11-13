@@ -1,0 +1,13 @@
+{
+  "order": 131100,
+  "scenario": "./scenarios/mcp-resume-recovery.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "executor/src/agents/codex/mcp_recovery.rs",
+    "executor/src/agents/codex.rs",
+    "wework/e2e/desktop/scenarios/mcp-resume-recovery.scenario.mjs"
+  ],
+  "ci": {
+    "core": { "order": 81100, "shard": 3, "position": 22100 }
+  }
+}
