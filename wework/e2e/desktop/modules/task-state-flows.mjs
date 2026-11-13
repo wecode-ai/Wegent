@@ -66,6 +66,116 @@ import {
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
+const PINNED_SECTION = '[data-testid="sidebar-pinned-section"]'
+const PINNED_TASK_LIST = '[data-testid="pinned-runtime-task-sortable-list"]'
+
+async function waitForPinnedTaskOrder(control, expectedRows, stableMs = 500) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let stableSince = null
+  let lastOrder = []
+  while (Date.now() < deadline) {
+    lastOrder = JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST)).filter(
+      testId => expectedRows.includes(testId)
+    )
+    if (lastOrder.join(',') === expectedRows.join(',')) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= stableMs) return
+    } else {
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Pinned task order did not remain ${JSON.stringify(expectedRows)}; last order ${JSON.stringify(lastOrder)}`
+  )
+}
+
+async function pinRuntimeTask(control, taskId) {
+  const row = `runtime-local-task-row-${taskId}`
+  await ensureTaskRowVisible(control, row)
+  await control.command('hover', `[data-testid="${row}"]`)
+  await control.command('waitFor', `[data-testid="runtime-local-task-mark-${taskId}"]`, {
+    enabled: true,
+  })
+  await control.command('click', `[data-testid="runtime-local-task-mark-${taskId}"]`)
+  await control.command('waitFor', `${PINNED_SECTION} [data-testid="${row}"]`)
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+    1,
+    'Pinning duplicated a runtime task across the project and pinned projections'
+  )
+}
+
+async function unpinRuntimeTask(control, taskId) {
+  const row = `runtime-local-task-row-${taskId}`
+  await control.command('hover', `${PINNED_SECTION} [data-testid="${row}"]`)
+  await control.command(
+    'click',
+    `${PINNED_SECTION} [data-testid="runtime-local-task-mark-${taskId}"]`
+  )
+  await control.command('waitFor', `${PINNED_SECTION} [data-testid="${row}"]`, { visible: false })
+  await ensureTaskRowVisible(control, row)
+  assert.equal(
+    Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+    1,
+    'Unpinning duplicated or removed the runtime task'
+  )
+}
+
+async function verifyPinnedTaskRefresh({
+  composerSelector,
+  control,
+  existingTaskId,
+  newTaskButtonSelector,
+}) {
+  const secondTaskRow = await createCheckpointTaskFixture(
+    control,
+    composerSelector,
+    newTaskButtonSelector
+  )
+  const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
+  const taskIds = [existingTaskId, secondTaskId]
+  const taskRows = taskIds.map(taskId => `runtime-local-task-row-${taskId}`)
+
+  await pinRuntimeTask(control, taskIds[0])
+  await pinRuntimeTask(control, taskIds[1])
+  const initialOrder = JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST)).filter(
+    testId => taskRows.includes(testId)
+  )
+  assert.equal(initialOrder.length, 2, 'The pinned section did not expose both runtime tasks')
+
+  const source = `${PINNED_TASK_LIST} [data-sidebar-sortable-id]:has([data-testid="${initialOrder[0]}"])`
+  const target = `${PINNED_TASK_LIST} [data-sidebar-sortable-id]:has([data-testid="${initialOrder[1]}"])`
+  const expectedOrder = [initialOrder[1], initialOrder[0]]
+  await control.command('drag', source, { target })
+  await waitForPinnedTaskOrder(control, expectedOrder)
+
+  await control.command('refreshRuntimeWork', 'body', { value: '{}' })
+  await waitForPinnedTaskOrder(control, expectedOrder)
+  for (const row of taskRows) {
+    assert.equal(
+      Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+      1,
+      'Refreshing duplicated a pinned task across work projections'
+    )
+  }
+
+  await unpinRuntimeTask(control, taskIds[0])
+  await control.command('refreshRuntimeWork', 'body', { value: '{}' })
+  await waitForPinnedTaskOrder(control, [taskRows[1]])
+  await unpinRuntimeTask(control, taskIds[1])
+  await control.command('refreshRuntimeWork', 'body', { value: '{}' })
+  for (const row of taskRows) {
+    await control.command('waitFor', `[data-testid="${row}"]`, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+    })
+    assert.equal(
+      Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+      1,
+      'Refreshing an unpinned task duplicated or removed it'
+    )
+  }
+}
 
 async function verifyPriorityFilter({ composerSelector, control, projectRowSelector }) {
   let requestInputResponseReleased = false
@@ -240,6 +350,14 @@ async function verifyPriorityFilter({ composerSelector, control, projectRowSelec
       'The priority shortcut did not restore the regular sidebar'
     )
     await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
+    await verifyPinnedTaskRefresh({
+      composerSelector,
+      control,
+      existingTaskId: requestInputTaskId,
+      newTaskButtonSelector: projectRowSelector
+        ? `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+        : '[data-testid="new-chat-button"]',
+    })
     await verifyCollapseReadConversations({
       composerSelector,
       control,
