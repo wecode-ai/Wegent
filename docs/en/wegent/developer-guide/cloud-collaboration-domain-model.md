@@ -33,16 +33,15 @@ for the concrete table mapping and relationship rules.
 The product path is fixed:
 
 ```text
-Workspace
-└── Project
-    └── Issue
-        ├── Assignments: Human | Agent
-        └── Runs
-            ├── Agent
-            ├── Initiator
-            ├── Runtime
-            ├── Execution Workspace
-            └── Deliverables
+Issue
+├── Project (optional) ── Workspace
+├── Assignments: Human | Agent
+└── Runs
+    ├── Agent
+    ├── Initiator
+    ├── Runtime
+    ├── Execution Workspace
+    └── Deliverables
 ```
 
 Workflow and Automation may create, assign, organize, or trigger Issues and
@@ -356,8 +355,7 @@ that the Issue has been accepted.
 1. Workspace is the only tenant boundary for members, permissions, and shared
    capabilities.
 2. Every Project belongs to one Workspace.
-3. Every Issue belongs to one Project and inherits its Workspace through the
-   Project authorization edge.
+3. An Issue can exist independently. Project-bound Issues inherit their Workspace through the Project authorization edge. Independent Issues have no project or space and use creator/explicit-invitation authorization.
 4. A Member is either a Human or an Agent; Devices and Executors cannot be
    Assignment targets.
 5. Team is the only cloud Agent definition; a single Bot is exposed through a

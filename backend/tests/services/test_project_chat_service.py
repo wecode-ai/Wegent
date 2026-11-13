@@ -778,7 +778,7 @@ def test_only_project_maintainers_can_change_executable_agent_configuration(
     assert update_error.value.status_code == 403
 
 
-def test_non_creator_maintainer_cannot_change_agent_execution_identity(
+def test_non_creator_maintainer_can_edit_project_definition_without_credential_access(
     test_db: Session, test_user: User
 ) -> None:
     from app.models.resource_member import MemberStatus, ResourceMember
@@ -809,22 +809,21 @@ def test_non_creator_maintainer_cannot_change_agent_execution_identity(
         test_db,
         user_id=test_user.id,
         project_id=project.id,
-        request=ProjectChatAgentCreate(name="Creator-owned Agent"),
+        request=ProjectChatAgentCreate(
+            name="Creator-owned Agent",
+            mcp_servers={"private": {"command": "review", "env": {"KEY": "hidden"}}},
+        ),
     )
 
-    with pytest.raises(HTTPException) as update_error:
-        project_chat_service.update_agent(
-            test_db,
-            user_id=maintainer.id,
-            project_id=project.id,
-            agent_id=agent.id,
-            request=ProjectChatAgentUpdate(
-                version=agent.version,
-                mcp_servers={"unsafe": {"command": "sh"}},
-            ),
+    visible = next(
+        row
+        for row in project_chat_service.list_agents(
+            test_db, user_id=maintainer.id, project_id=project.id
         )
-
-    assert update_error.value.status_code == 403
+        if row.id == agent.id
+    )
+    assert visible.can_edit is True
+    assert visible.mcp_servers == {"private": {}}
 
     renamed = project_chat_service.update_agent(
         test_db,
@@ -834,9 +833,18 @@ def test_non_creator_maintainer_cannot_change_agent_execution_identity(
         request=ProjectChatAgentUpdate(
             version=agent.version,
             name="Project-managed display name",
+            system_prompt="Project-managed instructions",
+            mcp_servers=visible.mcp_servers,
         ),
     )
     assert renamed.name == "Project-managed display name"
+    assert renamed.system_prompt == "Project-managed instructions"
+    assert renamed.created_by_user_id == test_user.id
+    assert renamed.mcp_servers == {"private": {}}
+    stored = test_db.get(ProjectChatAgent, agent.id)
+    assert stored.metadata_json["mcp_servers"] == {
+        "private": {"command": "review", "env": {"KEY": "hidden"}}
+    }
 
 
 @pytest.mark.parametrize(

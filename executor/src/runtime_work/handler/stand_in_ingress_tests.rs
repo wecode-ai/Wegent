@@ -808,3 +808,66 @@ async fn collection_partition_changes_cannot_reuse_another_partitions_ordered_bo
         .get("boundary")
         .is_none());
 }
+
+#[tokio::test]
+async fn dingtalk_blacklist_filters_shared_pages_per_role_for_manual_and_automatic_intake() {
+    for kind in ["group", "direct"] {
+        for automatic in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+            handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+            let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+            let mut settings = store.personal_stand_in(7, "mac").unwrap();
+            let source = json!({"providerId":crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER,"profile":"corp","kind":kind,"id":"*","scope":"all","name":"All","policy":{"automatic":automatic,"askBeforeAct":true}});
+            let mut restricted = source.clone();
+            restricted["excludedResources"] = json!([{"id":"blocked","name":"Blocked"}]);
+            let roles =
+                [("restricted", restricted), ("unrestricted", source)].map(|(id, source)| {
+                    let mut role = settings["roles"][0].clone();
+                    role["id"] = json!(id);
+                    role["enabled"] = json!(true);
+                    role["connections"] = json!([source]);
+                    role
+                });
+            settings["roles"] = json!(roles);
+            let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
+            let roles = stand_in_identities(&settings);
+            let sources = collection_sources(&roles);
+            assert_eq!(
+                sources.len(),
+                1,
+                "Blacklist edits must not duplicate polling"
+            );
+            let (source, receiving) = sources.values().next().unwrap();
+            let messages = ["blocked", "allowed"].map(|id| json!({"id":id,"text":"New matter","at":"2099-01-01T00:00:00Z","resource":{"kind":kind,"id":id,"name":id}}));
+            let checkpoint = json!({"checkpoint":{"after":"2099-01-01T00:00:00Z","cursor":"0"}});
+            assert_eq!(
+                handler
+                    .collect_connection_page(
+                        &store,
+                        7,
+                        source,
+                        receiving,
+                        (messages.to_vec(), checkpoint.clone())
+                    )
+                    .await
+                    .unwrap(),
+                checkpoint
+            );
+            if automatic {
+                let events = store.stand_in_events(7).unwrap();
+                assert_eq!(events.len(), 3);
+                assert!(
+                    !events.iter().any(|event| event["source"]["id"] == "blocked"
+                        && event["roleIds"] == json!(["restricted"]))
+                );
+            } else {
+                let works = store.list_stand_in_work(7, None).unwrap();
+                assert_eq!(works.len(), 3);
+                assert!(!works.iter().any(
+                    |work| work["source"]["id"] == "blocked" && work["roleId"] == "restricted"
+                ));
+            }
+        }
+    }
+}

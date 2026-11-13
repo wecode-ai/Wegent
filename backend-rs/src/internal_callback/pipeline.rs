@@ -7,7 +7,7 @@ use brz_mysql::{Json, MysqlRow, MysqlTransaction};
 use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
-use crate::responses::create::{dispatch, executor_client, request, routing, seam};
+use crate::responses::create::{executor_client, request, routing, seam};
 use crate::responses::dispatch::DefaultDispatchJob;
 use crate::state::AppState;
 use crate::task_store::PipelineStageAdvance;
@@ -45,6 +45,7 @@ pub(super) async fn dispatch_next(
     let task_id = advance.task_id;
     let subtask_id = advance.pair.assistant_subtask_id;
     let user_id = advance.user_id;
+    let message_id = advance.message_id + 1;
     if let Err(error) = dispatch_execution(state, advance).await {
         tracing::error!(
             ?error,
@@ -52,43 +53,22 @@ pub(super) async fn dispatch_next(
             subtask_id,
             "pipeline next-stage dispatch failed"
         );
-        if let Some(redis) = state.redis.as_ref() {
-            let ctx = super::completion::Completion {
-                app: Some(state),
-                mysql: &state.mysql,
-                redis,
-                tables: super::tables(state),
-                executor_manager: &state.executor_manager,
-            };
-            super::completion::persist_completed_result(
-                &ctx,
-                task_id,
-                subtask_id,
-                "FAILED",
-                None,
-                Some("Pipeline stage dispatch failed"),
-                None,
-                None,
-            )
-            .await;
-            if let Err(error) = super::socketio::publish_emit_in_room(
-                redis,
-                "task:status",
-                &format!("user:{user_id}"),
-                json!({"task_id":task_id,"status":"FAILED","progress":null}),
-            )
-            .await
-            {
-                tracing::error!(%error, task_id, "pipeline dispatch-failure status emit failed");
-            }
-        }
+        crate::responses::dispatch::finalize_executor_failure(
+            &crate::responses::dispatch::ConsumerState::from_app(state),
+            task_id,
+            subtask_id,
+            user_id,
+            Some(message_id),
+            ("Pipeline stage dispatch failed", "EXECUTOR_DISPATCH_FAILED"),
+        )
+        .await;
     }
     Ok(())
 }
 
 async fn dispatch_execution(
     state: &AppState,
-    mut advance: PipelineStageAdvance,
+    advance: PipelineStageAdvance,
 ) -> Result<(), FastApiError> {
     let bot_ids = [advance.bot.id];
     let request_id = format!(
@@ -135,7 +115,7 @@ async fn dispatch_execution(
             task_project_id: advance.project_id,
             executor_name: &advance.pair.executor.name,
             executor_namespace: &advance.pair.executor.namespace,
-            executor_deleted: false,
+            executor_deleted: advance.pair.executor.deleted_at != 0,
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
@@ -173,25 +153,42 @@ async fn dispatch_execution(
         .message_edit_tables(advance.task_id)
         .await
         .map_err(dependency)?;
+    let recovered = if target.mode == routing::CommunicationMode::HttpCallback {
+        match seam::recover_before_dispatch(state, &mut execution, None).await {
+            Ok(recovered) => recovered,
+            // Recovery owns failure persistence and notification.
+            Err(_) => return Ok(()),
+        }
+    } else {
+        false
+    };
     let mysql = state
         .mysql
         .route(crate::task_routing::ByTaskId(advance.task_id as u64));
     let running = mysql.with_transaction(async |transaction| {
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
-        let current = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
-        if current.as_ref().and_then(|json| json.0.pointer("/spec/currentStage")) != advance.task_json.pointer("/spec/currentStage") { return Ok(false); }
+        let current = task.as_ref().filter(|row| super::completion::is_active_task(row))
+            .and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
+        let Some(Json(mut current)) = current else { return Ok(false) };
+        if current.pointer("/status/status").and_then(Value::as_str) != Some("PENDING")
+            || current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage") {
+            return Ok(false);
+        }
         let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
         let changed = transaction.execute(
             format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
             (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
         if changed.rows_affected == 0 { return Ok(false); }
-        advance.task_json["status"]["status"] = json!("RUNNING");
+        current["status"]["status"] = json!("RUNNING");
         transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
-            (crate::json_compat::python_json_value(&advance.task_json), now, advance.task_id)).await?;
+            (crate::json_compat::python_json_value(&current), now, advance.task_id)).await?;
         Ok(true)
-    }).await.map_err(dependency)?;
-    if !running {
+    }).await;
+    if recovered && !matches!(running, Ok(true)) {
+        crate::responses::create::discard_recovered_executor(state, &execution).await;
+    }
+    if !running.map_err(dependency)? {
         return Ok(());
     }
     if routing::supports_streaming(&target) || target.mode == routing::CommunicationMode::Inprocess
@@ -222,8 +219,9 @@ async fn dispatch_execution(
                 user_id: execution.user_id,
                 message_id: execution.message_id,
                 url: executor_client::executor_responses_url(url),
-                body: serde_json::to_value(dispatch::assemble(&execution, false, true))
-                    .map_err(|_| FastApiError::internal())?,
+                body: crate::responses::dispatch::ExecutorDispatchBody::Prepared(
+                    crate::executor_binding::dispatch_request(state, &execution),
+                ),
                 start: state
                     .redis
                     .clone()

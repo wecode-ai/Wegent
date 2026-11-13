@@ -15,7 +15,7 @@ use crate::task_store_statements::{
 };
 
 pub(crate) use crate::task_store_statements::{
-    active_task_projection_statement, active_task_statement, owner_matches_task_id_statement,
+    active_task_projection_statement, owner_matches_task_id_statement,
     regular_active_task_statement, update_task_json_statement,
 };
 
@@ -54,6 +54,33 @@ pub(crate) fn active_task_statement_single_state(table: &str) -> String {
 pub(crate) struct Tables {
     pub(crate) tasks: &'static str,
     pub(crate) subtasks: &'static str,
+}
+
+pub(crate) fn is_active_task(task: &brz_mysql::MysqlRow) -> bool {
+    super::task_column::<i64>(task, "is_active").is_some_and(|state| matches!(state, 1 | 2))
+        && super::task_column::<String>(task, "kind").as_deref() == Some("Task")
+}
+
+pub(crate) fn dispatchable_task_status(payload: &serde_json::Value) -> Option<&str> {
+    payload
+        .pointer("/status/status")
+        .and_then(serde_json::Value::as_str)
+        .filter(|status| matches!(*status, "PENDING" | "RUNNING"))
+}
+
+pub(crate) async fn latest_assistant_id(
+    tx: &mut impl brz_mysql::MysqlTransaction,
+    table: &str,
+    task_id: i64,
+) -> brz_mysql::MysqlResult<Option<i64>> {
+    tx.fetch_optional(
+        format!(
+            "SELECT id FROM {table} WHERE task_id = ? AND role = 'ASSISTANT' \
+                 ORDER BY message_id DESC, id DESC LIMIT 1"
+        ),
+        (task_id,),
+    )
+    .await
 }
 
 /// One subtask row (`subtask_store.get_by_id`).

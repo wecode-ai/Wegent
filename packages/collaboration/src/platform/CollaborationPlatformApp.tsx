@@ -1380,7 +1380,13 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     host.location.rootView === "templates" &&
     Boolean(host.templateStore);
-  const ownsPageRequests = isDevicePage || isStandInPage || isTemplatePage;
+  const isPersonalIssuesPage =
+    !host.location.projectId &&
+    !host.location.workspaceId &&
+    Boolean(host.renderIssueList) &&
+    Boolean(host.location.rootView?.startsWith("issues-"));
+  const ownsPageRequests =
+    isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -1505,6 +1511,9 @@ function CollaborationPlatformAppContent({
       return;
     }
     let active = true;
+    setProjectWorkspaceMembers([]);
+    setProjectWorkspaceAgents([]);
+    setProjectWorkspaceGroups([]);
     setProjectCreationResources({ agents: [], execution_environments: [] });
     setProjectEnvironmentLoading(Boolean(api.resources));
     setProjectEnvironmentError(false);
@@ -1547,6 +1556,12 @@ function CollaborationPlatformAppContent({
     projectResourceRefreshKey,
     projectWorkspaceId,
   ]);
+  const defaultProjectWorkspace = state.workspaces.find(
+    (workspace) =>
+      workspace.location === "cloud" &&
+      workspace.is_system_default &&
+      workspace.access_role === "Owner",
+  );
   const projectCreateLocation =
     projectWorkspace?.location ??
     (host.capabilities.projectNavigation === "projects"
@@ -1733,7 +1748,7 @@ function CollaborationPlatformAppContent({
       host.notify?.(messages.navigationLoadFailed, "error");
       return;
     }
-    setProjectWorkspaceId(null);
+    setProjectWorkspaceId(defaultProjectWorkspace?.id ?? null);
     setProjectDialogOpen(true);
   };
   const handledTemplateRequest = useRef<string | null>(null);
@@ -2224,6 +2239,17 @@ function CollaborationPlatformAppContent({
           }}
           onManageResource={manageRootResource}
         />
+      ) : rootView.startsWith("issues-") && host.renderIssueList ? (
+        host.renderIssueList({
+          scope:
+            rootView === "issues-created"
+              ? "created"
+              : rootView === "issues-assigned"
+                ? "assigned"
+                : "participating",
+          projects: state.navigationProjects,
+          onOpenIssue: openMyWorkItem,
+        })
       ) : rootView === "inbox" ? (
         <WorkItemsPage
           title={messages.inbox}
@@ -2878,6 +2904,40 @@ function CollaborationPlatformAppContent({
           defaultLocation={projectCreateLocation}
           allowDingTalkAITable={host.capabilities.dingtalkAitable}
           labels={projectCreateLabels[locale]}
+          workspaceSelection={
+            projectCreateLocation === "cloud"
+              ? {
+                  label: messages.chooseProjectWorkspace,
+                  value:
+                    projectWorkspaceId ?? defaultProjectWorkspace?.id ?? "",
+                  options: [
+                    ...(!defaultProjectWorkspace
+                      ? [{ value: "", label: messages.defaultProjectWorkspace }]
+                      : []),
+                    ...state.workspaces
+                      .filter(
+                        (workspace) =>
+                          workspace.location === "cloud" &&
+                          (workspace.access_role === "Owner" ||
+                            workspace.access_role === "Maintainer" ||
+                            workspace.access_role === "Developer"),
+                      )
+                      .map((workspace) => ({
+                        value: workspace.id,
+                        label:
+                          workspace.id === defaultProjectWorkspace?.id
+                            ? messages.defaultProjectWorkspace
+                            : workspace.name,
+                      })),
+                  ],
+                  onChange: (workspaceId) => {
+                    setProjectTemplate(null);
+                    setStandaloneProjectLocation("cloud");
+                    setProjectWorkspaceId(workspaceId || null);
+                  },
+                }
+              : undefined
+          }
           workspaceContext={
             projectWorkspace && projectWorkspaceOwnerLabel
               ? {

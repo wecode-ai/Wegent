@@ -1136,6 +1136,7 @@
     "title": "App Preview"
   },
   "userSearch": {
+    "searchFailed": "Search failed. Please try again.",
     "placeholder": "Search username or email...",
     "selectedUsers": "{{count}} user(s) selected",
     "noResults": "No users found"

@@ -46,6 +46,7 @@ const SANDBOX_MUTATION_TIMEOUT: Duration = Duration::from_secs(180);
 const DELETE_EXECUTOR_TIMEOUT: Duration = Duration::from_secs(30);
 /// `ArchiveService._call_executor_restore`'s httpx timeout.
 const EXECUTOR_RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
+const EXECUTOR_PREPARE_TIMEOUT: Duration = Duration::from_secs(180);
 /// `RemoteWorkspaceService`'s `request_timeout` default (5.0s,
 /// `remote_workspace_service.py:44`) used by the executor address probe.
 const EXECUTOR_ADDRESS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -60,6 +61,13 @@ pub enum SandboxLookup {
     NotFound,
     /// Any other failure (`(None, Some(error))`).
     Failed,
+}
+
+/// The executor binding returned after preparing a runtime.
+#[derive(Debug, serde::Deserialize)]
+pub struct PreparedExecutor {
+    pub executor_name: String,
+    pub executor_namespace: Option<String>,
 }
 
 /// `cleanup_sandbox_by_task_id`'s request body.
@@ -100,6 +108,7 @@ struct ExecutorRestoreRequest<'a> {
 #[derive(Clone)]
 pub struct ExecutorManager {
     client: Client,
+    recovery_client: Client,
     base: String,
     /// `settings.EXECUTOR_CANCEL_TASK_URL`, which the source keeps as an
     /// independent absolute URL rather than deriving it from the manager base.
@@ -162,8 +171,16 @@ impl ExecutorManager {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .context("failed to build the executor-manager HTTP client")?;
+        // A Pod may take seconds to prepare or restore before sending headers.
+        // The requests on this client still carry their individual deadlines.
+        let recovery_client = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .read_timeout(EXECUTOR_PREPARE_TIMEOUT)
+            .build()
+            .context("failed to build the executor recovery HTTP client")?;
         Ok(Self {
             client,
+            recovery_client,
             base: base.into().trim_end_matches('/').to_owned(),
             cancel_url,
         })
@@ -214,7 +231,7 @@ impl ExecutorManager {
         executor_namespace: &str,
     ) -> Option<serde_json::Value> {
         let endpoint = self
-            .client
+            .recovery_client
             .endpoint_named(
                 format!("{}/executor-manager/executor/address", self.base),
                 format!("{}/executor-manager/executor/address", self.base),
@@ -389,6 +406,36 @@ impl ExecutorManager {
         }
     }
 
+    /// Prepare an executor with the normal execution request without dispatching it.
+    pub async fn prepare_executor(&self, request: &impl Serialize) -> Result<PreparedExecutor> {
+        let url = format!("{}/executor-manager/executors/prepare", self.base);
+        let response = self
+            .recovery_client
+            .post(url)?
+            .json(request)
+            .timeout(EXECUTOR_PREPARE_TIMEOUT)
+            .send()
+            .await
+            .context("Could not prepare the executor")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let payload = response.json::<serde_json::Value>().await.ok();
+            if let Some(detail) = payload.as_ref().and_then(|value| value["detail"].as_str()) {
+                anyhow::bail!("{detail}");
+            }
+            anyhow::bail!("Executor preparation returned HTTP {status}");
+        }
+        let executor = response
+            .json::<PreparedExecutor>()
+            .await
+            .context("Executor preparation returned an invalid binding")?;
+        anyhow::ensure!(
+            !executor.executor_name.trim().is_empty(),
+            "Executor preparation returned an empty executor name"
+        );
+        Ok(executor)
+    }
+
     /// `ArchiveService._call_executor_restore`: `POST
     /// {base}/executor-manager/executor/restore` with a 120s timeout. The
     /// source returns the decoded JSON body, or `None` on any transport error,
@@ -402,7 +449,7 @@ impl ExecutorManager {
         runtime_type: &str,
     ) -> Option<serde_json::Value> {
         let endpoint = self
-            .client
+            .recovery_client
             .endpoint_named(
                 format!("{}/executor-manager/executor/restore", self.base),
                 format!("{}/executor-manager/executor/restore", self.base),

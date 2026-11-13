@@ -6167,7 +6167,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         />
         <TaskForkDialog
-          key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
+          key={forkDialogOpen ? `fork-open-${currentRuntimeTask?.taskId ?? 'none'}` : 'fork-closed'}
           open={forkDialogOpen}
           source={currentRuntimeTask}
           runtimeWork={runtimeWork}
@@ -6220,8 +6220,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskBoardAssociationDialog
           key={
             taskBoardAssociation
-              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
-              : 'closed'
+              ? `board-association-${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'board-association-closed'
           }
           project={taskBoardAssociation?.project ?? null}
           currentProject={boundCloudProject}

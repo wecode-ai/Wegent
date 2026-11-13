@@ -10,6 +10,7 @@ jest.mock('@playwright/test', () => ({
 }))
 
 const independent = new Set([
+  'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
@@ -21,8 +22,9 @@ const expectedCounts: Record<string, number> = {
   'tasks/agent-conversation-regression.spec.ts': 22,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
+  'tasks/executor-workspace-recovery.spec.ts': 1,
   'tasks/pipeline-session-archive.spec.ts': 5,
-  'tasks/claude-background-lifecycle.spec.ts': 4,
+  'tasks/claude-background-lifecycle.spec.ts': 5,
   'tasks/provider-native-claudecode.spec.ts': 3,
   'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 1,
@@ -126,6 +128,11 @@ describe('Executor scheduling boundaries', () => {
     expect(
       identities.has(
         'tasks/provider-native-claudecode.spec.ts:cloud ClaudeCode discovers and invokes static and lazy connector tools without keywords'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/claude-background-lifecycle.spec.ts:cloud Claude registers downloadable artifacts before new and reused turns finish'
       )
     ).toBe(true)
     expect(

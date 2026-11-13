@@ -28,6 +28,10 @@ mod session_policy;
 mod tests;
 
 #[cfg(test)]
+#[path = "stand_in_blacklist_tests.rs"]
+mod blacklist_tests;
+
+#[cfg(test)]
 #[path = "stand_in_direct_recovery_tests.rs"]
 mod direct_recovery_tests;
 

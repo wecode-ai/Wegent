@@ -470,3 +470,28 @@ def test_personal_sort_modes_apply_before_every_page(
         actual.extend(row["id"] for row in page)
     assert actual == [rows[index].id for index in expected]
     assert cursor is None
+
+
+def test_created_scope_keeps_creator_identity_and_project_authorization(
+    test_db, test_user
+):
+    project = _make_project(test_db, test_user)
+    mine = add_items(test_db, project, test_user.id, 2, prefix="CREATED")
+    other = User(
+        user_name="created-scope-other", password_hash="unused", is_active=True
+    )
+    test_db.add(other)
+    test_db.commit()
+    assigned = add_items(test_db, project, other.id, 1, prefix="ASSIGNED")[0]
+    assigned.assignee_user_id = test_user.id
+    test_db.commit()
+    rows, cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, created_only=True, limit=1
+    )
+    assert [row["id"] for row in rows] == [mine[1].id]
+    assert cursor is not None
+    rows, cursor = loop_item_service.list_my_work_page(
+        test_db, test_user.id, created_only=True, limit=1, cursor=cursor
+    )
+    assert [row["id"] for row in rows] == [mine[0].id]
+    assert cursor is None

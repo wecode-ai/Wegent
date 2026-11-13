@@ -9,11 +9,10 @@
 //! part of the UPDATE: a FAILED completion without a payload collects `None`
 //! and leaves the stored value untouched. `updated_at` and `completed_at` are
 //! independent wall-clock reads, `completed_at` first (`db.py:181-184`).
-use brz_mysql::{Json, Mysql, MysqlRow, MysqlTransaction};
-use brz_redis::Redis;
+use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::Value;
 
-use super::{Completion, local_datetime, sql, subtask_column};
+use super::{local_datetime, sql, subtask_column};
 use crate::internal_callback::py_json::python_dumps;
 
 /// `_update_subtask_sync`'s `result` assignment (`db.py:136-177`).
@@ -70,21 +69,32 @@ fn sanitize_result_for_storage(result: &Value) -> Value {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransaction>(
-    ctx: &Completion<'_, M, R>,
+pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
+    tables: sql::Tables,
     mysql: &mut T,
+    task_id: i64,
     subtask_id: i64,
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-) -> Option<(i64, MysqlRow, Option<String>)> {
-    let row: MysqlRow = mysql
-        .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
-        .await
-        .ok()
-        .flatten()?;
+) -> MysqlResult<Option<(MysqlRow, Option<String>)>> {
+    let row: Option<MysqlRow> = mysql
+        .fetch_optional(
+            format!("{} FOR UPDATE", sql::subtask_by_id(tables)),
+            (subtask_id,),
+        )
+        .await?;
+    let Some(row) = row else { return Ok(None) };
+    if subtask_column::<i64>(&row, "task_id") != Some(task_id)
+        || !matches!(
+            subtask_column::<String>(&row, "status").as_deref(),
+            Some("PENDING" | "RUNNING")
+        )
+    {
+        return Ok(None);
+    }
     // `SubtaskStore.get_by_id` (`sqlalchemy_subtask_store.py:321-330`)
     // eager-loads `Subtask.contexts` with `subqueryload`, so the source issues
     // this read even though the update never consumes it.
@@ -92,7 +102,6 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
         .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
         .await
         .unwrap_or_default();
-    let owner_task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
     let existing_executor_name = subtask_column::<String>(&row, "executor_name");
     // The ORM projection labels every column `{table}_{column}`, so the stored
     // result is read by its position in that projection.
@@ -122,7 +131,7 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
     let namespace = executor_namespace.unwrap_or_default();
     let name = executor_name.unwrap_or_default();
     let error = error.unwrap_or_default();
-    let sql = sql::update_subtask_terminal(ctx.tables, with_result, with_error, with_executor);
+    let sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
 
     // Read and write on the same writer transaction; metrics publish after commit.
     let outcome = match (with_executor, with_error, with_result) {
@@ -224,11 +233,8 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
                 .await
         }
     };
-    if let Err(failure) = outcome {
-        tracing::warn!(%failure, "callback subtask update failed");
-        return None;
-    }
-    Some((owner_task_id, row, metrics_message))
+    outcome?;
+    Ok(Some((row, metrics_message)))
 }
 
 #[cfg(test)]

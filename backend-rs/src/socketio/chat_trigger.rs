@@ -129,7 +129,11 @@ pub(crate) async fn after_commit(
                 subtask_id = turn.assistant_subtask_id,
                 "chat:send AI trigger failed"
             );
-            finalize_trigger_failure(&state, &turn, user_id, &error).await;
+            // A concurrent cancellation can make the subtask undispatchable.
+            // Preserve that terminal state instead of marking the turn failed.
+            if !seam::is_subtask_not_dispatchable(&error) {
+                finalize_trigger_failure(&state, &turn, user_id, &error).await;
+            }
         }
     });
     Ok(())
@@ -495,7 +499,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
     let created_task = created_task(turn, &request, &request_title);
     seam::dispatch_chat_turn(
         state,
-        &request,
+        &mut request,
         &request_id,
         created_task,
         turn.device_id.as_deref(),

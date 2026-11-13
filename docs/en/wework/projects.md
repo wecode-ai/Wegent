@@ -17,9 +17,11 @@ sidebar_position: 3
 
 <a id="workspace-resource-controls"></a>
 
-Open **top + → Collaboration**. The sidebar shows accessible **Local projects** and **Remote projects** by default. Use the **+** beside either group to create a project without first choosing or creating a collaboration space. Remote projects require a cloud connection. These groups describe project storage; configure execution devices separately inside the project.
+Open **top + → Collaboration**. Local projects appear directly under **Local projects**. Remote projects use **Remote projects → space → project**. Spaces expand by default and collapse independently; each project appears only once. Use the **+** beside either group to create a project without first choosing or creating a collaboration space. Remote projects require a cloud connection. These groups describe project storage; configure execution devices separately inside the project.
 
-Expand **Collaboration spaces** when you need shared membership, resources, and permissions across projects. Space entries provide management controls; open projects from the local/remote project lists above. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
+The local list does not expose the internal local space. Click the **Local projects** heading to manage device projects. Use the arrow beside a remote space to collapse or expand its projects. Scroll the sidebar vertically when its content exceeds the window height to reach lower spaces and entries. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
+
+For remote projects, **Choose a workspace** initially selects **Default space**, or you can choose an existing space. The first use creates an independent default space, which later requests reuse. Existing business spaces and their projects are not adopted or moved. The add-folder button beside Remote projects creates a space. Local projects stay on the current device and have no redundant space selector. Switching spaces preserves the project name and description and clears the previous space's member, agent, and template selections; configure these again in the target space before creating.
 
 Global catalogs, space settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace space membership management.
 
@@ -244,7 +246,9 @@ Local spaces save the agent configuration in the project, preserving its resourc
 
 ### Agent capabilities and disabled state
 
-Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. The Edit action requires permission to edit the Agent definition; shared use permission does not grant editing permission. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
+Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
+
+Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **Runtime settings** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 
@@ -533,3 +537,25 @@ Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-de
 Open an Issue in a cloud project space and click **Copy web link** in its detail header to copy its address on the connected Wegent website. The button confirms success with **Copied**; if copying fails, click again to retry. Recipients still need to sign in and have access to the project.
 
 Local project space Issues have no corresponding Wegent webpage, so this action is hidden. It is also hidden until the cloud website address is available.
+
+<a id="independent-issues"></a>
+
+## Independent Issues and My issues
+
+<!-- ui-source: src/features/todo/IndependentIssueDialog.tsx -->
+<!-- ui-source: src/features/todo/IndependentIssueEditor.tsx -->
+<!-- ui-source: src/features/todo/PersonalIssuesView.tsx -->
+
+The collaboration sidebar separates **My issues** from **Projects**. **Assigned to me**, **Created by me**, and **Participating** query the current account's local and cloud project Issues and cloud independent Issues. Home keeps its existing composer, project-grouped list and assistant workspace. Project navigation retains local projects, remote projects and space grouping.
+
+Connect a cloud account, choose **Collaboration → New Issue**, complete the title, description, status, priority, assignee and due date, and save. Independent Issues have no project or space. They are visible only to their creator until colleagues are explicitly invited.
+
+The creator searches for colleagues under **Edit → Participants**, adds invitations or removes existing participants. Participants can read, edit, comment and work on the Issue, but cannot change invitations or delete it. Removing a participant also clears their assignment. Every subsequent read and write rechecks the current invitation. Assignment grants no access; assignees must be the creator or an invited participant.
+
+Open an Issue to discuss, edit or archive it. **Show archived independent issues** lists archived records for restoration. Only the creator can confirm deletion. Saves require the observed version; a concurrent change preserves the draft and reports a conflict so the current content can be reviewed before resubmitting.
+
+The creator can **Associate project** after reviewing the permission change: project permissions will apply and existing participants receive no automatic project membership. One transaction preserves the Issue and comments, allocates a project sequence number, and opens the existing project detail. Target-project edit permission is required; project operations and permissions apply afterwards.
+
+**Ask AI to help** creates a personal task from the currently authorized Issue content using the task page's selected device, workspace and model. It does not automatically change the Issue status or publish results; add the shareable conclusions as comments. Independent Issues are cloud-shared; cloud connection failures do not block local projects or the rest of the workbench.
+
+Existing catalogs are grouped under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. The group can be expanded or collapsed. The duplicate personal assistant sidebar entry is removed while the assistant remains in Home's right workspace.

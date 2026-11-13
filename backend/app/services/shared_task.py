@@ -8,22 +8,19 @@ Service for managing task sharing functionality.
 Uses the unified ResourceMember model instead of the legacy SharedTask table.
 """
 
-import base64
 import logging
-import urllib.parse
-from datetime import datetime
-from typing import List, Optional
+import re
+import secrets
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
+import app.stores.tasks as task_stores
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
-from app.models.share_link import ResourceType
+from app.models.share_link import ResourceType, ShareLink
 from app.models.subtask import SubtaskStatus
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
@@ -37,6 +34,11 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.share.token_access import (
+    hash_share_token,
+    require_share_link_access,
+    share_token_lookup,
+)
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -46,187 +48,151 @@ logger = logging.getLogger(__name__)
 class SharedTaskService:
     """Service for managing task sharing functionality using ResourceMember"""
 
-    def __init__(self):
-        # Initialize AES key and IV from settings (reuse team share settings)
-        self.aes_key = settings.SHARE_TOKEN_AES_KEY.encode("utf-8")
-        self.aes_iv = settings.SHARE_TOKEN_AES_IV.encode("utf-8")
-
-    def _aes_encrypt(self, data: str) -> str:
-        """Encrypt data using AES-256-CBC"""
-        cipher = Cipher(
-            algorithms.AES(self.aes_key),
-            modes.CBC(self.aes_iv),
-            backend=default_backend(),
-        )
-        encryptor = cipher.encryptor()
-
-        # Pad the data to 16-byte boundary (AES block size)
-        padder = padding.PKCS7(128).padder()
-        padded_data = padder.update(data.encode("utf-8")) + padder.finalize()
-
-        # Encrypt the data
-        encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
-
-        # Return base64 encoded encrypted data
-        return base64.b64encode(encrypted_bytes).decode("utf-8")
-
-    def _aes_decrypt(self, encrypted_data: str) -> Optional[str]:
-        """Decrypt data using AES-256-CBC"""
-        try:
-            # Decode base64 encrypted data
-            encrypted_bytes = base64.b64decode(encrypted_data.encode("utf-8"))
-
-            # Create cipher object
-            cipher = Cipher(
-                algorithms.AES(self.aes_key),
-                modes.CBC(self.aes_iv),
-                backend=default_backend(),
-            )
-            decryptor = cipher.decryptor()
-
-            # Decrypt the data
-            decrypted_padded_bytes = (
-                decryptor.update(encrypted_bytes) + decryptor.finalize()
-            )
-
-            # Unpad the data
-            unpadder = padding.PKCS7(128).unpadder()
-            decrypted_bytes = (
-                unpadder.update(decrypted_padded_bytes) + unpadder.finalize()
-            )
-
-            # Return decrypted string
-            return decrypted_bytes.decode("utf-8")
-        except Exception:
-            return None
-
     def generate_share_token(self, user_id: int, task_id: int) -> str:
-        """Generate share token based on user and task information using AES encryption"""
-        # Format: "user_id#task_id"
-        share_data = f"{user_id}#{task_id}"
-        # Use AES encryption
-        share_token = self._aes_encrypt(share_data)
-        # URL encode the token before returning it
-        share_token = urllib.parse.quote(share_token)
-        return share_token
+        """Generate a 256-bit opaque share token."""
+        return secrets.token_urlsafe(32)
+
+    def create_share_link(
+        self,
+        db: Session,
+        task_id: int,
+        owner_user_id: int,
+    ) -> ShareLink:
+        """Create and persist a new task share link."""
+        share_token = self.generate_share_token(owner_user_id, task_id)
+        share_link = ShareLink(
+            resource_type=ResourceType.TASK_SHARE.value,
+            resource_id=task_id,
+            share_token=share_token,
+            token_hash=self._hash_share_token(share_token),
+            token_version=ShareLink.OPAQUE_TOKEN_VERSION,
+            require_approval=False,
+            default_role=ResourceRole.Reporter.value,
+            expires_at=datetime.utcnow() + timedelta(days=365 * 100),
+            created_by_user_id=owner_user_id,
+            is_active=True,
+        )
+        db.add(share_link)
+        db.commit()
+        return share_link
+
+    def _hash_share_token(self, share_token: str) -> str:
+        """Return the SHA-256 digest used for token lookup."""
+        return hash_share_token(share_token)
+
+    def _find_share_link(self, db: Session, share_token: str) -> Optional[ShareLink]:
+        """Find an active task share link by its token hash."""
+        share_link = (
+            db.query(ShareLink)
+            .filter(
+                share_token_lookup(share_token),
+                (
+                    (ShareLink.resource_type == ResourceType.TASK_SHARE.value)
+                    & (ShareLink.token_version == ShareLink.OPAQUE_TOKEN_VERSION)
+                )
+                | (
+                    (ShareLink.resource_type == ResourceType.TASK.value)
+                    & (ShareLink.token_version == ShareLink.LEGACY_TOKEN_VERSION)
+                ),
+                ShareLink.is_active.is_(True),
+            )
+            .first()
+        )
+        return share_link
 
     def decode_share_token(
-        self, share_token: str, db: Optional[Session] = None
+        self,
+        share_token: str,
+        db: Optional[Session] = None,
+        viewer_id: Optional[int] = None,
     ) -> Optional[TaskShareInfo]:
-        """Decode share token to get task information using AES decryption"""
-        try:
-            # First URL decode the token, then use AES decryption
-            decoded_token = urllib.parse.unquote(share_token)
-            share_data_str = self._aes_decrypt(decoded_token)
-            if not share_data_str:
-                logger.info("Invalid share token format: %s", share_token)
-                return None
-
-            # Parse the "user_id#task_id" format
-            if "#" not in share_data_str:
-                return None
-
-            user_id_str, task_id_str = share_data_str.split("#", 1)
-            try:
-                user_id = int(user_id_str)
-                task_id = int(task_id_str)
-            except ValueError:
-                return None
-
-            # If database session is provided, query user_name and task_title from database
-            if db is not None:
-                # Query user name
-                user = (
-                    db.query(User)
-                    .filter(User.id == user_id, User.is_active == True)
-                    .first()
-                )
-
-                # Query task
-                task = task_store.get_task_by_states(
-                    db,
-                    task_id=task_id,
-                    states=TaskResource.is_active_query(),
-                )
-
-                if not user or not task:
-                    logger.info("User or task not found in the database.")
-                    return None
-
-                # Extract task_type from task JSON (stored in metadata.labels)
-                task_type = "chat"  # default
-                git_repo_id = None
-                git_repo = None
-                git_domain = None
-                git_type = None
-                branch_name = None
-
-                try:
-                    from app.schemas.kind import Task, Workspace
-
-                    task_json = task.json if isinstance(task.json, dict) else {}
-                    metadata = task_json.get("metadata", {})
-                    labels = metadata.get("labels", {})
-                    task_type = labels.get("taskType", "chat")
-
-                    # For code tasks, extract workspace repository information
-                    if task_type == "code":
-                        task_crd = Task.model_validate(task.json)
-                        workspace_ref = task_crd.spec.workspaceRef
-
-                        workspace = task_store.get_workspace_by_ref(
-                            db,
-                            user_id=user_id,
-                            name=workspace_ref.name,
-                            namespace=workspace_ref.namespace,
-                        )
-
-                        if workspace:
-                            workspace_crd = Workspace.model_validate(workspace.json)
-                            repo = workspace_crd.spec.repository
-                            git_repo_id = repo.gitRepoId
-                            git_repo = repo.gitRepo
-                            git_domain = repo.gitDomain
-                            branch_name = repo.branchName
-                            # Infer git_type from git_domain
-                            if "github" in repo.gitDomain.lower():
-                                git_type = "github"
-                            elif "gitlab" in repo.gitDomain.lower():
-                                git_type = "gitlab"
-                            elif "gitee" in repo.gitDomain.lower():
-                                git_type = "gitee"
-                            elif "gitea" in repo.gitDomain.lower():
-                                git_type = "gitea"
-                except Exception as e:
-                    logger.warning(f"Failed to extract workspace info: {e}")
-                    pass  # Use defaults if extraction fails
-
-                return TaskShareInfo(
-                    user_id=user_id,
-                    user_name=user.user_name,
-                    task_id=task_id,
-                    task_title=task.name or "Untitled Task",
-                    task_type=task_type,
-                    git_repo_id=git_repo_id,
-                    git_repo=git_repo,
-                    git_domain=git_domain,
-                    git_type=git_type,
-                    branch_name=branch_name,
-                )
-            else:
-                # Without database session, return basic info with placeholder names
-                return TaskShareInfo(
-                    user_id=user_id,
-                    user_name=f"User_{user_id}",
-                    task_id=task_id,
-                    task_title=f"Task_{task_id}",
-                )
-        except Exception:
+        """Resolve a task share token to its active, owned resource."""
+        if db is None:
             return None
+
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
+            logger.info("Invalid or inactive share token")
+            return None
+
+        self._require_link_access(db, share_link, viewer_id)
+        user_id = share_link.created_by_user_id
+        task_id = share_link.resource_id
+
+        if share_link.is_expired:
+            raise HTTPException(status_code=400, detail="Share link has expired")
+        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=TaskResource.is_active_query(),
+            user_id=user_id,
+        )
+
+        if not user or not task:
+            logger.info("User or task not found in the database.")
+            return None
+
+        task_type = "chat"
+        git_repo_id = None
+        git_repo = None
+        git_domain = None
+        git_type = None
+        branch_name = None
+
+        try:
+            from app.schemas.kind import Task, Workspace
+
+            task_json = task.json if isinstance(task.json, dict) else {}
+            metadata = task_json.get("metadata", {})
+            labels = metadata.get("labels", {})
+            task_type = labels.get("taskType", "chat")
+
+            if task_type == "code":
+                task_crd = Task.model_validate(task.json)
+                workspace_ref = task_crd.spec.workspaceRef
+                workspace = task_store.get_workspace_by_ref(
+                    db,
+                    user_id=user_id,
+                    name=workspace_ref.name,
+                    namespace=workspace_ref.namespace,
+                )
+                if workspace:
+                    workspace_crd = Workspace.model_validate(workspace.json)
+                    repo = workspace_crd.spec.repository
+                    git_repo_id = repo.gitRepoId
+                    git_repo = repo.gitRepo
+                    git_domain = repo.gitDomain
+                    branch_name = repo.branchName
+                    if "github" in repo.gitDomain.lower():
+                        git_type = "github"
+                    elif "gitlab" in repo.gitDomain.lower():
+                        git_type = "gitlab"
+                    elif "gitee" in repo.gitDomain.lower():
+                        git_type = "gitee"
+                    elif "gitea" in repo.gitDomain.lower():
+                        git_type = "gitea"
+        except Exception as e:
+            logger.warning("Failed to extract workspace info: %s", e)
+
+        return TaskShareInfo(
+            user_id=user_id,
+            user_name=user.user_name,
+            task_id=task_id,
+            task_title=task.name or "Untitled Task",
+            task_type=task_type,
+            git_repo_id=git_repo_id,
+            git_repo=git_repo,
+            git_domain=git_domain,
+            git_type=git_type,
+            branch_name=branch_name,
+        )
 
     def generate_share_url(self, share_token: str) -> str:
         """Generate share URL with token"""
         # Use /shared/task path for public read-only viewing
+        from app.core.config import settings
+
         base_url = settings.TASK_SHARE_BASE_URL  # Reuse the base URL
         return f"{base_url}/shared/task?token={share_token}"
 
@@ -255,21 +221,33 @@ class SharedTaskService:
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # Generate share token using the task owner's user_id (not the current user)
-        # This ensures the token remains valid and consistent
-        share_token = self.generate_share_token(
-            user_id=task.user_id,
-            task_id=task_id,
-        )
+        share_link = self.create_share_link(db, task_id, task.user_id)
 
         # Generate share URL
-        share_url = self.generate_share_url(share_token)
+        share_url = self.generate_share_url(share_link.share_token)
 
-        return TaskShareResponse(share_url=share_url, share_token=share_token)
+        return TaskShareResponse(
+            share_url=share_url,
+            share_token=share_link.share_token,
+        )
 
-    def get_share_info(self, db: Session, share_token: str) -> TaskShareInfo:
+    def _require_link_access(
+        self, db: Session, link: ShareLink, viewer_id: Optional[int]
+    ) -> None:
+        require_share_link_access(
+            db,
+            link,
+            viewer_id,
+            lambda uid: task_stores.task_access_store.is_member(
+                db, task_id=link.resource_id, user_id=uid
+            ),
+        )
+
+    def get_share_info(
+        self, db: Session, share_token: str, viewer_id: Optional[int] = None
+    ) -> TaskShareInfo:
         """Get task share information from token"""
-        share_info = self.decode_share_token(share_token, db)
+        share_info = self.decode_share_token(share_token, db, viewer_id)
 
         if not share_info:
             raise HTTPException(status_code=400, detail="Invalid share token")
@@ -314,6 +292,7 @@ class SharedTaskService:
             db.query(Kind)
             .filter(
                 Kind.id == new_team_id,
+                Kind.user_id == new_user_id,
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )
@@ -603,7 +582,7 @@ class SharedTaskService:
     ) -> JoinSharedTaskResponse:
         """Join a shared task by copying it to user's task list"""
         # Decode share token
-        share_info = self.decode_share_token(share_token, db)
+        share_info = self.decode_share_token(share_token, db, user_id)
 
         if not share_info:
             raise HTTPException(status_code=400, detail="Invalid share token")
@@ -763,28 +742,16 @@ class SharedTaskService:
         return True
 
     def get_public_shared_task(
-        self, db: Session, share_token: str
+        self, db: Session, share_token: str, viewer_id: Optional[int] = None
     ) -> PublicSharedTaskResponse:
-        """Get public shared task data (no authentication required)"""
-        # First try to decode the token format (without database check)
-        try:
-            decoded_token = urllib.parse.unquote(share_token)
-            share_data_str = self._aes_decrypt(decoded_token)
-
-            if not share_data_str or "#" not in share_data_str:
-                raise HTTPException(status_code=400, detail="Invalid share link format")
-
-            # Parse user_id and task_id
-            user_id_str, task_id_str = share_data_str.split("#", 1)
-            try:
-                user_id = int(user_id_str)
-                task_id = int(task_id_str)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid share link format")
-        except HTTPException:
-            raise
-        except Exception:
+        """Read opaque shares anonymously; legacy locators require resource access."""
+        share_link = self._find_share_link(db, share_token)
+        if not share_link:
             raise HTTPException(status_code=400, detail="Invalid share link format")
+
+        self._require_link_access(db, share_link, viewer_id)
+        user_id = share_link.created_by_user_id
+        task_id = share_link.resource_id
 
         # Now check if task exists and is active
         task = task_store.get_task_by_states(

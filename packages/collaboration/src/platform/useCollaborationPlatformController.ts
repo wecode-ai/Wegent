@@ -270,7 +270,9 @@ export function useCollaborationPlatformController({
         !force &&
         !location.workspaceId &&
         !location.projectId &&
-        (rootView === "home" || rootView === "devices") &&
+        (rootView === "home" ||
+          rootView === "devices" ||
+          rootView.startsWith("issues-")) &&
         navigationCacheStatusRef.current === "complete"
       ) {
         setState((current) => ({
@@ -1049,6 +1051,13 @@ export function useCollaborationPlatformController({
           workspaceId: workspaceId ?? undefined,
         });
         registerProject(project);
+        if (
+          project.workspace_id &&
+          !navigationCacheRef.current.workspaces.some(
+            (workspace) => workspace.id === project.workspace_id,
+          )
+        )
+          void activeLoadRef.current(true);
         return project;
       },
       registerProject,
