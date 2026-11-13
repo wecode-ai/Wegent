@@ -47,3 +47,30 @@ it('recovers settings reads and gives the saved roles and board connections to t
   expect(children).toHaveBeenCalledWith(settings)
   expect(personalGet).toHaveBeenCalledWith(7, 'bound')
 })
+
+it('keeps the current work list and its draft mounted when a refresh fails', async () => {
+  const settings = {
+    userId: 7,
+    executionDeviceId: 'bound',
+    primary: { enabled: true },
+    roles: [],
+    version: 1,
+  }
+  const personalGet = vi
+    .fn()
+    .mockResolvedValueOnce(settings)
+    .mockRejectedValueOnce(new Error('offline'))
+  const api = { personalGet } as unknown as StandInExecutorApi
+  const panel = (active: boolean) => (
+    <StandInHomeSetup api={api} userId={7} deviceId="bound" active={active}>
+      {() => <input aria-label="Work draft" defaultValue="Keep this" />}
+    </StandInHomeSetup>
+  )
+  const { rerender } = render(panel(true))
+  const input = await screen.findByLabelText('Work draft')
+  rerender(panel(false))
+  rerender(panel(true))
+  await screen.findByRole('alert')
+  expect(screen.getByLabelText('Work draft')).toBe(input)
+  expect(input).toHaveValue('Keep this')
+})

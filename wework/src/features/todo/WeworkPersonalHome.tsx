@@ -369,6 +369,18 @@ export function WeworkPersonalHome({
     assignedOnly: boolean
     order: PersonalHomeIssueOrder
   }>()
+  const [detailScope, setDetailScope] = useState({ userId, sources })
+  if (
+    detailScope.userId !== userId ||
+    detailScope.sources.length !== sources.length ||
+    detailScope.sources.some((source, index) => source !== sources[index])
+  ) {
+    setDetailScope({ userId, sources })
+    setIssueTabs([])
+    setActiveTab('stand-in')
+    setExpandedTabs(new Set())
+    setRecentCreation(undefined)
+  }
   if (createdIssue && createdIssue.key !== handledCreation) {
     setHandledCreation(createdIssue.key)
     const ownIds =

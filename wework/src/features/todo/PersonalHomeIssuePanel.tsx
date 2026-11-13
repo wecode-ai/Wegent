@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type {
   CollaborationIssue,
   CollaborationIssueDetailRenderContext,
@@ -42,9 +42,20 @@ export function PersonalHomeIssuePanel({
     failed?: boolean
   }>()
   const [revision, setRevision] = useState(0)
+  const editRevision = useRef(0)
+  const saveIssue = useStableEvent((updated: CollaborationIssue) => {
+    editRevision.current += 1
+    setSnapshot(previous =>
+      previous?.api === api && previous.id === issue.id && previous.detail
+        ? { ...previous, detail: { ...previous.detail, issue: updated } }
+        : previous
+    )
+    onUpdated({ ...issue, ...updated })
+  })
   useEffect(() => {
     if (!active) return
     let current = true
+    const requestedEditRevision = editRevision.current
     void (async () => {
       const item = await api.issues.get(issue.id)
       if (String(item.cloud_project_id) !== String(project.id))
@@ -54,7 +65,7 @@ export function PersonalHomeIssuePanel({
         api.assignments?.list(issue.id) ?? Promise.resolve([]),
         api.taskBindings?.list(issue.id, String(project.id)) ?? Promise.resolve([]),
       ])
-      if (current) {
+      if (current && editRevision.current === requestedEditRevision) {
         setSnapshot({
           api,
           id: issue.id,
@@ -68,27 +79,33 @@ export function PersonalHomeIssuePanel({
         publishUpdated(item)
       }
     })().catch(() => {
-      if (current) setSnapshot({ api, id: issue.id, failed: true })
+      if (current && editRevision.current === requestedEditRevision)
+        setSnapshot(previous => ({
+          api,
+          id: issue.id,
+          detail: previous?.api === api && previous.id === issue.id ? previous.detail : undefined,
+          failed: true,
+        }))
     })
     return () => {
       current = false
     }
   }, [api, issue.id, project.id, active, revision, refreshKey, publishUpdated])
   const current = snapshot?.api === api && snapshot?.id === issue.id ? snapshot : undefined
-  if (current?.failed)
-    return (
-      <div role="alert" className="p-5 text-sm text-error">
-        {t('personalHome.detailFailed')}
-        <button
-          type="button"
-          data-testid="personal-home-detail-retry"
-          className="ml-2 min-h-11 underline md:min-h-8"
-          onClick={() => setRevision(value => value + 1)}
-        >
-          {t('standIn.reload')}
-        </button>
-      </div>
-    )
+  const error = current?.failed ? (
+    <div role="alert" className="p-5 text-sm text-error">
+      {t('personalHome.detailFailed')}
+      <button
+        type="button"
+        data-testid="personal-home-detail-retry"
+        className="ml-2 min-h-11 underline md:min-h-8"
+        onClick={() => setRevision(value => value + 1)}
+      >
+        {t('standIn.reload')}
+      </button>
+    </div>
+  ) : null
+  if (!current?.detail && error) return error
   if (!current?.detail)
     return (
       <p role="status" className="p-5 text-sm text-text-muted">
@@ -101,19 +118,13 @@ export function PersonalHomeIssuePanel({
       className="relative flex h-full min-h-0 flex-1 flex-col"
       data-testid="work-item-context-panel"
     >
+      {error}
       {renderDetail({
         ...detail,
         api,
         project,
         onClose: () => onClose?.(),
-        onChange: updated => {
-          setSnapshot(previous =>
-            previous?.detail
-              ? { ...previous, detail: { ...previous.detail, issue: updated } }
-              : previous
-          )
-          onUpdated({ ...issue, ...updated })
-        },
+        onChange: saveIssue,
         onRead: updated =>
           setSnapshot(previous =>
             previous?.detail
@@ -126,7 +137,13 @@ export function PersonalHomeIssuePanel({
                 }
               : previous
           ),
-        onOpenRelatedIssue: related => onOpenIssue({ ...issue, ...related }),
+        onOpenRelatedIssue: related =>
+          onOpenIssue({
+            ...related,
+            project_name: project.name,
+            project_key: project.project_key,
+            has_active_task: false,
+          }),
         onCreateTask: onCreateTask ? () => void onCreateTask(detail.issue) : undefined,
       })}
     </div>

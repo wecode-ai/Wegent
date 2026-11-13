@@ -107,3 +107,55 @@ it('rejects late responses from a previous API scope', async () => {
     expect.objectContaining({ issue: expect.objectContaining({ title: 'New scope' }) })
   )
 })
+
+it('does not overwrite a saved edit with a refresh that started before the save', async () => {
+  const { get, props, rerender, renderDetail } = await setup()
+  await screen.findByText('Actual board editor')
+  let resolve!: (item: CollaborationIssue) => void
+  get.mockImplementationOnce(
+    () =>
+      new Promise(done => {
+        resolve = done
+      })
+  )
+  rerender(<PersonalHomeIssuePanel {...props} refreshKey={1} />)
+  fireEvent.click(screen.getByText('Actual board editor'))
+  await act(async () =>
+    resolve({ id: 'one', cloud_project_id: 'p1', title: 'Stale', version: 3 } as CollaborationIssue)
+  )
+  expect(renderDetail).toHaveBeenLastCalledWith(
+    expect.objectContaining({ issue: expect.objectContaining({ title: 'Saved title' }) })
+  )
+  expect(props.onUpdated).not.toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Stale' }))
+})
+
+it('keeps the authorized detail mounted when its same-scope refresh fails', async () => {
+  const { get, props, rerender, renderDetail } = await setup()
+  const editor = await screen.findByText('Actual board editor')
+  get.mockRejectedValueOnce(new Error('offline'))
+  rerender(<PersonalHomeIssuePanel {...props} refreshKey={1} />)
+  await screen.findByRole('alert')
+  expect(screen.getByText('Actual board editor')).toBe(editor)
+  expect(renderDetail).toHaveBeenLastCalledWith(
+    expect.objectContaining({ issue: expect.objectContaining({ title: 'Authoritative' }) })
+  )
+  fireEvent.click(screen.getByTestId('personal-home-detail-retry'))
+  await act(async () => {})
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('opens a related Issue without inheriting the current assignment or task summaries', async () => {
+  const { props, rerender, renderDetail } = await setup()
+  const issue = {
+    ...props.issue,
+    task_bindings: [],
+    assignment_context: { body: 'For A', created_by_user_name: 'Alice', created_at: '2026-11-13' },
+  }
+  rerender(<PersonalHomeIssuePanel {...props} issue={issue} />)
+  await screen.findByText('Actual board editor')
+  const context = renderDetail.mock.lastCall![0]
+  context.onOpenRelatedIssue!({ ...context.issue, id: 'two', title: 'Related' })
+  expect(props.onOpenIssue).toHaveBeenCalledWith(expect.objectContaining({ id: 'two' }))
+  expect(props.onOpenIssue.mock.lastCall![0]).not.toHaveProperty('assignment_context')
+  expect(props.onOpenIssue.mock.lastCall![0]).not.toHaveProperty('task_bindings')
+})

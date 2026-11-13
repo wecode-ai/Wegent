@@ -50,7 +50,14 @@ export function StandInHomeSetup({
         if (current) setSnapshot({ api, scope, settings: value })
       },
       cause => {
-        if (current) setSnapshot({ api, scope, error: getStandInErrorMessage(cause) })
+        if (current)
+          setSnapshot(previous => ({
+            api,
+            scope,
+            settings:
+              previous?.api === api && previous.scope === scope ? previous.settings : undefined,
+            error: getStandInErrorMessage(cause),
+          }))
       }
     )
     return () => {
@@ -58,8 +65,8 @@ export function StandInHomeSetup({
     }
   }, [api, userId, deviceId, active, scope, i18n.language, revision])
   const current = snapshot?.api === api && snapshot?.scope === scope ? snapshot : undefined
-  if (!api || current?.error)
-    return (
+  const error =
+    !api || current?.error ? (
       <div role="alert" className="p-5 text-sm text-error">
         {current?.error ?? t('personalHome.workUnavailable')}
         <button
@@ -71,12 +78,18 @@ export function StandInHomeSetup({
           {t('standIn.reload')}
         </button>
       </div>
-    )
+    ) : null
+  if (!current?.settings && error) return error
   if (!current)
     return (
       <p role="status" className="p-5 text-sm text-text-muted">
         {t('standIn.loading')}
       </p>
     )
-  return current.settings ? children(current.settings) : null
+  return (
+    <>
+      {error}
+      {current.settings ? children(current.settings) : null}
+    </>
+  )
 }

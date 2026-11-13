@@ -12,6 +12,7 @@ type SourceSnapshot = {
   loading: boolean
   error: boolean
   queryKey: string
+  scopeKey: string
 }
 
 export type PersonalHomeIssueOrder = 'attention' | 'activity' | 'assignment' | 'priority'
@@ -30,7 +31,8 @@ export function usePersonalHomeIssues(
   const generation = useRef(0)
   const pendingPages = useRef(new Set<SharedWorkspaceApi>())
   const viewers = JSON.stringify(viewerIds)
-  const queryKey = JSON.stringify([revision, assignedOnly, includeCompleted, viewers, order])
+  const scopeKey = JSON.stringify([assignedOnly, includeCompleted, viewers, order])
+  const queryKey = JSON.stringify([revision, scopeKey])
   const reload = useCallback(() => setRevision(value => value + 1), [])
   useEffect(() => {
     const requestGeneration = ++generation.current
@@ -59,6 +61,7 @@ export function usePersonalHomeIssues(
                 {
                   api,
                   queryKey,
+                  scopeKey,
                   items: page.items,
                   nextCursor: page.nextCursor,
                   loading: false,
@@ -75,7 +78,11 @@ export function usePersonalHomeIssues(
                 {
                   api,
                   queryKey,
-                  items: previous.find(snapshot => snapshot.api === api)?.items ?? [],
+                  scopeKey,
+                  items:
+                    previous.find(
+                      snapshot => snapshot.api === api && snapshot.scopeKey === scopeKey
+                    )?.items ?? [],
                   nextCursor: null,
                   loading: false,
                   error: true,
@@ -93,9 +100,11 @@ export function usePersonalHomeIssues(
       unsubscribeContext()
       window.removeEventListener('focus', reload)
     }
-  }, [sources, queryKey, active, assignedOnly, includeCompleted, viewers, order, reload])
+  }, [sources, queryKey, scopeKey, active, assignedOnly, includeCompleted, viewers, order, reload])
   const current = sources.map(api => {
-    const snapshot = snapshots.find(snapshot => snapshot.api === api)
+    const snapshot = snapshots.find(
+      snapshot => snapshot.api === api && snapshot.scopeKey === scopeKey
+    )
     return snapshot
       ? {
           ...snapshot,

@@ -50,6 +50,27 @@ it('replaces the single Issue tab while keeping the assistant tab', async () => 
   expect(screen.getByTestId('personal-home-tab-fifo-6')).toHaveAttribute('aria-selected', 'true')
 })
 
+it.each(['viewer', 'source'])(
+  'clears open Issue details when the %s scope changes',
+  async change => {
+    const { props, rerender } = await setup([source(vi.fn().mockResolvedValue([issue('private')]))])
+    fireEvent.click(await screen.findByTestId('personal-home-issue-private'))
+    expect(screen.getByTestId('personal-home-tab-private')).toBeInTheDocument()
+    rerender(
+      <WeworkPersonalHome
+        {...props}
+        userId={change === 'viewer' ? 8 : props.userId}
+        sources={change === 'source' ? [source()] : props.sources}
+      />
+    )
+    expect(screen.queryByTestId('personal-home-tab-private')).not.toBeInTheDocument()
+    expect(screen.getByTestId('personal-home-tab-stand-in')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  }
+)
+
 it('merges attention order across stores and puts projects needing intervention first', async () => {
   const ordinary = {
     ...issue('ordinary'),
@@ -177,7 +198,7 @@ it('groups participating issues by project, filters finished work and opens the 
   )
   expect(screen.getByTestId('personal-home')).toBeInTheDocument()
   fireEvent.change(screen.getByTestId('personal-home-filter'), { target: { value: 'all' } })
-  expect(screen.getByText('Platform')).toBeInTheDocument()
+  expect(await screen.findByText('Platform')).toBeInTheDocument()
   expect(screen.getByText('Issue finished')).toBeInTheDocument()
 })
 
@@ -188,7 +209,7 @@ it('defaults to assigned-to-me work and makes other participating issues availab
   expect(screen.getByTestId('personal-home-scope-assigned')).toHaveAttribute('aria-pressed', 'true')
   expect(screen.queryByText('Issue other')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('personal-home-scope-participating'))
-  expect(screen.getByText('Issue other')).toBeInTheDocument()
+  expect(await screen.findByText('Issue other')).toBeInTheDocument()
   expect(screen.getByText('Issue mine')).toBeInTheDocument()
 })
 

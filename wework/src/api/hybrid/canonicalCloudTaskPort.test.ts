@@ -75,3 +75,51 @@ it('refuses to bind through an ambiguous alias when the Runtime has no registere
   )
   expect(bindTask).not.toHaveBeenCalled()
 })
+
+it('reads and removes an existing canonical binding without requiring an online Runtime', async () => {
+  const port = {
+    findIssueForTask: vi.fn(),
+    findCloudContextForTask: vi.fn(),
+    unbindTask: vi.fn(),
+    unbindCloudContext: vi.fn(),
+  }
+  const identity = vi.fn().mockRejectedValue(new Error('Runtime offline'))
+  const api = canonicalCloudTaskPort(port as unknown as WeworkWorkspaceRuntimePort, identity)
+  const task = { deviceId: 'app-record-42', taskId: 'existing' }
+  await api.findIssueForTask(task)
+  await api.findCloudContextForTask(task)
+  await api.unbindTask('issue', task)
+  await api.unbindCloudContext(task)
+  expect(identity).not.toHaveBeenCalled()
+  expect(port.findIssueForTask).toHaveBeenCalledExactlyOnceWith(task)
+  expect(port.findCloudContextForTask).toHaveBeenCalledExactlyOnceWith(task)
+  expect(port.unbindTask).toHaveBeenCalledExactlyOnceWith('issue', task)
+  expect(port.unbindCloudContext).toHaveBeenCalledExactlyOnceWith(task)
+})
+
+it.each(['alias', 'app-record-0', 'app-record-42-other'])(
+  'requires attestation for non-record metadata address %s',
+  async deviceId => {
+    const findIssueForTask = vi.fn()
+    const api = canonicalCloudTaskPort(
+      { findIssueForTask } as unknown as WeworkWorkspaceRuntimePort,
+      vi.fn().mockRejectedValue(new Error('Runtime offline'))
+    )
+    await expect(api.findIssueForTask({ deviceId, taskId: 'task' })).rejects.toThrow(
+      'Runtime offline'
+    )
+    expect(findIssueForTask).not.toHaveBeenCalled()
+  }
+)
+
+it('requires live attestation for a new binding even with a record address', async () => {
+  const bindTask = vi.fn()
+  const api = canonicalCloudTaskPort(
+    { bindTask } as unknown as WeworkWorkspaceRuntimePort,
+    vi.fn().mockRejectedValue(new Error('Runtime offline'))
+  )
+  await expect(
+    api.bindTask('issue', { deviceId: 'app-record-42', taskId: 'task' })
+  ).rejects.toThrow('Runtime offline')
+  expect(bindTask).not.toHaveBeenCalled()
+})

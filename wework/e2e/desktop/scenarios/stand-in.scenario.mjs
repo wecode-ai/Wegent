@@ -873,7 +873,7 @@ export async function createDesktopScenario({
         await control.command('getAttribute', '[data-testid="stand-in-details-open"]', {
           value: 'aria-label',
         }),
-        '分身详情'
+        '助理详情'
       )
       await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
