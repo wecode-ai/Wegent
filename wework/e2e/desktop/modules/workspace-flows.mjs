@@ -990,11 +990,6 @@ async function verifyWorkspaceIssueCreation(control) {
   const createIssueContent = `${createIssueDialog} [data-testid="cloud-todo-create-content"]`
   const createIssueFooter = `${createIssueDialog} [data-testid="cloud-todo-create-footer"]`
   const projectsCreateButton = '[data-testid="projects-create-button"]'
-  const expandSidebarButton = '[data-testid="expand-sidebar-button"]'
-  if (Number(await control.command('getElementCount', expandSidebarButton)) > 0) {
-    await control.command('clickWhenEnabled', expandSidebarButton)
-  }
-  await control.command('waitFor', projectsCreateButton, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await control.command('scrollIntoView', projectsCreateButton)
   await control.command('waitFor', projectsCreateButton, {
     visible: true,
