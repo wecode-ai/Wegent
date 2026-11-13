@@ -11,6 +11,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.context.context_service import context_service
+from shared.event_reporting.catalogs.knowledge._common import loaded_scalar
+from shared.event_reporting.catalogs.knowledge.quality import (
+    new_quality_execution_id,
+    report_retrieval_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +149,7 @@ class RetrievalPersistenceService:
         query: str,
         mode: str,
         restricted_mode: bool,
+        execution_id: str | None,
     ) -> None:
         """Create or update the persisted retrieval result for one KB."""
         chunks = payload.get("chunks", [])
@@ -178,9 +184,19 @@ class RetrievalPersistenceService:
                 },
             )
             existing_contexts[kb_id] = created_context
+            report_retrieval_context(
+                execution_id=execution_id,
+                context_id=loaded_scalar(created_context, "id"),
+                subtask_id=user_subtask_id,
+                kb_id=kb_id,
+                operation="created",
+                injection_mode=mode,
+                chunk_count=len(chunks),
+                restricted_mode=restricted_mode,
+            )
             return
 
-        context_service.update_knowledge_base_retrieval_result(
+        updated_context = context_service.update_knowledge_base_retrieval_result(
             db=db,
             context_id=context.id,
             extracted_text=extracted_text,
@@ -190,6 +206,17 @@ class RetrievalPersistenceService:
             chunks_count=len(chunks),
             restricted_mode=restricted_mode,
         )
+        if updated_context is not None:
+            report_retrieval_context(
+                execution_id=execution_id,
+                context_id=context.id,
+                subtask_id=user_subtask_id,
+                kb_id=kb_id,
+                operation="updated",
+                injection_mode=mode,
+                chunk_count=len(chunks),
+                restricted_mode=restricted_mode,
+            )
 
     def persist_retrieval_result(
         self,
@@ -206,6 +233,9 @@ class RetrievalPersistenceService:
         if not user_subtask_id or not records or user_id is None or user_id < 0:
             return
         try:
+            execution_id = new_quality_execution_id(
+                "knowledge.retrieval.context.recorded"
+            )
             payload_by_kb = self._prepare_persistence_payload(
                 records=records,
                 restricted_mode=restricted_mode,
@@ -229,6 +259,7 @@ class RetrievalPersistenceService:
                     query=query,
                     mode=mode,
                     restricted_mode=restricted_mode,
+                    execution_id=execution_id,
                 )
         except Exception as exc:
             logger.warning(

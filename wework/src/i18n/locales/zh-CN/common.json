@@ -3413,7 +3413,6 @@
     "archived_chats_empty_title": "暂无已归档会话",
     "archived_chats_empty_desc": "归档后的会话会显示在这里，方便之后恢复或清理。",
     "change_connection_color": "更改连接颜色",
-    "archive_project_conversations": "归档对话",
     "archiving_conversations": "归档中...",
     "archive_project_confirm": "确定归档该项目下的所有对话吗？",
     "archive_project_dialog_title": "归档 {{count}} 个对话?",
