@@ -93,8 +93,6 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
     }
 }
 
-/// `session_manager._get_cancel_key` (`app/services/chat/storage/session.py`).
-const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
 /// `_SSE_CANCEL_POLL_INTERVAL_SECONDS`.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// The chat-shell per-read timeout (`httpx`'s 300-second default).
@@ -172,10 +170,11 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     if let Some(created) = ctx.created_task.clone() {
         emitter = emitter.with_created_task(created);
     }
-    let cancel_key = format!("{CANCEL_KEY_PREFIX}{}", request.subtask_id);
+    let cancel_key = crate::socketio::chat_control::cancel_key(request.subtask_id);
     // A package job starts after the public request has returned or subscribed.
     // Clearing its flag here could erase a cancellation admitted while queued.
-    if !ctx.package_mode && !super::package_runtime::is_image_target(target_url) {
+    let image_stream = super::package_runtime::is_image_target(target_url);
+    if !ctx.package_mode && !image_stream {
         let _ = redis.del(cancel_key.as_str()).await;
     }
 
@@ -197,7 +196,17 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     let _ = redis.del(cancel_key.as_str()).await;
 
     match result {
-        Ok(collected) => Ok(collected),
+        Ok((collected, terminal)) => {
+            if let Some(event) = terminal {
+                // A terminal image row makes its subtask ID available for retry.
+                // All old cancel-key operations must finish before that handoff.
+                complete(ctx, &event).await.map_err(|error| error.message)?;
+                if event.event_type == "error" {
+                    return Err(event.error.unwrap_or_else(|| "Unknown error".to_string()));
+                }
+            }
+            Ok(collected)
+        }
         Err(failure) => {
             if failure.persist {
                 complete_failure(ctx, request, &failure).await;
@@ -259,6 +268,8 @@ enum StreamEnd {
     /// The `error` terminal event's FAILED state was already persisted; drain,
     /// then report the failure.
     ErrorTerminal(brz_http::Response, Failure),
+    /// The image stream's terminal event is persisted after releasing its cancel key.
+    ImageTerminal(brz_http::Response, Box<ExecutionEvent>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -271,7 +282,7 @@ async fn read_stream<M: Mysql, R: Redis>(
     redis: &R,
     emitter: &mut StatusUpdatingEmitter<R>,
     cancel_key: &str,
-) -> Result<Collected, Failure> {
+) -> Result<(Collected, Option<ExecutionEvent>), Failure> {
     let mut content = String::new();
     // `_wait_for_sse_cancellation` is created before `stream_open_task`
     // (`chat_shell_sse.py:235`) and cancelled in `finally` (`:533-548`), so this
@@ -340,14 +351,29 @@ async fn read_stream<M: Mysql, R: Redis>(
         }
     };
     let result = match end {
-        None => finish_cancelled(ctx, request, emitter, &content).await,
+        None => {
+            let event =
+                ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
+            if image_stream {
+                Ok((Collected { content }, Some(event)))
+            } else {
+                emitter.close().await;
+                complete(ctx, &event)
+                    .await
+                    .map(|()| (Collected { content }, None))
+            }
+        }
         Some(Ok(StreamEnd::Terminal(mut response))) => {
             cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
-            Ok(Collected { content })
+            Ok((Collected { content }, None))
         }
         Some(Ok(StreamEnd::ErrorTerminal(mut response, failure))) => {
             cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
             Err(failure)
+        }
+        Some(Ok(StreamEnd::ImageTerminal(mut response, event))) => {
+            cancel_done |= drain_with_cancel_poll(&mut response, cancel.as_mut()).await;
+            Ok((Collected { content }, Some(*event)))
         }
         Some(Err(failure)) => Err(failure),
     };
@@ -478,6 +504,9 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                     content.push_str(&parsed.content);
                 }
                 if completion::terminal_status(&parsed.event_type).is_some() {
+                    if image_stream {
+                        return Ok(StreamEnd::ImageTerminal(response, Box::new(parsed)));
+                    }
                     // `StatusUpdatingEmitter`'s terminal branch flushes the
                     // buffered stream content before completing the task.
                     emitter.close().await;
@@ -496,9 +525,6 @@ async fn open_and_consume<M: Mysql, R: Redis>(
                                 error_code: None,
                             },
                         ));
-                    }
-                    if image_stream {
-                        return Ok(StreamEnd::Terminal(response));
                     }
                 } else if ctx.package_mode {
                     emit_package_event(ctx, &parsed).await?;
@@ -823,22 +849,6 @@ fn failure_result(failure: &Failure) -> Option<Value> {
     failure
         .error_code
         .map(|code| serde_json::json!({ "error_type": code }))
-}
-
-/// `dispatch_sse` emits a cancelled terminal event and stops reading;
-/// `collect` keeps the accumulated content.
-async fn finish_cancelled<M: Mysql, R: Redis>(
-    ctx: &ConsumerContext<'_, M, R>,
-    request: &ExecutionRequest,
-    emitter: &mut StatusUpdatingEmitter<R>,
-    content: &str,
-) -> Result<Collected, Failure> {
-    let event = ExecutionEvent::new(EventType::Cancelled, request.task_id, request.subtask_id);
-    emitter.close().await;
-    complete(ctx, &event).await?;
-    Ok(Collected {
-        content: content.to_string(),
-    })
 }
 
 /// Incremental `data:` frame reader for the chat-shell event stream.

@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use brz_json::OpaqueJson;
 use brz_mysql::{Json, MysqlTransaction as _};
+use brz_redis::Redis as _;
 use brz_socket_io::{ClientError, Reply};
 use serde_json::{Map, Value, json};
 
@@ -211,7 +212,15 @@ async fn prepare_retry(
             failed.status
         ))));
     }
-    reset_subtask_for_retry(state, &tables, payload, task_owner, &mut task_json).await?;
+    reset_subtask_for_retry(
+        state,
+        &tables,
+        payload,
+        &failed.status,
+        task_owner,
+        &mut task_json,
+    )
+    .await?;
     let user = crate::user_reader::user_entity_by_id(&state.mysql, user_id)
         .await
         .map_err(|_| RetryFailure::Internal)?;
@@ -352,6 +361,7 @@ async fn reset_subtask_for_retry(
     state: &AppState,
     tables: &crate::task_store::MessageEditTables,
     payload: &RetryPayload,
+    previous_status: &str,
     task_owner: i64,
     task_json: &mut Value,
 ) -> Result<(), RetryFailure> {
@@ -362,14 +372,14 @@ async fn reset_subtask_for_retry(
     let mut pending = task_json.clone();
     crate::responses::create::continuation::mark_pending(&mut pending, &local_isoformat());
     let task_payload = python_json_value(&pending);
-    state
+    let reset = state
         .mysql
         .with_transaction(async |transaction| {
-            transaction
+            let updated = transaction
                 .execute(
                     &format!(
                         "UPDATE {subtasks} SET status=?, progress=?, result=?, \
-                         error_message=?, updated_at=? WHERE {subtasks}.id = ?"
+                         error_message=?, updated_at=? WHERE {subtasks}.id = ? AND status = ?"
                     ),
                     (
                         "PENDING".to_string(),
@@ -378,9 +388,25 @@ async fn reset_subtask_for_retry(
                         String::new(),
                         now.clone(),
                         payload.subtask_id,
+                        previous_status,
                     ),
                 )
                 .await?;
+            if updated.rows_affected == 0 {
+                return Ok(false);
+            }
+            // Clear stale cancellation while the reset is still private to this
+            // transaction. A cancel for the new attempt can only see PENDING
+            // after commit, and a concurrent retry cannot clear its flag.
+            if let Some(redis) = state.redis.as_ref() {
+                let key = super::chat_control::cancel_key(payload.subtask_id);
+                redis.del(key.as_str()).await.map_err(|error| {
+                    tracing::warn!(%error, subtask_id = payload.subtask_id, "retry cancel cleanup failed");
+                    brz_mysql::MysqlError::InvalidQuery {
+                        reason: "could not clear previous cancellation".to_string(),
+                    }
+                })?;
+            }
             transaction
                 .execute(
                     &format!(
@@ -389,10 +415,15 @@ async fn reset_subtask_for_retry(
                     (task_payload.clone(), row_now.clone(), payload.task_id),
                 )
                 .await?;
-            Ok(())
+            Ok(true)
         })
         .await
         .map_err(|_| RetryFailure::Internal)?;
+    if !reset {
+        return Err(RetryFailure::Ack(error_ack(
+            "Subtask state changed before retry",
+        )));
+    }
     *task_json = pending;
     let _ = state
         .task_store

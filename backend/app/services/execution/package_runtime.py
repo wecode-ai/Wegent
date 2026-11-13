@@ -17,6 +17,8 @@ from app.services.execution.emitters.sse import SSEResultEmitter
 from shared.models import ExecutionRequest
 
 PACKAGE_RUNTIME_PATH = "/_runtime/chat-shell"
+IMAGE_EXECUTION_ROUTE = "/v1/image-execution"
+IMAGE_EXECUTION_PATH = f"{PACKAGE_RUNTIME_PATH}{IMAGE_EXECUTION_ROUTE}"
 
 
 def mount_package_runtime(app: FastAPI) -> None:
@@ -27,7 +29,7 @@ def mount_package_runtime(app: FastAPI) -> None:
         openapi_url=None,
         dependencies=[Depends(verify_internal_service_token)],
     )
-    runtime.add_api_route("/v1/image-execution", execute_image, methods=["POST"])
+    runtime.add_api_route(IMAGE_EXECUTION_ROUTE, execute_image, methods=["POST"])
     if settings.CHAT_SHELL_MODE == "package":
         from chat_shell.api.v1.response import router
 

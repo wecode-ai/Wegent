@@ -16,8 +16,11 @@ class ImageCases:
     def test_chat_send_and_retry_store_generated_images(self) -> None:
         asyncio.run(self._send_and_retry_images(self._create_image_team()))
 
-    def _create_image_team(self) -> int:
-        name = f"{self.suffix}-image"
+    def test_chat_retries_image_immediately_after_cancellation(self) -> None:
+        asyncio.run(self._cancel_and_retry_image(self._create_image_team("cancel")))
+
+    def _create_image_team(self, scenario: str = "generate") -> int:
+        name = f"{self.suffix}-image-{scenario}"
         specs = {
             "Model": {
                 "modelType": "image",
@@ -108,13 +111,57 @@ class ImageCases:
         finally:
             await client.disconnect()
         self.assertEqual(
-            self.model.image_requests,
+            [
+                request
+                for request in self.model.image_requests
+                if request[0] != "Cancel the blue square"
+            ],
             [
                 ("Draw a blue square", "1024x1024"),
                 ("Retry the blue square", selected_size),
                 ("Retry the blue square", selected_size),
             ],
         )
+
+    async def _cancel_and_retry_image(self, team_id: int) -> None:
+        client = socketio.AsyncClient(reconnection=False)
+        cancelled: asyncio.Queue[dict] = asyncio.Queue()
+        done: asyncio.Queue[dict] = asyncio.Queue()
+        client.on("chat:cancelled", handler=cancelled.put_nowait, namespace="/chat")
+        client.on("chat:done", handler=done.put_nowait, namespace="/chat")
+        prompt = "Cancel the blue square"
+        try:
+            await client.connect(
+                self.url,
+                auth={"token": self.jwt},
+                namespaces=["/chat"],
+                transports=["websocket"],
+            )
+            ack = await self._send_image(client, team_id, prompt)
+            subtask_id = self.chat_assistant_id(ack)
+            self.assertTrue(
+                await asyncio.to_thread(self.model.image_request_blocked.wait, 10),
+                "The provider never received the first image attempt",
+            )
+            cancel = await client.call(
+                "chat:cancel", {"subtask_id": subtask_id}, namespace="/chat", timeout=10
+            )
+            self.assertTrue(cancel.get("success"), cancel)
+            event = await asyncio.wait_for(cancelled.get(), timeout=10)
+            self.assertEqual(event["subtask_id"], subtask_id)
+            self.assertIsNone(self.redis.get(f"chat:cancel:{subtask_id}"))
+            retry = await client.call(
+                "chat:retry",
+                {"task_id": ack["task_id"], "subtask_id": subtask_id},
+                namespace="/chat",
+                timeout=15,
+            )
+            self.assertTrue(retry.get("success"), retry)
+            await self._assert_completed_image(subtask_id, done)
+            self.assertEqual(self.model.image_requests.count((prompt, "1024x1024")), 2)
+        finally:
+            self.model.release_image_request.set()
+            await client.disconnect()
 
     async def _send_image(
         self, client, team_id: int, prompt: str, *, size: str | None = None

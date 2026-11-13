@@ -22,6 +22,8 @@ class ModelServer(ThreadingHTTPServer):
         self.jobs: dict[str, dict] = {}
         self.failures: list[str] = []
         self.image_requests: list[tuple[str, str | None]] = []
+        self.image_request_blocked = threading.Event()
+        self.release_image_request = threading.Event()
         image = BytesIO()
         Image.new("RGB", (8, 8), "blue").save(image, format="PNG")
         self.image = image.getvalue()
@@ -85,6 +87,9 @@ class ModelHandler(BaseHTTPRequestHandler):
             for previous_prompt, _ in self.server.image_requests
         )
         self.server.image_requests.append((prompt, payload.get("size")))
+        if prompt == "Cancel the blue square" and first_attempt:
+            self.server.image_request_blocked.set()
+            self.server.release_image_request.wait(timeout=20)
         if payload["model"] != "gpt-image-e2e":
             status, result = 400, {"error": {"message": "Unexpected image model"}}
         elif prompt == "Retry the blue square" and first_attempt:
@@ -99,7 +104,11 @@ class ModelHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            if prompt != "Cancel the blue square" or not first_attempt:
+                raise
 
     def log_message(self, format: str, *args: object) -> None:
         pass
