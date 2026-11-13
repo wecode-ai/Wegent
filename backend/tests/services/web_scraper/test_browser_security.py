@@ -285,9 +285,102 @@ async def test_child_target_is_guarded_before_execution(
     )
 
     commands = [call.args[0] for call in child.send.await_args_list]
-    assert commands == [
-        "Fetch.enable",
-        "Target.setAutoAttach",
-        "Runtime.runIfWaitingForDebugger",
+    expected = ["Target.setAutoAttach", "Runtime.runIfWaitingForDebugger"]
+    if target_type != "worker":
+        expected.insert(0, "Fetch.enable")
+    assert commands == expected
+    attach = next(
+        call
+        for call in child.send.await_args_list
+        if call.args[0] == "Target.setAutoAttach"
+    )
+    assert attach.args[1]["waitForDebuggerOnStart"] is True
+
+
+async def test_child_command_error_keeps_method_and_code() -> None:
+    listeners = {}
+
+    async def send(method: str, params: dict[str, Any]) -> None:
+        command = json.loads(params["message"])
+        await listeners["Target.receivedMessageFromTarget"](
+            {
+                "sessionId": params["sessionId"],
+                "message": json.dumps(
+                    {
+                        "id": command["id"],
+                        "error": {
+                            "code": -32601,
+                            "message": "'Fetch.enable' wasn't found",
+                        },
+                    }
+                ),
+            }
+        )
+
+    parent = SimpleNamespace(
+        send=send, on=lambda event, handler: listeners.update({event: handler})
+    )
+    child = _TargetSession(parent, "worker-session")
+    with pytest.raises(RuntimeError) as error:
+        await child.send("Fetch.enable")
+    assert getattr(error.value, "method", None) == "Fetch.enable"
+    assert getattr(error.value, "code", None) == -32601
+    assert "Fetch.enable" in str(error.value)
+
+
+async def test_dedicated_worker_uses_creator_request_interception_before_running() -> (
+    None
+):
+    """Chromium delivers dedicated-worker Fetch pauses on its creator target."""
+    context = make_context()
+    session = context.new_cdp_session.return_value
+    handlers: dict[str, Any] = {}
+    session.on.side_effect = lambda event, handler: handlers.update({event: handler})
+    commands: list[tuple[str, str]] = []
+
+    async def send(method: str, params: dict | None = None) -> dict:
+        if method == "Target.getTargetInfo":
+            return {"targetInfo": {"targetId": "main", "type": "page"}}
+        if method == "Target.sendMessageToTarget":
+            command = json.loads(params["message"])
+            commands.append(("worker", command["method"]))
+            reply = {"id": command["id"], "result": {}}
+            if command["method"] == "Fetch.enable":
+                reply = {"id": command["id"], "error": {"code": -32601}}
+            await handlers["Target.receivedMessageFromTarget"](
+                {
+                    "sessionId": params["sessionId"],
+                    "message": json.dumps(reply),
+                }
+            )
+        else:
+            commands.append(("page", method))
+        return {}
+
+    session.send.side_effect = send
+    installed = await install_browser_guard(context, WebScraperUrlGuard())
+    page = Page()
+    await installed.begin_navigation(context, page, BrowserNavigation())
+    await handlers["Target.attachedToTarget"](
+        {
+            "sessionId": "dedicated",
+            "targetInfo": {"targetId": "worker", "type": "worker"},
+        }
+    )
+    assert ("worker", "Fetch.enable") not in commands
+    assert commands[-2:] == [
+        ("worker", "Target.setAutoAttach"),
+        ("worker", "Runtime.runIfWaitingForDebugger"),
     ]
-    assert child.send.await_args_list[1].args[1]["waitForDebuggerOnStart"] is True
+    for url in ("http://93.184.216.34/public", "http://127.0.0.1/private"):
+        await handlers["Fetch.requestPaused"](
+            {
+                "requestId": url,
+                "request": {"url": url},
+                "resourceType": "Fetch",
+            }
+        )
+    assert commands[-2:] == [
+        ("page", "Fetch.continueRequest"),
+        ("page", "Fetch.failRequest"),
+    ]

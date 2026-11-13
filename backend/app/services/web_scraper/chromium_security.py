@@ -17,6 +17,15 @@ from weakref import WeakKeyDictionary, WeakValueDictionary
 from app.services.web_scraper.security import WebScraperUrlGuard
 
 
+class ChromiumProtocolError(RuntimeError):
+    """Preserve safe protocol diagnostics without exposing request parameters."""
+
+    def __init__(self, method: str, code: int | None) -> None:
+        self.method = method
+        self.code = code
+        super().__init__(f"Chromium guard command failed: method={method} code={code}")
+
+
 class _TargetSession:
     """Send CDP commands to an auto-attached, non-flattened child target."""
 
@@ -25,6 +34,7 @@ class _TargetSession:
         self._session_id = session_id
         self._sequence = 0
         self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._methods: dict[int, str] = {}
         self._listeners: dict[str, list[Callable[..., Any]]] = {}
         parent.on("Target.receivedMessageFromTarget", self._receive)
         parent.on("Target.detachedFromTarget", self._detached)
@@ -49,6 +59,7 @@ class _TargetSession:
         sequence = self._sequence
         future = asyncio.get_running_loop().create_future()
         self._pending[sequence] = future
+        self._methods[sequence] = method
         try:
             await self._parent.send(
                 "Target.sendMessageToTarget",
@@ -62,6 +73,7 @@ class _TargetSession:
             return await asyncio.wait_for(future, timeout=30)
         finally:
             self._pending.pop(sequence, None)
+            self._methods.pop(sequence, None)
 
     async def _receive(self, event: dict[str, Any]) -> None:
         if event["sessionId"] != self._session_id:
@@ -71,7 +83,12 @@ class _TargetSession:
             future = self._pending.get(message["id"])
             if future is not None and not future.done():
                 if "error" in message:
-                    future.set_exception(RuntimeError("Chromium guard command failed"))
+                    future.set_exception(
+                        ChromiumProtocolError(
+                            self._methods[message["id"]],
+                            message["error"].get("code"),
+                        )
+                    )
                 else:
                     future.set_result(message.get("result", {}))
         else:
@@ -101,15 +118,20 @@ class ChromiumRequestGuard:
             self._pages[page] = target["targetId"]
 
     async def _configure_target(self, session: Any, info: dict[str, Any]) -> None:
-        async def paused(request: dict[str, Any]) -> None:
-            await self._route_request(session, info, request)
-
-        session.on("Fetch.requestPaused", paused)
         self._listen_for_targets(session)
-        await session.send(
-            "Fetch.enable",
-            {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]},
-        )
+        # Dedicated workers have no Fetch domain. Their requests are intercepted
+        # by the creator page/iframe, as in Playwright's Chromium network manager.
+        # Shared workers and out-of-process iframes do expose their own Fetch.
+        if info["type"] != "worker":
+
+            async def paused(request: dict[str, Any]) -> None:
+                await self._route_request(session, info, request)
+
+            session.on("Fetch.requestPaused", paused)
+            await session.send(
+                "Fetch.enable",
+                {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]},
+            )
         await session.send("Target.setAutoAttach", self._auto_attach_params())
 
     @staticmethod
