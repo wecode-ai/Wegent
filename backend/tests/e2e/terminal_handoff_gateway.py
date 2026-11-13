@@ -605,6 +605,35 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(rows[-1]["result"]["value"], second)
         self.assertEqual(len(self._model_requests()), 1)
 
+    def test_python_replays_committed_result_after_redis_publish_failure(self) -> None:
+        team_id, bots = self._create_team(pipeline=False)
+        task_id, subtask_id = self._seed_running_stage(team_id, bots[0])
+        result = f"{self.marker}-committed"
+        subscriber = self.redis.pubsub()
+        self.addCleanup(subscriber.close)
+        subscriber.subscribe(f"callback:channel:{subtask_id}")
+        self._wait_for(lambda: subscriber.get_message(timeout=0.1))
+        self.redis.execute_command("ACL", "SETUSER", "default", "-publish")
+        try:
+            self._callback(task_id, subtask_id, result, rust=False, fail=True)
+            self.assertEqual(self._snapshot(task_id)[1][-1]["status"], "COMPLETED")
+        finally:
+            self.redis.execute_command("ACL", "SETUSER", "default", "+publish")
+
+        self._callback(task_id, subtask_id, "duplicate result", rust=False)
+
+        def terminal_event() -> dict | None:
+            message = subscriber.get_message(timeout=0.1)
+            if message and message["type"] == "message":
+                return json.loads(message["data"])
+            return None
+
+        event = self._wait_for(terminal_event)
+        self.assertEqual(event["type"], "done")
+        self.assertEqual(event["result"]["value"], result)
+        self._callback(task_id, subtask_id, "second duplicate", rust=False)
+        self.assertIsNone(subscriber.get_message(timeout=0.25))
+
     def test_rust_retries_post_commit_redis_publish(self) -> None:
         team_id, bots = self._create_team(pipeline=True)
         task_id, parent_id = self._seed_running_stage(team_id, bots[0])

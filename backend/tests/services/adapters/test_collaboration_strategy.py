@@ -217,7 +217,6 @@ class TestPipelineAutoAdvance:
         ]
 
         subtask = _make_subtask(bot_id=10)
-        db.get.return_value = subtask
 
         task_resource = MagicMock()
         task_resource.user_id = 1
@@ -242,7 +241,12 @@ class TestPipelineAutoAdvance:
         )
 
         # Patch lazy imports at their source modules
-        with patch.object(strategy, "_should_require_confirmation", return_value=False):
+        with (
+            patch.object(strategy, "_should_require_confirmation", return_value=False),
+            patch(
+                "app.stores.tasks.subtask_store.get_basic_by_id", return_value=subtask
+            ),
+        ):
             with patch("app.schemas.kind.Task") as mock_task_schema:
                 with patch("app.schemas.kind.Team") as mock_team_schema:
                     mock_task_schema.model_validate.return_value = task_crd

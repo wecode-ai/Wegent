@@ -605,6 +605,25 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
         event::{EventType, ExecutionEvent},
     };
     let app = consumer.app.upgrade();
+    let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
+    event.message_id = message_id;
+    event.error = Some(message.to_owned());
+    event.error_code = Some(code.to_owned());
+    if let Some(app) = app.as_ref().filter(|app| app.redis.is_some()) {
+        if let Err(error) = Box::pin(crate::internal_callback::process_dispatch_failure(
+            app, event,
+        ))
+        .await
+        {
+            tracing::warn!(
+                ?error,
+                task_id,
+                subtask_id,
+                "executor failure awaits terminal recovery"
+            );
+        }
+        return;
+    }
     let ctx = consumer.redis.as_ref().map(|redis| completion::Completion {
         app: app.as_deref(),
         mysql: &consumer.mysql,
@@ -625,10 +644,6 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
     let (Some(redis), Some(result)) = (consumer.redis.as_ref(), result) else {
         return;
     };
-    let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
-    event.message_id = message_id;
-    event.error = Some(message.to_owned());
-    event.error_code = Some(code.to_owned());
     if let Err(error) =
         crate::internal_callback::session::publish_callback_event(redis, subtask_id, &event).await
     {
@@ -658,8 +673,11 @@ where
     R: Redis + Clone,
 {
     let app = job.consumer.app.upgrade();
+    let package_mode = super::create::package_runtime::is_target(&job.target_url);
+    // Image retries reuse the subtask ID, so each attempt owns its own terminal frames.
+    let image_stream = super::create::package_runtime::is_image_target(&job.target_url);
     let consumer = sse_sync::ConsumerContext {
-        package_mode: super::create::package_runtime::is_target(&job.target_url),
+        package_mode,
         mysql: &job.consumer.mysql,
         redis: job.consumer.redis.as_ref(),
         tables: job.consumer.tables,
@@ -669,7 +687,7 @@ where
         start_data: job.start_data.clone(),
         created_task: job.created_task.clone(),
         owner_user_id: job.forward.then_some(job.request.user_id),
-        background: true,
+        recover_terminal: accepted.is_some() || package_mode || (job.forward && !image_stream),
         acceptance: accepted.map(|sender| std::sync::Mutex::new(Some(sender))),
     };
     // Keep the streaming state machine off the dispatch worker's stack.

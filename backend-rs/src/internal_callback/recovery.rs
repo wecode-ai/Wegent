@@ -179,12 +179,9 @@ async fn recover_locked(
     let event = marker
         .and_then(|marker| serde_json::from_str::<Value>(marker).ok())
         .and_then(|saved| saved.get("event").map(ExecutionEvent::from_value));
-    let (mut event, executor) = match (event, child) {
-        (Some(event), _) => (event, (None, None)),
-        (None, Some(_)) => (
-            ExecutionEvent::new(super::event::EventType::Done, task_id, subtask_id),
-            (None, None),
-        ),
+    let event = match (event, child) {
+        (Some(event), _) => event,
+        (None, Some(_)) => ExecutionEvent::new(super::event::EventType::Done, task_id, subtask_id),
         _ => {
             let Some(raw) = redis
                 .hget::<_, _, String>(EVENTS, format!("{task_id}:{subtask_id}"))
@@ -200,10 +197,20 @@ async fn recover_locked(
                 retire(redis, task_id, subtask_id).await?;
                 return Ok(());
             }
-            let event = ExecutionEvent::from_value(&serde_json::from_str(&raw)?);
-            (event, (Some("inprocess-chat"), Some("standalone")))
+            ExecutionEvent::from_value(&serde_json::from_str(&raw)?)
         }
     };
+    replay_event(state, redis, event).await
+}
+
+async fn replay_event(
+    state: &AppState,
+    redis: &RedisService,
+    mut event: ExecutionEvent,
+) -> anyhow::Result<()> {
+    let executor_name = event.executor_name.take();
+    let executor_namespace = event.executor_namespace.take();
+    let executor = (executor_name.as_deref(), executor_namespace.as_deref());
     let status = completion::terminal_status(&event.event_type)
         .ok_or_else(|| anyhow::anyhow!("invalid terminal recovery event"))?;
     Box::pin(deliver_terminal_callback(

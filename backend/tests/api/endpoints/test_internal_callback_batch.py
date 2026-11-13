@@ -4,6 +4,8 @@
 
 """Tests for the execution callback endpoints."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.api.endpoints.internal import callback as callback_module
@@ -57,10 +59,14 @@ def _batch_payload(subtask_id: int = 18) -> list:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_transition_lost", [False, True])
+@pytest.mark.parametrize(
+    ("terminal_transition_lost", "stored_status"),
+    [(False, "COMPLETED"), (True, "CANCELLED"), (True, "COMPLETED")],
+)
 async def test_batch_callback_publishes_events_for_openapi_streams(
     monkeypatch,
     terminal_transition_lost,
+    stored_status,
 ):
     """Batch callbacks must reach active v1/responses SSE consumers."""
     published: list[tuple[int, str]] = []
@@ -73,6 +79,33 @@ async def test_batch_callback_publishes_events_for_openapi_streams(
         callback_module.session_manager,
         "publish_callback_event",
         _publish,
+    )
+
+    async def _publish_terminal(event) -> None:
+        if terminal_transition_lost:
+            assert event.result == {"value": "committed"}
+        await _publish(event.subtask_id, event)
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        callback_module, "_publish_terminal_callback", _publish_terminal
+    )
+    monkeypatch.setattr(callback_module, "SessionLocal", Session)
+    monkeypatch.setattr(
+        callback_module.subtask_store,
+        "get_basic_by_id_for_update",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            task_id=2,
+            status=SimpleNamespace(value=stored_status),
+            result={"value": "committed"},
+            error_message=None,
+        ),
     )
     monkeypatch.setattr(callback_module, "WebSocketResultEmitter", _RecordingEmitter)
 
@@ -98,6 +131,6 @@ async def test_batch_callback_publishes_events_for_openapi_streams(
 
     assert response.status == "ok"
     expected_events = [(18, "chunk")]
-    if not terminal_transition_lost:
+    if stored_status == "COMPLETED":
         expected_events.append((18, "done"))
     assert published == expected_events

@@ -138,6 +138,14 @@ pub(crate) async fn process_background_shell_event(
     .await
 }
 
+/// Queue a locally generated failure so a worker can retry its terminal write.
+pub(crate) async fn process_dispatch_failure(
+    state: &AppState,
+    event: event::ExecutionEvent,
+) -> Result<(), FastApiError> {
+    process_event(state, event, (None, None), true).await
+}
+
 async fn process_event(
     state: &AppState,
     mut event: event::ExecutionEvent,
@@ -199,7 +207,12 @@ async fn deliver_terminal_callback(
     executor: (Option<&str>, Option<&str>),
     defer_advance: bool,
 ) -> Result<(), FastApiError> {
-    let pending_event = defer_advance.then(|| event.to_value());
+    let pending_event = defer_advance.then(|| {
+        let mut saved = event.to_value();
+        saved["executor_name"] = json!(executor.0);
+        saved["executor_namespace"] = json!(executor.1);
+        saved
+    });
     recovery::track(
         redis,
         event.task_id,

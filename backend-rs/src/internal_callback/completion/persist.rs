@@ -239,13 +239,6 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         let Some(task) = lock_task(transaction, ctx.tables.tasks, task_id).await? else {
             return Ok(None);
         };
-        if matches!(
-            error_code,
-            Some("task_queue_failure" | "task_queue_stalled")
-        ) && !can_fail_dispatch(ctx.tables, transaction, &task, task_id, subtask_id).await?
-        {
-            return Ok(None);
-        }
         let Some(row) = lock_subtask(transaction, ctx.tables, subtask_id).await? else {
             return Ok(None);
         };
@@ -285,6 +278,18 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
                     source: saved.and_then(|value| value.get("event").cloned()),
                 })));
             }
+        }
+        if matches!(
+            error_code,
+            Some(
+                "task_queue_failure"
+                    | "task_queue_stalled"
+                    | "EXECUTOR_DISPATCH_FAILED"
+                    | "container_error"
+            )
+        ) && !can_fail_dispatch(ctx.tables, transaction, &task, task_id, subtask_id).await?
+        {
+            return Ok(None);
         }
         let Some((row, metrics_message)) = update_subtask_status_on(
             ctx.tables,

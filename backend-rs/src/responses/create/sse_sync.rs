@@ -76,7 +76,7 @@ pub(crate) struct ConsumerContext<'a, M: Mysql, R: Redis> {
     /// addresses when forwarding to Socket.IO.
     pub owner_user_id: Option<i64>,
     pub acceptance: Option<DispatchAcceptance>,
-    pub background: bool,
+    pub recover_terminal: bool,
 }
 
 impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
@@ -95,7 +95,7 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
             created_task: None,
             owner_user_id: None,
             acceptance: None,
-            background: false,
+            recover_terminal: false,
         }
     }
 }
@@ -723,7 +723,7 @@ async fn emit_package_event<M: Mysql, R: Redis>(
     let app = ctx.app.ok_or_else(|| {
         Failure::persisted("Chat Shell dispatch lost application state".to_owned())
     })?;
-    let result = if ctx.background {
+    let result = if ctx.recover_terminal {
         crate::internal_callback::process_background_shell_event(app, event.clone()).await
     } else {
         crate::internal_callback::process_execution_event(
@@ -749,7 +749,7 @@ async fn complete<M: Mysql, R: Redis>(
     ctx: &ConsumerContext<'_, M, R>,
     event: &ExecutionEvent,
 ) -> Result<(), Failure> {
-    if ctx.package_mode || ctx.acceptance.is_some() || (ctx.background && ctx.forward) {
+    if ctx.package_mode || ctx.recover_terminal {
         return Box::pin(emit_package_event(ctx, event)).await;
     }
     let Some(redis) = ctx.redis else {
@@ -830,7 +830,7 @@ async fn complete_failure<M: Mysql, R: Redis>(
     request: &ExecutionRequest,
     failure: &Failure,
 ) {
-    if ctx.package_mode || (ctx.background && ctx.forward) {
+    if ctx.package_mode || ctx.recover_terminal {
         let mut event = ExecutionEvent::new(EventType::Error, request.task_id, request.subtask_id);
         event.error = Some(failure.message.clone());
         event.error_code = failure.error_code.map(str::to_owned);
