@@ -1225,6 +1225,11 @@ pub async fn handle(
                 git_domain: payload.git_domain.as_deref().unwrap_or(""),
                 branch_name: payload.branch_name.as_deref().unwrap_or(""),
             };
+            // A supplied whitespace-only URL still selects a Git workspace so
+            // the execution request can report the missing URL.
+            let git_workspace = !repository.git_url.is_empty()
+                || !repository.git_repo.trim().is_empty()
+                || repository.git_repo_id > 0;
             let task_id = payload.task_id.unwrap_or(0);
             let continuation = payload.task_id.map(|task_id| Continuation {
                 task_id,
@@ -1261,7 +1266,7 @@ pub async fn handle(
                     auto_delete_executor: None,
                     omit_mcp_binary_output: false,
                     device_id: resolved_device_id.as_deref(),
-                    git_workspace: payload.git_url.is_some(),
+                    git_workspace,
                     created_at: &crd_ts,
                     updated_at: &crd_ts,
                 },
@@ -1406,12 +1411,8 @@ pub async fn handle(
 
             // The ACK is returned before `chat:start`; the broadcast and the
             // AI trigger run after the commit on the persisted turn.
-            let repository = &input.repository;
-            let created_git_repository = (setup.workspace_id != 0
-                && (!repository.git_url.trim().is_empty()
-                    || !repository.git_repo.trim().is_empty()
-                    || repository.git_repo_id > 0))
-                .then(|| repository.to_json());
+            let created_git_repository =
+                (setup.workspace_id != 0 && git_workspace).then(|| input.repository.to_json());
             let turn = ChatTurn {
                 task_id: setup.task_id,
                 user_subtask_id: setup.user_subtask_id,

@@ -1325,6 +1325,54 @@ test.describe('Agent conversation regression', () => {
     }
   })
 
+  test('Socket.IO rejects a whitespace-only Git URL before dispatch', async ({ request }) => {
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => API_BASE_URL,
+      getToken: () => token,
+      namespace: '/chat',
+    })
+    const prompt = `Verify rejection of a blank Git URL for ${TEST_PREFIX}`
+
+    try {
+      await client.ensureConnected()
+      const ack = (await client.getRawSocket()!.timeout(10_000).emitWithAck('chat:send', {
+        team_id: codeTeam.id,
+        task_type: 'code',
+        message: prompt,
+        git_url: ' ',
+      })) as { task_id: number; error?: string }
+      expect(ack.error).toBeUndefined()
+      expect(ack.task_id).toBeGreaterThan(0)
+      createdTaskIds.add(ack.task_id)
+
+      await expect
+        .poll(
+          async () => {
+            const response = await request.get(`${API_BASE_URL}/api/tasks/${ack.task_id}`, {
+              headers: authHeaders(),
+            })
+            expect(response.status(), await response.text()).toBe(200)
+            const task = (await response.json()) as {
+              subtasks: Array<{ role: string; status: string; error_message?: string }>
+            }
+            const assistant = task.subtasks.find(subtask => subtask.role === 'ASSISTANT')
+            return assistant && ['FAILED', 'COMPLETED', 'CANCELLED'].includes(assistant.status)
+              ? assistant
+              : undefined
+          },
+          { timeout: RESPONSE_TIMEOUT_MS }
+        )
+        .toMatchObject({
+          status: 'FAILED',
+          error_message: 'Git workspace is missing a repository URL',
+        })
+      const captures = await loadCapturedModelRequests(request)
+      expect(captures.some(capture => extractText(capture.body).includes(prompt))).toBe(false)
+    } finally {
+      client.dispose()
+    }
+  })
+
   async function createTestResources(request: APIRequestContext): Promise<void> {
     const chatModelResponse = await request.post(
       `${API_BASE_URL}/api/v1/namespaces/default/models`,
