@@ -134,6 +134,14 @@ export function createDesktopScenario({
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      // Prediction forks can start these same MCP binaries before the parent
+      // thread recovers. Only the parent should populate the lifecycle logs.
+      const preferences = JSON.parse(
+        await control.command('setAppPreferences', 'body', {
+          value: JSON.stringify({ replyPredictionsEnabled: false }),
+        })
+      )
+      assert.equal(preferences.replyPredictionsEnabled, false)
       await waitForValue(
         async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
         value => {
