@@ -196,6 +196,7 @@ impl Mysql for RecordingMysql {
 
 struct TerminalRows {
     task: Option<MysqlRow>,
+    latest: Option<MysqlRow>,
     subtask: Option<MysqlRow>,
     assistant: Option<MysqlRow>,
 }
@@ -216,6 +217,9 @@ impl TerminalRows {
                         Value::Text(json!({"status": {"status": task_status}}).to_string()),
                     ),
                 ];
+            }
+            if sql.ends_with("fixture_latest") {
+                return vec![("id", Value::I64(SUBTASK_ID))];
             }
             let status = if sql.ends_with("fixture_assistant") {
                 terminal_status
@@ -261,8 +265,14 @@ impl TerminalRows {
             .fetch_one("SELECT fixture_assistant", ())
             .await
             .unwrap();
+        let latest = fixture
+            .mysql
+            .fetch_one("SELECT fixture_latest", ())
+            .await
+            .unwrap();
         Self {
             task: Some(task),
+            latest: Some(latest),
             subtask: Some(subtask),
             assistant: Some(assistant),
         }
@@ -298,6 +308,14 @@ impl MysqlTransaction for RecordingTransaction {
     {
         self.mysql.record(sql.as_ref());
         let sql = sql.as_ref();
+        if sql.starts_with("SELECT id FROM subtasks_") {
+            return self
+                .rows
+                .as_mut()
+                .and_then(|rows| rows.latest.take())
+                .map(T::from_mysql_row)
+                .transpose();
+        }
         if sql.contains("subtasks_") && sql.ends_with("FOR UPDATE") {
             if let Some(signal) = &self.mysql.terminal_signal
                 && let Some(sender) = signal.lock().unwrap().take()

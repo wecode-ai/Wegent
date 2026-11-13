@@ -42,10 +42,11 @@ pub(crate) use delivery::{
 };
 pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{
-    CollaborationStatus, claim_running_subtask, mark_subtask_running, persist_completed_result,
+    CollaborationStatus, commit_subtask_running, mark_subtask_running, persist_completed_result,
     update_task_status,
 };
 pub(crate) use sql::Tables;
+pub(crate) use sql::{dispatchable_task_status, is_active_task, latest_assistant_id};
 
 pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
     mysql: &M,
@@ -358,6 +359,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
         status,
         final_result.as_ref(),
         error,
+        error_code,
         executor_name,
         executor_namespace,
         device_attempt,

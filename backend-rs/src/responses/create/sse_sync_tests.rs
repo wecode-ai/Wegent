@@ -380,6 +380,7 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         created_task: None,
         owner_user_id: None,
         acceptance: None,
+        background: false,
     };
 
     let collected = tokio::time::timeout(
@@ -426,6 +427,7 @@ async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried()
         created_task: None,
         owner_user_id: None,
         acceptance: None,
+        background: false,
     };
 
     collect(
@@ -496,6 +498,7 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
         created_task: None,
         owner_user_id: None,
         acceptance: None,
+        background: false,
     };
 
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
@@ -553,6 +556,7 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
         created_task: None,
         owner_user_id: None,
         acceptance: None,
+        background: false,
     };
 
     let request = execution_request();
@@ -621,6 +625,7 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         created_task: None,
         owner_user_id: None,
         acceptance: None,
+        background: false,
     };
 
     let request = execution_request();
@@ -681,16 +686,21 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         "the cancellation poll must issue a GET after terminal persistence starts: {:?}",
         redis.calls()
     );
-    let terminal_locks = mysql
-        .statements()
+    let statements = mysql.statements();
+    let result_reads = statements
         .iter()
         .filter(|sql| sql.contains("FROM subtasks_0424") && sql.ends_with("FOR UPDATE"))
         .count();
+    let parent_locks = statements
+        .iter()
+        .filter(|statement| {
+            statement.contains("FROM tasks_0424") && statement.ends_with("FOR UPDATE")
+        })
+        .count();
     assert_eq!(
-        terminal_locks,
-        1,
-        "only the terminal completion runs; an in-drain cancel has no effect: {:?}",
-        mysql.statements()
+        (result_reads, parent_locks),
+        (1, 1),
+        "the terminal collects once and locks its parent once; the in-drain cancel must not persist: {statements:?}",
     );
 }
 
@@ -796,6 +806,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
         created_task: None,
         owner_user_id: None,
         acceptance: None,
+        background: false,
     };
 
     let mut collect_fut = Box::pin(collect(&ctx, &url, &request, "req-test", Some(2)));
@@ -868,6 +879,7 @@ async fn a_forwarded_dispatch_publishes_the_chat_frames() {
         }),
         owner_user_id: Some(6501),
         acceptance: None,
+        background: false,
     };
     let request = execution_request();
     collect(&ctx, &url, &request, "req-test", Some(2))
@@ -935,6 +947,7 @@ async fn parent_status_write_failure_rolls_back_and_does_not_deliver_completion(
         created_task: None,
         owner_user_id: Some(6501),
         acceptance: None,
+        background: false,
     };
 
     let result = collect(&ctx, &url, &execution_request(), "req-test", Some(2)).await;

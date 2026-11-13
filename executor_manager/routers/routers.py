@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from executor_manager.clients.executor_binding import BINDING_SCHEME, BINDING_TOKEN
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -1470,6 +1471,12 @@ async def openai_responses(http_request: Request):
 
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
+    # Only the backend-to-manager authorization header carries this grant.
+    metadata.pop(BINDING_TOKEN, None)
+    scheme, _, credential = http_request.headers.get("Authorization", "").partition(" ")
+    if scheme == BINDING_SCHEME and credential:
+        metadata[BINDING_TOKEN] = credential
+        request_data["metadata"] = metadata
     task_id = metadata.get("task_id", 0)
     subtask_id = metadata.get("subtask_id", 0)
     background = request_data.get("background", False)

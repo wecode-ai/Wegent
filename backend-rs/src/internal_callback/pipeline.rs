@@ -88,6 +88,7 @@ pub(super) async fn dispatch_next(
             Some("Pipeline stage dispatch failed"),
             None,
             None,
+            None,
         )
         .await;
         match persisted {
@@ -255,10 +256,10 @@ async fn claim_and_dispatch(
     let running = mysql.with_transaction(async |transaction| {
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
-        let Some(Json(mut current)) = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
+        let Some(Json(mut current)) = task.as_ref().filter(|row| super::completion::is_active_task(row)).and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
         if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
             || current.pointer(PIPELINE_HANDOFF_PATH) != advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
-            || !matches!(current.pointer("/status/status").and_then(Value::as_str), Some("PENDING" | "RUNNING"))
+            || super::completion::dispatchable_task_status(&current).is_none()
         {
             return Ok(false);
         }

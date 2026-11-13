@@ -30,8 +30,11 @@ from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import TaskCreationParams, create_chat_task
 from app.services.chat.storage.db import (
+    PIPELINE_RECOVERY_KIND,
+    PIPELINE_RECOVERY_NAMESPACE,
     PipelineAutoAdvanceIntent,
     TerminalPersistenceError,
+    pipeline_recovery_key,
 )
 from app.services.chat.storage.task_manager import (
     initialize_redis_chat_history,
@@ -104,8 +107,55 @@ async def pipeline_recovery_lifespan() -> AsyncIterator[None]:
         await asyncio.gather(worker, return_exceptions=True)
 
 
+def _pending_recovery_members(after_id: int, limit: int) -> list[tuple[int, str]]:
+    with SessionLocal() as db:
+        return [
+            (row.id, row.name)
+            for row in db.query(Kind.id, Kind.name)
+            .filter(
+                Kind.kind == PIPELINE_RECOVERY_KIND,
+                Kind.namespace == PIPELINE_RECOVERY_NAMESPACE,
+                Kind.is_active.is_(True),
+                Kind.id > after_id,
+            )
+            .order_by(Kind.id)
+            .limit(limit)
+        ]
+
+
+async def _due_recoveries(limit: int) -> list[str | bytes]:
+    now = time.time()
+    async with cache_manager._client_context() as redis:
+        return await redis.eval(
+            "local due = redis.call('ZRANGEBYSCORE', KEYS[1], "
+            "'-inf', ARGV[1], 'LIMIT', 0, ARGV[3]); "
+            "for _, member in ipairs(due) do "
+            "redis.call('ZADD', KEYS[1], ARGV[2], member) end; "
+            "return due",
+            1,
+            _RECOVERY_QUEUE,
+            now,
+            now + _RECOVERY_DELAY_SECONDS,
+            limit,
+        )
+
+
+async def _index_recoveries(after_id: int) -> int:
+    page = await run_in_threadpool_with_cleanup(_pending_recovery_members, after_id, 64)
+    if not page:
+        return 0
+    async with cache_manager._client_context() as redis:
+        await redis.zadd(
+            _RECOVERY_QUEUE,
+            {name: time.time() + _RECOVERY_DELAY_SECONDS for _, name in page},
+            nx=True,
+        )
+    return page[-1][0]
+
+
 async def _recover_pipeline_handoffs() -> None:
     jobs: set[asyncio.Task] = set()
+    cursor = 0
     try:
         while True:
             await asyncio.sleep(1)
@@ -113,21 +163,8 @@ async def _recover_pipeline_handoffs() -> None:
             if available <= 0:
                 continue
             try:
-                now = time.time()
-                async with cache_manager._client_context() as redis:
-                    due = await redis.eval(
-                        "local due = redis.call('ZRANGEBYSCORE', KEYS[1], "
-                        "'-inf', ARGV[1], 'LIMIT', 0, ARGV[3]); "
-                        "for _, member in ipairs(due) do "
-                        "redis.call('ZADD', KEYS[1], ARGV[2], member) end; "
-                        "return due",
-                        1,
-                        _RECOVERY_QUEUE,
-                        now,
-                        now + _RECOVERY_DELAY_SECONDS,
-                        available,
-                    )
-                for member in due:
+                cursor = await _index_recoveries(cursor)
+                for member in await _due_recoveries(available):
                     job = asyncio.create_task(_recover_pipeline_handoff(member))
                     jobs.add(job)
                     job.add_done_callback(jobs.discard)
@@ -154,6 +191,9 @@ async def _recover_pipeline_handoff(member: str | bytes) -> None:
             )
             async with cache_manager._client_context() as redis:
                 if pending is None:
+                    await run_in_threadpool_with_cleanup(
+                        _retire_recovery, task_id, subtask_id
+                    )
                     await redis.zrem(_RECOVERY_QUEUE, member)
                     return
                 if pending.next_pair and await redis.exists(
@@ -163,6 +203,16 @@ async def _recover_pipeline_handoff(member: str | bytes) -> None:
             await _resume_auto_advance(pending)
     except Exception:
         logger.exception("Pipeline recovery will retry %s", member)
+
+
+def _retire_recovery(task_id: int, subtask_id: int) -> None:
+    with SessionLocal() as db:
+        db.query(Kind).filter_by(
+            kind=PIPELINE_RECOVERY_KIND,
+            namespace=PIPELINE_RECOVERY_NAMESPACE,
+            name=pipeline_recovery_key(task_id, subtask_id),
+        ).delete()
+        db.commit()
 
 
 def _read_pending_handoff(

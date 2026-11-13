@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
@@ -41,6 +42,9 @@ _db_executor = ThreadPoolExecutor(max_workers=20)
 
 # Terminal statuses that mark completion
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
+PIPELINE_RECOVERY_KIND = "PipelineRecovery"
+PIPELINE_RECOVERY_NAMESPACE = "internal"
+
 
 T = TypeVar("T")
 
@@ -94,6 +98,23 @@ class PipelineAutoAdvanceIntent:
             (pair[0], pair[1]) if pair is not None else None,
             data.get("dispatch_acknowledged", False),
         )
+
+
+def pipeline_recovery_key(task_id: int, subtask_id: int) -> str:
+    return f"{task_id}:{subtask_id}"
+
+
+def add_pipeline_recovery(db: Session, intent: PipelineAutoAdvanceIntent) -> None:
+    db.add(
+        Kind(
+            kind=PIPELINE_RECOVERY_KIND,
+            namespace=PIPELINE_RECOVERY_NAMESPACE,
+            name=pipeline_recovery_key(intent.task_id, intent.completed_subtask_id),
+            user_id=intent.user_id,
+            json={},
+            is_active=True,
+        )
+    )
 
 
 def settle_pipeline_handoff(payload: dict[str, Any], subtask_id: int) -> None:
@@ -446,6 +467,8 @@ class DatabaseHandler:
             settle_pipeline_handoff(payload, changed_subtask_id)
         if update_result.auto_advance is not None:
             update_result.auto_advance.write(payload)
+            if terminal:
+                add_pipeline_recovery(db, update_result.auto_advance)
         task_stores.task_store.update_json(db, task=task, payload=payload)
 
         return update_result

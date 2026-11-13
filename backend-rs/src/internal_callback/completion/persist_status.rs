@@ -6,7 +6,7 @@
 //! completion callback (`app/services/chat/storage/db.py`). Split from
 //! [`persist`](super) so the file stays within the source-size bound.
 use brz_mysql::{Json, MysqlError, MysqlResult, MysqlRow, MysqlTransaction};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::sql;
 use super::{
@@ -32,6 +32,7 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
         changed_subtask_id,
         None,
         false,
+        None,
         None,
     )
     .await?
@@ -60,6 +61,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     pending_delivery: Option<(Delivery, Option<&Value>)>,
     terminal: bool,
     required_status: Option<&str>,
+    terminal_result: Option<&Value>,
 ) -> MysqlResult<Option<CollaborationStatus>> {
     let task_table = tables.tasks;
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
@@ -80,30 +82,16 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
         return Ok(None);
     };
     let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
+    let is_latest = subtask_column::<i64>(last, "id") == Some(changed_subtask_id);
+    if !is_latest && !terminal {
+        return Ok(None);
+    }
     if required_status.is_some_and(|required| {
         last_status != required || subtask_column::<i64>(last, "id") != Some(changed_subtask_id)
     }) {
         return Ok(None);
     }
-    // `list_assistant_by_task` labels its columns too, so the last subtask's
-    // result — the payload `_apply_status_update` writes into the task CRD's
-    // `status.result` — is decoded positionally.
-    let mut last_result: Option<Value> =
-        subtask_column::<Json<Value>>(last, "result").map(|json| json.0);
-
-    let found = subtasks
-        .iter()
-        .any(|row| subtask_column::<i64>(row, "id") == Some(changed_subtask_id));
-    let changed: Option<MysqlRow> = if !found && last_result.is_none() {
-        mysql
-            .fetch_optional(sql::subtask_by_id(tables), (changed_subtask_id,))
-            .await?
-    } else {
-        None
-    };
-    if let Some(row) = changed {
-        last_result = subtask_column::<Json<Value>>(&row, "result").map(|json| json.0);
-    }
+    let last_result = subtask_column::<Json<Value>>(last, "result").map(|json| json.0);
 
     let Some(Value::Object(mut payload)) = task_json else {
         return Err(MysqlError::InvalidQuery {
@@ -115,8 +103,26 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
             reason: "Task status must be an object".into(),
         });
     };
-    let decision =
-        collaboration_status(mysql, task_table, task_id, &payload, last, &last_status).await?;
+    let previous_status = status_object.get("status").and_then(Value::as_str);
+    let preserve_parent = !is_latest || matches!(previous_status, Some("CANCELLED" | "DELETE"));
+    let decision = if preserve_parent {
+        CollaborationStatus {
+            status: previous_status.unwrap_or(&last_status).to_owned(),
+            progress: status_object.get("progress").and_then(Value::as_i64),
+            auto_advance: false,
+        }
+    } else {
+        collaboration_status(
+            mysql,
+            task_table,
+            task_id,
+            &payload,
+            last,
+            &last_status,
+            previous_status == Some("CANCELLING"),
+        )
+        .await?
+    };
     let new_status = &decision.status;
     let progress = decision.progress;
 
@@ -129,29 +135,41 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
         return Ok(None);
     }
     let now = local_isoformat();
-    let mut updated = status_object;
-    updated.insert("status".into(), Value::String(new_status.clone()));
-    if let Some(result) = last_result {
-        updated.insert("result".into(), result);
-    }
-    if let Some(progress) = progress {
-        updated.insert("progress".into(), json!(progress));
-    }
-    if matches!(
-        new_status.as_str(),
-        "COMPLETED" | "CANCELLED" | "PENDING_CONFIRMATION"
-    ) {
-        updated.insert("completedAt".into(), Value::String(now.clone()));
-    }
-    if last_status == "FAILED" {
-        updated.insert(
-            "errorMessage".into(),
-            subtask_column::<String>(last, "error_message").map_or(Value::Null, Value::String),
-        );
-    }
-    updated.insert("updatedAt".into(), Value::String(now.clone()));
-    payload.insert("status".into(), Value::Object(updated));
+    if !preserve_parent {
+        let mut updated = status_object;
+        updated.insert("status".into(), Value::String(new_status.clone()));
+        if let Some(result) = last_result {
+            updated.insert("result".into(), result);
+        }
+        if let Some(progress) = progress {
+            updated.insert("progress".into(), json!(progress));
+        }
+        if matches!(
+            new_status.as_str(),
+            "COMPLETED" | "CANCELLED" | "PENDING_CONFIRMATION"
+        ) {
+            updated.insert("completedAt".into(), Value::String(now.clone()));
+        }
+        if last_status == "FAILED" {
+            updated.insert(
+                "errorMessage".into(),
+                subtask_column::<String>(last, "error_message").map_or(Value::Null, Value::String),
+            );
+        }
+        updated.insert("updatedAt".into(), Value::String(now.clone()));
+        payload.insert("status".into(), Value::Object(updated));
 
+        if last_status == "COMPLETED"
+            && let Some(path) = terminal_result
+                .and_then(|result| result.get("standalone_chat_workspace_path"))
+                .filter(|path| !path.is_null())
+            && let Value::Object(spec) = payload
+                .entry("spec")
+                .or_insert_with(|| Value::Object(Map::new()))
+        {
+            spec.insert("standaloneChatWorkspacePath".into(), path.clone());
+        }
+    }
     complete_task_model(&mut payload);
     let mut document = Value::Object(render_task_crd(payload));
     if terminal {

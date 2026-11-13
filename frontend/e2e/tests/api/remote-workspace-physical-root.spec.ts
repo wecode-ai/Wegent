@@ -77,19 +77,20 @@ test('Rust workspace API browses a real Executor repository using returned physi
       prompt: 'physical remote workspace E2E',
       team_id: teamId,
       type: 'offline',
-      // The Manager is started explicitly below, so leave the subtask pending.
+      // This scenario prepares the executor itself, so create an undispatched turn.
       task_type: 'task',
       auto_delete_executor: 'false',
       source: 'web',
     })
     expect(created.status, JSON.stringify(created.data)).toBe(201)
     taskId = reservedTaskId
-    const detail = await api.get<{
-      subtasks: Array<{ id: number; role: string; status: string }>
-    }>(`/api/tasks/${taskId}`)
+    const detail = await api.get<{ subtasks: Array<{ id: number; role: string; status: string }> }>(
+      `/api/tasks/${taskId}`
+    )
     expect(detail.status).toBe(200)
     const assistant = detail.data!.subtasks.find(subtask => subtask.role === 'ASSISTANT')
-    expect(assistant?.status).toBe('PENDING')
+    expect(assistant).toBeTruthy()
+    expect(assistant!.status).toBe('PENDING')
 
     // Provision the production Docker executor without invoking an agent or a model.
     const prepared = await request.post(`${managerUrl}/executor-manager/executors/prepare`, {

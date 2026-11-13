@@ -125,7 +125,7 @@ pub(crate) async fn process_execution_event(
     process_event(state, event, (executor_name, executor_namespace), false).await
 }
 
-pub(crate) async fn process_pipeline_event(
+pub(crate) async fn process_background_shell_event(
     state: &AppState,
     event: event::ExecutionEvent,
 ) -> Result<(), FastApiError> {
@@ -192,12 +192,18 @@ async fn deliver_terminal_callback(
     executor: (Option<&str>, Option<&str>),
     defer_advance: bool,
 ) -> Result<(), FastApiError> {
-    recovery::track(redis, event.task_id, event.subtask_id)
-        .await
-        .map_err(|error| {
-            tracing::warn!(%error, "could not index pending terminal delivery");
-            FastApiError::internal()
-        })?;
+    let pending_event = defer_advance.then(|| event.to_value());
+    recovery::track(
+        redis,
+        event.task_id,
+        event.subtask_id,
+        pending_event.as_ref(),
+    )
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, "could not index pending terminal delivery");
+        FastApiError::internal()
+    })?;
     let mut source = event.to_value();
     // The committed result is replayed from the subtask row.
     source["result"] = Value::Null;

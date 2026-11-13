@@ -177,6 +177,7 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
+    error_code: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> MysqlResult<Option<bool>> {
@@ -187,6 +188,7 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
         status,
         result,
         error,
+        error_code,
         executor_name,
         executor_namespace,
         None,
@@ -221,6 +223,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
+    error_code: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     device_attempt: Option<&DeviceAttempt<'_>>,
@@ -236,6 +239,13 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         let Some(task) = lock_task(transaction, ctx.tables.tasks, task_id).await? else {
             return Ok(None);
         };
+        if matches!(
+            error_code,
+            Some("task_queue_failure" | "task_queue_stalled")
+        ) && !can_fail_dispatch(ctx.tables, transaction, &task, task_id, subtask_id).await?
+        {
+            return Ok(None);
+        }
         let Some(row) = lock_subtask(transaction, ctx.tables, subtask_id).await? else {
             return Ok(None);
         };
@@ -301,6 +311,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
             delivery,
             true,
             None,
+            result,
         )
         .await?
         .ok_or(MysqlError::RowNotFound)?;
@@ -337,9 +348,6 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         Some(PendingTransition::Written(row, message, advance)) => (row, message, advance),
     };
     publish_task_run_metrics(ctx, &row, subtask_id, &normalized_status, metrics_message).await;
-    if normalized_status == "COMPLETED" {
-        persist_standalone_workspace_path(ctx, task_id, result).await;
-    }
     if let Err(failure) =
         session::cleanup_streaming_state(ctx.redis, subtask_id, Some(task_id)).await
     {
@@ -380,6 +388,19 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
         .await
 }
 
+async fn can_fail_dispatch<T: MysqlTransaction>(
+    tables: sql::Tables,
+    tx: &mut T,
+    task: &MysqlRow,
+    task_id: i64,
+    subtask_id: i64,
+) -> MysqlResult<bool> {
+    let can_fail = task_column::<Json<Value>>(task, "json")
+        .is_some_and(|json| sql::dispatchable_task_status(&json.0).is_some());
+    Ok(can_fail
+        && sql::latest_assistant_id(tx, tables.subtasks, task_id).await? == Some(subtask_id))
+}
+
 pub(super) async fn persist_executor_failure<M: Mysql>(
     mysql: &M,
     tables: sql::Tables,
@@ -394,13 +415,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
             let Some(task) = lock_task(transaction, tables.tasks, task_id).await? else {
                 return Ok(None);
             };
-            let document = task_column::<Json<Value>>(&task, "json");
-            if !document.as_ref().is_some_and(|json| {
-                matches!(
-                    json.0.pointer("/status/status").and_then(Value::as_str),
-                    Some("PENDING" | "RUNNING")
-                )
-            }) {
+            if !can_fail_dispatch(tables, transaction, &task, task_id, subtask_id).await? {
                 return Ok(None);
             }
             let Some(row) = lock_subtask(transaction, tables, subtask_id).await? else {
@@ -439,6 +454,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
                 None,
                 true,
                 Some("FAILED"),
+                None,
             )
             .await?
             .ok_or(MysqlError::RowNotFound)?;
@@ -510,83 +526,97 @@ fn subtask_metric_event(
 ///
 /// Exposed so the create path's focused test can pin the read and its position
 /// without a database.
-pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] {
+fn running_transition_statements(tables: sql::Tables) -> [String; 3] {
     [
-        sql::subtask_by_id(tables),
+        format!("{} FOR UPDATE", sql::subtask_by_id(tables)),
         sql::contexts_by_subtask(),
         sql::update_subtask_running(tables),
     ]
 }
 
-/// Claim a queued turn only while its task and subtask can still run.
-pub(crate) async fn claim_running_subtask<M: Mysql>(
-    mysql: &M,
-    tables: sql::Tables,
-    subtask_id: i64,
-) -> brz_mysql::MysqlResult<bool> {
-    mysql
-        .route(crate::task_routing::ByTaskId(subtask_id as u64))
-        .execute(
-            sql::claim_running_subtask(tables),
-            ("RUNNING", local_datetime(), subtask_id),
-        )
-        .await
-        .map(|result| result.rows_affected != 0)
-}
-
-/// `ExecutionDispatcher._update_subtask_to_running`
-/// (`app/services/execution/dispatcher.py:335-355`, called before the mode
-/// branch at `:166`): `db_handler.update_subtask_status(subtask_id, "RUNNING")`
-/// reads the subtask with its contexts, writes the status-only flush, commits
-/// (publishing the after-commit run metrics), then re-derives the Task CRD
-/// status in a second session.
 pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
+    task_id: i64,
     subtask_id: i64,
-    claim: bool,
-) -> bool {
-    let [read_subtask, read_contexts, update_running] = running_transition_statements(ctx.tables);
-    let mysql = ctx
-        .mysql
-        .route(crate::task_routing::ByTaskId(subtask_id as u64));
-    let row: Option<MysqlRow> = mysql
-        .fetch_optional(read_subtask, (subtask_id,))
-        .await
-        .ok()
-        .flatten();
-    // `_update_subtask_sync`'s `if not subtask: return None`: a vanished row
-    // ends the transition without an error, a write, or after-commit metrics.
-    let Some(row) = row else {
-        return false;
+) -> MysqlResult<bool> {
+    let Some(row) = commit_subtask_running(ctx.mysql, ctx.tables, task_id, subtask_id).await?
+    else {
+        return Ok(false);
     };
-    // `SubtaskStore.get_by_id` eager-loads `Subtask.contexts`.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(read_contexts, (subtask_id,))
-        .await
-        .unwrap_or_default();
-    let task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
-    let updated = if claim {
-        claim_running_subtask(ctx.mysql, ctx.tables, subtask_id).await
-    } else {
-        mysql
-            .execute(update_running, ("RUNNING", local_datetime(), subtask_id))
-            .await
-            .map(|_| true)
-    };
-    match updated {
-        Ok(true) => {}
-        Ok(false) => return false,
-        Err(error) => {
-            tracing::warn!(subtask_id, %error, "subtask running update failed");
-            return false;
-        }
+    if subtask_column::<String>(&row, "status").as_deref() == Some("PENDING") {
+        publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
     }
-    // `_before_flush` tracks the status change (`record_total=False`,
-    // `sync_failure=True`) and `_after_commit` publishes it. A RUNNING subtask
-    // carries no error message, so the failure reason is empty.
-    publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
-    update_task_status(ctx, task_id, subtask_id).await;
-    true
+    Ok(true)
+}
+
+/// Commit both startup states before any dispatch. Lock the Task first, in the
+/// same order as turn creation and executor binding.
+pub(crate) async fn commit_subtask_running<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    task_id: i64,
+    subtask_id: i64,
+) -> MysqlResult<Option<MysqlRow>> {
+    let [read_subtask, read_contexts, update_running] = running_transition_statements(tables);
+    mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
+        .with_transaction(async |tx| {
+            let task: Option<MysqlRow> = tx
+                .fetch_optional(
+                    crate::task_store::task_for_update_first_statement(tables.tasks),
+                    (task_id,),
+                )
+                .await?;
+            let Some(task) = task else { return Ok(None) };
+            if !sql::is_active_task(&task) {
+                return Ok(None);
+            }
+            let Json(payload) = task_column::<Json<Value>>(&task, "json")
+                .ok_or_else(|| MysqlError::ColumnNotFound("task json".into()))?;
+            let Some(status) = sql::dispatchable_task_status(&payload) else {
+                return Ok(None);
+            };
+            let task_is_running = status == "RUNNING";
+            let Some(row) = tx
+                .fetch_optional::<_, _, MysqlRow>(read_subtask, (subtask_id,))
+                .await?
+            else {
+                return Ok(None);
+            };
+            if subtask_column::<String>(&row, "role").as_deref() != Some("ASSISTANT")
+                || subtask_column::<i64>(&row, "task_id") != Some(task_id)
+            {
+                return Ok(None);
+            }
+            let now = local_datetime();
+            match subtask_column::<String>(&row, "status").as_deref() {
+                Some("RUNNING") => {}
+                Some("PENDING") => {
+                    // Preserve the eager context read in the dispatch transaction.
+                    let _: Vec<MysqlRow> = tx.fetch_all(read_contexts, (subtask_id,)).await?;
+                    let updated = tx
+                        .execute(update_running, ("RUNNING", now.as_str(), subtask_id))
+                        .await?;
+                    if updated.rows_affected != 1 {
+                        return Ok(None);
+                    }
+                }
+                _ => return Ok(None),
+            }
+            if !task_is_running && let Value::Object(mut payload) = payload {
+                payload["status"]["status"] = Value::String("RUNNING".into());
+                payload["status"]["updatedAt"] = Value::String(local_isoformat());
+                complete_task_model(&mut payload);
+                let json = python_dumps(&Value::Object(render_task_crd(payload)));
+                tx.execute(
+                    sql::update_task_json_statement(tables.tasks),
+                    (json, now, task_id),
+                )
+                .await?;
+            }
+            Ok(Some(row))
+        })
+        .await
 }
 
 /// `_update_task_status_sync`: re-derive the task's status from its assistant
@@ -607,7 +637,7 @@ pub(crate) async fn update_task_status<M: Mysql, R: Redis>(
         })
         .await
     {
-        Ok(auto_advance) => auto_advance.unwrap_or(false),
+        Ok(auto_advance) => auto_advance.unwrap_or_default(),
         Err(error) => {
             tracing::error!(%error, "callback task status transaction failed");
             false
@@ -634,7 +664,12 @@ async fn collaboration_status<T: MysqlTransaction>(
     payload: &Map<String, Value>,
     subtask: &MysqlRow,
     subtask_status: &str,
+    cancelling: bool,
 ) -> MysqlResult<CollaborationStatus> {
+    // A real terminal event settles cancellation without scheduling another stage.
+    if cancelling {
+        return Ok(default_collaboration_status(subtask_status));
+    }
     // `get_regular_active_task`: the exact task read the factory issues. Its
     // outcome decides whether the factory reads the task's Team at all.
     let regular_task_found = mysql
@@ -690,20 +725,15 @@ async fn collaboration_status<T: MysqlTransaction>(
             });
         }
     }
-    // `DefaultCollaborationStrategy.get_task_status_on_subtask_complete`: map
-    // the subtask status directly, defaulting to the subtask status itself.
-    let (status, progress) = match subtask_status {
-        "COMPLETED" => ("COMPLETED".to_string(), Some(100)),
-        "CANCELLED" => ("CANCELLED".to_string(), Some(100)),
-        "FAILED" => ("FAILED".to_string(), None),
-        "RUNNING" => ("RUNNING".to_string(), None),
-        other => (other.to_string(), None),
-    };
-    Ok(CollaborationStatus {
-        status,
-        progress,
+    Ok(default_collaboration_status(subtask_status))
+}
+
+fn default_collaboration_status(subtask_status: &str) -> CollaborationStatus {
+    CollaborationStatus {
+        status: subtask_status.to_owned(),
+        progress: matches!(subtask_status, "COMPLETED" | "CANCELLED").then_some(100),
         auto_advance: false,
-    })
+    }
 }
 
 /// `CollaborationStrategyFactory.get_strategy_for_task`'s team read
@@ -720,14 +750,12 @@ async fn strategy_team<T: MysqlTransaction>(
     regular_task_found: bool,
     payload: &Map<String, Value>,
 ) -> MysqlResult<Option<Value>> {
-    if !regular_task_found {
-        return Ok(None);
-    }
-    let Some(team_ref) = payload
+    let team_ref = payload
         .get("spec")
+        .filter(|_| regular_task_found)
         .and_then(|spec| spec.get("teamRef"))
-        .and_then(Value::as_object)
-    else {
+        .and_then(Value::as_object);
+    let Some(team_ref) = team_ref else {
         return Ok(None);
     };
     let name = team_ref
@@ -819,51 +847,6 @@ fn member_stage(members: &[Value], bot_name: &str, bot_namespace: &str) -> Optio
                 .unwrap_or("default")
                 == bot_namespace
     })
-}
-
-/// `_persist_standalone_workspace_path`: store a local executor's standalone
-/// chat workspace path on the task CRD.
-async fn persist_standalone_workspace_path<M: Mysql, R: Redis>(
-    ctx: &Completion<'_, M, R>,
-    task_id: i64,
-    result: Option<&Value>,
-) {
-    let Some(path) = result
-        .and_then(|value| value.get("standalone_chat_workspace_path"))
-        .filter(|value| !value.is_null())
-        .cloned()
-    else {
-        return;
-    };
-    let mysql = ctx
-        .mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64));
-    let task: Option<MysqlRow> = mysql
-        .fetch_optional(sql::active_task_statement(ctx.tables.tasks), (task_id,))
-        .await
-        .ok()
-        .flatten();
-    let Some(task) = task else {
-        return;
-    };
-    let Some(Value::Object(mut payload)) =
-        task_column::<Json<Value>>(&task, "json").map(|json| json.0)
-    else {
-        return;
-    };
-    match payload
-        .entry("spec")
-        .or_insert_with(|| Value::Object(Map::new()))
-    {
-        Value::Object(spec) => {
-            spec.insert("standaloneChatWorkspacePath".into(), path);
-        }
-        _ => return,
-    }
-    let json_text = python_dumps(&Value::Object(render_task_crd(payload)));
-    let now = local_datetime();
-    let sql = sql::update_task_json_statement(ctx.tables.tasks);
-    let _ = mysql.execute(sql, (json_text, now, task_id)).await;
 }
 
 /// `datetime.now()` in the `DATETIME(6)` form the source binds to its columns.

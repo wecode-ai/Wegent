@@ -17,6 +17,8 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from redis.exceptions import WatchError
+
 from executor_manager.common.redis_factory import RedisClientFactory
 from shared.logger import setup_logger
 
@@ -226,14 +228,14 @@ class TaskQueueService:
             "dequeued_at": None,
         }
         try:
-            self.redis_client.setex(
-                PENDING_KEY_TEMPLATE.format(task_id=task_id),
-                PENDING_KEY_TTL,
-                json.dumps(payload),
-            )
-            self.redis_client.zadd(
-                PENDING_INDEX_KEY, {str(task_id): payload["enqueued_at"]}
-            )
+            with self.redis_client.pipeline() as pipe:
+                pipe.setex(
+                    PENDING_KEY_TEMPLATE.format(task_id=task_id),
+                    PENDING_KEY_TTL,
+                    json.dumps(payload),
+                )
+                pipe.zadd(PENDING_INDEX_KEY, {str(task_id): payload["enqueued_at"]})
+                pipe.execute()
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to mark task pending: {e}")
 
@@ -246,30 +248,50 @@ class TaskQueueService:
             return
         key = PENDING_KEY_TEMPLATE.format(task_id=task_id)
         try:
-            raw = self.redis_client.get(key)
-            payload = json.loads(raw) if raw else {}
-            payload.update(
-                {
-                    "task_id": str(task_id),
-                    "subtask_id": str(subtask_id),
-                    "queue_key": self.queue_key,
-                    "dequeued_at": time.time(),
-                }
-            )
-            self.redis_client.setex(key, PENDING_KEY_TTL, json.dumps(payload))
-            self.redis_client.zadd(
-                PENDING_INDEX_KEY, {str(task_id): payload["dequeued_at"]}
-            )
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                payload = json.loads(raw) if raw else {}
+                if raw and str(payload.get("subtask_id")) != str(subtask_id):
+                    return
+                payload.update(
+                    {
+                        "task_id": str(task_id),
+                        "subtask_id": str(subtask_id),
+                        "queue_key": self.queue_key,
+                        "dequeued_at": time.time(),
+                    }
+                )
+                pipe.multi()
+                pipe.setex(key, PENDING_KEY_TTL, json.dumps(payload))
+                pipe.zadd(PENDING_INDEX_KEY, {str(task_id): payload["dequeued_at"]})
+                pipe.execute()
+        except WatchError:
+            logger.debug("[TaskQueue] Pending record changed for task %s", task_id)
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to mark task dequeued: {e}")
 
-    def clear_pending(self, task_id: Any) -> None:
+    def clear_pending(self, task_id: Any, subtask_id: Any = None) -> None:
         """Forget a pending record once the task started or reached a terminal state."""
         if not self.redis_client or task_id in (None, "unknown"):
             return
+        key = PENDING_KEY_TEMPLATE.format(task_id=task_id)
         try:
-            self.redis_client.delete(PENDING_KEY_TEMPLATE.format(task_id=task_id))
-            self.redis_client.zrem(PENDING_INDEX_KEY, str(task_id))
+            if subtask_id is None:
+                self.redis_client.delete(key)
+                self.redis_client.zrem(PENDING_INDEX_KEY, str(task_id))
+                return
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if not raw or str(json.loads(raw).get("subtask_id")) != str(subtask_id):
+                    return
+                pipe.multi()
+                pipe.delete(key)
+                pipe.zrem(PENDING_INDEX_KEY, str(task_id))
+                pipe.execute()
+        except WatchError:
+            logger.debug("[TaskQueue] Pending record changed for task %s", task_id)
         except Exception as e:
             logger.warning(f"[TaskQueue] Failed to clear pending task: {e}")
 

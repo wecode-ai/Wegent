@@ -4,6 +4,7 @@
 
 """Exercise terminal handoff through the real hybrid gateway and Chat Shell."""
 
+import asyncio
 import json
 import os
 import threading
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
+import socketio
 from redis import Redis
 from sqlalchemy import text
 
@@ -46,6 +48,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             db.commit()
             self.user_id = user.id
             token = create_access_token({"sub": user.user_name, "user_id": user.id})
+        self.token = token
         self.addCleanup(self._cleanup_rows)
         self.api = httpx.Client(
             base_url=os.environ["E2E_API_URL"],
@@ -448,63 +451,159 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertIn(answer, json.dumps(capture))
             self.assertNotIn("late callback payload", json.dumps(capture))
 
-    def test_rust_advances_when_all_eight_dispatch_slots_are_busy(self) -> None:
-        team_id, bots = self._create_team(pipeline=True, stages=3)
-        runs = [
-            self._seed_running_stage(team_id, bots[0], suffix=f"-{index}")
-            for index in range(8)
-        ]
-        second = f"{self.marker}-second-stage-answer"
-        third = f"{self.marker}-third"
-        for index in range(len(runs)):
-            self._json(
-                self.model.post(
-                    "/stream-rules",
-                    json={
-                        "matchText": f"{self.marker}-first-{index}",
-                        "responseContent": second,
-                        "holdDone": True,
-                    },
+    async def _send_chat_turns(self, team_id: int, prompts: list[str]) -> list[dict]:
+        client = socketio.AsyncClient(reconnection=False)
+        await client.connect(
+            str(self.api.base_url),
+            auth={"token": self.token},
+            namespaces=["/chat"],
+            transports=["websocket"],
+        )
+        try:
+            responses = []
+            for prompt in prompts:
+                result = await client.call(
+                    "chat:send",
+                    {"team_id": team_id, "message": prompt, "task_type": "chat"},
+                    namespace="/chat",
+                    timeout=15,
                 )
+                self.assertFalse(result.get("error"), result)
+                responses.append(result)
+            return responses
+        finally:
+            await client.disconnect()
+
+    def _wait_for_held_model_requests(self, count: int) -> None:
+        self._wait_for(
+            lambda: sum(
+                rule["pendingResponses"]
+                for rule in self._json(self.model.get("/stream-rules"))
             )
+            == count
+        )
+
+    def test_rust_advances_when_all_eight_initial_chat_slots_are_busy(self) -> None:
+        team_id, _ = self._create_team(pipeline=True)
+        first, second = f"{self.marker}-first", f"{self.marker}-second"
+        prompts = [f"{self.marker}-prompt-{index}" for index in range(8)]
         self._json(
             self.model.post(
-                "/stream-rules", json={"matchText": second, "responseContent": third}
+                "/stream-rules",
+                json={
+                    "matchText": self.marker,
+                    "responseContent": first,
+                    "holdDone": True,
+                },
             )
         )
-        for index, (task_id, subtask_id) in enumerate(runs):
-            self._callback(
-                task_id, subtask_id, f"{self.marker}-first-{index}", rust=True
+        self._json(
+            self.model.post(
+                "/stream-rules",
+                json={"matchText": first, "responseContent": second},
+            )
+        )
+        turns = asyncio.run(self._send_chat_turns(team_id, prompts))
+        task_ids = [turn["task_id"] for turn in turns]
+        self.assertEqual(len(set(task_ids)), len(prompts))
+        try:
+            self._wait_for_held_model_requests(len(prompts))
+            for task_id in task_ids:
+                task, rows = self._snapshot(task_id)
+                self.assertEqual(task["spec"].get("currentStage") or 0, 0)
+                self.assertEqual(len(rows), 2)
+        finally:
+            self._json(
+                self.model.post(
+                    "/stream-rules/release", json={"matchText": self.marker}
+                )
             )
 
-        def all_slots_occupied() -> bool:
-            rules = self._json(self.model.get("/stream-rules"))
-            return sum(rule["pendingResponses"] for rule in rules) == len(runs)
+        self._wait_for(
+            lambda: all(
+                self._snapshot(task_id)[0]["status"]["status"] == "COMPLETED"
+                for task_id in task_ids
+            )
+        )
+        for task_id in task_ids:
+            task, rows = self._snapshot(task_id)
+            self.assertEqual(task["spec"]["currentStage"], 1)
+            self.assertEqual(len(rows), 4)
+            self.assertEqual(rows[1]["result"]["value"], first)
+            self.assertEqual(rows[-1]["result"]["value"], second)
+        self.assertEqual(len(self._model_requests()), 2 * len(task_ids))
 
-        try:
-            self._wait_for(all_slots_occupied)
-        finally:
-            for index in range(len(runs)):
-                self._json(
-                    self.model.post(
-                        "/stream-rules/release",
-                        json={"matchText": f"{self.marker}-first-{index}"},
+    def test_rust_replays_initial_terminal_event_after_writer_failure(self) -> None:
+        team_id, _ = self._create_team(pipeline=False)
+        answer = f"{self.marker}-answer"
+        self._json(
+            self.model.post(
+                "/stream-rules",
+                json={
+                    "matchText": self.marker,
+                    "responseContent": answer,
+                    "holdDone": True,
+                },
+            )
+        )
+        (turn,) = asyncio.run(self._send_chat_turns(team_id, [self.marker]))
+        task_id = turn["task_id"]
+        self._wait_for_held_model_requests(1)
+        assistant_id = self._snapshot(task_id)[1][-1]["id"]
+        key = "{wegent:terminal-delivery:pending:rust}:events"
+        with self._reject_terminal_write(task_id, assistant_id):
+            self._json(
+                self.model.post(
+                    "/stream-rules/release", json={"matchText": self.marker}
+                )
+            )
+            self._wait_for(
+                lambda: (
+                    self.redis.hexists(key, f"{task_id}:{assistant_id}")
+                    and not self.redis.exists(
+                        f"wegent:lock:terminal-delivery-callback-{assistant_id}"
                     )
                 )
-
-        def all_tasks_completed() -> bool:
-            return all(
-                self._snapshot(task_id)[0]["status"]["status"] == "COMPLETED"
-                for task_id, _ in runs
             )
+            self.assertEqual(self._snapshot(task_id)[1][-1]["status"], "RUNNING")
+        self._wait_for(
+            lambda: self._snapshot(task_id)[0]["status"]["status"] == "COMPLETED"
+        )
+        self.assertEqual(self._snapshot(task_id)[1][-1]["result"]["value"], answer)
+        self.assertEqual(len(self._model_requests()), 1)
 
-        self._wait_for(all_tasks_completed)
-        for task_id, _ in runs:
+    def test_python_discovers_handoff_committed_before_redis_registration(self) -> None:
+        team_id, bots = self._create_team(pipeline=True)
+        task_id, subtask_id = self._seed_running_stage(team_id, bots[0])
+        first, second = f"{self.marker}-first", f"{self.marker}-second"
+        self._json(
+            self.model.post(
+                "/stream-rules", json={"matchText": first, "responseContent": second}
+            )
+        )
+        member = f"{task_id}:{subtask_id}"
+        queue = "wegent:terminal-delivery:pending:python"
+        self.redis.execute_command("ACL", "SETUSER", "default", "-zadd")
+        try:
+            self._callback(task_id, subtask_id, first, rust=False, fail=True)
             task, rows = self._snapshot(task_id)
-            self.assertEqual(task["spec"]["currentStage"], 2)
-            self.assertEqual(len(rows), 6)
-            self.assertEqual(rows[-1]["result"]["value"], third)
-        self.assertEqual(len(self._model_requests()), 2 * len(runs))
+            self.assertEqual(task["status"]["status"], "PENDING")
+            self.assertEqual(rows[-1]["status"], "COMPLETED")
+            self.assertIn(
+                f"pipelineAutoAdvance:{subtask_id}", task["metadata"]["labels"]
+            )
+            self.assertIsNone(self.redis.zscore(queue, member))
+            self.assertFalse(self._model_requests())
+        finally:
+            self.redis.execute_command("ACL", "SETUSER", "default", "+zadd")
+        self._wait_for(
+            lambda: self._snapshot(task_id)[0]["status"]["status"] == "COMPLETED"
+        )
+        task, rows = self._snapshot(task_id)
+        self.assertEqual(task["spec"]["currentStage"], 1)
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[-1]["result"]["value"], second)
+        self.assertEqual(len(self._model_requests()), 1)
 
     def test_rust_retries_post_commit_redis_publish(self) -> None:
         team_id, bots = self._create_team(pipeline=True)

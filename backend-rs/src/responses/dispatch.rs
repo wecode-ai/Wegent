@@ -144,7 +144,7 @@ pub(crate) fn start_event<R: Redis>(
 /// Input to an executor dispatch job.
 pub(crate) enum ExecutorDispatchBody {
     #[cfg(test)]
-    Prepared(Value),
+    Prepared(Result<crate::executor_binding::DispatchRequest, String>),
     Recover(Box<ExecutionRequest>),
 }
 
@@ -442,27 +442,41 @@ where
                         };
                         recovered
                     };
-                    let claimed = if accepted.is_some() {
-                        crate::internal_callback::completion::claim_running_subtask(
-                            &app.mysql, crate::internal_callback::tables(&app), subtask_id,
-                        )
-                        .await
-                        .inspect_err(|error| tracing::warn!(%error, subtask_id, "pipeline dispatch claim failed"))
-                        .unwrap_or(false)
-                    } else {
-                        super::create::seam::claim_executor_dispatch(&app, subtask_id).await
-                    };
-                    if !claimed {
+                    if let Err(error) =
+                        super::create::seam::mark_subtask_running(&app, &request).await
+                    {
                         if recovered {
                             super::create::discard_recovered_executor(&app, &request).await;
                         }
+                        if let Some(accepted) = accepted {
+                            let _ = accepted.send(Err(format!("{error:?}")));
+                            return;
+                        }
+                        if !error.status().is_server_error() {
+                            return;
+                        }
+                        finalize_executor_failure(
+                            &consumer,
+                            task_id,
+                            subtask_id,
+                            user_id,
+                            message_id,
+                            (
+                                "Could not commit executor startup state",
+                                "EXECUTOR_DISPATCH_FAILED",
+                            ),
+                        )
+                        .await;
                         return;
                     }
-                    let payload = super::create::dispatch::assemble(&request, false, true);
-                    serde_json::to_value(payload).unwrap_or(Value::Null)
+                    crate::executor_binding::dispatch_request(&app, &request)
                 }
             };
-            match send_executor(http, &url, &body).await {
+            let outcome = match body {
+                Ok(body) => send_executor(http, &url, &body).await,
+                Err(error) => Err(error),
+            };
+            match outcome {
                 Ok(()) => {
                     if let Some(accepted) = accepted {
                         let _ = accepted.send(Ok(()));
@@ -502,8 +516,12 @@ where
     }
 }
 
-async fn send_executor(http: &HttpClient, url: &str, body: &Value) -> Result<(), String> {
-    let request = executor_request(http, url, body)
+async fn send_executor(
+    http: &HttpClient,
+    url: &str,
+    dispatch: &crate::executor_binding::DispatchRequest,
+) -> Result<(), String> {
+    let request = executor_request(http, url, dispatch)
         .ok_or_else(|| "Could not build executor dispatch request".to_owned())?;
     let response = request
         .timeout(DISPATCH_TIMEOUT)
@@ -514,6 +532,42 @@ async fn send_executor(http: &HttpClient, url: &str, body: &Value) -> Result<(),
         return Err(format!("Executor returned HTTP {}", response.status()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn test_dispatch_start_failure(
+    mysql: MysqlService,
+    task_id: i64,
+    subtask_id: i64,
+) {
+    let app = crate::app_test_support::app(mysql);
+    app.completion_app.set(Arc::downgrade(&app)).ok().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let request = ExecutionRequest {
+        task_id,
+        subtask_id,
+        ..Default::default()
+    };
+    let http = HttpClient::builder().build().unwrap();
+    run(
+        &http,
+        DispatchJob::Executor {
+            url: format!("http://{}", listener.local_addr().unwrap()),
+            body: ExecutorDispatchBody::Recover(Box::new(request)),
+            start: None,
+            consumer: Box::new(ConsumerState::from_app(&app)),
+            task_id,
+            subtask_id,
+            user_id: 7,
+            message_id: None,
+        },
+    )
+    .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
 }
 
 async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
@@ -615,6 +669,7 @@ where
         start_data: job.start_data.clone(),
         created_task: job.created_task.clone(),
         owner_user_id: job.forward.then_some(job.request.user_id),
+        background: true,
         acceptance: accepted.map(|sender| std::sync::Mutex::new(Some(sender))),
     };
     // Keep the streaming state machine off the dispatch worker's stack.
@@ -704,7 +759,7 @@ where
 fn executor_request(
     http: &HttpClient,
     url: &str,
-    body: &Value,
+    dispatch: &crate::executor_binding::DispatchRequest,
 ) -> Option<brz_http::RequestBuilder> {
     Some(
         crate::responses::create::openai_client::apply_openai_client_headers(
@@ -717,10 +772,14 @@ fn executor_request(
                 )
                 .header(
                     "authorization",
-                    crate::responses::create::openai_client::OPENAI_DUMMY_AUTHORIZATION,
+                    format!(
+                        "{} {}",
+                        crate::executor_binding::AUTHORIZATION_SCHEME,
+                        dispatch.binding_token
+                    ),
                 ),
         )
-        .json(body),
+        .json(&dispatch.body),
     )
 }
 

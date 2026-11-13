@@ -15,6 +15,7 @@ use crate::state::AppState;
 use super::{completion, deliver_terminal_callback, event::ExecutionEvent, tables};
 
 const QUEUE: &str = "wegent:terminal-delivery:pending:rust";
+const EVENTS: &str = "{wegent:terminal-delivery:pending:rust}:events";
 const RETRY_SECONDS: i64 = 5;
 const MAX_RECOVERIES: usize = 8;
 
@@ -22,14 +23,22 @@ pub(super) async fn track(
     redis: &RedisService,
     task_id: i64,
     subtask_id: i64,
+    event: Option<&Value>,
 ) -> brz_redis::RedisResult<()> {
-    redis
-        .zadd(
-            QUEUE,
-            next_attempt() as f64,
-            format!("{task_id}:{subtask_id}"),
-        )
-        .await?;
+    let member = format!("{task_id}:{subtask_id}");
+    let score = next_attempt().to_string();
+    if let Some(event) = event {
+        redis
+            .eval::<_, _, _, i64>(
+                "redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
+             return redis.call('HSETNX', KEYS[2], ARGV[1], ARGV[3])",
+                [QUEUE, EVENTS],
+                [member, score, event.to_string()],
+            )
+            .await?;
+    } else {
+        redis.zadd(QUEUE, next_attempt() as f64, member).await?;
+    }
     Ok(())
 }
 
@@ -39,7 +48,12 @@ pub(super) async fn retire(
     subtask_id: i64,
 ) -> brz_redis::RedisResult<()> {
     redis
-        .zrem(QUEUE, [format!("{task_id}:{subtask_id}")])
+        .eval::<_, _, _, i64>(
+            "redis.call('HDEL', KEYS[2], ARGV[1])
+         return redis.call('ZREM', KEYS[1], ARGV[1])",
+            [QUEUE, EVENTS],
+            [format!("{task_id}:{subtask_id}")],
+        )
         .await?;
     Ok(())
 }
@@ -165,17 +179,34 @@ async fn recover_locked(
     let event = marker
         .and_then(|marker| serde_json::from_str::<Value>(marker).ok())
         .and_then(|saved| saved.get("event").map(ExecutionEvent::from_value));
-    let mut event = match (event, child) {
-        (Some(event), _) => event,
-        (None, Some(_)) => ExecutionEvent::new(super::event::EventType::Done, task_id, subtask_id),
+    let (mut event, executor) = match (event, child) {
+        (Some(event), _) => (event, (None, None)),
+        (None, Some(_)) => (
+            ExecutionEvent::new(super::event::EventType::Done, task_id, subtask_id),
+            (None, None),
+        ),
         _ => {
-            retire(redis, task_id, subtask_id).await?;
-            return Ok(());
+            let Some(raw) = redis
+                .hget::<_, _, String>(EVENTS, format!("{task_id}:{subtask_id}"))
+                .await?
+            else {
+                retire(redis, task_id, subtask_id).await?;
+                return Ok(());
+            };
+            if completion::read_terminal_result(&state.mysql, tables, task_id, subtask_id)
+                .await?
+                .is_some()
+            {
+                retire(redis, task_id, subtask_id).await?;
+                return Ok(());
+            }
+            let event = ExecutionEvent::from_value(&serde_json::from_str(&raw)?);
+            (event, (Some("inprocess-chat"), Some("standalone")))
         }
     };
     let status = completion::terminal_status(&event.event_type)
         .ok_or_else(|| anyhow::anyhow!("invalid terminal recovery event"))?;
-    deliver_terminal_callback(state, redis, &mut event, status, (None, None), false)
+    deliver_terminal_callback(state, redis, &mut event, status, executor, false)
         .await
         .map_err(|_| anyhow::anyhow!("terminal work is still pending"))
 }

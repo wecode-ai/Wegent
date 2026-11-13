@@ -595,7 +595,12 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             &http,
             DispatchJob::Executor {
                 url,
-                body: ExecutorDispatchBody::Prepared(json!({})),
+                body: ExecutorDispatchBody::Prepared(Ok(
+                    crate::executor_binding::DispatchRequest {
+                        body: json!({}),
+                        binding_token: "test-binding".into(),
+                    },
+                )),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
                 consumer: Box::new(consumer(mysql.clone(), redis.clone())),
                 task_id: TASK_ID,

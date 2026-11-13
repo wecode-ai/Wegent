@@ -1025,6 +1025,8 @@
       "manageTeams": "管理团队"
     },
     "creation": {
+      "refreshingLocations": "正在刷新创建位置…",
+      "refreshLocationsFailed": "刷新创建位置失败，请重试。",
       "created": "库已创建",
       "createdDescription": "知识库已保存。现在可以给人员或团队授权，也可稍后配置。",
       "authorize": "授权",

@@ -3,6 +3,7 @@
 
 use super::models::{ArtifactQuery, Source, valid_workspace_root};
 use crate::{http_compat::FastApiError, state::AppState};
+use brz_http_server::StatusCode;
 use serde::Deserialize;
 use std::time::Duration;
 
@@ -53,9 +54,9 @@ pub(super) async fn workspace_root(
             .timeout(Duration::from_secs(15))
             .send()
             .await
-            .map_err(|_| super::repository::source_unavailable())?;
+            .map_err(|_| source_temporarily_unavailable())?;
         if !response.status().is_success() {
-            return Err(super::repository::source_unavailable());
+            return Err(upstream_unavailable(response.status().as_u16()));
         }
         response
             .json()
@@ -94,9 +95,9 @@ pub(super) async fn executor_base(
         .timeout(Duration::from_secs(5))
         .send()
         .await
-        .map_err(|_| super::repository::source_unavailable())?;
+        .map_err(|_| source_temporarily_unavailable())?;
     if !response.status().is_success() {
-        return Err(super::repository::source_unavailable());
+        return Err(upstream_unavailable(response.status().as_u16()));
     }
     let address: Address = response
         .json()
@@ -108,4 +109,18 @@ pub(super) async fn executor_base(
         .filter(|_| address.status.eq_ignore_ascii_case("success"))
         .map(|value| value.trim_end_matches('/').to_owned())
         .ok_or_else(super::repository::source_unavailable)
+}
+
+fn upstream_unavailable(status: u16) -> FastApiError {
+    match status {
+        502..=504 => source_temporarily_unavailable(),
+        _ => super::repository::source_unavailable(),
+    }
+}
+
+fn source_temporarily_unavailable() -> FastApiError {
+    FastApiError::detail(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Artifact execution source is temporarily unavailable",
+    )
 }
