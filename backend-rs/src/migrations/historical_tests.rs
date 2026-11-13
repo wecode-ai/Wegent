@@ -228,6 +228,78 @@ async fn historical_integer_ids_and_member_constraints_preserve_rows() -> Result
 
 #[tokio::test]
 #[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated schema"]
+async fn historical_secure_share_tokens_backfill_existing_rows() -> Result<()> {
+    isolated(async |mysql| {
+        sql(
+            mysql,
+            &[
+                "CREATE TABLE share_links (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,resource_type VARCHAR(50) NOT NULL,resource_id BIGINT NOT NULL,share_token VARCHAR(512) NOT NULL,require_approval BOOL NOT NULL,default_role VARCHAR(20) NOT NULL,expires_at DATETIME NOT NULL,created_by_user_id INT NOT NULL,is_active BOOL NOT NULL,created_at DATETIME NOT NULL,updated_at DATETIME NOT NULL,UNIQUE KEY uniq_share_links_share_token (share_token))",
+                VERSION_TABLE,
+                "INSERT INTO alembic_version VALUES ('f3a7c9e1b2d4')",
+                "INSERT INTO share_links (resource_type,resource_id,share_token,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',1,'legacy-a',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Task',2,'legacy-b%2B%3D',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Team',3,'inactive-c',0,'Reporter','9999-12-31',7,0,NOW(),NOW())",
+            ],
+        )
+        .await?;
+        target(mysql, "b1c2d3e4f5a6").await?;
+        let rows = data(
+            mysql,
+            "SELECT JSON_OBJECT('hash',token_hash,'expected',SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256),'active',is_active,'version',token_version) AS data FROM share_links ORDER BY id",
+        )
+        .await?;
+        assert_eq!(rows.len(), 3);
+        for (index, row) in rows.into_iter().enumerate() {
+            assert_eq!(row["active"], json!(u8::from(index < 2)));
+            assert_eq!(row["version"], json!(1));
+            assert_eq!(row["hash"], row["expected"]);
+        }
+        // Old binaries omit both new columns. Multiple late writes must remain
+        // version-1 locators, without colliding on a default empty hash.
+        sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('Task',4,'late-a%2B%3D',0,'Reporter','9999-12-31',7,1,NOW(),NOW()),('Task',5,'late-b',0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
+        assert_eq!(
+            data(mysql, "SELECT JSON_OBJECT('version',token_version,'hash',token_hash) AS data FROM share_links WHERE resource_id IN (4,5) ORDER BY id").await?,
+            vec![json!({"version": 1, "hash": null}), json!({"version": 1, "hash": null})],
+        );
+        let hash = crate::share_access::token_hash("late-a+=");
+        let row: Option<crate::share_access::TaskShareLink> = mysql
+            .fetch_optional(
+                "SELECT resource_id,created_by_user_id,token_version FROM share_links WHERE (token_hash=? OR (token_hash IS NULL AND token_version=1 AND SHA2(REPLACE(REPLACE(share_token,'%2B','+'),'%3D','='),256)=?)) AND is_active=true",
+                (hash.clone(), hash),
+            )
+            .await?;
+        let row = row.expect("late legacy writer must remain discoverable");
+        assert_eq!(row.resource_id, 4);
+        assert_eq!(row.token_version, 1);
+        assert!(crate::share_access::legacy_viewer(row.token_version, None).is_err());
+        sql(mysql, &["INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,token_version,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) VALUES ('TaskShare',6,'opaque-new',SHA2('opaque-new',256),2,0,'Reporter','9999-12-31',7,1,NOW(),NOW())"]).await?;
+        assert_eq!(
+            data(mysql, "SELECT JSON_OBJECT('version',token_version) AS data FROM share_links WHERE share_token='opaque-new'").await?,
+            vec![json!({"version": 2})],
+        );
+        assert!(mysql.execute("INSERT INTO share_links(resource_type,resource_id,share_token,token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at) SELECT resource_type,resource_id,'different-token',token_hash,require_approval,default_role,expires_at,created_by_user_id,is_active,created_at,updated_at FROM share_links WHERE id=1",()).await.is_err());
+        // MySQL implicitly drops the named index when the indexed column is
+        // removed, so the JSON migration treats dropping it as optional.
+        mysql.with_transaction(async |tx| {
+            let graph = graph::Graph::load()
+                .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+                    reason: "migration graph failed to load".into(),
+                })?;
+            let revision = graph
+                .get("b1c2d3e4f5a6")
+                .map_err(|_| brz_mysql::MysqlError::InvalidQuery {
+                    reason: "secure share migration is missing".into(),
+                })?;
+            legacy::execute(tx, revision, true).await?;
+            Ok(())
+        })
+        .await?;
+        assert!(data(mysql, "SELECT JSON_OBJECT('name',COLUMN_NAME) AS data FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='share_links' AND COLUMN_NAME IN ('token_hash','token_version')").await?.is_empty());
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated schema"]
 async fn partial_ddl_failure_retains_revision_and_requires_cleanup() -> Result<()> {
     isolated(async |mysql| {
         sql(mysql,&[VERSION_TABLE,"INSERT INTO alembic_version VALUES ('d5e6f7a8b9c0')"]).await?;

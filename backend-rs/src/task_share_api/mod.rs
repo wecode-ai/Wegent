@@ -18,7 +18,7 @@
 //! the unauthenticated read-only projection of a shared task.
 
 mod auth;
-mod handler;
+pub(crate) mod handler;
 mod models;
 mod public;
 mod router;
