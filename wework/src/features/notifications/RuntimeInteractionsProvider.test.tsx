@@ -2,6 +2,7 @@
 import {
   context,
   harness,
+  localRuntimeIdentity,
   probe,
   unrelatedForm,
   view,
@@ -11,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import type { TaskSource } from './NotificationTaskSourceContext'
 import {
   ConversationTranslationProvider,
   RequestUserInputCard,
@@ -87,6 +89,83 @@ describe('unified human response', () => {
     expect(await screen.findByTestId('runtime-interaction-notice')).toHaveTextContent(
       interactionQuestion.questions![0].question!
     )
+  })
+
+  it('keeps remote work pending but delivers reminders only for the current device', async () => {
+    cacheNotificationPreferences('test:1', {
+      ...defaultNotificationPreferences,
+      tasks: { in_app: true, system: true, im: null },
+    })
+    harness.desktop = true
+    harness.focused = false
+    harness.host.mockImplementation(async method =>
+      method === 'notification.pendingReplies' ? [] : undefined
+    )
+    const remoteTask = {
+      ...interactionTask,
+      key: 'remote\0remote-review',
+      address: { ...interactionTask.address, deviceId: 'remote', taskId: 'remote-review' },
+      task: { ...interactionTask.task, taskId: 'remote-review', title: 'Remote order review' },
+      workspace: {
+        ...interactionTask.workspace,
+        deviceId: 'remote',
+        tasks: [{ ...interactionTask.task, taskId: 'remote-review', title: 'Remote order review' }],
+      },
+    }
+    const rendered = view(interactionQuestion, interactionTask, false, undefined, false)
+    await waitFor(() => expect(harness.list).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(context!.loading).toBe(false))
+    harness.list.mockImplementation(async ({ deviceId }) => {
+      const task = deviceId === remoteTask.address.deviceId ? remoteTask : interactionTask
+      return {
+        projects: [],
+        chats: [{ ...task.workspace, deviceId, tasks: [task.task] }],
+        totalTasks: 1,
+      }
+    })
+    harness.transcript.mockImplementation(async request => {
+      const remote = request.taskId === remoteTask.address.taskId
+      return interactionTranscript(
+        {
+          ...interactionQuestion,
+          itemId: remote ? 'remote-choice' : 'local-choice',
+          questions: [
+            {
+              ...interactionQuestion.questions![0],
+              question: remote ? 'Remote question only' : 'Local question only',
+            },
+          ],
+        },
+        remote ? 'turn-remote' : 'turn-local'
+      )
+    })
+    rendered.rerenderSource({
+      ...rendered.taskSource,
+      devices: [
+        {
+          device_id: localRuntimeIdentity.deviceId,
+          status: 'online',
+        } as NonNullable<TaskSource['devices']>[number],
+        {
+          device_id: remoteTask.address.deviceId,
+          status: 'online',
+        } as NonNullable<TaskSource['devices']>[number],
+      ],
+    })
+    await act(async () => {
+      await context!.refresh()
+    })
+    await waitFor(() => expect(context!.pending).toHaveLength(2))
+    expect(new Set(context!.pending.map(item => item.task.address.deviceId))).toEqual(
+      new Set([localRuntimeIdentity.deviceId, remoteTask.address.deviceId])
+    )
+    const notifications = () =>
+      harness.host.mock.calls.filter(([method]) => method === 'notification.show')
+    await waitFor(() => expect(notifications()).toHaveLength(1))
+    expect(notifications()[0][1]).toMatchObject({
+      title: interactionTask.task.title,
+      body: 'Local question only',
+    })
   })
 
   it('keeps the reminder until manually closed, including after opening its destination', async () => {
@@ -665,7 +744,15 @@ describe('unified human response', () => {
     const id = context!.pending[0].id
     first.unmount()
     harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
-    const restarted = view(interactionQuestion, interactionTask, false, undefined, false)
+    const restarted = view(
+      interactionQuestion,
+      interactionTask,
+      false,
+      undefined,
+      false,
+      false,
+      'local'
+    )
     await act(async () => {
       await context!.refresh()
     })
@@ -744,6 +831,13 @@ describe('unified human response', () => {
       devices: [
         { device_id: 'device', status: 'offline' } as NonNullable<TaskSource['devices']>[number],
       ],
+      services: {
+        ...rendered.taskSource.services!,
+        getLocalRuntimeSidebarIdentity: async () => ({
+          ...localRuntimeIdentity,
+          deviceId: 'local',
+        }),
+      },
     }
     harness.list.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
     rendered.rerenderSource(offline)
@@ -774,7 +868,7 @@ describe('unified human response', () => {
     expect(harness.list).toHaveBeenCalledWith({
       pendingOnly: true,
       preferCached: true,
-      deviceId: undefined,
+      deviceId: interactionTask.address.deviceId,
     })
     expect(context!.pending[0].task.address).toMatchObject({
       deviceId: interactionTask.address.deviceId,

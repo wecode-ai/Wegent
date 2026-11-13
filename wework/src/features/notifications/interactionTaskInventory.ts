@@ -4,13 +4,18 @@ import {
   collectRuntimeTaskReminderItems,
   type RuntimeTaskReminderItem,
 } from '@/features/workbench/runtimeTaskReminders'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 
-/** Sidebar visibility never defines which authorized executions can ask for a decision. */
+/**
+ * Sidebar visibility never defines which authorized executions can ask for a
+ * decision. The local aliases scope reminders without limiting discovery.
+ */
 export async function readInteractionTaskInventory(source: TaskSource): Promise<{
   items: RuntimeTaskReminderItem[]
   failedDevices: Set<string>
   failedRequests: Set<string>
   refreshedDevices: Set<string>
+  localDeviceIds: Set<string>
   localIssueQuestionsPending?: boolean
 }> {
   const api = source.services?.runtimeWorkApi
@@ -20,11 +25,25 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       failedDevices: new Set(),
       failedRequests: new Set(),
       refreshedDevices: new Set(),
+      localDeviceIds: new Set(),
     }
   const localIdentity = await source.services?.getLocalRuntimeSidebarIdentity?.().catch(error => {
     logInteractionLoadFailure('local-identity', error)
     return null
   })
+  const localDeviceIds = new Set<string>()
+  if (localIdentity) {
+    localDeviceIds.add(localIdentity.deviceId)
+    localDeviceIds.add(localIdentity.runtimeInstanceId)
+    for (const device of source.devices ?? []) {
+      if (
+        device.device_id !== localIdentity.deviceId &&
+        device.runtime_instance_id !== localIdentity.runtimeInstanceId
+      )
+        continue
+      for (const deviceId of getWorkbenchDeviceIds(device)) localDeviceIds.add(deviceId)
+    }
+  }
   const devices: Array<string | undefined> = [
     ...new Set([
       ...(localIdentity ? [localIdentity.deviceId] : []),
@@ -71,5 +90,12 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       }
     })
   )
-  return { items, failedDevices, failedRequests, refreshedDevices, localIssueQuestionsPending }
+  return {
+    items,
+    failedDevices,
+    failedRequests,
+    refreshedDevices,
+    localDeviceIds,
+    localIssueQuestionsPending,
+  }
 }

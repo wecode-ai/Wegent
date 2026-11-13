@@ -76,6 +76,11 @@ const captureContext = (value: ReturnType<typeof useRuntimeInteractions>) => {
 }
 export const probe = <InteractionProbe onChange={captureContext} />
 export const unrelatedForm = <UnrelatedForm />
+export const localRuntimeIdentity = {
+  deviceId: interactionTask.address.deviceId,
+  runtimeInstanceId: 'runtime-device',
+  provenance: 'local-ipc' as const,
+}
 
 export function view(
   payload = interactionQuestion,
@@ -83,11 +88,16 @@ export function view(
   active = false,
   initialError?: Error,
   listed = true,
-  running = false
+  running = false,
+  localDeviceId = localRuntimeIdentity.deviceId
 ) {
   if (initialError) harness.transcript.mockRejectedValue(initialError)
   else harness.transcript.mockResolvedValue({ ...interactionTranscript(payload), running })
   const services = {
+    getLocalRuntimeSidebarIdentity: vi.fn(async () => ({
+      ...localRuntimeIdentity,
+      deviceId: localDeviceId,
+    })),
     runtimeWorkApi: {
       getRuntimeTranscript: harness.transcript,
       sendRuntimeMessage: harness.send,
