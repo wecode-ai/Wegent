@@ -4,7 +4,7 @@ import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn
 import { roleIncludesProject } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ExperienceProjectData } from '../model'
+import { projectScopeOf, type ExperienceProjectData } from '../model'
 
 export interface AssistantTeamProps {
   settings: PersonalStandInSettings
@@ -17,6 +17,9 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
   const { t } = useTranslation('collaborationExp')
   const [deleting, setDeleting] = useState<StandInRole | null>(null)
   const [pending, setPending] = useState(false)
+  const scopedProjects = [
+    ...new Map(projects.map(row => [projectScopeOf(row.project).key, row])).values(),
+  ]
   const rows = [
     { id: '@primary', name: t('assistant.defaultAssistant'), role: null },
     ...settings.roles.map(role => ({
@@ -49,7 +52,7 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
             <span className="block truncate font-medium">{name}</span>
             <p className="mt-1 text-xs text-text-muted">
               {role
-                ? projects
+                ? scopedProjects
                     .filter(({ project }) =>
                       roleIncludesProject(role, {
                         id: project.id,

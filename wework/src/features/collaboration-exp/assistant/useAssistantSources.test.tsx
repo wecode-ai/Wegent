@@ -3,15 +3,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { experienceStandInFixture } from '../model/fixtures'
 import { useAssistantSources } from './useAssistantSources'
 
-const mocks = vi.hoisted(() => ({ workbench: {} as Record<string, unknown> }))
+const mocks = vi.hoisted(() => ({
+  workbench: {} as Record<string, unknown>,
+  inbox: {
+    items: [],
+    sourceErrors: [],
+    error: null,
+    scope: undefined as string | undefined,
+    refresh: vi.fn(),
+  },
+}))
 const translate = (key: string) => key
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: translate }) }))
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => mocks.workbench }))
 vi.mock('@/features/todo/useStandInInbox', () => ({
-  useStandInInbox: () => ({ items: [], sourceErrors: [], error: null, refresh: vi.fn() }),
+  useStandInInbox: () => mocks.inbox,
 }))
 
 function setup() {
+  mocks.inbox.scope = undefined
   const api = {
     binding: vi.fn().mockResolvedValue({
       status: 'active',
@@ -41,6 +51,26 @@ afterEach(() => {
 })
 
 describe('useAssistantSources', () => {
+  it('keeps inbox and proposal readiness separate from an already loaded configuration', async () => {
+    const { api } = setup()
+    let accept!: (value: null) => void
+    api.proposal.mockReturnValue(
+      new Promise(resolve => {
+        accept = resolve
+      })
+    )
+    const view = renderHook(() => useAssistantSources(true))
+    await waitFor(() => expect(view.result.current.settings).toBeDefined())
+    expect(view.result.current.proposalsReady).toBe(false)
+    expect(view.result.current.inboxReady).toBe(false)
+    mocks.inbox.scope = '7:bound-device'
+    view.rerender()
+    expect(view.result.current.inboxReady).toBe(true)
+    expect(view.result.current.proposalsReady).toBe(false)
+    await act(async () => accept(null))
+    await waitFor(() => expect(view.result.current.proposalsReady).toBe(true))
+  })
+
   it('does not read or start the assistant while its view is inactive', () => {
     const { api, identity } = setup()
     renderHook(() => useAssistantSources(false))

@@ -20,7 +20,7 @@ import type {
   ExperienceProjectScope,
   ExperienceTaskRow,
 } from './model/types'
-import { AssistantConversationPane, AssistantHome } from './assistant'
+import { AssistantConversationPane, AssistantHome, AssistantTeamRelay } from './assistant'
 import { ExperienceNavigation, ExperiencePanes, type ExperiencePane } from './shell'
 import { TaskListView } from './tasks/TaskListView'
 import type { TaskFilterValue } from './tasks/TaskFilters'
@@ -265,6 +265,11 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
         view === 'tasks' ? (
           <TaskListView
             rows={rows}
+            team={
+              state.user ? (
+                <AssistantTeamRelay active={active} projects={assistantProjects} />
+              ) : null
+            }
             projects={projects}
             statuses={statuses}
             filters={filters}

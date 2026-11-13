@@ -11,6 +11,7 @@ import type {
 } from '@wegent/collaboration'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInInboxWork, StandInProposal } from '@/api/standIn'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 
 export type ExperienceSourceState = 'ready' | 'unknown' | 'hidden'
 
@@ -75,6 +76,7 @@ export interface ExperienceTaskRow {
   waitingSince: string | null
   waitingFor: { id: number; name: string }[]
   executionState: string | null
+  completedAt?: string | null
   updatedAt: string
   conversations: ExperienceConversationSelection
 }
@@ -153,4 +155,46 @@ export interface ExperienceAssistantSummary {
     title: string
     status: StandInInboxWork['status']
   }[]
+}
+
+export type ExperienceWorkState = 'waiting' | 'running' | 'completed' | 'idle'
+
+export interface ExperienceWorkCounts {
+  waiting: number
+  running: number
+  completed: number
+}
+
+export interface ExperienceWorkSnapshotItem {
+  key: string
+  title: string
+  state: ExperienceWorkState
+  roleIds: (string | null)[]
+  updatedAt: string
+  taskRow?: ExperienceTaskRow
+  address?: RuntimeTaskAddress
+}
+
+export interface ExperienceTeamRelayNode {
+  id: string | null
+  name: string | null
+  enabled: boolean
+  isDefault: boolean
+  state: 'waiting' | 'running' | 'idle'
+  counts: ExperienceWorkCounts
+}
+
+export interface ExperienceWorkSnapshotInput {
+  roles: ExperienceAssistantSummary['roles']
+  work: readonly RuntimeTaskReminderItem[]
+  pendingDecisions?: readonly ExperienceAssistantSummary['pendingDecisions'][number][]
+  /** Already authorized and filtered visible Issue rows; omitted on the assistant home. */
+  rows?: readonly ExperienceTaskRow[]
+}
+
+export interface ExperienceWorkSnapshot {
+  counts: ExperienceWorkCounts
+  current: ExperienceWorkSnapshotItem | null
+  items: ExperienceWorkSnapshotItem[]
+  team: ExperienceTeamRelayNode[]
 }

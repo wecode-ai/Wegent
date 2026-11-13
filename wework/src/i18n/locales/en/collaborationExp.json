@@ -12,6 +12,13 @@
     "projects": "Projects"
   },
   "tasks": {
+    "rhythm": {
+      "title": "Work rhythm",
+      "waiting": "Your turn",
+      "running": "In progress",
+      "completed": "Finished",
+      "current": "Current work"
+    },
     "title": "Tasks",
     "configurationUnavailable": "Your project role cannot change configuration.",
     "relevance": "Task relevance",
@@ -88,6 +95,15 @@
     }
   },
   "assistant": {
+    "runtimeWorkUnavailable": "The work list could not be loaded. Retry to confirm the team's current status.",
+    "snapshot": {
+      "title": "Current work",
+      "waiting": "Awaiting a decision",
+      "running": "In progress",
+      "completed": "Completed",
+      "current": "In progress now"
+    },
+    "openTask": "Open task",
     "introduction": "Tell your assistant what you want to achieve, or continue a recent discussion.",
     "placeholder": "Ask a question or describe your goal",
     "needsDecision": "Needs your decision",
@@ -116,11 +132,27 @@
     "conversationEmpty": "Continue your private discussion with the assistant.",
     "draftPersistenceFailed": "The draft is still editable, but it could not be saved on this device.",
     "status": {
+      "idle": "No active work",
+      "unknown": "Status not confirmed",
       "running": "Running",
       "waiting": "Waiting for your input",
       "completed": "Completed",
       "failed": "Failed",
       "cancelled": "Cancelled"
+    }
+  },
+  "teamRelay": {
+    "title": "Team relay",
+    "memberLabel": "{{name}} · {{state}} · Configure assistant",
+    "allMembers": "View all {{count}} assistants",
+    "paused": "Paused",
+    "unavailable": "Assistant team is not available yet.",
+    "managementUnavailable": "Assistant configuration is unavailable. Retry loading it before managing the team.",
+    "state": {
+      "waiting": "Awaiting confirmation",
+      "running": "In progress",
+      "idle": "Standing by",
+      "unknown": "Status not confirmed"
     }
   }
 }

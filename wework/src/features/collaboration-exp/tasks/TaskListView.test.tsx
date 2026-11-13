@@ -107,6 +107,41 @@ it('shows retry without presenting a failed load as an empty successful result',
   )
   expect(view.getByRole('alert').textContent).toContain('Source offline')
   expect(view.queryByTestId('collaboration-exp-tasks-empty')).toBeNull()
+  expect(view.queryByTestId('collaboration-exp-task-rhythm')).toBeNull()
   fireEvent.click(view.getByTestId('collaboration-exp-tasks-retry'))
   expect(onRetry).toHaveBeenCalledTimes(1)
+})
+
+it('keeps a completed task static when its last execution projection still says running', () => {
+  const rows = selectTaskRows({
+    ...input,
+    projects: [
+      {
+        project,
+        issues: [
+          experienceIssueFixture({
+            status: 'reviewed',
+            completed_at: '2026-11-03T00:00:00Z',
+            execution_state: 'running',
+          }),
+        ],
+      },
+    ],
+  })
+  const view = render(
+    <TaskListView
+      rows={rows}
+      projects={projects}
+      statuses={[]}
+      filters={filters}
+      loading={false}
+      onFiltersChange={vi.fn()}
+      onSelect={vi.fn()}
+      onOpenProject={vi.fn()}
+      onRetry={vi.fn()}
+    />
+  )
+  expect(view.getByTestId('collaboration-exp-task-rhythm-completed').textContent).toBe('1')
+  expect(view.queryByTestId('collaboration-exp-task-rhythm-current')).toBeNull()
+  expect(view.getByTestId('collaboration-exp-task-EXP-1').querySelector('.animate-spin')).toBeNull()
 })

@@ -2,9 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
 import { newStandInRole } from '@/api/personalStandIn'
+import type { RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeWorkLoadState } from '@/types/workbench'
+import { collectRuntimeTaskReminderItems } from '@/features/workbench/runtimeTaskReminders'
 import { AssistantHome } from './AssistantHome'
 import { AssistantComposer } from './AssistantComposer'
 import { AssistantTeam } from './AssistantTeam'
+import { AssistantTeamRelay } from './AssistantTeamRelay'
 import {
   experienceHumanRequestFixture,
   experienceIssueFixture,
@@ -20,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   source: {} as ReturnType<typeof useAssistantSources>,
   attachments: {} as Record<string, unknown>,
   controls: {} as Record<string, unknown>,
+  navigate: vi.fn(),
 }))
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -27,6 +32,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => mocks.workbench }))
 vi.mock('./useAssistantSources', () => ({ useAssistantSources: () => mocks.source }))
+vi.mock('@/lib/navigation', () => ({ navigateTo: (...args: unknown[]) => mocks.navigate(...args) }))
 vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
   useWorkbenchAttachments: () => mocks.attachments,
 }))
@@ -93,13 +99,20 @@ function setupWorkbench() {
     skills: [],
     trialTemplates: [],
   }
+  const state = {
+    user: { id: 7 },
+    runtimeWork: { projects: [], chats: [], totalTasks: 0 } as RuntimeWorkListResponse | null,
+    runtimeWorkLoad: { phase: 'ready', error: null } as RuntimeWorkLoadState,
+  }
+  const reminders = { items: collectRuntimeTaskReminderItems(state.runtimeWork) }
+  const refreshWorkLists = vi.fn().mockResolvedValue(undefined)
   mocks.workbench = {
-    state: { user: { id: 7 }, runtimeWork: null },
+    state,
     services: { standInApi: api, sharedWorkspaceApi: { issues: { create: createIssue } } },
     projectChat,
-    runtimeTaskReminders: { items: [] },
+    runtimeTaskReminders: reminders,
     openRuntimeTask: vi.fn(),
-    refreshWorkLists: vi.fn().mockResolvedValue(undefined),
+    refreshWorkLists,
   }
   mocks.attachments = {
     attachments: [],
@@ -123,12 +136,55 @@ function setupWorkbench() {
     localDeviceId: 'device-1',
     scope: '[7,""]',
     proposals: [],
+    proposalsReady: true,
+    inboxReady: true,
     loading: false,
     error: null,
     inbox: { items: [], sourceErrors: [], error: null, refresh: vi.fn() },
     refresh: vi.fn(),
   }
-  return { api, createIssue, projectChat }
+  return { api, createIssue, projectChat, state, reminders, refreshWorkLists }
+}
+
+function runningCatalog(publicExecution = false): RuntimeWorkListResponse {
+  return {
+    projects: [],
+    totalTasks: 1,
+    chats: [
+      {
+        deviceId: 'device-1',
+        workspacePath: '',
+        available: true,
+        tasks: [
+          {
+            taskId: 'native-running',
+            title: 'Native running work',
+            runtime: 'codex',
+            workspacePath: '',
+            status: 'running',
+            running: true,
+            runtimeHandle: {
+              origin: {
+                initiatedBy: 'stand_in',
+                standInId: 'default',
+                userId: 7,
+                deviceId: 'device-1',
+                ...(publicExecution
+                  ? {
+                      type: 'issue_dispatch',
+                      publicConversation: true,
+                      cloudProjectId: 'real-project',
+                      loopItemId: 'real-issue',
+                      projectStore: 'local',
+                    }
+                  : {}),
+              },
+            },
+          },
+        ],
+      },
+    ],
+  }
 }
 
 beforeEach(() => {
@@ -141,6 +197,209 @@ afterEach(() => {
 })
 
 describe('AssistantHome', () => {
+  it.each(['loading', 'error'] as const)(
+    'does not infer an idle team from an initially %s native catalog and retries all sources',
+    async phase => {
+      const { state, reminders, refreshWorkLists, api, createIssue } = setupWorkbench()
+      state.runtimeWork = null
+      state.runtimeWorkLoad = {
+        phase,
+        error: phase === 'error' ? 'Native catalog unavailable' : null,
+      }
+      reminders.items = collectRuntimeTaskReminderItems(state.runtimeWork)
+      const openConversation = vi.fn()
+      const content = (
+        <>
+          <AssistantHome
+            active
+            conversations={[conversation]}
+            onOpenConversation={openConversation}
+          />
+          <AssistantTeamRelay active projects={[]} />
+        </>
+      )
+      const view = render(content)
+      for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-default'))
+        expect(node).toHaveAttribute('data-state', 'unknown')
+      expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('—')
+      fireEvent.click(screen.getByText('Original private discussion'))
+      expect(openConversation).toHaveBeenCalledWith(conversation)
+      if (phase === 'error') {
+        fireEvent.click(screen.getByTestId('collaboration-exp-assistant-retry'))
+        fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-retry'))
+        expect(refreshWorkLists).toHaveBeenCalledTimes(2)
+        expect(mocks.source.refresh).toHaveBeenCalledTimes(2)
+        expect(mocks.source.inbox.refresh).toHaveBeenCalledTimes(2)
+      }
+      state.runtimeWork = runningCatalog()
+      state.runtimeWorkLoad = { phase: 'ready', error: null }
+      reminders.items = collectRuntimeTaskReminderItems(state.runtimeWork)
+      view.rerender(
+        <>
+          <AssistantHome
+            active
+            conversations={[conversation]}
+            onOpenConversation={openConversation}
+          />
+          <AssistantTeamRelay active projects={[]} />
+        </>
+      )
+      for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-default'))
+        expect(node).toHaveAttribute('data-state', 'running')
+      expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('1')
+      expect(api.conversation).not.toHaveBeenCalled()
+      expect(createIssue).not.toHaveBeenCalled()
+    }
+  )
+
+  it('opens public Issue work through its original runtime address without a loaded Issue or discussion map', () => {
+    const { state, reminders, api, createIssue } = setupWorkbench()
+    state.runtimeWork = runningCatalog(true)
+    reminders.items = collectRuntimeTaskReminderItems(state.runtimeWork)
+    const openConversation = vi.fn()
+    render(
+      <AssistantHome
+        active
+        projects={[]}
+        conversations={[]}
+        onOpenConversation={openConversation}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-current'))
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-work-native-running'))
+    expect(mocks.workbench.openRuntimeTask).toHaveBeenNthCalledWith(1, reminders.items[0].address)
+    expect(mocks.workbench.openRuntimeTask).toHaveBeenNthCalledWith(2, reminders.items[0].address)
+    expect(openConversation).not.toHaveBeenCalled()
+    expect(api.conversation).not.toHaveBeenCalled()
+    expect(createIssue).not.toHaveBeenCalled()
+  })
+
+  it('shares real team states and work counts with the tasks relay without creating work', () => {
+    const { api, createIssue } = setupWorkbench()
+    mocks.source.settings = {
+      ...settings,
+      roles: [
+        { ...newStandInRole('device-1', 'reviewer'), name: 'Reviewer', enabled: true },
+        { ...newStandInRole('device-1', 'archivist'), name: 'Archivist', enabled: true },
+      ],
+    }
+    mocks.source.inbox.items = [
+      {
+        id: 'waiting',
+        taskId: 'waiting-task',
+        roleId: 'default',
+        title: 'Choose release scope',
+        status: 'pending',
+        messageCount: 1,
+        updatedAt: '2026-11-03T00:00:00Z',
+        latestMessage: null,
+        source: { id: 'source', name: 'Release group' } as never,
+      },
+      {
+        id: 'running',
+        taskId: 'running-task',
+        roleId: 'reviewer',
+        title: 'Review release changes',
+        status: 'sending',
+        messageCount: 1,
+        updatedAt: '2026-11-03T00:00:00Z',
+        latestMessage: null,
+        source: { id: 'source', name: 'Release group' } as never,
+      },
+      {
+        id: 'completed',
+        taskId: 'completed-task',
+        roleId: 'archivist',
+        title: 'Archive previous release',
+        status: 'sent',
+        messageCount: 1,
+        updatedAt: '2026-11-03T00:00:00Z',
+        latestMessage: null,
+        source: { id: 'source', name: 'Release group' } as never,
+      },
+    ]
+    const openConversation = vi.fn()
+    render(
+      <>
+        <AssistantHome active onOpenConversation={openConversation} />
+        <AssistantTeamRelay active projects={[]} />
+      </>
+    )
+    for (const relay of screen.getAllByTestId('collaboration-exp-team-relay')) {
+      expect(
+        within(relay).getByTestId('collaboration-exp-team-relay-node-default')
+      ).toHaveAttribute('data-state', 'waiting')
+      expect(
+        within(relay).getByTestId('collaboration-exp-team-relay-node-reviewer')
+      ).toHaveAttribute('data-state', 'running')
+      expect(
+        within(relay).getByTestId('collaboration-exp-team-relay-node-archivist')
+      ).toHaveAttribute('data-state', 'idle')
+      expect(
+        within(relay).getByTestId('collaboration-exp-team-relay-node-archivist')
+      ).toHaveAttribute('data-completed-count', '1')
+    }
+    expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent('1')
+    expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('1')
+    expect(screen.getByTestId('collaboration-exp-assistant-count-completed')).toHaveTextContent('1')
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-current'))
+    expect(openConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ address: { deviceId: 'device-1', taskId: 'running-task' } })
+    )
+    fireEvent.click(
+      within(screen.getByTestId('collaboration-exp-connected-team-relay')).getByTestId(
+        'collaboration-exp-team-relay-node-reviewer'
+      )
+    )
+    expect(mocks.navigate).toHaveBeenCalledWith(expect.stringContaining('profileId=reviewer'))
+    expect(api.conversation).not.toHaveBeenCalled()
+    expect(api.personalSave).not.toHaveBeenCalled()
+    expect(createIssue).not.toHaveBeenCalled()
+  })
+
+  it('does not turn unavailable assistant data into empty work counts', () => {
+    mocks.source.settings = undefined
+    mocks.source.error = 'Assistant unavailable'
+    render(<AssistantHome active />)
+    expect(screen.getByTestId('collaboration-exp-team-relay-unavailable')).toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-exp-assistant-snapshot')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('collaboration-exp-team-relay-node-default')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-exp-assistant-team-toggle')).toBeDisabled()
+    expect(screen.getByTestId('collaboration-exp-assistant-retry')).toBeEnabled()
+  })
+
+  it('keeps team statuses unknown and counters unset until both work sources finish', () => {
+    mocks.source.inboxReady = false
+    mocks.source.proposalsReady = false
+    const view = render(<AssistantHome active />)
+    const node = screen.getByTestId('collaboration-exp-team-relay-node-default')
+    expect(node).toHaveAttribute('data-state', 'unknown')
+    expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent('—')
+    mocks.source.inboxReady = true
+    view.rerender(<AssistantHome active />)
+    expect(node).toHaveAttribute('data-state', 'unknown')
+    expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('—')
+    mocks.source.proposalsReady = true
+    view.rerender(<AssistantHome active />)
+    expect(screen.getByTestId('collaboration-exp-team-relay-node-default')).toBe(node)
+    expect(node).toHaveAttribute('data-state', 'idle')
+    expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('0')
+  })
+
+  it('keeps unavailable tasks team configuration disabled instead of navigating with an empty device', () => {
+    mocks.source.settings = undefined
+    mocks.source.deviceId = undefined
+    mocks.source.error = 'Assistant unavailable'
+    render(<AssistantTeamRelay active projects={[]} />)
+    expect(screen.getByTestId('collaboration-exp-team-relay-manage')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-manage'))
+    expect(mocks.navigate).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-retry'))
+    expect(mocks.source.refresh).toHaveBeenCalled()
+  })
+
   it('keeps a proven Issue discussion available when assistant settings fail to load', () => {
     const openConversation = vi.fn()
     const proven = {
@@ -217,6 +476,13 @@ describe('AssistantHome', () => {
       />
     )
     expect(screen.getByText('Connect the release calendar')).toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-exp-assistant-proposal-proposal-one')).toHaveAttribute(
+      'data-state',
+      'waiting'
+    )
+    expect(
+      screen.getByTestId('collaboration-exp-assistant-proposal-proposal-one')
+    ).toHaveTextContent('assistant.reviewProposal')
     fireEvent.click(screen.getByText('Choose the release scope'))
     expect(openIssue).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'project-1', store: 'backend' }),

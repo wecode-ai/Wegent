@@ -14,6 +14,7 @@ interface AssistantSourceData {
   localDeviceId: string
   settings: PersonalStandInSettings
   proposals: StandInProposal[]
+  proposalsReady: boolean
 }
 
 export function useAssistantSources(active: boolean, includeProposals = true) {
@@ -51,13 +52,22 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
       if (settings.userId !== ownerId)
         throw Object.assign(new Error(), { code: 'permission_denied' })
       if (!current) return
-      setData({
-        scope,
-        ownerId,
-        deviceId,
-        localDeviceId: identity.deviceId,
-        settings,
-        proposals: [],
+      setData(previous => {
+        const sameSources =
+          previous?.scope === scope &&
+          previous.ownerId === ownerId &&
+          previous.deviceId === deviceId &&
+          JSON.stringify(previous.settings.roles.map(role => [role.id, role.executionDeviceId])) ===
+            JSON.stringify(settings.roles.map(role => [role.id, role.executionDeviceId]))
+        return {
+          scope,
+          ownerId,
+          deviceId,
+          localDeviceId: identity.deviceId,
+          settings,
+          proposals: sameSources ? previous.proposals : [],
+          proposalsReady: sameSources ? previous.proposalsReady : false,
+        }
       })
       setFailure(undefined)
     })().catch(cause => {
@@ -93,21 +103,32 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
       if (!current) return
       const rejected = results.find(result => result.status === 'rejected')
       setData(previous =>
-        previous?.scope === scope && previous.deviceId === deviceId
+        previous?.scope === scope &&
+        previous.ownerId === ownerId &&
+        previous.deviceId === deviceId &&
+        JSON.stringify(previous.settings.roles.map(role => [role.id, role.executionDeviceId])) ===
+          roleLocations
           ? {
               ...previous,
-              proposals: results.flatMap(result =>
-                result.status === 'fulfilled' &&
-                result.value?.status === 'pending' &&
-                result.value.settings.userId === ownerId
+              proposals: results.flatMap((result, index) => {
+                if (result.status === 'rejected') {
+                  const [roleId] = locations[index]
+                  return previous.proposals.filter(
+                    proposal => (proposal.roleId ?? undefined) === roleId
+                  )
+                }
+                return result.value?.status === 'pending' &&
+                  result.value.settings.userId === ownerId
                   ? [result.value]
                   : []
-              ),
+              }),
+              proposalsReady: previous.proposalsReady || !rejected,
             }
           : previous
       )
       if (rejected?.status === 'rejected')
         setFailure({ scope, message: getStandInErrorMessage(rejected.reason) })
+      else setFailure(previous => (previous?.scope === scope ? undefined : previous))
       timer = setTimeout(poll, 3000)
     }
     void poll()
@@ -133,6 +154,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
   const inbox = useStandInInbox(api, ownerId, deviceId, active)
   return {
     ...source,
+    scope,
     userId,
     loading: active && Boolean(api) && !source && failure?.scope !== scope,
     error: !api
@@ -141,6 +163,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
         ? failure.message
         : inbox.error,
     inbox,
+    inboxReady: Boolean(deviceId && inbox.scope === `${ownerId}:${deviceId}`),
     refresh,
   }
 }

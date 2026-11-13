@@ -163,3 +163,251 @@
   min-height: 44px;
   height: 44px;
 }
+
+.experience-team-relay {
+  min-width: 0;
+  padding: 8px 16px 12px;
+}
+
+.experience-team-relay-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.experience-team-relay-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 144px), 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.experience-team-relay-member {
+  min-width: 0;
+}
+
+.experience-team-relay-node {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgb(var(--color-text-primary) / 0.025);
+  text-align: left;
+}
+
+.experience-team-relay-node:hover {
+  background: rgb(var(--color-text-primary) / 0.05);
+}
+
+.experience-team-relay-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--color-text-muted));
+}
+
+.experience-team-relay-node[data-state='waiting'] .experience-team-relay-status,
+.experience-assistant-decision[data-state='waiting'] .experience-assistant-decision-icon {
+  color: rgb(var(--color-text-secondary));
+}
+
+.experience-team-relay-trail {
+  position: absolute;
+  inset: auto 8px 0;
+  height: 1px;
+  overflow: hidden;
+}
+
+.experience-team-relay-node[data-state='running'] .experience-team-relay-trail::after {
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: rgb(var(--color-text-muted));
+  content: '';
+}
+
+.experience-team-relay-more {
+  display: none;
+}
+
+.experience-assistant-home {
+  container-type: inline-size;
+}
+
+.experience-assistant-snapshot {
+  min-width: 0;
+  margin: 4px 16px 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgb(var(--color-text-primary) / 0.025);
+}
+
+.experience-work-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.experience-assistant-current {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.experience-assistant-current:hover {
+  background: rgb(var(--color-text-primary) / 0.025);
+}
+
+.experience-assistant-decision {
+  position: relative;
+  display: flex;
+  width: calc(100% - 32px);
+  min-width: 0;
+  min-height: 64px;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 4px 16px 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgb(var(--color-text-primary) / 0.025);
+  text-align: left;
+}
+
+.experience-assistant-decision[data-state='waiting']::before {
+  position: absolute;
+  inset: 12px auto 12px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: rgb(var(--color-text-secondary));
+  content: '';
+}
+
+.experience-assistant-decision:hover:enabled {
+  background: rgb(var(--color-text-primary) / 0.05);
+}
+
+.experience-assistant-decision:disabled {
+  cursor: default;
+}
+
+.experience-team-relay-node:focus-visible,
+.experience-assistant-current:focus-visible,
+.experience-assistant-decision:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: 2px;
+}
+
+@container (max-width: 560px) {
+  .experience-assistant-snapshot {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .experience-assistant-introduction,
+  .experience-assistant-snapshot {
+    display: none;
+  }
+
+  .experience-team-relay {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  .experience-team-relay-members {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .experience-team-relay-member:nth-child(n + 3) {
+    display: none;
+  }
+
+  .experience-team-relay-more {
+    display: block;
+    grid-column: 1 / -1;
+  }
+
+  .experience-assistant-decision-title {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .experience-team-relay-node {
+    animation: experience-state-entry 150ms ease-out;
+  }
+
+  .experience-team-relay-node[data-state='running'] .experience-team-relay-status svg {
+    animation: experience-work-spin 1.5s linear infinite;
+  }
+
+  .experience-team-relay-node[data-state='waiting'] .experience-team-relay-status {
+    animation: experience-work-pulse 2s ease-in-out infinite;
+  }
+
+  .experience-team-relay-node[data-state='running'] .experience-team-relay-trail::after {
+    animation: experience-work-trail 2s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .experience-team-relay *,
+  .experience-team-relay *::before,
+  .experience-team-relay *::after,
+  .experience-assistant-home *,
+  .experience-assistant-home *::before,
+  .experience-assistant-home *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes experience-state-entry {
+  from {
+    opacity: 0.7;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes experience-work-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes experience-work-pulse {
+  50% {
+    opacity: 0.65;
+  }
+}
+
+@keyframes experience-work-trail {
+  from {
+    transform: translateX(-24px);
+  }
+  to {
+    transform: translateX(144px);
+  }
+}

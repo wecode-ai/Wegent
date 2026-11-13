@@ -9,6 +9,7 @@ import type { ExperiencePanesProps } from './shell/types'
 import type { PrivateDiscussionPaneProps } from './private/PrivateDiscussionPane'
 import type { AssistantHomeProps } from './assistant/types'
 import type { AssistantConversationPaneProps } from './assistant/AssistantConversationPane'
+import type { AssistantTeamRelayProps } from './assistant/AssistantTeamRelay'
 import {
   experienceBindingFixture,
   experienceIssueFixture,
@@ -23,6 +24,7 @@ let cloudBaseUrl = ''
 const privateProps = vi.hoisted(() => vi.fn())
 const assistantProps = vi.hoisted(() => vi.fn())
 const assistantConversationProps = vi.hoisted(() => vi.fn())
+const teamRelayProps = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => workbench }))
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
@@ -32,6 +34,10 @@ vi.mock('@/features/todo/useCollaborationMarkdownServices', () => ({
   useCollaborationMarkdownServices: () => ({}),
 }))
 vi.mock('./assistant', () => ({
+  AssistantTeamRelay: (props: AssistantTeamRelayProps) => {
+    teamRelayProps(props)
+    return <div data-testid="team-relay-leaf" />
+  },
   AssistantHome: (props: AssistantHomeProps) => {
     assistantProps(props)
     return (
@@ -202,6 +208,7 @@ describe('CollaborationExpApp integration', () => {
     privateProps.mockClear()
     assistantProps.mockClear()
     assistantConversationProps.mockClear()
+    teamRelayProps.mockClear()
     currentIssue = issue
     bindings = [experienceBindingFixture()]
     messages = []
@@ -522,5 +529,30 @@ describe('CollaborationExpApp integration', () => {
     fireEvent.click(screen.getByTestId('back-assistant-conversation'))
     expect(screen.queryByTestId('assistant-conversation-leaf')).not.toBeInTheDocument()
     expect(new URLSearchParams(window.location.search).has('assistantTaskId')).toBe(false)
+  })
+
+  test('opens the current work through the same task selection and retains the task team source', async () => {
+    currentIssue = { ...issue, status: 'in_progress', execution_state: 'running' }
+    const scope = JSON.stringify([project.project_store, project.id])
+    open({ projectScope: scope, search: 'Release', future: 'keep' })
+    const current = await screen.findByTestId('collaboration-exp-task-rhythm-current')
+    expect(current).toHaveTextContent(issue.title)
+    expect(screen.getByTestId('team-relay-leaf')).toBeInTheDocument()
+    expect(teamRelayProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        active: true,
+        projects: expect.arrayContaining([expect.objectContaining({ project })]),
+      })
+    )
+    fireEvent.click(current)
+    await screen.findByTestId('pane-timeline')
+    const selected = new URLSearchParams(window.location.search)
+    expect(selected.get('issueId')).toBe(issue.id)
+    expect(selected.get('projectStore')).toBe(project.project_store)
+    expect(selected.get('projectId')).toBe(project.id)
+    expect(selected.get('projectScope')).toBe(scope)
+    expect(selected.get('search')).toBe('Release')
+    expect(selected.get('future')).toBe('keep')
+    expect(assistantProps).not.toHaveBeenCalled()
   })
 })

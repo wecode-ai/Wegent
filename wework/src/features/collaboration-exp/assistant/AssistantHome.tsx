@@ -1,11 +1,9 @@
 import { useState } from 'react'
-import { ArrowUpRight, LoaderCircle, UsersRound } from 'lucide-react'
+import { ArrowUpRight, CircleHelp, LoaderCircle } from 'lucide-react'
 import { issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import type { StandInRole } from '@/api/personalStandIn'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { standInState } from '@/features/notifications/standInNotifications'
-import { mergeStandInWorkItems, standInWorkRole } from '@/features/todo/standInWork'
 import { StandInProposalCard } from '@/features/todo/StandInProposalCard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -18,7 +16,9 @@ import {
 import { AssistantComposer } from './AssistantComposer'
 import { AssistantTeam } from './AssistantTeam'
 import { RecentDiscussions } from './RecentDiscussions'
-import { useAssistantSources } from './useAssistantSources'
+import { useExperienceTeamState } from './useExperienceTeamState'
+import { TeamRelay } from './TeamRelay'
+import { AssistantWorkSnapshot } from './AssistantWorkSnapshot'
 import { selectAssistantConversations } from './assistantConversationIdentity'
 import type { AssistantHomeProps } from './types'
 
@@ -30,22 +30,20 @@ export function AssistantHome({
   onOpenConversation,
 }: AssistantHomeProps) {
   const { t } = useTranslation('collaborationExp')
-  const { services, state, runtimeTaskReminders, openRuntimeTask } = useWorkbench()
-  const source = useAssistantSources(active)
+  const { services, state, openRuntimeTask } = useWorkbench()
+  const {
+    source,
+    ownerId,
+    work,
+    snapshot,
+    ready,
+    error: sourceError,
+    refresh,
+  } = useExperienceTeamState(active, projects)
   const [teamOpen, setTeamOpen] = useState(false)
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const ownerId = source.ownerId ?? source.userId
-  const work = mergeStandInWorkItems(
-    runtimeTaskReminders.items.filter(item => {
-      const origin = item.task.runtimeHandle?.origin as Record<string, unknown> | undefined
-      return standInWorkRole(item) !== null && origin?.userId === ownerId
-    }),
-    source.inbox.items,
-    source.deviceId,
-    projects.map(row => row.project)
-  ).sort((a, b) => standInState(b).updatedAt.localeCompare(standInState(a).updatedAt))
   const discussions = new Map(
     conversations.map(conversation => [
       JSON.stringify([conversation.address.deviceId, conversation.address.taskId]),
@@ -93,6 +91,23 @@ export function AssistantHome({
         linkedAt: null,
       }
     )
+  }
+  const openWork = (address: RuntimeTaskAddress, title: string) => {
+    const item = work.find(
+      item => item.address.deviceId === address.deviceId && item.address.taskId === address.taskId
+    )
+    const origin = item?.task.runtimeHandle?.origin as Record<string, unknown> | undefined
+    if (
+      item &&
+      (origin?.type === 'issue_dispatch' ||
+        origin?.publicConversation === true ||
+        origin?.cloudProjectId ||
+        origin?.loopItemId)
+    ) {
+      void openRuntimeTask(item.address)
+      return
+    }
+    openCreatedConversation(address, title)
   }
   const configure = (roleId?: string, deviceId?: string) => {
     const query = new URLSearchParams({
@@ -168,40 +183,47 @@ export function AssistantHome({
 
   return (
     <div
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+      className="experience-assistant-home flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
       data-testid="collaboration-exp-assistant-home"
     >
       <div
         className="scrollbar-soft min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-4"
         data-testid="collaboration-exp-assistant-summary"
       >
-        <div className="flex items-center justify-between gap-3 px-4 py-4">
-          <p className="min-w-0 text-sm text-text-secondary">{t('assistant.introduction')}</p>
-          <button
-            type="button"
-            data-testid="collaboration-exp-assistant-team-toggle"
-            onClick={() => setTeamOpen(value => !value)}
-            aria-expanded={teamOpen}
-            className="inline-flex min-h-11 shrink-0 items-center gap-2 px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
-          >
-            <UsersRound aria-hidden="true" className="size-4" />
-            {t('assistant.team')}
-          </button>
-        </div>
+        <p className="experience-assistant-introduction px-4 pt-4 text-sm text-text-secondary">
+          {t('assistant.introduction')}
+        </p>
+        <TeamRelay
+          nodes={snapshot.team}
+          ready={ready}
+          managementAvailable={Boolean(active && source.settings && source.deviceId)}
+          onManage={() => setTeamOpen(value => !value)}
+          manageTestId="collaboration-exp-assistant-team-toggle"
+          expanded={teamOpen}
+        />
+        {(source.settings || work.length > 0) && (
+          <AssistantWorkSnapshot
+            snapshot={snapshot}
+            ready={ready}
+            onOpen={item => {
+              if (item.address) openWork(item.address, item.title)
+            }}
+          />
+        )}
         {source.loading && (
           <p role="status" className="px-4 py-3 text-sm text-text-muted">
             {t('assistant.loading')}
           </p>
         )}
-        {(source.error || error) && (
+        {(sourceError || error) && (
           <div role="alert" className="px-4 py-3 text-sm text-error">
-            {error ?? source.error}
+            {error ?? sourceError}
             <button
               type="button"
               data-testid="collaboration-exp-assistant-retry"
               onClick={() => {
                 setError(null)
-                source.refresh()
+                refresh()
               }}
               className="ml-2 min-h-11 underline md:min-h-8"
             >
@@ -232,12 +254,22 @@ export function AssistantHome({
                   configure(proposal.roleId ?? undefined, proposal.settings.executionDeviceId)
                 else setSelectedProposalId(decision.id)
               }}
-              className="block min-h-11 w-full px-4 py-3 text-left hover:bg-text-primary/[0.025]"
+              className="experience-assistant-decision"
+              data-state="waiting"
             >
-              <span className="block break-words">{decision.summary}</span>
-              <span className="mt-1 block text-xs text-text-muted">
-                {t('assistant.reviewProposal')}
+              <CircleHelp
+                aria-hidden="true"
+                className="experience-assistant-decision-icon size-4 shrink-0"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="experience-assistant-decision-title block break-words">
+                  {decision.summary}
+                </span>
+                <span className="mt-1 block text-xs text-text-muted">
+                  {t('assistant.reviewProposal')}
+                </span>
               </span>
+              <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
             </button>
           ))}
           {pendingTasks.map(task => {
@@ -262,19 +294,29 @@ export function AssistantHome({
                 data-testid={`collaboration-exp-assistant-pending-${task.key}`}
                 onClick={() => onOpenIssue?.(task.project, task.id)}
                 disabled={!onOpenIssue}
-                className="block min-h-11 w-full px-4 py-3 text-left hover:bg-text-primary/[0.025] disabled:cursor-default"
+                className="experience-assistant-decision"
+                data-state="waiting"
               >
-                <span className="block truncate">{task.title}</span>
-                {question && (
-                  <span className="mt-1 line-clamp-3 block text-sm text-text-secondary">
-                    {question}
+                <CircleHelp
+                  aria-hidden="true"
+                  className="experience-assistant-decision-icon size-4 shrink-0"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{task.title}</span>
+                  {question && (
+                    <span className="experience-assistant-decision-title mt-1 block text-sm text-text-secondary">
+                      {question}
+                    </span>
+                  )}
+                  <span className="mt-1 block text-xs text-text-muted">
+                    {task.project.name} · {t('assistant.openTask')}
                   </span>
-                )}
-                <span className="mt-1 block text-xs text-text-muted">{task.project.name}</span>
+                </span>
+                <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
               </button>
             )
           })}
-          {!summary.pendingDecisions.length && !pendingTasks.length && !source.loading && (
+          {!summary.pendingDecisions.length && !pendingTasks.length && source.proposalsReady && (
             <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noDecisions')}</p>
           )}
           {selectedProposal && source.settings && (
@@ -295,16 +337,19 @@ export function AssistantHome({
             {t('assistant.recentProgress')}
           </h2>
           {work.slice(0, 6).map(item => {
-            const state = standInState(item)
+            const status =
+              snapshot.items.find(
+                row => row.key === JSON.stringify([item.address.deviceId, item.address.taskId])
+              )?.state ?? 'unknown'
             return (
               <button
                 type="button"
                 key={item.key}
                 data-testid={`collaboration-exp-assistant-work-${item.task.taskId}`}
                 className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left hover:bg-text-primary/[0.025]"
-                onClick={() => openCreatedConversation(item.address, item.task.title)}
+                onClick={() => openWork(item.address, item.task.title)}
               >
-                {state.status === 'running' ? (
+                {status === 'running' ? (
                   <LoaderCircle
                     aria-hidden="true"
                     className="size-4 shrink-0 motion-safe:animate-spin"
@@ -315,14 +360,14 @@ export function AssistantHome({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{item.task.title}</span>
                   <span className="mt-1 block text-xs text-text-muted">
-                    {t(`assistant.status.${state.status}`)}
+                    {t(`assistant.status.${status}`)}
                     {item.projectName ? ` · ${item.projectName}` : ''}
                   </span>
                 </span>
               </button>
             )
           })}
-          {!work.length && !source.loading && (
+          {!work.length && source.inboxReady && (
             <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noProgress')}</p>
           )}
         </section>

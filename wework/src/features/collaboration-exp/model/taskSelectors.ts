@@ -110,6 +110,7 @@ function taskRow(
           )
         : [],
     executionState: issue.execution_state ?? issue.ai_state?.status ?? null,
+    completedAt: issue.completed_at,
     updatedAt: issue.updated_at,
     conversations: selectPrivateConversations({
       ...source,

@@ -15,6 +15,19 @@ import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
+import {
+  COLLABORATION_EXP_RHYTHM_MARKER,
+  COLLABORATION_EXP_RHYTHM_ROLE,
+  assertUnchangedGeometry,
+  createCollaborationExpRhythmFixture,
+} from '../modules/collaboration-exp-rhythm.mjs'
+import {
+  assertMobileAssistantPriority,
+  assertNativeWorkOpened,
+  assertReducedStateMotion,
+  assertStableStateGeometry,
+  readTeam,
+} from '../modules/collaboration-exp-state-motion.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const APP = `${ACTIVE} [data-testid="collaboration-exp-app"]`
@@ -33,6 +46,7 @@ export const COLLABORATION_EXP_USER_STORIES = [
   'local-and-cloud-issues-keep-their-canonical-source',
   'project-notifications-and-deep-links-reuse-one-experiment-tab',
   'assistant-tasks-project-timeline-private-discussion-work-in-three-viewports',
+  'reduced-motion-keeps-real-team-and-task-rhythm-states-readable-without-layout-shifts',
   'ordinary-assistant-question-creates-no-project-issue',
   'source-discussion-shows-only-the-proven-owned-native-turn',
   'edited-conclusion-publishes-exactly-once-and-rechecks-current-permission',
@@ -62,6 +76,14 @@ export function createDesktopScenario({
   let workspace
   let ownerToken
   let sourceMessage
+  let heldRhythmResponse
+  let rhythmModelCalls = 0
+  function finishRhythmResponse() {
+    if (!heldRhythmResponse) return
+    const { response, finish } = heldRhythmResponse
+    if (!response.writableEnded) response.end(createSse(finish))
+    heldRhythmResponse = undefined
+  }
   async function request(path, body, options = {}) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method: options.method ?? (body === undefined ? 'GET' : 'POST'),
@@ -196,7 +218,7 @@ export function createDesktopScenario({
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
-      const marker = [ORDINARY, UNRELATED, PROMPT].find(value =>
+      const marker = [COLLABORATION_EXP_RHYTHM_MARKER, ORDINARY, UNRELATED, PROMPT].find(value =>
         JSON.stringify(body).includes(value)
       )
       if (!marker) return false
@@ -206,6 +228,17 @@ export function createDesktopScenario({
         'final_answer'
       )
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      if (marker === COLLABORATION_EXP_RHYTHM_MARKER) {
+        assert.equal(
+          ++rhythmModelCalls,
+          1,
+          'The rhythm extension must use only one native model turn'
+        )
+        assert.equal(heldRhythmResponse, undefined, 'One controlled native turn is sufficient')
+        response.write(createSse(events.start))
+        heldRhythmResponse = { response, finish: events.finish }
+        return true
+      }
       response.end(createSse(events.start) + createSse(events.finish))
       return true
     },
@@ -214,6 +247,7 @@ export function createDesktopScenario({
       let previousSize
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       const gates = runtimeTransportGates(control)
+      const rhythm = createCollaborationExpRhythmFixture(rpc, modelResponseTimeoutMs)
       const comments = () =>
         rpc('todos.comment.list', { project_id: localProject.id, task_id: localIssue.id })
       const localIssueIdentities = async () => {
@@ -226,6 +260,13 @@ export function createDesktopScenario({
           )
         )
         return issues.flat().sort()
+      }
+      const nativeTaskIdentities = async () => {
+        const work = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+        return Object.values(work.workspaces ?? {})
+          .flatMap(workspace => workspace.tasks ?? [])
+          .map(task => task.taskId ?? task.task_id)
+          .sort()
       }
       try {
         await control.command('setAppPreferences', 'body', {
@@ -569,6 +610,12 @@ export function createDesktopScenario({
           'Ordinary assistant conversation must remain private'
         )
 
+        const { runningIssue, address: runningAddress } = await rhythm.prepare(
+          localProject,
+          secondIssue,
+          cloudUser.id
+        )
+
         const logPath = join(resultDir, 'app.log')
         const logOffset = (await readFile(logPath, 'utf8')).length
         let lightStructure
@@ -588,7 +635,133 @@ export function createDesktopScenario({
           await control.command('waitFor', `html[data-theme="${appearanceMode}"]`)
           await control.command('navigate', 'body', { value: route() })
           await click(control, testId('collaboration-exp-navigation-assistant'))
+          await control.command('setReducedMotion', 'body', { value: 'no-preference' })
+          const relay = testId('collaboration-exp-team-relay')
+          const runningRole = `${relay} [data-assistant-id="${COLLABORATION_EXP_RHYTHM_ROLE}"]`
+          await control.command('waitFor', `${runningRole}[data-state="running"]`, {
+            visible: true,
+          })
+          const teamBefore = await readTeam(control, relay)
+          const boxesBefore = JSON.parse(await control.command('getElementMetrics', relay))
+          await control.command('setReducedMotion', 'body', { value: 'reduce' })
+          await assertReducedStateMotion(control, relay)
+          assert.deepEqual(await readTeam(control, relay), teamBefore)
+          assertUnchangedGeometry(
+            boxesBefore,
+            JSON.parse(await control.command('getElementMetrics', relay)),
+            'Reduced-motion team'
+          )
+          await assertStableStateGeometry(control, relay)
+          if (width === 390) {
+            await assertMobileAssistantPriority(
+              control,
+              testId,
+              runningRole,
+              localProject.id,
+              localIssue.id
+            )
+            await assertNoOverflow(control, testId('collaboration-exp-assistant-home'), width)
+          }
+          await captureScreenshot(control, `collaboration-exp-team-${name}.png`, APP)
+          if (name === 'wide-light') {
+            await control.command('waitFor', testId('collaboration-exp-assistant-current'), {
+              visible: true,
+              text: runningIssue.title,
+            })
+            await click(control, testId('collaboration-exp-assistant-current'))
+            await assertNativeWorkOpened(control, runningAddress, uiTimeoutMs)
+            await control.command('navigate', 'body', { value: route() })
+            await control.command('waitFor', APP, { visible: true })
+          }
           await click(control, testId('collaboration-exp-navigation-tasks'))
+          await control.command('waitFor', `${runningRole}[data-state="running"]`, {
+            visible: true,
+          })
+          assert.deepEqual(await readTeam(control, relay), teamBefore)
+          await assertReducedStateMotion(control, relay)
+          for (const state of ['waiting', 'running', 'completed'])
+            await control.command('waitFor', testId(`collaboration-exp-task-rhythm-${state}`), {
+              text: '1',
+            })
+          for (const state of ['waiting', 'running', 'completed'])
+            assert.equal(
+              await control.command('getText', testId(`collaboration-exp-task-rhythm-${state}`)),
+              '1'
+            )
+          await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
+            text: runningIssue.title,
+          })
+          await assertStableStateGeometry(control, testId('collaboration-exp-task-rhythm'))
+          await captureScreenshot(control, `collaboration-exp-rhythm-${name}.png`, APP)
+          if (name === 'wide-light') {
+            await click(control, testId('collaboration-exp-filter-status'))
+            await click(control, '[data-testid="collaboration-exp-filter-status-option-completed"]')
+            await control.command('waitFor', testId('collaboration-exp-clear-status'), {
+              visible: true,
+            })
+            for (const [state, expected] of [
+              ['waiting', '0'],
+              ['running', '0'],
+              ['completed', '1'],
+            ]) {
+              await control.command('waitFor', testId(`collaboration-exp-task-rhythm-${state}`), {
+                text: expected,
+              })
+              assert.equal(
+                await control.command('getText', testId(`collaboration-exp-task-rhythm-${state}`)),
+                expected
+              )
+            }
+            await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
+              visible: false,
+            })
+            assert.equal(
+              Number(
+                await control.command(
+                  'getElementCount',
+                  testId('collaboration-exp-task-rhythm-current')
+                )
+              ),
+              0
+            )
+            assert.deepEqual(await readTeam(control, relay), teamBefore)
+            await click(control, testId('collaboration-exp-clear-status'))
+            await control.command('waitFor', testId('collaboration-exp-clear-status'), {
+              visible: false,
+            })
+            for (const state of ['waiting', 'running', 'completed']) {
+              await control.command('waitFor', testId(`collaboration-exp-task-rhythm-${state}`), {
+                text: '1',
+              })
+              assert.equal(
+                await control.command('getText', testId(`collaboration-exp-task-rhythm-${state}`)),
+                '1'
+              )
+            }
+            await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
+              visible: true,
+              text: runningIssue.title,
+            })
+            const beforeManage = await nativeTaskIdentities()
+            const beforeManageIssues = await localIssueIdentities()
+            await click(control, runningRole)
+            await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-role-name"]`, {
+              visible: true,
+            })
+            assert.equal(
+              await control.command('getValue', `${ACTIVE} [data-testid="stand-in-role-name"]`),
+              'Integration assistant'
+            )
+            assert.deepEqual(await nativeTaskIdentities(), beforeManage)
+            assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
+            await control.command('navigate', 'body', { value: route() })
+            await control.command('waitFor', `${runningRole}[data-state="running"]`, {
+              visible: true,
+            })
+          }
+          await click(control, testId('collaboration-exp-task-rhythm-current'))
+          await assertSingleton(control, localProject, runningIssue, 'local')
+          await click(control, testId('collaboration-exp-pane-header-timeline-back'))
           await control.command('waitFor', testId(`collaboration-exp-task-${localIssue.id}`), {
             visible: true,
           })
@@ -598,6 +771,7 @@ export function createDesktopScenario({
             'waitFor',
             testId('collaboration-exp-project-plan') + '[aria-current="page"]'
           )
+          await assertReducedStateMotion(control, APP)
           await click(control, testId('collaboration-exp-pane-header-project-back'))
           await click(control, testId(`collaboration-exp-task-${localIssue.id}`))
           await openPrivate(control)
@@ -635,6 +809,8 @@ export function createDesktopScenario({
           }
           await captureScreenshot(control, `collaboration-exp-${name}.png`, APP)
         }
+        finishRhythmResponse()
+        await rhythm.assertCompleted(control)
         assert.doesNotMatch(
           (await readFile(logPath, 'utf8')).slice(logOffset),
           /\[renderer-(?:warning|error)\]/,
@@ -741,24 +917,30 @@ export function createDesktopScenario({
         await control.command('waitFor', PRIVATE_INPUT, { visible: true })
         assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
       } finally {
-        await gates.reset()
-        if (workspace && cloudUser)
-          await request(
-            `/api/v1/workspaces/${workspace.id}/members/${cloudUser.id}`,
-            { role: 'Developer' },
-            { token: ownerToken, method: 'PATCH' }
-          )
-        if (previousSize)
-          await control.command('setMainWindowSize', 'body', { value: previousSize })
-        await control.command('setAppPreferences', 'body', {
-          value: JSON.stringify({
-            collaborationExperienceEnabled: initialPreferences.collaborationExperienceEnabled,
-            experimentalFeaturesEnabled: initialPreferences.experimentalFeaturesEnabled,
-            fixedWorkspaceTabs: initialPreferences.fixedWorkspaceTabs,
-            startupWorkspaceTabId: initialPreferences.startupWorkspaceTabId,
-            appearanceMode: initialPreferences.appearanceMode,
-          }),
-        })
+        finishRhythmResponse()
+        try {
+          await rhythm.cleanup()
+        } finally {
+          await gates.reset()
+          await control.command('setReducedMotion', 'body', { value: 'system' })
+          if (workspace && cloudUser)
+            await request(
+              `/api/v1/workspaces/${workspace.id}/members/${cloudUser.id}`,
+              { role: 'Developer' },
+              { token: ownerToken, method: 'PATCH' }
+            )
+          if (previousSize)
+            await control.command('setMainWindowSize', 'body', { value: previousSize })
+          await control.command('setAppPreferences', 'body', {
+            value: JSON.stringify({
+              collaborationExperienceEnabled: initialPreferences.collaborationExperienceEnabled,
+              experimentalFeaturesEnabled: initialPreferences.experimentalFeaturesEnabled,
+              fixedWorkspaceTabs: initialPreferences.fixedWorkspaceTabs,
+              startupWorkspaceTabId: initialPreferences.startupWorkspaceTabId,
+              appearanceMode: initialPreferences.appearanceMode,
+            }),
+          })
+        }
       }
     },
     diagnostics() {

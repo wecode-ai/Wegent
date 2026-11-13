@@ -12,6 +12,13 @@
     "projects": "项目"
   },
   "tasks": {
+    "rhythm": {
+      "title": "工作节奏",
+      "waiting": "轮到我了",
+      "running": "推进中",
+      "completed": "已结束",
+      "current": "当前推进"
+    },
     "title": "任务",
     "configurationUnavailable": "当前项目角色无权修改配置。",
     "relevance": "任务相关性",
@@ -88,6 +95,15 @@
     }
   },
   "assistant": {
+    "runtimeWorkUnavailable": "工作目录加载失败，请重试以确认助理团当前状态。",
+    "snapshot": {
+      "title": "当前工作",
+      "waiting": "待决",
+      "running": "推进中",
+      "completed": "已完成",
+      "current": "正在推进"
+    },
+    "openTask": "进入任务处理",
     "introduction": "直接交代目标，或从最近的私人讨论继续。",
     "placeholder": "提个问题，或说说你想完成的目标",
     "needsDecision": "待你决定",
@@ -116,11 +132,27 @@
     "conversationEmpty": "继续与助理的私人讨论。",
     "draftPersistenceFailed": "草稿仍可编辑，但暂时无法保存到此设备。",
     "status": {
+      "idle": "暂无活跃执行",
+      "unknown": "状态尚未确认",
       "running": "运行中",
       "waiting": "等待你输入",
       "completed": "已完成",
       "failed": "失败",
       "cancelled": "已取消"
+    }
+  },
+  "teamRelay": {
+    "title": "团队接力",
+    "memberLabel": "{{name}} · {{state}} · 管理助理",
+    "allMembers": "查看全部 {{count}} 位助理",
+    "paused": "已暂停",
+    "unavailable": "助理团信息尚不可用。",
+    "managementUnavailable": "助理配置尚不可用，请重试加载后再管理。",
+    "state": {
+      "waiting": "待确认",
+      "running": "推进中",
+      "idle": "待命",
+      "unknown": "状态尚未确认"
     }
   }
 }

@@ -10,3 +10,4 @@ export {
   selectTaskRows,
 } from './taskSelectors'
 export { selectTaskTimeline } from './timelineSelectors'
+export { selectExperienceTaskState, selectExperienceWorkSnapshot } from './workSnapshotSelectors'

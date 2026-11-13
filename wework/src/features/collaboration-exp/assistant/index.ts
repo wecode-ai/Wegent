@@ -11,3 +11,6 @@ export {
 export type { AssistantHomeProps } from './types'
 export { AssistantTeam, type AssistantTeamProps } from './AssistantTeam'
 export { RecentDiscussions, type RecentDiscussionsProps } from './RecentDiscussions'
+export { TeamRelay, type TeamRelayProps } from './TeamRelay'
+export { AssistantTeamRelay, type AssistantTeamRelayProps } from './AssistantTeamRelay'
+export { useExperienceTeamState } from './useExperienceTeamState'

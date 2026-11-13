@@ -21,15 +21,21 @@ The preview corresponds to `collab.experience.v1` and defaults to off. Experimen
 3. **Needs your decision** shows pending questions and configuration proposals. Select a task to open its timeline and continue the question through its related private discussion. Select **Review the proposed changes**, inspect the changes, then choose **Confirm and apply** or **Dismiss**. Stale proposals need to be regenerated. Changes take effect after application.
 4. Resume an existing conversation from **Recent discussions** or **Recent progress**. A discussion bound to a project task opens the same project, task and private conversation with its saved draft. An independent assistant discussion opens in the assistant conversation pane. Use **Retry** when the source or current account's access cannot be confirmed.
 
-Select **Assistant team** at the top right to expand the roles. **Configure**, or a role's configure button, opens the existing My Stand-in configuration page; save identity, model and project-scope changes there. The default assistant stays available and cannot be deleted or paused. A specialist's delete button opens **Delete specialist assistant?**; select **Delete role** to save, or cancel to retain the configuration. Existing discussions and execution history remain after deletion. The default assistant continues within its configured project scope.
+**Team relay** shows each assistant as **Awaiting confirmation**, **In progress** or **Standing by**, using existing work and pending proposals. Until its sources are ready, it shows **Status not confirmed** and snapshot counts use “—”; missing data does not mean standing by or zero work. Failed reads offer Retry. In a wide pane, **Current work** summarizes assistant work awaiting a decision, in progress and completed. Select current work to continue its existing conversation or execution. Phones and narrow panes hide the detailed snapshot and prioritize the compact team, first decision and bottom input area.
+
+Select **Configure** or a member in **Team relay** to expand the roles. **Configure**, or a role's configure button, opens the existing My Stand-in configuration page; save identity, model and project-scope changes there. The default assistant stays available and cannot be deleted or paused. A specialist's delete button opens **Delete specialist assistant?**; select **Delete role** to save, or cancel to retain the configuration. Existing discussions and execution history remain after deletion. The default assistant continues within its configured project scope.
 
 ## Tasks, projects and timelines
 
 Switch between **Assistant** and **Tasks** on the left. Filter related or all visible tasks by search, status and project. Clear filters to broaden the visible scope. Tasks keep their original project data and permissions.
 
+**Work rhythm** shows **Your turn**, **In progress** and **Finished** counts for the current list. Existing filters update these counts, which exclude inaccessible or unloaded tasks. Select **Current work** to open that task's timeline while retaining filters and project scope. This page's **Team relay** uses the same state rules as Assistant and does not change with task filters. Selecting a member opens its existing configuration without creating a discussion or task.
+
 Select a task to inspect its timeline. Select its project or a project navigation entry to open the overview, plan or settings. The tab address retains project scope, task and view across tab switches, refresh and restart. Project edits follow existing permissions and the corresponding form's save action.
 
 The timeline shows original comments, executions, status changes and handoffs. A selected node's details and accessible private discussions keep the same task and node identity. Missing or inaccessible sources do not imply a new conversation. Wide windows support adjacent list, timeline and discussion panes with resizable separators. Narrow screens use successive views and Back controls.
+
+When the system requests reduced motion, team entrance, pulse and activity-trail animations stop. Status text, icons and accessible names remain available; state changes do not rely on animation.
 
 ## Private discussion
 

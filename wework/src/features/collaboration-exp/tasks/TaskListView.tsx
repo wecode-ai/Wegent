@@ -1,8 +1,11 @@
 import { Circle, Check, LoaderCircle } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import type { ExperienceProjectScope, ExperienceTaskRow } from '../model/types'
+import { selectExperienceTaskState } from '../model'
 import { TaskFilters, type TaskFilterValue } from './TaskFilters'
+import { TaskRhythm } from './TaskRhythm'
 
 interface Props {
   rows: readonly ExperienceTaskRow[]
@@ -11,6 +14,7 @@ interface Props {
   filters: TaskFilterValue
   selectedKey?: string | null
   loading: boolean
+  team?: ReactNode
   error?: string | null
   hasMore?: boolean
   onFiltersChange(value: TaskFilterValue): void
@@ -32,6 +36,10 @@ export function TaskListView(props: Props) {
         onChange={props.onFiltersChange}
       />
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" aria-busy={props.loading}>
+        {props.team}
+        {(props.rows.length > 0 || (!props.loading && !props.error)) && (
+          <TaskRhythm rows={props.rows} onSelect={props.onSelect} />
+        )}
         {props.error && (
           <div role="alert" className="px-4 py-3 text-sm text-error">
             <p>{props.error}</p>
@@ -105,8 +113,8 @@ function TaskRow({
   onOpenProject(project: ExperienceProjectScope): void
 }) {
   const { t } = useTranslation('collaborationExp')
-  const Icon =
-    row.status === 'completed' ? Check : row.executionState === 'running' ? LoaderCircle : Circle
+  const state = selectExperienceTaskState(row)
+  const Icon = state === 'completed' ? Check : state === 'running' ? LoaderCircle : Circle
   return (
     <article
       className={selected ? 'bg-muted' : 'hover:bg-muted/50'}
@@ -136,7 +144,7 @@ function TaskRow({
         </div>
         <Icon
           aria-hidden="true"
-          className={`mt-1 h-4 w-4 shrink-0 text-text-muted ${row.executionState === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`}
+          className={`mt-1 h-4 w-4 shrink-0 text-text-muted ${state === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`}
         />
       </button>
       <button
