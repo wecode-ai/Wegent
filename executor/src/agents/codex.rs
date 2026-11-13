@@ -738,6 +738,9 @@ impl CodexAppServerClient {
                 {
                     Ok(response) => response,
                     Err(error) => {
+                        if is_missing_codex_thread_error(&error) {
+                            break;
+                        }
                         let mut state = self.state.lock().await;
                         let running = state
                             .process
@@ -2267,6 +2270,10 @@ async fn fail_all_pending(
 
 fn is_json_rpc_response(message: &Value) -> bool {
     response_id(message).is_some() && message.get("method").is_none()
+}
+
+fn is_missing_codex_thread_error(error: &str) -> bool {
+    error.trim_start().starts_with("thread not found:")
 }
 
 pub async fn run_codex_app_server_turn(

@@ -710,6 +710,16 @@ async fn live_background_terminal_query_reads_native_processes_across_pages() {
     client.restart().await;
 }
 
+#[test]
+fn background_terminal_query_ignores_missing_native_threads() {
+    assert!(is_missing_codex_thread_error(
+        "thread not found: 01a1d436-e8a3-7a63-b9a4-b45d845509f4"
+    ));
+    assert!(!is_missing_codex_thread_error(
+        "unknown method: thread/backgroundTerminals/list"
+    ));
+}
+
 #[tokio::test]
 async fn auth_mutation_is_rejected_while_a_turn_is_active() {
     let client = CodexAppServerClient::new("codex-auth-mutation-active-test");
