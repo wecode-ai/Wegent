@@ -505,7 +505,12 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
   )
 }
 
-export async function createLocalCollaborationProject(control, contentSelector, projectName) {
+export async function createLocalCollaborationProject(
+  control,
+  contentSelector,
+  projectName,
+  projectReadyTimeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   await enterLocalCollaborationWorkspace(control, contentSelector)
   await control.command(
     'click',
@@ -517,7 +522,8 @@ export async function createLocalCollaborationProject(control, contentSelector, 
     control,
     `${contentSelector} ${COLLABORATION_SIDEBAR_SELECTOR}`,
     'collaboration-workspace-project-',
-    projectName
+    projectName,
+    projectReadyTimeoutMs
   )
   await revealCollaborationSidebarElement(
     control,
