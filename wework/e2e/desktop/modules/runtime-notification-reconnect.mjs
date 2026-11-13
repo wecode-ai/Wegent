@@ -30,6 +30,8 @@ export function createRuntimeNotificationReconnect({
   let control
   let storedProfile
   let deviceId
+  let notificationDeviceId
+  let sessionKey
   let proxy
   let api
   let userId
@@ -38,9 +40,9 @@ export function createRuntimeNotificationReconnect({
   const gates = new Map()
   const proxies = []
   const events = () => proxies.flatMap(value => value.events)
-  const request = (path, body) =>
+  const request = (path, body, method = 'POST') =>
     fetchJson(`${cloud.backendUrl}${path}`, {
-      ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}),
+      ...(body ? { method, body: JSON.stringify(body) } : {}),
       headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
     })
   const fixture = async payload => {
@@ -79,11 +81,26 @@ export function createRuntimeNotificationReconnect({
             line =>
               line.includes('runtime terminal relay') &&
               line.includes(taskId) &&
+              line.includes(JSON.stringify(notificationDeviceId)) &&
               /phase["\s:=]*forwarded/.test(line)
           ),
       `Rust Backend did not finish terminal processing: ${taskId}`,
       uiTimeoutMs
     )
+  }
+
+  async function subscribe(address) {
+    const result = await request(
+      '/api/runtime-work/im-notifications/runtime-task',
+      {
+        address: { deviceId: notificationDeviceId, localTaskId: address.taskId },
+        sessionKeys: [sessionKey],
+      },
+      'PUT'
+    )
+    assert.equal(result.subscribed, true)
+    assert.equal(result.address.deviceId, notificationDeviceId)
+    assert.deepEqual(result.sessionKeys, [sessionKey])
   }
 
   async function createTask(name, subscribed = true) {
@@ -130,10 +147,7 @@ export function createRuntimeNotificationReconnect({
       modelResponseTimeoutMs
     )
     if (subscribed) {
-      await fixture({
-        operation: 'subscribe',
-        address: { deviceId, localTaskId: task.taskId },
-      })
+      await subscribe(address)
     }
     return address
   }
@@ -235,6 +249,10 @@ export function createRuntimeNotificationReconnect({
       assert.ok(storedProfile?.backendUrl, 'Desktop cloud profile is unavailable')
       const app = await cloud.waitForConnectedAppDevice()
       deviceId = app.device_id
+      // Device-list names and the APP notification transport route differ.
+      notificationDeviceId = app.socket_device_id
+      assert.ok(notificationDeviceId, 'The APP notification route is unavailable')
+      assert.equal(notificationDeviceId, app.execution_target_id)
       const instance = app.runtime_instance_id
       const executorPid = await currentExecutorPid(control)
       assert.ok(executorPid, 'The desktop Executor must already be running')
@@ -273,11 +291,15 @@ export function createRuntimeNotificationReconnect({
         await waitForCompletedRuntimeTaskThread(control, old.taskId, modelResponseTimeoutMs)
         await proxy.waitForEvent(entry => terminal(entry, old.taskId))
         await waitForBackendTerminal(old.taskId)
-        await fixture({ operation: 'seed', apiBase: `http://127.0.0.1:${api.address().port}` })
-        await fixture({
-          operation: 'subscribe',
-          address: { deviceId, localTaskId: old.taskId },
+        const seeded = await fixture({
+          operation: 'seed',
+          apiBase: `http://127.0.0.1:${api.address().port}`,
         })
+        sessionKey = seeded.sessionKey
+        const settings = await request('/api/runtime-work/im-notifications')
+        assert.equal(settings.global.enabled, true)
+        assert.equal(settings.global.session?.sessionKey, sessionKey)
+        await subscribe(old)
         const offline = await createTask('offline')
         proxy.disconnectWebSockets(true)
         await cloud.waitForDeviceStatus(deviceId, 'offline', cloud.backendLogPath)

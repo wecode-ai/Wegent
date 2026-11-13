@@ -56,10 +56,6 @@ async def run() -> None:
             )
             db.commit()
         await im_session_service.enable_global_notification(db=None, session=session)
-    elif request["operation"] == "subscribe":
-        await im_session_service.subscribe_runtime_task_notification(
-            db=None, session=session, runtime_task=request["address"]
-        )
     elif request["operation"] == "receipts":
         receipts = {}
         async with cache_manager._client_context() as client:
@@ -73,7 +69,7 @@ async def run() -> None:
     else:
         raise ValueError("Unknown reconnect fixture operation")
     if request["operation"] != "receipts":
-        print(json.dumps({"configured": True}))
+        print(json.dumps({"configured": True, "sessionKey": session.session_key}))
     await cache_manager.aclose()
 
 
