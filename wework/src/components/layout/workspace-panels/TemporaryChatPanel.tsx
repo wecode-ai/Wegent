@@ -6,7 +6,6 @@ import {
 } from '@/features/collaboration-exp/private/privateConversationHistory'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
-import { deliverNativeConversationMessage } from './nativeConversationDelivery'
 import type { ConversationModelControls } from './conversationModelControls'
 import { modelSelectionKey } from '@wegent/collaboration/controls/model-ui'
 import { useStandInActiveModelProvider } from './useStandInActiveModelProvider'
@@ -770,6 +769,58 @@ export function TemporaryChatPanel({
     })
   }, [address, globalSelectedModel, taskModelSelection])
 
+  const sendConversationMessage = useCallback(
+    async (message: RuntimePaneQueuedMessage, interrupt = false) => {
+      if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
+      const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
+      let error: string | null = null
+      let queued = false
+      const sendMessage = interrupt ? interruptAndSendRuntimePaneMessage : sendRuntimePaneMessage
+      const sent = await sendMessage(
+        runtimeQueuedMessageRequest(
+          {
+            address,
+            ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
+            ...(sendEphemeral ? { ephemeral: true } : {}),
+            ...runtimeContext,
+          },
+          message
+        ),
+        {
+          silentBusyRetry: nativeConversation,
+          onError: value => {
+            error = value
+          },
+          onQueued: () => {
+            queued = true
+          },
+        }
+      )
+      if (sent && !queued)
+        setMessages(
+          appendAcceptedRuntimeConversationMessage(
+            address,
+            createRuntimeUserMessage(message.content, message.attachments ?? [], {
+              id: message.id,
+            }),
+            lifecycleStore.getTask(address)?.turn.id ?? null,
+            turnIdsBeforeSend
+          )
+        )
+      return { sent, error }
+    },
+    [
+      address,
+      interruptAndSendRuntimePaneMessage,
+      lifecycleStore,
+      nativeConversation,
+      runtimeContext,
+      sendEphemeral,
+      sendRuntimePaneMessage,
+      t,
+    ]
+  )
+
   const queuePort = useMemo<RuntimeConversationQueuePort<number>>(
     () => ({
       lifecycle: () => lifecycleStore.getTaskRevision(address),
@@ -777,39 +828,7 @@ export function TemporaryChatPanel({
       isBusyError: isRuntimeTaskBusyError,
       sendFailedText: t('workbench.project_chat_send_failed'),
       guidanceFailedText: t('workbench.project_chat_send_failed'),
-      async send(message) {
-        if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
-        const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
-        let error: string | null = null
-        let queued = false
-        const sent = await sendRuntimePaneMessage(
-          runtimeQueuedMessageRequest(
-            { address, ...(sendEphemeral ? { ephemeral: true } : {}), ...runtimeContext },
-            message
-          ),
-          {
-            silentBusyRetry: nativeConversation,
-            onError: value => {
-              error = value
-            },
-            onQueued: () => {
-              queued = true
-            },
-          }
-        )
-        if (sent && !queued)
-          setMessages(
-            appendAcceptedRuntimeConversationMessage(
-              address,
-              createRuntimeUserMessage(message.content, message.attachments ?? [], {
-                id: message.id,
-              }),
-              lifecycleStore.getTask(address)?.turn.id ?? null,
-              turnIdsBeforeSend
-            )
-          )
-        return { sent, error }
-      },
+      send: sendConversationMessage,
       async guide(message) {
         if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
         const request = runtimeQueuedMessageRequest({ address }, message)
@@ -822,16 +841,7 @@ export function TemporaryChatPanel({
         })
       },
     }),
-    [
-      address,
-      lifecycleStore,
-      runtimeContext,
-      sendEphemeral,
-      sendRuntimePaneMessage,
-      sendRuntimePaneGuidance,
-      nativeConversation,
-      t,
-    ]
+    [address, lifecycleStore, sendConversationMessage, sendRuntimePaneGuidance, t]
   )
 
   useEffect(() => {
@@ -887,31 +897,38 @@ export function TemporaryChatPanel({
             submission = transactionalDraft(draftValue)
             queuedMessage.id = submission.clientMessageId
           }
-          const result = await deliverNativeConversationMessage({
-            busy: !queuedMessage.startNewSession && paneStatus.isBusy,
-            send: () => queuePort.send(queuedMessage),
-            guide: () =>
-              sendRuntimePaneGuidance({
+          const guideCurrentTurn =
+            !queuedMessage.startNewSession && paneStatus.isBusy && options.guideWhenBusy
+          const guidanceResult = guideCurrentTurn
+            ? await sendRuntimePaneGuidance({
                 address,
                 message,
                 clientGuidanceId: queuedMessage.id,
                 attachments: localRuntimeAttachments(currentAttachments),
                 attachmentIds: remoteAttachmentIds(currentAttachments),
-              }),
-            isBusyError: error => !queuedMessage.startNewSession && isRuntimeTaskBusyError(error),
-          })
+              })
+            : null
+          const result =
+            guidanceResult ??
+            (await sendConversationMessage(
+              queuedMessage,
+              !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
+            ))
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
             if (!transactionalDraft) setInput(current => current || message)
             return false
           }
           if (
-            result.delivery === 'guidance' &&
-            result.turnId &&
+            guidanceResult?.turnId &&
             !getRuntimeConversationMessages(address).some(item => item.id === queuedMessage.id)
           ) {
             setMessages(
-              appendOptimisticRuntimeConversationGuidance(address, result.turnId, queuedMessage)
+              appendOptimisticRuntimeConversationGuidance(
+                address,
+                guidanceResult.turnId,
+                queuedMessage
+              )
             )
           }
           submission?.clearIfUnchanged()
@@ -1085,7 +1102,7 @@ export function TemporaryChatPanel({
       historySource,
       scopedHistory.available,
       paneStatus.isBusy,
-      queuePort,
+      sendConversationMessage,
       sendRuntimePaneGuidance,
       t,
       goalDraftActive,
@@ -1465,8 +1482,8 @@ export function TemporaryChatPanel({
                   onCancelQueuedMessage={cancelQueuedMessage}
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
-                  isStreaming={nativeConversation ? false : busy}
-                  onPause={nativeConversation ? undefined : pause}
+                  isStreaming={busy}
+                  onPause={pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
                     allowInitialGoal && createTask && !address
