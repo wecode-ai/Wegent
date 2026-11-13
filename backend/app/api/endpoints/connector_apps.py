@@ -17,7 +17,6 @@ from app.schemas.connector import (
     ConnectorOAuthSessionPollResponse,
 )
 from app.services.connector_apps import connector_app_service
-from app.services.connector_connections import connector_connection_service
 from app.services.connector_oauth import connector_oauth_service
 
 router = APIRouter()

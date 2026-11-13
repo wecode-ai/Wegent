@@ -1,11 +1,41 @@
 """Tests for conversion_task module."""
 
 import base64
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from knowledge_doc_converter.config import ConverterSettings
+
+
+def test_conversion_attempt_reports_wall_clock_and_elapsed_time(monkeypatch):
+    from knowledge_doc_converter.tasks import conversion_task
+
+    captured = []
+    monkeypatch.setattr(conversion_task.time, "monotonic", lambda: 12.5)
+    monkeypatch.setattr(
+        conversion_task,
+        "emit_conversion_event",
+        lambda *a, **kw: captured.append((a, kw)),
+    )
+    conversion_task._emit_attempt(
+        kb_id=7,
+        document_id=9,
+        attempt_id="a",
+        status="success",
+        file_extension="pdf",
+        generation=1,
+        started_at=10.0,
+        task_state="completed",
+    )
+    args, fields = captured[0]
+    assert args[0] == "knowledge.conversion.attempt.finished"
+    assert fields["duration_ms"] == 2500
+    started = datetime.fromisoformat(fields["data"]["started_at"])
+    assert started.tzinfo is not None
+    assert 2 <= (datetime.now(timezone.utc) - started).total_seconds() < 5
+
 
 # Common task kwargs used across all task tests
 TASK_KWARGS = dict(
