@@ -63,8 +63,19 @@ under the same prefix remain with Python.
 Set `WEGENT_RS_UNIQUE_APP_DEVICE_NAMES=1` if a legacy MySQL schema enforces
 uniqueness on `kinds (user_id, kind, name, namespace)`. Rust App device
 registration then returns an identity conflict before attempting an insert.
+An installation with the exact stored Runtime and App IDs can also restore
+a legacy Remote record as an App record.
 The default preserves separate record-scoped routes for installations that
 share a logical device ID.
+
+With unique names enabled, an administrator can rebind the App ID for a
+verified installation via
+`POST /api/admin/users/{user_id}/devices/records/{record_id}/rebind`.
+Disconnect the device and let pending work finish before submitting
+`runtime_instance_id`, `expected_app_device_id` (use explicit `null` if absent),
+and `new_app_device_id` as JSON. The request compares the stored identity and
+returns `{"record_id": ...}` on success. Reconnect the verified installation
+using its new App ID to use the same record-scoped route.
 
 ## Observability foundation
 

@@ -105,7 +105,7 @@ impl DeviceType {
     }
 }
 
-fn route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
+pub(crate) fn route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
     match device_type {
         DeviceType::App => format!("app-record-{}", row.id),
         _ => row.name.clone(),

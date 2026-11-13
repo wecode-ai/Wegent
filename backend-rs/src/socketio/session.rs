@@ -47,6 +47,7 @@ pub struct DeviceSessionState {
     pub runtime_transfer_host: Option<String>,
     pub runtime_transfer_port: Option<i64>,
     pub runtime_instance_id: Option<String>,
+    pub app_device_id: Option<String>,
     pub device_type: Option<DeviceType>,
     pub execution_target_id: Option<String>,
     pub registered: bool,
@@ -112,6 +113,7 @@ impl DeviceSession {
         state.runtime_transfer_host = registration.runtime_transfer_host;
         state.runtime_transfer_port = registration.runtime_transfer_port;
         state.runtime_instance_id = registration.runtime_instance_id;
+        state.app_device_id = registration.app_device_id;
         state.device_type = Some(registration.device_type);
         state.execution_target_id = Some(execution_target_id.clone());
         state.registered = true;
@@ -153,6 +155,7 @@ pub struct RegistrationSession {
     pub runtime_transfer_host: Option<String>,
     pub runtime_transfer_port: Option<i64>,
     pub runtime_instance_id: Option<String>,
+    pub app_device_id: Option<String>,
     pub device_type: DeviceType,
     pub execution_target_id: String,
 }
@@ -277,12 +280,14 @@ mod tests {
             runtime_transfer_host: Some("192.0.2.1".into()),
             runtime_transfer_port: Some(17888),
             runtime_instance_id: Some("runtime-1".into()),
+            app_device_id: Some("app-1".into()),
             device_type: DeviceType::App,
             execution_target_id: "app-record-7".into(),
         });
         assert_eq!(route, "app-record-7");
         assert_eq!(target, "app-record-7");
         let snapshot = session.snapshot();
+        assert_eq!(snapshot.device.app_device_id.as_deref(), Some("app-1"));
         assert_eq!(snapshot.device.reported_device_id.as_deref(), Some("d-1"));
         assert_eq!(snapshot.device.device_id.as_deref(), Some("app-record-7"));
         assert_eq!(snapshot.client_ip.as_deref(), Some("127.0.0.1"));

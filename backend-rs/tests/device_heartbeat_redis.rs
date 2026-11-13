@@ -17,21 +17,14 @@ use brz_redis::{Redis, RedisService, cmd};
 use engineio_poll_client::PollClient;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, time::timeout};
-use wegent_backend_rs::{build_app_state_with_clients, migrations, socketio};
+use wegent_backend_rs::{
+    Application, Gateway, HybridConfig, OriginService, RouteTable, auth::AppAuthenticator, bind,
+    build_app_state_with_clients, migrations, serve, socketio,
+};
 
 const USER_ID: i32 = 7;
 const NAMESPACE: &str = "/local-executor";
 const SHORT_TTL_SECONDS: u64 = 30;
-// Registration uses the redis-py lock release script by digest. Load the
-// canonical bytes into the isolated Redis before registering a device.
-const LOCK_RELEASE_SCRIPT: &str = r#"
-        local token = redis.call('get', KEYS[1])
-        if not token or token ~= ARGV[1] then
-            return 0
-        end
-        redis.call('del', KEYS[1])
-        return 1
-    "#;
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL and Redis; explicitly run by Backend Rust CI"]
@@ -45,10 +38,6 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         "only a disposable Redis is allowed"
     );
     let redis = RedisService::single(address.to_string()).await.unwrap();
-    let mut load = cmd("SCRIPT");
-    load.arg("LOAD").arg(LOCK_RELEASE_SCRIPT);
-    let digest: String = redis.command(load).await.unwrap();
-    assert_eq!(digest, "c3f8721cbb97f72bc19e972846bd7aaf91901658");
     let fixture = fixture::Fixture::new().await;
     migrations::upgrade(&fixture.mysql).await.unwrap();
     fixture
@@ -208,10 +197,6 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         "only a disposable Redis is allowed"
     );
     let redis = RedisService::single(address.to_string()).await.unwrap();
-    let mut load = cmd("SCRIPT");
-    load.arg("LOAD").arg(LOCK_RELEASE_SCRIPT);
-    let digest: String = redis.command(load).await.unwrap();
-    assert_eq!(digest, "c3f8721cbb97f72bc19e972846bd7aaf91901658");
 
     let fixture = fixture::Fixture::new().await;
     migrations::upgrade(&fixture.mysql).await.unwrap();
@@ -221,7 +206,8 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     ).await.unwrap();
     fixture.mysql.execute(
         "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)
-         VALUES (?, ?, '', true, 'user', 'password', '{}')",
+         VALUES (?, ?, '', true, 'user', 'password', '{}'),
+         (9, 'app-registration-admin', '', true, 'admin', 'password', '{}')",
         (OWNER_ID, USERNAME),
     ).await.unwrap();
     let registration = fixture.mysql.execute(
@@ -231,7 +217,7 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
             "kind": "Device",
             "metadata": {"name": "local-device", "namespace": "default"},
             "spec": {
-                "deviceType": "app", "deviceId": "local-device",
+                "deviceType": "remote", "deviceId": "local-device",
                 "runtimeInstanceId": "runtime-original", "appDeviceId": "local-device",
             },
         }).to_string()),
@@ -246,13 +232,15 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         state.unique_app_device_names,
         "enable legacy unique names for this test"
     );
-    let token = jsonwebtoken::encode(
-        &jsonwebtoken::Header::default(),
-        &json!({"sub": USERNAME, "exp": chrono::Utc::now().timestamp() + 60}),
-        &jsonwebtoken::EncodingKey::from_secret(state.auth.jwt_key.as_bytes()),
-    )
-    .unwrap();
-    let server = socketio::handlers::build(Arc::new(state)).await.unwrap();
+    let token = device_token(USERNAME, &state.auth.jwt_key);
+    let admin = device_token("app-registration-admin", &state.auth.jwt_key);
+    let state = Arc::new(state);
+    let path = format!(
+        "/api/admin/users/{OWNER_ID}/devices/records/{}/rebind",
+        registration.last_insert_id
+    );
+    let http = RebindServer::start(state.clone(), &path).await;
+    let server = socketio::handlers::build(state).await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (stop, stopped) = oneshot::channel();
@@ -264,10 +252,24 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         let mysql = fixture.mysql.clone();
         let redis = redis.clone();
         let key = key.clone();
+        let rebind_url = format!("http://{}{path}", http.address);
         async move {
             timeout(
                 Duration::from_secs(20),
-                assert_app_conflicts(&address, &token, &mysql, &redis, &key, &route, OWNER_ID),
+                assert_app_conflicts(
+                    &address,
+                    &token,
+                    &mysql,
+                    &redis,
+                    &key,
+                    &route,
+                    OWNER_ID,
+                    RebindRequest {
+                        url: &rebind_url,
+                        admin: &admin,
+                        owner: &token,
+                    },
+                ),
             )
             .await
             .expect("App registration scenario timed out");
@@ -276,10 +278,103 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     .await;
     let _ = stop.send(());
     let stopped = server.await;
+    http.stop().await;
     redis.del(key).await.unwrap();
     fixture.close().await;
     stopped.unwrap().unwrap();
     outcome.unwrap();
+}
+
+fn device_token(user: &str, key: &str) -> String {
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &json!({"sub": user, "exp": chrono::Utc::now().timestamp() + 60}),
+        &jsonwebtoken::EncodingKey::from_secret(key.as_bytes()),
+    )
+    .unwrap()
+}
+
+struct RebindServer {
+    address: SocketAddr,
+    api_stop: oneshot::Sender<()>,
+    gateway_stop: oneshot::Sender<()>,
+    api_task: tokio::task::JoinHandle<()>,
+    gateway_task: tokio::task::JoinHandle<()>,
+}
+
+impl RebindServer {
+    async fn start(state: Arc<wegent_backend_rs::AppState>, path: &str) -> Self {
+        let app = Application::build(state.clone()).await.unwrap();
+        let api = wegent_backend_rs::http_server::Server::bind_with_authenticator(
+            "127.0.0.1:0".parse().unwrap(),
+            app.routes,
+            AppAuthenticator::new(state.authentication_services()),
+        )
+        .await
+        .unwrap();
+        let api_uri = format!("http://{}", api.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        let config = HybridConfig::new(
+            "127.0.0.1:0".parse().unwrap(),
+            "http://127.0.0.1:1".parse().unwrap(),
+            RouteTable::empty(),
+        )
+        .with_routes_file(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml"),
+        )
+        .unwrap();
+        assert!(config.selects_rust(&http::Method::POST, path));
+        let gateway = Gateway::new(
+            config.routes,
+            OriginService::new(&api_uri).unwrap(),
+            &config.python_upstream,
+        )
+        .unwrap();
+        let listener = bind(config.listen_address).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (api_stop, api_stopped) = oneshot::channel();
+        let (gateway_stop, gateway_stopped) = oneshot::channel();
+        let api_task = tokio::spawn(async move {
+            api.serve_until(async {
+                let _ = api_stopped.await;
+            })
+            .await
+            .unwrap();
+        });
+        let gateway_task = tokio::spawn(async move {
+            serve(
+                listener,
+                gateway,
+                async {
+                    let _ = gateway_stopped.await;
+                },
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        });
+        Self {
+            address,
+            api_stop,
+            gateway_stop,
+            api_task,
+            gateway_task,
+        }
+    }
+
+    async fn stop(self) {
+        let _ = self.gateway_stop.send(());
+        let _ = self.api_stop.send(());
+        self.gateway_task.await.unwrap();
+        self.api_task.await.unwrap();
+    }
+}
+
+struct RebindRequest<'a> {
+    url: &'a str,
+    admin: &'a str,
+    owner: &'a str,
 }
 
 #[derive(brz_mysql::FromMysqlRow)]
@@ -289,6 +384,7 @@ struct AppDeviceRecord {
     json: Value,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn assert_app_conflicts(
     address: &str,
     token: &str,
@@ -297,6 +393,7 @@ async fn assert_app_conflicts(
     key: &str,
     route: &str,
     owner_id: i32,
+    rebind: RebindRequest<'_>,
 ) {
     let connect = || async {
         PollClient::connect(address, NAMESPACE, &json!({"token": token}).to_string())
@@ -380,5 +477,136 @@ async fn assert_app_conflicts(
         "runtime-original"
     );
     assert_eq!(rows[0].json["spec"]["appDeviceId"], "local-device");
+    assert_eq!(rows[0].json["spec"]["deviceType"], "app");
     assert_eq!(online(redis, key).await["socket_id"], original.socket_id());
+    assert_rebind(
+        &rebind, &original, &contender, redis, key, route, rows[0].id,
+    )
+    .await;
+    let rows = read_records().await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].json["spec"]["runtimeInstanceId"],
+        "runtime-original"
+    );
+    assert_eq!(rows[0].json["spec"]["appDeviceId"], "electron-new");
+}
+
+async fn assert_rebind(
+    request: &RebindRequest<'_>,
+    original: &PollClient,
+    contender: &PollClient,
+    redis: &RedisService,
+    key: &str,
+    route: &str,
+    record_id: i64,
+) {
+    let http = brz_http::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .read_timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let send = |url: &str, token: Option<&str>, expected: &str| {
+        let mut req = http.post(url).unwrap().json(&json!({
+            "runtime_instance_id": "runtime-original",
+            "expected_app_device_id": expected,
+            "new_app_device_id": "electron-new",
+        }));
+        if let Some(token) = token {
+            req = req.header("authorization", format!("Bearer {token}"));
+        }
+        async move {
+            let response = req.send().await.unwrap();
+            (
+                response.status().as_u16(),
+                response.json::<Value>().await.unwrap(),
+            )
+        }
+    };
+    let call = |token, expected| send(request.url, token, expected);
+    assert_eq!(call(None, "local-device").await.0, 401);
+    assert_eq!(call(Some(request.owner), "local-device").await.0, 403);
+    let wrong_owner = request.url.replace("/users/8/", "/users/9/");
+    assert_eq!(
+        send(&wrong_owner, Some(request.admin), "local-device")
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        call(Some(request.admin), "local-device").await,
+        (
+            409,
+            json!({"detail": "Device is online or busy; disconnect it before rebinding"})
+        ),
+    );
+    assert_eq!(online(redis, key).await["socket_id"], original.socket_id());
+
+    // An old socket can outlive an expired presence key. Exercise the
+    // production recovery path before and after the stored binding changes.
+    redis.del(key).await.unwrap();
+    assert_eq!(call(Some(request.admin), "stale-app").await.0, 409);
+    let legacy_key = key.rsplit_once(':').unwrap().0.to_owned() + ":local-device";
+    redis
+        .set_ex(legacy_key.as_str(), 10, r#"{"status":"online"}"#)
+        .await
+        .unwrap();
+    let legacy_result = call(Some(request.admin), "local-device").await;
+    redis.del(legacy_key.as_str()).await.unwrap();
+    assert_eq!(legacy_result.0, 409);
+    let heartbeat = json!({"device_id": "local-device", "runtime_instance_id": "runtime-original"});
+    assert_eq!(
+        event_ack(original, 4, "device:heartbeat", heartbeat.clone()).await,
+        json!({"success": true}),
+    );
+    redis.del(key).await.unwrap();
+    assert_eq!(
+        call(Some(request.admin), "local-device").await,
+        (200, json!({"record_id": record_id})),
+    );
+    assert_eq!(call(Some(request.admin), "local-device").await.0, 409);
+    let stale = json!({"error": "Stale device connection"});
+    assert_eq!(
+        event_ack(original, 5, "device:heartbeat", heartbeat.clone()).await,
+        stale
+    );
+    assert_eq!(
+        event_ack(original, 6, "runtime.tasks.pull", json!({})).await,
+        stale
+    );
+    assert!(redis.get::<_, String>(key).await.unwrap().is_none());
+
+    let registration = |id: &str| {
+        json!({
+            "device_id": "local-device", "name": "App E2E", "device_type": "app",
+            "runtime_instance_id": "runtime-original", "app_device_id": id,
+        })
+    };
+    let ack = event_ack(original, 7, "device:register", registration("local-device")).await;
+    assert!(ack["error"].as_str().unwrap().contains("verify and rebind"));
+    let mut legacy_registration = registration("local-device");
+    legacy_registration["device_type"] = json!("remote");
+    assert_eq!(
+        event_ack(original, 9, "device:register", legacy_registration).await,
+        json!({"error": "Registration failed: App device ID mismatch for device local-device"}),
+    );
+    assert_eq!(
+        event_ack(
+            contender,
+            4,
+            "device:register",
+            registration("electron-new")
+        )
+        .await,
+        json!({"success": true, "device_id": "local-device", "device_route_id": route}),
+    );
+    assert_eq!(
+        event_ack(original, 8, "device:heartbeat", heartbeat.clone()).await,
+        stale
+    );
+    assert_eq!(
+        event_ack(contender, 5, "device:heartbeat", heartbeat).await,
+        json!({"success": true})
+    );
+    assert_eq!(online(redis, key).await["socket_id"], contender.socket_id());
 }

@@ -220,6 +220,28 @@ fn selection_keeps_another_app_installation_on_its_own_route() {
 }
 
 #[test]
+fn unique_app_names_recover_matching_legacy_remote_records() {
+    for is_active in [0, 1] {
+        let rows = [device_row(
+            2,
+            device_json(Some("remote"), Some("runtime-a"), Some("app-a")),
+            is_active,
+        )];
+        let selected = select_registration_device(
+            &rows,
+            "local-device",
+            Some("runtime-a"),
+            Some("app-a"),
+            DeviceType::App,
+            true,
+        )
+        .expect("a legacy Remote record can be restored as App")
+        .expect("existing record");
+        assert_eq!(selected.id, 2);
+    }
+}
+
+#[test]
 fn unique_app_names_reject_changed_ipc_on_active_and_inactive_records() {
     for is_active in [0, 1] {
         let rows = [device_row(

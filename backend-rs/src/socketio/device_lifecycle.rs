@@ -105,7 +105,7 @@ fn identity_lock_unavailable() -> Reply<Value> {
 /// happens before the ACK is returned. Acquisition
 /// exhaustion, a Redis failure, the 20 s body timeout and a failed release all
 /// take the source's "temporarily unavailable" branch.
-async fn with_identity_lock<R, F, Fut>(
+pub(super) async fn with_identity_lock<R, F, Fut>(
     redis: &R,
     user_id: i64,
     body: F,
@@ -129,7 +129,11 @@ where
         }
     };
     // `async with asyncio.timeout(20):` wraps only the session handler body.
-    let outcome = tokio::time::timeout(IDENTITY_LOCK_BODY_TIMEOUT, body()).await;
+    let outcome = tokio::time::timeout(
+        crate::device_identity_lock::IDENTITY_LOCK_BODY_TIMEOUT,
+        body(),
+    )
+    .await;
     // `Lock.__aexit__` releases before the body's outcome escapes; a release
     // failure is a `RedisError` and takes the source's unavailable branch.
     if let Err(error) = lock.release().await {
@@ -144,9 +148,6 @@ where
         }
     }
 }
-
-/// Bound registration work under the identity lock.
-const IDENTITY_LOCK_BODY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `_register_device_session`: the registration body (no identity lock).
 async fn register_session(
@@ -202,10 +203,11 @@ async fn register_session(
         );
         persisted_display_name =
             runtime.recent_display_name(user_id, &payload.device_id, &fingerprint);
-        let requires_identity_check = matches!(
-            payload.device_type,
-            DeviceType::App | DeviceType::Cloud | DeviceType::Remote
-        );
+        let requires_identity_check = state.unique_app_device_names
+            || matches!(
+                payload.device_type,
+                DeviceType::App | DeviceType::Cloud | DeviceType::Remote
+            );
         if persisted_display_name.is_none() || requires_identity_check {
             match device::upsert_device(
                 state,
@@ -268,6 +270,7 @@ async fn register_session(
         runtime_transfer_host: runtime_transfer_host.clone(),
         runtime_transfer_port,
         runtime_instance_id: payload.runtime_instance_id.clone(),
+        app_device_id: payload.app_device_id.clone(),
         device_type: payload.device_type,
         execution_target_id: execution_target_id.clone(),
     });
@@ -555,10 +558,38 @@ pub async fn disconnect(
         );
         return;
     };
-    if !online_cleanup_permitted(redis, user_id, &device_id, socket_id, DISCONNECT_GRACE).await {
+    if super::device_heartbeat::requires_current_app_binding(state, &snapshot) {
+        let outcome = with_identity_lock(redis, user_id, || async {
+            disconnect_registered(state, runtime, redis, &snapshot, socket_id, &device_id).await;
+            Ok(Reply::payload(Value::Null))
+        })
+        .await;
+        if let Err(error) = outcome {
+            tracing::warn!(?error, user_id, "device disconnect failed");
+        }
         return;
     }
-    if let Some(online) = device::get_online(state, user_id, &device_id).await
+    disconnect_registered(state, runtime, redis, &snapshot, socket_id, &device_id).await;
+}
+
+async fn disconnect_registered(
+    state: &AppState,
+    runtime: &Arc<SocketRuntime>,
+    redis: &brz_redis::RedisService,
+    snapshot: &super::session::SessionSnapshot,
+    socket_id: &str,
+    device_id: &str,
+) {
+    let user_id = snapshot.user_id;
+    if !online_cleanup_permitted(redis, user_id, device_id, socket_id, DISCONNECT_GRACE).await {
+        return;
+    }
+    if super::device_heartbeat::requires_current_app_binding(state, snapshot)
+        && !super::device_upsert::app_session_matches(state, snapshot).await
+    {
+        return;
+    }
+    if let Some(online) = device::get_online(state, user_id, device_id).await
         && online["socket_id"] == socket_id
         && let Some(observed) = online["last_heartbeat"]
             .as_str()
@@ -571,14 +602,14 @@ pub async fn disconnect(
                 .device
                 .logical_device_id
                 .as_deref()
-                .unwrap_or(&device_id),
+                .unwrap_or(device_id),
             snapshot.device.runtime_instance_id.as_deref(),
             observed,
             true,
         )
         .await;
     }
-    if !device::clear_online(state, user_id, &device_id).await {
+    if !device::clear_online(state, user_id, device_id).await {
         // `delete_or_raise` surfaces the failure to `on_disconnect`'s outer
         // handler, which skips the rest of the cleanup.
         return;
@@ -586,9 +617,9 @@ pub async fn disconnect(
     // `_handle_device_disconnect` fails the device's RUNNING subtasks and
     // their parent tasks; the per-subtask `chat:error` emissions follow the
     // committed database work, exactly like the source.
-    let failed = super::device_disconnect::fail_running_subtasks(state, user_id, &device_id).await;
+    let failed = super::device_disconnect::fail_running_subtasks(state, user_id, device_id).await;
     super::device_disconnect::emit_chat_errors(state, runtime, &failed).await;
-    broadcast_offline(runtime.emitters(), state, user_id, &device_id).await;
+    broadcast_offline(runtime.emitters(), state, user_id, device_id).await;
 }
 
 #[cfg(test)]

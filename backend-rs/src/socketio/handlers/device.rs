@@ -22,6 +22,22 @@ use crate::socketio::runtime_event_order::Turn;
 use crate::socketio::session::{DeviceSession, SessionSnapshot};
 use crate::state::AppState;
 
+use device_heartbeat::stale_binding;
+
+async fn current_device_socket(app: &AppState, session: &SessionSnapshot, socket_id: &str) -> bool {
+    if !device_heartbeat::requires_current_app_binding(app, session) {
+        return true;
+    }
+    let Some(route) = session.device.device_id.as_deref() else {
+        return false;
+    };
+    // The current socket is the sole recipient of record-scoped device work.
+    matches!(
+        crate::device_online_state::read_online_state::<Value>(app, session.user_id, route).await,
+        Ok(Some(online)) if online["socket_id"].as_str() == Some(socket_id)
+    )
+}
+
 /// `on_device_register` -> `_register_device_session`.
 #[brz_socket_io::event("device:register", namespace = "/local-executor")]
 async fn register(
@@ -55,6 +71,27 @@ async fn status(
     #[inject(app)] app: &Arc<AppState>,
     #[inject(runtime)] runtime: &Arc<SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if app.unique_app_device_names {
+        let Some(redis) = app.redis.as_ref() else {
+            return Ok(Reply::payload(
+                serde_json::json!({"error": "Device identity is temporarily unavailable"}),
+            ));
+        };
+        return device_lifecycle::with_identity_lock(redis, snapshot.user_id, || async {
+            Ok(Reply::payload(
+                crate::socketio::device_status::status(
+                    app,
+                    runtime,
+                    &session.snapshot(),
+                    context.id(),
+                    &data,
+                )
+                .await,
+            ))
+        })
+        .await;
+    }
     Ok(Reply::payload(
         crate::socketio::device_status::status(
             app,
@@ -76,11 +113,15 @@ async fn upgrade_status(
     #[inject(app)] app: &Arc<AppState>,
     #[inject(runtime)] runtime: &Arc<SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if !current_device_socket(app, &snapshot, context.id()).await {
+        return Ok(stale_binding(&snapshot));
+    }
     Ok(Reply::payload(
         crate::socketio::device_status::upgrade_status(
             app,
             runtime,
-            &session.snapshot(),
+            &snapshot,
             context.id(),
             &data,
         )
@@ -100,6 +141,7 @@ async fn runtime_event(
     session: &DeviceSession,
     app: &AppState,
     runtime: &Arc<SocketRuntime>,
+    socket_id: &str,
     turn: Turn,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
@@ -116,6 +158,9 @@ async fn runtime_event(
         .unwrap_or_else(|| device_id.clone());
     // `_forward_runtime_event` runs under `_get_runtime_event_lock(sid)`.
     turn.wait().await;
+    if !current_device_socket(app, &snapshot, socket_id).await {
+        return Ok(stale_binding(&snapshot));
+    }
     let forwarded = device_runtime_event::forward(
         app,
         runtime,
@@ -189,6 +234,7 @@ const _: () = {
                                 DeviceSession,
                                 _,
                             >(&socket);
+                            let session_id = Arc::clone(&session);
                             let dependencies = dependencies.clone();
                             async move {
                                 let observation = metrics.handler.start();
@@ -200,6 +246,7 @@ const _: () = {
                                         &session,
                                         &dependencies.app,
                                         &dependencies.runtime,
+                                        &session_id,
                                         turn,
                                     )
                                     .await
@@ -346,10 +393,15 @@ plugin_auth!("plugin.auth.read", read, crate::plugin_account_auth::READ);
 async fn pull_tasks(
     #[payload] data: Value,
     #[session] session: &DeviceSession,
+    #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if !current_device_socket(app, &snapshot, context.id()).await {
+        return Ok(stale_binding(&snapshot));
+    }
     Ok(Reply::payload(
-        crate::socketio::device_pull::pull(app, &session.snapshot(), &data).await?,
+        crate::socketio::device_pull::pull(app, &snapshot, &data).await?,
     ))
 }
 /// `on_runtime_tasks_accept`: record the Executor's response to a pulled run.
@@ -357,12 +409,16 @@ async fn pull_tasks(
 async fn accept_tasks(
     #[payload] data: Value,
     #[session] session: &DeviceSession,
+    #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
     #[inject(runtime)] runtime: &Arc<SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if !current_device_socket(app, &snapshot, context.id()).await {
+        return Ok(stale_binding(&snapshot));
+    }
     Ok(Reply::payload(
-        crate::socketio::device_runtime_tasks::accept(app, runtime, &session.snapshot(), &data)
-            .await?,
+        crate::socketio::device_runtime_tasks::accept(app, runtime, &snapshot, &data).await?,
     ))
 }
 /// `on_runtime_workspace_cleanup_claim`: claim one cleanup desired-state
@@ -371,10 +427,15 @@ async fn accept_tasks(
 async fn claim_cleanup(
     #[payload] data: Value,
     #[session] session: &DeviceSession,
+    #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if !current_device_socket(app, &snapshot, context.id()).await {
+        return Ok(stale_binding(&snapshot));
+    }
     Ok(Reply::payload(
-        crate::socketio::workspace_cleanup_intents::claim(app, &session.snapshot(), &data).await?,
+        crate::socketio::workspace_cleanup_intents::claim(app, &snapshot, &data).await?,
     ))
 }
 /// `on_runtime_workspace_cleanup_accept`: acknowledge one applied cleanup
@@ -383,10 +444,15 @@ async fn claim_cleanup(
 async fn accept_cleanup(
     #[payload] data: Value,
     #[session] session: &DeviceSession,
+    #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if !current_device_socket(app, &snapshot, context.id()).await {
+        return Ok(stale_binding(&snapshot));
+    }
     Ok(Reply::payload(
-        crate::socketio::workspace_cleanup_intents::accept(app, &session.snapshot(), &data).await?,
+        crate::socketio::workspace_cleanup_intents::accept(app, &snapshot, &data).await?,
     ))
 }
 /// `on_runtime_task_updated`: project a terminal watcher update into the
@@ -395,12 +461,16 @@ async fn accept_cleanup(
 async fn tasks_updated(
     #[payload] data: Value,
     #[session] session: &DeviceSession,
+    #[context] context: &ConnectionContext,
     #[inject(app)] app: &Arc<AppState>,
     #[inject(runtime)] runtime: &Arc<crate::socketio::runtime::SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
+    if !current_device_socket(app, &snapshot, context.id()).await {
+        return Ok(stale_binding(&snapshot));
+    }
     Ok(Reply::payload(
-        crate::socketio::device_runtime_tasks::updated(app, runtime, &session.snapshot(), &data)
-            .await?,
+        crate::socketio::device_runtime_tasks::updated(app, runtime, &snapshot, &data).await?,
     ))
 }
 /// `on_terminal_output`: forward executor PTY output to the browser terminal
@@ -486,12 +556,18 @@ const _: () = {
                                         if let Some(turn) = &turn {
                                             turn.wait().await;
                                         }
-                                        let reply = device_responses::handle(
-                                            &dependencies.app, &dependencies.runtime,
-                                            &session, &name, input,
-                                        ).await;
-                                        drop(turn);
-                                        Ok(Reply::payload(reply))
+                                        if !current_device_socket(
+                                            &dependencies.app, &session, &socket.id.to_string(),
+                                        ).await {
+                                            Ok(stale_binding(&session))
+                                        } else {
+                                            let reply = device_responses::handle(
+                                                &dependencies.app, &dependencies.runtime,
+                                                &session, &name, input,
+                                            ).await;
+                                            drop(turn);
+                                            Ok(Reply::payload(reply))
+                                        }
                                     }
                                     Err(error) => Err(error),
                                 };

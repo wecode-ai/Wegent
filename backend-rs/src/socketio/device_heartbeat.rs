@@ -22,10 +22,10 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::device_running_tasks::list_running_tasks;
-use crate::socketio::device::{self, RuntimeTransfer};
+use crate::socketio::device::{self, DeviceType, RuntimeTransfer};
 use crate::socketio::device_lifecycle::publish_chat_event;
 use crate::socketio::runtime::SocketRuntime;
-use crate::socketio::session::DeviceSession;
+use crate::socketio::session::{DeviceSession, SessionSnapshot};
 use crate::state::AppState;
 
 /// `DEVICE_ONLINE_TTL`.
@@ -159,6 +159,36 @@ pub async fn heartbeat(
         Err(error) => return Ok(Reply::payload(error_ack(&error))),
     };
     let snapshot = session.snapshot();
+    if state.unique_app_device_names {
+        let Some(redis) = state.redis.as_ref() else {
+            return Ok(Reply::payload(error_ack(
+                "Device identity is temporarily unavailable",
+            )));
+        };
+        return super::device_lifecycle::with_identity_lock(redis, snapshot.user_id, || {
+            refresh_session(state, runtime, session, socket_id, payload)
+        })
+        .await;
+    }
+    refresh_session(state, runtime, session, socket_id, payload).await
+}
+
+pub(super) fn requires_current_app_binding(state: &AppState, snapshot: &SessionSnapshot) -> bool {
+    state.unique_app_device_names
+        && matches!(
+            snapshot.device.device_type,
+            Some(DeviceType::App | DeviceType::Remote)
+        )
+}
+
+async fn refresh_session(
+    state: &AppState,
+    runtime: &Arc<SocketRuntime>,
+    session: &DeviceSession,
+    socket_id: &str,
+    payload: HeartbeatPayload,
+) -> Result<Reply<Value>, ClientError> {
+    let snapshot = session.snapshot();
     let user_id = snapshot.user_id;
     let session_device_id = snapshot
         .device
@@ -172,7 +202,24 @@ pub async fn heartbeat(
         return Ok(Reply::payload(error_ack("Device ID mismatch")));
     };
 
-    let online = device::get_online(state, user_id, &route_id).await;
+    let guarded = requires_current_app_binding(state, &snapshot);
+    let online = if guarded {
+        let Some(redis) = state.redis.as_ref() else {
+            return Ok(Reply::payload(error_ack(
+                "Device identity is temporarily unavailable",
+            )));
+        };
+        match crate::device_online_state::read_online_state_with(redis, user_id, &route_id).await {
+            Ok(online) => online,
+            Err(()) => {
+                return Ok(Reply::payload(error_ack(
+                    "Device identity is temporarily unavailable",
+                )));
+            }
+        }
+    } else {
+        device::get_online(state, user_id, &route_id).await
+    };
     if let Some(online_socket_id) = online
         .as_ref()
         .and_then(|online| online.get("socket_id"))
@@ -180,7 +227,17 @@ pub async fn heartbeat(
         && online_socket_id != socket_id
     {
         tracing::info!(user_id, device = %route_id, "ignoring stale heartbeat");
-        return Ok(Reply::payload(error_ack("Stale device connection")));
+        return Ok(if guarded {
+            stale_binding(&snapshot)
+        } else {
+            Reply::payload(error_ack("Stale device connection"))
+        });
+    }
+    if online.is_none()
+        && guarded
+        && !super::device_upsert::app_session_matches(state, &snapshot).await
+    {
+        return Ok(stale_binding(&snapshot));
     }
     if let Some(registered) = snapshot.device.runtime_instance_id.as_deref()
         && payload.runtime_instance_id.as_deref() != Some(registered)
@@ -295,6 +352,22 @@ pub async fn heartbeat(
             needs_confirmation_only: true,
         });
     }))
+}
+
+pub(super) fn stale_binding(snapshot: &SessionSnapshot) -> Reply<Value> {
+    let reply = Reply::payload(error_ack("Stale device connection"));
+    let Some(route) = snapshot.device.device_id.as_deref() else {
+        return reply;
+    };
+    let user_id = snapshot.user_id;
+    let target = snapshot
+        .device
+        .execution_target_id
+        .as_deref()
+        .unwrap_or(route);
+    reply
+        .leave(format!("device:{user_id}:{route}"))
+        .leave(format!("execution-target:{user_id}:{target}"))
 }
 
 /// The online document fields `_set_online` needs during heartbeat recovery.

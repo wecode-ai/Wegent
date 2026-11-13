@@ -173,6 +173,9 @@ path = "/api/internal/chat/attachments/:attachment_id/text"
 [[routes]]
 methods = ["GET"]
 path = "/api/devices"
+[[routes]]
+methods = ["POST"]
+path = "/api/admin/users/:user_id/devices/records/:record_id/rebind"
 #[[routes]]
 #methods = ["DELETE"]
 #path = "/api/devices/records/:record_id"

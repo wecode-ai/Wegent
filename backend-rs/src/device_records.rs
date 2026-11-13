@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `DELETE /api/devices/records/{record_id}`: record-scoped removal of one
-//! owned Device registration.
+//! Record-scoped device removal and administrator App identity changes.
 //!
 //! Mirrors `app.api.endpoints.devices.delete_device_by_record`, which runs
 //! `app.services.device.record_operations.delete_device_record` inside
@@ -28,17 +27,21 @@
 //! one transaction connection because the `FOR UPDATE` row lock has to span
 //! the `UPDATE` that ends it.
 
+use brz_http_server::StatusCode;
 use brz_mysql::{MysqlError, MysqlTransaction};
 use brz_redis::{Redis, RedisBytes};
 use chrono::Utc;
 use serde_json::Value;
 
+use crate::admin_service_keys::AdminUser;
 use crate::auth::{SessionUser, UserRow};
 use crate::device_identity_lock::IdentityLock;
 use crate::devices::{
-    DeviceKindRow, DeviceSpecInput, DeviceType, internal_error, online_key, record_route_id, spec,
+    DeviceKindRow, DeviceType, internal_error, online_key, record_route_id, spec,
 };
 use crate::http_compat::FastApiError;
+use crate::socketio::device::DeviceKindRow as RegistrationRow;
+use crate::socketio::device_upsert::{DEVICE_BY_NAME_QUERY, app_registration_record, spec_string};
 use crate::state::AppState;
 
 /// `DeviceType.CLOUD.value` (`app.schemas.device`).
@@ -83,6 +86,157 @@ const ACTIVE_SUBTASK_BY_EXECUTOR_QUERY: &str = "SELECT subtasks.id AS subtasks_i
 /// Python-side `onupdate` `updated_at`.
 const UPDATE_DEVICE_INACTIVE_QUERY: &str =
     "UPDATE kinds SET is_active=0, updated_at=? WHERE kinds.id = ?";
+
+const REBIND_RECORD_QUERY: &str = "SELECT id AS kinds_id, name AS kinds_name, \
+     json AS kinds_json, is_active AS kinds_is_active FROM kinds WHERE id = ? \
+     AND user_id = ? AND namespace = 'default' AND kind = 'Device' FOR UPDATE";
+
+#[derive(serde::Deserialize)]
+struct DeviceRebind {
+    runtime_instance_id: String,
+    expected_app_device_id: Value,
+    new_app_device_id: String,
+}
+
+impl DeviceRebind {
+    fn validate(&self) -> Result<(), FastApiError> {
+        let valid_id = |id: &str| !id.trim().is_empty() && id.chars().count() <= 255;
+        let expected = &self.expected_app_device_id;
+        if !valid_id(&self.runtime_instance_id)
+            || !valid_id(&self.new_app_device_id)
+            || !(expected.is_null()
+                || expected
+                    .as_str()
+                    .is_some_and(|id| id.chars().count() <= 255))
+            || expected.as_str() == Some(self.new_app_device_id.as_str())
+        {
+            return Err(FastApiError::detail(
+                StatusCode::BAD_REQUEST,
+                "Provide a Runtime ID, the current App ID (or null), and a different new App ID",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct DeviceRebound {
+    record_id: i64,
+}
+
+#[brz_http_server::post("/api/admin/users/:user_id/devices/records/:record_id/rebind")]
+async fn rebind_device_record(
+    #[inject(state)] state: &AppState,
+    #[auth] admin: AdminUser,
+    user_id: i64,
+    record_id: i64,
+    body: DeviceRebind,
+) -> Result<DeviceRebound, FastApiError> {
+    body.validate()?;
+    if !state.unique_app_device_names {
+        return Err(rebind_conflict(
+            "App device rebind requires unique App device names",
+        ));
+    }
+    let redis = state.redis.as_ref().ok_or_else(status_unavailable)?;
+    let lock = IdentityLock::acquire(redis, user_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, user_id, "device rebind lock acquisition failed");
+            status_unavailable()
+        })?
+        .ok_or_else(status_unavailable)?;
+    let outcome = tokio::time::timeout(
+        crate::device_identity_lock::IDENTITY_LOCK_BODY_TIMEOUT,
+        state.mysql.with_transaction(async |tx| {
+            rebind_record_in(tx, redis, user_id, record_id, &body).await
+        }),
+    )
+    .await;
+    if let Err(error) = lock.release().await {
+        tracing::error!(%error, user_id, "device rebind lock release failed");
+        return Err(status_unavailable());
+    }
+    match outcome {
+        Ok(Ok(Ok(()))) => {
+            tracing::info!(
+                admin_user_id = admin.0.id,
+                user_id,
+                record_id,
+                "App device rebound"
+            );
+            Ok(DeviceRebound { record_id })
+        }
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Err(error)) => {
+            tracing::error!(%error, user_id, record_id, "device rebind database operation failed");
+            Err(internal_error())
+        }
+        Err(_) => Err(status_unavailable()),
+    }
+}
+
+fn rebind_conflict(message: &'static str) -> FastApiError {
+    FastApiError::detail(StatusCode::CONFLICT, message)
+}
+
+async fn rebind_record_in<T: MysqlTransaction, R: Redis>(
+    tx: &mut T,
+    redis: &R,
+    user_id: i64,
+    record_id: i64,
+    rebind: &DeviceRebind,
+) -> Result<Result<(), FastApiError>, MysqlError> {
+    let _owner: Option<LockOwnerRow> = tx
+        .fetch_optional(LOCK_DEVICE_OWNER_QUERY, (user_id,))
+        .await?;
+    let Some(row) = tx
+        .fetch_optional::<_, _, RegistrationRow>(REBIND_RECORD_QUERY, (record_id, user_id))
+        .await?
+    else {
+        return Ok(Err(FastApiError::detail(
+            StatusCode::NOT_FOUND,
+            "Device record not found",
+        )));
+    };
+    if !app_registration_record(&row.json)
+        || spec_string(&row.json, "runtimeInstanceId") != Some(rebind.runtime_instance_id.as_str())
+        || row.json["spec"]["appDeviceId"] != rebind.expected_app_device_id
+    {
+        return Ok(Err(rebind_conflict(
+            "Stored device identity no longer matches",
+        )));
+    }
+    let devices: Vec<RegistrationRow> = tx
+        .fetch_all(DEVICE_BY_NAME_QUERY, (user_id, row.name.as_str()))
+        .await?;
+    if devices.iter().any(|device| device.id != row.id) {
+        return Ok(Err(rebind_conflict(
+            "Device name belongs to multiple records",
+        )));
+    }
+    let route = crate::socketio::device::route_id(&row, crate::socketio::device::DeviceType::App);
+    match require_offline_and_idle(tx, redis, user_id, &route, &row.name, LegacyPresence::Any)
+        .await?
+    {
+        GuardDecision::Offline => {}
+        GuardDecision::Online => {
+            return Ok(Err(rebind_conflict(
+                "Device is online or busy; disconnect it before rebinding",
+            )));
+        }
+        GuardDecision::Unavailable | GuardDecision::Undecodable => {
+            return Ok(Err(status_unavailable()));
+        }
+    }
+    tx.execute(
+        "UPDATE kinds SET json=JSON_SET(json, '$.spec.appDeviceId', ?), updated_at=NOW() \
+         WHERE id = ? AND user_id = ? AND namespace = 'default' AND kind = 'Device'",
+        (rebind.new_app_device_id.as_str(), row.id, user_id),
+    )
+    .await?;
+    Ok(Ok(()))
+}
 
 /// The endpoint's success body (`{"message": "Device registration removed"}`).
 #[derive(serde::Serialize)]
@@ -212,13 +366,15 @@ where
     let device_type = DeviceType::from_spec(&device_spec);
     // `device.json.get("spec", {}).get("deviceType") != "cloud"`.
     if device_spec.device_type_value() != Some(CLOUD_DEVICE_TYPE) {
+        let route = record_route_id(&device, device_type);
+        let runtime = device_spec.runtime_instance_id_value();
         match require_offline_and_idle(
             transaction,
             redis,
             user_id,
-            &device,
-            &device_spec,
-            device_type,
+            &route,
+            &device.name,
+            LegacyPresence::MatchingRuntime(runtime.as_ref()),
         )
         .await?
         {
@@ -252,6 +408,11 @@ enum GuardDecision {
     Undecodable,
 }
 
+enum LegacyPresence<'a> {
+    MatchingRuntime(Option<&'a Value>),
+    Any,
+}
+
 /// `_require_offline_and_idle`: only cloud registrations may be removed while
 /// online or busy. An older running server may still publish under the logical
 /// device name, so both the record-scoped route and the name are read.
@@ -259,19 +420,15 @@ async fn require_offline_and_idle<T, R>(
     transaction: &mut T,
     redis: &R,
     user_id: i64,
-    device: &DeviceKindRow,
-    device_spec: &DeviceSpecInput,
-    device_type: DeviceType,
+    route: &str,
+    name: &str,
+    legacy_policy: LegacyPresence<'_>,
 ) -> Result<GuardDecision, MysqlError>
 where
     T: MysqlTransaction,
     R: Redis,
 {
-    let route_id = record_route_id(device, device_type);
-    let keys = vec![
-        online_key(user_id, &route_id),
-        online_key(user_id, &device.name),
-    ];
+    let keys = vec![online_key(user_id, route), online_key(user_id, name)];
     let values = match redis.mget::<_, RedisBytes>(keys).await {
         Ok(values) => values,
         Err(error) => {
@@ -281,6 +438,15 @@ where
             return Ok(GuardDecision::Unavailable);
         }
     };
+    let LegacyPresence::MatchingRuntime(runtime) = legacy_policy else {
+        let busy = values.iter().any(Option::is_some)
+            || active_subtask_by_executor(transaction, user_id, route, name).await?;
+        return Ok(if busy {
+            GuardDecision::Online
+        } else {
+            GuardDecision::Offline
+        });
+    };
     let online = match decode_online_document(values.first().and_then(Option::as_ref)) {
         Ok(value) => value,
         Err(()) => return Ok(GuardDecision::Undecodable),
@@ -289,8 +455,7 @@ where
         Ok(value) => value,
         Err(()) => return Ok(GuardDecision::Undecodable),
     };
-    let runtime = device_spec.runtime_instance_id_value();
-    let running = active_subtask_by_executor(transaction, user_id, &route_id, &device.name).await?;
+    let running = active_subtask_by_executor(transaction, user_id, route, name).await?;
 
     let online_reported = online.as_ref().is_some_and(python_truthy);
     // `legacy.get("runtime_instance_id")` names this record's Runtime, or the
@@ -298,7 +463,7 @@ where
     let legacy_conflict = legacy
         .as_ref()
         .filter(|value| python_truthy(value))
-        .is_some_and(|legacy| legacy_matches_runtime(legacy, runtime.as_ref()));
+        .is_some_and(|legacy| legacy_matches_runtime(legacy, runtime));
     Ok(if online_reported || running || legacy_conflict {
         GuardDecision::Online
     } else {

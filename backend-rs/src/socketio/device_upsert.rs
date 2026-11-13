@@ -33,7 +33,7 @@ use crate::state::AppState;
 
 /// `find_registration_device`'s owned-device read: every row with this name,
 /// ordered by primary key, with no `FOR UPDATE` (the owner lock serializes).
-const DEVICE_BY_NAME_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
+pub(crate) const DEVICE_BY_NAME_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS kinds_user_id, \
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, kinds.namespace AS kinds_namespace, \
      kinds.json AS kinds_json, kinds.is_active AS kinds_is_active, \
      kinds.created_at AS kinds_created_at, kinds.updated_at AS kinds_updated_at FROM kinds \
@@ -440,7 +440,7 @@ fn select_registration_device<'a>(
         let exact: Vec<&DeviceKindRow> = devices
             .iter()
             .filter(|device| {
-                (!app_name_is_unique || spec_string(&device.json, "deviceType") == Some("app"))
+                (!app_name_is_unique || app_registration_record(&device.json))
                     && spec_string(&device.json, "runtimeInstanceId") == Some(runtime)
                     && spec_string(&device.json, "appDeviceId") == app_device_id
             })
@@ -454,7 +454,7 @@ fn select_registration_device<'a>(
         if app_name_is_unique && !devices.is_empty() {
             let same_runtime = runtime.is_some()
                 && devices.iter().any(|device| {
-                    spec_string(&device.json, "deviceType") == Some("app")
+                    app_registration_record(&device.json)
                         && spec_string(&device.json, "runtimeInstanceId") == runtime
                 });
             return Err(if same_runtime {
@@ -555,8 +555,57 @@ fn is_local_device(json: &Value) -> bool {
     }
 }
 
+/// App registrations can restore an exact legacy Remote record.
+pub(crate) fn app_registration_record(json: &Value) -> bool {
+    matches!(spec_string(json, "deviceType"), Some("app" | "remote"))
+}
+
+/// Check the persisted binding before a previously registered socket recovers.
+pub(super) async fn app_session_matches(
+    state: &AppState,
+    session: &super::session::SessionSnapshot,
+) -> bool {
+    let device = &session.device;
+    let (Some(route), Some(name)) = (&device.device_id, &device.reported_device_id) else {
+        return false;
+    };
+    // Recovery can follow an administrator's committed rebind immediately.
+    // Use a primary transaction so replica lag cannot resurrect the old ID.
+    let result: MysqlResult<Vec<DeviceKindRow>> = state
+        .mysql
+        .with_transaction(async |tx| {
+            tx.fetch_all(DEVICE_BY_NAME_QUERY, (session.user_id, name.as_str()))
+                .await
+        })
+        .await;
+    match result {
+        Ok(rows) => rows.iter().any(|row| {
+            row.is_active != 0
+                && spec_string(&row.json, "deviceType") == device.device_type.map(DeviceType::value)
+                && device
+                    .device_type
+                    .is_some_and(|kind| super::device::route_id(row, kind) == *route)
+                && identity_matches_field(
+                    &row.json,
+                    "runtimeInstanceId",
+                    device.runtime_instance_id.as_deref(),
+                )
+                && identity_matches_field(&row.json, "appDeviceId", device.app_device_id.as_deref())
+        }),
+        Err(error) => {
+            tracing::warn!(%error, user_id = session.user_id, "device session identity check failed");
+            false
+        }
+    }
+}
+
+fn identity_matches_field(json: &Value, field: &str, expected: Option<&str>) -> bool {
+    let value = &json["spec"][field];
+    expected.map_or_else(|| value.is_null(), |id| value.as_str() == Some(id))
+}
+
 /// One `spec.<key>` string value, matching Python's `.get(key)`.
-fn spec_string<'a>(json: &'a Value, key: &str) -> Option<&'a str> {
+pub(crate) fn spec_string<'a>(json: &'a Value, key: &str) -> Option<&'a str> {
     json.get("spec")
         .and_then(|spec| spec.get(key))
         .and_then(Value::as_str)
