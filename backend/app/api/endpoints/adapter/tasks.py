@@ -542,12 +542,17 @@ def share_task(
 def get_task_share_info(
     share_token: str = Query(..., description="Share token from URL"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Get task share information from share token.
     This endpoint doesn't require authentication, so anyone with the link can view.
     """
-    return shared_task_service.get_share_info(db=db, share_token=share_token)
+    return shared_task_service.get_share_info(
+        db=db,
+        share_token=share_token,
+        viewer_id=current_user.id if current_user else None,
+    )
 
 
 @router.post("/share/join", response_model=JoinSharedTaskResponse)
@@ -567,6 +572,7 @@ def join_shared_task(
         user_team = (
             db.query(Kind)
             .filter(
+                Kind.user_id == current_user.id,
                 Kind.kind == "Team",
                 Kind.id == request.team_id,
                 Kind.is_active == True,
