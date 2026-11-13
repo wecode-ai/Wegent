@@ -56,6 +56,7 @@ impl RuntimeWorkRpcHandler {
                         | "changeRequests"
                         | "queuePosition"
                         | "modelProviderRouting"
+                        | "quotaWait"
                 )
             });
             // The serializer originally adds this authoritative identity after

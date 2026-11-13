@@ -642,6 +642,53 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     );
 }
 
+#[tokio::test]
+async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried() {
+    let redis = RecordingRedis::default();
+    redis.mark_cancelled();
+    let mysql = RecordingMysql::default();
+    let executor = executor_manager();
+    let request = execution_request();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: Value::Null,
+        created_task: None,
+        owner_user_id: None,
+    };
+
+    collect(
+        &ctx,
+        &super::super::package_runtime::image_url(),
+        &request,
+        "image-cancel",
+        Some(2),
+    )
+    .await
+    .expect("the queued cancellation completes the image turn");
+
+    let calls = redis.calls();
+    let check = calls
+        .iter()
+        .position(|call| call.starts_with("GET chat:cancel:"))
+        .unwrap();
+    let cleanup = calls
+        .iter()
+        .position(|call| call.starts_with("DEL chat:cancel:"))
+        .unwrap();
+    let published = calls
+        .iter()
+        .position(|call| call.starts_with("PUBLISH ") && call.contains("chat:cancelled"))
+        .unwrap();
+    assert!(check < cleanup && cleanup < published, "{calls:?}");
+    assert_eq!(redis.count("DEL chat:cancel:"), 1, "{calls:?}");
+}
+
 /// The client's read timeout bounds inactivity, not total stream lifetime.
 /// Reintroducing `RequestBuilder::timeout(STREAM_TIMEOUT)` would make this
 /// assertion fail and reproduce the 300-second truncation regression.
