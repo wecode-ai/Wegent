@@ -247,49 +247,36 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
   assert.ok(saved)
 })
 
-test('does not click space management without a declared expanded state', async () => {
-  const clicks = []
+test('waits for directly visible storage groups without clicking a section toggle', async () => {
+  const calls = []
   const control = {
     async command(action, selector) {
-      if (action === 'getAttribute') return ''
-      if (action === 'click') clicks.push(selector)
-    },
-  }
-  await assert.rejects(expandCollaborationSpaces(control), /must expose its expanded state/)
-  assert.deepEqual(clicks, [])
-})
-
-test('reveals offscreen navigation controls before testing visibility or clicking', async () => {
-  const states = new Map([
-    ['collaboration-workspaces-section-toggle', { mounted: true, visible: false, expanded: false }],
-    [
-      'collaboration-workspace-home-guest-parent',
-      { mounted: false, visible: false, expanded: false },
-    ],
-  ])
-  const control = {
-    async command(action, selector, options = {}) {
-      const key = [...states.keys()].find(id => selector.includes(`"${id}"`))
-      const state = states.get(key)
-      assert.ok(state?.mounted, 'Workspace controls require open space management')
-      if (action === 'scrollIntoView') state.visible = true
-      if (options.visible && action !== 'scrollIntoView') assert.ok(state.visible)
-      if (action === 'getAttribute') return String(state.expanded)
-      if (action === 'click') {
-        assert.ok(state.visible, 'An offscreen control must be revealed before clicking')
-        state.expanded = true
-        if (key === 'collaboration-workspaces-section-toggle')
-          states.get('collaboration-workspace-home-guest-parent').mounted = true
-      }
-      if (selector.endsWith('[aria-expanded="true"]')) assert.ok(state.expanded)
+      calls.push({ action, selector })
     },
   }
   await expandCollaborationSpaces(control)
+  assert.deepEqual(
+    calls.map(call => call.action),
+    ['waitFor', 'waitFor']
+  )
+  assert.ok(calls[0].selector.includes('collaboration-project-group-local'))
+  assert.ok(calls[1].selector.includes('collaboration-project-group-cloud'))
+})
+
+test('reveals offscreen navigation controls before testing visibility or clicking', async () => {
+  let visible = false
+  const control = {
+    async command(action, selector, options = {}) {
+      assert.ok(selector.includes('collaboration-workspace-home-guest-parent'))
+      if (action === 'scrollIntoView') visible = true
+      if (options.visible) assert.ok(visible)
+    },
+  }
   await revealCollaborationSidebarElement(
     control,
     '[data-testid="collaboration-workspace-home-guest-parent"]'
   )
-  assert.ok([...states.values()].every(state => state.visible))
+  assert.ok(visible)
 })
 
 test('reveals a workspace identity independently of its section toggle position', async () => {

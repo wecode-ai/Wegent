@@ -891,7 +891,8 @@ jobs:
 
       - name: Start backend server
         env:
-          PYTHONPATH: ..:.:tests/e2e
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.:tests/e2e', github.workspace) || '..:.:tests/e2e' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
           EXTERNAL_KNOWLEDGE_MCP_ENABLED: "true"
           EMBEDDED_CELERY_ENABLED: "false"
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
@@ -952,7 +953,8 @@ jobs:
           ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
           ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
           ATTACHMENT_S3_USE_SSL: "false"
-          PYTHONPATH: ..:.
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.', github.workspace) || '..:.' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
         run: |
           uv run --no-sync celery -A app.core.celery_app worker \
             --pool=threads --concurrency=4 --queues=wegent_online --beat \
@@ -970,6 +972,8 @@ jobs:
 
       - name: Start Knowledge Runtime
         env:
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
           KNOWLEDGE_RUNTIME_DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL: http://localhost:8000
           LOG_FILE_ENABLED: "false"
@@ -1007,6 +1011,8 @@ jobs:
 
       - name: Start Knowledge Doc Converter
         env:
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
           BACKEND_BASE_URL: http://localhost:8000
           BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
           CELERY_BROKER_URL: redis://redis:6379/0
@@ -1330,15 +1336,21 @@ jobs:
           E2E_BOOTSTRAP_ADMIN_USER: admin
           E2E_DOCKER_NETWORK: ${{ job.container.network }}
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/knowledge-provider-e2e
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ github.workspace }}/.ci-artifacts/knowledge-event-probe
+          E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
           PYTHONPATH: ..:.
-        run: ../.github/scripts/run-knowledge-provider-e2e.sh
+        run: |
+          ../.github/scripts/run-knowledge-provider-e2e.sh
+          uv run --no-sync python tests/e2e/knowledge_event_e2e.py
 
       - name: Upload knowledge provider lifecycle diagnostics
         if: always() && matrix.shardIndex == 4 && steps.knowledge_e2e.outcome != 'skipped' && steps.knowledge_e2e.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: knowledge-provider-lifecycle-e2e
-          path: .ci-artifacts/knowledge-provider-e2e/
+          path: |
+            .ci-artifacts/knowledge-provider-e2e/
+            .ci-artifacts/knowledge-event-probe/
           if-no-files-found: error
           retention-days: 7
 
@@ -1828,7 +1840,7 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           RS_DATABASE_URL_COLLATION: utf8mb4_0900_ai_ci
           REDIS_URL: redis://localhost:6379/0
-          EXECUTOR_MANAGER_URL: http://localhost:8001
+          EXECUTOR_MANAGER_URL: http://localhost:8191
           SECRET_KEY: test-secret-key-for-ci-testing
           ALGORITHM: HS256
           ENVIRONMENT: development
@@ -1952,6 +1964,17 @@ jobs:
           nohup uvicorn main:app --host 0.0.0.0 --port 8001 > executor_manager.log 2>&1 &
           echo $! > executor_manager.pid
 
+      - name: Start Executor recovery fixture
+        working-directory: ./backend
+        env:
+          E2E_MYSQL_PASSWORD: test123
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+        run: |
+          nohup uv run --no-sync uvicorn tests.e2e.executor_recovery_fixture:app \
+            --host 0.0.0.0 --port 8191 > executor-recovery.log 2>&1 &
+          echo $! > executor-recovery.pid
+
       - name: Wait for services
         run: |
           wait_for_url() {
@@ -1970,7 +1993,8 @@ jobs:
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
             && wait_for_url http://localhost:8001/health \
-            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && exit 1)
+            && wait_for_url http://localhost:8191/health \
+            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && cat backend/executor-recovery.log && exit 1)
 
       - name: Verify backend is running
         run: |
@@ -2006,6 +2030,7 @@ jobs:
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
           E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || needs.build-executor-e2e-runtime.outputs.image }}
           E2E_DEVICE_ID: e2e-claudecode-device
+          E2E_EXECUTOR_RECOVERY_URL: http://localhost:8191
           CI: true
         run: |
           # Sandbox veth changes must not invalidate the browser's network stack.
@@ -2037,6 +2062,8 @@ jobs:
             --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env DATABASE_URL \
             --env E2E_DEVICE_ID \
+            --env E2E_EXECUTOR_RECOVERY_URL \
+            --env E2E_EXECUTOR_RECOVERY_GATEWAY_LOG="$container_workspace/logs/backend/rust/info.log" \
             --env GITHUB_RUN_ID \
             --env GITHUB_RUN_ATTEMPT \
             --env CI \
@@ -2157,6 +2184,15 @@ jobs:
             rm executor_manager.pid
           fi
 
+      - name: Stop Executor recovery fixture
+        if: always()
+        working-directory: ./backend
+        run: |
+          if [ -f executor-recovery.pid ]; then
+            kill "$(cat executor-recovery.pid)" 2>/dev/null || true
+            rm executor-recovery.pid
+          fi
+
       - name: Capture Executor Manager container logs
         if: failure()
         run: |
@@ -2223,6 +2259,10 @@ jobs:
           name: backend-logs-executor
           path: |
             backend/backend.log
+            backend/executor-recovery.log
+            logs/backend/rust/info.log
+            logs/backend/rust/error.log
+            logs/backend/rust/warn.log
             backend/backend-stalled.log
             backend/backend-stalled-rust/info.log
             backend/chat_shell.log

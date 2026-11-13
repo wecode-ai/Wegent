@@ -9,11 +9,10 @@
 //! part of the UPDATE: a FAILED completion without a payload collects `None`
 //! and leaves the stored value untouched. `updated_at` and `completed_at` are
 //! independent wall-clock reads, `completed_at` first (`db.py:181-184`).
-use brz_mysql::{Json, Mysql, MysqlRow, MysqlTransaction};
-use brz_redis::Redis;
+use brz_mysql::{Json, MysqlRow, MysqlTransaction};
 use serde_json::Value;
 
-use super::{Completion, local_datetime, sql, subtask_column};
+use super::{local_datetime, sql, subtask_column};
 use crate::internal_callback::py_json::python_dumps;
 
 /// `_update_subtask_sync`'s `result` assignment (`db.py:136-177`).
@@ -70,8 +69,8 @@ fn sanitize_result_for_storage(result: &Value) -> Value {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransaction>(
-    ctx: &Completion<'_, M, R>,
+pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
+    tables: sql::Tables,
     mysql: &mut T,
     subtask_id: i64,
     status: &str,
@@ -79,9 +78,10 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
     error: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
+    require_pending: bool,
 ) -> Option<(i64, MysqlRow, Option<String>)> {
     let row: MysqlRow = mysql
-        .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
+        .fetch_optional(sql::subtask_by_id(tables), (subtask_id,))
         .await
         .ok()
         .flatten()?;
@@ -122,7 +122,10 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
     let namespace = executor_namespace.unwrap_or_default();
     let name = executor_name.unwrap_or_default();
     let error = error.unwrap_or_default();
-    let sql = sql::update_subtask_terminal(ctx.tables, with_result, with_error, with_executor);
+    let mut sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
+    if require_pending {
+        sql.push_str(" AND status IN ('PENDING', 'RUNNING')");
+    }
 
     // Read and write on the same writer transaction; metrics publish after commit.
     let outcome = match (with_executor, with_error, with_result) {
@@ -224,11 +227,16 @@ pub(super) async fn update_subtask_status_on<M: Mysql, R: Redis, T: MysqlTransac
                 .await
         }
     };
-    if let Err(failure) = outcome {
-        tracing::warn!(%failure, "callback subtask update failed");
-        return None;
+    match outcome {
+        Ok(result) if !require_pending || result.rows_affected != 0 => {
+            Some((owner_task_id, row, metrics_message))
+        }
+        Ok(_) => None,
+        Err(failure) => {
+            tracing::warn!(%failure, "callback subtask update failed");
+            None
+        }
     }
-    Some((owner_task_id, row, metrics_message))
 }
 
 #[cfg(test)]

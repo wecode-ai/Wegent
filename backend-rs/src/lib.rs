@@ -268,6 +268,7 @@ mod subtasks;
 mod system_execute_sql_for_single;
 mod tables;
 pub use wegent_task_store::task_creation;
+mod share_access;
 mod task_detail_api;
 pub mod task_export_docx;
 mod task_mutation_api;
