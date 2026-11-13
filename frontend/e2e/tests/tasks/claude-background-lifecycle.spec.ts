@@ -339,7 +339,7 @@ test('cloud Claude registers downloadable artifacts before new and reused turns 
   const cleanup: Array<() => Promise<unknown>> = []
 
   try {
-    const teamId = await createAgent(request, headers, model, shell, bot, team)
+    const { teamId } = await createAgent(request, headers, model, shell, bot, team)
     await page.addInitScript(id => {
       localStorage.setItem('user_onboarding_completed', 'true')
       localStorage.setItem('wegent_last_team_id', String(id))
