@@ -212,7 +212,14 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         });
         // The caller and worker share the lease. Failure keeps the lane until
         // publication, and cancellation cannot release a still-running worker's slot.
-        let prepared = self.prepare_plugin(&spec, &snapshot, lease.clone()).await;
+        let prepared = self
+            .prepare_plugin(
+                &spec,
+                &snapshot,
+                lease.clone(),
+                Some(self.sync_lock.clone()),
+            )
+            .await;
         crate::logging::log_executor_event(
             "plugin_prepared",
             &[
