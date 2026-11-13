@@ -472,10 +472,14 @@ def test_personal_sort_modes_apply_before_every_page(
     assert cursor is None
 
 
-def test_created_scope_keeps_creator_identity_and_project_authorization(test_db, test_user):
+def test_created_scope_keeps_creator_identity_and_project_authorization(
+    test_db, test_user
+):
     project = _make_project(test_db, test_user)
     mine = add_items(test_db, project, test_user.id, 2, prefix="CREATED")
-    other = User(user_name="created-scope-other", password_hash="unused", is_active=True)
+    other = User(
+        user_name="created-scope-other", password_hash="unused", is_active=True
+    )
     test_db.add(other)
     test_db.commit()
     assigned = add_items(test_db, project, other.id, 1, prefix="ASSIGNED")[0]

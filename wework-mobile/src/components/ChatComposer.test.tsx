@@ -1,0 +1,158 @@
+import React from 'react'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { ChatComposer } from './ChatComposer'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
+vi.mock('expo-document-picker', () => ({}))
+vi.mock('expo-image-picker', () => ({}))
+vi.mock('react-native', () => ({
+  Alert: { alert: vi.fn() },
+  Image: 'Image',
+  Platform: { OS: 'android' },
+  Pressable: 'Pressable',
+  ScrollView: 'ScrollView',
+  StyleSheet: { create: (styles: unknown) => styles },
+  View: 'View',
+}))
+vi.mock('react-native-paper', () => ({
+  ActivityIndicator: 'ActivityIndicator',
+  Text: 'Text',
+  useTheme: () => ({
+    dark: false,
+    colors: {
+      onSurface: '#111111',
+      surface: '#ffffff',
+      surfaceVariant: '#f3f3f3',
+      onSurfaceVariant: '#777777',
+      outlineVariant: '#eeeeee',
+    },
+  }),
+}))
+vi.mock('./KeyboardSafeInput', () => ({ KeyboardSafeTextInput: 'TextInput' }))
+vi.mock('./LiquidGlass', () => ({
+  LiquidGlassGroup: 'LiquidGlassGroup',
+  LiquidGlassSurface: 'LiquidGlassSurface',
+}))
+vi.mock('./ComposerContextMenu', () => ({ ComposerContextMenu: 'ComposerContextMenu' }))
+
+describe('ChatComposer', () => {
+  let renderer: ReactTestRenderer
+  const focus = vi.fn()
+  afterEach(async () => {
+    if (renderer) await act(() => renderer.unmount())
+    focus.mockClear()
+  })
+
+  const element = (testID: string) =>
+    renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID)[0]!
+
+  async function render(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
+    const props = {
+      disabled: false,
+      modelLabel: 'GPT-6 High',
+      onLoadApps: vi.fn().mockResolvedValue([]),
+      onClearPlanMode: vi.fn(),
+      onSelectModel: vi.fn(),
+      onSend: vi.fn().mockResolvedValue(true),
+      onStop: vi.fn().mockResolvedValue(true),
+      onSetPlanMode: vi.fn(),
+      onUploadAttachment: vi.fn(),
+      planModeActive: false,
+      running: false,
+      stopping: false,
+      ...overrides,
+    }
+    await act(() => {
+      renderer = create(<ChatComposer {...props} />, {
+        createNodeMock: element => (element.type === 'TextInput' ? { focus } : null),
+      })
+    })
+    return props
+  }
+
+  it('retains the draft and a single send control when the input expands', async () => {
+    await render({ emptyContextPlaceholder: '向 Wework 提问' })
+    expect(element('chat-input').props.placeholder).toBe('向 Wework 提问')
+    await act(() => {
+      element('chat-input').props.onChangeText('Review this project')
+      element('chat-input').props.onFocus()
+    })
+    expect(element('chat-input').props.value).toBe('Review this project')
+    expect(
+      renderer.root.findAll(
+        node => node.type === ('Pressable' as never) && node.props.testID === 'chat-send'
+      )
+    ).toHaveLength(1)
+    await act(() => element('chat-input').props.onBlur())
+    expect(element('chat-input').props.value).toBe('Review this project')
+  })
+
+  it('opens the model control with the current model announced by its icon', async () => {
+    const props = await render()
+    await act(() => element('chat-input').props.onFocus())
+    expect(element('composer-model').props.accessibilityLabel).toContain('GPT-6 High')
+    await act(() => element('composer-model').props.onPress())
+    expect(props.onSelectModel).toHaveBeenCalledOnce()
+  })
+
+  it.each([true, false])('clears the draft only after an accepted send (%s)', async accepted => {
+    const onSend = vi.fn().mockResolvedValue(accepted)
+    await render({ onSend })
+    await act(() => element('chat-input').props.onChangeText('Review this project'))
+    await act(() => element('chat-send').props.onPress())
+    expect(onSend).toHaveBeenCalledWith('Review this project', {
+      attachmentIds: [],
+      pursueGoal: false,
+    })
+    expect(element('chat-input').props.value).toBe(accepted ? '' : 'Review this project')
+  })
+
+  it('keeps stopping in the existing action slot and disables repeated cancellation', async () => {
+    const props = await render({ running: true })
+    expect(element('chat-stop').props.disabled).toBe(false)
+    await act(() => element('chat-stop').props.onPress())
+    expect(props.onStop).toHaveBeenCalledOnce()
+    await act(() => renderer.update(<ChatComposer {...props} stopping />))
+    expect(element('chat-stop').props.disabled).toBe(true)
+    expect(element('chat-stop').props.accessibilityState.disabled).toBe(true)
+  })
+
+  it('focuses a requested new conversation once without stealing focus on model changes', async () => {
+    const props = await render()
+    expect(focus).not.toHaveBeenCalled()
+    await act(() => renderer.update(<ChatComposer {...props} focusRequest={1} />))
+    expect(focus).toHaveBeenCalledOnce()
+    await act(() => element('chat-input').props.onChangeText('Keep this draft'))
+    await act(() =>
+      renderer.update(<ChatComposer {...props} focusRequest={1} modelLabel="Other" />)
+    )
+    expect(focus).toHaveBeenCalledOnce()
+    expect(element('chat-input').props.value).toBe('Keep this draft')
+    await act(() => renderer.update(<ChatComposer {...props} focusRequest={2} />))
+    expect(focus).toHaveBeenCalledTimes(2)
+  })
+
+  it('defers requested focus until the input can become editable', async () => {
+    const props = await render({ disabled: true, focusRequest: 1 })
+    expect(focus).not.toHaveBeenCalled()
+    await act(() => renderer.update(<ChatComposer {...props} disabled={false} />))
+    expect(focus).toHaveBeenCalledOnce()
+  })
+
+  it('shows the speed shortcut only when the selected model supplies a real action', async () => {
+    const props = await render()
+    await act(() => element('chat-input').props.onFocus())
+    expect(renderer.root.findAllByProps({ testID: 'composer-speed' })).toHaveLength(0)
+    const onToggleSpeed = vi.fn()
+    await act(() =>
+      renderer.update(<ChatComposer {...props} speed="fast" onToggleSpeed={onToggleSpeed} />)
+    )
+    expect(element('composer-speed').props.accessibilityState.selected).toBe(true)
+    await act(() => element('composer-speed').props.onPress())
+    expect(onToggleSpeed).toHaveBeenCalledOnce()
+  })
+})
