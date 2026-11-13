@@ -36,8 +36,44 @@ test('discovery fixture metadata cannot become production package-pair evidence'
   const catalog = intervalUpgradeCatalog(pair, 'http://127.0.0.1')
   const target = catalog.releases.at(-1)
   assert.equal(target.fixture, true)
+  const evidence = {
+    schemaVersion: 1,
+    kind: 'release',
+    suiteVersion: 22,
+    runId: '123',
+    source: pair.from.sha256,
+    target: target.sha256,
+    fromSourceSha: pair.from.sourceSha,
+    toSourceSha: target.sourceSha,
+    fromVersion: pair.from.version,
+    toVersion: target.version,
+    platform: catalog.platform,
+    arch: catalog.arch,
+    channel: catalog.channel,
+    upgrade: 'passed',
+    rollback: 'passed',
+    manifestRecovery: {
+      schemaVersion: 2,
+      restarted: true,
+      rolledBack: true,
+      backup: 'manifest.json.empty-current',
+      historicalBackup: 'manifest.json.empty-previous',
+    },
+  }
+  const promotion = {
+    from: pair.from,
+    to: { ...target, fixture: false },
+    evidence,
+    evidenceBytes: JSON.stringify(evidence),
+    runId: evidence.runId,
+    suiteVersion: evidence.suiteVersion,
+    platform: catalog.platform,
+    arch: catalog.arch,
+    channel: catalog.channel,
+  }
+  assert.equal(verifiedUpgradeEdge(promotion).to, target.version)
   assert.throws(
-    () => verifiedUpgradeEdge({ from: pair.from, to: target, evidence: {} }),
+    () => verifiedUpgradeEdge({ ...promotion, to: target }),
     /requires exact-package upgrade and rollback E2E evidence/
   )
 })
