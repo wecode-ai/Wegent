@@ -362,6 +362,8 @@ class RuntimeRpcService:
                 }
         if app_task_messaging_allowed or app_task_reading_allowed:
             request["appTaskAccessScope"] = "project-session"
+        elif app_stand_in_allowed:
+            request["appTaskAccessScope"] = "stand-in-conversation"
         started_at = time.perf_counter()
         logger.info(
             "[RuntimeRpcService] Sending runtime RPC: user_id=%s "

@@ -71,13 +71,19 @@ impl RemoteTaskAccess {
         Ok(json!({"enabled": settings.enabled}))
     }
 
-    pub(crate) fn authorize(&self, method: &str, project_session: bool) -> Result<(), AppIpcError> {
+    pub(crate) fn authorize(
+        &self,
+        method: &str,
+        access_scope: Option<&str>,
+    ) -> Result<(), AppIpcError> {
         let project_method = matches!(
             method,
             "runtime.tasks.send" | "runtime.tasks.transcript" | "runtime.tasks.transcript.search"
         );
         if method == "runtime.runner.catalog"
-            || (project_session && project_method)
+            || (access_scope == Some("project-session") && project_method)
+            || (access_scope == Some("stand-in-conversation")
+                && method == "runtime.stand_in.conversation")
             || (TASK_METHODS.contains(&method) && self.enabled())
         {
             return Ok(());
@@ -108,19 +114,19 @@ mod tests {
         let b = RemoteTaskAccess::new(root.path().join("b/settings.json"));
         let existing_reader = a.clone();
         assert!(!a.enabled());
-        assert!(a.authorize("runtime.tasks.list", false).is_err());
+        assert!(a.authorize("runtime.tasks.list", None).is_err());
         a.update(json!({"enabled": true})).unwrap();
         assert!(existing_reader
-            .authorize("runtime.tasks.list", false)
+            .authorize("runtime.tasks.list", None)
             .is_ok());
         assert!(existing_reader
-            .authorize("runtime.tasks.send", false)
+            .authorize("runtime.tasks.send", None)
             .is_ok());
         assert!(!b.enabled());
         assert!(RemoteTaskAccess::new(a.path.clone()).enabled());
         a.update(json!({"enabled": false})).unwrap();
         assert!(existing_reader
-            .authorize("runtime.tasks.send", false)
+            .authorize("runtime.tasks.send", None)
             .is_err());
     }
 
@@ -131,13 +137,13 @@ mod tests {
         let peer = RemoteTaskAccess::new(root.path().join("b/settings.json"));
         let reader = access.clone();
         let method = "runtime.tasks.create";
-        assert!(reader.authorize(method, false).is_err());
-        assert!(reader.authorize(method, true).is_err());
+        assert!(reader.authorize(method, None).is_err());
+        assert!(reader.authorize(method, Some("project-session")).is_err());
         access.update(json!({"enabled": true})).unwrap();
-        assert!(reader.authorize(method, false).is_ok());
-        assert!(peer.authorize(method, false).is_err());
+        assert!(reader.authorize(method, None).is_ok());
+        assert!(peer.authorize(method, None).is_err());
         access.update(json!({"enabled": false})).unwrap();
-        assert!(reader.authorize(method, false).is_err());
+        assert!(reader.authorize(method, None).is_err());
     }
 
     #[test]
@@ -152,12 +158,55 @@ mod tests {
             "runtime.codex.app_server.request",
             "device.execute_command",
         ] {
-            assert!(access.authorize(method, false).is_err(), "{method}");
-            assert!(access.authorize(method, true).is_err(), "{method}");
+            assert!(access.authorize(method, None).is_err(), "{method}");
+            assert!(
+                access.authorize(method, Some("project-session")).is_err(),
+                "{method}"
+            );
         }
         access.update(json!({"enabled": false})).unwrap();
-        assert!(access.authorize("runtime.tasks.transcript", true).is_ok());
-        assert!(access.authorize("runtime.tasks.list", true).is_err());
+        assert!(access
+            .authorize("runtime.tasks.transcript", Some("project-session"))
+            .is_ok());
+        assert!(access
+            .authorize("runtime.tasks.list", Some("project-session"))
+            .is_err());
+    }
+
+    #[test]
+    fn stand_in_grant_is_required_and_cannot_authorize_other_operations() {
+        let root = tempfile::tempdir().unwrap();
+        let access = RemoteTaskAccess::new(root.path().join("settings.json"));
+        for enabled in [false, true] {
+            access.update(json!({"enabled": enabled})).unwrap();
+            for scope in [None, Some("project-session"), Some("unknown")] {
+                assert!(access
+                    .authorize("runtime.stand_in.conversation", scope)
+                    .is_err());
+            }
+            assert!(access
+                .authorize(
+                    "runtime.stand_in.conversation",
+                    Some("stand-in-conversation")
+                )
+                .is_ok());
+        }
+        access.update(json!({"enabled": false})).unwrap();
+        for method in TASK_METHODS.iter().copied().chain([
+            "runtime.stand_in.personal.save",
+            "executor.remote_task_access.update",
+            "executor.backend.configure",
+            "runtime.settings.update",
+            "runtime.codex.app_server.request",
+            "device.execute_command",
+        ]) {
+            assert!(
+                access
+                    .authorize(method, Some("stand-in-conversation"))
+                    .is_err(),
+                "{method}"
+            );
+        }
     }
 
     #[test]

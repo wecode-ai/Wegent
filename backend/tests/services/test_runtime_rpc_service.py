@@ -1226,16 +1226,17 @@ async def test_task_model_binding_rejects_non_object_execution_config(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("method", "payload_user", "allowed"),
+    ("method", "payload_user", "stand_in_grant", "allowed"),
     [
-        ("runtime.stand_in.conversation", 7, True),
-        ("runtime.stand_in.conversation", 8, False),
-        ("runtime.tasks.create", 7, False),
-        ("runtime.stand_in.personal.save", 7, False),
+        ("runtime.stand_in.conversation", 7, True, True),
+        ("runtime.stand_in.conversation", 7, False, False),
+        ("runtime.stand_in.conversation", 8, True, False),
+        ("runtime.tasks.create", 7, True, False),
+        ("runtime.stand_in.personal.save", 7, True, False),
     ],
 )
 async def test_im_stand_in_capability_cannot_control_other_users_or_methods(
-    monkeypatch, method, payload_user, allowed
+    monkeypatch, method, payload_user, stand_in_grant, allowed
 ):
     from app.schemas.device import DeviceType
     from app.services.device import runtime_rpc_service as module
@@ -1253,18 +1254,26 @@ async def test_im_stand_in_capability_cannot_control_other_users_or_methods(
             device_id="device-1",
             method=method,
             payload={"userId": payload_user, "message": "hello"},
-            allow_app_device_stand_in=True,
+            allow_app_device_stand_in=stand_in_grant,
         )
         assert result["taskId"] == "stand-in-chat-7-primary"
         call.assert_awaited_once()
+        assert call.await_args.args[1] == {
+            "method": method,
+            "payload": {"userId": payload_user, "message": "hello"},
+            "appTaskAccessScope": "stand-in-conversation",
+        }
     else:
         with pytest.raises(module.RuntimeRpcError) as error:
             await module.RuntimeRpcService().call(
                 user_id=7,
                 device_id="device-1",
                 method=method,
-                payload={"userId": payload_user},
-                allow_app_device_stand_in=True,
+                payload={
+                    "userId": payload_user,
+                    "appTaskAccessScope": "stand-in-conversation",
+                },
+                allow_app_device_stand_in=stand_in_grant,
             )
         assert error.value.code == "remote_control_disabled"
         call.assert_not_awaited()

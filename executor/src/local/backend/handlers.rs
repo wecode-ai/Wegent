@@ -230,10 +230,9 @@ where
                     .unwrap_or("<missing>")
                     .to_owned();
                 if config.device_type == "app" {
-                    // Only Backend-validated project sessions may use the existing scoped grant.
-                    let project_session = payload.get("appTaskAccessScope").and_then(Value::as_str)
-                        == Some("project-session");
-                    if let Err(error) = remote_task_access.authorize(&method, project_session) {
+                    // Scoped grants are issued by the Backend after validating the caller.
+                    let access_scope = payload.get("appTaskAccessScope").and_then(Value::as_str);
+                    if let Err(error) = remote_task_access.authorize(&method, access_scope) {
                         return Some(runtime_error_response(error));
                     }
                 }

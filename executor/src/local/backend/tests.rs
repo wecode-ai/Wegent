@@ -609,6 +609,38 @@ async fn app_remote_task_consent_is_enforced_at_network_dispatch_and_event_forwa
     );
     assert!(!access.enabled());
     assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 1);
+
+    // Caller-supplied payload fields cannot grant stand-in access.
+    assert_eq!(
+        network(json!({
+            "method": "runtime.stand_in.conversation",
+            "payload": {"appTaskAccessScope": "stand-in-conversation"}
+        }))
+        .await
+        .unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert_eq!(
+        network(json!({
+            "method": "runtime.stand_in.conversation",
+            "appTaskAccessScope": "stand-in-conversation",
+            "payload": {"userId": 7}
+        }))
+        .await
+        .unwrap()["success"],
+        true
+    );
+    assert_eq!(
+        network(json!({
+            "method": "runtime.tasks.list",
+            "appTaskAccessScope": "stand-in-conversation"
+        }))
+        .await
+        .unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert!(!access.enabled());
+    assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 2);
 }
 
 impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
