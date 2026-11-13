@@ -36,6 +36,10 @@ export async function fillTemplateRoleBindings(control, count) {
   )
   await control.command('select', testId('template-role-main-role-0'), { value: human })
   for (let index = 1; index < count; index++) {
+    await control.command(
+      'waitFor',
+      `${testId(`template-role-main-role-${index}`)} option[value="agent:template-agent:main-role-${index}"]`
+    )
     await control.command('select', testId(`template-role-main-role-${index}`), {
       value: `agent:template-agent:main-role-${index}`,
     })

@@ -277,13 +277,10 @@ async fn task_projects_join_local_space_once_without_resurrecting_archived_proje
         .unwrap()
         .iter()
         .any(|project| project["id"] == existing["id"]));
+    verify_comment_child_request_idempotency(&server).await;
 }
 
-#[tokio::test]
-async fn comment_child_request_reuses_persisted_issue_without_allocating_another_number() {
-    let home = tempfile::tempdir().unwrap();
-    std::env::set_var("WEGENT_EXECUTOR_HOME", home.path());
-    let server = AppIpcServer::new();
+async fn verify_comment_child_request_idempotency(server: &AppIpcServer) {
     let project = server
         .dispatch("projects.create", json!({"name":"Idempotent children"}))
         .await
