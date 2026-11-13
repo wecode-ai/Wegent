@@ -390,6 +390,7 @@ pub(crate) async fn build_chat_execution_request(
     preload_skills: &[Value],
     generation: Option<&Value>,
     model_options: Option<&Value>,
+    created_git_repository: Option<&Value>,
 ) -> Result<ExecutionRequest, FastApiError> {
     let runtime_model = super::socket_runtime_model::resolve(state, input, model_options).await?;
     build_request_with_runtime(
@@ -399,8 +400,11 @@ pub(crate) async fn build_chat_execution_request(
         preload_skills,
         true,
         generation,
-        runtime_model,
-        true,
+        ExecutionOverrides {
+            runtime_model,
+            created_git_repository,
+            include_coordinate_members: true,
+        },
     )
     .await
 }
@@ -438,13 +442,18 @@ pub(super) async fn build_request(
         preload_skills,
         compile_coding_mcp,
         generation,
-        None,
-        false,
+        ExecutionOverrides::default(),
     )
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Default)]
+struct ExecutionOverrides<'a> {
+    runtime_model: Option<serde_json::Map<String, Value>>,
+    created_git_repository: Option<&'a Value>,
+    include_coordinate_members: bool,
+}
+
 async fn build_request_with_runtime(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
@@ -452,9 +461,13 @@ async fn build_request_with_runtime(
     preload_skills: &[Value],
     compile_coding_mcp: bool,
     generation: Option<&Value>,
-    runtime_model: Option<serde_json::Map<String, Value>>,
-    include_coordinate_members: bool,
+    overrides: ExecutionOverrides<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
+    let ExecutionOverrides {
+        runtime_model,
+        created_git_repository,
+        include_coordinate_members,
+    } = overrides;
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
@@ -512,6 +525,7 @@ async fn build_request_with_runtime(
         input.task_json,
         input.task_project_id,
         input.user_id,
+        created_git_repository,
     )
     .await;
     let project_repository = project_config
@@ -530,6 +544,12 @@ async fn build_request_with_runtime(
     }
     let (git_repo, git_url, git_domain, git_repo_id, branch_name) =
         git_fields(&workspace_repository);
+    if created_git_repository.is_some() && git_url.trim().is_empty() {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "Git workspace is missing a repository URL",
+        ));
+    }
     // `_build_user_info` + `classify_git_auth_transport`: match the user's
     // stored Git account against the task's resolved domain, resolve/encrypt
     // its token, and classify the transport the executor must expect.

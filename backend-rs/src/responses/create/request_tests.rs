@@ -128,11 +128,22 @@ fn skill_fixture(sql: &str, automatic: bool, preload: bool) -> (Row, Vec<Row>) {
     (vec![("id", SqlValue::I64(0))], vec![])
 }
 
-fn chat_input<'a>(
-    team: &'a KindRow,
-    bot: &'a KindRow,
-    bot_ids: &'a [i64],
-) -> BuildExecutionRequestInput<'a> {
+fn chat_agent() -> (KindRow, KindRow) {
+    let team = stored_kind(1, 0, "Team", "analysis-agent", json!({}));
+    let bot = stored_kind(
+        2,
+        0,
+        "Bot",
+        "analysis-bot",
+        json!({
+            "ghostRef": {"name": "analysis-ghost", "namespace": "default"},
+            "modelRef": {"name": "test-model", "namespace": "default"},
+        }),
+    );
+    (team, bot)
+}
+
+fn chat_input<'a>(team: &'a KindRow, bot: &'a KindRow) -> BuildExecutionRequestInput<'a> {
     BuildExecutionRequestInput {
         user_id: 7,
         user_name: "user",
@@ -145,7 +156,7 @@ fn chat_input<'a>(
         bot,
         bot_role: "leader",
         team_member_prompt: None,
-        bot_ids,
+        bot_ids: &[2],
         message: "Analyze the report",
         reasoning: None,
         enable_tools: false,
@@ -169,24 +180,13 @@ fn chat_input<'a>(
 
 #[tokio::test]
 async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
-    let team = stored_kind(1, 0, "Team", "analysis-agent", json!({}));
-    let bot = stored_kind(
-        2,
-        0,
-        "Bot",
-        "analysis-bot",
-        json!({
-            "ghostRef": {"name": "analysis-ghost", "namespace": "default"},
-            "modelRef": {"name": "test-model", "namespace": "default"},
-        }),
-    );
-    let input = chat_input(&team, &bot, &[2]);
-
+    let (team, bot) = chat_agent();
+    let input = chat_input(&team, &bot);
     for (automatic, preload) in [(false, true), (false, false), (true, true), (true, false)] {
         let fixture =
             MysqlRows::start_results(move |sql| skill_fixture(sql, automatic, preload)).await;
         let state = crate::app_test_support::app(fixture.mysql.clone());
-        let request = build_chat_execution_request(&state, &input, &[], None, None)
+        let request = build_chat_execution_request(&state, &input, &[], None, None, None)
             .await
             .unwrap_or_else(|error| {
                 panic!(
@@ -195,6 +195,7 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
                 )
             });
 
+        assert_eq!(request.git_url.as_deref(), Some(""));
         assert_eq!(request.bot[0]["shell_type"], "Chat");
         assert_eq!(request.bot[0]["skills"], json!([ANALYSIS_SKILL]));
         assert_eq!(request.skill_names, vec![json!(ANALYSIS_SKILL)]);
@@ -246,8 +247,9 @@ async fn web_chat_dispatches_coordinate_workers_and_keeps_pipeline_on_its_curren
                 ],
             }),
         );
-        let input = chat_input(&team, &leader, &[2, 3, 4]);
-        let request = build_chat_execution_request(&state, &input, &[], None, None)
+        let mut input = chat_input(&team, &leader);
+        input.bot_ids = &[2, 3, 4];
+        let request = build_chat_execution_request(&state, &input, &[], None, None, None)
             .await
             .unwrap_or_else(|error| {
                 panic!("mode={mode}: {error:?}; queries: {:?}", fixture.queries())
@@ -465,6 +467,100 @@ async fn coordinate_member_skills_resolve_in_the_team_owner_and_group_scope() {
     super::super::skills::append_coding_mcp(&mut servers, &skills, "ClaudeCode");
     assert_eq!(servers[0]["url"], "https://personal.invalid");
     assert_eq!(servers[1]["url"], "https://group.invalid");
+}
+
+#[tokio::test]
+async fn first_git_chat_dispatch_uses_written_workspace_while_replica_is_missing_it() {
+    use crate::task_creation::{WorkspaceRepository, build_workspace_payload};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use wegent_protocol::{OpenAIResponsesRequest, dispatch};
+
+    let (team, bot) = chat_agent();
+    let task_json =
+        json!({"spec": {"workspaceRef": {"name": "workspace-3", "namespace": "default"}}});
+    let mut input = chat_input(&team, &bot);
+    input.task_json = &task_json;
+    let repository = WorkspaceRepository {
+        git_url: "https://git.example.com/team/demo.git",
+        git_repo: "team/demo",
+        git_repo_id: 12,
+        git_domain: "git.example.com",
+        branch_name: "develop",
+    };
+    let written = build_workspace_payload("workspace-3", "default", &repository);
+    let replica_caught_up = Arc::new(AtomicBool::new(false));
+    let workspace_row = vec![("json", SqlValue::Text(written.to_string()))];
+    let replica = replica_caught_up.clone();
+    let fixture = MysqlRows::start_results(move |sql| {
+        if sql.contains("kind = 'Workspace'") {
+            let rows = if replica.load(Ordering::Relaxed) {
+                vec![workspace_row.clone()]
+            } else {
+                vec![]
+            };
+            return (workspace_row.clone(), rows);
+        }
+        skill_fixture(sql, false, false)
+    })
+    .await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+    let first =
+        build_chat_execution_request(&state, &input, &[], None, None, Some(&repository.to_json()))
+            .await
+            .expect("first turn uses the repository written with the task");
+    assert!(
+        !fixture
+            .queries()
+            .iter()
+            .any(|sql| sql.contains("kind = 'Workspace'")),
+        "first turn must not read its freshly written Workspace from the replica"
+    );
+
+    replica_caught_up.store(true, Ordering::Relaxed);
+    input.assistant_subtask_id = 7;
+    input.user_subtask_id = 6;
+    input.message_id = 4;
+    let followup = build_chat_execution_request(&state, &input, &[], None, None, None)
+        .await
+        .expect("follow-up reads the persisted repository");
+    assert!(
+        fixture
+            .queries()
+            .iter()
+            .any(|sql| sql.contains("kind = 'Workspace'"))
+    );
+    for request in [first, followup] {
+        assert_eq!(
+            request.workspace["repository"],
+            written["spec"]["repository"]
+        );
+        let wire = serde_json::to_value(dispatch::assemble(&request, false, true)).unwrap();
+        let execution = OpenAIResponsesRequest::from_value(wire)
+            .unwrap()
+            .to_execution_request();
+        assert_eq!(execution.task_id, "3");
+        assert_eq!(execution.git_url().as_deref(), Some(repository.git_url));
+        assert_eq!(execution.extra["branch_name"], repository.branch_name);
+        assert!(!execution.skip_git_clone);
+    }
+}
+
+#[tokio::test]
+async fn a_new_git_chat_without_a_repository_url_fails_before_dispatch() {
+    let (team, bot) = chat_agent();
+    let input = chat_input(&team, &bot);
+    let fixture = MysqlRows::start_results(|sql| skill_fixture(sql, false, false)).await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+    let repository = json!({"gitRepo": "team/demo", "gitUrl": " "});
+    let error = build_chat_execution_request(&state, &input, &[], None, None, Some(&repository))
+        .await
+        .expect_err("missing Git URL must fail");
+    assert_eq!(error.status(), brz_http_server::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        error.detail_message(),
+        Some("Git workspace is missing a repository URL")
+    );
 }
 
 /// `_get_model_config` (`request_builder.py:318`), `_get_bot_skills` (`:393`)
