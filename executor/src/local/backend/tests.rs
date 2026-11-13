@@ -538,6 +538,79 @@ async fn registration_captures_backend_assigned_device_route_id() {
 
 struct RouteRegistrationRuntimeWorkHandler;
 
+struct PersonalTaskTestHandler(AtomicUsize);
+
+impl RuntimeWorkHandler for PersonalTaskTestHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(json!({"success": true}))
+        })
+    }
+}
+
+#[tokio::test]
+async fn app_remote_task_consent_is_enforced_at_network_dispatch_and_event_forwarding() {
+    let root = tempfile::tempdir().unwrap();
+    let access = crate::runtime_work::remote_task_access::RemoteTaskAccess::new(
+        root.path().join("remote-task-access.json"),
+    );
+    let handler = Arc::new(PersonalTaskTestHandler(AtomicUsize::new(0)));
+    let mut config = backend_config("same-device-name");
+    config.device_type = "app".into();
+    let (event_tx, _) = broadcast::channel(8);
+    let event_hub = ExecutorEventHub::new(event_tx);
+    let mut runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
+        config,
+        SocketIoTransport::default(),
+        handler.clone(),
+        event_hub,
+    );
+    runner.client.remote_task_access = access.clone();
+    let network = runner.runtime_rpc_handler();
+    let request = json!({"method": "runtime.tasks.list", "params": {
+        "appTaskAccessScope": "project-session", "remoteTaskAccess": {"enabled": true}
+    }});
+    assert_eq!(
+        network(request.clone()).await.unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 0);
+    access.update(json!({"enabled": true})).unwrap();
+    assert_eq!(network(request.clone()).await.unwrap()["success"], true);
+    assert_eq!(
+        runner.client.runtime_event(json!({}))["appRemoteTaskAccessEnabled"],
+        true
+    );
+    assert_eq!(
+        runner.client.runtime_features()["remoteTaskAccess"]["enabled"],
+        true
+    );
+    access.update(json!({"enabled": false})).unwrap();
+    assert_eq!(
+        network(request).await.unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert_eq!(
+        runner.client.runtime_event(json!({}))["appRemoteTaskAccessEnabled"],
+        false
+    );
+    // Even a forged remote request cannot mutate installation-local consent.
+    assert_eq!(
+        network(
+            json!({"method": "executor.remote_task_access.update", "params": {"enabled": true}})
+        )
+        .await
+        .unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert!(!access.enabled());
+    assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 1);
+}
+
 impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
     fn handle_runtime_rpc<'a>(
         &'a self,

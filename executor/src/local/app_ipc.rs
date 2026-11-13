@@ -147,6 +147,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugin_auth.run",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.remote_task_access.get",
+    "executor.remote_task_access.update",
     "executor.codex_home.config.read",
     "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
@@ -491,6 +493,14 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        // Consent settings never enter the remotely dispatched runtime namespace.
+        if method == "executor.remote_task_access.get" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env().read();
+        }
+        if method == "executor.remote_task_access.update" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env()
+                .update(params);
+        }
         if method == "executor.protocol.describe" {
             return Ok(self.protocol_description());
         }

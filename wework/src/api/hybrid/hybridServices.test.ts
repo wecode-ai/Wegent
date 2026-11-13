@@ -1284,6 +1284,58 @@ describe('createHybridWorkbenchServices', () => {
     ).rejects.toThrow('executor-not-found:other-app')
     expect(mocks.cloudServices.composerCatalogApi.readCatalog).toHaveBeenCalledTimes(1)
   })
+  it('shows an enabled peer once, keeps self local, and routes peer reads to its own Backend address', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'local-device',
+        runtime_instance_id: 'installation-a',
+        device_type: 'local',
+        status: 'online',
+        name: 'Computer',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const app = (id: number, runtime: string, enabled: boolean) => ({
+      id,
+      device_id: `app-record-${id}`,
+      execution_target_id: `app-record-${id}`,
+      app_device_id: 'shared-legacy-id',
+      runtime_instance_id: runtime,
+      device_type: 'app',
+      status: 'online',
+      name: 'Computer',
+      bind_shell: 'claudecode',
+      runtime_features: { remoteTaskAccess: { version: 1, enabled } },
+    })
+    mocks.cloudListDevices.mockResolvedValue([
+      app(11, 'installation-a', true),
+      app(22, 'installation-b', true),
+      app(33, 'installation-c', false),
+    ])
+    const services = createServices()
+    // Background discovery may run before the normal local list loads.
+    expect(
+      (await services.cloudBackgroundApi!.listDevices!()).map(device => device.device_id)
+    ).toEqual(['app-record-22'])
+    expect((await services.deviceApi.listDevices()).map(device => device.device_id)).toEqual([
+      'local-device',
+      'app-record-22',
+    ])
+    await services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-record-22' })
+    expect(mocks.cloudListRuntimeWork).toHaveBeenCalledWith({ deviceId: 'app-record-22' })
+    expect(mocks.localListRuntimeWork).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    mocks.cloudListDevices.mockResolvedValue([
+      app(11, 'installation-a', true),
+      app(22, 'installation-b', false),
+    ])
+    await services.cloudBackgroundApi!.listDevices!()
+    expect((await services.deviceApi.listDevices()).map(device => device.device_id)).toEqual([
+      'local-device',
+    ])
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.localSidebarIdentity.mockReset()

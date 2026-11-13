@@ -423,6 +423,7 @@ async def test_runtime_rpc_service_allows_app_device_task_message_when_explicit(
         {
             "method": "runtime.tasks.send",
             "payload": {"taskId": "runtime-1", "message": "continue from IM"},
+            "appTaskAccessScope": "project-session",
         },
         to="socket-1",
         namespace="/local-executor",

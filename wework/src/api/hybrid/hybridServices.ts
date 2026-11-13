@@ -49,8 +49,9 @@ import {
   notifyWorkbenchAutomationsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
+import type { RuntimeWorkListRequestOptions } from '@/api/runtimeWork'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
-import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
+import { isRemoteTaskDevice, isUsableDevice } from '@/lib/device-capabilities'
 import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
@@ -596,6 +597,24 @@ export function createHybridWorkbenchServices(
     }
     const cached = cloudRuntimeApis.get(logicalDeviceId)
     if (cached) return cached
+    if (
+      rememberedCloudDevices.some(
+        device => device.device_id === logicalDeviceId && device.device_type === 'app'
+      )
+    ) {
+      // Personal App tasks use the same Backend task contract as Mobile. The
+      // target keeps its own model catalog and installation-local settings.
+      const api = {
+        ...cloudServices.runtimeWorkApi!,
+        listRuntimeWork: (requestOptions?: RuntimeWorkListRequestOptions) =>
+          cloudServices.runtimeWorkApi!.listRuntimeWork({
+            ...requestOptions,
+            deviceId: logicalDeviceId,
+          }),
+      }
+      cloudRuntimeApis.set(logicalDeviceId, api)
+      return api
+    }
     const api = createRuntimeWorkApiFromIpc(
       (method, params) =>
         method === 'runtime.tasks.transcript'
@@ -660,13 +679,20 @@ export function createHybridWorkbenchServices(
     return devices
   }
   const fetchCloudDevices = async (signal?: AbortSignal) => {
+    if (rememberedLocalDevices.length === 0) await listLocalDevices(signal)
     const revision = nextCloudDevicesRevision
     nextCloudDevicesRevision += 1
     const discoveredDevices = signal
       ? await cloudServices.deviceApi.listDevices({ signal })
       : await cloudServices.deviceApi.listDevices()
     const devices = discoveredDevices.filter(
-      device => isCloudDevice(device) || isRemoteDevice(device)
+      device =>
+        isRemoteTaskDevice(device) &&
+        (device.device_type !== 'app' ||
+          (!isLocalDeviceId(device.device_id) &&
+            !rememberedLocalDevices.some(local =>
+              workbenchDevicesShareRuntimeIdentity(local, device)
+            )))
     )
     const appDeviceRegistrations = discoveredDevices.filter(isAppDeviceRegistration)
     rememberCloudDevices(devices, appDeviceRegistrations, revision)
@@ -736,9 +762,9 @@ export function createHybridWorkbenchServices(
     if (!isUsableDevice(device)) {
       throw new Error(`executor-offline:${normalizedDeviceId}`)
     }
-    if (device.device_type === 'local' || device.device_type === 'app')
+    if (device.device_type === 'local' || isLocalDeviceId(normalizedDeviceId))
       return localServices.runtimeWorkApi!
-    if (isCloudDevice(device) || isRemoteDevice(device)) {
+    if (isRemoteTaskDevice(device)) {
       return cloudRuntimeApi(device.device_id)
     }
     throw new Error(`executor-not-found:${normalizedDeviceId}`)
@@ -748,7 +774,9 @@ export function createHybridWorkbenchServices(
     cloudDevices: DeviceInfo[]
   ): DeviceInfo[] =>
     mergeDeviceLists(localDevices, [...currentAppDeviceRegistrations(), ...cloudDevices]).filter(
-      device => !isAppDeviceRegistration(device)
+      device =>
+        !isAppDeviceRegistration(device) ||
+        (isRemoteTaskDevice(device) && !isLocalDeviceId(device.device_id))
     ) as DeviceInfo[]
   const routeLocalSidebarMutation = async (
     deviceId: string,
@@ -1477,30 +1505,32 @@ export function createHybridWorkbenchServices(
     )
   }
   const refreshCloudAutomationsInBackground = () => {
-    rememberedCloudDevices.filter(isUsableDevice).forEach(device => {
-      const deviceId = device.device_id
-      if (cloudAutomationRequests.has(deviceId)) return
-      const request = automationApiForDevice(deviceId)
-        .listAutomations()
-        .then(response => {
-          const previous = rememberedCloudAutomations.get(deviceId) ?? []
-          rememberAutomationRoutes(deviceId, response.items)
-          rememberedCloudAutomations.set(deviceId, response.items)
-          if (!sameAutomationVersions(previous, response.items)) {
-            notifyWorkbenchAutomationsChanged()
-          }
-        })
-        .catch(error => {
-          console.warn('[Wework] Failed to refresh cloud automations in background', {
-            deviceId,
-            error,
+    rememberedCloudDevices
+      .filter(device => isUsableDevice(device) && device.device_type !== 'app')
+      .forEach(device => {
+        const deviceId = device.device_id
+        if (cloudAutomationRequests.has(deviceId)) return
+        const request = automationApiForDevice(deviceId)
+          .listAutomations()
+          .then(response => {
+            const previous = rememberedCloudAutomations.get(deviceId) ?? []
+            rememberAutomationRoutes(deviceId, response.items)
+            rememberedCloudAutomations.set(deviceId, response.items)
+            if (!sameAutomationVersions(previous, response.items)) {
+              notifyWorkbenchAutomationsChanged()
+            }
           })
-        })
-        .finally(() => {
-          cloudAutomationRequests.delete(deviceId)
-        })
-      cloudAutomationRequests.set(deviceId, request)
-    })
+          .catch(error => {
+            console.warn('[Wework] Failed to refresh cloud automations in background', {
+              deviceId,
+              error,
+            })
+          })
+          .finally(() => {
+            cloudAutomationRequests.delete(deviceId)
+          })
+        cloudAutomationRequests.set(deviceId, request)
+      })
   }
   const automationMutationDeviceId = (data: { taskRequest?: RuntimeTaskCreateRequest }) => {
     const deviceId = data.taskRequest?.deviceId?.trim()

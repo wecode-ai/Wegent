@@ -84,8 +84,7 @@ import {
   isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
-  isCloudDevice,
-  isRemoteDevice,
+  isRemoteTaskDevice,
 } from '@/lib/device-capabilities'
 import {
   applyProjectEnvironmentPatch,
@@ -2290,9 +2289,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const conversationImageDevice = findWorkbenchDevice(devices, conversationImageTarget?.deviceId)
   const remoteImageTarget =
     conversationImageTarget &&
-    (!isElectronRuntime() ||
-      (conversationImageDevice?.device_type !== 'local' &&
-        conversationImageDevice?.device_type !== 'app'))
+    (!isElectronRuntime() || conversationImageDevice?.device_type !== 'local')
       ? conversationImageTarget
       : null
   const selectedFileWorkspaceTarget =
@@ -2321,8 +2318,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
   const centralHarnessUsesRemoteDevice = Boolean(
-    centralHarnessTargetDevice &&
-    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
+    centralHarnessTargetDevice && isRemoteTaskDevice(centralHarnessTargetDevice)
   )
   const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
   const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath

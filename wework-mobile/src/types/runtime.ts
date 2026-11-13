@@ -38,11 +38,21 @@ export interface ModelExecutionFields {
 export interface DeviceInfo {
   id: number
   device_id: string
+  execution_target_id?: string | null
+  runtime_instance_id?: string | null
+  app_device_id?: string | null
+  socket_device_id?: string | null
+  runtime_routes?: import('../../../packages/chat-core/src/execution-project').DeviceRuntimeRoute[]
   name: string
   status: DeviceStatus
   device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
+  runtime_features?: {
+    schemaVersion: number
+    remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
+    [feature: string]: unknown
+  } | null
 }
 
 export interface DeviceListResponse {
@@ -125,6 +135,10 @@ export interface RuntimeTranscriptMessage {
   errorType?: string | null
   error_type?: string | null
   blocks?: RuntimeChatBlock[] | null
+  runtimeItems?: (
+    | { id: string; type: 'assistant_text'; content: string; createdAt?: string | number | null }
+    | { id: string; type: 'block'; block: RuntimeChatBlock }
+  )[]
   fileChanges?: RuntimeFileChangesSummary | null
   file_changes?: RuntimeFileChangesSummary | null
   createdAt?: string | number | null
@@ -147,7 +161,8 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeCreateRequest {
   schemaVersion: 2
   deviceId: string
-  workspacePath: string
+  workspacePath?: string
+  standaloneChatWorkspace?: boolean
   taskId: string
   runtime: 'codex'
   message: string

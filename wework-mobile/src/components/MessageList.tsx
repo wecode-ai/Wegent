@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import * as Clipboard from 'expo-clipboard'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import {
   FlatList,
   type GestureResponderEvent,
@@ -33,6 +33,7 @@ interface MessageListProps {
   messages: ChatMessage[]
   loading: boolean
   loadingMoreBefore: boolean
+  running: boolean
   onLoadMoreBefore: () => Promise<void>
   topInset: number
 }
@@ -50,6 +51,7 @@ export function MessageList({
   messages,
   loading,
   loadingMoreBefore,
+  running,
   onLoadMoreBefore,
   topInset,
 }: MessageListProps) {
@@ -184,7 +186,13 @@ export function MessageList({
             </View>
           ) : null
         }
-        ListFooterComponent={messages.length > 0 ? <View style={{ height: bottomInset }} /> : null}
+        ListFooterComponent={
+          <View style={{ paddingBottom: bottomInset }}>
+            {running && messages.at(-1)?.role !== 'assistant' ? (
+              <ThinkingIndicator preview="" />
+            ) : null}
+          </View>
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text variant="headlineSmall">从这里开始</Text>
@@ -219,7 +227,7 @@ function MessageSeparator() {
   return <View style={styles.messageSeparator} />
 }
 
-function Message({
+const Message = memo(function Message({
   message,
   onLongPress,
 }: {
@@ -275,7 +283,7 @@ function Message({
       !message.content &&
       !thinkingPreview &&
       !message.blocks?.length ? (
-        <ActivityIndicator size={16} style={styles.streaming} />
+        <ThinkingIndicator preview="" />
       ) : null}
       {message.error ? (
         <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
@@ -284,7 +292,7 @@ function Message({
       ) : null}
     </Pressable>
   )
-}
+})
 
 function ThinkingIndicator({ preview }: { preview: string }) {
   const theme = useTheme()
@@ -295,7 +303,7 @@ function ThinkingIndicator({ preview }: { preview: string }) {
       testID="thinking-indicator"
       variant="bodyMedium"
     >
-      思考中 · {preview}
+      {preview ? `思考中 · ${preview}` : '思考中'}
     </Text>
   )
 }
@@ -414,6 +422,5 @@ const styles = StyleSheet.create({
   fileStats: { flexDirection: 'row', gap: 8 },
   additions: { color: '#34a853' },
   deletions: { color: '#ea4335' },
-  streaming: { alignSelf: 'flex-start', marginTop: 8 },
   error: { marginTop: 8 },
 })

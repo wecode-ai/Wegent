@@ -17,6 +17,7 @@ import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { reduceModelControlLayer } from '@/domain/modelControlPresentation'
+import { mobileCreatableDevices } from '@/domain/deviceOrdering'
 import {
   modelLabel,
   reasoningEfforts,
@@ -99,7 +100,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
   const [bottomControlHeight, setBottomControlHeight] = useState(0)
   const [headerHeight, setHeaderHeight] = useState(CONVERSATION_HEADER_HEIGHT)
 
-  const onlineDevices = props.devices.filter(device => device.status !== 'offline')
+  const onlineDevices = mobileCreatableDevices(props.devices)
   const configurationDevice =
     onlineDevices.find(device => device.device_id === props.selectedDeviceId) ??
     onlineDevices[0] ??
@@ -251,6 +252,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
           loading={props.loading}
           loadingMoreBefore={props.loadingMoreMessagesBefore}
           messages={props.messages}
+          running={props.sending || props.running}
           onLoadMoreBefore={props.onLoadMoreMessagesBefore}
           topInset={messageTopInset}
         />
@@ -312,6 +314,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
         onLayout={handleHeaderLayout}
         onMore={props.onMore}
         onNewConversation={props.onNewConversation}
+        canCreateConversation={onlineDevices.length > 0}
         projectName={conversationProjectName}
         style={[styles.headerOverlay, { top: headerTop }]}
         title={props.currentTitle}

@@ -7,7 +7,11 @@ import { ActivityIndicator, Portal, Text, useTheme, type MD3Theme } from 'react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { DRAWER_HEADER_HEIGHT, drawerBottomOffset, drawerTopPadding } from '@/domain/drawerLayout'
-import { onlineDevicesFirst } from '@/domain/deviceOrdering'
+import {
+  mobileCreatableDevices,
+  mobileProjectCreatableDevices,
+  onlineDevicesFirst,
+} from '@/domain/deviceOrdering'
 import type {
   ConversationItem,
   DeviceInfo,
@@ -89,6 +93,15 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   )
   const onlineDevices = props.devices.filter(device => onlineDeviceIds.has(device.device_id))
   const displayedDevices = showAllDevices ? onlineDevicesFirst(props.devices) : onlineDevices
+  const creatableDeviceIds = new Set(
+    mobileCreatableDevices(props.devices).map(device => device.device_id)
+  )
+  const canCreate = [...creatableDeviceIds].some(
+    deviceId => props.allDevicesSelected || deviceId === props.selectedDeviceId
+  )
+  const canCreateProject = mobileProjectCreatableDevices(props.devices).some(
+    device => props.allDevicesSelected || device.device_id === props.selectedDeviceId
+  )
   const selectedDeviceId = props.allDevicesSelected
     ? null
     : (onlineDevices.find(device => device.device_id === props.selectedDeviceId)?.device_id ??
@@ -266,6 +279,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
               >
                 <DrawerAction
                   icon="folder-outline"
+                  disabled={!canCreateProject}
                   label="新建项目"
                   onPress={() => {
                     setActionsVisible(false)
@@ -403,6 +417,9 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
               )
             }
             if (item.type === 'project') {
+              const canCreateWorkspace = Boolean(
+                item.workspace && creatableDeviceIds.has(item.workspace.deviceId)
+              )
               return (
                 <View style={styles.projectRow}>
                   <Pressable
@@ -429,15 +446,17 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                     accessibilityLabel={`在 ${item.name} 中新建聊天`}
                     colorScheme={glassColorScheme}
                     contentStyle={styles.projectCompose}
-                    disabled={!item.workspace}
                     fallbackStyle={styles.glassFallback}
+                    disabled={!canCreateWorkspace}
                     onPress={() => props.onNewConversation(item.workspace)}
                     style={styles.projectComposeGlass}
                     testID={`workspace-new-${item.workspace?.deviceId ?? 'none'}-${item.workspace?.workspacePath ?? item.name}`}
                   >
                     <Ionicons
                       color={
-                        item.workspace ? theme.colors.onBackground : theme.colors.onSurfaceVariant
+                        canCreateWorkspace
+                          ? theme.colors.onBackground
+                          : theme.colors.onSurfaceVariant
                       }
                       name="create-outline"
                       size={25}
@@ -517,16 +536,16 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
           accessibilityLabel="新聊天"
           colorScheme={glassColorScheme}
           contentStyle={styles.roundButton}
-          disabled={onlineDeviceIds.size === 0}
-          fallbackStyle={onlineDeviceIds.size ? styles.blueGlassFallback : styles.glassFallback}
+          disabled={!canCreate}
+          fallbackStyle={canCreate ? styles.blueGlassFallback : styles.glassFallback}
           glassEffectStyle="regular"
           onPress={() => props.onNewConversation()}
           style={styles.bottomRoundGlass}
           testID="drawer-new-conversation"
-          tintColor={onlineDeviceIds.size ? liquidGlassAccentTint : undefined}
+          tintColor={canCreate ? liquidGlassAccentTint : undefined}
         >
           <Ionicons
-            color={onlineDeviceIds.size ? '#ffffff' : theme.colors.onSurfaceVariant}
+            color={canCreate ? '#ffffff' : theme.colors.onSurfaceVariant}
             name="create-outline"
             size={24}
           />
@@ -537,12 +556,14 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
 }
 
 function DrawerAction({
+  disabled = false,
   icon,
   label,
   onPress,
   showAddBadge = false,
   testID,
 }: {
+  disabled?: boolean
   icon: keyof typeof Ionicons.glyphMap
   label: string
   onPress: () => void
@@ -552,10 +573,16 @@ function DrawerAction({
   const theme = useTheme()
   return (
     <Pressable
+      disabled={disabled}
+      accessibilityState={{ disabled }}
       accessibilityLabel={label}
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.actionRow, pressed && styles.actionRowPressed]}
+      style={({ pressed }) => [
+        styles.actionRow,
+        pressed && styles.actionRowPressed,
+        disabled && { opacity: 0.4 },
+      ]}
       testID={testID}
     >
       <View style={styles.actionIconCircle}>

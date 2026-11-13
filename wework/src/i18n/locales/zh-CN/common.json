@@ -4313,7 +4313,11 @@
     "plugins_local_sync_unconfirmed": "尚未确认操作提交结果，请先刷新核对安装状态。",
     "plugins_local_sync_journal_error": "无法读取或保存本机操作记录，请检查磁盘空间和权限后重试。",
     "plugins_local_sync_superseded": "插件的安装目标已被其他操作改变，请刷新后按最新状态操作。",
-    "plugins_local_sync_disabled": "当前暂不接受新的本机插件操作，请稍后重试。"
+    "plugins_local_sync_disabled": "当前暂不接受新的本机插件操作，请稍后重试。",
+    "remote_task_access_title": "允许远程访问本机任务",
+    "remote_task_access_description": "允许同账号的手机和其他电脑新建、查看并继续任务，任务会在本机执行操作。开关只能在这台电脑修改；关闭后阻止后续访问。需要连接云端。",
+    "remote_task_access_load_failed": "无法读取本机远程任务访问设置。",
+    "remote_task_access_save_failed": "设置保存失败，远程任务访问状态未改变。"
   },
   "delivery": {
     "action": "交付",

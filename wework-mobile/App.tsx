@@ -37,6 +37,7 @@ export default function App() {
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
         {auth.status === 'authenticated' && auth.config ? (
           <RuntimeApplication
+            key={`${auth.config.apiBaseUrl}:${auth.user?.id ?? 0}`}
             config={auth.config}
             onLogout={auth.logout}
             userId={auth.user?.id ?? 0}
@@ -154,7 +155,7 @@ function RuntimeApplication({
                   gitRef={runtime.gitRef}
                   isNew={isNewConversation}
                   hasMoreMessagesBefore={runtime.hasMoreMessagesBefore}
-                  loading={runtime.loading}
+                  loading={runtime.conversationLoading}
                   loadingMoreMessagesBefore={runtime.loadingMoreMessagesBefore}
                   messages={runtime.messages}
                   model={runtime.selectedModel}

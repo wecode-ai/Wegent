@@ -94,6 +94,11 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
     ...(turnId && { turnId }),
     content:
       role === 'user' ? visibleRuntimeUserMessage(message.content ?? '') : (message.content ?? ''),
+    ...(message.runtimeItems && {
+      textItems: message.runtimeItems.flatMap(item =>
+        item.type === 'assistant_text' ? [{ id: item.id, content: item.content }] : []
+      ),
+    }),
     ...(blocks?.length && { blocks }),
     ...(fileChanges && { fileChanges }),
     status: terminalStatus(message.status),
@@ -833,7 +838,7 @@ function upsertMessage(state: ChatMessage[], message: ChatMessage): ChatMessage[
 }
 
 function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.reduce<ChatMessage[]>(upsertMessage, [])
+  return [...new Map(messages.map(message => [message.id, message])).values()]
 }
 
 export function appendDelta(current: string, delta: string, offset?: number): string {
