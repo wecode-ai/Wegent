@@ -358,6 +358,9 @@ test.describe('Agent skill management scope', () => {
         bind_mode: ['code'],
       })
       expect(team.status, JSON.stringify(team.data)).toBe(200)
+      // Compare the same read projection and viewer before and after cloning.
+      const sourceBeforeClone = await fixture.userApi.get(`/api/bots/${fixture.botId}`)
+      expect(sourceBeforeClone.status).toBe(200)
 
       const cloneBot = async (
         dialog: Locator,
@@ -469,7 +472,7 @@ test.describe('Agent skill management scope', () => {
       )
       const unchanged = await fixture.userApi.get(`/api/bots/${fixture.botId}`)
       expect(unchanged.status).toBe(200)
-      expect(unchanged.data).toEqual(source.data)
+      expect(unchanged.data).toEqual(sourceBeforeClone.data)
     } finally {
       await context.close()
       for (const clone of clones.reverse()) {
