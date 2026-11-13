@@ -359,11 +359,13 @@ async function prepareProfile(options: {
     .every(name => currentBundles.includes(name))
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
-  // Package installation replaces client files even when their bytes are unchanged.
-  // Production plugin changes take effect on explicit restart, without remounting the UI.
-  await writeFile(join(profileRoot, 'cordis.patch.yml'), '- id: client-hmr\n  disabled: true\n', {
-    mode: 0o600,
-  })
+  // Package operations temporarily unlink dependencies. Production changes take
+  // effect on explicit restart; neither profile nor client HMR may reload mid-install.
+  await writeFile(
+    join(profileRoot, 'cordis.patch.yml'),
+    '- id: client-hmr\n  disabled: true\n- id: hmr\n  disabled: true\n',
+    { mode: 0o600 }
+  )
   if (
     stampIsCurrent &&
     removedDependencies.size === 0 &&

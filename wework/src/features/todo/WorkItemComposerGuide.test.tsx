@@ -52,6 +52,26 @@ const pickerProjects: CloudProject[] = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('keeps board changes usable while project options refresh', async () => {
+    const user = userEvent.setup()
+    const onSelectProject = vi.fn()
+    const item = { id: 'WORK-1', title: 'Linked work' } as CloudLoopItem
+    const props = { project: teamProject, item, onSelectProject }
+    const { rerender } = render(<WorkItemComposerGuide {...props} projects={[teamProject]} />)
+    const trigger = screen.getByTestId('work-item-change-board')
+
+    rerender(<WorkItemComposerGuide {...props} projects={[]} />)
+
+    expect(screen.getByTestId('work-item-change-board')).toBe(trigger)
+    await user.click(trigger)
+    expect(screen.getByTestId('work-item-context-menu')).toBeVisible()
+    expect(screen.getByTestId('project-space-picker-empty')).toBeVisible()
+
+    rerender(<WorkItemComposerGuide {...props} projects={[teamProject]} />)
+    await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+    expect(onSelectProject).toHaveBeenCalledExactlyOnceWith(teamProject)
+  })
+
   test('reopens Issue selection for the current draft project', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()
