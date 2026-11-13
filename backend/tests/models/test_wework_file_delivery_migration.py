@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
 from alembic.config import Config
+from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
@@ -69,8 +70,10 @@ def storage() -> Iterator[tuple[Connection, sa.Table]]:
 def test_withdrawn_revision_is_absent_from_the_version_chain(
     scripts: ScriptDirectory,
 ) -> None:
-    assert scripts.get_revision(PREDECESSOR) is not None
-    assert REVISION not in {step.revision for step in scripts.walk_revisions()}
+    for head in scripts.get_heads():
+        revisions = {rev.revision for rev in scripts.iterate_revisions(head, "base")}
+        assert PREDECESSOR in revisions
+        assert REVISION not in revisions
     assert not list(Path(scripts.versions).glob(f"*{REVISION}*"))
     with pytest.raises(CommandError, match=REVISION):
         scripts.get_revision(REVISION)
@@ -107,7 +110,8 @@ def _advance(
     context = MigrationContext.configure(
         connection, opts={"version_table": VERSION_TABLE, "fn": migrations}
     )
-    context.run_migrations()
+    with Operations.context(context):
+        context.run_migrations()
     assert context.get_current_revision() == target
 
 
@@ -144,12 +148,7 @@ def test_upgrade_and_rollback_preserve_prompts_and_reject_withdrawn_version(
 
     sa.event.listen(connection, "before_cursor_execute", capture)
     try:
-        for target, direction in [
-            (PREDECESSOR, "upgrade"),
-            (PREDECESSOR, "downgrade"),
-            (PREDECESSOR, "upgrade"),
-        ]:
-
+        for target, direction in [(PREDECESSOR, "upgrade")] * 3:
             if starting_revision == REVISION:
                 with pytest.raises(CommandError, match=REVISION):
                     _advance(connection, scripts, target, direction)

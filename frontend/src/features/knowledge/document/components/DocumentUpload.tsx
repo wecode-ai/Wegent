@@ -82,14 +82,6 @@ function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
 
 type UploadMode = 'file' | 'text' | 'web' | 'dingtalk' | 'wiki'
 
-const SOURCE_HEIGHT: Record<UploadMode, string> = {
-  file: 'h-[540px] md:h-[480px]',
-  web: 'h-[440px] md:h-[344px]',
-  text: 'h-[580px]',
-  dingtalk: 'h-[720px]',
-  wiki: 'h-[680px]',
-}
-
 const WEB_ERROR_KEYS = {
   FETCH_FAILED: 'document.upload.web.fetchFailed',
   FETCH_TIMEOUT: 'document.upload.web.fetchTimeout',
@@ -437,11 +429,26 @@ function DocumentUploadSession({
         {action}
       </DocumentUploadFooter>
     ) : null
+  const textBodyRef = useRef<HTMLDivElement>(null)
+  const webBodyRef = useRef<HTMLDivElement>(null)
+  const activeError = uploadMode === 'web' ? webError : uploadMode === 'text' ? textError : null
+  useEffect(() => {
+    const body = uploadMode === 'web' ? webBodyRef.current : textBodyRef.current
+    const alert = body?.querySelector<HTMLElement>('[role="alert"]')
+    if (!body || !alert || !activeError) return
+    const bodyRect = body.getBoundingClientRect()
+    const alertRect = alert.getBoundingClientRect()
+    // Scroll only this body; preserve focus and the dialog's global scroll lock.
+    if (alertRect.bottom > bodyRect.bottom || alertRect.top < bodyRect.top) {
+      body.scrollTop += alertRect.top - bodyRect.top - 20
+    }
+  }, [activeError, uploadMode])
+
   const errorMessage = (error: string | null) =>
     error && (
       <div
         role="alert"
-        className="flex items-start gap-2 rounded-lg bg-error/10 p-3 text-sm text-error"
+        className="flex items-start gap-2 break-words [overflow-wrap:anywhere] rounded-lg bg-error/10 p-3 text-sm text-error"
       >
         <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
         <span>{error}</span>
@@ -480,8 +487,7 @@ function DocumentUploadSession({
           'flex flex-col gap-0 overflow-hidden p-0',
           wikiFullscreen
             ? 'left-0 top-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 rounded-none sm:max-w-none sm:rounded-none'
-            : 'top-[5dvh] max-h-[90dvh] w-[calc(100%-2rem)] translate-y-0 sm:max-w-3xl',
-          !wikiFullscreen && SOURCE_HEIGHT[uploadMode]
+            : 'top-[5dvh] max-h-[90dvh] w-[calc(100%-2rem)] translate-y-0 sm:max-w-3xl'
         )}
         data-testid="document-upload-dialog"
         hideCloseButton
@@ -705,40 +711,43 @@ function DocumentUploadSession({
             value="text"
             className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
           >
-            <fieldset
-              disabled={busy}
-              className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-5"
+            <div
+              ref={textBodyRef}
+              data-testid="document-text-body"
+              className="min-h-0 flex-1 overflow-y-auto p-5"
             >
-              <div className="space-y-2">
-                <Label htmlFor="text-filename">{t('document.upload.textTitle')}</Label>
-                <Input
-                  id="text-filename"
-                  data-testid="document-text-title"
-                  className="h-11"
-                  placeholder={t('document.upload.fileNamePlaceholder')}
-                  value={textFileName}
-                  onChange={e => {
-                    setTextFileName(e.target.value)
-                    setTextError(null)
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="text-content">{t('document.upload.textContent')}</Label>
-                <Textarea
-                  id="text-content"
-                  data-testid="document-text-content"
-                  className="min-h-44"
-                  placeholder={t('document.upload.textPlaceholder')}
-                  value={textContent}
-                  onChange={e => {
-                    setTextContent(e.target.value)
-                    setTextError(null)
-                  }}
-                />
-              </div>
-              {errorMessage(textError)}
-            </fieldset>
+              <fieldset disabled={busy} className="min-w-0 space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="text-filename">{t('document.upload.textTitle')}</Label>
+                  <Input
+                    id="text-filename"
+                    data-testid="document-text-title"
+                    className="h-11"
+                    placeholder={t('document.upload.fileNamePlaceholder')}
+                    value={textFileName}
+                    onChange={e => {
+                      setTextFileName(e.target.value)
+                      setTextError(null)
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="text-content">{t('document.upload.textContent')}</Label>
+                  <Textarea
+                    id="text-content"
+                    data-testid="document-text-content"
+                    className="min-h-44"
+                    placeholder={t('document.upload.textPlaceholder')}
+                    value={textContent}
+                    onChange={e => {
+                      setTextContent(e.target.value)
+                      setTextError(null)
+                    }}
+                  />
+                </div>
+                {errorMessage(textError)}
+              </fieldset>
+            </div>
             {footer(
               'text',
               actionButton(
@@ -754,39 +763,42 @@ function DocumentUploadSession({
               value="web"
               className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
             >
-              <fieldset
-                disabled={busy}
-                className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-5"
+              <div
+                ref={webBodyRef}
+                data-testid="document-web-body"
+                className="min-h-0 flex-1 overflow-y-auto p-5"
               >
-                <div className="space-y-2">
-                  <Label htmlFor="web-url">{t('document.upload.web.urlLabel')}</Label>
-                  <Input
-                    id="web-url"
-                    type="url"
-                    data-testid="document-web-url"
-                    className={cn(
-                      'h-11',
-                      webValidationError && 'border-error focus-visible:ring-error'
+                <fieldset disabled={busy} className="min-w-0 space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="web-url">{t('document.upload.web.urlLabel')}</Label>
+                    <Input
+                      id="web-url"
+                      type="url"
+                      data-testid="document-web-url"
+                      className={cn(
+                        'h-11',
+                        webValidationError && 'border-error focus-visible:ring-error'
+                      )}
+                      aria-invalid={Boolean(webValidationError)}
+                      aria-describedby={webValidationError ? 'web-url-error' : undefined}
+                      onBlur={() => setWebTouched(true)}
+                      placeholder={t('document.upload.web.urlPlaceholder')}
+                      value={webUrl}
+                      onChange={e => {
+                        setWebUrl(e.target.value)
+                        setWebError(null)
+                      }}
+                    />
+                    {webValidationError && (
+                      <p id="web-url-error" role="alert" className="text-sm text-error">
+                        {webValidationError}
+                      </p>
                     )}
-                    aria-invalid={Boolean(webValidationError)}
-                    aria-describedby={webValidationError ? 'web-url-error' : undefined}
-                    onBlur={() => setWebTouched(true)}
-                    placeholder={t('document.upload.web.urlPlaceholder')}
-                    value={webUrl}
-                    onChange={e => {
-                      setWebUrl(e.target.value)
-                      setWebError(null)
-                    }}
-                  />
-                  {webValidationError && (
-                    <p id="web-url-error" role="alert" className="text-sm text-error">
-                      {webValidationError}
-                    </p>
-                  )}
-                </div>
-                <p className="text-xs text-text-muted">{t('document.upload.web.hint')}</p>
-                {errorMessage(webError)}
-              </fieldset>
+                  </div>
+                  <p className="text-xs text-text-muted">{t('document.upload.web.hint')}</p>
+                  {errorMessage(webError)}
+                </fieldset>
+              </div>
               {footer(
                 'web',
                 actionButton(

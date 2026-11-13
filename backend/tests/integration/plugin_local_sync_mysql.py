@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -22,8 +22,48 @@ from app.services.plugin_local_sync import _lookup_operation as lookup_operation
 from app.services.plugin_state_store import ensure_plugin_state
 from app.services.plugin_write_coordination import configure_plugin_session
 from app.services.plugin_write_errors import PluginWriteError
+from tests.integration.secure_share_tokens_mysql import create_legacy_share_links
 
 PARENT = "f3a7c9e1b2d4"
+
+
+def verify_merge_paths(engine, config):
+    """Upgrade either published head without replaying its schema changes."""
+    statement = select(PluginState.__table__).order_by(PluginState.id)
+    for predecessor in ("a5b6c7d8e9f0", "b1c2d3e4f5a6"):
+        # A downgrade to one merge parent keeps the other Alembic branch.
+        # Start at the common ancestor to reproduce a single published head.
+        command.downgrade(config, PARENT)
+        command.upgrade(config, predecessor)
+        assert inspect(engine).has_table("plugin_states") == (
+            predecessor == "a5b6c7d8e9f0"
+        )
+        share_columns = {
+            column["name"] for column in inspect(engine).get_columns("share_links")
+        }
+        assert {"token_hash", "token_version"}.issubset(share_columns) == (
+            predecessor == "b1c2d3e4f5a6"
+        )
+        if predecessor == "a5b6c7d8e9f0":
+            with Session(engine) as db:
+                configure_plugin_session(db)
+                for identity in (17, 18):
+                    ensure_plugin_state(
+                        db, 1, f"plugin-{identity}", installed_kind_id=identity
+                    )
+                db.commit()
+            with engine.connect() as db:
+                states = db.execute(statement).mappings().all()
+            assert states
+        command.upgrade(config, "head")
+        assert inspect(engine).has_table("plugin_states")
+        if predecessor == "a5b6c7d8e9f0":
+            with engine.connect() as db:
+                assert db.execute(statement).mappings().all() == states
+        with Session(engine) as db:
+            receipt = lookup_operation(db, 1, "native", "uncertain-operation")
+            assert receipt["intentOrder"] == 7
+    print("MySQL: either feature head upgrades to the merged head without replay")
 
 
 def verify_ordering(engine):
@@ -80,6 +120,7 @@ def verify(engine, url):
     }
     User.__table__.create(engine)
     Kind.__table__.create(engine)
+    create_legacy_share_links(engine)
     with Session(engine) as db, db.begin():
         db.add_all(
             [
@@ -153,6 +194,7 @@ def verify(engine, url):
             assert db.query(Kind).filter_by(kind="PluginSyncState").count() == 1
             assert db.query(PluginState).count() == 0
         verify_ordering(engine)
+        verify_merge_paths(engine, config)
         command.downgrade(config, PARENT)
         assert set(inspect(engine).get_table_names()) == before
         with Session(engine) as db:
