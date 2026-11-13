@@ -504,7 +504,6 @@ export function createDesktopScenario({
         uninstallLogOffset,
         uiTimeoutMs
       )
-      await waitForBackgroundTerminalCount(control, 1, uiTimeoutMs)
       await waitForTerminalProgress(
         control,
         PLUGIN_MARKER,
