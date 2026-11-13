@@ -176,6 +176,8 @@ The target's minimum source version remains a constraint, never permission by it
 
 Revoked targets, witness edges, and witness source releases cannot authorize inferred upgrades. An explicitly revoked B → D pair overrides A → D interval coverage; other valid paths remain available. An installed revoked source may still escape through its own non-revoked verified pair. Recheck the same policy immediately before installation. Missing paths must never cause unrestricted updating.
 
+Acceptance version 22 reuses the upgraded real client in the existing `app-rollback` checkpoint to check interval discovery, revocation, and recovery. Its future target manifest is explicitly marked `fixture`; no fixture archive is downloaded and no release evidence is produced for that pair. Real source-to-target upgrade, data retention, and rollback assertions continue independently. Results are retained in `interval-policy-result.json`, with no additional checkpoint or package build.
+
 ## Release lifecycle
 
 ### macOS installation and Dock identity
