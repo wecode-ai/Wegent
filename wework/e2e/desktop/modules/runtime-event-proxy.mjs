@@ -22,6 +22,10 @@ export class RuntimeEventProxy extends TransportFaultProxy {
   }
 
   upgrade(request, downstream, head) {
+    if (this.webSocketsDisconnected) {
+      downstream.destroy()
+      return
+    }
     const options = this.options(request)
     // Inspect uncompressed messages while preserving the actual endpoint handshake.
     delete options.headers['sec-websocket-extensions']
@@ -29,7 +33,7 @@ export class RuntimeEventProxy extends TransportFaultProxy {
     this.upstreams.add(upstream)
     upstream.once('close', () => this.upstreams.delete(upstream))
     upstream.on('error', error => {
-      this.fail(error)
+      if (!this.webSocketsDisconnected) this.fail(error)
       downstream.destroy()
     })
     downstream.once('close', () => upstream.destroy())
@@ -39,6 +43,11 @@ export class RuntimeEventProxy extends TransportFaultProxy {
       downstream.destroy()
     })
     upstream.once('upgrade', (response, socket, upstreamHead) => {
+      if (this.webSocketsDisconnected) {
+        socket.destroy()
+        downstream.destroy()
+        return
+      }
       this.bridgeWebsocket({ response, socket, downstream, head, upstreamHead })
     })
     upstream.end()
@@ -47,6 +56,7 @@ export class RuntimeEventProxy extends TransportFaultProxy {
   bridgeWebsocket({ response, socket, downstream, head, upstreamHead }) {
     this.track(socket)
     this.websockets.add(socket)
+    this.deviceSockets.add(downstream)
     socket.once('close', () => {
       this.websockets.delete(socket)
       for (const [id, pending] of this.acknowledgements) {
@@ -56,7 +66,10 @@ export class RuntimeEventProxy extends TransportFaultProxy {
       }
       downstream.destroy()
     })
-    downstream.once('close', () => socket.destroy())
+    downstream.once('close', () => {
+      this.deviceSockets.delete(downstream)
+      socket.destroy()
+    })
     const headers = response.rawHeaders.reduce((lines, value, index, all) => {
       if (index % 2 === 0) lines.push(`${value}: ${all[index + 1]}`)
       return lines

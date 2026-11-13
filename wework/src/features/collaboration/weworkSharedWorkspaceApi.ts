@@ -80,7 +80,7 @@ export interface WeworkDeliverySharedWorkspaceApi {
 
 export const WEWORK_DELIVERY_SHARED_WORKSPACE_METHODS = {
   projects: ['list', 'get', 'create', 'update', 'archive'],
-  myWork: ['list'],
+  myWork: ['list', 'page'],
   assignmentReceipts: ['list', 'acknowledge'],
   milestones: ['getCacheScope', 'list', 'create', 'update', 'remove'],
   issues: [
@@ -211,6 +211,9 @@ function toMyWorkItem(
   return {
     ...item,
     ...toIssue(item),
+    task_bindings: (item.task_bindings ?? []).map(binding =>
+      mapWorkspaceTaskBindingDto(binding, String(item.cloud_project_id))
+    ),
   }
 }
 
@@ -476,8 +479,24 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
     },
     myWork: {
+      async page(input) {
+        const page = await deliveryApi.listMyWork(input)
+        if (page.errors?.length) throw new Error(page.errors.join('\n'))
+        return { items: page.items.map(toMyWorkItem), nextCursor: page.next_cursor ?? null }
+      },
       async list() {
-        return (await deliveryApi.listMyWork()).items.map(toMyWorkItem)
+        const items: WorkspaceMyWorkItem[] = []
+        const cursors = new Set<string>()
+        let cursor: string | undefined
+        do {
+          const page = await deliveryApi.listMyWork(cursor ? { cursor } : undefined)
+          if (page.errors?.length) throw new Error(page.errors.join('\n'))
+          items.push(...page.items.map(toMyWorkItem))
+          cursor = page.next_cursor ?? undefined
+          if (cursor && cursors.has(cursor)) throw new Error('My work pagination did not advance')
+          if (cursor) cursors.add(cursor)
+        } while (cursor)
+        return items
       },
     },
     milestones: {
@@ -532,6 +551,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               assignee_group_id: input.assigneeGroupId,
               assignee_agent_id: input.assigneeAgentId,
               notify_assignee: input.notifyAssignee,
+              personal_task: input.personalTask,
             }) as Parameters<DeliveryApi['createLoopItem']>[1]
           )
           .then(toIssue)
