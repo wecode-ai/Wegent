@@ -67,6 +67,7 @@ export function createProvider() {
         throw invalid('Invalid resource scope')
       const profile = required(input, 'profile')
       if (!['group', 'direct'].includes(input.kind)) throw invalid('Invalid conversation kind')
+      validateCollection(input)
       await ownIdentity(ctx, profile, identities)
       return input
     },
@@ -122,6 +123,7 @@ export function createProvider() {
       }
     },
     async collect(ctx, { source, checkpoint }) {
+      validateCollection(source)
       const selfId = await ownIdentity(ctx, required(source, 'profile'), identities)
       const start = checkpoint?.after ?? required(source, 'enabledAfter')
       const until = checkpoint?.until ?? new Date().toISOString()
@@ -204,16 +206,30 @@ async function readMessagePage(ctx, source, window, ownId) {
     selfConversationId = required(page.messages[0], 'conversationId')
   }
   const args = { ...window, limit: String(window.limit), profile: required(source, 'profile') }
+  const allMessages = source.collectionKey === 'all-messages'
   if (source.scope !== 'all') {
-    if (source.kind === 'group') args.group = required(source, 'id')
+    if (source.kind === 'group')
+      args[allMessages ? 'conversationIds' : 'group'] = required(source, 'id')
     else args.senderIds = required(source, 'id')
   }
   const response = await readTool(
     ctx,
-    source.kind === 'group' ? 'listMentions' : 'searchMessages',
+    source.kind === 'group' && !allMessages ? 'listMentions' : 'searchMessages',
     args
   )
   return messagePage(source, response, ownId, window.cursor, selfConversationId)
+}
+
+function validateCollection(source) {
+  if (source.collectionKey === undefined) return
+  if (
+    source.collectionKey !== 'all-messages' ||
+    source.kind !== 'group' ||
+    source.scope !== undefined ||
+    required(source, 'id') === '*' ||
+    /[,\r\n]/.test(source.id)
+  )
+    throw invalid('All-message intake requires one exact group')
 }
 
 function validateNativePage(page, limit) {
