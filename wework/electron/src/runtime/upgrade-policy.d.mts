@@ -33,6 +33,7 @@ export interface UpgradeCatalog {
 }
 export function compareVersions(left: string, right: string): number
 export function validateUpgradeCatalog(input: unknown): UpgradeCatalog
+export function upgradeTargets(catalog: UpgradeCatalog, currentVersion: string): UpgradeRelease[]
 export function planUpgrade(
   catalog: UpgradeCatalog,
   currentVersion: string
