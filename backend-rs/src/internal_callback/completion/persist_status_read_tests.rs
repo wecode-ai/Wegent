@@ -101,7 +101,12 @@ impl MysqlTransaction for CapturedTransaction {
 #[tokio::test]
 async fn the_task_status_read_locks_the_labeled_active_task_projection() {
     let mut transaction = CapturedTransaction::default();
-    update_task_status_on(tables(), &mut transaction, 426335633820493, 7).await;
+    assert!(
+        update_task_status_on(tables(), &mut transaction, 426335633820493, 7)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let statement = transaction
         .statements
@@ -128,31 +133,16 @@ async fn the_task_status_read_locks_the_labeled_active_task_projection() {
     );
 }
 
-/// `_update_task_status_sync` catches and logs a store failure instead of
-/// propagating it into the request path.
 #[tokio::test]
-async fn a_failed_task_status_read_is_logged_and_swallowed() {
+async fn a_failed_task_status_read_reaches_the_transaction_caller() {
     let mut transaction = CapturedTransaction {
         fail_reads: true,
         ..CapturedTransaction::default()
     };
-    update_task_status_on(tables(), &mut transaction, 426335633820493, 7).await;
+    assert!(matches!(
+        update_task_status_on(tables(), &mut transaction, 426335633820493, 7).await,
+        Err(brz_mysql::MysqlError::RowNotFound)
+    ));
 
     assert_eq!(transaction.statements.len(), 1);
-}
-
-/// `_update_task_status_sync`'s `try/except` covers every status read, not
-/// only the task read: a failed later read yields no value, so the caller
-/// returns before performing the task-update write. Treating the failure as an
-/// empty result (`unwrap_or_default`) is exactly what the alias repair removed.
-#[tokio::test]
-async fn a_failed_later_status_read_aborts_before_any_write() {
-    let failed: MysqlResult<Vec<brz_mysql::MysqlRow>> = Err(brz_mysql::MysqlError::RowNotFound);
-    assert!(super::read_status(failed, 426335633820493, "assistant_subtasks").is_none());
-
-    let empty: MysqlResult<Vec<brz_mysql::MysqlRow>> = Ok(Vec::new());
-    assert_eq!(
-        super::read_status(empty, 426335633820493, "assistant_subtasks").map(|rows| rows.len()),
-        Some(0)
-    );
 }

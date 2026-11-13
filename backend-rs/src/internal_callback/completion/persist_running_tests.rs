@@ -215,7 +215,7 @@ async fn the_running_transition_locks_the_parent_task_on_its_shard_first() {
 }
 
 #[tokio::test]
-#[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated MySQL schema and a lagging reader fixture"]
+#[ignore = "requires loopback MySQL and Redis; uses an isolated MySQL schema and a lagging reader fixture"]
 async fn running_transition_commits_before_dispatch_when_replica_has_no_subtask()
 -> anyhow::Result<()> {
     crate::migrations::mysql_tests::isolated(verify_running_transition).await
@@ -337,6 +337,7 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
         .execute("DROP TRIGGER reject_running_transition", ())
         .await?;
     verify_obsolete_dispatches(writer, tables).await?;
+    verify_terminal_callbacks(writer).await?;
     mysql.close().await;
     Ok(())
 }
@@ -465,5 +466,215 @@ async fn verify_obsolete_dispatches(writer: &MysqlService, tables: Tables) -> an
         .fetch_one("SELECT json FROM tasks WHERE id = 12", ())
         .await?;
     assert_eq!(task.0["status"]["status"], "CANCELLED");
+    Ok(())
+}
+
+async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> {
+    use brz_redis::{RedisService, RedisServiceOptions};
+
+    let address = std::env::var("WEGENT_TEST_REDIS_ADDRESS")?;
+    anyhow::ensure!(address.starts_with("127.0.0.1:"));
+    let redis = RedisService::noshard_with_options(
+        address.clone(),
+        [address],
+        RedisServiceOptions::default(),
+    )
+    .await?;
+    let mut app = crate::app_test_support::app(writer.clone());
+    std::sync::Arc::get_mut(&mut app).unwrap().redis = Some(redis);
+
+    verify_cancel_callback_order(writer, &app).await?;
+    verify_terminal_callback_retry(writer, &app).await
+}
+
+async fn reset_callback_state(writer: &MysqlService, parent_status: &str) -> anyhow::Result<()> {
+    writer
+        .execute(
+            "UPDATE tasks SET json = JSON_OBJECT('status', JSON_OBJECT('status', ?)) WHERE id = 12",
+            (parent_status,),
+        )
+        .await?;
+    writer.execute(
+        "UPDATE subtasks SET status = 'RUNNING', result = NULL, error_message = '' WHERE id = 43",
+        (),
+    ).await?;
+    Ok(())
+}
+
+async fn configure_callback_pipeline(writer: &MysqlService) -> anyhow::Result<()> {
+    use serde_json::json;
+
+    let team = json!({"spec": {"collaborationModel": "pipeline", "members": [
+        {"botRef": {"name": "first-bot", "namespace": "default"}},
+        {"botRef": {"name": "second-bot", "namespace": "default"}}
+    ]}});
+    writer.execute(
+        "INSERT INTO kinds (id, user_id, kind, name, namespace, json, is_active, created_at, updated_at) VALUES \
+         (9, 7, 'Team', 'cancel-pipeline', 'default', ?, 1, NOW(), NOW()), \
+         (10, 7, 'Bot', 'first-bot', 'default', '{}', 1, NOW(), NOW())",
+        (team.to_string(),),
+    ).await?;
+    writer.execute(
+        "UPDATE tasks SET json = JSON_SET(json, '$.spec', JSON_OBJECT('currentStage', 0, \
+         'teamRef', JSON_OBJECT('user_id', 7, 'name', 'cancel-pipeline', 'namespace', 'default'))) WHERE id = 12",
+        (),
+    ).await?;
+    writer
+        .execute("UPDATE subtasks SET bot_ids = '[10]' WHERE id = 43", ())
+        .await?;
+    Ok(())
+}
+
+async fn terminal_callback(
+    app: &crate::state::AppState,
+    kind: &str,
+    value: &str,
+) -> Result<(), crate::http_compat::FastApiError> {
+    let (event_type, data) = match kind {
+        "done" => (
+            "response.completed",
+            serde_json::json!({
+                "response": {
+                    "output": [{"content": [{"type": "output_text", "text": value}]}],
+                    "standalone_chat_workspace_path": "/workspace/replayed",
+                },
+            }),
+        ),
+        "error" => (
+            "error",
+            serde_json::json!({"message": value, "code": "execution_error"}),
+        ),
+        "cancelled" => ("response.incomplete", serde_json::json!({})),
+        _ => unreachable!(),
+    };
+    crate::internal_callback::handle_callback(
+        app,
+        serde_json::json!({
+            "task_id": 12,
+            "subtask_id": 43,
+            "event_type": event_type,
+            "data": data,
+        }),
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn callback_statuses(writer: &MysqlService) -> anyhow::Result<(String, String)> {
+    let task: brz_mysql::Json<serde_json::Value> = writer
+        .fetch_one("SELECT json FROM tasks WHERE id = 12", ())
+        .await?;
+    let subtask = writer
+        .fetch_one("SELECT status FROM subtasks WHERE id = 43", ())
+        .await?;
+    Ok((
+        task.0["status"]["status"].as_str().unwrap().to_owned(),
+        subtask,
+    ))
+}
+
+async fn verify_cancel_callback_order(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    for (first, second, status) in [
+        ("done", "cancelled", "COMPLETED"),
+        ("error", "cancelled", "FAILED"),
+        ("cancelled", "done", "CANCELLED"),
+        ("cancelled", "error", "CANCELLED"),
+    ] {
+        reset_callback_state(writer, "RUNNING").await?;
+        if first == "done" {
+            configure_callback_pipeline(writer).await?;
+        }
+        assert!(
+            crate::socketio::chat_control::mark_cancelling(app, 12, 43)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            callback_statuses(writer).await?,
+            ("CANCELLING".into(), "RUNNING".into())
+        );
+        terminal_callback(app, first, "first outcome")
+            .await
+            .unwrap();
+        let expected = (status.to_owned(), status.to_owned());
+        assert_eq!(callback_statuses(writer).await?, expected);
+        let count: i64 = writer
+            .fetch_one("SELECT COUNT(*) FROM subtasks WHERE task_id = 12", ())
+            .await?;
+        assert_eq!(count, 2, "a cancelled pipeline must not advance");
+        let before: Option<brz_mysql::Json<serde_json::Value>> = writer
+            .fetch_one("SELECT result FROM subtasks WHERE id = 43", ())
+            .await?;
+        terminal_callback(app, second, "late outcome")
+            .await
+            .unwrap();
+        assert_eq!(callback_statuses(writer).await?, expected);
+        assert!(
+            !crate::socketio::chat_control::mark_cancelling(app, 12, 43)
+                .await
+                .unwrap()
+        );
+        assert_eq!(callback_statuses(writer).await?, expected);
+        let after: Option<brz_mysql::Json<serde_json::Value>> = writer
+            .fetch_one("SELECT result FROM subtasks WHERE id = 43", ())
+            .await?;
+        assert_eq!(before.map(|json| json.0), after.map(|json| json.0));
+    }
+    Ok(())
+}
+
+async fn verify_terminal_callback_retry(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    reset_callback_state(writer, "RUNNING").await?;
+    writer
+        .execute(
+            "CREATE TRIGGER reject_terminal_status BEFORE UPDATE ON tasks FOR EACH ROW \
+         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject parent callback write'",
+            (),
+        )
+        .await?;
+    let error = terminal_callback(app, "done", "replay result")
+        .await
+        .unwrap_err();
+    assert_eq!(error.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("RUNNING".into(), "RUNNING".into())
+    );
+    writer
+        .execute("DROP TRIGGER reject_terminal_status", ())
+        .await?;
+
+    terminal_callback(app, "done", "replay result")
+        .await
+        .unwrap();
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("COMPLETED".into(), "COMPLETED".into())
+    );
+    terminal_callback(app, "error", "stale failure")
+        .await
+        .unwrap();
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("COMPLETED".into(), "COMPLETED".into())
+    );
+    let result: brz_mysql::Json<serde_json::Value> = writer
+        .fetch_one("SELECT result FROM subtasks WHERE id = 43", ())
+        .await?;
+    assert_eq!(result.0["value"], "replay result");
+    let task: brz_mysql::Json<serde_json::Value> = writer
+        .fetch_one("SELECT json FROM tasks WHERE id = 12", ())
+        .await?;
+    assert_eq!(task.0["status"]["result"]["value"], "replay result");
+    assert_eq!(
+        task.0["spec"]["standaloneChatWorkspacePath"],
+        "/workspace/replayed"
+    );
     Ok(())
 }

@@ -15,7 +15,7 @@ use crate::task_store_statements::{
 };
 
 pub(crate) use crate::task_store_statements::{
-    active_task_projection_statement, active_task_statement, owner_matches_task_id_statement,
+    active_task_projection_statement, owner_matches_task_id_statement,
     regular_active_task_statement, update_task_json_statement,
 };
 

@@ -16,8 +16,7 @@
 
 use std::sync::Arc;
 
-use brz_json::OpaqueJson;
-use brz_mysql::{Json, MysqlTransaction as _};
+use brz_mysql::{Json, Mysql as _, MysqlResult, MysqlRow, MysqlTransaction as _};
 use brz_socket_io::{ClientError, Reply};
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
@@ -41,8 +40,6 @@ const CANCEL_FLAG_TTL: u64 = 300;
 const CANCELLING_STUCK_TIMEOUT_SECONDS: i64 = 1800;
 /// `DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS`.
 const GUIDANCE_QUEUE_TTL_SECONDS: u64 = 60 * 60 * 24;
-/// `_TASK_FINAL_STATES`.
-const TASK_FINAL_STATES: [&str; 4] = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"];
 
 /// `on_chat_cancel`.
 pub(crate) async fn cancel(
@@ -88,7 +85,9 @@ pub(crate) async fn cancel(
     {
         return Ok(Reply::payload(ack));
     }
-    mark_cancelling(state, info.task_id).await?;
+    if !mark_cancelling(state, info.task_id, subtask_id).await? {
+        return Ok(Reply::payload(error_ack("Subtask is no longer running")));
+    }
     let delivered = deliver_cancel(
         state, runtime, user_id, &info, subtask_id, device_id, shell_type,
     )
@@ -195,55 +194,75 @@ async fn subtask_for_cancel(
     }))
 }
 
-/// `_mark_task_and_board_cancelling`: persist the CANCELLING intent only.
-async fn mark_cancelling(state: &AppState, task_id: i64) -> Result<(), ClientError> {
-    let Some(task) = state
-        .task_store
-        .get_regular_active_task(task_id)
+/// Record cancellation under the same parent lock used by terminal callbacks.
+pub(crate) async fn mark_cancelling(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+) -> Result<bool, ClientError> {
+    use crate::internal_callback::completion::dispatchable_task_status;
+
+    let tables = crate::internal_callback::tables(state);
+    state.mysql.route(crate::task_routing::ByTaskId(task_id as u64))
+        .with_transaction(async |tx| {
+            let Some(mut payload) = lock_cancel_task(tx, tables.tasks, task_id).await? else {
+                return Ok(false);
+            };
+            let already_cancelling = payload.pointer("/status/status").and_then(Value::as_str)
+                == Some("CANCELLING");
+            if !already_cancelling && dispatchable_task_status(&payload).is_none() {
+                return Ok(false);
+            }
+            let live: Option<i64> = tx.fetch_optional(
+                format!("SELECT id FROM {} WHERE id = ? AND task_id = ? AND status IN ('PENDING', 'RUNNING') FOR UPDATE", tables.subtasks),
+                (subtask_id, task_id),
+            ).await?;
+            if live.is_none() {
+                return Ok(false);
+            }
+            if !already_cancelling {
+                let now = local_isoformat();
+                payload["status"]["status"] = json!("CANCELLING");
+                payload["status"]["errorMessage"] = json!("");
+                payload["status"]["updatedAt"] = json!(now);
+                payload["status"]["completedAt"] = Value::Null;
+                tx.execute(
+                    crate::task_store::update_task_json_statement(tables.tasks),
+                    (python_json_value(&payload), task_update_timestamp(), task_id),
+                ).await?;
+            }
+            Ok(true)
+        })
         .await
         .map_err(|error| {
-            tracing::error!(%error, task_id, "chat:cancel task read failed");
+            tracing::error!(%error, task_id, "chat:cancel intent transaction failed");
             internal_error()
-        })?
-    else {
-        return Ok(());
-    };
-    let Some(json) = task
-        .get::<Json<OpaqueJson>>("json")
-        .ok()
-        .flatten()
-        .map(|json| json.0.to_value())
-    else {
-        return Ok(());
-    };
-    let mut json = json;
-    if let Some(status) = json.get_mut("status").and_then(Value::as_object_mut) {
-        status.insert("status".into(), Value::String("CANCELLING".into()));
-        status.insert("errorMessage".into(), Value::String(String::new()));
-        status.insert("updatedAt".into(), Value::String(local_isoformat()));
-        status.insert("completedAt".into(), Value::Null);
-    }
-    let owner = task
-        .get::<i32>("user_id")
-        .map_err(|error| {
-            tracing::error!(%error, task_id, "chat:cancel owner decode failed");
-            internal_error()
-        })?
-        .unwrap_or_default();
-    state
-        .task_store
-        .update_task_json(
-            task_id,
-            i64::from(owner),
-            &python_json_value(&json),
-            &task_update_timestamp(),
+        })
+}
+
+async fn lock_cancel_task(
+    tx: &mut impl brz_mysql::MysqlTransaction,
+    table: &str,
+    task_id: i64,
+) -> MysqlResult<Option<Value>> {
+    use crate::internal_callback::completion::task_column;
+
+    let task: Option<MysqlRow> = tx
+        .fetch_optional(
+            crate::task_store::task_for_update_first_statement(table),
+            (task_id,),
         )
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, task_id, "chat:cancel task update failed");
-            internal_error()
-        })?;
-    Ok(())
+        .await?;
+    let Some(task) = task else { return Ok(None) };
+    if task_column::<i64>(&task, "is_active") != Some(1)
+        || task_column::<String>(&task, "kind").as_deref() != Some("Task")
+        || task_column::<String>(&task, "namespace").as_deref() == Some("system")
+    {
+        return Ok(None);
+    }
+    let payload = task_column::<Json<Value>>(&task, "json")
+        .ok_or_else(|| brz_mysql::MysqlError::ColumnNotFound("task json".into()))?;
+    Ok(Some(payload.0))
 }
 
 /// `ExecutionDispatcher.cancel` for the migrated routing branches.
@@ -313,127 +332,82 @@ async fn stream_alive(state: &AppState, task_id: i64, subtask_id: i64) -> bool {
     idle.num_seconds() <= CANCELLING_STUCK_TIMEOUT_SECONDS
 }
 
-/// `finalize_stuck_cancellation`: mark the stuck assistant subtasks and the
-/// task CANCELLED, returning the finalized ids; `None` when the task is absent
-/// and `Some([])` when it is already terminal.
+/// Finalize a cancellation only while its intent is still current.
 async fn finalize_stuck_cancellation(
     state: &AppState,
     task_id: i64,
 ) -> Result<Option<Vec<i64>>, ClientError> {
-    let Some(task) = state
-        .task_store
-        .get_regular_active_task(task_id)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, task_id, "cancel finalize task read failed");
-            internal_error()
-        })?
-    else {
-        // `finalize_stuck_cancellation`: a missing task returns an empty list,
-        // which still counts as a local finalization.
-        return Ok(Some(Vec::new()));
-    };
-    let Some(json) = task
-        .get::<Json<OpaqueJson>>("json")
-        .ok()
-        .flatten()
-        .map(|json| json.0.to_value())
-    else {
-        return Ok(Some(Vec::new()));
-    };
-    let status = json
-        .get("status")
-        .and_then(|status| status.get("status"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if TASK_FINAL_STATES.contains(&status) {
-        return Ok(Some(Vec::new()));
-    }
-    let owner = task
-        .get::<i32>("user_id")
-        .map_err(|error| {
-            tracing::error!(%error, task_id, "cancel finalize owner decode failed");
-            internal_error()
-        })?
-        .unwrap_or_default();
-    let listing = crate::task_detail_api::repository::list_subtasks_by_task(
-        &*state.task_store,
-        task_id,
-        i64::from(owner),
-        true,
-    )
-    .await
-    .map_err(|error| {
-        tracing::error!(%error, task_id, "cancel finalize subtask read failed");
-        internal_error()
-    })?;
-    let stuck: Vec<i64> = listing
-        .subtasks
-        .into_iter()
-        .filter(|subtask| {
-            subtask.role == "ASSISTANT" && matches!(subtask.status.as_str(), "PENDING" | "RUNNING")
-        })
-        .map(|subtask| subtask.id)
-        .collect();
-    let tables = state
-        .task_store
-        .message_edit_tables(task_id)
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, task_id, "cancel finalize table lookup failed");
-            internal_error()
-        })?;
-    let mut cancelled = json.clone();
-    if let Some(status) = cancelled.get_mut("status").and_then(Value::as_object_mut) {
-        status.insert("status".into(), Value::String("CANCELLED".into()));
-        status.insert("errorMessage".into(), Value::String(String::new()));
-        status.insert("updatedAt".into(), Value::String(local_isoformat()));
-        status.insert("completedAt".into(), Value::String(local_isoformat()));
-    }
-    let subtasks = tables.subtasks.clone();
-    let task_json = python_json_value(&cancelled);
-    state
+    let tables = crate::internal_callback::tables(state);
+    let finalized = state
         .mysql
-        .with_transaction(async |transaction| {
-            for subtask_id in &stuck {
-                let statement = format!(
-                    "UPDATE {subtasks} SET status=?, progress=?, result=?, updated_at=?, \
-                     completed_at=? WHERE {subtasks}.id = ?"
-                );
-                let now = local_isoformat();
-                let result = python_json_value(&json!({"value": ""}));
-                transaction
-                    .execute(
-                        &statement,
-                        (
-                            "CANCELLED".to_string(),
-                            100_i64,
-                            result,
-                            now.clone(),
-                            now,
-                            *subtask_id,
-                        ),
-                    )
-                    .await?;
+        .route(crate::task_routing::ByTaskId(task_id as u64))
+        .with_transaction(async |tx| {
+            let Some(mut payload) = lock_cancel_task(tx, tables.tasks, task_id).await? else {
+                return Ok(Some(Vec::new()));
+            };
+            let status = payload.pointer("/status/status").and_then(Value::as_str);
+            if matches!(
+                status,
+                Some("COMPLETED" | "FAILED" | "CANCELLED" | "DELETE")
+            ) {
+                return Ok(Some(Vec::new()));
             }
-            transaction
-                .execute(
-                    &format!(
-                        "UPDATE {t} SET json=?, updated_at=? WHERE {t}.id = ?",
-                        t = tables.tasks
+            if status != Some("CANCELLING") {
+                return Ok(None);
+            }
+            let subtasks = tables.subtasks;
+            let stuck: Vec<i64> = tx
+                .fetch_all(
+                    format!(
+                        "SELECT id FROM {subtasks} WHERE task_id = ? AND role = 'ASSISTANT' \
+                         AND status IN ('PENDING', 'RUNNING') FOR UPDATE"
                     ),
-                    (task_json.clone(), task_update_timestamp(), task_id),
+                    (task_id,),
                 )
                 .await?;
-            Ok(())
+            for &subtask_id in &stuck {
+                let now = task_update_timestamp();
+                tx.execute(
+                    format!(
+                        "UPDATE {subtasks} SET status = 'CANCELLED', progress = 100, result = ?, \
+                             updated_at = ?, completed_at = ? WHERE id = ?"
+                    ),
+                    (
+                        python_json_value(&json!({"value": ""})),
+                        now.clone(),
+                        now,
+                        subtask_id,
+                    ),
+                )
+                .await?;
+            }
+            let now = local_isoformat();
+            payload["status"]["status"] = json!("CANCELLED");
+            payload["status"]["errorMessage"] = json!("");
+            payload["status"]["updatedAt"] = json!(now);
+            payload["status"]["completedAt"] = json!(now);
+            tx.execute(
+                crate::task_store::update_task_json_statement(tables.tasks),
+                (
+                    python_json_value(&payload),
+                    task_update_timestamp(),
+                    task_id,
+                ),
+            )
+            .await?;
+            Ok(Some(stuck))
         })
         .await
         .map_err(|error| {
             tracing::error!(%error, task_id, "cancel finalize commit failed");
             internal_error()
         })?;
-    tracing::warn!(task_id, ?stuck, "finalized stuck cancellation locally");
-    Ok(Some(stuck))
+    tracing::info!(
+        task_id,
+        ?finalized,
+        "checked local cancellation finalization"
+    );
+    Ok(finalized)
 }
 
 /// `on_chat_guide`.
