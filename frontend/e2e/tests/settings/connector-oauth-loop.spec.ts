@@ -884,4 +884,107 @@ test.describe('Connector app OAuth loop', () => {
       }
     })
   }
+  test('routes colliding app and upstream names through discovery and real HTTP', async ({
+    request,
+  }) => {
+    const regularToken = await loginToken(request, REGULAR_USER)
+    const runtimeToken = await connectorRuntimeToken(request, regularToken)
+    const prefix = SLUG + '-identity'
+    const targets = [
+      { slug: prefix, raw: 'archive__lookup', name: prefix + '__archive__lookup', id: 0 },
+      { slug: prefix + '__archive', raw: 'lookup', name: prefix + '_u_uarchive__lookup', id: 0 },
+    ]
+    const httpCalls = async () => {
+      const response = await request.get(MOCK_URL + '/connector-oauth/_state')
+      expect(response.ok(), await response.text()).toBeTruthy()
+      return ((await response.json()) as { httpCalls: Array<{ path: string }> }).httpCalls
+    }
+    const invoke = async (name: string, id: string) =>
+      request.post(API_URL + '/api/connector-runtime/call', {
+        headers: authHeaders(runtimeToken),
+        data: { name, arguments: { id } },
+      })
+    try {
+      // Create the longer slug first: it must work without a prefix app present.
+      for (const target of [...targets].reverse()) {
+        const created = await request.post(API_URL + '/api/admin/connector-apps', {
+          headers: authHeaders(adminToken),
+          data: {
+            slug: target.slug,
+            name: target.slug,
+            auth_type: 'oauth2',
+            transport: 'http',
+            mcp_url: MOCK_URL + '/connector-oauth/mcp',
+            tool_allowlist: [target.raw],
+            http_tools: [
+              {
+                name: target.raw,
+                method: 'GET',
+                path: '/records/' + target.slug + '/{id}',
+                input_schema: {
+                  type: 'object',
+                  required: ['id'],
+                  properties: { id: { type: 'string' } },
+                },
+                argument_locations: { id: 'path' },
+              },
+            ],
+          },
+        })
+        expect(created.ok(), await created.text()).toBeTruthy()
+        target.id = ((await created.json()) as { id: number }).id
+        await authorizeViaApi(request, regularToken, target.slug)
+        const called = await invoke(target.name, target.slug)
+        expect(called.ok(), await called.text()).toBeTruthy()
+        expect(await called.text()).toContain(target.slug)
+      }
+      const listed = await request.get(API_URL + '/api/connector-runtime/tools', {
+        headers: authHeaders(runtimeToken),
+      })
+      expect(listed.ok(), await listed.text()).toBeTruthy()
+      const tools = (
+        (await listed.json()) as { tools: Array<{ name: string; connector_slug: string }> }
+      ).tools
+      expect(
+        tools
+          .filter(tool => targets.some(target => target.slug === tool.connector_slug))
+          .map(tool => tool.name)
+          .sort()
+      ).toEqual(targets.map(target => target.name).sort())
+      const installed = await request.get(API_URL + '/api/apps/installed', {
+        headers: authHeaders(regularToken),
+      })
+      expect(installed.ok(), await installed.text()).toBeTruthy()
+      const apps = ((await installed.json()) as { apps: InstalledAppView[] }).apps
+      for (const target of targets) {
+        expect(apps.find(app => app.slug === target.slug)?.tool_summaries).toEqual([
+          expect.objectContaining({ name: target.name, raw_tool_name: target.raw }),
+        ])
+      }
+      const before = await httpCalls()
+      for (const target of targets) {
+        const called = await invoke(target.name, target.slug)
+        expect(called.ok(), await called.text()).toBeTruthy()
+        expect(await called.text()).toContain(target.slug)
+      }
+      expect((await httpCalls()).slice(before.length).map(call => call.path)).toEqual(
+        targets.map(target => '/connector-oauth/mcp/records/' + target.slug + '/' + target.slug)
+      )
+      const foreignRuntime = await connectorRuntimeToken(request, adminToken)
+      const unauthorized = await request.post(API_URL + '/api/connector-runtime/call', {
+        headers: authHeaders(foreignRuntime),
+        data: { name: targets[1].name, arguments: { id: 'foreign' } },
+      })
+      expect(unauthorized.status()).toBe(401)
+      expect((await httpCalls()).length).toBe(before.length + targets.length)
+    } finally {
+      for (const target of targets) {
+        if (!target.id) continue
+        const removed = await request.delete(API_URL + '/api/admin/connector-apps/' + target.id, {
+          headers: authHeaders(adminToken),
+        })
+        expect(removed.status()).toBe(204)
+      }
+    }
+  })
 })

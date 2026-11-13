@@ -455,7 +455,7 @@ where
                             continue;
                         }
                         app_tools.push(ConnectorTool {
-                            name: format!("{}__{}", app.slug, tool.name),
+                            name: wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
                             title: None,
                             description: tool.description,
                             raw_tool_name: tool.name,
@@ -517,7 +517,7 @@ where
                 continue;
             }
             app_tools.push(ConnectorTool {
-                name: format!("{}__{}", app.slug, tool.name),
+                name: wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
                 title: tool.title,
                 description: tool.description.unwrap_or_default(),
                 raw_tool_name: tool.name,
@@ -611,6 +611,17 @@ fn installed_app_projection(
         stored
             .map(|stored| stored.tool_summaries.clone())
             .unwrap_or_default()
+    });
+    app_tools.retain_mut(|tool| {
+        let Some(raw_name) = tool
+            .raw_tool_name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        else {
+            return false;
+        };
+        tool.name = wegent_protocol::connector::qualify_tool(&app.slug, raw_name);
+        true
     });
     // Cached discovery predates administrator edits. It must not re-publish a
     // disabled operation when discovery fails or the grant needs renewal.

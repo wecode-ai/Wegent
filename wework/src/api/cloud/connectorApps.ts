@@ -247,9 +247,23 @@ export async function authorizeWegentConnector(
     }),
   })
   let authorizationHandle: CloudAuthorizationHandle | void = undefined
+  const assertCurrent = () => {
+    if (options.isCurrent && !options.isCurrent()) {
+      attempt.cancel()
+      throw abortError()
+    }
+  }
+  const closeAuthorization = async () => {
+    const handle = authorizationHandle
+    authorizationHandle = undefined
+    await Promise.resolve(handle?.close?.()).catch(() => undefined)
+  }
   try {
+    assertCurrent()
     const session = await createConnectorOAuthSession(apiBaseUrl, token, slug)
+    assertCurrent()
     authorizationHandle = await openAuthorizationUrl(session.authorize_url)
+    assertCurrent()
     let windowClosed = false
     void authorizationHandle?.closed?.then(() => {
       windowClosed = true
@@ -257,17 +271,16 @@ export async function authorizeWegentConnector(
     const intervalMs = Math.max(500, session.poll_interval_seconds * 1000)
     while (Date.now() < session.expires_at * 1000) {
       await delay(intervalMs)
-      if (options.isCurrent && !options.isCurrent()) {
-        attempt.cancel()
-        throw abortError()
-      }
+      assertCurrent()
       // The close notification is the fast path; ask the host for the real
       // state too so a late or lost notification still cancels promptly.
       if (!windowClosed && authorizationHandle?.isOpen) {
         const open = await authorizationHandle.isOpen().catch(() => true)
+        assertCurrent()
         if (!open) windowClosed = true
       }
       const result = await pollConnectorOAuthSession(apiBaseUrl, token, session)
+      assertCurrent()
       if (result.status === 'pending') {
         if (windowClosed) {
           attempt.cancel()
@@ -287,6 +300,8 @@ export async function authorizeWegentConnector(
         attempt.fail('confirm')
         throw new ConnectorAuthorizationError('connection_missing')
       }
+      await closeAuthorization()
+      assertCurrent()
       if (result.connection.status === 'connected') attempt.succeed()
       else attempt.fail('confirm')
       notifyConnectorAuthorizationChanged()
@@ -295,11 +310,13 @@ export async function authorizeWegentConnector(
     attempt.fail('confirm')
     throw new ConnectorAuthorizationError('timeout')
   } catch (error) {
+    assertCurrent()
     attempt.fail('request')
     throw error
   } finally {
     // Successful, declined, failed, timed out, or the poll itself threw: the
     // consent window belongs to this attempt and must not outlive it.
-    await Promise.resolve(authorizationHandle?.close?.()).catch(() => undefined)
+    if (authorizationHandle) await closeAuthorization()
+    assertCurrent()
   }
 }

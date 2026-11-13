@@ -16,21 +16,21 @@ Connector Apps 让 Wework 在不修改 Codex 源码、也不依赖 ChatGPT 登�
 6. `wegent_apps` 子进程从 Executor 私有目录读取自动轮换的短期 JWT，并调用 Wegent Connector Runtime。Backend 解密管理员固定请求头，并连接上游 Streamable HTTP/SSE MCP，或把工具调用转换为普通 HTTP 请求。
 7. 每个可用 App 会生成一个由 Wegent 管理的本地 Skill。Skill 包含应用描述、可使用的工具命名空间（例如 `crm__`）及必要的授权提示，不包含任何凭据。
 
-工具名统一为 `<app_slug>__<upstream_tool_name>`。管理员设置工具白名单后，列表和调用两个入口都会执行同一检查，不能通过直接构造工具名绕过。
+工具名统一为 `<encoded_app_slug>__<upstream_tool_name>`：App slug 中每个 `_` 编码为 `_u`，上游工具名保持原样。例如 `reports` 的 `archive__lookup` 与 `reports__archive` 的 `lookup` 分别暴露为 `reports__archive__lookup` 和 `reports_u_uarchive__lookup`，不会发生路由碰撞。资源标识、授权 slug 和 `X-Connector-App` 仍使用原始 slug；缓存工具名由所属 App 和 `rawToolName` 重建。管理员设置工具白名单后，列表和调用两个入口都会执行同一检查，不能通过直接构造工具名绕过。
 
 ## 工具加载方式
 
 管理员通过 `Kind.json.spec.toolLoadingMode` 选择工具加载方式。管理后台新增应用时默认使用 `lazy`；切换为 `static` 会弹出确认，提示其会一次性注入全部工具。直接调用 API 且未传该字段时，服务端仍按 `static` 处理：
 
-| 方式 | 行为 | 适用场景 |
-| --- | --- | --- |
-| `static` | 所有已授权 App 的工具进入共享 `wegent-connectors` MCP，每个任务都能直接看到（Static loading / 静态全局加载） | App 少、使用频率高 |
-| `lazy` | 上游工具 schema 按需加载；Chat 使用 connector Skill，编码类 Shell 和桌面使用轻量发现/调用入口 | App 多、工具重或低频使用 |
+| 方式     | 行为                                                                                                         | 适用场景                 |
+| -------- | ------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| `static` | 所有已授权 App 的工具进入共享 `wegent-connectors` MCP，每个任务都能直接看到（Static loading / 静态全局加载） | App 少、使用频率高       |
+| `lazy`   | 上游工具 schema 按需加载；Chat 使用 connector Skill，编码类 Shell 和桌面使用轻量发现/调用入口                | App 多、工具重或低频使用 |
 
-`lazy` 模式不进入共享 MCP，而是使用带 `X-Connector-App` 请求头的 scoped MCP 端点。该端点只列出并允许调用指定 App 的工具；共享 `wegent-connectors` 只返回 `static` App。`keywords` 按子串匹配，包含空格的词组要求所有词同时出现（例如 `钉钉 表格`）；命中后会 preload 对应 Skill 并挂载完整 scoped MCP。未授权 App 在对话内按需提示授权，Wework 继续使用 `connector_auth_required` 卡片。
+完整的 lazy 工具通过带 `X-Connector-App` 请求头的 scoped MCP 端点访问，该端点只列出并允许调用指定 App 的工具；共享 `wegent-connectors` 只返回 `static` App。`keywords` 按子串匹配，包含空格的词组要求所有词同时出现（例如 `钉钉 表格`）；命中后会 preload 对应 Skill 并挂载完整 scoped MCP。未授权 App 在对话内按需提示授权，Wework 继续使用 `connector_auth_required` 卡片。
 
 - Chat 中未命中的 lazy App 通过 `load_skill` 挂载 MCP；显式选择文档 Provider 时直接挂载其已授权、可见且启用的 App，未挂载时不能标记为 ready。
-- 云端 Codex/ClaudeCode 中，即使没有关键词或没有命中，lazy App 仍提供 `_wegent_discover__<slug>` 和 `_wegent_call__<slug>` 两个轻量工具。请求头 `X-Connector-Loading: lazy` 让目录不探测上游；discover 返回实际白名单工具及 schema，call 接收 `{name, arguments}` 并执行原有权限检查。
+- 云端 Codex/ClaudeCode 中，即使没有关键词或没有命中，lazy App 仍提供 `_wegent_discover__<slug>` 和 `_wegent_call__<slug>` 两个轻量工具。请求头 `X-Connector-Loading: lazy` 让目录不探测上游；discover 返回实际白名单工具、schema 和 `rawToolName`，call 的 `name` 使用该原始上游名字，并执行原有权限检查。ClaudeCode 未命中的 lazy App 共用短名称 `wca`、`alwaysLoad: true` 的服务器，其不带 App scope 的轻量列表只包含当前用户可见且已授权的 lazy App。这样即使 slug 达到 100 字符，完整 `mcp__wca___wegent_discover__<slug>` 名称也不超过 Claude 的 128 字符限制。
 - 桌面同步使用 `X-Connector-Loading: compact` 读取已安装应用和 Runtime 目录。目录只含 static 工具和 lazy 轻量入口，lazy 上游仅在 discover 时连接。设置页仍默认读取完整目录；模式切换会更新本地 Skill 和工具目录。
 
 管理后台新增应用时，`keywords` 默认填入应用的显示名和标识名；标识名中的 `-`、`_` 会替换为空格（例如 slug `dingtalk_ai_table` 生成 `dingtalk ai table`）。管理员手动修改关键词后，不会再随名称自动变化。
@@ -53,10 +53,10 @@ Backend 不跟随 HTTP 重定向，避免固定请求头被带到其他主机；
 
 Connector 当前支持以下 App 认证方式：
 
-| 类型 | 用途 | 凭据位置 |
-| --- | --- | --- |
-| `none` | 上游不需要用户单独授权，或由管理员统一管理身份 | 无用户凭据；可配置管理员固定请求头 |
-| `oauth2` | 上游要求用户级 OAuth 授权 | 用户 access/refresh token 加密存储在 `ConnectorConnection` |
+| 类型     | 用途                                           | 凭据位置                                                   |
+| -------- | ---------------------------------------------- | ---------------------------------------------------------- |
+| `none`   | 上游不需要用户单独授权，或由管理员统一管理身份 | 无用户凭据；可配置管理员固定请求头                         |
+| `oauth2` | 上游要求用户级 OAuth 授权                      | 用户 access/refresh token 加密存储在 `ConnectorConnection` |
 
 管理员可配置加密固定请求头，例如内部 API Key 或服务令牌，而无需每个用户单独连接。固定请求头不会通过管理 API 回显；管理 API 只返回是否已配置以及请求头名称。OAuth 2.0 授权使用 `/api/connector-apps/{slug}/oauth/sessions` 和 `/api/connector-apps/oauth/callback`；用户凭据只加密存储在 `ConnectorConnection`，不会通过任何 API 返回。
 
@@ -105,18 +105,18 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 - `/api/apps/list`、`/api/apps/read`、`/api/apps/installed`：Wework/Codex app 投影。
 - `/api/connector-runtime/token`：用普通云端会话签发最小权限短凭证。
 - `/api/connector-runtime/tools`、`/call`：仅接受 Connector 专用 JWT，供 Executor MCP 代理调用。
-- `/api/mcp/connectors/sse`：面向 Chat 和云端编码类 Shell 的动态 MCP 端点，按 task token 解析调用者，列表与调用均检查可见性、授权和白名单。不带 `X-Connector-App` 时只暴露 `static` App；带该请求头时限定为指定 App，可用 `X-Connector-Loading: lazy` 请求轻量入口。桌面编码任务使用设备本地 `wegent_apps` 代理，不重复挂载云端端点。
+- `/api/mcp/connectors/sse`：面向 Chat 和云端编码类 Shell 的动态 MCP 端点，按 task token 解析调用者，列表与调用均检查可见性、授权和白名单。默认不带 `X-Connector-App` 时只暴露 `static` App；`X-Connector-Loading: lazy` 请求当前用户已授权的 lazy 轻量入口。带 App scope 时进一步限定为指定 App。桌面编码任务使用设备本地 `wegent_apps` 代理，不重复挂载云端端点。
 
 ## 内置钉钉 Connector Apps
 
 钉钉文档、表格、AI 表格、知识库由钉钉托管固定的 OAuth MCP 地址，用户不需要粘贴个人 URL。后端启动时（`CONNECTOR_BUILTIN_APPS_ENABLED=True`）会补齐缺失的应用定义：
 
-| slug | 名称 | MCP 地址 |
-| --- | --- | --- |
-| `dingtalk_docs` | 钉钉文档 | `https://mcp-gw.dingtalk.com/oauth/server/doc` |
-| `dingtalk_sheet` | 钉钉表格 | `https://mcp-gw.dingtalk.com/oauth/server/sheet` |
+| slug               | 名称         | MCP 地址                                           |
+| ------------------ | ------------ | -------------------------------------------------- |
+| `dingtalk_docs`    | 钉钉文档     | `https://mcp-gw.dingtalk.com/oauth/server/doc`     |
+| `dingtalk_sheet`   | 钉钉表格     | `https://mcp-gw.dingtalk.com/oauth/server/sheet`   |
 | `dingtalk_aitable` | 钉钉 AI 表格 | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
-| `dingtalk_wiki` | 钉钉知识库 | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
+| `dingtalk_wiki`    | 钉钉知识库   | `https://mcp-gw.dingtalk.com/oauth/server/wiki`    |
 
 `CONNECTOR_BUILTIN_APPS_ENABLED` 默认开启。Rust 和 Python 初始化共用 `shared/data/builtin-connector-apps.json` 清单，不依赖开发环境 YAML 初始化，并由拥有数据库初始化的一方补齐缺失应用。补齐是幂等的：缺失的系统应用会被创建，后续管理员的停用、加载方式和关键词设置会保留；已有相同地址的系统应用不会重复创建。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
 

@@ -16,21 +16,21 @@ Connector Apps let Wework connect to internal systems without changing Codex sou
 6. The `wegent_apps` child process reads the automatically rotated short token from Executor's private directory and calls Wegent Connector Runtime. Backend decrypts administrator fixed headers and either connects to the upstream Streamable HTTP/SSE MCP server or translates the tool invocation into an ordinary HTTP request.
 7. Every available app gets a Wegent-managed local Skill containing its description, tool namespace (such as `crm__`), and any required authorization guidance. It never contains credentials.
 
-Tools are exposed as `<app_slug>__<upstream_tool_name>`. The same allowlist is enforced during both tool discovery and invocation, so a caller cannot bypass policy by constructing a tool name directly.
+Tools are exposed as `<encoded_app_slug>__<upstream_tool_name>`: each `_` in the app slug is encoded as `_u`, while the upstream name stays unchanged. For example, `reports` / `archive__lookup` and `reports__archive` / `lookup` become `reports__archive__lookup` and `reports_u_uarchive__lookup`, preventing routing collisions. Resource identities, authorization slugs, and `X-Connector-App` retain the original slug. Cached tool names are rebuilt from their owning app and `rawToolName`. The same allowlist is enforced during both discovery and invocation.
 
 ## Tool loading modes
 
 Administrators choose a loading mode through `Kind.json.spec.toolLoadingMode`. The admin console creates new apps as `lazy` by default and asks for confirmation before switching to `static`, because static loading injects every tool at once. API callers that omit the field still get the server-side default of `static`:
 
-| Mode | Behavior | Best for |
-| --- | --- | --- |
-| `static` | Every authorized app's tools join the shared `wegent-connectors` MCP and are visible to every task (Static loading) | A few frequently used apps |
-| `lazy` | Upstream schemas load on demand: Chat uses a connector Skill, while coding shells and desktop use compact discovery/invocation tools | Many, tool-heavy, or infrequently used apps |
+| Mode     | Behavior                                                                                                                             | Best for                                    |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| `static` | Every authorized app's tools join the shared `wegent-connectors` MCP and are visible to every task (Static loading)                  | A few frequently used apps                  |
+| `lazy`   | Upstream schemas load on demand: Chat uses a connector Skill, while coding shells and desktop use compact discovery/invocation tools | Many, tool-heavy, or infrequently used apps |
 
-`lazy` apps stay out of the shared MCP. They use a scoped MCP endpoint identified by the `X-Connector-App` header, which lists and invokes only the named app's tools. The shared `wegent-connectors` surface returns only `static` apps. Keywords use substring matching; a phrase with spaces requires every word to be present (for example `DingTalk table`). A match preloads the Skill and mounts its full scoped MCP. Unauthorized apps are prompted in the conversation on demand; Wework keeps the `connector_auth_required` card.
+Full lazy tool schemas use a scoped MCP endpoint identified by `X-Connector-App`, which lists and invokes only the named app's tools. The shared `wegent-connectors` surface returns only `static` apps. Keywords use substring matching; a phrase with spaces requires every word to be present (for example `DingTalk table`). A match preloads the Skill and mounts its full scoped MCP. Unauthorized apps are prompted in the conversation on demand; Wework keeps the `connector_auth_required` card.
 
 - In Chat, unmatched lazy apps mount through `load_skill`. Explicit document-provider selection mounts its authorized, visible, enabled app directly; a missing mount cannot be reported as ready.
-- In cloud Codex/ClaudeCode, lazy apps without matching keywords still expose `_wegent_discover__<slug>` and `_wegent_call__<slug>`. `X-Connector-Loading: lazy` avoids upstream discovery during catalog loading. Discovery returns actual allowlisted tools and schemas; invocation accepts `{name, arguments}` and preserves the existing permission checks.
+- In cloud Codex/ClaudeCode, lazy apps without matching keywords still expose `_wegent_discover__<slug>` and `_wegent_call__<slug>`. `X-Connector-Loading: lazy` avoids upstream discovery during catalog loading. Discovery returns allowlisted tools, schemas, and `rawToolName`; invocation uses this raw upstream name in `name` and preserves the existing permission checks. ClaudeCode groups unmatched lazy apps under a short `wca` server with `alwaysLoad: true`. Its unscoped compact listing includes only the current user's visible, authorized lazy apps. Even with a 100-character slug, the full `mcp__wca___wegent_discover__<slug>` name stays within Claude's 128-character limit.
 - Desktop synchronization requests installed apps and the Runtime catalog with `X-Connector-Loading: compact`. It receives static tools and compact lazy entries, connecting to lazy upstreams only on discovery. Settings retain the full directory by default; mode changes update both the local Skill and tool catalog.
 
 When creating an app in the admin console, `keywords` defaults to the display name and the identifier; `-` and `_` in the identifier become spaces (for example slug `dingtalk_ai_table` yields `dingtalk ai table`). Once an administrator edits the keywords manually, they no longer follow later name changes.
@@ -53,10 +53,10 @@ Backend does not follow redirects, preventing fixed headers from crossing to ano
 
 Connector currently supports these app authentication modes:
 
-| Type | Use case | Credential location |
-| --- | --- | --- |
-| `none` | The upstream needs no per-user authorization, or identity is managed centrally by administrators | No user credential; optional administrator fixed headers |
-| `oauth2` | The upstream requires per-user OAuth authorization | User access/refresh tokens are encrypted in `ConnectorConnection` |
+| Type     | Use case                                                                                         | Credential location                                               |
+| -------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `none`   | The upstream needs no per-user authorization, or identity is managed centrally by administrators | No user credential; optional administrator fixed headers          |
+| `oauth2` | The upstream requires per-user OAuth authorization                                               | User access/refresh tokens are encrypted in `ConnectorConnection` |
 
 Administrators can configure encrypted fixed headers, such as an internal API key or service token, without requiring every user to connect separately. Fixed provider headers are never returned by the administrator API. It only reports whether headers exist and the configured header names. OAuth 2.0 authorization uses `/api/connector-apps/{slug}/oauth/sessions` and `/api/connector-apps/oauth/callback`; user credentials are encrypted only in `ConnectorConnection` and never returned by any API.
 
@@ -105,18 +105,18 @@ The paths below use the default `API_PREFIX=/api`; replace `/api` with your depl
 - `/api/apps/list`, `/api/apps/read`, `/api/apps/installed`: Wework/Codex app projections.
 - `/api/connector-runtime/token`: exchanges a normal cloud session for a least-privilege short token.
 - `/api/connector-runtime/tools` and `/call`: accept only connector JWTs and are used by the Executor MCP proxy.
-- `/api/mcp/connectors/sse`: dynamic MCP endpoint for Chat and cloud coding shells. Task tokens identify the caller; listing and invocation both enforce visibility, authorization, and the allowlist. Without `X-Connector-App`, only static apps are exposed; scoped requests address the named app and may use `X-Connector-Loading: lazy` for compact entries. Desktop coding tasks use the device-local `wegent_apps` proxy without duplicating the cloud endpoint.
+- `/api/mcp/connectors/sse`: dynamic MCP endpoint for Chat and cloud coding shells. Task tokens identify the caller; listing and invocation enforce visibility, authorization, and the allowlist. Without `X-Connector-App`, the default listing exposes only static apps; `X-Connector-Loading: lazy` requests the current user's authorized lazy compact entries. An app scope further restricts the surface to that app. Desktop coding tasks use the device-local `wegent_apps` proxy without duplicating the cloud endpoint.
 
 ## Built-in DingTalk connector apps
 
 DingTalk hosts the document, sheet, AI table, and wiki MCP servers at fixed OAuth URLs, so users never paste a personal URL. On startup (`CONNECTOR_BUILTIN_APPS_ENABLED=True`) the backend backfills missing app definitions:
 
-| slug | Name | MCP URL |
-| --- | --- | --- |
-| `dingtalk_docs` | DingTalk Docs | `https://mcp-gw.dingtalk.com/oauth/server/doc` |
-| `dingtalk_sheet` | DingTalk Sheet | `https://mcp-gw.dingtalk.com/oauth/server/sheet` |
+| slug               | Name              | MCP URL                                            |
+| ------------------ | ----------------- | -------------------------------------------------- |
+| `dingtalk_docs`    | DingTalk Docs     | `https://mcp-gw.dingtalk.com/oauth/server/doc`     |
+| `dingtalk_sheet`   | DingTalk Sheet    | `https://mcp-gw.dingtalk.com/oauth/server/sheet`   |
 | `dingtalk_aitable` | DingTalk AI Table | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
-| `dingtalk_wiki` | DingTalk Wiki | `https://mcp-gw.dingtalk.com/oauth/server/wiki` |
+| `dingtalk_wiki`    | DingTalk Wiki     | `https://mcp-gw.dingtalk.com/oauth/server/wiki`    |
 
 `CONNECTOR_BUILTIN_APPS_ENABLED` defaults to enabled. Rust and Python initialization share `shared/data/builtin-connector-apps.json` independently of development YAML initialization, and the owning initializer backfills missing apps. Backfill creates missing system apps, preserves subsequent administrator changes to enabled state, loading mode, and keywords, and avoids duplicating system apps with the same endpoint. A deleted built-in app is recreated on the next startup; set `CONNECTOR_BUILTIN_APPS_ENABLED=False` to keep it removed.
 

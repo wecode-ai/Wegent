@@ -237,6 +237,30 @@ fn cached_tools_respect_the_current_allowlist_for_connected_and_expired_grants()
 }
 
 #[test]
+fn cached_names_are_rebuilt_from_the_app_identity_after_reload() {
+    let app = row_to_app(&app_row(
+        9,
+        "reports__archive",
+        serde_json::json!({"authType":"oauth2"}),
+    ));
+    for status in ["connected", "expired"] {
+        let stored = ConnectorConnection::from_row(&app_row(
+            10,
+            "reports__archive",
+            serde_json::json!({
+                "status": status, "toolsDiscoveredAt": chrono::Utc::now().to_rfc3339(),
+                "toolSummaries":[{"name":"reports__archive__lookup","rawToolName":"lookup","inputSchema":{"type":"object"}}]
+            }),
+        ));
+        let expected = "reports_u_uarchive__lookup";
+        let item = installed_app_projection(&app, Some(&stored), None, false).unwrap();
+        assert_eq!(item.tool_summaries[0].name, expected);
+        let cached = stored.cached_tool_entries(&app.slug, &[]).unwrap();
+        assert_eq!(cached[0]["name"], expected);
+    }
+}
+
+#[test]
 fn a_removed_cached_tool_cannot_keep_an_app_callable() {
     let app = row_to_app(&app_row(
         9,
@@ -509,7 +533,7 @@ async fn sse_transport_apps_publish_the_same_tools_as_the_mcp_entry() {
     assert_eq!(listed.len(), 1, "{listed:?}");
     let app_tools = &listed["legacy_sse"];
     assert_eq!(app_tools.len(), 1);
-    assert_eq!(app_tools[0].name, "legacy_sse__read_doc");
+    assert_eq!(app_tools[0].name, "legacy_usse__read_doc");
     assert_eq!(app_tools[0].raw_tool_name, "read_doc");
 
     // The public MCP entry projects the same upstream tool.

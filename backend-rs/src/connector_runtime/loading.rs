@@ -22,11 +22,11 @@ pub(crate) fn deferred_tools(app: &ConnectorApp) -> Vec<Value> {
         }),
         json!({
             "name": format!("{CALL_PREFIX}{}", app.slug),
-            "description": format!("Invoke a previously discovered tool for {description}. Use the exact name and JSON argument types returned by discovery."),
+            "description": format!("Invoke a previously discovered tool for {description}. Use its rawToolName and exact JSON argument types returned by discovery."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "minLength": 1, "description": "The unqualified upstream tool name from discovery."},
+                    "name": {"type": "string", "minLength": 1, "description": "The unqualified rawToolName from discovery."},
                     "arguments": {"type": "object"},
                 },
                 "required": ["name", "arguments"],

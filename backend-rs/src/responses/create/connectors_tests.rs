@@ -88,7 +88,12 @@ fn cloud_coding_mounts_static_and_compact_lazy_with_preserved_headers() {
         assert_eq!(servers.len(), 2);
         assert_eq!(servers[0]["name"], "wegent-connectors");
         assert_eq!(servers[1]["headers"]["X-Connector-Loading"], "lazy");
-        assert_eq!(servers[1]["headers"]["X-Connector-App"], "lazy-app");
+        if shell == "ClaudeCode" {
+            assert_eq!(servers[1]["name"], "wca");
+            assert!(servers[1]["headers"].get("X-Connector-App").is_none());
+        } else {
+            assert_eq!(servers[1]["headers"]["X-Connector-App"], "lazy-app");
+        }
         assert_eq!(
             servers[1].get("alwaysLoad"),
             if shell == "ClaudeCode" {
@@ -145,7 +150,7 @@ fn connector_urls_normalize_an_existing_api_prefix() {
 
 #[test]
 fn keyword_phrases_require_all_terms_and_preload_chat_or_direct_coding() {
-    for shell in ["Chat", "Codex"] {
+    for shell in ["Chat", "Codex", "ClaudeCode"] {
         for (prompt, matched) in [("WRITE the DOCUMENT", true), ("write a table", false)] {
             let mut request = request(shell);
             request.prompt = json!([{"type": "input_text", "text": prompt}, {"type": "image", "text": "document"}]);
@@ -173,6 +178,32 @@ fn keyword_phrases_require_all_terms_and_preload_chat_or_direct_coding() {
         }
     }
     assert!(!keywords_match("anything", &[String::new(), "  ".into()]));
+}
+
+#[test]
+fn claude_compact_tools_share_a_server_within_the_provider_name_budget() {
+    let mut request = request("ClaudeCode");
+    let slug = "a".repeat(100);
+    let apps = [
+        app(&slug, "lazy", true),
+        app("another-app", "lazy", true),
+        app("pending-app", "lazy", false),
+    ];
+    assemble(&mut request, &apps, false);
+    let mut servers = request.bot[0]["mcp_servers"].as_array().unwrap().clone();
+    super::super::skills::append_coding_mcp(&mut servers, &Default::default(), "ClaudeCode");
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0]["name"], "wca");
+    assert_eq!(servers[0]["alwaysLoad"], true);
+    assert!(servers[0]["headers"].get("X-Connector-App").is_none());
+    for tool in crate::connector_runtime::loading::deferred_tools(&apps[0].config) {
+        let full_name = format!(
+            "mcp__{}__{}",
+            servers[0]["name"].as_str().unwrap(),
+            tool["name"].as_str().unwrap()
+        );
+        assert!(full_name.len() <= 128, "{full_name}");
+    }
 }
 
 #[test]

@@ -2,6 +2,7 @@ import { subscribeOperationResults, type OperationResult } from '@/telemetry/ope
 import { afterEach, onTestFinished, describe, expect, test, vi } from 'vitest'
 import {
   authorizeWegentConnector,
+  CONNECTOR_AUTHORIZATION_CHANGED_EVENT,
   ConnectorAuthorizationError,
   listWegentInstalledConnectorApps,
   waitForConnectorToolCatalog,
@@ -12,6 +13,109 @@ describe('connector OAuth client', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
+
+  test('does not create a session for an obsolete account', async () => {
+    const fetchMock = vi.fn()
+    const openAuthorization = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      authorizeWegentConnector(
+        'https://backend.example.test/api',
+        'old-token',
+        'records',
+        openAuthorization,
+        { isCurrent: () => false }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(openAuthorization).not.toHaveBeenCalled()
+  })
+
+  test.each(['session', 'open', 'isOpen', 'poll', 'poll-failure', 'close'] as const)(
+    'discards an obsolete account while awaiting %s',
+    async stage => {
+      vi.useFakeTimers()
+      let current = true
+      let release: () => void = () => undefined
+      let entered: () => void = () => undefined
+      const blocked = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const waiting = new Promise<void>(resolve => {
+        entered = resolve
+      })
+      const hold = async () => {
+        entered()
+        await blocked
+      }
+      const results: OperationResult[] = []
+      onTestFinished(subscribeOperationResults(result => results.push(result)))
+      const changed = vi.fn()
+      window.addEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, changed)
+      onTestFinished(() =>
+        window.removeEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, changed)
+      )
+      const close = vi.fn(async () => {
+        if (stage === 'close') await hold()
+      })
+      const isOpen = vi.fn(async () => {
+        if (stage === 'isOpen') await hold()
+        return true
+      })
+      const openAuthorization = vi.fn(async () => {
+        if (stage === 'open') await hold()
+        return { closed: new Promise<void>(() => undefined), isOpen, close }
+      })
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const poll = String(input).includes('/poll')
+        if ((!poll && stage === 'session') || (poll && stage.startsWith('poll'))) await hold()
+        if (poll && stage === 'poll-failure') throw new TypeError('old account network failure')
+        const body = poll
+          ? {
+              status: 'success',
+              connection: {
+                status: 'connected',
+                external_account_name: 'old-account',
+                granted_scopes: [],
+                expires_at: null,
+              },
+            }
+          : {
+              session_id: 'old-session',
+              poll_token: 'old-poll',
+              authorize_url: 'https://provider.example.test/authorize',
+              expires_at: Math.floor(Date.now() / 1000) + 60,
+              poll_interval_seconds: 1,
+            }
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const authorization = authorizeWegentConnector(
+        'https://backend.example.test/api',
+        'old-token',
+        'records',
+        openAuthorization,
+        { isCurrent: () => current }
+      )
+      const outcome = authorization.catch((error: Error) => error)
+      await vi.advanceTimersByTimeAsync(1000)
+      await waiting
+      current = false
+      release()
+      const error = await outcome
+      expect(error).toMatchObject({ name: 'AbortError' })
+      expect(results).toEqual([])
+      expect(changed).not.toHaveBeenCalled()
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/poll'))).toHaveLength(
+        stage.startsWith('poll') || stage === 'close' ? 1 : 0
+      )
+      expect(openAuthorization).toHaveBeenCalledTimes(stage === 'session' ? 0 : 1)
+      expect(close).toHaveBeenCalledTimes(stage === 'session' ? 0 : 1)
+    }
+  )
 
   test('requests a compact installed catalog only for synchronization', async () => {
     const fetchMock = vi.fn().mockImplementation(

@@ -20,6 +20,7 @@ from app.schemas.connector import (
 )
 from app.services.connector_apps import connector_app_service
 from app.services.connector_runtime import connector_runtime_service
+from shared.utils.connector_tools import qualify_connector_tool
 
 router = APIRouter(prefix="/connector-apps")
 
@@ -78,11 +79,7 @@ async def test_connector_tool(
     admin: User = Depends(get_admin_user),
 ) -> ConnectorToolCallResponse:
     app = connector_app_service.get_app(db, app_id)
-    tool_name = (
-        payload.name
-        if payload.name.startswith(f"{app.slug}__")
-        else f"{app.slug}__{payload.name}"
-    )
+    tool_name = qualify_connector_tool(app.slug, payload.name)
     content, structured_content, is_error = await connector_runtime_service.call_tool(
         db,
         admin,

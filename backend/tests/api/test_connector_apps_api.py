@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -806,12 +807,14 @@ def test_admin_can_register_wegent_sites_mcp_connector(
     assert app.mcp_url == "https://sites.example.test/mcp"
 
 
+@pytest.mark.parametrize("raw_name", ["get_ticket", "members-only__get_ticket"])
 def test_admin_can_test_a_connector_app_restricted_to_other_roles(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
     test_admin_token: str,
     monkeypatch,
+    raw_name: str,
 ):
     """Catalog validation must not depend on the admin's own visibility."""
     assert test_admin_user.role != "member"
@@ -826,7 +829,7 @@ def test_admin_can_test_a_connector_app_restricted_to_other_roles(
         allowed_roles=["member"],
         http_tools=[
             {
-                "name": "get_ticket",
+                "name": raw_name,
                 "description": "Get one ticket",
                 "method": "GET",
                 "path": "/tickets/{id}",
@@ -839,7 +842,7 @@ def test_admin_can_test_a_connector_app_restricted_to_other_roles(
                 "timeout_seconds": 20,
             }
         ],
-        tool_allowlist=["get_ticket"],
+        tool_allowlist=[raw_name],
     )
 
     async def fake_call_http_tool(config, definition, arguments):
@@ -854,7 +857,7 @@ def test_admin_can_test_a_connector_app_restricted_to_other_roles(
     response = test_client.post(
         f"/api/admin/connector-apps/{app.id}/tools/test",
         headers=_admin_headers(test_admin_token),
-        json={"name": "get_ticket", "arguments": {"id": "1"}},
+        json={"name": raw_name, "arguments": {"id": "1"}},
     )
 
     assert response.status_code == 200

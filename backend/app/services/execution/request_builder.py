@@ -2913,7 +2913,10 @@ class TaskRequestBuilder:
         if not auth_token:
             return
         servers = self._coding_shell_connector_servers(
-            user=user, auth_token=auth_token, message=message
+            user=user,
+            auth_token=auth_token,
+            message=message,
+            shell_type=bot_config.get("shell_type", ""),
         )
         if not servers:
             return
@@ -2946,7 +2949,12 @@ class TaskRequestBuilder:
         )
 
     def _coding_shell_connector_servers(
-        self, *, user: User, auth_token: str, message: Union[str, list]
+        self,
+        *,
+        user: User,
+        auth_token: str,
+        message: Union[str, list],
+        shell_type: str,
     ) -> list[dict]:
         """Scoped connector MCP entries for coding shells without a local proxy.
 
@@ -2971,6 +2979,21 @@ class TaskRequestBuilder:
         prompt_text = self._extract_prompt_text(message).casefold()
         for app in self._authorized_lazy_connector_apps(user):
             matched = self._connector_keywords_match(prompt_text, app.keywords)
+            if shell_type == "ClaudeCode" and not matched:
+                # Preserve the full app identity in compact tool names while
+                # staying inside Claude's 128-character prefixed name limit.
+                if not any(server["name"] == "wca" for server in servers):
+                    servers.append(
+                        {
+                            "name": "wca",
+                            "type": "streamable-http",
+                            "url": connector_url,
+                            "headers": {**headers, "X-Connector-Loading": "lazy"},
+                            "timeout": 180,
+                            "alwaysLoad": True,
+                        }
+                    )
+                continue
             app_headers = {**headers, "X-Connector-App": app.slug}
             if not matched:
                 # Keep a compact discovery entry reachable without eagerly

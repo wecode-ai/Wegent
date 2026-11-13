@@ -51,7 +51,7 @@ where
                             continue;
                         }
                         tools.push(ConnectorTool {
-                            name: format!("{}__{}", app.slug, tool.name),
+                            name: wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
                             title: None,
                             description: tool.description,
                             input_schema: tool
@@ -159,7 +159,7 @@ fn tool_from_upstream(app: &ConnectorApp, tool: &UpstreamTool) -> ConnectorTool 
             open_world: Some(annotations.open_world()),
         });
     ConnectorTool {
-        name: format!("{}__{}", app.slug, tool.name),
+        name: wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
         title: tool.title.clone(),
         description: tool.description.clone().unwrap_or_default(),
         // `inputSchema or {"type": "object", "properties": {}}`.

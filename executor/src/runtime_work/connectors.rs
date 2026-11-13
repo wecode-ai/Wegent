@@ -428,7 +428,7 @@ fn materialize_skills(
         let tool_section = if lazy {
             format!(
                 "\nTools load on demand. First use `_wegent_discover__{slug}` to read this app's tool schemas, \
-                 then invoke `_wegent_call__{slug}` with the discovered tool name and an arguments object. \
+                 then invoke `_wegent_call__{slug}` with the discovered rawToolName and an arguments object. \
                  Preserve every argument's declared JSON type.\n"
             )
         } else if tool_names.is_empty() {
@@ -457,8 +457,9 @@ fn materialize_skills(
         } else {
             String::new()
         };
+        let tool_prefix = wegent_protocol::connector::qualify_tool(&slug, "");
         let body = format!(
-            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{authorization_section}{tool_section}"
+            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Full upstream tool names use the namespace `{tool_prefix}`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{authorization_section}{tool_section}"
         );
         write_skill_if_changed(&skill_path, &body, changed)?;
         let marker = tool_definitions_marker(tools.iter().filter(|tool| {

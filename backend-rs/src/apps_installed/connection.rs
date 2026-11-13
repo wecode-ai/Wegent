@@ -214,11 +214,7 @@ impl ConnectorConnection {
                     if !allowlist.is_empty() && !allowlist.iter().any(|tool| tool == raw_name) {
                         return None;
                     }
-                    let name = if summary.name.is_empty() {
-                        format!("{slug}__{raw_name}")
-                    } else {
-                        summary.name.clone()
-                    };
+                    let name = wegent_protocol::connector::qualify_tool(slug, raw_name);
                     let mut entry = serde_json::json!({
                         "name": name,
                         "description": summary.description,

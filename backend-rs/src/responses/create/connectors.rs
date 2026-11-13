@@ -120,6 +120,13 @@ fn assemble(request: &mut ExecutionRequest, apps: &[App], has_local_device: bool
             }
             let name = format!("wegent-connector-{}", app.config.slug);
             let matched = keywords_match(&message, &app.keywords);
+            if shell == "ClaudeCode" && !matched {
+                // Claude prefixes tools with the server name. A three-letter
+                // shared name keeps a 100-character slug's discovery tool at
+                // the provider's 128-character limit, without duplicating it.
+                add_server(request, server(request, "wca", None, true, false), false);
+                continue;
+            }
             let scoped = server(
                 request,
                 &name,

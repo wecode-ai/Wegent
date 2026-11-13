@@ -49,7 +49,9 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     return payload
 
 
-async def _resource_metadata_url(client: httpx.AsyncClient, resource_url: str) -> str:
+async def _resource_metadata_urls(
+    client: httpx.AsyncClient, resource_url: str
+) -> list[str]:
     try:
         response = await client.get(
             resource_url,
@@ -66,11 +68,39 @@ async def _resource_metadata_url(client: httpx.AsyncClient, resource_url: str) -
         start = header.index(marker) + len(marker)
         end = header.find('"', start)
         if end > start:
-            return _require_secure_url(header[start:end], field="resource metadata URL")
+            return [
+                _require_secure_url(header[start:end], field="resource metadata URL")
+            ]
 
     parsed = urlsplit(resource_url)
     origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-    return f"{origin}/.well-known/oauth-protected-resource{parsed.path}"
+    root = f"{origin}/.well-known/oauth-protected-resource"
+    return list(dict.fromkeys([f"{root}{parsed.path}", root]))
+
+
+def _authorization_metadata_urls(issuer: str) -> list[str]:
+    parsed = urlsplit(issuer)
+    origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    path = parsed.path.rstrip("/")
+    urls = [
+        f"{origin}/.well-known/oauth-authorization-server{path}",
+        f"{origin}/.well-known/openid-configuration{path}",
+    ]
+    if path:
+        urls.append(f"{origin}{path}/.well-known/openid-configuration")
+    return urls
+
+
+async def _discover_metadata(
+    client: httpx.AsyncClient, urls: list[str]
+) -> dict[str, Any]:
+    for index, url in enumerate(urls):
+        try:
+            return await _get_json(client, url)
+        except HTTPException:
+            if index == len(urls) - 1:
+                raise
+    raise AssertionError("Metadata discovery requires at least one URL")
 
 
 async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
@@ -78,8 +108,8 @@ async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
     async with create_connector_http_client(
         timeout=httpx.Timeout(DISCOVERY_TIMEOUT_SECONDS)
     ) as client:
-        metadata_url = await _resource_metadata_url(client, resource_url)
-        resource = await _get_json(client, metadata_url)
+        metadata_urls = await _resource_metadata_urls(client, resource_url)
+        resource = await _discover_metadata(client, metadata_urls)
         if resource.get("resource") != resource_url:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
@@ -94,15 +124,8 @@ async def discover_connector_oauth(resource_url: str) -> dict[str, Any]:
         issuer = _require_secure_url(
             str(authorization_servers[0]), field="authorization server"
         )
-        # RFC 8414 places the well-known segment between host and issuer path:
-        # https://as.example.com/tenant1 ->
-        # https://as.example.com/.well-known/oauth-authorization-server/tenant1
-        issuer_parts = urlsplit(issuer)
-        issuer_path = issuer_parts.path.rstrip("/")
-        metadata = await _get_json(
-            client,
-            f"{issuer_parts.scheme}://{issuer_parts.netloc}"
-            f"/.well-known/oauth-authorization-server{issuer_path}",
+        metadata = await _discover_metadata(
+            client, _authorization_metadata_urls(issuer)
         )
         if metadata.get("issuer") != issuer:
             raise HTTPException(

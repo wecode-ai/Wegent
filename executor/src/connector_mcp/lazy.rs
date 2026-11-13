@@ -28,15 +28,25 @@ async fn call_with_config(config: &ConnectorGatewayConfig, name: &str, arguments
             .await
         {
             Ok(catalog) => {
-                let tools = mcp_tools(&catalog);
+                let mut tools = mcp_tools(&catalog);
+                for tool in &mut tools {
+                    if let Some((_, raw_name)) = tool["name"]
+                        .as_str()
+                        .and_then(wegent_protocol::connector::split_tool)
+                    {
+                        tool["rawToolName"] = json!(raw_name);
+                    }
+                }
                 text_result(json!({"tools": tools}).to_string(), tools.is_empty())
             }
-            Err(error) => gateway_error_result(&format!("{slug}__discover"), &error),
+            Err(error) => gateway_error_result(
+                &wegent_protocol::connector::qualify_tool(slug, "discover"),
+                &error,
+            ),
         };
     }
     let tool = arguments["name"].as_str().expect("validated upstream name");
-    let tool = tool.strip_prefix(&format!("{slug}__")).unwrap_or(tool);
-    let qualified = format!("{slug}__{tool}");
+    let qualified = wegent_protocol::connector::qualify_tool(slug, tool);
     let normalized = match normalize_tool_arguments(&qualified, arguments["arguments"].clone()) {
         Ok(arguments) => arguments,
         Err(message) => return text_result(message, true),
@@ -174,13 +184,53 @@ mod tests {
         let result = call_with_config(
             &config,
             "_wegent_call__records",
-            &json!({"name": "records__lookup", "arguments": {"id": "123"}}),
+            &json!({"name": "lookup", "arguments": {"id": "123"}}),
         )
         .await;
         assert_eq!(result["isError"], false);
         assert_eq!(
             *received.lock().unwrap(),
             vec![json!({"name": "records__lookup", "arguments": {"id": "123"}})]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn raw_names_resembling_app_prefixes_are_not_stripped_or_rerouted() {
+        let received = Arc::new(Mutex::new(vec![]));
+        let calls = Arc::clone(&received);
+        let router = Router::new().route(
+            "/connector-runtime/call",
+            post(move |Json(body): Json<Value>| {
+                calls.lock().unwrap().push(body);
+                async { Json(json!({"content":[],"is_error":false})) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = ConnectorGatewayConfig {
+            api_base_url: format!("http://{}", listener.local_addr().unwrap()),
+            connector_token: "synthetic".into(),
+            expires_at_ms: i64::MAX,
+        };
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        for (slug, raw) in [
+            ("reports", "reports__lookup"),
+            ("reports__archive", "reports_u_uarchive__lookup"),
+        ] {
+            let result = call_with_config(
+                &config,
+                &format!("_wegent_call__{slug}"),
+                &json!({"name":raw,"arguments":{"id":42}}),
+            )
+            .await;
+            assert_eq!(result["isError"], false);
+        }
+        assert_eq!(
+            *received.lock().unwrap(),
+            vec![
+                json!({"name":"reports__reports__lookup","arguments":{"id":42}}),
+                json!({"name":"reports_u_uarchive__reports_u_uarchive__lookup","arguments":{"id":42}}),
+            ]
         );
         server.abort();
     }

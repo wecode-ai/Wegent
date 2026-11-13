@@ -184,7 +184,7 @@ fn tool_summaries(app: &ConnectorApp, tools: &[mcp::UpstreamTool]) -> Vec<serde_
         .filter(|tool| allowlist.is_empty() || allowlist.contains(&tool.name))
         .map(|tool| {
             serde_json::json!({
-                "name": format!("{}__{}", app.slug, tool.name),
+                "name": wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
                 "title": tool.title,
                 "description": tool.description.clone().unwrap_or_default(),
                 "rawToolName": tool.name,
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(
             summaries,
             vec![serde_json::json!({
-                "name": "dingtalk_docs__read_doc",
+                "name": "dingtalk_udocs__read_doc",
                 "title": "read_doc title",
                 "description": "read_doc description",
                 "rawToolName": "read_doc",
@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(
             summaries[0]["name"],
-            serde_json::json!("dingtalk_docs__read_doc")
+            serde_json::json!("dingtalk_udocs__read_doc")
         );
     }
 

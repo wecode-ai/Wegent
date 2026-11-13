@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.mcp_server import connectors_app
+from shared.utils.connector_tools import qualify_connector_tool
 
 
 @pytest.mark.asyncio
@@ -153,3 +154,37 @@ async def test_call_tool_rejects_a_tool_outside_the_scoped_app(monkeypatch) -> N
     assert result.isError is True
     assert "outside this Skill's app scope" in result.content[0].text
     call_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["reports", "reports__archive"])
+async def test_scoped_calls_compare_decoded_identity_instead_of_a_prefix(
+    monkeypatch, scope
+) -> None:
+    monkeypatch.setattr(connectors_app, "current_connector_user_id", lambda: 7)
+    monkeypatch.setattr(
+        connectors_app,
+        "_active_user",
+        lambda db, user_id: SimpleNamespace(id=user_id, is_active=True),
+    )
+    call_tool = AsyncMock(return_value=("target", None, False))
+    monkeypatch.setattr(
+        connectors_app.connector_runtime_service, "call_tool", call_tool
+    )
+    name = qualify_connector_tool("reports__archive", "lookup")
+    token = connectors_app.connector_mcp_app_slug.set(scope)
+    try:
+        result = await connectors_app.call_connector_tool(name, {})
+    finally:
+        connectors_app.connector_mcp_app_slug.reset(token)
+    assert result.isError is (scope != "reports__archive")
+    assert call_tool.await_count == int(scope == "reports__archive")
+
+
+def test_authorization_hint_preserves_an_escaped_app_slug() -> None:
+    slug = "reports__archive"
+    result = connectors_app._failure_text(
+        qualify_connector_tool(slug, "lookup"),
+        HTTPException(401, f"Connector '{slug}' requires authorization"),
+    )
+    assert json.loads(result)["connectorSlug"] == slug

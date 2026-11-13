@@ -145,7 +145,16 @@ async fn list_deferred_tools(
         }
     };
     let catalog = rows.iter().map(service::row_to_app).collect::<Vec<_>>();
-    let connected = match service::connected_apps(&state.mysql, &catalog, &user).await {
+    deferred_tools_for_user(&state.mysql, &catalog, &user, app_scope).await
+}
+
+async fn deferred_tools_for_user<M: brz_mysql::Mysql>(
+    mysql: &M,
+    catalog: &[ConnectorApp],
+    user: &UserRow,
+    app_scope: Option<&str>,
+) -> Vec<Value> {
+    let connected = match service::connected_apps(mysql, catalog, user).await {
         Ok(connected) => connected,
         Err(error) => {
             tracing::error!(%error, "deferred connector MCP grant read failed");
@@ -202,7 +211,8 @@ async fn call_deferred_tool(
                 other => failure(other.to_string()),
             };
         }
-        let tools = list_tools(state, authorization, Some(slug)).await;
+        let mut tools = list_tools(state, authorization, Some(slug)).await;
+        add_upstream_names(&mut tools);
         if tools.is_empty() {
             return failure("Connector discovery returned no available tools");
         }
@@ -222,8 +232,7 @@ async fn call_deferred_tool(
     else {
         return failure("Connector call arguments must be an object");
     };
-    let tool = tool.strip_prefix(&format!("{slug}__")).unwrap_or(tool);
-    let params = json!({"name": format!("{slug}__{tool}"), "arguments": arguments});
+    let params = json!({"name": wegent_protocol::connector::qualify_tool(slug, tool), "arguments": arguments});
     call_tool(state, authorization, Some(slug), Some(&params)).await
 }
 
@@ -242,7 +251,15 @@ async fn resolve_user(state: &AppState, authorization: Option<&str>) -> Option<U
 
 /// `get_app_by_slug` + `list_visible_apps` for this caller.
 async fn visible_app(state: &AppState, user: &UserRow, slug: &str) -> Option<ConnectorApp> {
-    let rows = db::list_connector_app_kinds(&state.mysql).await.ok()?;
+    visible_app_for_user(&state.mysql, user, slug).await
+}
+
+async fn visible_app_for_user<M: brz_mysql::Mysql>(
+    mysql: &M,
+    user: &UserRow,
+    slug: &str,
+) -> Option<ConnectorApp> {
+    let rows = db::list_connector_app_kinds(mysql).await.ok()?;
     let apps: Vec<ConnectorApp> = rows.iter().map(service::row_to_app).collect();
     service::list_visible_apps(&apps, user)
         .into_iter()
@@ -359,7 +376,7 @@ where
                 .map(brz_json::OpaqueJson::to_value)
                 .unwrap_or_else(connection::default_input_schema);
             let mut entry = json!({
-                "name": format!("{}__{}", app.slug, tool.name),
+                "name": wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
                 "description": tool.description.clone().unwrap_or_default(),
                 "rawToolName": tool.name,
                 "inputSchema": schema,
@@ -399,6 +416,17 @@ fn listing_entry(mut entry: Value) -> Value {
     entry
 }
 
+fn add_upstream_names(tools: &mut [Value]) {
+    for tool in tools {
+        if let Some((_, raw_name)) = tool["name"]
+            .as_str()
+            .and_then(wegent_protocol::connector::split_tool)
+        {
+            tool["rawToolName"] = json!(raw_name);
+        }
+    }
+}
+
 /// `_connected_apps`' scope rule: a scoped request addresses exactly one app,
 /// while the unscoped surface is the eager `wegent-connectors` MCP and carries
 /// only `static` apps. Lazy apps stay reachable through their scoped server
@@ -420,6 +448,15 @@ async fn call_tool(
     let Some(user) = resolve_user(state, authorization).await else {
         return failure("Connector user unavailable");
     };
+    call_tool_for_user(&state.mysql, &user, app_scope, params).await
+}
+
+async fn call_tool_for_user<M: brz_mysql::Mysql>(
+    mysql: &M,
+    user: &UserRow,
+    app_scope: Option<&str>,
+    params: Option<&Value>,
+) -> Value {
     let name = params
         .and_then(|params| params.get("name"))
         .and_then(Value::as_str)
@@ -428,20 +465,15 @@ async fn call_tool(
         .and_then(|params| params.get("arguments"))
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if let Some(scope) = app_scope
-        && !name.starts_with(&format!("{scope}__"))
-    {
+    let Some((slug, upstream_name)) = wegent_protocol::connector::split_tool(name) else {
+        return failure("Invalid connector tool name");
+    };
+    if app_scope.is_some_and(|scope| scope != slug) {
         return failure(format!(
             "Connector tool '{name}' is outside this Skill's app scope"
         ));
     }
-    let Some((slug, upstream_name)) = name.split_once("__") else {
-        return failure("Invalid connector tool name");
-    };
-    if slug.is_empty() || upstream_name.is_empty() {
-        return failure("Invalid connector tool name");
-    }
-    let Some(app) = visible_app(state, &user, slug).await else {
+    let Some(app) = visible_app_for_user(mysql, user, &slug).await else {
         return failure("Connector app not found");
     };
     if !app.tool_allowlist.is_empty()
@@ -449,29 +481,21 @@ async fn call_tool(
     {
         return failure("Connector tool is disabled");
     }
-    let (headers, attempted_access) =
-        match service::session_headers(&state.mysql, &app, &user).await {
-            Ok(headers) => headers,
-            Err(SessionError::AuthorizationRequired) => {
-                return failure(connector_auth_required(&app.slug));
-            }
-            Err(error) => {
-                tracing::warn!(connector = %app.slug, %error, "connector tool session failed");
-                return failure(error.to_string());
-            }
-        };
+    let (headers, attempted_access) = match service::session_headers(mysql, &app, user).await {
+        Ok(headers) => headers,
+        Err(SessionError::AuthorizationRequired) => {
+            return failure(connector_auth_required(&app.slug));
+        }
+        Err(error) => {
+            tracing::warn!(connector = %app.slug, %error, "connector tool session failed");
+            return failure(error.to_string());
+        }
+    };
     if app.transport == "http" {
         return match call_http_tool(&app, upstream_name, &arguments, &headers).await {
             HttpToolOutcome::Result(result) => result,
             HttpToolOutcome::Unauthorized(message) => {
-                unauthorized(
-                    &state.mysql,
-                    &app,
-                    user.users_id,
-                    &message,
-                    attempted_access,
-                )
-                .await
+                unauthorized(mysql, &app, user.users_id, &message, attempted_access).await
             }
         };
     }
@@ -486,14 +510,7 @@ async fn call_tool(
     {
         Ok(call) => success(&call),
         Err(mcp::McpError::Unauthorized(message)) => {
-            unauthorized(
-                &state.mysql,
-                &app,
-                user.users_id,
-                &message,
-                attempted_access,
-            )
-            .await
+            unauthorized(mysql, &app, user.users_id, &message, attempted_access).await
         }
         Err(error) => {
             tracing::warn!(connector = %app.slug, %error, "connector tool call failed");
@@ -619,6 +636,10 @@ fn failure(message: impl Into<String>) -> Value {
 }
 
 #[cfg(test)]
+#[path = "connectors_identity_tests.rs"]
+mod identity_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -716,7 +737,7 @@ mod tests {
         assert!(registered, "{PATH} must be registered by the router");
     }
 
-    fn app(slug: &str, loading_mode: &str) -> ConnectorApp {
+    pub(super) fn app(slug: &str, loading_mode: &str) -> ConnectorApp {
         let row = crate::apps_installed::db::KindRow {
             kinds_id: 1,
             kinds_user_id: 0,

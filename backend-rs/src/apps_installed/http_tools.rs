@@ -94,7 +94,7 @@ pub(crate) fn definitions(app: &ConnectorApp) -> Result<Vec<HttpTool>, HttpToolE
 /// The tool-listing entry for one configured operation.
 pub(crate) fn listing_entry(app: &ConnectorApp, tool: &HttpTool) -> Value {
     let mut entry = json!({
-        "name": format!("{}__{}", app.slug, tool.name),
+        "name": wegent_protocol::connector::qualify_tool(&app.slug, &tool.name),
         "description": tool.description,
         "rawToolName": tool.name,
         "inputSchema": tool

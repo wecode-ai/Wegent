@@ -37,6 +37,7 @@ from app.services.connector_connections import (
 from app.services.connector_errors import exception_texts
 from app.services.connector_oauth import connector_oauth_service
 from shared.telemetry.decorators import trace_async
+from shared.utils.connector_tools import qualify_connector_tool, split_connector_tool
 
 logger = logging.getLogger(__name__)
 MAX_HTTP_RESPONSE_BYTES = 1_000_000
@@ -252,7 +253,7 @@ class ConnectorRuntimeService:
                 continue
             tools.append(
                 ConnectorTool(
-                    name=str(summary.get("name") or f"{app.slug}__{raw_name}"),
+                    name=qualify_connector_tool(app.slug, raw_name),
                     title=summary.get("title"),
                     description=str(summary.get("description") or ""),
                     input_schema=summary.get("inputSchema")
@@ -362,11 +363,12 @@ class ConnectorRuntimeService:
         *,
         enforce_visibility: bool = True,
     ) -> tuple[Any, dict[str, Any] | None, bool]:
-        app_slug, separator, upstream_name = name.partition("__")
-        if not separator or not app_slug or not upstream_name:
+        try:
+            app_slug, upstream_name = split_connector_tool(name)
+        except ValueError as exc:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "Invalid connector tool name"
-            )
+            ) from exc
         app = ConnectorAppService.get_app_by_slug(db, app_slug)
         if not app:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
@@ -553,7 +555,7 @@ class ConnectorRuntimeService:
         allowlist = set(app.tool_allowlist or [])
         return [
             ConnectorTool(
-                name=f"{app.slug}__{definition.name}",
+                name=qualify_connector_tool(app.slug, definition.name),
                 description=definition.description,
                 input_schema=definition.input_schema,
                 connector_id=app.slug,
@@ -578,7 +580,7 @@ class ConnectorRuntimeService:
     def _tool_from_upstream(app: ConnectorApp, tool: Any) -> ConnectorTool:
         upstream_name = tool.name
         return ConnectorTool(
-            name=f"{app.slug}__{upstream_name}",
+            name=qualify_connector_tool(app.slug, upstream_name),
             title=getattr(tool, "title", None),
             description=getattr(tool, "description", "") or "",
             input_schema=getattr(tool, "inputSchema", None)

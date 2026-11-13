@@ -351,8 +351,9 @@ def test_cloud_coding_shell_does_not_double_an_api_prefix(
     assert resolved[0]["headers"]["Authorization"] == "Bearer synthetic"
 
 
-def test_coding_shell_can_discover_unmatched_lazy_apps(monkeypatch) -> None:
-    """An unmatched app keeps a compact, app-scoped discovery entry."""
+@pytest.mark.parametrize("shell_type", ["ClaudeCode", "Codex"])
+def test_coding_shell_can_discover_unmatched_lazy_apps(monkeypatch, shell_type) -> None:
+    """Claude shares a compact server; Codex preserves its per-app scope."""
     builder = TaskRequestBuilder(MagicMock())
     monkeypatch.setattr(
         TaskRequestBuilder,
@@ -366,18 +367,46 @@ def test_coding_shell_can_discover_unmatched_lazy_apps(monkeypatch) -> None:
             SimpleNamespace(slug="dingding_log", keywords=["钉钉日志"])
         ],
     )
-    bot_config: dict = {"shell_type": "ClaudeCode", "mcp_servers": []}
+    bot_config: dict = {"shell_type": shell_type, "mcp_servers": []}
 
     builder._attach_connector_mcp_for_coding_shell(
         bot_config, user=SimpleNamespace(id=6), auth_token="t", message="写周报"
     )
 
     assert len(bot_config["mcp_servers"]) == 1
-    assert bot_config["mcp_servers"][0]["headers"] == {
+    headers = {
         "Authorization": "Bearer ${{task_token}}",
-        "X-Connector-App": "dingding_log",
         "X-Connector-Loading": "lazy",
     }
+    if shell_type == "ClaudeCode":
+        assert bot_config["mcp_servers"][0]["name"] == "wca"
+        assert bot_config["mcp_servers"][0]["alwaysLoad"] is True
+    else:
+        headers["X-Connector-App"] = "dingding_log"
+        assert "alwaysLoad" not in bot_config["mcp_servers"][0]
+    assert bot_config["mcp_servers"][0]["headers"] == headers
+
+
+def test_claude_lazy_apps_share_one_server_and_fit_the_full_tool_name_budget(
+    monkeypatch,
+) -> None:
+    builder = TaskRequestBuilder(MagicMock())
+    apps = [
+        SimpleNamespace(slug="a" * 100, keywords=[]),
+        SimpleNamespace(slug="another-app", keywords=[]),
+    ]
+    monkeypatch.setattr(builder, "_user_has_callable_connectors", lambda user: False)
+    monkeypatch.setattr(builder, "_authorized_lazy_connector_apps", lambda user: apps)
+    bot_config = {"shell_type": "ClaudeCode", "mcp_servers": []}
+    builder._attach_connector_mcp_for_coding_shell(
+        bot_config, user=SimpleNamespace(id=6), auth_token="t", message="unrelated"
+    )
+    servers = bot_config["mcp_servers"]
+    assert len(servers) == 1
+    assert "X-Connector-App" not in servers[0]["headers"]
+    for app in apps:
+        for entry in ("_wegent_discover__", "_wegent_call__"):
+            assert len(f"mcp__{servers[0]['name']}__{entry}{app.slug}") <= 128
 
 
 @pytest.mark.parametrize("shell_type", ["Chat", "Codex", "ClaudeCode"])

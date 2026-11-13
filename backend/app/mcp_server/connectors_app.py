@@ -29,6 +29,7 @@ from starlette.types import Receive, Scope, Send
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.services.connector_runtime import connector_runtime_service
+from shared.utils.connector_tools import split_connector_tool
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,14 @@ async def call_connector_tool(name: str, arguments: dict[str, Any]) -> CallToolR
                 isError=True,
             )
         scoped_app_slug = current_connector_app_slug()
-        if scoped_app_slug and not name.startswith(f"{scoped_app_slug}__"):
+        try:
+            app_slug, _ = split_connector_tool(name)
+        except ValueError:
+            return CallToolResult(
+                content=[TextContent(type="text", text="Invalid connector tool name")],
+                isError=True,
+            )
+        if scoped_app_slug and app_slug != scoped_app_slug:
             return CallToolResult(
                 content=[
                     TextContent(
@@ -132,7 +140,7 @@ def _failure_text(name: str, exc: HTTPException) -> str:
     """
     detail = str(exc.detail)
     if exc.status_code == 401 and "requires authorization" in detail:
-        slug = name.split("__", 1)[0]
+        slug, _ = split_connector_tool(name)
         return json.dumps(
             {
                 "error": "connector_auth_required",

@@ -614,10 +614,7 @@ fn gateway_error_result(tool_name: &str, error: &ConnectorGatewayError) -> Value
     text_result(&error.message, true)
 }
 
-fn connector_auth_required_slug<'a>(
-    tool_name: &'a str,
-    error: &ConnectorGatewayError,
-) -> Option<&'a str> {
+fn connector_auth_required_slug(tool_name: &str, error: &ConnectorGatewayError) -> Option<String> {
     let requires_auth = error.code == "connector_gateway_error"
         && error.message.contains("(HTTP 401")
         && error
@@ -627,10 +624,7 @@ fn connector_auth_required_slug<'a>(
     if !requires_auth {
         return None;
     }
-    tool_name
-        .split_once("__")
-        .map(|(slug, _)| slug)
-        .filter(|slug| !slug.is_empty())
+    wegent_protocol::connector::split_tool(tool_name).map(|(slug, _)| slug)
 }
 
 async fn connector_gateway_request(
@@ -663,7 +657,10 @@ mod tests {
             "Connector 'dingtalk_log' requires authorization (HTTP 401 Unauthorized)",
         );
 
-        let result = gateway_error_result("dingtalk_log__get_templates", &error);
+        let result = gateway_error_result(
+            &wegent_protocol::connector::qualify_tool("dingtalk_log", "get_templates"),
+            &error,
+        );
 
         assert_eq!(result["isError"], true);
         let text = result["content"][0]["text"].as_str().unwrap();
@@ -679,7 +676,10 @@ mod tests {
             "Connector gateway request failed (HTTP 502 Bad Gateway)",
         );
 
-        let result = gateway_error_result("dingtalk_log__get_templates", &error);
+        let result = gateway_error_result(
+            &wegent_protocol::connector::qualify_tool("dingtalk_log", "get_templates"),
+            &error,
+        );
 
         assert_eq!(result["isError"], true);
         assert!(result["content"][0]["text"]

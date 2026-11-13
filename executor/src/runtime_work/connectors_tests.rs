@@ -138,6 +138,27 @@ fn lazy_catalog_validates_only_compact_entries_and_mode_changes_invalidate_skill
 }
 
 #[test]
+fn generated_skills_use_the_encoded_tool_namespace_and_raw_lazy_argument() {
+    let temp = tempfile::tempdir().unwrap();
+    let apps = vec![
+        json!({"slug":"reports__archive","name":"Archive","toolLoadingMode":"lazy","tools":[]}),
+    ];
+    let tools = mcp_tools(&json!({"deferred_tools":[
+        {"name":"_wegent_discover__reports__archive","_meta":{"connectorId":"reports__archive"}},
+        {"name":"_wegent_call__reports__archive","_meta":{"connectorId":"reports__archive"}}
+    ]}));
+    materialize_skills(temp.path(), &apps, &tools, &mut false).unwrap();
+    let skill = fs::read_to_string(
+        temp.path()
+            .join("wegent-connector-reports__archive/SKILL.md"),
+    )
+    .unwrap();
+    assert!(skill.contains("reports_u_uarchive__"));
+    assert!(skill.contains("_wegent_discover__reports__archive"));
+    assert!(skill.contains("rawToolName"));
+}
+
+#[test]
 fn skill_materialization_is_scoped_and_removes_only_managed_stale_dirs() {
     let temp = tempfile::tempdir().expect("temporary directory should be created");
     let skills_root = temp.path().join("skills");
