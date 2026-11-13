@@ -549,7 +549,7 @@ pub(crate) async fn test_dispatch_start_failure(
         ..Default::default()
     };
     let http = HttpClient::builder().build().unwrap();
-    run(
+    Box::pin(run(
         &http,
         DispatchJob::Executor {
             url: format!("http://{}", listener.local_addr().unwrap()),
@@ -561,7 +561,7 @@ pub(crate) async fn test_dispatch_start_failure(
             user_id: 7,
             message_id: None,
         },
-    )
+    ))
     .await;
     assert!(
         tokio::time::timeout(Duration::from_millis(100), listener.accept())

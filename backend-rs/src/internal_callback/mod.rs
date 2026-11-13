@@ -172,7 +172,14 @@ async fn process_event(
             event.subtask_id,
             completion::Delivery::Callback,
             FastApiError::internal,
-            deliver_terminal_callback(state, redis, &mut event, status, executor, defer_advance),
+            Box::pin(deliver_terminal_callback(
+                state,
+                redis,
+                &mut event,
+                status,
+                executor,
+                defer_advance,
+            )),
         )
         .await;
     }
@@ -215,7 +222,7 @@ async fn deliver_terminal_callback(
         tables: tables(state),
         executor_manager: &state.executor_manager,
     };
-    let completion = completion::complete_with_delivery(
+    let completion = Box::pin(completion::complete_with_delivery(
         &ctx,
         event,
         status,
@@ -223,7 +230,7 @@ async fn deliver_terminal_callback(
         executor.1,
         completion::Delivery::Callback,
         Some(&source),
-    )
+    ))
     .await
     .map_err(|_| FastApiError::internal())?;
     let Some(completion::TerminalCompletion {
@@ -288,7 +295,7 @@ async fn deliver_terminal_callback(
             // The recovery worker waits for admission outside the SSE consumer pool.
             return Ok(());
         }
-        pipeline::dispatch_next(state, advance).await?;
+        Box::pin(pipeline::dispatch_next(state, advance)).await?;
     }
 
     session::publish_terminal_callback(redis, event)

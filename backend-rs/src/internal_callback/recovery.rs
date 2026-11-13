@@ -206,7 +206,9 @@ async fn recover_locked(
     };
     let status = completion::terminal_status(&event.event_type)
         .ok_or_else(|| anyhow::anyhow!("invalid terminal recovery event"))?;
-    deliver_terminal_callback(state, redis, &mut event, status, executor, false)
-        .await
-        .map_err(|_| anyhow::anyhow!("terminal work is still pending"))
+    Box::pin(deliver_terminal_callback(
+        state, redis, &mut event, status, executor, false,
+    ))
+    .await
+    .map_err(|_| anyhow::anyhow!("terminal work is still pending"))
 }
