@@ -40,12 +40,15 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     task_id: i64,
     changed_subtask_id: i64,
 ) -> bool {
-    // `task_store.get_task_by_states(...).first()`: the active two-state task
-    // read through the ORM's labeled projection, with no row lock.
+    // Lock the Task before deriving its status so cancellation and a newer
+    // turn cannot be overwritten by a callback that read an older snapshot.
     let task: Option<MysqlRow> = read_status(
         mysql
             .fetch_optional(
-                sql::active_task_projection_statement(ctx.tables.tasks),
+                format!(
+                    "{} FOR UPDATE",
+                    sql::active_task_projection_statement(ctx.tables.tasks)
+                ),
                 (task_id,),
             )
             .await,
@@ -58,6 +61,14 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     };
     let owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
+    if task_json
+        .as_ref()
+        .and_then(|task| task.pointer("/status/status"))
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "CANCELLED" | "CANCELLING" | "DELETE"))
+    {
+        return false;
+    }
 
     // `list_assistant_by_task`'s owner guard, then the ordered listing.
     // `_update_task_status_sync` wraps the whole block in `try/except`: a

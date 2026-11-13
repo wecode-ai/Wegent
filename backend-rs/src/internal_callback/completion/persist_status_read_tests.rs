@@ -160,9 +160,9 @@ impl MysqlTransaction for CapturedTransaction {
 /// `_update_task_status_sync` -> `task_store.get_task_by_states(...).first()`:
 /// the recorded reads of case `f0a9b48f-8875-436e-958a-5361a7817bc1`
 /// (`query_sequence` 80, 95, 159, 173, 174, 201, 218) are the ORM's labeled
-/// active-task projection with no `FOR UPDATE`.
+/// active-task projection. The writer now locks it against cancellation.
 #[tokio::test]
-async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lock() {
+async fn the_task_status_read_locks_the_labeled_active_task_projection() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
     let redis = NoRedis;
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
@@ -194,7 +194,7 @@ async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lo
         "{}",
         statement.sql
     );
-    assert!(!statement.sql.contains("FOR UPDATE"), "{}", statement.sql);
+    assert!(statement.sql.ends_with("FOR UPDATE"), "{}", statement.sql);
     assert!(
         !statement.sql.contains("SELECT id, user_id"),
         "{}",

@@ -245,7 +245,7 @@ pub async fn dispatch_create(
         // `_update_subtask_to_running` (`dispatcher.py:166`): every dispatch
         // mode flips the assistant subtask to RUNNING before it is dispatched,
         // and the committed change re-derives the Task CRD's status.
-        if let Err(error) = mark_subtask_running(state, request.subtask_id).await {
+        if let Err(error) = mark_subtask_running(state, &request).await {
             persist_dispatch_start_failure(state, &request, &error).await;
             return Err(error);
         }
@@ -478,7 +478,7 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
     let result =
         completion::collect_completed_result(&ctx, subtask_id, "FAILED", None, Some(message), None)
             .await;
-    completion::persist_completed_result(
+    if let Err(error) = completion::persist_completed_result(
         &ctx,
         task_id,
         subtask_id,
@@ -487,8 +487,12 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         Some(message),
         None,
         None,
+        None,
     )
-    .await;
+    .await
+    {
+        tracing::error!(%error, task_id, subtask_id, "dispatch failure persistence failed");
+    }
 }
 
 const SUBTASK_NOT_DISPATCHABLE: &str = "Assistant subtask is no longer dispatchable";
@@ -515,7 +519,11 @@ async fn persist_dispatch_start_failure(
 }
 
 /// Require the assistant subtask to be RUNNING on the writer before dispatch.
-async fn mark_subtask_running(state: &AppState, subtask_id: i64) -> Result<(), FastApiError> {
+async fn mark_subtask_running(
+    state: &AppState,
+    request: &ExecutionRequest,
+) -> Result<(), FastApiError> {
+    let (task_id, subtask_id) = (request.task_id, request.subtask_id);
     let tables = crate::internal_callback::tables(state);
     let running = if let Some(redis) = state.redis.as_ref() {
         let ctx = completion::Completion {
@@ -525,14 +533,14 @@ async fn mark_subtask_running(state: &AppState, subtask_id: i64) -> Result<(), F
             tables,
             executor_manager: &state.executor_manager,
         };
-        completion::mark_subtask_running(&ctx, subtask_id).await
+        completion::mark_subtask_running(&ctx, task_id, subtask_id).await
     } else {
-        completion::commit_subtask_running(&state.mysql, tables, subtask_id)
+        completion::commit_subtask_running(&state.mysql, tables, task_id, subtask_id)
             .await
             .map(|row| row.is_some())
     };
     if running.map_err(|error| {
-        tracing::error!(%error, subtask_id, "subtask running transition failed");
+        tracing::error!(%error, task_id, subtask_id, "task running transition failed");
         FastApiError::internal()
     })? {
         Ok(())
@@ -735,7 +743,7 @@ pub(super) async fn dispatch_executor_after_subscribe(
     request_id: &str,
 ) -> Result<(), FastApiError> {
     super::recover_executor::recover_executor_if_needed(state, request).await;
-    if let Err(error) = mark_subtask_running(state, request.subtask_id).await {
+    if let Err(error) = mark_subtask_running(state, request).await {
         persist_dispatch_start_failure(state, request, &error).await;
         return Err(error);
     }
@@ -749,6 +757,32 @@ pub(super) async fn dispatch_executor_after_subscribe(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn test_dispatch_start_failure(
+    mysql: brz_mysql::MysqlService,
+    task_id: i64,
+    subtask_id: i64,
+) {
+    let app = crate::app_test_support::app(mysql);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = format!("http://{}", listener.local_addr().unwrap());
+    let request = ExecutionRequest {
+        task_id,
+        subtask_id,
+        ..Default::default()
+    };
+    let result = dispatch_executor_after_subscribe(&app, &request, Some(&target), "test").await;
+    assert_eq!(
+        result.unwrap_err().status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
 }
 
 /// `_dispatch_http_callback`: admit the fire-and-forget executor-manager
@@ -883,7 +917,7 @@ pub(crate) async fn dispatch_chat_turn(
             == Some("video"),
         model_protocol: request.model_config.get("protocol").and_then(Value::as_str),
     });
-    mark_subtask_running(state, request.subtask_id).await?;
+    mark_subtask_running(state, request).await?;
     if target.mode == routing::CommunicationMode::Websocket {
         let Some(route) = resolved_device.as_deref() else {
             tracing::error!(task_id = request.task_id, "device dispatch has no route");
@@ -1066,7 +1100,7 @@ mod tests {
             "the collect step must receive the raised message"
         );
         let tail = &source[persist..];
-        let end = tail.find(".await;").expect("persist call end");
+        let end = tail.find(".await").expect("persist call end");
         assert!(
             tail[..end].contains("Some(message)"),
             "the persist step must receive the raised message"

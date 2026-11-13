@@ -60,7 +60,7 @@ pub(super) async fn dispatch_next(
                 tables: super::tables(state),
                 executor_manager: &state.executor_manager,
             };
-            super::completion::persist_completed_result(
+            let persisted = super::completion::persist_completed_result(
                 &ctx,
                 task_id,
                 subtask_id,
@@ -69,8 +69,13 @@ pub(super) async fn dispatch_next(
                 Some("Pipeline stage dispatch failed"),
                 None,
                 None,
+                None,
             )
-            .await;
+            .await
+            .map_err(dependency)?;
+            if persisted.is_none() {
+                return Ok(());
+            }
             if let Err(error) = super::socketio::publish_emit_in_room(
                 redis,
                 "task:status",
@@ -88,7 +93,7 @@ pub(super) async fn dispatch_next(
 
 async fn dispatch_execution(
     state: &AppState,
-    mut advance: PipelineStageAdvance,
+    advance: PipelineStageAdvance,
 ) -> Result<(), FastApiError> {
     let bot_ids = [advance.bot.id];
     let request_id = format!(
@@ -179,16 +184,21 @@ async fn dispatch_execution(
     let running = mysql.with_transaction(async |transaction| {
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
-        let current = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
-        if current.as_ref().and_then(|json| json.0.pointer("/spec/currentStage")) != advance.task_json.pointer("/spec/currentStage") { return Ok(false); }
+        let current = task.as_ref().filter(|row| super::completion::is_active_task(row))
+            .and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
+        let Some(Json(mut current)) = current else { return Ok(false) };
+        if current.pointer("/status/status").and_then(Value::as_str) != Some("PENDING")
+            || current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage") {
+            return Ok(false);
+        }
         let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
         let changed = transaction.execute(
             format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
             (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
         if changed.rows_affected == 0 { return Ok(false); }
-        advance.task_json["status"]["status"] = json!("RUNNING");
+        current["status"]["status"] = json!("RUNNING");
         transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
-            (crate::json_compat::python_json_value(&advance.task_json), now, advance.task_id)).await?;
+            (crate::json_compat::python_json_value(&current), now, advance.task_id)).await?;
         Ok(true)
     }).await.map_err(dependency)?;
     if !running {

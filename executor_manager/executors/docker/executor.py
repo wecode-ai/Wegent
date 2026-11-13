@@ -20,7 +20,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
 import requests
 
-from executor_manager.clients.executor_binding import bind_executor_for_dispatch
+from executor_manager.clients.executor_binding import (
+    ObsoleteExecutorDispatch,
+    bind_executor_for_dispatch,
+)
 from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
@@ -212,6 +215,8 @@ class DockerExecutor(Executor):
                 )
 
                 self._create_new_container(task_dict, task_info, execution_status)
+        except ObsoleteExecutorDispatch:
+            raise
         except Exception as e:
             # Unified exception handling
             self._handle_execution_exception(e, task_id, execution_status)

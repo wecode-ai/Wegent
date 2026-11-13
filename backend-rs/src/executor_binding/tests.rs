@@ -44,7 +44,7 @@ fn only_a_running_assistant_can_acquire_or_reuse_its_binding() {
     assert_eq!(row.binding_decision(&request), BindingDecision::Conflict);
     row.executor_name = Some(request.executor_name.clone());
     row.status = "CANCELLED".into();
-    assert_eq!(row.binding_decision(&request), BindingDecision::Conflict);
+    assert_eq!(row.binding_decision(&request), BindingDecision::Obsolete);
 }
 
 #[test]

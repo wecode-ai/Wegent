@@ -13,6 +13,10 @@ BINDING_TOKEN = "executor_binding_token"
 BINDING_SCHEME = "WegentExecutorBinding"
 
 
+class ObsoleteExecutorDispatch(Exception):
+    """The backend no longer admits this queued execution turn."""
+
+
 def bind_executor_for_dispatch(
     task: dict[str, Any], executor_name: str, executor_namespace: str
 ) -> dict[str, Any]:
@@ -41,6 +45,8 @@ def bind_executor_for_dispatch(
             },
             follow_redirects=False,
         )
+    if response.status_code == 410:
+        raise ObsoleteExecutorDispatch("Execution turn is no longer dispatchable")
     if not response.is_success:
         raise RuntimeError(f"Executor binding failed with HTTP {response.status_code}")
     if response.json() != {"status": "bound"}:

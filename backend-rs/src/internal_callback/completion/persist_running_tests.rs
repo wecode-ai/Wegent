@@ -44,7 +44,7 @@ impl MysqlRouting for RecordedShard {
     }
 }
 
-/// The read below fails before any metrics publish, so Redis is never touched.
+/// These tests do not need a Redis server.
 struct NoRedis;
 
 impl Redis for NoRedis {
@@ -162,7 +162,7 @@ fn the_running_transition_statements_keep_the_recorded_order_and_predicates() {
 /// `LIMIT 1`. The prepared statement reaches the server before any status
 /// flush, which is the position the recording shows.
 #[tokio::test]
-async fn the_running_transition_reads_the_subtask_from_its_shard_first() {
+async fn the_running_transition_locks_the_parent_task_on_its_shard_first() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mysql = crate::connect_mysql(&format!(
@@ -188,7 +188,7 @@ async fn the_running_transition_reads_the_subtask_from_its_shard_first() {
         // read fails and the transition stops before the contexts read and the
         // status write.
         assert!(
-            mark_subtask_running(&ctx, 801_406_538_674_542)
+            mark_subtask_running(&ctx, 801_406_538_674_541, 801_406_538_674_542)
                 .await
                 .is_err()
         );
@@ -197,17 +197,17 @@ async fn the_running_transition_reads_the_subtask_from_its_shard_first() {
         let queries = server.await.unwrap();
         mysql.close().await;
 
-        let read = queries.first().expect("the subtask read is issued");
+        let read = queries.first().expect("the task read is issued");
         assert!(
-            read.contains("FROM `subtasks_0711`"),
+            read.contains("FROM `tasks_0711`"),
             "the read targets the routed shard table: {read}"
         );
         assert!(
-            read.contains("`subtasks_0711`.id AS `subtasks_0711_id`"),
+            read.contains("`tasks_0711`.id AS `tasks_0711_id`"),
             "the read keeps the ORM's labeled projection: {read}"
         );
         assert!(
-            read.contains("WHERE `subtasks_0711`.id = ?")
+            read.contains("WHERE `tasks_0711`.id = ?")
                 && read.trim_end().ends_with("LIMIT 1 FOR UPDATE"),
             "the read locks the selected row: {read}"
         );
@@ -234,6 +234,15 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
     }
 
     crate::migrations::upgrade(writer).await?;
+    writer
+        .execute(
+            "INSERT INTO tasks (id, user_id, kind, name, namespace, json, is_active, \
+              created_at, updated_at, project_id, client_origin, is_group_chat) \
+             VALUES (12, 7, 'Task', 'lag-test', 'default', JSON_OBJECT('status', \
+              JSON_OBJECT('status', 'PENDING')), 1, NOW(), NOW(), 0, 'web', 0)",
+            (),
+        )
+        .await?;
     writer
         .execute(
             "INSERT INTO subtasks (id, user_id, task_id, team_id, title, bot_ids, `role`, \
@@ -268,12 +277,18 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
         subtasks: "subtasks",
     };
 
-    let updated = commit_subtask_running(&mysql, tables, 42).await?;
-    assert_eq!(updated.map(|(task_id, _)| task_id), Some(12));
+    assert!(
+        commit_subtask_running(&mysql, tables, 12, 42)
+            .await?
+            .is_some()
+    );
     // A different writer connection can see the committed status as soon as
     // the dispatch prerequisite returns. The reader still has no row.
     let current: Status = writer.fetch_one(status_query, (42,)).await?;
     assert_eq!(current.status, "RUNNING");
+    let task_query = "SELECT json FROM tasks WHERE id = 12";
+    let current: brz_mysql::Json<serde_json::Value> = writer.fetch_one(task_query, ()).await?;
+    assert_eq!(current.0["status"]["status"], "RUNNING");
     assert!(
         mysql
             .fetch_optional::<_, _, Status>(status_query, (42,))
@@ -282,8 +297,16 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
     );
     assert_eq!(replica.queries(), [status_query, status_query]);
 
-    assert!(commit_subtask_running(&mysql, tables, 43).await?.is_none());
-    assert!(commit_subtask_running(&mysql, tables, 44).await?.is_none());
+    assert!(
+        commit_subtask_running(&mysql, tables, 12, 43)
+            .await?
+            .is_none()
+    );
+    assert!(
+        commit_subtask_running(&mysql, tables, 12, 44)
+            .await?
+            .is_none()
+    );
     let cancelled: Status = writer.fetch_one(status_query, (43,)).await?;
     assert_eq!(cancelled.status, "CANCELLED");
 
@@ -292,18 +315,143 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
         .await?;
     writer
         .execute(
-            "CREATE TRIGGER reject_running_transition BEFORE UPDATE ON subtasks FOR EACH ROW \
+            "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'PENDING') WHERE id = 12",
+            (),
+        )
+        .await?;
+    writer
+        .execute(
+            "CREATE TRIGGER reject_running_transition BEFORE UPDATE ON tasks FOR EACH ROW \
          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'rejected by test fixture'",
             (),
         )
         .await?;
-    let failure = commit_subtask_running(&mysql, tables, 42)
+    let failure = commit_subtask_running(&mysql, tables, 12, 42)
         .await
         .unwrap_err();
     assert_eq!(failure.database_sql_state(), Some("45000"));
+    crate::responses::create::seam::test_dispatch_start_failure(mysql.clone(), 12, 42).await;
     let pending: Status = writer.fetch_one(status_query, (42,)).await?;
     assert_eq!(pending.status, "PENDING");
-    assert_eq!(replica.queries(), [status_query, status_query]);
+    let pending: brz_mysql::Json<serde_json::Value> = writer.fetch_one(task_query, ()).await?;
+    assert_eq!(pending.0["status"]["status"], "PENDING");
+    writer
+        .execute("DROP TRIGGER reject_running_transition", ())
+        .await?;
+    verify_obsolete_dispatches(writer, tables).await?;
     mysql.close().await;
+    Ok(())
+}
+
+async fn verify_obsolete_dispatches(writer: &MysqlService, tables: Tables) -> anyhow::Result<()> {
+    use serde_json::{Value, json};
+
+    let app = crate::app_test_support::app(writer.clone());
+    let binding = crate::executor_binding::BindingRequest {
+        executor_name: "wegent-test-executor".into(),
+        executor_namespace: String::new(),
+    };
+    writer
+        .execute(
+            "UPDATE subtasks SET status = 'RUNNING' WHERE id IN (42, 43)",
+            (),
+        )
+        .await?;
+    writer
+        .execute(
+            "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'CANCELLED') WHERE id = 12",
+            (),
+        )
+        .await?;
+    let rejected = crate::executor_binding::persist_binding(&app, 12, 43, 7, &binding)
+        .await
+        .unwrap_err();
+    assert_eq!(rejected.status(), http::StatusCode::GONE);
+    let executor: Option<String> = writer
+        .fetch_one("SELECT executor_name FROM subtasks WHERE id = 43", ())
+        .await?;
+    assert_eq!(executor, None);
+
+    let redis = NoRedis;
+    let ctx = Completion {
+        app: None,
+        mysql: writer,
+        redis: &redis,
+        tables,
+        executor_manager: &app.executor_manager,
+    };
+    assert!(
+        super::persist_completed_result(
+            &ctx,
+            12,
+            43,
+            "FAILED",
+            None,
+            Some("late queue failure"),
+            Some("task_queue_failure"),
+            None,
+            None
+        )
+        .await?
+        .is_none()
+    );
+    let status: String = writer
+        .fetch_one("SELECT status FROM subtasks WHERE id = 43", ())
+        .await?;
+    assert_eq!(status, "RUNNING");
+
+    writer
+        .execute(
+            "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'RUNNING') WHERE id = 12",
+            (),
+        )
+        .await?;
+    let rejected = crate::executor_binding::persist_binding(&app, 12, 42, 7, &binding)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        rejected.status(),
+        http::StatusCode::GONE,
+        "a newer turn exists"
+    );
+    for status in ["COMPLETED", "CANCELLED"] {
+        writer.execute(
+            "UPDATE subtasks SET status = ?, result = JSON_OBJECT('value', 'original') WHERE id = 43",
+            (status,)
+        ).await?;
+        let rejected = crate::executor_binding::persist_binding(&app, 12, 43, 7, &binding)
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.status(), http::StatusCode::GONE);
+        assert!(
+            super::persist_completed_result(
+                &ctx,
+                12,
+                43,
+                "FAILED",
+                Some(&json!({"value": "stale"})),
+                Some("late queue failure"),
+                Some("task_queue_failure"),
+                None,
+                None
+            )
+            .await?
+            .is_none()
+        );
+        let (actual, brz_mysql::Json(result)): (String, brz_mysql::Json<Value>) = writer
+            .fetch_one("SELECT status, result FROM subtasks WHERE id = 43", ())
+            .await?;
+        assert_eq!(actual, status);
+        assert_eq!(result, json!({"value": "original"}));
+    }
+    writer
+        .execute("UPDATE subtasks SET status = 'RUNNING' WHERE id = 43", ())
+        .await?;
+    assert_eq!(
+        crate::executor_binding::persist_binding(&app, 12, 43, 7, &binding)
+            .await
+            .unwrap(),
+        json!({"status": "bound"})
+    );
     Ok(())
 }
