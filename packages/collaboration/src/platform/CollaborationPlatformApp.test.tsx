@@ -1163,6 +1163,33 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.workspaces!.create).not.toHaveBeenCalled();
   });
 
+  it.each(["Owner", "Maintainer", "Developer", "Viewer"] as const)(
+    "offers cloud project destinations allowed for workspace role %s",
+    async (role) => {
+      const { api } = createApi({
+        initialWorkspaces: [{ ...workspace, access_role: role }],
+        initialProjects: [],
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          capabilities={{
+            automation: false,
+            dingtalkAitable: false,
+            projectNavigation: "projects",
+          }}
+        />,
+      );
+      await click(byTestId("collaboration-project-create-cloud"));
+      const select = portalByTestId(
+        "collaboration-project-workspace-select",
+      ) as HTMLSelectElement;
+      const values = Array.from(select.options, (option) => option.value);
+      expect(values.includes(workspace.id)).toBe(role !== "Viewer");
+      expect(values).toContain("");
+    },
+  );
+
   it.each([groupWorkspace.id, ""])(
     "creates a project with workspace selection '%s' while preserving the entered name",
     async (workspaceId) => {

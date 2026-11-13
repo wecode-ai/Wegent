@@ -2898,7 +2898,13 @@ function CollaborationPlatformAppContent({
                       ? [{ value: "", label: messages.defaultProjectWorkspace }]
                       : []),
                     ...state.workspaces
-                      .filter((workspace) => workspace.location === "cloud")
+                      .filter(
+                        (workspace) =>
+                          workspace.location === "cloud" &&
+                          (workspace.access_role === "Owner" ||
+                            workspace.access_role === "Maintainer" ||
+                            workspace.access_role === "Developer"),
+                      )
                       .map((workspace) => ({
                         value: workspace.id,
                         label:
