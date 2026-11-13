@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 
 type Fixture = {
   task_id: number
@@ -41,6 +42,15 @@ for (const requireApproval of [true, false]) {
     const owner = createApiClient(request)
     const viewer = createApiClient(request)
     const anonymous = createApiClient(request)
+    const setBrowserSession = async (token: string) => {
+      const expiry = getJwtExpiryMs(token)
+      expect(expiry).not.toBeNull()
+      const storage = buildStorageState(page.url(), token, expiry)
+      await page.context().addCookies(storage.cookies)
+      await page.evaluate(entries => {
+        for (const { name, value } of entries) localStorage.setItem(name, value)
+      }, storage.origins[0].localStorage)
+    }
     const ownerLogin = await owner.login(ADMIN_USER.username, ADMIN_USER.password, 1)
     expect(ownerLogin.status).toBe(200)
     const login = await viewer.login(REGULAR_USER.username, REGULAR_USER.password, 1)
@@ -66,10 +76,7 @@ for (const requireApproval of [true, false]) {
       await expect(page).toHaveURL(/\/login\?redirect=/)
       expect(new URL(page.url()).searchParams.get('redirect')).toBe(target)
 
-      await page.evaluate(
-        token => localStorage.setItem('auth_token', token),
-        login.data!.access_token
-      )
+      await setBrowserSession(login.data!.access_token)
       await page.goto(target)
       const joined = page.waitForResponse(
         response =>
@@ -108,13 +115,18 @@ for (const requireApproval of [true, false]) {
       expect((await viewer.get(legacyRead)).status).toBe(200)
       await page.goto(`/shared/task?token=${encodeURIComponent(fixture.tokens.Task)}`)
       await expect(page.getByText(fixture.body, { exact: true })).toBeVisible()
-      await page.evaluate(
-        token => localStorage.setItem('auth_token', token),
-        ownerLogin.data!.access_token
-      )
+      await setBrowserSession(ownerLogin.data!.access_token)
       await page.goto(target)
       await page.getByTestId('task-access-request').click()
       await expect(page).toHaveURL(new RegExp(`/chat\\?taskId=${fixture.task_id}$`))
+      await page.goto(`/shared/task?token=${encodeURIComponent(fixture.tokens.Task)}`)
+      await expect(page.getByText(fixture.body, { exact: true })).toBeVisible()
+      // Exercise a client-side link change rather than resetting the page with goto.
+      await page.evaluate(next => {
+        window.history.pushState(null, '', next)
+      }, `/shared/task?token=${prefix}-unrecorded`)
+      await expect(page.getByTestId('shared-task-access-action')).toBeVisible()
+      await expect(page.getByText(fixture.body, { exact: true })).toHaveCount(0)
     } finally {
       state('cleanup')
     }

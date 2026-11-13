@@ -28,12 +28,17 @@ const MessageBubble = dynamic(() => import('@/features/tasks/components/message/
 })
 
 /**
- * Public shared task page - no authentication required
+ * Opaque shares are public; legacy locators require existing resource access.
  * Uses the same layout and styling as the chat page for consistency
  */
-function SharedTaskContent() {
+function SharedTaskContent({
+  token,
+  sessionToken,
+}: {
+  token: string | null
+  sessionToken: string | null
+}) {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { theme } = useTheme()
   const { t } = useTranslation()
 
@@ -47,7 +52,6 @@ function SharedTaskContent() {
   const rightPanelOffsetClassName = rightPanelRequest ? 'lg:mr-[720px]' : ''
 
   // Check if user is logged in
-  const sessionToken = getToken()
   const isLoggedIn = !!sessionToken
 
   // Fetch current user if logged in
@@ -71,7 +75,6 @@ function SharedTaskContent() {
   }, [isLoggedIn, sessionToken])
 
   useEffect(() => {
-    const token = searchParams.get('token')
     let cancelled = false
     setTaskData(null)
     setError(null)
@@ -127,10 +130,9 @@ function SharedTaskContent() {
     return () => {
       cancelled = true
     }
-  }, [searchParams, t, sessionToken])
+  }, [token, t, sessionToken])
 
   const handleLoginAndCopy = () => {
-    const token = searchParams.get('token')
     if (!token) return
 
     // Check if we're in an in-app browser
@@ -331,7 +333,7 @@ function SharedTaskContent() {
                 data-testid="shared-task-access-action"
                 onClick={() => {
                   if (accessError === 401) {
-                    const target = `/shared/task?token=${encodeURIComponent(searchParams.get('token') || '')}`
+                    const target = `/shared/task?token=${encodeURIComponent(token || '')}`
                     router.push(`/login?redirect=${encodeURIComponent(target)}`)
                   } else {
                     router.push('/chat')
@@ -356,7 +358,6 @@ function SharedTaskContent() {
       {showInAppBrowserGuard && (
         <InAppBrowserGuard
           onProceed={() => {
-            const token = searchParams.get('token')
             if (token) {
               proceedToLoginOrChat(token)
             }
@@ -426,7 +427,7 @@ function SharedTaskContent() {
                     selectedBranch={null}
                     theme={theme}
                     t={t}
-                    shareToken={searchParams.get('token') || undefined}
+                    shareToken={token || undefined}
                   />
                 )
               })}
@@ -463,6 +464,20 @@ function SharedTaskContent() {
   )
 }
 
+function ScopedSharedTaskContent() {
+  const token = useSearchParams().get('token')
+  const sessionToken = getToken()
+
+  // Reset messages, identity and attachment panels before rendering a new scope.
+  return (
+    <SharedTaskContent
+      key={JSON.stringify([token, sessionToken])}
+      token={token}
+      sessionToken={sessionToken}
+    />
+  )
+}
+
 export default function SharedTaskPage() {
   return (
     <Suspense
@@ -477,7 +492,7 @@ export default function SharedTaskPage() {
         </div>
       }
     >
-      <SharedTaskContent />
+      <ScopedSharedTaskContent />
     </Suspense>
   )
 }
