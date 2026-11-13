@@ -8,7 +8,7 @@ from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import Index, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -69,6 +69,7 @@ class Subtask(Base):
     )
 
     __table_args__ = (
+        Index("ix_subtasks_user_executor_status", "user_id", "executor_name", "status"),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

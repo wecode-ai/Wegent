@@ -75,7 +75,10 @@ Disconnect the device and let pending work finish before submitting
 `runtime_instance_id`, `expected_app_device_id` (use explicit `null` if absent),
 and `new_app_device_id` as JSON. The request compares the stored identity and
 returns `{"record_id": ...}` on success. Reconnect the verified installation
-using its new App ID to use the same record-scoped route.
+using its new App ID to use the same record-scoped route. Apply the native
+database migration before enabling this flow on an existing schema. The
+subtask assignment index lets the rebind lock the affected ranges until
+the identity change commits.
 
 ## Observability foundation
 

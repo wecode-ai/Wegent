@@ -463,6 +463,7 @@ impl SocketRuntime {
         tokio::spawn(super::device_sync::run_adapter_emit_worker(
             emit_receiver,
             Arc::clone(&emitters),
+            Arc::clone(&state),
         ));
         tokio::spawn(super::device_sync::run_worker(
             receiver,

@@ -28,7 +28,7 @@
 //! the `UPDATE` that ends it.
 
 use brz_http_server::StatusCode;
-use brz_mysql::{MysqlError, MysqlTransaction};
+use brz_mysql::{MysqlError, MysqlIsolationLevel, MysqlTransaction, MysqlTransactionOptions};
 use brz_redis::{Redis, RedisBytes};
 use chrono::Utc;
 use serde_json::Value;
@@ -81,6 +81,13 @@ const ACTIVE_SUBTASK_BY_EXECUTOR_QUERY: &str = "SELECT subtasks.id AS subtasks_i
      WHERE subtasks.user_id = ? \
      AND subtasks.executor_name IN (?, ?) \
      AND subtasks.status IN ('PENDING', 'RUNNING') \n LIMIT 1";
+
+// Limit the next-key locks to this owner's executor/status ranges even on
+// small tables where the optimizer could otherwise choose a full scan.
+const LOCK_ACTIVE_SUBTASK_BY_EXECUTOR_QUERY: &str = "SELECT id AS subtasks_id \
+     FROM subtasks FORCE INDEX (ix_subtasks_user_executor_status) \
+     WHERE user_id = ? AND executor_name IN (?, ?) \
+     AND status IN ('PENDING', 'RUNNING') LIMIT 1 FOR UPDATE";
 
 /// `db.commit()`'s flush of the dirty `Kind` row: `is_active` and the
 /// Python-side `onupdate` `updated_at`.
@@ -148,9 +155,11 @@ async fn rebind_device_record(
         .ok_or_else(status_unavailable)?;
     let outcome = tokio::time::timeout(
         crate::device_identity_lock::IDENTITY_LOCK_BODY_TIMEOUT,
-        state.mysql.with_transaction(async |tx| {
-            rebind_record_in(tx, redis, user_id, record_id, &body).await
-        }),
+        state.mysql.with_transaction_options(
+            MysqlTransactionOptions::default()
+                .with_isolation_level(MysqlIsolationLevel::RepeatableRead),
+            async |tx| rebind_record_in(tx, redis, user_id, record_id, &body).await,
+        ),
     )
     .await;
     if let Err(error) = lock.release().await {
@@ -439,8 +448,10 @@ where
         }
     };
     let LegacyPresence::MatchingRuntime(runtime) = legacy_policy else {
+        // A locking read under REPEATABLE READ sees in-flight assignments and
+        // holds the matching index ranges, including gaps, until rebind commits.
         let busy = values.iter().any(Option::is_some)
-            || active_subtask_by_executor(transaction, user_id, route, name).await?;
+            || active_subtask_by_executor(transaction, user_id, route, name, true).await?;
         return Ok(if busy {
             GuardDecision::Online
         } else {
@@ -455,7 +466,7 @@ where
         Ok(value) => value,
         Err(()) => return Ok(GuardDecision::Undecodable),
     };
-    let running = active_subtask_by_executor(transaction, user_id, route, name).await?;
+    let running = active_subtask_by_executor(transaction, user_id, route, name, false).await?;
 
     let online_reported = online.as_ref().is_some_and(python_truthy);
     // `legacy.get("runtime_instance_id")` names this record's Runtime, or the
@@ -488,11 +499,17 @@ async fn active_subtask_by_executor<T: MysqlTransaction>(
     user_id: i64,
     route_id: &str,
     name: &str,
+    lock_assignments: bool,
 ) -> Result<bool, MysqlError> {
+    let query = if lock_assignments {
+        LOCK_ACTIVE_SUBTASK_BY_EXECUTOR_QUERY
+    } else {
+        ACTIVE_SUBTASK_BY_EXECUTOR_QUERY
+    };
     let executor_names = [format!("device-{route_id}"), format!("device-{name}")];
     let row: Option<ActiveSubtaskRow> = transaction
         .fetch_optional(
-            ACTIVE_SUBTASK_BY_EXECUTOR_QUERY,
+            query,
             (
                 user_id,
                 executor_names[0].as_str(),

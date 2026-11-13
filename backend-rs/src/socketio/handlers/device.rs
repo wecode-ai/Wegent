@@ -22,20 +22,33 @@ use crate::socketio::runtime_event_order::Turn;
 use crate::socketio::session::{DeviceSession, SessionSnapshot};
 use crate::state::AppState;
 
-use device_heartbeat::stale_binding;
+use device_heartbeat::{identity_unavailable, stale_binding};
 
-async fn current_device_socket(app: &AppState, session: &SessionSnapshot, socket_id: &str) -> bool {
+async fn device_socket_rejection(
+    app: &AppState,
+    session: &SessionSnapshot,
+    socket_id: &str,
+) -> Option<Reply<Value>> {
     if !device_heartbeat::requires_current_app_binding(app, session) {
-        return true;
+        return None;
     }
     let Some(route) = session.device.device_id.as_deref() else {
-        return false;
+        return Some(stale_binding(session));
     };
-    // The current socket is the sole recipient of record-scoped device work.
-    matches!(
-        crate::device_online_state::read_online_state::<Value>(app, session.user_id, route).await,
-        Ok(Some(online)) if online["socket_id"].as_str() == Some(socket_id)
-    )
+    let presence =
+        crate::device_online_state::read_online_state::<Value>(app, session.user_id, route).await;
+    match presence {
+        Ok(Some(online)) => match online["socket_id"].as_str() {
+            Some(current) if current == socket_id => None,
+            Some(_) => Some(stale_binding(session)),
+            None => Some(identity_unavailable()),
+        },
+        Ok(None) => match crate::socketio::device_upsert::app_session_matches(app, session).await {
+            Ok(false) => Some(stale_binding(session)),
+            Ok(true) | Err(_) => Some(identity_unavailable()),
+        },
+        Err(_) => Some(identity_unavailable()),
+    }
 }
 
 /// `on_device_register` -> `_register_device_session`.
@@ -74,9 +87,7 @@ async fn status(
     let snapshot = session.snapshot();
     if app.unique_app_device_names {
         let Some(redis) = app.redis.as_ref() else {
-            return Ok(Reply::payload(
-                serde_json::json!({"error": "Device identity is temporarily unavailable"}),
-            ));
+            return Ok(identity_unavailable());
         };
         return device_lifecycle::with_identity_lock(redis, snapshot.user_id, || async {
             Ok(Reply::payload(
@@ -114,8 +125,8 @@ async fn upgrade_status(
     #[inject(runtime)] runtime: &Arc<SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
-    if !current_device_socket(app, &snapshot, context.id()).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, context.id()).await {
+        return Ok(rejection);
     }
     Ok(Reply::payload(
         crate::socketio::device_status::upgrade_status(
@@ -158,8 +169,8 @@ async fn runtime_event(
         .unwrap_or_else(|| device_id.clone());
     // `_forward_runtime_event` runs under `_get_runtime_event_lock(sid)`.
     turn.wait().await;
-    if !current_device_socket(app, &snapshot, socket_id).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, socket_id).await {
+        return Ok(rejection);
     }
     let forwarded = device_runtime_event::forward(
         app,
@@ -397,8 +408,8 @@ async fn pull_tasks(
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
-    if !current_device_socket(app, &snapshot, context.id()).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, context.id()).await {
+        return Ok(rejection);
     }
     Ok(Reply::payload(
         crate::socketio::device_pull::pull(app, &snapshot, &data).await?,
@@ -414,8 +425,8 @@ async fn accept_tasks(
     #[inject(runtime)] runtime: &Arc<SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
-    if !current_device_socket(app, &snapshot, context.id()).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, context.id()).await {
+        return Ok(rejection);
     }
     Ok(Reply::payload(
         crate::socketio::device_runtime_tasks::accept(app, runtime, &snapshot, &data).await?,
@@ -431,8 +442,8 @@ async fn claim_cleanup(
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
-    if !current_device_socket(app, &snapshot, context.id()).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, context.id()).await {
+        return Ok(rejection);
     }
     Ok(Reply::payload(
         crate::socketio::workspace_cleanup_intents::claim(app, &snapshot, &data).await?,
@@ -448,8 +459,8 @@ async fn accept_cleanup(
     #[inject(app)] app: &Arc<AppState>,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
-    if !current_device_socket(app, &snapshot, context.id()).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, context.id()).await {
+        return Ok(rejection);
     }
     Ok(Reply::payload(
         crate::socketio::workspace_cleanup_intents::accept(app, &snapshot, &data).await?,
@@ -466,8 +477,8 @@ async fn tasks_updated(
     #[inject(runtime)] runtime: &Arc<crate::socketio::runtime::SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
     let snapshot = session.snapshot();
-    if !current_device_socket(app, &snapshot, context.id()).await {
-        return Ok(stale_binding(&snapshot));
+    if let Some(rejection) = device_socket_rejection(app, &snapshot, context.id()).await {
+        return Ok(rejection);
     }
     Ok(Reply::payload(
         crate::socketio::device_runtime_tasks::updated(app, runtime, &snapshot, &data).await?,
@@ -556,10 +567,10 @@ const _: () = {
                                         if let Some(turn) = &turn {
                                             turn.wait().await;
                                         }
-                                        if !current_device_socket(
+                                        if let Some(rejection) = device_socket_rejection(
                                             &dependencies.app, &session, &socket.id.to_string(),
                                         ).await {
-                                            Ok(stale_binding(&session))
+                                            Ok(rejection)
                                         } else {
                                             let reply = device_responses::handle(
                                                 &dependencies.app, &dependencies.runtime,

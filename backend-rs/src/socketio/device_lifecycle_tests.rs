@@ -271,7 +271,8 @@ const OWN_SOCKET: &str = r#"{"socket_id":"mine","status":"online"}"#;
 const STALE_SOCKET: &str = r#"{"socket_id":"other","status":"online"}"#;
 
 async fn permitted(redis: &GateRedis) -> bool {
-    online_cleanup_permitted(redis, 7, "device-1", "mine", Duration::ZERO).await
+    online_cleanup_permitted(redis, 7, "device-1", "mine").await
+        && online_cleanup_permitted(redis, 7, "device-1", "mine").await
 }
 
 #[tokio::test]

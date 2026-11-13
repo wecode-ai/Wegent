@@ -58,6 +58,16 @@ impl Fixture {
         }
     }
 
+    pub async fn additional_client(&self) -> MysqlService {
+        let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
+        MysqlService::connect(&format!(
+            "mysql://root@{address}/{}?ssl-mode=disabled",
+            self.database,
+        ))
+        .await
+        .unwrap()
+    }
+
     async fn create_subtasks_table(&self, table: &str) {
         self.mysql
             .execute(

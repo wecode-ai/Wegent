@@ -65,6 +65,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
             .any(|table| table.name == "plugin_sync_outbox")
     );
     upgrade(mysql).await?;
+    verify_device_assignment_index(mysql).await?;
     // Exercise JSON/permission, plugin-publication, merge, notification and transcript migrations.
     downgrade(mysql, "d47dd270f4b6").await?;
     upgrade(mysql).await?;
@@ -75,6 +76,26 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     crate::socketio::verify_reconnect_projection(mysql).await?;
     crate::socketio::verify_late_human_reply_projection(mysql).await?;
     crate::stand_in_issue_events::verify_mentions(mysql).await?;
+    Ok(())
+}
+
+async fn verify_device_assignment_index(mysql: &MysqlService) -> Result<()> {
+    let columns = || async {
+        mysql
+            .fetch_all::<_, _, Name>(
+                "SELECT CAST(COLUMN_NAME AS CHAR) AS name FROM information_schema.STATISTICS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'subtasks'
+                 AND INDEX_NAME = 'ix_subtasks_user_executor_status' ORDER BY SEQ_IN_INDEX",
+                (),
+            )
+            .await
+            .map(|rows| rows.into_iter().map(|row| row.name).collect::<Vec<_>>())
+    };
+    assert_eq!(columns().await?, ["user_id", "executor_name", "status"]);
+    downgrade(mysql, "-1").await?;
+    assert!(columns().await?.is_empty());
+    upgrade(mysql).await?;
+    assert_eq!(columns().await?, ["user_id", "executor_name", "status"]);
     Ok(())
 }
 

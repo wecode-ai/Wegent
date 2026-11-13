@@ -11,12 +11,17 @@ mod engineio_poll_client;
 #[path = "support/responses_mysql.rs"]
 mod fixture;
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
+use brz_mysql::{MysqlRow, MysqlTransaction};
 use brz_redis::{Redis, RedisService, cmd};
 use engineio_poll_client::PollClient;
 use serde_json::{Value, json};
-use tokio::{net::TcpListener, sync::oneshot, time::timeout};
+use tokio::{
+    net::TcpListener,
+    sync::oneshot,
+    time::{sleep, timeout},
+};
 use wegent_backend_rs::{
     Application, Gateway, HybridConfig, OriginService, RouteTable, auth::AppAuthenticator, bind,
     build_app_state_with_clients, migrations, serve, socketio,
@@ -241,7 +246,10 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         registration.last_insert_id
     );
     let http = RebindServer::start(state.clone(), &path).await;
+    let mysql = fixture.additional_client().await;
     let server = socketio::handlers::build(state).await.unwrap();
+    let room_probe = server.emitter(NAMESPACE, "device-e2e-probe").unwrap();
+    let transport = server.io().clone();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (stop, stopped) = oneshot::channel();
@@ -250,7 +258,7 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     }));
 
     let outcome = tokio::spawn({
-        let mysql = fixture.mysql.clone();
+        let mysql = mysql.clone();
         let redis = redis.clone();
         let key = key.clone();
         let rebind_url = format!("http://{}{path}", http.address);
@@ -265,6 +273,8 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
                     &key,
                     &route,
                     OWNER_ID,
+                    &room_probe,
+                    &transport,
                     RebindRequest {
                         url: &rebind_url,
                         admin: &admin,
@@ -280,6 +290,7 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     let _ = stop.send(());
     let stopped = server.await;
     http.stop().await;
+    mysql.close().await;
     redis.del(key).await.unwrap();
     fixture.close().await;
     stopped.unwrap().unwrap();
@@ -394,6 +405,8 @@ async fn assert_app_conflicts(
     key: &str,
     route: &str,
     owner_id: i32,
+    room_probe: &brz_socket_io::EventEmitter,
+    transport: &brz_socket_io::SocketIo,
     rebind: RebindRequest<'_>,
 ) {
     let connect = || async {
@@ -480,8 +493,9 @@ async fn assert_app_conflicts(
     assert_eq!(rows[0].json["spec"]["appDeviceId"], "local-device");
     assert_eq!(rows[0].json["spec"]["deviceType"], "app");
     assert_eq!(online(redis, key).await["socket_id"], original.socket_id());
+    assert_presence_recovery(&original, redis, key, route, owner_id, room_probe).await;
     assert_rebind(
-        &rebind, &original, &contender, redis, key, route, rows[0].id,
+        &rebind, &original, &contender, redis, key, route, rows[0].id, mysql, owner_id,
     )
     .await;
     let rows = read_records().await;
@@ -491,8 +505,175 @@ async fn assert_app_conflicts(
         "runtime-original"
     );
     assert_eq!(rows[0].json["spec"]["appDeviceId"], "electron-new");
+
+    // The old disconnect must leave the new socket's presence intact when
+    // another socket registers during its two-second grace period.
+    let replacement = connect().await;
+    contender.post(&format!("41{NAMESPACE},")).await.unwrap();
+    let namespace = transport.of(NAMESPACE).unwrap();
+    let disconnected = contender.socket_id().parse().unwrap();
+    timeout(Duration::from_secs(1), async {
+        while namespace.get_socket(disconnected).is_some() {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the namespace must remove the disconnected socket");
+    let registered = timeout(
+        Duration::from_millis(1500),
+        event_ack(
+            &replacement,
+            1,
+            "device:register",
+            registration("runtime-original", "electron-new"),
+        ),
+    )
+    .await
+    .expect("registration must complete during disconnect grace");
+    assert_eq!(
+        registered,
+        json!({"success": true, "device_id": "local-device", "device_route_id": route})
+    );
+    sleep(Duration::from_millis(2100)).await;
+    assert_eq!(
+        online(redis, key).await["socket_id"],
+        replacement.socket_id()
+    );
 }
 
+async fn assert_presence_recovery(
+    client: &PollClient,
+    redis: &RedisService,
+    key: &str,
+    route: &str,
+    owner_id: i32,
+    emitter: &brz_socket_io::EventEmitter,
+) {
+    let heartbeat = json!({"device_id": "local-device", "runtime_instance_id": "runtime-original"});
+    let unavailable = json!({"error": "Device identity is temporarily unavailable"});
+    redis.set_ex(key, 10, "not-json").await.unwrap();
+    assert_eq!(
+        event_ack(client, 30, "runtime.tasks.pull", json!({})).await,
+        unavailable
+    );
+    redis.del(key).await.unwrap();
+    assert_eq!(
+        event_ack(client, 31, "runtime.tasks.pull", json!({})).await,
+        unavailable
+    );
+
+    let rooms = [
+        format!("device:{owner_id}:{route}"),
+        format!("execution-target:{owner_id}:{route}"),
+    ];
+    for room in &rooms {
+        assert_room_delivery(client, emitter, room).await;
+    }
+    assert_eq!(
+        event_ack(client, 32, "device:heartbeat", heartbeat).await,
+        json!({"success": true})
+    );
+    assert_eq!(online(redis, key).await["socket_id"], client.socket_id());
+    for room in &rooms {
+        assert_room_delivery(client, emitter, room).await;
+    }
+}
+
+async fn assert_room_delivery(
+    client: &PollClient,
+    emitter: &brz_socket_io::EventEmitter,
+    room: &str,
+) {
+    emitter
+        .clone()
+        .to(room.to_owned())
+        .emit(&room)
+        .await
+        .unwrap();
+    let expected = format!("42{NAMESPACE},{}", json!(["device-e2e-probe", room]));
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if client.poll_packets().await.unwrap().contains(&expected) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the current connection must receive events from {room}"));
+}
+
+async fn assert_concurrent_assignment(
+    mysql: &brz_mysql::MysqlService,
+    owner_id: i32,
+    route: &str,
+    rebind: impl Future<Output = (u16, Value)>,
+) -> (u16, Value) {
+    let assignment = mysql
+        .execute(
+            "INSERT INTO subtasks (user_id, task_id, team_id, title, bot_ids, role,
+         executor_deleted_at, message_id, status, progress, completed_at, sender_type,
+         sender_user_id, reply_to_subtask_id)
+         VALUES (?, 1, 1, 'rebind assignment', JSON_ARRAY(), 'ASSISTANT',
+         false, 1, 'RUNNING', 0, NOW(), '', 0, 0)",
+            (owner_id,),
+        )
+        .await
+        .unwrap()
+        .last_insert_id;
+    let (assigned, started) = oneshot::channel();
+    let (commit, finish) = oneshot::channel();
+    let writer = tokio::spawn({
+        let mysql = mysql.clone();
+        let executor = format!("device-{route}");
+        async move {
+            mysql
+                .with_transaction(async |tx| {
+                    tx.execute(
+                        "UPDATE subtasks SET executor_name = ? WHERE id = ?",
+                        (executor, assignment),
+                    )
+                    .await?;
+                    assigned.send(()).unwrap();
+                    finish.await.unwrap();
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+    });
+    started.await.unwrap();
+    let observe = async {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let row: MysqlRow = mysql.fetch_one(
+                    "SELECT COUNT(*) AS n FROM performance_schema.data_lock_waits w
+                     JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID = w.REQUESTING_ENGINE_LOCK_ID
+                     WHERE l.OBJECT_SCHEMA = DATABASE() AND l.OBJECT_NAME = 'subtasks'
+                     AND l.INDEX_NAME = 'ix_subtasks_user_executor_status'",
+                    (),
+                ).await.unwrap();
+                if row.get_required::<i64>("n").unwrap() > 0 {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        }).await
+    };
+    let (result, observed) = tokio::join!(rebind, async {
+        let observed = observe.await;
+        commit.send(()).unwrap();
+        observed
+    });
+    writer.await.unwrap();
+    mysql
+        .execute("DELETE FROM subtasks WHERE id = ?", (assignment,))
+        .await
+        .unwrap();
+    observed.expect("the rebind must wait for the in-flight device assignment");
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn assert_rebind(
     request: &RebindRequest<'_>,
     original: &PollClient,
@@ -501,6 +682,8 @@ async fn assert_rebind(
     key: &str,
     route: &str,
     record_id: i64,
+    mysql: &brz_mysql::MysqlService,
+    owner_id: i32,
 ) {
     let http = brz_http::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -571,10 +754,36 @@ async fn assert_rebind(
     );
     redis.del(key).await.unwrap();
     assert_eq!(
+        assert_concurrent_assignment(
+            mysql,
+            owner_id,
+            route,
+            call(Some(request.admin), "local-device")
+        )
+        .await,
+        (
+            409,
+            json!({"detail": "Device is online or busy; disconnect it before rebinding"})
+        ),
+    );
+    assert_eq!(
         call(Some(request.admin), "local-device").await,
         (200, json!({"record_id": record_id})),
     );
     assert_eq!(call(Some(request.admin), "local-device").await.0, 409);
+    let rebound = json!({
+        "device_id": "local-device", "name": "App E2E", "device_type": "app",
+        "runtime_instance_id": "runtime-original", "app_device_id": "electron-new",
+    });
+    assert_eq!(
+        event_ack(contender, 4, "device:register", rebound).await,
+        json!({"success": true, "device_id": "local-device", "device_route_id": route}),
+    );
+    assert_only_rebound_socket_receives_work(redis, owner_id, route, original, contender).await;
+
+    // Drop the new presence to exercise the old socket's primary identity
+    // check independently of the replacement socket's cached ID.
+    redis.del(key).await.unwrap();
     let stale = json!({"error": "Stale device connection"});
     assert_eq!(
         event_ack(original, 5, "device:heartbeat", heartbeat.clone()).await,
@@ -601,22 +810,71 @@ async fn assert_rebind(
         json!({"error": "Registration failed: App device ID mismatch for device local-device"}),
     );
     assert_eq!(
-        event_ack(
-            contender,
-            4,
-            "device:register",
-            registration("electron-new")
-        )
-        .await,
-        json!({"success": true, "device_id": "local-device", "device_route_id": route}),
-    );
-    assert_eq!(
-        event_ack(original, 8, "device:heartbeat", heartbeat.clone()).await,
-        stale
-    );
-    assert_eq!(
-        event_ack(contender, 5, "device:heartbeat", heartbeat).await,
+        event_ack(contender, 5, "device:heartbeat", heartbeat.clone()).await,
         json!({"success": true})
     );
+    assert_eq!(
+        event_ack(original, 8, "device:heartbeat", heartbeat).await,
+        stale
+    );
     assert_eq!(online(redis, key).await["socket_id"], contender.socket_id());
+}
+
+async fn assert_only_rebound_socket_receives_work(
+    redis: &RedisService,
+    owner_id: i32,
+    route: &str,
+    old: &PollClient,
+    current: &PollClient,
+) {
+    let data = json!({"task_id": 42});
+    let room = format!("device:{owner_id}:{route}");
+    let publish = |event: &str, room: &str| {
+        wegent_socket_events::socketio_emit::device_execution_message(event, &data, NAMESPACE, room)
+    };
+    let channel = wegent_socket_events::socketio_emit::SOCKETIO_CHANNEL;
+    timeout(Duration::from_secs(3), async {
+        loop {
+            let mut command = cmd("PUBSUB");
+            command.arg("NUMSUB").arg(channel);
+            let (_, subscribers): (String, i64) = redis.command(command).await.unwrap();
+            if subscribers >= 2 {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the application Socket.IO adapters must subscribe");
+    redis
+        .publish::<_, _>(channel, publish("task:execute", &room))
+        .await
+        .unwrap();
+    // This per-connection probe travels through the same FIFO adapter
+    // consumer, so the old socket has seen every prior packet on its room.
+    redis
+        .publish::<_, _>(channel, publish("device-e2e-barrier", old.socket_id()))
+        .await
+        .unwrap();
+    let work = format!("42{NAMESPACE},{}", json!(["task:execute", data]));
+    let barrier = format!("42{NAMESPACE},{}", json!(["device-e2e-barrier", data]));
+    timeout(Duration::from_secs(3), async {
+        loop {
+            let packets = old.poll_packets().await.unwrap();
+            assert!(
+                !packets.contains(&work),
+                "old socket must not receive assigned work"
+            );
+            if packets.contains(&barrier) {
+                break;
+            }
+        }
+        loop {
+            if current.poll_packets().await.unwrap().contains(&work) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the adapter must deliver the probe and send work to the rebound socket");
 }

@@ -564,39 +564,36 @@ pub(crate) fn app_registration_record(json: &Value) -> bool {
 pub(super) async fn app_session_matches(
     state: &AppState,
     session: &super::session::SessionSnapshot,
-) -> bool {
+) -> MysqlResult<bool> {
     let device = &session.device;
     let (Some(route), Some(name)) = (&device.device_id, &device.reported_device_id) else {
-        return false;
+        return Ok(false);
     };
     // Recovery can follow an administrator's committed rebind immediately.
     // Use a primary transaction so replica lag cannot resurrect the old ID.
-    let result: MysqlResult<Vec<DeviceKindRow>> = state
+    let rows: Vec<DeviceKindRow> = state
         .mysql
         .with_transaction(async |tx| {
             tx.fetch_all(DEVICE_BY_NAME_QUERY, (session.user_id, name.as_str()))
                 .await
         })
-        .await;
-    match result {
-        Ok(rows) => rows.iter().any(|row| {
-            row.is_active != 0
-                && spec_string(&row.json, "deviceType") == device.device_type.map(DeviceType::value)
-                && device
-                    .device_type
-                    .is_some_and(|kind| super::device::route_id(row, kind) == *route)
-                && identity_matches_field(
-                    &row.json,
-                    "runtimeInstanceId",
-                    device.runtime_instance_id.as_deref(),
-                )
-                && identity_matches_field(&row.json, "appDeviceId", device.app_device_id.as_deref())
-        }),
-        Err(error) => {
+        .await
+        .inspect_err(|error| {
             tracing::warn!(%error, user_id = session.user_id, "device session identity check failed");
-            false
-        }
-    }
+        })?;
+    Ok(rows.iter().any(|row| {
+        row.is_active != 0
+            && spec_string(&row.json, "deviceType") == device.device_type.map(DeviceType::value)
+            && device
+                .device_type
+                .is_some_and(|kind| super::device::route_id(row, kind) == *route)
+            && identity_matches_field(
+                &row.json,
+                "runtimeInstanceId",
+                device.runtime_instance_id.as_deref(),
+            )
+            && identity_matches_field(&row.json, "appDeviceId", device.app_device_id.as_deref())
+    }))
 }
 
 fn identity_matches_field(json: &Value, field: &str, expected: Option<&str>) -> bool {

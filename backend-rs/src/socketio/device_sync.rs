@@ -640,6 +640,7 @@ pub(crate) fn adapter_emit_job(message: Value) -> Option<AdapterEmit> {
 pub(crate) async fn run_adapter_emit_worker(
     emits: Arc<tokio::sync::Mutex<mpsc::Receiver<AdapterEmit>>>,
     emitters: Arc<SocketEmitters>,
+    state: Arc<AppState>,
 ) {
     loop {
         let emit = {
@@ -649,6 +650,23 @@ pub(crate) async fn run_adapter_emit_worker(
         let Some(emit) = emit else {
             return;
         };
+        let restricted_route = if state.unique_app_device_names
+            && emit.namespace == SYNC_NAMESPACE
+            && emit.event == "task:execute"
+        {
+            emit.room
+                .strip_prefix("device:")
+                .and_then(|room| room.split_once(':'))
+                .and_then(|(owner, route)| Some((owner.parse::<i64>().ok()?, route)))
+        } else {
+            None
+        };
+        if let Some((owner, route)) = restricted_route {
+            emitters
+                .emit_current_device_work(&state, owner, route, &emit)
+                .await;
+            continue;
+        }
         let (sent, failed) = emitters
             .emit_room(
                 &emit.namespace,

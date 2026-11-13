@@ -446,59 +446,25 @@ pub async fn publish_room_event(
 ///
 /// The source reads `get_device_online_info` (a strict
 /// `cache_manager.get_or_raise`) twice around
-/// `DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS`. `get_or_raise` raises on a
-/// transport or decode failure, and a truthy non-dict document raises on its
-/// `.get(...)`; `on_disconnect` catches both at its outer boundary, so they
-/// skip the rest of the cleanup: no grace sleep and no explicit offline
-/// delete. A missing or falsy document is a normal cache miss and keeps the
-/// original flow.
+/// `DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS`.
+/// A transport, decode, or shape error aborts cleanup. A missing document
+/// is a normal cache miss and permits the original disconnect flow.
 async fn online_cleanup_permitted<R: brz_redis::Redis + ?Sized>(
     redis: &R,
     user_id: i64,
     device_id: &str,
     socket_id: &str,
-    grace: Duration,
 ) -> bool {
-    match crate::device_online_state::read_online_state_with(redis, user_id, device_id).await {
-        Ok(online) => match stale_online_state(online, socket_id) {
-            Ok(true) => return false,
-            Ok(false) => {}
-            Err(()) => {
-                tracing::error!(
-                    user_id,
-                    device_id,
-                    "device online state is not a dict; disconnect cleanup skipped"
-                );
-                return false;
-            }
-        },
+    let state = crate::device_online_state::read_online_state_with(redis, user_id, device_id)
+        .await
+        .and_then(|online| stale_online_state(online, socket_id));
+    match state {
+        Ok(stale) => !stale,
         Err(()) => {
             tracing::error!(
                 user_id,
                 device_id,
-                "device online state read failed; disconnect cleanup skipped"
-            );
-            return false;
-        }
-    }
-    tokio::time::sleep(grace).await;
-    match crate::device_online_state::read_online_state_with(redis, user_id, device_id).await {
-        Ok(online) => match stale_online_state(online, socket_id) {
-            Ok(stale) => !stale,
-            Err(()) => {
-                tracing::error!(
-                    user_id,
-                    device_id,
-                    "device online state re-read is not a dict; disconnect cleanup skipped"
-                );
-                false
-            }
-        },
-        Err(()) => {
-            tracing::error!(
-                user_id,
-                device_id,
-                "device online state re-read failed; disconnect cleanup skipped"
+                "device online state could not be checked; disconnect cleanup skipped"
             );
             false
         }
@@ -558,37 +524,40 @@ pub async fn disconnect(
         );
         return;
     };
+    if !online_cleanup_permitted(redis, user_id, &device_id, socket_id).await {
+        return;
+    }
+    // A replacement connection must be able to publish presence during grace.
+    tokio::time::sleep(DISCONNECT_GRACE).await;
     if super::device_heartbeat::requires_current_app_binding(state, &snapshot) {
         let outcome = with_identity_lock(redis, user_id, || async {
-            disconnect_registered(state, runtime, redis, &snapshot, socket_id, &device_id).await;
+            if online_cleanup_permitted(redis, user_id, &device_id, socket_id).await
+                && matches!(
+                    super::device_upsert::app_session_matches(state, &snapshot).await,
+                    Ok(true)
+                )
+            {
+                disconnect_registered(state, runtime, &snapshot, socket_id, &device_id).await;
+            }
             Ok(Reply::payload(Value::Null))
         })
         .await;
         if let Err(error) = outcome {
             tracing::warn!(?error, user_id, "device disconnect failed");
         }
-        return;
+    } else if online_cleanup_permitted(redis, user_id, &device_id, socket_id).await {
+        disconnect_registered(state, runtime, &snapshot, socket_id, &device_id).await;
     }
-    disconnect_registered(state, runtime, redis, &snapshot, socket_id, &device_id).await;
 }
 
 async fn disconnect_registered(
     state: &AppState,
     runtime: &Arc<SocketRuntime>,
-    redis: &brz_redis::RedisService,
     snapshot: &super::session::SessionSnapshot,
     socket_id: &str,
     device_id: &str,
 ) {
     let user_id = snapshot.user_id;
-    if !online_cleanup_permitted(redis, user_id, device_id, socket_id, DISCONNECT_GRACE).await {
-        return;
-    }
-    if super::device_heartbeat::requires_current_app_binding(state, snapshot)
-        && !super::device_upsert::app_session_matches(state, snapshot).await
-    {
-        return;
-    }
     if let Some(online) = device::get_online(state, user_id, device_id).await
         && online["socket_id"] == socket_id
         && let Some(observed) = online["last_heartbeat"]

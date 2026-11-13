@@ -226,6 +226,55 @@ impl SocketEmitters {
         })
     }
 
+    /// A live transport can outlast its Redis presence and an App rebind.
+    /// Deliver assigned work to the published socket, even if older sockets
+    /// still belong to the room.
+    pub(super) async fn emit_current_device_work(
+        &self,
+        state: &crate::state::AppState,
+        owner: i64,
+        route: &str,
+        frame: &super::device_sync::AdapterEmit,
+    ) {
+        let Some(namespace) = self.io.of(EXECUTOR_NAMESPACE) else {
+            return;
+        };
+        let sockets = namespace.to(frame.room.clone()).sockets();
+        let guarded = |socket: &SocketRef| {
+            brz_socket_io::__private::session::<super::session::DeviceSession, _>(socket).is_ok_and(
+                |session| {
+                    super::device_heartbeat::requires_current_app_binding(
+                        state,
+                        &session.snapshot(),
+                    )
+                },
+            )
+        };
+        let current = if sockets.iter().any(&guarded) {
+            crate::device_online_state::read_online_state::<Value>(state, owner, route)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        let current_id = current
+            .as_ref()
+            .and_then(|value| value["socket_id"].as_str());
+        let args = super::device_sync::ArgsTuple(&frame.args);
+        for socket in sockets {
+            let id = socket.id.to_string();
+            if frame.skip_sid.as_deref() == Some(&id)
+                || (guarded(&socket) && current_id != Some(&id))
+            {
+                continue;
+            }
+            if let Err(error) = socket.emit(&frame.event, &args) {
+                tracing::warn!(%error, owner, route, socket_id = id, "device task delivery failed");
+            }
+        }
+    }
+
     /// `_broadcast_device_online`'s local delivery.
     pub async fn device_online(&self, user_id: i64, data: &Value) -> Result<(), EmitterError> {
         self.emit_to_user_rooms(&self.online, user_id, data).await

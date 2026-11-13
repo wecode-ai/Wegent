@@ -161,9 +161,7 @@ pub async fn heartbeat(
     let snapshot = session.snapshot();
     if state.unique_app_device_names {
         let Some(redis) = state.redis.as_ref() else {
-            return Ok(Reply::payload(error_ack(
-                "Device identity is temporarily unavailable",
-            )));
+            return Ok(identity_unavailable());
         };
         return super::device_lifecycle::with_identity_lock(redis, snapshot.user_id, || {
             refresh_session(state, runtime, session, socket_id, payload)
@@ -205,27 +203,22 @@ async fn refresh_session(
     let guarded = requires_current_app_binding(state, &snapshot);
     let online = if guarded {
         let Some(redis) = state.redis.as_ref() else {
-            return Ok(Reply::payload(error_ack(
-                "Device identity is temporarily unavailable",
-            )));
+            return Ok(identity_unavailable());
         };
         match crate::device_online_state::read_online_state_with(redis, user_id, &route_id).await {
             Ok(online) => online,
             Err(()) => {
-                return Ok(Reply::payload(error_ack(
-                    "Device identity is temporarily unavailable",
-                )));
+                return Ok(identity_unavailable());
             }
         }
     } else {
         device::get_online(state, user_id, &route_id).await
     };
-    if let Some(online_socket_id) = online
+    let online_socket_id = online
         .as_ref()
         .and_then(|online| online.get("socket_id"))
-        .and_then(Value::as_str)
-        && online_socket_id != socket_id
-    {
+        .and_then(Value::as_str);
+    if online_socket_id.is_some_and(|current| current != socket_id) {
         tracing::info!(user_id, device = %route_id, "ignoring stale heartbeat");
         return Ok(if guarded {
             stale_binding(&snapshot)
@@ -233,11 +226,15 @@ async fn refresh_session(
             Reply::payload(error_ack("Stale device connection"))
         });
     }
-    if online.is_none()
-        && guarded
-        && !super::device_upsert::app_session_matches(state, &snapshot).await
-    {
-        return Ok(stale_binding(&snapshot));
+    if guarded && online_socket_id.is_none() {
+        if online.is_some() {
+            return Ok(identity_unavailable());
+        }
+        match super::device_upsert::app_session_matches(state, &snapshot).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(stale_binding(&snapshot)),
+            Err(_) => return Ok(identity_unavailable()),
+        }
     }
     if let Some(registered) = snapshot.device.runtime_instance_id.as_deref()
         && payload.runtime_instance_id.as_deref() != Some(registered)
@@ -255,24 +252,15 @@ async fn refresh_session(
     };
     session.apply_heartbeat_transfer(runtime_transfer_host.clone(), runtime_transfer_port);
 
-    if !refresh_heartbeat(
-        state,
-        user_id,
-        &route_id,
-        &payload,
-        runtime_transfer_host.as_deref(),
-        runtime_transfer_port,
-    )
-    .await
-    {
-        // Redis key expired: recreate it from the session, then refresh again.
-        let device_name = snapshot
-            .device
-            .device_name
-            .clone()
-            .unwrap_or_else(|| format!("device-{}", first_eight(&route_id)));
+    let recovered = online.as_ref().and_then(Value::as_object).is_none();
+    let device_name = snapshot
+        .device
+        .device_name
+        .clone()
+        .unwrap_or_else(|| format!("device-{}", first_eight(&route_id)));
+    let online = if recovered {
         tracing::warn!(user_id, device = %route_id, "heartbeat recovery: recreating online key");
-        let online = device::online_payload(
+        device::online_payload(
             socket_id,
             &device_name,
             snapshot.client_ip.as_deref(),
@@ -284,17 +272,24 @@ async fn refresh_session(
                 features: payload.runtime_features.as_ref(),
             },
             &device::local_isoformat(),
-        );
-        device::set_online(state, user_id, &route_id, &online).await;
-        refresh_heartbeat(
-            state,
-            user_id,
-            &route_id,
-            &payload,
-            runtime_transfer_host.as_deref(),
-            runtime_transfer_port,
         )
-        .await;
+    } else {
+        online.expect("checked online document")
+    };
+    let refreshed = refresh_heartbeat(
+        state,
+        user_id,
+        &route_id,
+        online,
+        &payload,
+        runtime_transfer_host.as_deref(),
+        runtime_transfer_port,
+    )
+    .await;
+    if guarded && !refreshed {
+        return Ok(identity_unavailable());
+    }
+    if recovered {
         crate::socketio::device_lifecycle::broadcast_online(
             runtime.emitters(),
             state,
@@ -335,7 +330,7 @@ async fn refresh_session(
     let reconcile_device_id = route_id.clone();
     let auth_sync_runtime = Arc::clone(runtime);
     let auth_sync_device_id = route_id.clone();
-    Ok(Reply::payload(
+    let reply = Reply::payload(
         serde_json::to_value(HeartbeatAck { success: true })
             .expect("a heartbeat acknowledgement serializes"),
     )
@@ -351,7 +346,17 @@ async fn refresh_session(
             device_id: reconcile_device_id,
             needs_confirmation_only: true,
         });
-    }))
+    });
+    Ok(if guarded && recovered {
+        let [device, target] = device_rooms(&snapshot, &route_id);
+        reply.join(device).join(target)
+    } else {
+        reply
+    })
+}
+
+pub(super) fn identity_unavailable() -> Reply<Value> {
+    Reply::payload(error_ack("Device identity is temporarily unavailable"))
 }
 
 pub(super) fn stale_binding(snapshot: &SessionSnapshot) -> Reply<Value> {
@@ -359,15 +364,21 @@ pub(super) fn stale_binding(snapshot: &SessionSnapshot) -> Reply<Value> {
     let Some(route) = snapshot.device.device_id.as_deref() else {
         return reply;
     };
+    let [device, target] = device_rooms(snapshot, route);
+    reply.leave(device).leave(target)
+}
+
+fn device_rooms(snapshot: &SessionSnapshot, route: &str) -> [String; 2] {
     let user_id = snapshot.user_id;
     let target = snapshot
         .device
         .execution_target_id
         .as_deref()
         .unwrap_or(route);
-    reply
-        .leave(format!("device:{user_id}:{route}"))
-        .leave(format!("execution-target:{user_id}:{target}"))
+    [
+        format!("device:{user_id}:{route}"),
+        format!("execution-target:{user_id}:{target}"),
+    ]
 }
 
 /// The online document fields `_set_online` needs during heartbeat recovery.
@@ -383,19 +394,17 @@ fn first_eight(value: &str) -> &str {
     value.get(..8).unwrap_or(value)
 }
 
-/// `LocalDeviceProvider.refresh_heartbeat` (`GET` then `SET ... EX 90`).
+/// Refresh a validated presence document, preserving its registered fields.
 async fn refresh_heartbeat(
     state: &AppState,
     user_id: i64,
     device_id: &str,
+    online: Value,
     payload: &HeartbeatPayload,
     runtime_transfer_host: Option<&str>,
     runtime_transfer_port: Option<i64>,
 ) -> bool {
-    let Some(online) = device::get_online(state, user_id, device_id).await else {
-        return false;
-    };
-    let Some(mut document) = online.as_object().cloned() else {
+    let Value::Object(mut document) = online else {
         return false;
     };
     document.insert(

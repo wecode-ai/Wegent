@@ -1,0 +1,21 @@
+{
+  "revision": "a2d59b84f731",
+  "parents": [
+    "f3a7c9e1b2d4"
+  ],
+  "source": "20261113_a2d59b84f731_index_subtask_device_assignments.py",
+  "upgrade": [
+    {
+      "sql": [
+        "CREATE INDEX ix_subtasks_user_executor_status ON subtasks (user_id, executor_name, status)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX ix_subtasks_user_executor_status ON subtasks"
+      ]
+    }
+  ]
+}
