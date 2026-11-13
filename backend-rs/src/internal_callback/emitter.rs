@@ -549,6 +549,7 @@ pub(crate) async fn emit_terminal_frames_once<R: Redis>(
     event: &ExecutionEvent,
     user_id: Option<i64>,
     result: &Value,
+    task: &super::completion::CollaborationStatus,
     contexts: Option<&Value>,
 ) -> RedisResult<()> {
     let room = format!("task:{}", event.task_id);
@@ -556,9 +557,9 @@ pub(crate) async fn emit_terminal_frames_once<R: Redis>(
         let key = super::completion::notification_key(event.task_id, event.subtask_id, step);
         super::socketio::publish_terminal_emit(redis, &key, name, room, payload).await
     };
-    let (name, status, payload) = match event.event_type.as_str() {
-        "error" => ("chat:error", "FAILED", error_payload(event)),
-        "cancelled" => ("chat:cancelled", "CANCELLED", cancelled_payload(event)),
+    let (name, payload) = match event.event_type.as_str() {
+        "error" => ("chat:error", error_payload(event)),
+        "cancelled" => ("chat:cancelled", cancelled_payload(event)),
         _ => {
             for (index, payload) in
                 block_frames::guidance_created_payloads(event.task_id, event.subtask_id, result)
@@ -573,22 +574,23 @@ pub(crate) async fn emit_terminal_frames_once<R: Redis>(
                 )
                 .await?;
             }
-            (
-                "chat:done",
-                "COMPLETED",
-                done_payload(event, result, contexts),
-            )
+            ("chat:done", done_payload(event, result, contexts))
         }
     };
     publish(name, &room, "result", payload).await?;
     if let Some(user_id) = user_id {
-        publish(
-            "task:status",
-            &format!("user:{user_id}"),
-            "status",
-            task_status_payload(event, status),
-        )
-        .await?;
+        let mut payload = task_status_payload(event, &task.status);
+        if matches!(
+            task.status.as_str(),
+            "PENDING" | "RUNNING" | "PENDING_CONFIRMATION"
+        ) {
+            payload["progress"] = json!(task.progress);
+            payload
+                .as_object_mut()
+                .expect("task status payload")
+                .shift_remove("completed_at");
+        }
+        publish("task:status", &format!("user:{user_id}"), "status", payload).await?;
     }
     Ok(())
 }

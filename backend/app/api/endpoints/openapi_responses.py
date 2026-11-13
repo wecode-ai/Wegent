@@ -1879,11 +1879,11 @@ async def cancel_response(
                     task_crd.status.completedAt = datetime.now()
                     task_crd.status.result = {"value": partial_content or ""}
 
-                task_store.update_json(
-                    db,
-                    task=task_kind,
-                    payload=task_crd.model_dump(mode="json"),
-                )
+                from app.services.chat.storage.db import settle_pipeline_handoff
+
+                document = task_crd.model_dump(mode="json")
+                settle_pipeline_handoff(document, running_subtask_id)
+                task_store.update_json(db, task=task_kind, payload=document)
 
                 db.commit()
                 # The SSE owner may finish as soon as it sees the flag.

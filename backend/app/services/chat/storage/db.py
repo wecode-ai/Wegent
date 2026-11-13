@@ -58,6 +58,7 @@ class PipelineAutoAdvanceIntent:
     completed_subtask_id: int
     advance_info: dict[str, Any]
     next_pair: tuple[int, int] | None = None
+    dispatch_acknowledged: bool = False
 
     @property
     def label(self) -> str:
@@ -67,7 +68,11 @@ class PipelineAutoAdvanceIntent:
         metadata = payload.setdefault("metadata", {})
         labels = metadata.get("labels") or {}
         labels[self.label] = json.dumps(
-            {"advance_info": self.advance_info, "next_pair": self.next_pair}
+            {
+                "advance_info": self.advance_info,
+                "next_pair": self.next_pair,
+                "dispatch_acknowledged": self.dispatch_acknowledged,
+            }
         )
         metadata["labels"] = labels
 
@@ -87,7 +92,21 @@ class PipelineAutoAdvanceIntent:
             completed_subtask_id,
             data["advance_info"],
             (pair[0], pair[1]) if pair is not None else None,
+            data.get("dispatch_acknowledged", False),
         )
+
+
+def settle_pipeline_handoff(payload: dict[str, Any], subtask_id: int) -> None:
+    """Retire a handoff only when its assistant's terminal write can commit."""
+    labels = payload.get("metadata", {}).get("labels") or {}
+    rust_marker = labels.get("pipelinePendingHandoff", "")
+    if rust_marker.rsplit(":", 1)[-1] == str(subtask_id):
+        labels.pop("pipelinePendingHandoff")
+    for key in list(labels):
+        if key.startswith("pipelineAutoAdvance:"):
+            pair = json.loads(labels[key]).get("next_pair")
+            if pair is not None and pair[1] == subtask_id:
+                labels.pop(key)
 
 
 @dataclass
@@ -318,7 +337,9 @@ class DatabaseHandler:
                     db.flush()
                     if expected_status is not None:
                         db.expire(subtask)
-                    update = self._update_task_status_in_session(db, task, subtask_id)
+                    update = self._update_task_status_in_session(
+                        db, task, subtask_id, terminal=True
+                    )
                     if update is None:
                         raise LookupError(
                             "No assistant subtask for terminal task status"
@@ -356,7 +377,12 @@ class DatabaseHandler:
         return TaskStatusUpdateResult()
 
     def _update_task_status_in_session(
-        self, db: Session, task: TaskResource, changed_subtask_id: int | None
+        self,
+        db: Session,
+        task: TaskResource,
+        changed_subtask_id: int | None,
+        *,
+        terminal: bool = False,
     ) -> Optional[TaskStatusUpdateResult]:
         from app.schemas.kind import Task
         from app.services.adapters.collaboration_strategy import (
@@ -416,6 +442,8 @@ class DatabaseHandler:
                 )
 
         payload = task_crd.model_dump(mode="json")
+        if terminal and changed_subtask_id is not None:
+            settle_pipeline_handoff(payload, changed_subtask_id)
         if update_result.auto_advance is not None:
             update_result.auto_advance.write(payload)
         task_stores.task_store.update_json(db, task=task, payload=payload)

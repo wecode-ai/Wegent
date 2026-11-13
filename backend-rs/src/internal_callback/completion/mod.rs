@@ -41,7 +41,9 @@ pub(crate) use delivery::{
     with_owned_lease,
 };
 pub(crate) use events::publish_task_completed_for_owner;
-pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
+pub(crate) use persist::{
+    CollaborationStatus, mark_subtask_running, persist_completed_result, update_task_status,
+};
 pub(crate) use sql::Tables;
 
 /// The deployment inputs one completion flow renders.
@@ -132,7 +134,7 @@ pub(crate) fn terminal_status(event_type: &str) -> Option<&'static str> {
 pub(crate) struct TerminalCompletion {
     pub(crate) result: Option<Value>,
     pub(crate) user_id: Option<i64>,
-    pub(crate) auto_advance: bool,
+    pub(crate) task: CollaborationStatus,
     pub(crate) replay_error: Option<Option<String>>,
     pub(crate) replay_source: Option<Value>,
 }
@@ -323,14 +325,14 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
         return Ok(None);
     };
 
-    let (auto_advance, final_result, replay_error, replay_source) = match transition {
-        persist::Transition::Committed(auto_advance) => (auto_advance, final_result, None, None),
+    let (task, final_result, replay_error, replay_source) = match transition {
+        persist::Transition::Committed(task) => (task, final_result, None, None),
         persist::Transition::Replay {
-            auto_advance,
+            task,
             result,
             error,
             source,
-        } => (auto_advance, result, Some(error), source),
+        } => (task, result, Some(error), source),
     };
     if replay_error.is_none() {
         events::publish_task_completed(
@@ -347,7 +349,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
     Ok(Some(TerminalCompletion {
         result: final_result,
         user_id: None,
-        auto_advance,
+        task,
         replay_error,
         replay_source,
     }))

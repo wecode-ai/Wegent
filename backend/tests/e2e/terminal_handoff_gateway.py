@@ -328,6 +328,11 @@ class TerminalHandoffGateway(unittest.TestCase):
                 json={"matchText": answer, "responseContent": second_answer},
             )
         )
+        socket_messages = self.redis.pubsub()
+        self.addCleanup(socket_messages.close)
+        socket_messages.subscribe("socketio")
+        self._wait_for(lambda: socket_messages.get_message(timeout=0.1))
+
         with self._reject_handoff_write(task_id):
             self._callback(task_id, subtask_id, answer, rust=rust, fail=True)
         before, original = self._snapshot(task_id)
@@ -367,12 +372,50 @@ class TerminalHandoffGateway(unittest.TestCase):
                 self.assertIn("pipelinePendingHandoff", running["metadata"]["labels"])
             self.assertFalse(self._model_requests())
 
-        self._callback(task_id, subtask_id, "late callback payload", rust=rust)
-        duplicate = self._callback(
-            task_id, subtask_id, "duplicate callback payload", rust=rust
+        assistant_id = saved_rows[-1]["id"]
+        self._json(
+            self.model.post(
+                "/stream-rules",
+                json={
+                    "matchText": answer,
+                    "responseContent": second_answer,
+                    "holdDone": True,
+                },
+            )
         )
-        if not rust:
-            self.assertIn("1 skipped", duplicate["message"])
+        lease_key = f"wegent:lock:pipeline-execution:{task_id}:{assistant_id}"
+        with self._reject_terminal_write(task_id, assistant_id):
+            self._callback(task_id, subtask_id, "late callback payload", rust=rust)
+            self._wait_for(lambda: self.redis.get(f"chat:streaming:{assistant_id}"))
+            self._wait_for(
+                lambda: next(
+                    (
+                        r
+                        for r in self._json(self.model.get("/stream-rules"))
+                        if r["matchText"] == answer and r["pendingResponses"]
+                    ),
+                    None,
+                )
+            )
+            inflight, _ = self._snapshot(task_id)
+            intent = "pipelinePendingHandoff" if rust else marker
+            self.assertIn(intent, inflight["metadata"]["labels"])
+            self.assertEqual(inflight["status"]["status"], "RUNNING")
+            if rust:
+                self._assert_intermediate_frames(socket_messages, task_id, subtask_id)
+            self.assertTrue(self.redis.exists(lease_key))
+            release = self._json(
+                self.model.post("/stream-rules/release", json={"matchText": answer})
+            )
+            self.assertEqual(release["released"], 1)
+            # The original worker saw the terminal frame but its write failed.
+            # A new callback must be able to take ownership after it exits.
+            self._wait_for(lambda: not self.redis.exists(lease_key))
+            interrupted, rows = self._snapshot(task_id)
+            self.assertIn(intent, interrupted["metadata"]["labels"])
+            self.assertEqual(rows[-1]["status"], "RUNNING")
+
+        self._callback(task_id, subtask_id, "replayed callback payload", rust=rust)
 
         def completed() -> tuple[dict, list[dict]] | None:
             snapshot = self._snapshot(task_id)
@@ -383,6 +426,12 @@ class TerminalHandoffGateway(unittest.TestCase):
             )
 
         after, rows = self._wait_for(completed)
+        self._wait_for(lambda: not self.redis.exists(lease_key))
+        duplicate = self._callback(
+            task_id, subtask_id, "duplicate callback payload", rust=rust
+        )
+        if not rust:
+            self.assertIn("1 skipped", duplicate["message"])
         self.assertEqual(after["status"]["status"], "COMPLETED", (after, rows))
         self.assertEqual(after["spec"]["currentStage"], 1, after)
         self.assertNotIn(marker, after["metadata"]["labels"])
@@ -394,9 +443,64 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(rows[-1]["parent"], rows[-2]["message"])
         self.assertEqual(rows[-1]["result"]["value"], second_answer)
         captures = self._model_requests()
-        self.assertEqual(len(captures), 1, captures)
-        self.assertIn(answer, json.dumps(captures[0]))
-        self.assertNotIn("late callback payload", json.dumps(captures[0]))
+        self.assertEqual(len(captures), 2, captures)
+        for capture in captures:
+            self.assertIn(answer, json.dumps(capture))
+            self.assertNotIn("late callback payload", json.dumps(capture))
+            self.assertNotIn("replayed callback payload", json.dumps(capture))
+
+    @contextmanager
+    def _reject_terminal_write(self, task_id: int, subtask_id: int) -> Iterator[None]:
+        name = f"{self.marker.replace('-', '_')}_terminal"
+        with SessionLocal() as db:
+            db.execute(
+                text(
+                    f"""
+                CREATE TRIGGER {name} BEFORE UPDATE ON subtasks
+                FOR EACH ROW BEGIN
+                    IF NEW.task_id = {task_id:d} AND NEW.id = {subtask_id:d}
+                       AND NEW.status IN ('COMPLETED','FAILED','CANCELLED') THEN
+                        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'E2E terminal write rejected';
+                    END IF;
+                END
+            """
+                )
+            )
+            db.commit()
+        try:
+            yield
+        finally:
+            with SessionLocal() as db:
+                db.execute(text(f"DROP TRIGGER {name}"))
+                db.commit()
+
+    def _assert_intermediate_frames(
+        self, subscription: Any, task_id: int, subtask_id: int
+    ) -> None:
+        statuses: list[str] = []
+        stage_done: list[int] = []
+
+        def received() -> bool:
+            message = subscription.get_message(timeout=0.1)
+            if message and message["type"] == "message":
+                frame = json.loads(message["data"])
+                data = frame["data"][0]
+                if data.get("task_id") == task_id:
+                    if (
+                        frame["event"] == "task:status"
+                        and frame["room"] == f"user:{self.user_id}"
+                    ):
+                        statuses.append(data["status"])
+                    elif (
+                        frame["event"] == "chat:done"
+                        and frame["room"] == f"task:{task_id}"
+                    ):
+                        stage_done.append(data["subtask_id"])
+            return bool(stage_done and statuses and statuses[-1] == "RUNNING")
+
+        self._wait_for(received)
+        self.assertEqual(statuses, ["PENDING", "RUNNING"])
+        self.assertEqual(stage_done, [subtask_id])
 
     def test_cancel_endpoint_settles_active_sse_with_partial_content(self) -> None:
         self._cancel_active_stream(terminal_arrives_first=False)
@@ -406,7 +510,15 @@ class TerminalHandoffGateway(unittest.TestCase):
     ) -> None:
         self._cancel_active_stream(terminal_arrives_first=True)
 
-    def _cancel_active_stream(self, *, terminal_arrives_first: bool) -> None:
+    def test_sse_error_uses_cancellation_already_committed_in_mysql(self) -> None:
+        self._cancel_active_stream(
+            terminal_arrives_first=True,
+            upstream_error="model failure after partial output",
+        )
+
+    def _cancel_active_stream(
+        self, *, terminal_arrives_first: bool, upstream_error: str | None = None
+    ) -> None:
         self._create_team(pipeline=False)
         partial = f"{self.marker}-partial"
         self._json(
@@ -416,6 +528,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                     "matchText": self.marker,
                     "responseContent": partial,
                     "holdDone": True,
+                    "terminalError": upstream_error,
                 },
             )
         )

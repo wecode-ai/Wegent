@@ -234,6 +234,36 @@ pub fn clear_pending_pipeline_handoff(task: &mut Value) {
     }
 }
 
+pub fn pending_pipeline_parent(task: &Value) -> Option<i64> {
+    task.pointer("/metadata/labels/pipelinePendingHandoff")?
+        .as_str()?
+        .split_once(':')?
+        .0
+        .parse()
+        .ok()
+}
+
+/// Retire an SSE handoff in the transaction that settles its assistant.
+pub fn settle_pipeline_handoff(task: &mut Value, subtask_id: i64) {
+    if let Some(labels) = task["metadata"]["labels"].as_object_mut() {
+        labels.retain(|key, value| {
+            let Some(marker) = value.as_str() else {
+                return true;
+            };
+            if key == PIPELINE_HANDOFF {
+                return marker.rsplit_once(':').and_then(|(_, id)| id.parse().ok())
+                    != Some(subtask_id);
+            }
+            if key.starts_with("pipelineAutoAdvance:")
+                && let Ok(intent) = serde_json::from_str::<Value>(marker)
+            {
+                return intent["next_pair"][1].as_i64() != Some(subtask_id);
+            }
+            true
+        });
+    }
+}
+
 fn pending_handoff(task: &Value, completed: i64, latest: Option<i64>) -> Option<(i64, i64)> {
     let label = task["metadata"]["labels"][PIPELINE_HANDOFF].as_str()?;
     let (parent, pair) = label.split_once(':')?;

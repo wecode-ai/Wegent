@@ -309,9 +309,16 @@ async fn deliver_remote_terminal(
     )
     .await
     .map_err(|error| error.to_string())?;
-    emitter::emit_terminal_frames_once(redis, event, Some(user_id), &result, contexts.as_ref())
-        .await
-        .map_err(|error| error.to_string())?;
+    emitter::emit_terminal_frames_once(
+        redis,
+        event,
+        Some(user_id),
+        &result,
+        &committed.task,
+        contexts.as_ref(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     let raw_key = completion::notification_key(task_id, subtask_id, "device-response");
     crate::internal_callback::publish_terminal_emit(
         redis,

@@ -488,6 +488,17 @@ impl Bridge {
     /// shared by the chat-shell and callback event sources. Returns `true` when
     /// the event ended the stream.
     async fn handle_parsed(&mut self, mut parsed: ExecutionEvent) -> bool {
+        if parsed.event_type == "error" && !self.callback_mode() {
+            self.fail_with_order(
+                BridgeFailure {
+                    message: parsed.error.unwrap_or_else(|| "Unknown error".to_string()),
+                    error_code: None,
+                },
+                FailureOrder::CompletionFirst,
+            )
+            .await;
+            return true;
+        }
         if let Some(status) = completion::terminal_status(&parsed.event_type) {
             self.finish_terminal(&mut parsed, status).await;
             return true;
@@ -552,14 +563,6 @@ impl Bridge {
             "done" => self
                 .state
                 .result_blocks(&mut self.queue, parsed.result.as_ref()),
-            "error" => {
-                let message = parsed
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "Unknown error".to_string());
-                self.fail(BridgeFailure::generic(message)).await;
-                return true;
-            }
             _ => {}
         }
         for chunk in chunks {
@@ -770,10 +773,17 @@ impl Bridge {
                 error_code,
             )
             .await;
-        if !matches!(completion, Ok(Some(_))) {
-            self.finish_persistence_error("Could not save the execution result")
-                .await;
-            return;
+        match completion {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                self.finish_committed_winner().await;
+                return;
+            }
+            Err(_) => {
+                self.finish_persistence_error("Could not save the execution result")
+                    .await;
+                return;
+            }
         }
         // `raw_chat_stream`'s per-event cancellation read for the failed event.
         let _ = self.cancelled().await;

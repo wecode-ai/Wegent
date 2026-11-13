@@ -197,7 +197,7 @@ async fn deliver_terminal_callback(
     let Some(completion::TerminalCompletion {
         result: final_result,
         user_id,
-        auto_advance,
+        task,
         replay_error,
         ..
     }) = completion
@@ -207,7 +207,7 @@ async fn deliver_terminal_callback(
     // `_update_task_status_sync` only schedules the next turn when
     // `get_auto_advance_info` produced an intent; every other completion,
     // including a non-pipeline team, stops after persisting its status.
-    let advance = if auto_advance {
+    let advance = if task.auto_advance {
         state
             .task_store
             .advance_pipeline_stage(&state.mysql, event.task_id, event.subtask_id)
@@ -242,7 +242,7 @@ async fn deliver_terminal_callback(
     };
     // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
     // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
-    emitter::emit_terminal_frames_once(redis, event, user_id, &result, contexts.as_ref())
+    emitter::emit_terminal_frames_once(redis, event, user_id, &result, &task, contexts.as_ref())
         .await
         .map_err(|error| {
             tracing::warn!(%error, "callback terminal frames failed");

@@ -64,6 +64,7 @@ interface StreamRule {
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
   holdDone?: boolean
+  terminalError?: string
   doneDelayMs?: number
   holdResponse?: boolean
 }
@@ -397,7 +398,8 @@ function writeStreamingResponse(
   content: string,
   chunkDelayMs: number,
   doneDelayMs: number,
-  doneGate?: MockResponseGate
+  doneGate?: MockResponseGate,
+  terminalError?: string
 ): void {
   const chunks = content.split(' ')
   let index = 0
@@ -413,7 +415,12 @@ function writeStreamingResponse(
 
     const finish = async () => {
       await doneGate?.wait(res)
-      if (!res.destroyed) writeSseDone(res)
+      if (res.destroyed) return
+      if (terminalError) {
+        res.end(`data: ${JSON.stringify({ error: { message: terminalError } })}\n\n`)
+      } else {
+        writeSseDone(res)
+      }
     }
     setTimeout(() => void finish(), doneDelayMs)
   }
@@ -769,7 +776,8 @@ const server = http.createServer((req, res) => {
           responseContent,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
           scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
-          streamRule?.holdDone ? responseGate : undefined
+          streamRule?.holdDone ? responseGate : undefined,
+          streamRule?.terminalError
         )
       } else {
         // Return non-streaming response

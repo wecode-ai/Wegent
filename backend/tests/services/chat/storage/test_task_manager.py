@@ -75,7 +75,7 @@ def test_database_handler_updates_subtask_status_through_store():
         )
 
     get_subtask_mock.assert_called_once_with(db, subtask_id=1861)
-    update_task_mock.assert_called_once_with(db, task, 1861)
+    update_task_mock.assert_called_once_with(db, task, 1861, terminal=True)
     update_kwargs = update_mock.call_args.kwargs
     assert update_kwargs["subtask"] is subtask
     assert update_kwargs["status"] == SubtaskStatus.COMPLETED

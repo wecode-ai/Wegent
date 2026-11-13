@@ -593,7 +593,16 @@ where
                             content: String::new(),
                         })
                     }
-                    None => collect.await,
+                    None => {
+                        crate::internal_callback::session::cleanup_streaming_state(
+                            redis,
+                            job.subtask_id,
+                            None,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                        collect.await
+                    }
                 }
             },
         )

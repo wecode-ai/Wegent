@@ -87,7 +87,7 @@ class ExecutionDispatcher:
         emitter: Optional[ResultEmitter] = None,
         *,
         already_running: bool = False,
-        on_accepted: Callable[[], None] | None = None,
+        on_accepted: Callable[[bool], None] | None = None,
     ) -> None:
         """Unified dispatch entry point for task execution.
 
@@ -118,11 +118,12 @@ class ExecutionDispatcher:
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
         wrapped_emitter = None
+        recoverable = on_accepted is not None
 
-        def accept() -> None:
+        def accept(executor_owns_execution: bool = False) -> None:
             nonlocal on_accepted
             if on_accepted is not None:
-                on_accepted()
+                on_accepted(executor_owns_execution)
                 on_accepted = None
 
         try:
@@ -196,15 +197,18 @@ class ExecutionDispatcher:
                     await self._dispatch_http_callback(request, target, wrapped_emitter)
                 else:
                     await self._dispatch_http_callback(
-                        request, target, wrapped_emitter, on_accepted=accept
+                        request,
+                        target,
+                        wrapped_emitter,
+                        on_accepted=lambda: accept(True),
                     )
             accept()
         except asyncio.CancelledError:
             # A cancelled SSE owner has already closed its stream. Persist the
-            # terminal state before closing the emitter, including lease loss.
-            # Remote dispatch modes retain their executor-owned lifecycle.
+            # terminal state before closing the emitter. Recoverable pipeline
+            # jobs keep their handoff on worker cancellation or lease loss.
             if (
-                on_accepted is None
+                not recoverable
                 and wrapped_emitter is not None
                 and target.mode == CommunicationMode.SSE
             ):
@@ -235,7 +239,7 @@ class ExecutionDispatcher:
                 f"subtask_id={request.subtask_id}, error={e}"
             )
             # Try to emit error to frontend if emitter is available
-            if wrapped_emitter is not None and on_accepted is None:
+            if wrapped_emitter is not None and not recoverable:
                 try:
                     from shared.utils.error_classifier import (
                         classify_error,

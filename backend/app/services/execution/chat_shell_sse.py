@@ -217,6 +217,7 @@ async def _dispatch_chat_shell_sse(
         get_trace_context_for_propagation,
     )
 
+    recoverable = on_accepted is not None
     request_id = openai_request["metadata"]["request_id"]
 
     # OpenAI client appends /responses to base_url, so we need to include /v1
@@ -481,6 +482,8 @@ async def _dispatch_chat_shell_sse(
                         "Chat Shell SSE stream ended without terminal event "
                         f"after {event_count} events"
                     )
+                    if recoverable:
+                        raise RuntimeError(error_message)
                     logger.warning(
                         "[ExecutionDispatcher] SSE stream ended without "
                         "terminal event: task_id=%d, subtask_id=%d, "

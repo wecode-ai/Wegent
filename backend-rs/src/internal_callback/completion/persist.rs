@@ -194,15 +194,14 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
     ))
     .await?
     .map(|transition| match transition {
-        Transition::Committed(auto_advance) => auto_advance,
-        Transition::Replay { auto_advance, .. } => auto_advance,
+        Transition::Committed(task) | Transition::Replay { task, .. } => task.auto_advance,
     }))
 }
 
 pub(super) enum Transition {
-    Committed(bool),
+    Committed(CollaborationStatus),
     Replay {
-        auto_advance: bool,
+        task: CollaborationStatus,
         result: Option<Value>,
         error: Option<String>,
         source: Option<Value>,
@@ -210,7 +209,7 @@ pub(super) enum Transition {
 }
 
 enum PendingTransition {
-    Written(MysqlRow, Option<String>, bool),
+    Written(MysqlRow, Option<String>, CollaborationStatus),
     Replay(Transition),
 }
 
@@ -250,19 +249,32 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         if let Some((delivery, _)) = delivery
             && subtask_column::<String>(&row, "status").as_deref() == Some(&normalized_status)
             && let Some(Json(task_json)) = task_column::<Json<Value>>(&task, "json")
-            && let Some(marker) =
-                task_json["metadata"]["labels"][delivery.label(subtask_id)].as_str()
         {
-            let saved = serde_json::from_str::<Value>(marker).ok();
-            return Ok(Some(PendingTransition::Replay(Transition::Replay {
-                auto_advance: marker == "advance"
-                    || saved
-                        .as_ref()
-                        .is_some_and(|value| value["kind"] == "advance"),
-                result: subtask_column::<Json<Value>>(&row, "result").map(|value| value.0),
-                error: subtask_column::<String>(&row, "error_message"),
-                source: saved.and_then(|value| value.get("event").cloned()),
-            })));
+            let marker = task_json["metadata"]["labels"][delivery.label(subtask_id)].as_str();
+            let pending_execution = matches!(delivery, Delivery::Callback)
+                && normalized_status == "COMPLETED"
+                && wegent_task_store::pending_pipeline_parent(&task_json) == Some(subtask_id);
+            if marker.is_some() || pending_execution {
+                let saved = marker.and_then(|marker| serde_json::from_str::<Value>(marker).ok());
+                let status = &task_json["status"];
+                return Ok(Some(PendingTransition::Replay(Transition::Replay {
+                    task: CollaborationStatus {
+                        status: status["status"]
+                            .as_str()
+                            .unwrap_or(&normalized_status)
+                            .to_owned(),
+                        progress: status["progress"].as_i64(),
+                        auto_advance: pending_execution
+                            || marker == Some("advance")
+                            || saved
+                                .as_ref()
+                                .is_some_and(|value| value["kind"] == "advance"),
+                    },
+                    result: subtask_column::<Json<Value>>(&row, "result").map(|value| value.0),
+                    error: subtask_column::<String>(&row, "error_message"),
+                    source: saved.and_then(|value| value.get("event").cloned()),
+                })));
+            }
         }
         let Some((row, metrics_message)) = update_subtask_status_on(
             ctx,
@@ -280,15 +292,15 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         else {
             return Ok(None);
         };
-        let auto_advance =
-            update_locked_task_status(ctx, transaction, task, task_id, subtask_id, delivery)
+        let task_status =
+            update_locked_task_status(ctx, transaction, task, task_id, subtask_id, delivery, true)
                 .await?
                 .ok_or(MysqlError::RowNotFound)?;
         ready_to_commit.store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(Some(PendingTransition::Written(
             row,
             metrics_message,
-            auto_advance,
+            task_status,
         )))
     };
     let committed = match crate::transaction_outcome::run_mysql_with_deadlock_retry(
@@ -311,7 +323,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         }
         outcome => outcome?,
     };
-    let (row, metrics_message, auto_advance) = match committed {
+    let (row, metrics_message, task_status) = match committed {
         None => return Ok(None),
         Some(PendingTransition::Replay(transition)) => return Ok(Some(transition)),
         Some(PendingTransition::Written(row, message, advance)) => (row, message, advance),
@@ -325,7 +337,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
     {
         tracing::warn!(%failure, task_id, subtask_id, "callback streaming cleanup failed");
     }
-    Ok(Some(Transition::Committed(auto_advance)))
+    Ok(Some(Transition::Committed(task_status)))
 }
 
 pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
@@ -508,10 +520,10 @@ pub(crate) async fn update_task_status<M: Mysql, R: Redis>(
 /// `get_task_status_on_subtask_complete` renders the status, and
 /// `get_auto_advance_info` decides whether `_update_task_status_sync` schedules
 /// the next pipeline turn (`app/services/adapters/collaboration_strategy.py`).
-struct CollaborationStatus {
-    status: String,
-    progress: Option<i64>,
-    auto_advance: bool,
+pub(crate) struct CollaborationStatus {
+    pub(crate) status: String,
+    pub(crate) progress: Option<i64>,
+    pub(crate) auto_advance: bool,
 }
 
 /// `CollaborationStrategyFactory.get_strategy_for_task` plus

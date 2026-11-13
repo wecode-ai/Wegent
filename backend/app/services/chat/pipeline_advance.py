@@ -107,7 +107,6 @@ async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             user_subtask_id=result.user_subtask.id,
             previous_bot_id=_previous_bot_id(db, pending.completed_subtask_id),
         )
-        await _emit_task_status(task.id, "RUNNING", 0)
         await _emit_user_message(
             db=db,
             user_subtask=result.user_subtask,
@@ -117,11 +116,13 @@ async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             task_room=f"task:{task.id}",
             skip_sid=None,
         )
-        # Keep the durable handoff until the receiving service accepts.
         if not _claim_auto_advance(pending):
             return False
-        await _dispatch_until_accepted(request)
-        _acknowledge_auto_advance(pending)
+        await _emit_task_status(task.id, "RUNNING", 0, user_id=user.id)
+        executor_owns_execution = await _dispatch_until_accepted(request)
+        _acknowledge_auto_advance(pending, executor_owns_execution)
+        if pending.dispatch_acknowledged:
+            return False
         try:
             schedule_chat_memory_save(
                 db, task, result.user_subtask, user, team, existing_subtasks
@@ -275,20 +276,29 @@ def _claim_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
     return claimed
 
 
-def _acknowledge_auto_advance(intent: PipelineAutoAdvanceIntent) -> None:
+def _acknowledge_auto_advance(
+    intent: PipelineAutoAdvanceIntent, executor_owns_execution: bool
+) -> None:
     with SessionLocal() as db:
         task = task_store.get_by_id_for_update(db, task_id=intent.task_id)
         if task:
             pending = PipelineAutoAdvanceIntent.read(task, intent.completed_subtask_id)
             if pending and pending.next_pair == intent.next_pair:
-                _clear_auto_advance(db, task, intent)
+                if executor_owns_execution:
+                    _clear_auto_advance(db, task, intent)
+                else:
+                    pending.dispatch_acknowledged = True
+                    document = task.json
+                    pending.write(document)
+                    task_store.update_json(db, task=task, payload=document)
                 db.commit()
 
 
-async def _dispatch_until_accepted(request: "ExecutionRequest") -> None:
+async def _dispatch_until_accepted(request: "ExecutionRequest") -> bool:
+    from app.services.chat.storage.session import session_manager
     from app.services.execution import execution_dispatcher
 
-    accepted = asyncio.Event()
+    accepted: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
     request.request_id = f"pipeline-{request.task_id}-{request.subtask_id}"
 
     async def dispatch() -> None:
@@ -302,11 +312,13 @@ async def _dispatch_until_accepted(request: "ExecutionRequest") -> None:
                     )
                     running = current and current.status == SubtaskStatus.RUNNING
                 if not running:
-                    accepted.set()
+                    accepted.set_result(False)
                     return
+                # The previous stream may have left a partial result behind.
+                await session_manager.cleanup_streaming_state(request.subtask_id)
                 execution = asyncio.create_task(
                     execution_dispatcher.dispatch(
-                        request, already_running=True, on_accepted=accepted.set
+                        request, already_running=True, on_accepted=accepted.set_result
                     )
                 )
                 try:
@@ -331,19 +343,17 @@ async def _dispatch_until_accepted(request: "ExecutionRequest") -> None:
             )
 
     job.add_done_callback(log_execution_failure)
-    wait = asyncio.create_task(accepted.wait())
     try:
-        await asyncio.wait({job, wait}, return_when=asyncio.FIRST_COMPLETED)
-        if not accepted.is_set():
-            await job
-            raise RuntimeError("Pipeline execution did not acknowledge dispatch")
+        await asyncio.wait({job, accepted}, return_when=asyncio.FIRST_COMPLETED)
+        if accepted.done():
+            return accepted.result()
+        await job
+        raise RuntimeError("Pipeline execution did not acknowledge dispatch")
     except BaseException:
-        if not accepted.is_set():
+        if not accepted.done():
             job.cancel()
             await asyncio.gather(job, return_exceptions=True)
         raise
-    finally:
-        wait.cancel()
 
 
 async def advance_pipeline_stage_and_send(
@@ -565,17 +575,18 @@ def _link_payload_contexts(
     )
 
 
-async def _emit_task_status(task_id: int, status: str, progress: int) -> None:
-    await get_sio().emit(
-        ServerEvents.TASK_STATUS,
-        {
-            "task_id": task_id,
-            "status": status,
-            "progress": progress,
-        },
-        room=f"task:{task_id}",
-        namespace="/chat",
+async def _emit_task_status(
+    task_id: int, status: str, progress: int, *, user_id: int | None = None
+) -> None:
+    sio = get_sio()
+    payload = {"task_id": task_id, "status": status, "progress": progress}
+    await sio.emit(
+        ServerEvents.TASK_STATUS, payload, room=f"task:{task_id}", namespace="/chat"
     )
+    if user_id is not None:
+        await sio.emit(
+            ServerEvents.TASK_STATUS, payload, room=f"user:{user_id}", namespace="/chat"
+        )
 
 
 async def _emit_user_message(

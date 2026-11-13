@@ -21,21 +21,16 @@ pub(super) async fn dispatch_next(
     advance: PipelineStageAdvance,
 ) -> Result<(), FastApiError> {
     if let Some(redis) = state.redis.as_ref() {
-        super::socketio::publish_emit(
-            redis,
-            "task:status",
+        let key = super::completion::notification_key(
             advance.task_id,
-            json!({"task_id": advance.task_id,"status":"RUNNING","progress":0}),
-        )
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "pipeline task status emit failed");
-            FastApiError::internal()
-        })?;
-        super::socketio::publish_emit(
+            advance.pair.assistant_subtask_id,
+            "pipeline-message",
+        );
+        super::socketio::publish_terminal_emit(
             redis,
+            &key,
             "chat:message",
-            advance.task_id,
+            &format!("task:{}", advance.task_id),
             user_message(&advance),
         )
         .await
@@ -223,6 +218,7 @@ async fn claim_and_dispatch(
     advance: &PipelineStageAdvance,
     job: DefaultDispatchJob,
 ) -> Result<(), FastApiError> {
+    let executor_owns_execution = matches!(&job, DefaultDispatchJob::Executor { .. });
     let permit = state.responses_dispatch.reserve().ok_or_else(|| {
         tracing::warn!(
             task_id = advance.task_id,
@@ -261,6 +257,31 @@ async fn claim_and_dispatch(
     if !running {
         return Ok(());
     }
+    if let Some(redis) = state.redis.as_ref() {
+        let payload = json!({"task_id": advance.task_id,"status":"RUNNING","progress":0});
+        for room in [
+            format!("task:{}", advance.task_id),
+            format!("user:{}", advance.user_id),
+        ] {
+            let key = super::completion::notification_key(
+                advance.task_id,
+                advance.pair.assistant_subtask_id,
+                &format!("pipeline-running:{room}"),
+            );
+            super::socketio::publish_terminal_emit(
+                redis,
+                &key,
+                "task:status",
+                &room,
+                payload.clone(),
+            )
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "pipeline task status emit failed");
+                FastApiError::internal()
+            })?;
+        }
+    }
     let (accepted, acknowledgement) = tokio::sync::oneshot::channel();
     permit.send(DefaultDispatchJob::Pipeline(Box::new(job), accepted));
     acknowledgement
@@ -270,7 +291,10 @@ async fn claim_and_dispatch(
             tracing::warn!(%error, task_id = advance.task_id, "pipeline dispatch was not accepted");
             FastApiError::internal()
         })?;
-    clear_dispatched_pair(state, advance).await
+    if executor_owns_execution {
+        clear_dispatched_pair(state, advance).await?;
+    }
+    Ok(())
 }
 
 async fn clear_dispatched_pair(

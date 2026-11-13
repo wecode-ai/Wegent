@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 
 use super::sql;
 use super::{
-    Completion, Delivery, collaboration_status, complete_task_model, delivery, local_datetime,
-    local_isoformat, render_task_crd, subtask_column, task_column,
+    CollaborationStatus, Completion, Delivery, collaboration_status, complete_task_model, delivery,
+    local_datetime, local_isoformat, render_task_crd, subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
 
@@ -25,7 +25,11 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let Some(task) = lock_task(mysql, ctx.tables.tasks, task_id).await? else {
         return Ok(None);
     };
-    update_locked_task_status(ctx, mysql, task, task_id, changed_subtask_id, None).await
+    Ok(
+        update_locked_task_status(ctx, mysql, task, task_id, changed_subtask_id, None, false)
+            .await?
+            .map(|task| task.auto_advance),
+    )
 }
 
 pub(super) async fn lock_task<T: MysqlTransaction>(
@@ -47,7 +51,8 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
     task_id: i64,
     changed_subtask_id: i64,
     pending_delivery: Option<(Delivery, Option<&Value>)>,
-) -> MysqlResult<Option<bool>> {
+    terminal: bool,
+) -> MysqlResult<Option<CollaborationStatus>> {
     let task_table = ctx.tables.tasks;
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
@@ -99,7 +104,7 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
     };
     let decision =
         collaboration_status(mysql, task_table, task_id, &payload, last, &last_status).await?;
-    let new_status = decision.status;
+    let new_status = &decision.status;
     let progress = decision.progress;
 
     let now = local_isoformat();
@@ -128,6 +133,9 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
 
     complete_task_model(&mut payload);
     let mut document = Value::Object(render_task_crd(payload));
+    if terminal {
+        wegent_task_store::settle_pipeline_handoff(&mut document, changed_subtask_id);
+    }
     if let Some((pending, payload)) = pending_delivery {
         let marker = if decision.auto_advance {
             "advance"
@@ -145,5 +153,5 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
     mysql
         .execute(sql, (json_text, row_updated_at, task_id))
         .await?;
-    Ok(Some(decision.auto_advance))
+    Ok(Some(decision))
 }

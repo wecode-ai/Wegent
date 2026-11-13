@@ -187,7 +187,7 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     // A package job starts after the public request has returned or subscribed.
     // Clearing its flag here could erase a cancellation admitted while queued.
     let image_stream = super::package_runtime::is_image_target(target_url);
-    if !ctx.package_mode && !image_stream {
+    if !ctx.package_mode && !image_stream && ctx.acceptance.is_none() {
         let _ = redis.del(cancel_key.as_str()).await;
     }
 
@@ -231,7 +231,9 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
                 let _ = sender.send(Err(failure.message.clone()));
                 return Err(failure.message);
             }
-            if failure.persist {
+            // An automatic handoff can replay this stream after transport loss.
+            // Explicit upstream terminal frames still settle through complete().
+            if failure.persist && ctx.acceptance.is_none() {
                 Box::pin(complete_failure(ctx, request, &failure)).await;
             }
             Err(failure.message)
@@ -710,15 +712,15 @@ async fn drain_with_cancel_poll<F: Future<Output = ()>>(
     true
 }
 
-/// Package execution fans out to Socket.IO and callback subscribers just like
-/// the in-process Python emitter, through the same handler as executor events.
+/// Package execution and automatic pipeline stages use the callback's durable
+/// terminal and notification path.
 async fn emit_package_event<M: Mysql, R: Redis>(
     ctx: &ConsumerContext<'_, M, R>,
     event: &ExecutionEvent,
 ) -> Result<(), Failure> {
-    let app = ctx
-        .app
-        .ok_or_else(|| Failure::persisted("Package dispatch lost application state".to_owned()))?;
+    let app = ctx.app.ok_or_else(|| {
+        Failure::persisted("Chat Shell dispatch lost application state".to_owned())
+    })?;
     crate::internal_callback::process_execution_event(
         app,
         event.clone(),
@@ -731,7 +733,7 @@ async fn emit_package_event<M: Mysql, R: Redis>(
         if completion::terminal_status(&event.event_type).is_some() {
             Failure::terminal_persistence("Could not save the execution result")
         } else {
-            Failure::persisted("Package event processing failed".into())
+            Failure::persisted("Chat Shell event processing failed".into())
         }
     })
 }
@@ -741,8 +743,8 @@ async fn complete<M: Mysql, R: Redis>(
     ctx: &ConsumerContext<'_, M, R>,
     event: &ExecutionEvent,
 ) -> Result<(), Failure> {
-    if ctx.package_mode {
-        return emit_package_event(ctx, event).await;
+    if ctx.package_mode || ctx.acceptance.is_some() {
+        return Box::pin(emit_package_event(ctx, event)).await;
     }
     let Some(redis) = ctx.redis else {
         return Ok(());
