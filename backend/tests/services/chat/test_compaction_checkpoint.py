@@ -238,20 +238,26 @@ def test_bounded_history_keeps_old_checkpoint_without_loading_all(monkeypatch, l
 
 
 @pytest.mark.parametrize("limit", [0, -1])
-def test_disabled_history_does_not_resolve(monkeypatch, limit):
+def test_nonpositive_shared_limit_preserves_checkpoint_scope(monkeypatch, limit):
     from app.services.chat import compaction_checkpoint as cc
 
     monkeypatch.setattr(
         cc.task_fork_history_resolver,
         "resolve_for_task",
-        lambda *a, **k: pytest.fail("disabled history must not read DB"),
+        lambda *a, **k: [
+            SimpleNamespace(subtask=_assistant(1, [])),
+            SimpleNamespace(
+                subtask=_assistant(
+                    2, [{"additional_kwargs": {"summary_compacted": True}}]
+                )
+            ),
+            SimpleNamespace(subtask=_assistant(3, [])),
+        ],
     )
-    assert (
-        cc.resolve_history_subtasks(
-            db=None, task_id=1, user_id=7, limit=limit, from_latest_compaction=True
-        )
-        == []
+    result = cc.resolve_history_subtasks(
+        db=None, task_id=1, user_id=7, limit=limit, from_latest_compaction=True
     )
+    assert [row.message_id for row in result] == [2, 3]
 
 
 @pytest.mark.parametrize("forked", [False, True])

@@ -95,7 +95,7 @@ def resolve_history_subtasks(
     """
     statuses = tuple(statuses) if statuses else _DEFAULT_STATUSES
     if limit is not None and limit <= 0:
-        return []
+        limit = None
     checkpoint = None
     if limit is not None and from_latest_compaction:
         checkpoint = _resolve_checkpoint(

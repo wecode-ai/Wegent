@@ -9,6 +9,7 @@ import pytest
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.task_fork_history import task_fork_history_resolver
+from app.stores.tasks.history_window import HistoryTaskWindow
 
 
 def _task(task_id: int, user_id: int, fork: dict | None = None) -> TaskResource:
@@ -105,23 +106,22 @@ def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
         lambda db, task_id, owner_user_id=None: root if task_id == 1 else None,
     )
 
-    def list_by_task_ordered(
+    def list_history_window(
         _db,
         *,
-        task_id,
-        owner_user_id=None,
-        recent_limit=None,
+        tasks,
+        limit,
         statuses=None,
         roles=None,
-        before_message_id=None,
+        after_message_id=None,
         summary_checkpoint_only=False,
     ):
-        calls.append((task_id, owner_user_id, recent_limit, statuses, roles))
-        return local if recent_limit is None else local[-recent_limit:]
+        calls.append((tasks, limit, statuses, roles))
+        return local[-limit:]
 
     monkeypatch.setattr(
-        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        list_by_task_ordered,
+        "app.services.task_fork_history.subtask_store.list_history_window",
+        list_history_window,
     )
 
     items = task_fork_history_resolver.resolve_for_task(
@@ -131,7 +131,7 @@ def test_resolve_for_task_passes_recent_limit_to_store(monkeypatch):
         limit=2,
     )
 
-    assert calls == [(1, 7, 2, None, None)]
+    assert calls == [([HistoryTaskWindow(1, 7)], 2, None, None)]
     assert [item.subtask.id for item in items] == [1, 2]
 
 
@@ -149,21 +149,19 @@ def test_resolve_for_fork_limits_parent_reads_after_cutoff(monkeypatch):
         lambda db, task_id, owner_user_id=None: {1: root, 2: fork}.get(task_id),
     )
 
-    def list_by_task_ordered(
+    def list_history_window(
         _db,
         *,
-        task_id,
-        owner_user_id=None,
-        recent_limit=None,
-        before_message_id=None,
+        tasks,
+        limit,
         **kwargs,
     ):
-        calls.append((task_id, recent_limit, before_message_id))
+        calls.append((tasks, limit))
         return []
 
     monkeypatch.setattr(
-        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        list_by_task_ordered,
+        "app.services.task_fork_history.subtask_store.list_history_window",
+        list_history_window,
     )
 
     task_fork_history_resolver.resolve_for_task(
@@ -173,26 +171,18 @@ def test_resolve_for_fork_limits_parent_reads_after_cutoff(monkeypatch):
         limit=2,
     )
 
-    assert calls == [(1, 2, 4), (2, 2, None)]
+    assert calls == [([HistoryTaskWindow(1, 7, 4), HistoryTaskWindow(2, 7)], 2)]
 
 
 @pytest.mark.parametrize("limit", [0, -1])
-def test_resolve_for_task_with_nonpositive_limit_skips_reads(monkeypatch, limit):
-    monkeypatch.setattr(
-        "app.services.task_fork_history.task_store.get_by_id",
-        lambda *args, **kwargs: pytest.fail("disabled history must not read tasks"),
+def test_nonpositive_shared_limit_preserves_unlimited_history(test_db, limit):
+    test_db.add(_task(1, 7))
+    test_db.add_all([_subtask(i, 1, 7, i, SubtaskRole.USER) for i in range(1, 61)])
+    test_db.flush()
+    items = task_fork_history_resolver.resolve_for_task(
+        db=test_db, task_id=1, user_id=7, limit=limit
     )
-    monkeypatch.setattr(
-        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda *args, **kwargs: pytest.fail("disabled history must not read subtasks"),
-    )
-
-    assert (
-        task_fork_history_resolver.resolve_for_task(
-            db=None, task_id=1, user_id=7, limit=limit
-        )
-        == []
-    )
+    assert [item.subtask.id for item in items] == list(range(1, 61))
 
 
 def test_bounded_fork_history_keeps_messages_before_parent_cutoff(test_db):
@@ -230,7 +220,7 @@ def test_bounded_history_keeps_messages_before_requested_message(test_db):
     assert [item.subtask.message_id for item in items] == [2, 3]
 
 
-def test_resolve_for_fork_with_zero_limit_returns_no_history(monkeypatch):
+def test_resolve_for_fork_with_zero_limit_preserves_inherited_history(test_db):
     root = _task(1, 7)
     fork = _task(
         2,
@@ -238,24 +228,18 @@ def test_resolve_for_fork_with_zero_limit_returns_no_history(monkeypatch):
         fork={"sourceTaskId": 1, "afterMessageId": 2, "rootTaskId": 1},
     )
 
-    monkeypatch.setattr(
-        "app.services.task_fork_history.task_store.get_by_id",
-        lambda db, task_id, owner_user_id=None: {1: root, 2: fork}.get(task_id),
+    test_db.add_all(
+        [root, fork] + [_subtask(i, 1, 7, i, SubtaskRole.USER) for i in range(1, 4)]
     )
-    monkeypatch.setattr(
-        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda *args, **kwargs: pytest.fail("zero limit must not read history"),
+    test_db.flush()
+    items = task_fork_history_resolver.resolve_for_task(
+        db=test_db,
+        task_id=2,
+        user_id=7,
+        limit=0,
     )
-
-    assert (
-        task_fork_history_resolver.resolve_for_task(
-            db=None,
-            task_id=2,
-            user_id=7,
-            limit=0,
-        )
-        == []
-    )
+    assert [item.subtask.id for item in items] == [1, 2]
+    assert all(item.inherited for item in items)
 
 
 @pytest.mark.parametrize("before_message_id", [None, 7])
@@ -297,7 +281,7 @@ def test_bounded_fork_memory_only_loads_eligible_window(
     expected_ids = [5, 6] if before_message_id else [6, 7]
     assert [item.subtask.id for item in items] == expected_ids
     assert all(item.inherited for item in items)
-    assert loaded_ids == [expected_ids, []]
+    assert loaded_ids == [expected_ids]
 
 
 @pytest.mark.parametrize(
@@ -318,13 +302,13 @@ def test_nested_fork_queries_keep_limit_and_strictest_message_bound(
         lambda db, task_id, owner_user_id=None: tasks[task_id],
     )
 
-    def list_by_task_ordered(db, **kwargs):
+    def list_history_window(db, **kwargs):
         calls.append(kwargs)
         return []
 
     monkeypatch.setattr(
-        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        list_by_task_ordered,
+        "app.services.task_fork_history.subtask_store.list_history_window",
+        list_history_window,
     )
 
     task_fork_history_resolver.resolve_for_task(
@@ -337,14 +321,59 @@ def test_nested_fork_queries_keep_limit_and_strictest_message_bound(
         roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
     )
 
-    assert [call["task_id"] for call in calls] == [1, 2, 3]
-    assert [call["owner_user_id"] for call in calls] == [8, 7, 7]
-    assert [call["before_message_id"] for call in calls] == expected_bounds
-    assert all(call["recent_limit"] == 2 for call in calls)
+    assert len(calls) == 1
+    assert [task.task_id for task in calls[0]["tasks"]] == [1, 2, 3]
+    assert [task.owner_user_id for task in calls[0]["tasks"]] == [8, 7, 7]
+    assert [task.before_message_id for task in calls[0]["tasks"]] == expected_bounds
+    assert all(call["limit"] == 2 for call in calls)
     assert all(call["statuses"] == (SubtaskStatus.COMPLETED,) for call in calls)
     assert all(
         call["roles"] == (SubtaskRole.USER, SubtaskRole.ASSISTANT) for call in calls
     )
+
+
+@pytest.mark.parametrize("limit", [1, 20, 50])
+def test_fork_window_loads_global_payload_limit_with_overlapping_keys(
+    test_db, monkeypatch, limit
+):
+    from app.services.task_fork_history import subtask_store
+
+    tasks = [
+        _task(1, 8),
+        _task(2, 7, fork={"sourceTaskId": 1, "afterMessageId": 29, "rootTaskId": 1}),
+        _task(3, 7, fork={"sourceTaskId": 2, "afterMessageId": 29, "rootTaskId": 1}),
+    ]
+    rows = [
+        _subtask(
+            task.id * 100 + message, task.id, task.user_id, message, SubtaskRole.USER
+        )
+        for task in tasks
+        for message in range(1, 31)
+    ]
+    test_db.add_all(tasks + rows)
+    test_db.flush()
+    loaded_ids = []
+    load_ordered = subtask_store._load_ordered
+
+    def capture(db, ids):
+        loaded_ids.extend(ids)
+        return load_ordered(db, ids)
+
+    monkeypatch.setattr(subtask_store, "_load_ordered", capture)
+    eligible = [row for row in rows if row.message_id < 30 and row.message_id > 3]
+    ordered = sorted(eligible, key=lambda row: (row.message_id, row.created_at, row.id))
+    expected = ordered[-limit:]
+    items = task_fork_history_resolver.resolve_for_task(
+        test_db,
+        task_id=3,
+        user_id=7,
+        limit=limit,
+        before_message_id=30,
+        after_message_id=3,
+    )
+    assert [item.subtask.id for item in items] == [row.id for row in expected]
+    assert loaded_ids == [row.id for row in expected]
+    assert len(loaded_ids) == limit
 
 
 def test_resolve_for_fork_uses_parent_cutoff(monkeypatch):

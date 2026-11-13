@@ -436,7 +436,7 @@ def _validate_attachment_ownership(
 
     # Add cross-subtask validation if task_id is provided
     if task_id:
-        task_subtask_ids = task_stores.subtask_store.list_ids_by_task(
+        task_subtask_ids = task_stores.subtask_store.ids_query_by_task(
             db,
             task_id=task_id,
             user_id=user_id,
@@ -1170,7 +1170,7 @@ def _batch_update_and_insert_contexts(
 
         # Add task-level validation if task_id is provided
         if task_id:
-            task_subtask_ids = task_stores.subtask_store.list_ids_by_task(
+            task_subtask_ids = task_stores.subtask_store.ids_query_by_task(
                 db,
                 task_id=task_id,
             )

@@ -127,17 +127,10 @@ def list_subtask_summaries(
     means no limit; ``limit=0`` returns an empty page (``total`` still reflects
     all visible subtasks).
     """
-    subtasks = subtask_store.list_new_messages_since(
-        db, task_id=task_id, owner_user_id=user_id
-    )
-    visible = [st for st in subtasks if st.status != SubtaskStatus.DELETE]
-    total = len(visible)
-
     offset = max(0, offset)
-    if limit is None:
-        window = visible[offset:]
-    else:
-        window = visible[offset : offset + max(0, limit)]
+    window, total = subtask_store.list_visible_history_page(
+        db, task_id=task_id, owner_user_id=user_id, limit=limit, offset=offset
+    )
     summaries = [
         {
             "id": st.id,

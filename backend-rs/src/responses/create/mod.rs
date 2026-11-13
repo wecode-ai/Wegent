@@ -67,6 +67,7 @@ pub mod skills;
 pub(crate) mod sse_sync;
 pub mod streaming;
 mod streaming_bridge;
+mod subscription_window;
 pub mod subtask_bot;
 pub mod task_default_knowledge_bases;
 pub mod team_access;

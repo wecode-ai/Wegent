@@ -277,14 +277,27 @@ impl<'a> ChatHistoryRepository<'a> {
         listing.rows.iter().map(decode_subtask_row).collect()
     }
 
-    pub async fn list_subtasks_history_window(
+    pub async fn list_history_candidates(
         &self,
         task_id: i64,
         owner_user_id: i64,
         window: crate::task_store::SubtaskHistoryWindow,
-    ) -> MysqlResult<Vec<SubtaskRow>> {
+    ) -> MysqlResult<Vec<wegent_task_store::task_store_history::HistoryCandidate>> {
+        let mut sql = self.mysql;
         self.task_store
-            .list_subtasks_history_window(task_id, owner_user_id, window)
+            .list_subtask_history_candidates_on(&mut sql, task_id, owner_user_id, window)
+            .await
+    }
+
+    pub async fn load_history_payloads(
+        &self,
+        task_id: i64,
+        owner_user_id: i64,
+        ids: &[i64],
+    ) -> MysqlResult<Vec<SubtaskRow>> {
+        let mut sql = self.mysql;
+        self.task_store
+            .load_subtask_history_payloads_on(&mut sql, task_id, owner_user_id, ids)
             .await?
             .iter()
             .map(decode_subtask_row)

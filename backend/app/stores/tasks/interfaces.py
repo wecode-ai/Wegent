@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
+from app.stores.tasks.history_window import HistoryTaskWindow
 
 RecentTeamMode = Literal["chat", "code", "knowledge", "task", "video", "image"]
 
@@ -779,6 +780,29 @@ class SubtaskStore(Protocol):
         owner_user_id: Optional[int] = None,
     ) -> list[int]: ...
 
+    def ids_query_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+    ) -> Any: ...
+
+    def list_visible_history_page(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int,
+        limit: Optional[int],
+        offset: int,
+    ) -> tuple[list[Subtask], int]: ...
+
+    def iter_runtime_cleanup_rows(
+        self, db: Session, *, task_id: int, owner_user_id: int
+    ) -> Any: ...
+
     def list_by_task_desc(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> list[Subtask]: ...
@@ -854,6 +878,19 @@ class SubtaskStore(Protocol):
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> list[Subtask]: ...
 
+    def list_recent_executor_sessions_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int,
+        bot_ids: Optional[Sequence[int]] = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def has_executor_session_by_task(
+        self, db: Session, *, task_id: int, owner_user_id: int
+    ) -> bool: ...
+
     def list_after_message_id(
         self,
         db: Session,
@@ -890,6 +927,18 @@ class SubtaskStore(Protocol):
         statuses: Optional[Sequence[SubtaskStatus]] = None,
         roles: Optional[Sequence[SubtaskRole]] = None,
         before_message_id: Optional[int] = None,
+        summary_checkpoint_only: bool = False,
+    ) -> list[Subtask]: ...
+
+    def list_history_window(
+        self,
+        db: Session,
+        *,
+        tasks: Sequence[HistoryTaskWindow],
+        limit: int,
+        statuses: Optional[Sequence[SubtaskStatus]] = None,
+        roles: Optional[Sequence[SubtaskRole]] = None,
+        after_message_id: Optional[int] = None,
         summary_checkpoint_only: bool = False,
     ) -> list[Subtask]: ...
 
@@ -935,6 +984,7 @@ class SubtaskStore(Protocol):
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> list[Subtask]: ...
 
     def list_not_executor_deleted_by_task(

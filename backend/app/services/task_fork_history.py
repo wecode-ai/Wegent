@@ -14,6 +14,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.stores.tasks import subtask_store, task_store
+from app.stores.tasks.history_window import HistoryTaskWindow
 
 MAX_FORK_DEPTH = 50
 
@@ -54,7 +55,7 @@ class TaskForkHistoryResolver:
         summary_checkpoint_only: bool = False,
     ) -> list[ForkHistoryItem]:
         if limit is not None and limit <= 0:
-            return []
+            limit = None
 
         lineage = self.resolve_lineage(
             db,
@@ -64,19 +65,42 @@ class TaskForkHistoryResolver:
         )
         items: list[ForkHistoryItem] = []
         current_task_id = lineage[-1].task.id if lineage else task_id
+        if limit is not None:
+            windows = [
+                HistoryTaskWindow(
+                    task_id=node.task.id,
+                    owner_user_id=node.task.user_id,
+                    before_message_id=self._node_before(
+                        before_message_id, node.inherited_cutoff
+                    ),
+                )
+                for node in lineage
+                if node.task.id is not None
+            ]
+            return [
+                ForkHistoryItem(
+                    subtask=subtask,
+                    inherited=subtask.task_id != current_task_id,
+                    origin_task_id=subtask.task_id,
+                    origin_subtask_id=subtask.id,
+                )
+                for subtask in subtask_store.list_history_window(
+                    db,
+                    tasks=windows,
+                    limit=limit,
+                    statuses=statuses,
+                    roles=roles,
+                    after_message_id=after_message_id,
+                    summary_checkpoint_only=summary_checkpoint_only,
+                )
+            ]
 
         for node in lineage:
             if node.task.id is None:
                 continue
-            node_before_message_id = before_message_id
-            if node.inherited_cutoff is not None:
-                # Fork cutoffs are inclusive; store bounds are exclusive.
-                inherited_before = node.inherited_cutoff + 1
-                node_before_message_id = (
-                    inherited_before
-                    if node_before_message_id is None
-                    else min(node_before_message_id, inherited_before)
-                )
+            node_before_message_id = self._node_before(
+                before_message_id, node.inherited_cutoff
+            )
             subtasks = subtask_store.list_by_task_ordered(
                 db,
                 task_id=node.task.id,
@@ -119,9 +143,13 @@ class TaskForkHistoryResolver:
                 item.subtask.id,
             )
         )
-        if limit is not None and limit > 0:
-            return items[-limit:]
         return items
+
+    @staticmethod
+    def _node_before(before: Optional[int], cutoff: Optional[int]) -> Optional[int]:
+        if cutoff is None:
+            return before
+        return cutoff + 1 if before is None else min(before, cutoff + 1)
 
     def resolve_lineage(
         self,

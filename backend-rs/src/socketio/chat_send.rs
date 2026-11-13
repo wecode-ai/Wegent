@@ -1236,6 +1236,7 @@ pub async fn handle(
                 // binds on the task lookups.
                 owner_user_id: user_id as i32,
                 continuation,
+                history_window: None,
                 team_id: team.id,
                 bot_ids: &bots.bot_ids,
                 create_assistant: should_trigger_ai,

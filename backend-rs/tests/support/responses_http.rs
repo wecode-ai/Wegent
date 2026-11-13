@@ -20,6 +20,8 @@ use super::fixture::{LARGE_RESULT_BYTES, LONG_CONVERSATION_ROWS};
 mod history_window;
 #[path = "session_auth.rs"]
 mod session_auth;
+#[path = "subscription_history_window.rs"]
+mod subscription_history_window;
 
 // The source limits package registers this exact script before EVALSHA.
 const RATE_SCRIPT: &str = "local current\nlocal amount = tonumber(ARGV[2])\ncurrent = redis.call(\"incrby\", KEYS[1], amount)\n\nif tonumber(current) == amount then\n    redis.call(\"expire\", KEYS[1], ARGV[1])\nend\n\nreturn current\n";
@@ -218,6 +220,14 @@ pub async fn assert_http_reads(
         for (task_id, table) in task_ids.iter().zip(history_tables) {
             history_window::assert_history_windows(
                 &client, address, &mysql, *task_id, table, user_id,
+            )
+            .await;
+            subscription_history_window::assert_store_windows(
+                &mysql,
+                state.task_store.as_ref(),
+                *task_id,
+                table,
+                user_id,
             )
             .await;
         }

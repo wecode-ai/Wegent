@@ -164,9 +164,68 @@ pub(super) async fn assert_history_windows(
             "history read transferred {transferred} DB bytes (budget {budget}): {path}"
         );
     }
+    assert_global_fork_payload_budget(client, address, mysql, root, fork, table, user_id).await;
 }
 
-async fn bytes_sent(mysql: &MysqlService) -> u64 {
+async fn assert_global_fork_payload_budget(
+    client: &brz_http::Client,
+    address: SocketAddr,
+    mysql: &MysqlService,
+    root: i64,
+    fork: i64,
+    table: &str,
+    user_id: i32,
+) {
+    mysql
+        .execute(format!("DELETE FROM {table} WHERE task_id = ?"), (fork,))
+        .await
+        .unwrap();
+    for message in 7..=26_i64 {
+        mysql.execute(
+            format!("INSERT INTO {table} (id,user_id,task_id,message_id,role,status,result,sender_user_id) \
+                     VALUES (?, ?, ?, ?, 'ASSISTANT', 'COMPLETED', ?, 0)"),
+            (2000 + message, user_id + 1, fork, message, brz_mysql::Json(json!({
+                "value": format!("fork:{message}:{}", "x".repeat(PAYLOAD_BYTES)),
+            }))),
+        ).await.unwrap();
+    }
+    let mut candidates: Vec<_> = (6..=25_i64)
+        .map(|message| (message, 1000 + message))
+        .chain((7..=26_i64).map(|message| (message, 2000 + message)))
+        .collect();
+    candidates.sort();
+    let expected: Vec<_> = candidates
+        .into_iter()
+        .skip(20)
+        .map(|(_, id)| id.to_string())
+        .collect();
+    let start = bytes_sent(mysql).await;
+    let response = client
+        .get(format!(
+            "http://{address}/api/internal/chat/history/task-{fork}?limit=20",
+        ))
+        .unwrap()
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let body: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    let actual: Vec<_> = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(actual, expected, "global fork ordering for task {root}");
+    let transferred = bytes_sent(mysql).await - start;
+    assert!(
+        transferred < (23 * PAYLOAD_BYTES) as u64,
+        "global fork window must hydrate only 20 payloads, not 20 per node: {transferred}"
+    );
+}
+
+pub(super) async fn bytes_sent(mysql: &MysqlService) -> u64 {
     let row: MysqlRow = mysql
         .fetch_optional("SHOW SESSION STATUS LIKE 'Bytes_sent'", ())
         .await

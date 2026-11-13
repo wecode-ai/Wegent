@@ -5,7 +5,16 @@ use brz_mysql::{FromMysqlCol, Json, MysqlRow};
 use brz_redis::{Redis, RedisBytes, SetExpiration, SetOptions};
 use serde_json::{Value, json};
 
-pub(super) async fn initialize(app: &AppState, task: i64, user: i64, before: i64) -> Result<()> {
+pub(super) async fn initialize(
+    app: &AppState,
+    task: i64,
+    user: i64,
+    before: i64,
+    limit: i64,
+) -> Result<()> {
+    if limit <= 0 {
+        return Ok(());
+    }
     let redis = app
         .redis
         .as_ref()
@@ -17,9 +26,54 @@ pub(super) async fn initialize(app: &AppState, task: i64, user: i64, before: i64
     {
         return Ok(());
     }
-    let rows = app
-        .task_store
-        .list_subtasks_by_task_unfiltered(task, Some(user))
+    let entries = load_entries(
+        app.task_store.as_ref(),
+        &mut &app.mysql,
+        task,
+        user,
+        before,
+        limit,
+    )
+    .await?;
+    let messages = rebuild(
+        entries,
+        super::model::setting("CHAT_HISTORY_MAX_MESSAGES", 50) as usize,
+    );
+    if !messages.is_empty() {
+        redis
+            .set_with(
+                &key,
+                serde_json::to_string(&messages)?,
+                SetOptions::default().with_expiration(SetExpiration::Seconds(
+                    super::model::setting("CHAT_HISTORY_EXPIRE_SECONDS", 7200),
+                )),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// Read only the completed history window needed for a cold cache.
+pub(super) async fn load_entries(
+    store: &dyn crate::task_store::TaskStore,
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task: i64,
+    user: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Entry>> {
+    let rows = store
+        .list_subtasks_history_window_on(
+            sql,
+            task,
+            user,
+            crate::task_store::SubtaskHistoryWindow {
+                limit,
+                before_message_id: Some(before),
+                summary_checkpoint_only: false,
+                selection: wegent_task_store::task_store_history::HistorySelection::Cache,
+            },
+        )
         .await?;
     let mut entries: Vec<_> = rows
         .iter()
@@ -40,22 +94,7 @@ pub(super) async fn initialize(app: &AppState, task: i64, user: i64, before: i64
         })
         .collect();
     entries.sort_by_key(|entry| entry.0);
-    let messages = rebuild(
-        entries,
-        super::model::setting("CHAT_HISTORY_MAX_MESSAGES", 50) as usize,
-    );
-    if !messages.is_empty() {
-        redis
-            .set_with(
-                &key,
-                serde_json::to_string(&messages)?,
-                SetOptions::default().with_expiration(SetExpiration::Seconds(
-                    super::model::setting("CHAT_HISTORY_EXPIRE_SECONDS", 7200),
-                )),
-            )
-            .await?;
-    }
-    Ok(())
+    Ok(entries)
 }
 fn column<T: FromMysqlCol>(row: &MysqlRow, name: &str) -> Option<T> {
     row.get_at::<T>(crate::task_store::subtask_column_index(name)?)

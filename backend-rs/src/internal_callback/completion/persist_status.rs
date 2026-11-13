@@ -15,6 +15,9 @@ use super::{
     render_task_crd, subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
+use wegent_task_store::task_store_subscription_reads::{
+    assistant_membership_statement, latest_assistant_statement,
+};
 
 /// `_update_task_status_sync`'s `try/except` around the status reads
 /// (`app/services/chat/storage/db.py:207,285-287`): a store failure logs the
@@ -32,6 +35,23 @@ pub(crate) fn read_status<T>(
             None
         }
     }
+}
+
+pub(super) async fn read_assistants<T: MysqlTransaction>(
+    mysql: &mut T,
+    tables: crate::internal_callback::completion::Tables,
+    task_id: i64,
+    is_subscription: bool,
+) -> MysqlResult<Vec<MysqlRow>> {
+    let statement = if is_subscription {
+        latest_assistant_statement(tables.subtasks)
+    } else {
+        sql::assistant_subtasks(tables)
+    };
+    mysql
+        .fetch_all(statement, (task_id,))
+        .await
+        .and_then(crate::task_store_listing::order_assistant_subtasks)
 }
 
 pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransaction>(
@@ -58,6 +78,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     };
     let owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
+    let is_subscription = task_column::<i64>(&task, "is_active") == Some(2);
 
     // `list_assistant_by_task`'s owner guard, then the ordered listing.
     // `_update_task_status_sync` wraps the whole block in `try/except`: a
@@ -75,10 +96,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
         return false;
     };
     let Some(subtasks) = read_status(
-        mysql
-            .fetch_all(sql::assistant_subtasks(ctx.tables), (task_id,))
-            .await
-            .and_then(crate::task_store_listing::order_assistant_subtasks),
+        read_assistants(mysql, ctx.tables, task_id, is_subscription).await,
         task_id,
         "assistant_subtasks",
     ) else {
@@ -94,9 +112,24 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let mut last_result: Option<Value> =
         subtask_column::<Json<Value>>(last, "result").map(|json| json.0);
 
-    let found = subtasks
+    let mut found = subtasks
         .iter()
         .any(|row| subtask_column::<i64>(row, "id") == Some(changed_subtask_id));
+    if is_subscription && !found && last_result.is_none() {
+        let Some(row) = read_status(
+            mysql
+                .fetch_optional::<_, _, (i64,)>(
+                    assistant_membership_statement(ctx.tables.subtasks),
+                    (changed_subtask_id, task_id),
+                )
+                .await,
+            task_id,
+            "changed_assistant_membership",
+        ) else {
+            return false;
+        };
+        found = row.is_some();
+    }
     let changed: Option<MysqlRow> = if !found && last_result.is_none() {
         // `read_status` returns `None` on a store failure; abort before writing
         // rather than treating the failure as "no row".

@@ -639,6 +639,69 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 self.assertEqual(cached_seed, expected)
 
         self._assert_package_history_payload_window(task_id, fork_id, seeded_content[1])
+        self._assert_package_global_fork_window(fork_id, team["id"], seeded_content[1])
+
+    def _assert_package_global_fork_window(
+        self, fork_id: int, team_id: int, summary: str
+    ) -> None:
+        """A populated fork must not hydrate a separate payload window per node."""
+        from sqlalchemy import event
+
+        from app.db.session import engine
+        from chat_shell.history.loader import _load_history_from_db_sync
+
+        with SessionLocal() as db:
+            task = db.get(TaskResource, fork_id)
+            start = (
+                db.query(Subtask.message_id)
+                .filter(Subtask.task_id == fork_id)
+                .order_by(Subtask.message_id.desc())
+                .first()[0]
+                + 1
+            )
+            contents = [
+                f"global-fork-window-{self.suffix}-{index}" for index in range(24)
+            ]
+            for index, content in enumerate(contents):
+                db.add(
+                    Subtask(
+                        user_id=task.user_id,
+                        task_id=fork_id,
+                        team_id=team_id,
+                        title=content,
+                        bot_ids=[],
+                        role=SubtaskRole.ASSISTANT,
+                        status=SubtaskStatus.COMPLETED,
+                        progress=100,
+                        message_id=start + index,
+                        parent_id=start + index - 1,
+                        result={"value": content},
+                    )
+                )
+            db.commit()
+        payload_rows = []
+
+        def capture(_conn, cursor, statement, _parameters, _context, _many):
+            projection = statement.split("FROM", 1)[0]
+            if statement.lstrip().upper().startswith("SELECT") and (
+                "subtasks" in statement and ".result" in projection
+            ):
+                payload_rows.append(cursor.rowcount)
+
+        event.listen(engine, "after_cursor_execute", capture)
+        try:
+            messages = _load_history_from_db_sync(
+                fork_id, False, limit=20, from_latest_compaction=True
+            )
+        finally:
+            event.remove(engine, "after_cursor_execute", capture)
+        self.assertEqual(messages[0]["content"], summary)
+        self.assertEqual(
+            [message["content"] for message in messages[1:]], contents[-19:]
+        )
+        self.assertTrue(payload_rows, "No actual fork payload load captured")
+        self.assertTrue(all(count >= 0 for count in payload_rows))
+        self.assertLessEqual(sum(payload_rows), 20)
 
     def _assert_package_history_payload_window(
         self, task_id: int, fork_id: int, summary: str

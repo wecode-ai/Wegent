@@ -74,6 +74,8 @@ pub struct SetupChatSessionInput<'a> {
     /// request session at `openapi_responses.py:522-547`'s position, before
     /// team and model resolution. `None` creates a new Task.
     pub continuation: Option<continuation::Continuation>,
+    /// Subscription-only DB window. None preserves ordinary chat preparation.
+    pub history_window: Option<i64>,
     pub team_id: i64,
     pub bot_ids: &'a [i64],
     pub create_assistant: bool,
@@ -300,11 +302,23 @@ async fn append_subtasks(
     // `subtask_store.list_by_task_ordered(task_id, owner_user_id)` reads the
     // task's subtasks in `message_id, created_at` order before the next
     // message id is computed. A new task has none.
-    let existing_subtasks = store
-        .list_subtasks_by_task_ordered_on(&mut *transaction, task_id, input.user_id)
-        .await
-        .map_err(internal)?
-        .rows;
+    let history_window = super::subscription_window::resolve_on(
+        &mut *transaction,
+        &task_json,
+        input.user_id,
+        input.history_window,
+    )
+    .await
+    .map_err(internal)?;
+    let existing_subtasks = load_existing_subtasks(
+        store,
+        &mut *transaction,
+        task_id,
+        input.user_id,
+        history_window,
+    )
+    .await
+    .map_err(internal)?;
     // `resolve_lineage`'s depth-0 read for the created task (qs25): the
     // source's `_lineage_task` reads the current task through the owner guard
     // before it breaks on `fork is None`. It is a distinct business read from
@@ -409,6 +423,36 @@ async fn append_subtasks(
         assistant_created_at: inserted.assistant_created_at,
         existing_subtasks,
     })
+}
+
+/// Keep subscription preparation bounded without changing ordinary chat reads.
+pub(crate) async fn load_existing_subtasks(
+    store: &dyn TaskStore,
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_id: i64,
+    user_id: i64,
+    history_window: Option<i64>,
+) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+    if let Some(limit) = history_window {
+        store
+            .list_subtasks_history_window_on(
+                sql,
+                task_id,
+                user_id,
+                crate::task_store::SubtaskHistoryWindow {
+                    limit,
+                    before_message_id: None,
+                    summary_checkpoint_only: false,
+                    selection: wegent_task_store::task_store_history::HistorySelection::All,
+                },
+            )
+            .await
+    } else {
+        Ok(store
+            .list_subtasks_by_task_ordered_on(sql, task_id, user_id)
+            .await?
+            .rows)
+    }
 }
 
 /// `setup_chat_session`'s dependency failure: the source propagates the

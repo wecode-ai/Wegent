@@ -738,6 +738,13 @@ def prepare_execution_request(
     try:
         # Build unified execution request
         builder = TaskRequestBuilder(db)
+        from app.services.subscription.history_window import (
+            is_subscription_task,
+            resolve_subscription_history_limit,
+        )
+
+        history_limit = resolve_subscription_history_limit(db, task, history_limit)
+        is_subscription = is_subscription or is_subscription_task(task)
 
         # Extract feature flags from payload if provided
         if payload is not None:

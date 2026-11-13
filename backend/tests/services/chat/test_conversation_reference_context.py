@@ -314,7 +314,6 @@ def _in_memory_subtask(
 def test_reference_inherits_fork_history_up_to_cutoff(
     test_db: Session,
     test_user: User,
-    monkeypatch,
 ) -> None:
     parent = _create_task(test_db, test_user, "Parent")
     fork = _fork_task(
@@ -332,12 +331,8 @@ def test_reference_inherits_fork_history_up_to_cutoff(
             3, parent.id, test_user, 3, SubtaskRole.USER, "after the fork point"
         ),
     ]
-    monkeypatch.setattr(
-        "app.services.task_fork_history.subtask_store.list_by_task_ordered",
-        lambda db, task_id, owner_user_id=None, recent_limit=None, **kwargs: (
-            inherited if task_id == parent.id else []
-        ),
-    )
+    test_db.add_all(inherited)
+    test_db.flush()
 
     # A fork with no messages of its own must still validate: its content is
     # the inherited history.

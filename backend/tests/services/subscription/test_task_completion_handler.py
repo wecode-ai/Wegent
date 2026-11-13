@@ -85,7 +85,10 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
 
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
-    subtask_query.all.return_value = [subtask]
+    subtask_query.options.return_value = subtask_query
+    subtask_query.order_by.return_value = subtask_query
+    subtask_query.limit.return_value = subtask_query
+    subtask_query.all.side_effect = [[subtask], [], [subtask], []]
 
     db = MagicMock()
 
@@ -203,7 +206,10 @@ async def test_auto_delete_task_without_background_execution_deletes_executor():
 
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
-    subtask_query.all.return_value = [subtask]
+    subtask_query.options.return_value = subtask_query
+    subtask_query.order_by.return_value = subtask_query
+    subtask_query.limit.return_value = subtask_query
+    subtask_query.all.side_effect = [[subtask], [], [subtask], []]
 
     db = MagicMock()
 
@@ -361,7 +367,10 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
 
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
-    subtask_query.all.return_value = [subtask]
+    subtask_query.options.return_value = subtask_query
+    subtask_query.order_by.return_value = subtask_query
+    subtask_query.limit.return_value = subtask_query
+    subtask_query.all.side_effect = [[subtask], [], [subtask], []]
 
     db = MagicMock()
 
@@ -475,10 +484,25 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
             self._filters = ()
 
         def filter(self, *criteria):
-            self._filters = criteria
+            self._filters += criteria
+            return self
+
+        def options(self, *_args):
+            return self
+
+        def order_by(self, *_args):
+            return self
+
+        def limit(self, *_args):
             return self
 
         def all(self):
+            if any(
+                str(criterion.left) == "subtasks.id"
+                and str(criterion.operator).find("gt") >= 0
+                for criterion in self._filters
+            ):
+                return []
             filter_sql = {str(criteria) for criteria in self._filters}
             if "subtasks.executor_name IS NOT NULL" in filter_sql:
                 return []

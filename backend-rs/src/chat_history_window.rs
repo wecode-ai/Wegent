@@ -8,6 +8,7 @@ use super::chat_history::{ForkHistoryItem, resolve_lineage};
 use crate::chat_repository::ChatHistoryRepository;
 use crate::internal_auth::http_error::HttpError;
 use crate::task_store::SubtaskHistoryWindow;
+use wegent_task_store::task_store_history::HistorySelection;
 
 type LineageNode = (i64, Option<i64>, Option<i64>);
 
@@ -33,25 +34,42 @@ async fn read_window(
     limit: i64,
     summary_checkpoint_only: bool,
 ) -> Result<Vec<ForkHistoryItem>, HttpError> {
-    let mut items = Vec::new();
+    let mut candidates = Vec::new();
     for (task_id, owner, cutoff) in lineage {
         let rows = repository
-            .list_subtasks_history_window(
+            .list_history_candidates(
                 *task_id,
                 owner.unwrap_or_default(),
                 SubtaskHistoryWindow {
                     limit,
                     before_message_id: lineage_before(before_message_id, *cutoff),
                     summary_checkpoint_only,
+                    selection: HistorySelection::Ready,
                 },
             )
+            .await
+            .map_err(HttpError::internal)?;
+        candidates.extend(rows.into_iter().map(|row| (row, *task_id, *owner)));
+    }
+    candidates.sort_by_key(|(row, _, _)| row.key());
+    let start = candidates.len().saturating_sub(limit as usize);
+    let mut selected = std::collections::BTreeMap::new();
+    for (row, task, owner) in candidates.into_iter().skip(start) {
+        selected
+            .entry((task, owner))
+            .or_insert_with(Vec::new)
+            .push(row.id);
+    }
+    let mut items = Vec::new();
+    for ((task, owner), ids) in selected {
+        let rows = repository
+            .load_history_payloads(task, owner.unwrap_or_default(), &ids)
             .await
             .map_err(HttpError::internal)?;
         items.extend(rows.into_iter().map(|subtask| ForkHistoryItem { subtask }));
     }
     items.sort_by_key(history_key);
-    let start = items.len().saturating_sub(limit as usize);
-    Ok(items.split_off(start))
+    Ok(items)
 }
 
 pub(super) fn keep_checkpoint(

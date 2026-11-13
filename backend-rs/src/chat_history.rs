@@ -211,7 +211,7 @@ async fn resolve_history_subtasks(
     limit: Option<i64>,
     from_latest_compaction: bool,
 ) -> Result<Vec<ForkHistoryItem>, HttpError> {
-    if let Some(limit) = limit {
+    if let Some(limit) = limit.filter(|limit| *limit > 0) {
         return crate::chat_history_window::resolve_bounded_history(
             repository,
             task_id,

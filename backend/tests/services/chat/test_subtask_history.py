@@ -45,8 +45,8 @@ def test_list_summaries_pagination_and_delete_filter(monkeypatch):
     ]
     monkeypatch.setattr(
         subtask_history.subtask_store,
-        "list_new_messages_since",
-        lambda db, **kw: rows,
+        "list_visible_history_page",
+        lambda db, **kw: ([rows[0], rows[1]], 3),
         raising=False,
     )
 
@@ -68,8 +68,8 @@ def test_list_preview_falls_back_to_blocks(monkeypatch):
     )
     monkeypatch.setattr(
         subtask_history.subtask_store,
-        "list_new_messages_since",
-        lambda db, **kw: [st],
+        "list_visible_history_page",
+        lambda db, **kw: ([st], 1),
         raising=False,
     )
 
@@ -86,8 +86,8 @@ def test_list_limit_zero_returns_empty_page(monkeypatch):
     ]
     monkeypatch.setattr(
         subtask_history.subtask_store,
-        "list_new_messages_since",
-        lambda db, **kw: rows,
+        "list_visible_history_page",
+        lambda db, **kw: ([], len(rows)),
         raising=False,
     )
 

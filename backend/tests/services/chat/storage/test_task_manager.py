@@ -185,6 +185,64 @@ def test_database_handler_auto_advance_uses_changed_subtask_status():
     )
 
 
+@pytest.mark.parametrize("status", [SubtaskStatus.RUNNING, SubtaskStatus.COMPLETED])
+def test_subscription_status_reads_only_latest_assistant(status):
+    from app.services.chat.storage.db import DatabaseHandler
+
+    db = MagicMock()
+    task = _build_existing_task(task_id=1385, user_id=7)
+    task.is_active = TaskResource.STATE_SUBSCRIPTION
+    latest = SimpleNamespace(
+        id=2002, status=status, result={"value": "latest"}, error_message=""
+    )
+    changed = SimpleNamespace(id=2001, status=SubtaskStatus.COMPLETED)
+    strategy = MagicMock()
+    strategy.get_task_status_on_subtask_complete.return_value = (status.value, 100)
+    strategy.get_auto_advance_info.return_value = None
+    with (
+        patch(
+            "app.services.chat.storage.db._db_session",
+            return_value=_mock_db_session(db),
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.task_store.get_task_by_states",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.list_by_task_ordered",
+            return_value=[latest],
+        ) as bounded,
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.list_assistant_by_task",
+            side_effect=AssertionError("Subscription must not load all assistants"),
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.get_by_id",
+            return_value=changed,
+        ) as get_changed,
+        patch(
+            "app.services.adapters.collaboration_strategy."
+            "CollaborationStrategyFactory.get_strategy_for_task",
+            return_value=strategy,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.task_store.update_json"
+        ) as update,
+    ):
+        DatabaseHandler()._update_task_status_sync(1385, changed_subtask_id=2001)
+
+    bounded.assert_called_once_with(
+        db, task_id=1385, owner_user_id=7, roles=[SubtaskRole.ASSISTANT], recent_limit=1
+    )
+    get_changed.assert_called_once_with(db, subtask_id=2001)
+    payload = update.call_args.kwargs["payload"]
+    assert payload["status"]["status"] == status.value
+    assert payload["status"]["result"] == {"value": "latest"}
+    strategy.get_auto_advance_info.assert_called_once_with(
+        db, 1385, 2001, SubtaskStatus.COMPLETED.value
+    )
+
+
 def test_pipeline_auto_advance_does_not_create_next_stage_subtask_in_db() -> None:
     """DB status updates should route pipeline continuation through an intent."""
     from app.services.chat.storage.db import DatabaseHandler
@@ -787,13 +845,17 @@ def test_prepare_execution_session_uses_fork_history_next_message_id(monkeypatch
     assert calls["assistant_parent_id"] == 9
 
 
-@pytest.mark.parametrize("history_window", [0, 1, 20])
-def test_bounded_execution_preserves_recent_memory_context(
-    test_db: Session, test_user: User, monkeypatch, history_window: int
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history_window", [None, 0, 1, 20])
+async def test_bounded_execution_preserves_recent_memory_context(
+    test_db: Session, test_user: User, monkeypatch, history_window: int | None
 ) -> None:
+    import asyncio
+
     from app.core.config import settings
     from app.services.chat.trigger import lifecycle
     from app.services.memory import build_context_messages
+    from app.services.openapi import chat_session
 
     task = _build_existing_task(task_id=1385, user_id=test_user.id)
     rows = []
@@ -842,23 +904,68 @@ def test_bounded_execution_preserves_recent_memory_context(
         commit=False,
     )
 
-    expected_ids = list(range(1, 7))[-history_window:] if history_window else []
+    expected_ids = (
+        list(range(1, 7))
+        if history_window is None
+        else list(range(1, 7))[-history_window:] if history_window else []
+    )
     assert [row.id for row in session.existing_subtasks] == expected_ids
-    assert [row.id for row in session.memory_history] == [4, 3]
+    assert [row.id for row in session.memory_history] == (
+        list(range(1, 7)) if history_window is None else [4, 3]
+    )
     assert session.user_subtask.message_id == 7
     assert session.assistant_subtask.message_id == 8
-    assert build_context_messages(
+    context = build_context_messages(
         db=test_db,
         existing_subtasks=session.memory_history,
         current_message=session.user_subtask.prompt,
         current_user=test_user,
         is_group_chat=False,
         context_limit=3,
-    ) == [
-        {"role": "user", "content": "prompt-3"},
-        {"role": "assistant", "content": "answer-4"},
-        {"role": "user", "content": "current-message"},
+    )
+    expected_history = (
+        [
+            {"role": "assistant", "content": "answer-2"},
+            {"role": "user", "content": "prompt-1"},
+        ]
+        if history_window is None
+        else [
+            {"role": "user", "content": "prompt-3"},
+            {"role": "assistant", "content": "answer-4"},
+        ]
+    )
+    assert context == expected_history + [
+        {"role": "user", "content": "current-message"}
     ]
+    assert context == build_context_messages(
+        db=test_db,
+        existing_subtasks=rows if history_window is None else rows[::-1],
+        current_message=session.user_subtask.prompt,
+        current_user=test_user,
+        is_group_chat=False,
+        context_limit=3,
+    )
+
+    saved = asyncio.Event()
+    save = AsyncMock(side_effect=lambda **kwargs: saved.set())
+    monkeypatch.setattr(
+        "app.services.memory.get_memory_manager",
+        lambda: SimpleNamespace(is_enabled=True, save_user_message_async=save),
+    )
+    monkeypatch.setattr(chat_session, "prepare_execution_session", lambda **kw: session)
+    setup = chat_session.setup_chat_session(
+        db=test_db,
+        user=test_user,
+        team=team,
+        model_info={},
+        input_text="current-message",
+        tool_settings={"enable_chat_bot": True},
+        task_id=task.id,
+    )
+    await asyncio.wait_for(saved.wait(), timeout=1)
+    save.assert_awaited_once()
+    assert save.await_args.kwargs["messages"] == context
+    assert setup.existing_subtasks is session.existing_subtasks
 
 
 @pytest.mark.asyncio
