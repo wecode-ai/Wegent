@@ -379,7 +379,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertEqual(original[1]["result"]["value"], answer)
             if after_pair:
                 self.assertEqual(original[-1]["status"], "PENDING")
-            cancelled = self._json(self.api.post(f"/api/v1/tasks/{task_id}/cancel"))
+            cancelled = self._json(self.api.post(f"/api/tasks/{task_id}/cancel"))
             self.assertEqual(cancelled["status"], "CANCELLED")
         _, expected_rows = self._snapshot(task_id)
         if after_pair:
