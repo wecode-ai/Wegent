@@ -1718,6 +1718,17 @@ async function verifyExistingTaskBoardAssociation(
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  // Cloud Issue tasks are bound to their Issue board. The inline issue task
+  // workflow no longer offers reassociation with a local project board.
+  if (
+    Number(await control.command('getElementCount', '[data-testid="work-item-change-board"]')) === 0
+  ) {
+    await control.command('waitFor', '[data-testid="work-item-guide-open-summary"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    return
+  }
   await control.command('waitFor', '[data-testid="work-item-change-board"]', {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
