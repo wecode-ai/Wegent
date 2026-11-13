@@ -49,6 +49,7 @@ def _patch_emitters(monkeypatch, state):
             )
         ),
         close=AsyncMock(),
+        terminal_transition_lost=False,
     )
     monkeypatch.setattr(callback, "WebSocketResultEmitter", lambda **kwargs: object())
     monkeypatch.setattr(callback, "StatusUpdatingEmitter", lambda **kwargs: emitter)
@@ -57,6 +58,7 @@ def _patch_emitters(monkeypatch, state):
         "publish_callback_event",
         AsyncMock(return_value=True),
     )
+    monkeypatch.setattr(callback, "_publish_terminal_callback", AsyncMock())
     monkeypatch.setattr(
         callback,
         "forward_event_to_channel_callbacks",
@@ -102,7 +104,10 @@ async def test_retained_single_callback_preserves_http_contract(
     assert response.json()["status"] == "ok"
     emitter.emit.assert_awaited_once()
     emitter.close.assert_awaited_once()
-    callback.session_manager.publish_callback_event.assert_awaited_once()
+    if event_type == ResponsesAPIStreamEvents.ERROR.value:
+        callback._publish_terminal_callback.assert_awaited_once()
+    else:
+        callback.session_manager.publish_callback_event.assert_awaited_once()
     callback.forward_event_to_channel_callbacks.assert_awaited_once()
 
 

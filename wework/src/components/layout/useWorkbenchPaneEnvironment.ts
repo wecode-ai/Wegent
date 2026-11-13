@@ -18,7 +18,7 @@ import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isCloudDevice } from '@/lib/device-selection'
-import { isRemoteDevice } from '@/lib/device-capabilities'
+import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -591,7 +591,7 @@ export function useWorkbenchPaneEnvironment({
               executionTarget: executionDevice
                 ? isCloudDevice(executionDevice)
                   ? 'cloud'
-                  : isRemoteDevice(executionDevice)
+                  : isRemoteTaskDevice(executionDevice)
                     ? 'remote'
                     : 'local'
                 : info.executionTarget,

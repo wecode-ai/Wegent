@@ -319,7 +319,8 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 for plugin_sync_checkpoint in \
   plugin-runtime-route-refresh \
   plugin-background-sync-isolation \
-  plugin-periodic-reconcile; do
+  plugin-periodic-reconcile \
+  plugin-package-integrity-recovery; do
   assert_desktop_case "plugin sync checkpoint runs independently: $plugin_sync_checkpoint" \
     "wework_desktop_e2e=true
 wework_desktop_core_e2e=false

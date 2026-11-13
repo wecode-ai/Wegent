@@ -662,6 +662,16 @@ async def test_dispatch_marks_exception_when_frontend_error_is_emitted():
     dispatch_error = RuntimeError("boom")
 
     with (
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            new_callable=AsyncMock,
+            return_value={"value": ""},
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating.persist_completed_result",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as persist,
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
@@ -674,5 +684,8 @@ async def test_dispatch_marks_exception_when_frontend_error_is_emitted():
         with pytest.raises(RuntimeError, match="boom"):
             await dispatcher.dispatch(request, emitter=emitter)
 
+    persist.assert_awaited_once()
+    assert persist.await_args.kwargs["subtask_id"] == request.subtask_id
+    assert persist.await_args.kwargs["status"] == "FAILED"
     emitter.emit_error.assert_awaited_once()
     assert getattr(dispatch_error, "_frontend_error_emitted", False) is True

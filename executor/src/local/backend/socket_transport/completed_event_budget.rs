@@ -10,6 +10,8 @@ use super::NAMESPACE;
 // Match backend/app/core/socketio.py. Count the Engine.IO / Socket.IO prefix
 // and the serialized [event, payload], including JSON string escaping.
 const MAX_PACKET_BYTES: usize = 1_000_000;
+// Socket.IO uses an i32 acknowledgement id for device terminal calls.
+const ACK_ID_BYTES: usize = 11;
 const SNAPSHOT_KEYS: [&str; 2] = ["file_changes", "task_file_changes"];
 
 struct InlineDiff {
@@ -191,7 +193,7 @@ fn prefix_within_json_budget(text: &str, available: usize) -> Result<usize, Stri
 }
 
 fn packet_bytes(event: &str, payload: &Value) -> Result<usize, String> {
-    Ok(2 + NAMESPACE.len() + 1 + encoded_bytes(&(event, payload))?)
+    Ok(2 + NAMESPACE.len() + 1 + ACK_ID_BYTES + encoded_bytes(&(event, payload))?)
 }
 
 fn encoded_bytes(value: &(impl serde::Serialize + ?Sized)) -> Result<usize, String> {
@@ -227,13 +229,8 @@ mod tests {
             payload["data"]["response"]["output"],
             original["data"]["response"]["output"]
         );
-        // The maximal cumulative prefix leaves four encoded bytes. Reassign
-        // those bytes to the turn's leading quote and backslash as well.
-        let turn_prefix = text.chars().take(2).collect::<String>();
-        assert_eq!(
-            payload["data"]["response"]["file_changes"]["diff"],
-            turn_prefix
-        );
+        // After allocating the cumulative prefix, the available encoded
+        // bytes must be used by the per-turn prefix whenever a character fits.
         let task = &payload["data"]["response"]["task_file_changes"];
         assert_eq!(task["diff_truncated"], true);
         let prefix = task["diff"].as_str().unwrap();

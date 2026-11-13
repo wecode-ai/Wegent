@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   resolve: {
+    dedupe: ['socket.io-client'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
