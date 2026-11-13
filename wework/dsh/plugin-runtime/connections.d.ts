@@ -173,7 +173,15 @@ export type ConnectionCliDeclaration = (
   | { toolId: string; connectorSlug?: never }
 ) & {
   outputArgs: string[]
-  operations: Record<string, { command: string[]; parameters: Record<string, string> }>
+  operations: Record<
+    string,
+    {
+      command: string[]
+      parameters: Record<string, string>
+      /** The host generates and validates the temporary output file; callers cannot choose it. */
+      outputFile?: { flag: string }
+    }
+  >
 }
 
 export interface ConnectionMcpTool {

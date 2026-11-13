@@ -1,4 +1,5 @@
 import { createReadCursor } from './read-cursor.js'
+import { readImages } from './read-images.js'
 
 const PROVIDER_ID = '@wegent/dsh-connection-dingtalk/dingtalk'
 
@@ -110,6 +111,12 @@ export function createProvider() {
         message => Date.parse(message.at) >= since && Date.parse(message.at) <= until
       )
       const hasMore = page.hasMore && !reachedStart
+      if (state.includeImages) {
+        for (const item of items) {
+          const original = page.messages.find(message => message.messageId === item.id)
+          item.images = await readImages(ctx, source, original, readTool)
+        }
+      }
       const time = hasMore ? required(page.nextPage, 'time') : undefined
       if (hasMore && (!Number.isFinite(Date.parse(time)) || time === (state.time ?? state.end)))
         throw invalid('Invalid native conversation pagination')
@@ -177,7 +184,9 @@ function readWindow(input) {
   const start = input.since === undefined ? new Date(now - 86400000).toISOString() : input.since
   const since = typeof start === 'string' ? Date.parse(start) : NaN
   const limit = input.limit === undefined ? 20 : input.limit
+  const includeImages = input.includeImages ?? false
   if (
+    typeof includeImages !== 'boolean' ||
     !Number.isFinite(since) ||
     since < now - 7 * 86400000 ||
     since > now ||
@@ -186,7 +195,7 @@ function readWindow(input) {
     limit > 20
   )
     throw invalid('Read at most twenty messages from the past seven days')
-  return { start, end: new Date(now).toISOString(), limit }
+  return { start, end: new Date(now).toISOString(), limit, includeImages }
 }
 
 async function readMessagePage(ctx, source, window, ownId) {

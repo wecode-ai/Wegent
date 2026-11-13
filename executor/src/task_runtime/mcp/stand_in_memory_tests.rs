@@ -478,6 +478,14 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
     );
     assert_eq!(reply["annotations"]["readOnlyHint"], false);
     assert_eq!(reply["annotations"]["openWorldHint"], true);
+    assert_eq!(
+        reply["inputSchema"]["properties"]["mentionOpenDingTalkIds"]["type"],
+        "array"
+    );
+    assert!(reply["description"]
+        .as_str()
+        .unwrap()
+        .contains("Writing @Name in text alone"));
     assert!(catalog.iter().all(|tool| !matches!(
         tool["name"].as_str(),
         Some(

@@ -253,6 +253,9 @@ def resolve_routing(db: Session, **kwargs) -> ResolvedRouting:
     try:
         return _resolve_routing(db, **kwargs)
     except HTTPException as error:
+        from app.services.runner_routing_errors import attach_routing_context
+
+        attach_routing_context(db, error, **kwargs)
         if isinstance(error.detail, dict) and error.detail.get("error_code") in {
             "RUNNER_SELECTION_REQUIRED",
             "RUNNER_MODEL_REQUIRED",
@@ -817,6 +820,13 @@ def resolve_group_routing(
                 automatic=automatic,
             )
         except HTTPException as error:
+            if isinstance(error.detail, dict):
+                error.detail.setdefault("routing_context", {}).update(
+                    group_id=group.get("id"),
+                    group_name=group.get("name"),
+                    agent_id=agent.id,
+                    agent_name=agent.name,
+                )
             logger.warning(
                 "Group member routing denied: %s",
                 json.dumps(
@@ -859,10 +869,27 @@ def resolve_group_routing(
                 sort_keys=True,
             ),
         )
-        raise routing_error(
+        error = routing_error(
             "ISSUE_RUNNER_CONFLICT",
             "No authorized runner satisfies all group members' environment and model policies",
         )
+        error.detail["routing_context"] = {
+            "reason": "group_no_common_environment",
+            "issue_id": issue_id,
+            "group_id": group.get("id"),
+            "group_name": group.get("name"),
+            "members": [
+                {
+                    "agent_id": agent_id,
+                    "agent_name": next(
+                        row.name for row in agents if row.id == agent_id
+                    ),
+                    "environment_ids": [str(value) for value in environment_ids],
+                }
+                for agent_id, environment_ids in member_candidates.items()
+            ],
+        }
+        raise error
     return routes
 
 
