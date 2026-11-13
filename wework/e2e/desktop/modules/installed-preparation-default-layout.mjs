@@ -21,26 +21,29 @@ export async function verifyDefaultLayoutInstalledPreparation({
 }) {
   const root = join(resultDir, 'default-layout-install-preparation')
   const home = join(root, 'home')
-  const appData = join(root, 'app-data')
+  const appData =
+    process.platform === 'darwin'
+      ? join(home, 'Library', 'Application Support')
+      : join(root, process.platform === 'win32' ? 'app-data' : 'xdg-config')
   const localAppData = join(root, 'local-app-data')
   const applicationId = 'io.wecode.wework.e2e.default-layout'
   const namespace = (await readPackagedNamespace(appBinary, appEnvironment)) || 'default'
   const userData = join(home, '.wegent', 'workbench', 'wework', namespace, 'user-data')
   const source = join(appData, applicationId)
-  await Promise.all([
-    mkdir(home, { recursive: true }),
-    mkdir(appData, { recursive: true }),
-    mkdir(localAppData, { recursive: true }),
-  ])
+  await Promise.all([mkdir(home, { recursive: true }), mkdir(appData, { recursive: true })])
+  if (process.platform === 'win32') await mkdir(localAppData, { recursive: true })
   await assert.rejects(lstat(userData), { code: 'ENOENT' })
   const environment = {
     ...upgradeUserEnvironment(appEnvironment, home),
-    APPDATA: appData,
-    CFFIXED_USER_HOME: home,
-    LOCALAPPDATA: localAppData,
-    USERPROFILE: home,
     WEWORK_APP_IDENTIFIER: applicationId,
   }
+  if (process.platform === 'darwin') environment.CFFIXED_USER_HOME = home
+  if (process.platform === 'win32') {
+    environment.APPDATA = appData
+    environment.LOCALAPPDATA = localAppData
+    environment.USERPROFILE = home
+  }
+  if (process.platform === 'linux') environment.XDG_CONFIG_HOME = appData
   for (const key of Object.keys(environment)) {
     if (key.startsWith('WEWORK_E2E_') || key === 'VITE_WEWORK_E2E') delete environment[key]
   }
@@ -84,7 +87,10 @@ export async function verifyDefaultLayoutInstalledPreparation({
   })
   try {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS
-    const startupLogPath = join(userData, 'logs', 'wework-main.log')
+    const startupLogPaths = [
+      join(userData, 'logs', 'wework-main.log'),
+      join(home, '.wegent', 'workbench', 'wework', namespace, 'electron-logs', 'wework-main.log'),
+    ]
     for (;;) {
       assert.equal(
         child.exitCode,
@@ -95,16 +101,18 @@ export async function verifyDefaultLayoutInstalledPreparation({
         Date.now() < deadline,
         `Default-layout first launch did not reach main-window-show:\n${stdout}\n${stderr}`
       )
-      const startupLog = await readFile(startupLogPath, 'utf8').catch(error => {
-        if (error.code === 'ENOENT') return ''
-        throw error
-      })
-      if (
-        parseStartupEvents(startupLog).some(
+      let ready = false
+      for (const startupLogPath of startupLogPaths) {
+        const startupLog = await readFile(startupLogPath, 'utf8').catch(error => {
+          if (error.code === 'ENOENT') return ''
+          throw error
+        })
+        ready = parseStartupEvents(startupLog).some(
           event => event.step === 'main-window-show' && event.status === 'completed'
         )
-      )
-        break
+        if (ready) break
+      }
+      if (ready) break
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
     assert.doesNotMatch(`${stdout}\n${stderr}`, /Application data migration target conflict/)

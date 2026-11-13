@@ -52,14 +52,11 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
           root: join(root, 'windows-desktop-startup'),
         })
       : undefined
-  const windowsInstalledPreparation =
-    process.platform === 'win32'
-      ? await verifyDefaultLayoutInstalledPreparation({
-          appBinary,
-          appEnvironment,
-          resultDir: join(root, 'installed-preparation'),
-        })
-      : undefined
+  const installedPreparation = await verifyDefaultLayoutInstalledPreparation({
+    appBinary,
+    appEnvironment,
+    resultDir: join(root, 'installed-preparation'),
+  })
   const windowsComponentPublication =
     process.platform === 'win32'
       ? await verifyWindowsComponentPublication({
@@ -360,8 +357,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   if (macosLogStartup) evidence.macosLogStartup = macosLogStartup
   evidence.missingDesktopUserData = missingDesktopUserData
   if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup
-  if (windowsInstalledPreparation)
-    evidence.windowsInstalledPreparation = windowsInstalledPreparation
+  evidence.installedPreparation = installedPreparation
   if (windowsComponentPublication)
     evidence.windowsComponentPublication = windowsComponentPublication
   assert.equal(evidence.selectedComponentStateUnchanged, true)
