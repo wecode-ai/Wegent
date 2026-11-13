@@ -743,12 +743,12 @@ async fn plugin_mutation_waits_for_transient_pending_requests() {
         *version = version.wrapping_add(1);
     });
 
-    assert_eq!(
+    assert!(
         tokio::time::timeout(std::time::Duration::from_secs(5), mutation)
             .await
             .unwrap()
             .unwrap(),
-        true
+        "plugin configuration mutation did not run after pending requests drained"
     );
     assert!(mutation_called.load(Ordering::SeqCst));
 }
