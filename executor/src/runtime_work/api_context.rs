@@ -19,12 +19,7 @@ pub(super) fn inject_current_session(
     device_id: &str,
     local_task_id: &str,
 ) {
-    request
-        .extra
-        .insert("runtimeDeviceId".to_owned(), json!(device_id));
-    request
-        .extra
-        .insert("runtimeLocalTaskId".to_owned(), json!(local_task_id));
+    bind_task_identity(request, device_id, local_task_id);
     // Establish the same user-message identity sent to Codex and projected by the API.
     let message_id = request
         .extra
@@ -71,6 +66,19 @@ pub(super) fn inject_current_session(
     request
         .extra
         .insert("additionalContext".to_owned(), Value::Object(additional));
+}
+
+pub(super) fn bind_task_identity(
+    request: &mut ExecutionRequest,
+    device_id: &str,
+    local_task_id: &str,
+) {
+    request
+        .extra
+        .insert("runtimeDeviceId".to_owned(), json!(device_id));
+    request
+        .extra
+        .insert("runtimeLocalTaskId".to_owned(), json!(local_task_id));
 }
 
 // Keep this wire format aligned with backend/app/services/wework_api/identity.py.
@@ -128,6 +136,34 @@ fn api_base_url(backend_url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_rebinding_preserves_restrictions_without_creating_a_user_message() {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("runtimeDeviceId".into(), json!("stale-device"));
+        request
+            .extra
+            .insert("runtimeLocalTaskId".into(), json!("stale-task"));
+        bind_task_identity(&mut request, "current-device", "current-task");
+        let context = crate::workbench_control::ControlContext::from_request(&request).unwrap();
+        assert_eq!(context.device_id, "current-device");
+        assert_eq!(context.task_id, "current-task");
+        assert!(!request.extra.contains_key("client_user_message_id"));
+        assert!(!request.extra.contains_key("additionalContext"));
+        for origin in [
+            json!({"dispatchRole":"executor","cloudProjectId":"space","loopItemId":"issue"}),
+            json!({"type":"stand_in_identity"}),
+            json!({"type":"connection_work"}),
+            json!({"type":"project_coordinator"}),
+        ] {
+            request.extra.insert("origin".into(), origin.clone());
+            bind_task_identity(&mut request, "current-device", "current-task");
+            assert_eq!(request.extra["origin"], origin);
+            assert!(crate::workbench_control::ControlContext::from_request(&request).is_none());
+        }
+    }
 
     fn context(request: &ExecutionRequest) -> Value {
         let value = request.extra["additionalContext"][CONTEXT_KEY]["value"]

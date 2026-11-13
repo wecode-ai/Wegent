@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
-# Shared Cargo build caches for local worktrees.
+# Cargo build directories for local worktrees.
 #
-# Keep one target directory per component so Cargo can reuse dependency
-# artifacts between worktrees. Cargo serializes concurrent access to a target
-# directory and invalidates artifacts when its fingerprints change.
+# Cargo's timestamp fingerprints cannot distinguish older sources in another
+# worktree. Isolate its mutable state and share compiled content through sccache.
 
 wegent_cargo_cache_root() {
   if [ -n "${WEGENT_CARGO_TARGET_ROOT:-}" ]; then
@@ -60,25 +59,34 @@ install_wegent_sccache_with_homebrew() {
 configure_wegent_cargo_target_dir() {
   local project_dir="$1"
   local cache_name="$2"
+  local canonical_project_dir=""
+  local cache_root="${CARGO_TARGET_DIR:-}"
+  local worktree_id=""
+
+  canonical_project_dir="$(cd "$project_dir" 2>/dev/null && pwd -P)" || return 1
+
+  if [ "${WEGENT_CARGO_TARGET_DIR_AUTO:-0}" = "1" ] \
+    && [ "$cache_root" = "${WEGENT_CONFIGURED_CARGO_TARGET_DIR:-}" ]; then
+    cache_root="${WEGENT_CARGO_TARGET_BASE:-}"
+  fi
 
   if [ "${WEGENT_DISABLE_SHARED_CARGO_TARGET:-0}" = "1" ]; then
-    configure_wegent_sccache "$project_dir" "$project_dir/target"
-    return 0
+    CARGO_TARGET_DIR="$canonical_project_dir/target/$cache_name"
+  else
+    [ -n "$cache_root" ] || cache_root="$(wegent_cargo_cache_root)"
+    [ -n "$cache_root" ] || cache_root="$canonical_project_dir/target"
+    mkdir -p "$cache_root" || return 1
+    cache_root="$(cd "$cache_root" && pwd -P)" || return 1
+    worktree_id="$(printf '%s\n' "$canonical_project_dir" | git hash-object --stdin)" || return 1
+    CARGO_TARGET_DIR="$cache_root/$cache_name/worktrees/$worktree_id"
   fi
 
-  if [ -n "${CARGO_TARGET_DIR:-}" ]; then
-    configure_wegent_sccache "$project_dir" "$CARGO_TARGET_DIR"
-    return 0
-  fi
-
-  local cache_root=""
-  cache_root="$(wegent_cargo_cache_root)"
-  [ -n "$cache_root" ] || return 0
-
-  export CARGO_TARGET_DIR="$cache_root/$cache_name"
+  export CARGO_TARGET_DIR
   export WEGENT_CARGO_TARGET_DIR_AUTO=1
-  mkdir -p "$CARGO_TARGET_DIR"
-  configure_wegent_sccache "$project_dir" "$CARGO_TARGET_DIR"
+  export WEGENT_CARGO_TARGET_BASE="$cache_root"
+  export WEGENT_CONFIGURED_CARGO_TARGET_DIR="$CARGO_TARGET_DIR"
+  mkdir -p "$CARGO_TARGET_DIR" || return 1
+  configure_wegent_sccache "$canonical_project_dir" "$CARGO_TARGET_DIR"
 }
 
 cargo_target_dir_for() {

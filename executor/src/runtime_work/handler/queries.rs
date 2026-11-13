@@ -56,6 +56,7 @@ impl RuntimeWorkRpcHandler {
                         | "changeRequests"
                         | "queuePosition"
                         | "modelProviderRouting"
+                        | "quotaWait"
                 )
             });
             // The serializer originally adds this authoritative identity after
@@ -803,14 +804,17 @@ impl RuntimeWorkRpcHandler {
             return Ok(response);
         };
 
-        // Named Homes execute in a separate per-turn process. Resuming in the
-        // reader would retain the native writer lock and block the next turn.
+        // Archived sessions are readable without resuming them. Named Homes
+        // also stay read-only here: a resume would retain their writer lock.
         if refresh
             && !local_execution_running
             && !direct_thread_override
             && !codex_client.has_dedicated_home()
         {
-            if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
+            if let Some(link) = local_link
+                .as_ref()
+                .filter(|link| !link.ephemeral && link.status != "archived")
+            {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
                     .await

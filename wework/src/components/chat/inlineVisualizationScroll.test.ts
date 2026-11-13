@@ -2,10 +2,24 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createVisualizationWheelScript,
   forwardVisualizationWheel,
+  withVisualizationWheel,
 } from './inlineVisualizationScroll'
 
 const TOKEN = 'visualization-scroll-token'
 const MESSAGE_TYPE = 'wework-inline-visualization-wheel'
+
+test.each([
+  '<section><script>const closingTag = "</body>"</script><p>Form</p></section>',
+  '<!doctype html><html><body><script>const closingTag = "</body>"</script><p>Form</p></body></html>',
+])('adds the scroll bridge without rewriting app scripts or document structure', html => {
+  const parsed = new DOMParser().parseFromString(withVisualizationWheel(html, TOKEN), 'text/html')
+  const scripts = parsed.querySelectorAll('script')
+  expect(scripts).toHaveLength(2)
+  expect(scripts[0].textContent).toBe('const closingTag = "</body>"')
+  expect(scripts[1].textContent).toContain("addEventListener('wheel'")
+  expect(parsed.querySelector('p')?.textContent).toBe('Form')
+  expect(parsed.doctype?.name).toBe(html.startsWith('<!doctype') ? 'html' : undefined)
+})
 
 function message(overrides: Record<string, unknown> = {}) {
   return {

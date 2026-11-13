@@ -5,6 +5,31 @@ fn app_error(message: &str) -> AppIpcError {
     AppIpcError::new("mcp_app_denied", message)
 }
 
+fn app_tool_failure(error: crate::agents::CodexAppToolError) -> Result<Value, AppIpcError> {
+    use crate::agents::CodexAppToolError;
+    let (outcome_unknown, reason) = match error {
+        CodexAppToolError::NotDispatched(reason) => (false, reason),
+        CodexAppToolError::OutcomeUnknown(reason) => (true, reason),
+    };
+    crate::logging::log_executor_event(
+        "MCP App tool transport failed",
+        &[
+            ("outcome_unknown", outcome_unknown.to_string()),
+            ("error_len", reason.len().to_string()),
+        ],
+    );
+    if !outcome_unknown {
+        return Err(app_error("MCP App tool call could not be dispatched"));
+    }
+    // Keep the business error code in the MCP result across SDK JSON-RPC error wrapping.
+    let detail = json!({
+        "code":"outcome_unknown",
+        "error":"The MCP App tool result is unknown. Check the actual result before retrying."
+    })
+    .to_string();
+    Ok(json!({"isError":true,"content":[{"type":"text","text":detail}]}))
+}
+
 fn resource_uri(meta: &Value) -> Option<&str> {
     [
         meta.pointer("/ui/resourceUri"),
@@ -25,6 +50,38 @@ fn source_call<'a>(thread: &'a Value, call_id: &str) -> Option<&'a Value> {
         .find(|item| item["id"] == call_id && item["type"] == "mcpToolCall")
 }
 
+fn source_resource_uri(source: &Value) -> Option<&str> {
+    [
+        source
+            .pointer("/mcpAppUi/resourceUri")
+            .and_then(Value::as_str),
+        source["mcpAppResourceUri"].as_str(),
+        resource_uri(&source["result"]["_meta"]),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|uri| !uri.is_empty())
+}
+
+fn app_descriptor(
+    source: &Value,
+    link: &RuntimeTaskLink,
+    call_id: &str,
+    uri: &str,
+    tool: Option<&Value>,
+) -> Value {
+    let server = &source["server"];
+    let model_context = link.runtime_handle["mcpAppContexts"]
+        .get(call_id)
+        .filter(|context| context["server"] == *server)
+        .cloned()
+        .unwrap_or(Value::Null);
+    json!({"tool":tool,"server":server,
+        "preferredDisplayMode":source["mcpAppUi"]["preferredModelDisplayMode"],
+        "resourceUri":uri,"arguments":source["arguments"],"result":source["result"],
+        "modelContext":model_context})
+}
+
 fn app_visible(tool: &Value) -> bool {
     tool.pointer("/_meta/ui/visibility")
         .or_else(|| tool.pointer("/_meta/ui~1visibility"))
@@ -34,6 +91,23 @@ fn app_visible(tool: &Value) -> bool {
                 .is_some_and(|items| items.iter().any(|v| v == "app"))
         })
         .unwrap_or(true)
+}
+
+fn source_visible(source: &Value, tool: &Value) -> bool {
+    let (name, arguments) = if source["tool"] == "invoke_capability" {
+        (
+            &source["arguments"]["name"],
+            &source["arguments"]["arguments"],
+        )
+    } else {
+        (&source["tool"], &source["arguments"])
+    };
+    app_visible(tool)
+        && (source["server"] != "wework_control"
+            || name != "present_interaction"
+            || arguments["tools"]
+                .as_array()
+                .is_some_and(|tools| tools.contains(&tool["name"])))
 }
 
 fn same_app(source: &Value, server: &Value, tool: &Value) -> bool {
@@ -110,6 +184,13 @@ impl RuntimeWorkRpcHandler {
             None if discovering => return Ok(Value::Null),
             None => return Err(app_error("Source invocation does not belong to this task")),
         };
+        // Historical UI declarations identify a card independently of service readiness.
+        // Initialization still revalidates the live server, plugin and tool authority.
+        if payload["method"] == "discover" {
+            if let Some(uri) = source_resource_uri(source) {
+                return Ok(app_descriptor(source, &link, &call_id, uri, None));
+            }
+        }
         if read["thread"]["status"]["type"] == "notLoaded" {
             self.resume_codex_thread_for_action(&link, &thread_id)
                 .await
@@ -133,12 +214,8 @@ impl RuntimeWorkRpcHandler {
                     && source["appContext"]["resourceUri"]
                         == tool["_meta"]["_codex_apps"]["resource_uri"])
         });
-        let uri = source
-            .pointer("/mcpAppUi/resourceUri")
-            .and_then(Value::as_str)
-            .or_else(|| source["mcpAppResourceUri"].as_str())
-            .or_else(|| origin.and_then(|tool| resource_uri(&tool["_meta"])))
-            .or_else(|| resource_uri(&source["result"]["_meta"]));
+        let uri = source_resource_uri(source)
+            .or_else(|| origin.and_then(|tool| resource_uri(&tool["_meta"])));
         let Some(uri) = uri.filter(|uri| !uri.is_empty()) else {
             // Discovery is optional for ordinary MCP calls, including historical calls
             // whose server or tool is no longer in the current catalog.
@@ -157,11 +234,7 @@ impl RuntimeWorkRpcHandler {
         if origin.is_none() {
             return Err(app_error("The source app is no longer available"));
         }
-        let descriptor = || {
-            json!({"tool":origin,"server":server,
-            "preferredDisplayMode":source["mcpAppUi"]["preferredModelDisplayMode"],
-            "resourceUri":uri,"arguments":source["arguments"],"result":source["result"]})
-        };
+        let descriptor = || app_descriptor(source, &link, &call_id, uri, origin);
         // Discovery confirms app identity without loading HTML or retaining a connection.
         if payload["method"] == "discover" {
             return Ok(descriptor());
@@ -197,12 +270,20 @@ impl RuntimeWorkRpcHandler {
                     return Err(app_error("Invalid or oversized MCP App model context"));
                 }
                 let context = json!({"server":server,"content":params["content"],"structuredContent":params["structuredContent"]});
-                let updated = self.store.update_task(&link.local_task_id, |task| {
-                    if !task.runtime_handle["mcpAppContexts"].is_object() {
-                        task.runtime_handle["mcpAppContexts"] = json!({});
-                    }
-                    task.runtime_handle["mcpAppContexts"][&call_id] = context;
-                });
+                let updated = self
+                    .store
+                    .try_update_task(&link.local_task_id, |task| {
+                        if !task.runtime_handle["mcpAppContexts"].is_object() {
+                            task.runtime_handle["mcpAppContexts"] = json!({});
+                        }
+                        task.runtime_handle["mcpAppContexts"][&call_id] = context;
+                    })
+                    .map_err(|_| {
+                        AppIpcError::new(
+                            "mcp_app_storage_failed",
+                            "Could not persist MCP App model context",
+                        )
+                    })?;
                 updated.ok_or_else(|| app_error("The source task is no longer available"))?;
                 Ok(json!({}))
             }
@@ -220,9 +301,9 @@ impl RuntimeWorkRpcHandler {
                 descriptor["resource"] = resource;
                 Ok(descriptor)
             }
-            "tools/list" => {
-                Ok(json!({"tools":catalog.into_iter().filter(app_visible).collect::<Vec<_>>()}))
-            }
+            "tools/list" => Ok(
+                json!({"tools":catalog.into_iter().filter(|tool| source_visible(source, tool)).collect::<Vec<_>>()}),
+            ),
             "resources/list" => {
                 Ok(json!({"resources":app_resources(source, server_catalog, "resources")}))
             }
@@ -232,11 +313,23 @@ impl RuntimeWorkRpcHandler {
             "tools/call" => {
                 let tool = catalog
                     .iter()
-                    .find(|tool| tool["name"] == params["name"] && app_visible(tool))
+                    .find(|tool| tool["name"] == params["name"] && source_visible(source, tool))
                     .ok_or_else(|| app_error("Tool is not available to this app"))?;
-                self.call_codex_thread_method("mcpServer/tool/call", json!({
+                let result = self.codex_app_server.call_mcp_app_tool(json!({
                     "threadId":thread_id,"server":server,"tool":tool["name"],"arguments":params["arguments"]
-                })).await.map_err(|_| app_error("MCP App tool call failed"))
+                })).await.or_else(app_tool_failure)?;
+                crate::logging::log_executor_event(
+                    "MCP App tool result",
+                    &[
+                        ("tool", tool["name"].as_str().unwrap_or_default().to_owned()),
+                        (
+                            "structured",
+                            result["structuredContent"].is_object().to_string(),
+                        ),
+                        ("is_error", (result["isError"] == true).to_string()),
+                    ],
+                );
+                Ok(result)
             }
             "resources/read" => {
                 let requested = params["uri"]
@@ -323,6 +416,78 @@ pub(super) fn append_model_context(request: &mut ExecutionRequest, link: &Runtim
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_resource_declarations_use_the_first_nonempty_uri() {
+        for (source, expected) in [
+            (
+                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":"ui://saved"}),
+                Some("ui://saved"),
+            ),
+            (
+                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":"","result":{"_meta":{"ui":{"resourceUri":"ui://result"}}}}),
+                Some("ui://result"),
+            ),
+            (
+                json!({"mcpAppUi":{"resourceUri":"ui://original"},"mcpAppResourceUri":"ui://other"}),
+                Some("ui://original"),
+            ),
+            (
+                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":""}),
+                None,
+            ),
+        ] {
+            assert_eq!(source_resource_uri(&source), expected);
+        }
+    }
+
+    #[test]
+    fn tool_transport_errors_preserve_unknown_outcomes_in_the_mcp_result() {
+        use crate::agents::CodexAppToolError;
+        let denied =
+            app_tool_failure(CodexAppToolError::NotDispatched("Not started".into())).unwrap_err();
+        assert_eq!(denied.code, "mcp_app_denied");
+        let unknown =
+            app_tool_failure(CodexAppToolError::OutcomeUnknown("Response lost".into())).unwrap();
+        assert_eq!(unknown["isError"], true);
+        let error: Value =
+            serde_json::from_str(unknown["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(error["code"], "outcome_unknown");
+    }
+
+    #[test]
+    fn generated_html_can_only_call_tools_bound_by_its_source_invocation() {
+        let source = json!({"server":"wework_control","tool":"present_interaction","arguments":{"tools":["list_conversations"]}});
+        assert!(source_visible(
+            &source,
+            &json!({"name":"list_conversations","_meta":{"ui":{"visibility":["app","model"]}}})
+        ));
+        assert!(!source_visible(
+            &source,
+            &json!({"name":"delete_automation","_meta":{"ui":{"visibility":["app","model"]}}})
+        ));
+        assert!(!source_visible(
+            &source,
+            &json!({"name":"list_conversations","_meta":{"ui":{"visibility":["model"]}}})
+        ));
+        assert!(!source_visible(
+            &json!({"server":"wework_control","tool":"present_interaction"}),
+            &json!({"name":"list_conversations"})
+        ));
+        assert!(source_visible(
+            &json!({"server":"other","tool":"show_app"}),
+            &json!({"name":"read"})
+        ));
+        let wrapped = json!({"server":"wework_control","tool":"invoke_capability","arguments":{"name":"present_interaction","arguments":source["arguments"]}});
+        assert!(source_visible(
+            &wrapped,
+            &json!({"name":"list_conversations"})
+        ));
+        assert!(!source_visible(
+            &wrapped,
+            &json!({"name":"delete_automation"})
+        ));
+    }
 
     #[test]
     fn opaque_app_metadata_preserves_manifest_serialization() {
@@ -437,6 +602,76 @@ mod session_tests {
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
+    fn cold_interaction_resume_restores_managed_control_from_the_owning_task() {
+        let _lock = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let root = tempfile::tempdir().unwrap();
+                let _env: Vec<_> = [
+                    "HOME", "CODEX_HOME", "WEGENT_CODEX_HOME", "WEGENT_EXECUTOR_HOME",
+                    "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME",
+                ].into_iter().map(|key| {
+                    let directory = root.path().join(key);
+                    fs::create_dir_all(&directory).unwrap();
+                    ScalarEnv::set(key, directory.to_str().unwrap())
+                }).collect();
+                let binary = root.path().join("codex-cold-interaction.sh");
+                let log = root.path().join("requests.jsonl");
+                fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
+control_ready=false
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{}'
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/read"'*) result='{{"thread":{{"id":"00000000-0000-0000-0000-000000000001","status":{{"type":"notLoaded"}},"turns":[{{"items":[{{"id":"call","type":"mcpToolCall","server":"wework_control","tool":"present_interaction","arguments":{{"tools":[]}},"result":{{"content":[],"structuredContent":{{"title":"Saved interaction"}},"_meta":{{"ui":{{"resourceUri":"ui://wework-control/interaction.html","html":"<p>Original card</p>","tools":[]}}}}}}}}]}}]}}}}';;
+    *'"method":"thread/resume"'*)
+      case "$line" in *'"mcp_servers.wework_control.url":'*) control_ready=true;; esac
+      result='{{}}';;
+    *'"method":"mcpServerStatus/list"'*)
+      if "$control_ready"; then
+        result='{{"data":[{{"name":"wework_control","tools":{{"present_interaction":{{"name":"present_interaction","_meta":{{"ui":{{"resourceUri":"ui://wework-control/interaction.html"}}}}}}}}}}]}}'
+      else result='{{"data":[]}}'; fi;;
+    *'"method":"mcpServer/resource/read"'*) result='{{"contents":[{{"uri":"ui://wework-control/interaction.html","mimeType":"text/html;profile=mcp-app","text":"<p>Host shell</p>"}}]}}';;
+    *) result='{{}}';;
+  esac
+  printf '{{"id":%s,"result":%s}}\n' "$id" "$result"
+  case "$line" in *'"method":"test/stop"'*) exit 0;; esac
+done
+"#, log.display()))).unwrap();
+                fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+                let handler = RuntimeWorkRpcHandler::new("owning-device", binary.to_str().unwrap());
+                let mut task = RuntimeTaskLink::new_pending("owning-task".into(),
+                    root.path().join("project").display().to_string(), "Saved interaction".into());
+                task.thread_id = Some("00000000-0000-0000-0000-000000000001".into());
+                let mut original = ExecutionRequest::default();
+                crate::runtime_work::api_context::inject_current_session(&mut original, "old-device", "old-task");
+                store_runtime_execution_request(&mut task.runtime_handle, &original);
+                assert!(task.runtime_handle["executionRequest"].get("runtimeDeviceId").is_none());
+                task.runtime_handle["mcpAppContexts"] = json!({"call":{
+                    "server":"wework_control", "structuredContent":{"state":{"view":"created","id":"saved-id","name":"Saved task"}}
+                }});
+                handler.upsert_local_task(task);
+                let reloaded = RuntimeWorkRpcHandler::new("owning-device", binary.to_str().unwrap());
+                let result = reloaded.mcp_app_request(json!({"taskId":"owning-task","callId":"call","method":"initialize"})).await;
+                reloaded.codex_app_server.request("test/stop", json!({})).await.unwrap();
+                let restored = result.expect("A cold resume must restore the personal tool service");
+                assert_eq!(restored["result"]["_meta"]["ui"]["html"], "<p>Original card</p>");
+                assert_eq!(restored["modelContext"]["structuredContent"]["state"]["id"], "saved-id");
+                let calls: Vec<Value> = fs::read_to_string(log).unwrap().lines()
+                    .map(|line| serde_json::from_str(line).unwrap()).collect();
+                let resume = calls.iter().find(|call| call["method"] == "thread/resume").unwrap();
+                let config = &resume["params"]["config"];
+                assert!(config["mcp_servers.wework_control.url"].as_str().unwrap().ends_with("/control/mcp"));
+                assert_eq!(config["shell_environment_policy.set.WEGENT_TASK_ID"], "owning-task");
+                assert!(!calls.iter().any(|call| call["method"] == "mcpServer/tool/call"), "Restoration must not repeat a business operation");
+            });
+    }
+
+    #[test]
     fn ordinary_mcp_discovery_does_not_require_an_app_or_grant_app_authority() {
         let _lock = crate::test_env::lock();
         tokio::runtime::Builder::new_current_thread()
@@ -487,7 +722,7 @@ done
                 let handler = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
                 let mut task = RuntimeTaskLink::new_pending("task".into(),
                     root.path().join("project").display().to_string(), "MCP".into());
-                task.runtime_handle = json!({"threadId":"00000000-0000-0000-0000-000000000001"});
+                task.thread_id = Some("00000000-0000-0000-0000-000000000001".into());
                 handler.upsert_local_task(task.clone());
                 for call in ["missing-server", "missing-tool", "ordinary", "broken-catalog"] {
                     assert_eq!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.unwrap(), Value::Null, "{call}");
@@ -498,6 +733,9 @@ done
                 }
                 for call in ["removed-app", "removed-app-tool", "broken-app"] {
                     assert!(handler.mcp_app_request(json!({"taskId":"task","callId":call})).await.is_err(), "{call}");
+                    let discovery = handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":"discover"})).await.unwrap();
+                    assert_eq!(discovery["resourceUri"], "ui://app", "A declared historical app must remain identifiable: {call}");
+                    assert!(discovery.get("resource").is_none());
                 }
                 for call in ["catalog-app", "result-app"] {
                     let discovery = handler.mcp_app_request(json!({"taskId":"task","callId":call,"method":"discover"})).await.unwrap();
@@ -507,6 +745,22 @@ done
                     assert_eq!(app["resourceUri"], "ui://app");
                     assert_eq!(app["resource"]["contents"][0]["text"], "Ready");
                 }
+                let completed = json!({"structuredContent":{"view":{"view":"list"},"lastAction":{"type":"created","automation_id":"schedule"}}});
+                handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app",
+                    "method":"ui/update-model-context","params":completed})).await.unwrap();
+                let restored = handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"initialize"})).await.unwrap();
+                assert_eq!(restored["modelContext"]["structuredContent"], completed["structuredContent"]);
+                let other = handler.mcp_app_request(json!({"taskId":"task","callId":"result-app","method":"initialize"})).await.unwrap();
+                assert!(other["modelContext"].is_null(), "Another card must not receive this card's state");
+                let reloaded = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
+                let restored = reloaded.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"initialize"})).await.unwrap();
+                assert_eq!(restored["modelContext"]["structuredContent"], completed["structuredContent"], "Card state must survive reloading the runtime task store");
+                let mut wrong_server = reloaded.store.get_task("task").unwrap();
+                wrong_server.runtime_handle["mcpAppContexts"]["catalog-app"]["server"] = json!("different");
+                reloaded.upsert_local_task(wrong_server);
+                let isolated = reloaded.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"initialize"})).await.unwrap();
+                assert!(isolated["modelContext"].is_null(), "Another server must not receive saved state");
+                reloaded.codex_app_server.request("test/stop", json!({})).await.unwrap();
                 handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"retain","sessionId":"instance"})).await.unwrap();
                 task.status = "archived".into();
                 handler.upsert_local_task(task);
