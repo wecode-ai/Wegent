@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve, win32 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
@@ -1064,6 +1064,18 @@ async function commandOutputAsync(command, args, options = {}) {
   })
 }
 
+function redisCliBinary(
+  serverBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim(),
+  platform = process.platform
+) {
+  if (!serverBinary) return 'redis-cli'
+  const paths = platform === 'win32' ? win32 : posix
+  return paths.join(
+    paths.dirname(serverBinary),
+    platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'
+  )
+}
+
 async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
   if (!app) return
   if (forceSnapshot) {
@@ -2093,6 +2105,7 @@ export {
   pathExists,
   commandOutput,
   commandOutputAsync,
+  redisCliBinary,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

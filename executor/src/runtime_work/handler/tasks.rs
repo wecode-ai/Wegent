@@ -1164,7 +1164,17 @@ impl RuntimeWorkRpcHandler {
             })
         }) && self.is_active_local_task(&local_task_id)
             && !self.is_queued_local_task(&local_task_id);
-        if was_busy && !queue_if_busy && !completed_native_turn {
+        let replacing_quota_wait = self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .iter()
+            .any(|turn| {
+                turn.local_task_id == local_task_id
+                    && turn.request.extra.contains_key(quota_recovery::MARKER)
+            });
+        if was_busy && !queue_if_busy && !completed_native_turn && !replacing_quota_wait {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -2330,7 +2340,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_worktree_turn(&local_task_id) {
+        if self.cancel_preparing_turn(&local_task_id) {
+            self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -2341,9 +2352,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if had_active_local_execution {
-            self.request_active_turn_stop(&local_task_id);
-        }
+        let had_active_local_execution =
+            self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
         if is_codex && !had_active_local_execution {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
@@ -2451,7 +2461,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
-        self.reserve_worktree_preparation(&queued_turn);
+        self.reserve_turn_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
@@ -2461,6 +2471,10 @@ impl RuntimeWorkRpcHandler {
             .request
             .extra
             .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+            || queued_turn
+                .request
+                .extra
+                .contains_key(quota_recovery::MARKER)
         {
             self.start_queued_turn(queued_turn);
         } else if queued_turn

@@ -26,6 +26,14 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+### Model overload and quota recovery
+
+Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
+
+When subscription usage is exhausted, the task waits in the queue and releases its execution slot. The composer shows the reset countdown. At that time, Wework checks usage again and continues with the original model, including a persistent goal stopped by the usage limit. If no reset time is available, it checks once per minute. Waiting records survive a Wework restart on the same device; execution requires the application to be running.
+
+Click **Cancel automatic recovery** beside the composer countdown to stop recovery. Pausing, editing or deleting its goal, or sending new task input, invalidates the old wait. Changed account, model configuration or conversation requires a new execution request. An exhausted task budget still requires a budget adjustment before continuing.
+
 <a id="sidebar-task-management"></a>
 
 ### Sidebar task management
