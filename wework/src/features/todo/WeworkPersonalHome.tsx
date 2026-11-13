@@ -480,7 +480,7 @@ export function WeworkPersonalHome({
                 <select
                   aria-label={t('personalHome.sort')}
                   data-testid="personal-home-sort"
-                  className="min-h-11 rounded-md bg-transparent px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+                  className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
                   value={order}
                   onChange={event => setOrder(event.target.value as PersonalHomeIssueOrder)}
                 >
@@ -493,7 +493,7 @@ export function WeworkPersonalHome({
                 <select
                   aria-label={t('personalHome.filter')}
                   data-testid="personal-home-filter"
-                  className="min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
+                  className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
                   value={showCompleted ? 'all' : 'open'}
                   onChange={event => setShowCompleted(event.target.value === 'all')}
                 >
