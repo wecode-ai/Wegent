@@ -44,6 +44,7 @@ pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
 use context::space_context_grant;
+pub(crate) use stand_in::stand_in_identity;
 pub(crate) use stand_in::stand_in_mcp_client_config;
 pub(crate) use stand_in::StandInMcpIdentity;
 
