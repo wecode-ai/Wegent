@@ -543,7 +543,13 @@ export function DeviceMonitorPanel() {
     setIsDeletingDevice(true)
     try {
       await adminApis.deleteDeviceRecord(deviceToDelete.id)
-      toast.success(t('device_monitor.actions.delete_success'))
+      toast.success(
+        t(
+          deviceToDelete.device_type === 'cloud'
+            ? 'device_monitor.actions.delete_cloud_success'
+            : 'device_monitor.actions.delete_success'
+        )
+      )
       setDeviceToDelete(null)
       latestDevicesRequestRef.current += 1
       setDevices(current => current.filter(device => device.id !== deviceToDelete.id))
@@ -551,9 +557,11 @@ export function DeviceMonitorPanel() {
       void loadStats(true)
     } catch (error) {
       const message =
-        error instanceof ApiError && error.status === 409
-          ? 'device_monitor.errors.delete_online'
-          : 'device_monitor.errors.delete_failed'
+        deviceToDelete.device_type === 'cloud'
+          ? 'device_monitor.errors.delete_cloud_failed'
+          : error instanceof ApiError && error.status === 409
+            ? 'device_monitor.errors.delete_online'
+            : 'device_monitor.errors.delete_failed'
       toast.error(t(message))
       if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
         setDeviceToDelete(null)
@@ -702,12 +710,20 @@ export function DeviceMonitorPanel() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('device_monitor.confirm.delete_title')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t(
+                deviceToDelete?.device_type === 'cloud'
+                  ? 'device_monitor.confirm.delete_cloud_title'
+                  : 'device_monitor.confirm.delete_title'
+              )}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {t('device_monitor.confirm.delete_message', {
-                name: deviceToDelete?.name,
-                user: deviceToDelete?.user_name,
-              })}
+              {t(
+                deviceToDelete?.device_type === 'cloud'
+                  ? 'device_monitor.confirm.delete_cloud_message'
+                  : 'device_monitor.confirm.delete_message',
+                { name: deviceToDelete?.name, user: deviceToDelete?.user_name }
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -916,6 +932,11 @@ export function DeviceMonitorPanel() {
                 upgradeState={upgradeStates[device.device_id]}
                 actionLoading={actionLoading}
                 extensionAction={deviceMonitorExtension.renderAction(device)}
+                canDelete={
+                  device.device_type === 'cloud'
+                    ? deviceMonitorExtension.supportsCloudDeviceDeletion
+                    : device.status === 'offline'
+                }
                 deleteDisabled={isDeletingDevice}
                 handleUpgrade={handleUpgrade}
                 handleRestart={handleRestart}

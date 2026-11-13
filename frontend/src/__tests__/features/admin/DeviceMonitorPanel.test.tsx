@@ -70,8 +70,11 @@ jest.mock('@/contexts/SocketContext', () => ({
   }),
 }))
 
+let mockSupportsCloudDeviceDeletion = false
+
 jest.mock('@extensions/admin-device-monitor', () => ({
   useAdminDeviceMonitorExtension: () => ({
+    supportsCloudDeviceDeletion: mockSupportsCloudDeviceDeletion,
     renderAction: () => null,
     renderPanel: () => null,
   }),
@@ -248,6 +251,9 @@ describe('DeviceMonitorPanel', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockSupportsCloudDeviceDeletion = false
+    mockedAdminApis.getDevices.mockReset()
+    mockedAdminApis.deleteDeviceRecord.mockReset()
 
     mockedAdminApis.getDeviceStats.mockResolvedValue({
       total: 2,
@@ -354,14 +360,77 @@ describe('DeviceMonitorPanel', () => {
       .mockResolvedValueOnce({ total: 20, items: [] })
       .mockResolvedValueOnce({ total: 20, items: [remaining] })
     mockedAdminApis.deleteDeviceRecord.mockResolvedValue({ message: 'Device registration removed' })
+    await act(async () => {
+      render(<DeviceMonitorPanel />)
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('next-page-button'))
+    })
+    fireEvent.click(screen.getByTestId('admin-delete-device-42'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+    })
+
+    expect(screen.getByText('Remaining device')).toBeInTheDocument()
+    expect(mockedAdminApis.getDevices.mock.calls.map(([page]) => page)).toEqual([1, 2, 2, 1])
+  })
+
+  it('hides cloud deletion when no provider is configured', async () => {
+    const cloudDevice = { ...offlineDevice, device_type: 'cloud' as const }
+    mockedAdminApis.getDevices.mockResolvedValueOnce({ total: 1, items: [cloudDevice] })
     render(<DeviceMonitorPanel />)
 
-    fireEvent.click(await screen.findByTestId('next-page-button'))
-    fireEvent.click(await screen.findByTestId('admin-delete-device-42'))
-    fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+    expect(await screen.findByText(cloudDevice.name)).toBeInTheDocument()
+    expect(screen.queryByTestId('admin-delete-device-42')).not.toBeInTheDocument()
+  })
 
-    expect(await screen.findByText('Remaining device')).toBeInTheDocument()
-    expect(mockedAdminApis.getDevices.mock.calls.map(([page]) => page)).toEqual([1, 2, 2, 1])
+  it.each(['online', 'offline', 'busy'] as const)(
+    'offers provider-backed deletion for a %s cloud device',
+    async status => {
+      mockSupportsCloudDeviceDeletion = true
+      const cloudDevice = { ...offlineDevice, status, device_type: 'cloud' as const }
+      mockedAdminApis.getDevices.mockResolvedValueOnce({ total: 1, items: [cloudDevice] })
+      mockedAdminApis.deleteDeviceRecord.mockResolvedValue({ message: 'Cloud device deleted' })
+      await act(async () => {
+        render(<DeviceMonitorPanel />)
+      })
+
+      fireEvent.click(screen.getByTestId('admin-delete-device-42'))
+      expect(screen.getByText('device_monitor.confirm.delete_cloud_message')).toBeInTheDocument()
+      expect(mockedAdminApis.deleteDeviceRecord).not.toHaveBeenCalled()
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+      })
+
+      expect(mockedAdminApis.deleteDeviceRecord).toHaveBeenCalledWith(42)
+      expect(mockedToast.success).toHaveBeenCalledWith(
+        'device_monitor.actions.delete_cloud_success'
+      )
+    }
+  )
+
+  it('keeps the cloud device visible and allows retry when deletion fails', async () => {
+    mockSupportsCloudDeviceDeletion = true
+    const cloudDevice = {
+      ...offlineDevice,
+      status: 'online' as const,
+      device_type: 'cloud' as const,
+    }
+    mockedAdminApis.getDevices.mockResolvedValueOnce({ total: 1, items: [cloudDevice] })
+    mockedAdminApis.deleteDeviceRecord.mockRejectedValue(new ApiError('Provider unavailable', 502))
+    await act(async () => {
+      render(<DeviceMonitorPanel />)
+    })
+
+    fireEvent.click(screen.getByTestId('admin-delete-device-42'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+    })
+
+    expect(mockedToast.error).toHaveBeenCalledWith('device_monitor.errors.delete_cloud_failed')
+    expect(screen.getByTestId('confirm-admin-delete-device')).toBeEnabled()
+    expect(screen.getByTestId('admin-delete-device-42')).toBeInTheDocument()
+    expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
   })
 
   it('refreshes the device state when the server rejects deletion because the device reconnected', async () => {

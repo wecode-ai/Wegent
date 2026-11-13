@@ -1568,6 +1568,7 @@
       "restart_all_cloud_failed": "批量重启云设备失败",
       "migrate_failed": "发送迁移命令失败",
       "delete_failed": "删除设备登记失败",
+      "delete_cloud_failed": "云设备删除未完成",
       "delete_online": "设备已上线或仍有任务，无法删除"
     },
     "actions": {
@@ -1579,12 +1580,15 @@
       "migrate": "迁移",
       "delete": "删除",
       "delete_success": "设备登记已删除",
+      "delete_cloud_success": "云设备已删除",
       "upgrade_sent": "升级命令已发送",
       "restart_sent": "重启命令已发送",
       "migrate_sent": "迁移命令已发送"
     },
     "confirm": {
       "delete_title": "删除设备登记",
+      "delete_cloud_title": "删除云设备",
+      "delete_cloud_message": "永久删除 {{user}} 的云设备「{{name}}」所在沙箱及其所有设备登记？沙箱中正在运行的任务会中断。",
       "delete_message": "删除 {{user}} 的设备「{{name}}」登记？设备重新连接时会再次登记。",
       "upgrade_all_local_title": "确认升级全部本地设备",
       "upgrade_all_local_message": "将向所有符合条件的本地设备发送升级命令，可能影响正在运行的任务。请确认后继续。",

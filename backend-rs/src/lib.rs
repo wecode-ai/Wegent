@@ -108,6 +108,7 @@ mod chat_history;
 mod chat_message_update;
 mod chat_repository;
 mod ci_lint_probe;
+pub mod cloud_device_deletion;
 mod cloud_project_automations;
 mod cloud_projects;
 mod cloud_projects_members;

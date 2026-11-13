@@ -86,6 +86,7 @@ interface AdminDeviceCardProps {
   upgradeState?: DeviceUpgradeState
   actionLoading: Record<string, string>
   extensionAction: ReactNode
+  canDelete: boolean
   deleteDisabled: boolean
   handleUpgrade: (device: AdminDeviceInfo) => void
   handleRestart: (device: AdminDeviceInfo) => void
@@ -98,6 +99,7 @@ export function AdminDeviceCard({
   upgradeState,
   actionLoading,
   extensionAction,
+  canDelete,
   deleteDisabled,
   handleUpgrade,
   handleRestart,
@@ -246,7 +248,7 @@ export function AdminDeviceCard({
                 <TooltipContent>{t('device_monitor.actions.migrate')}</TooltipContent>
               </Tooltip>
             )}
-            {device.status === 'offline' && (
+            {canDelete && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

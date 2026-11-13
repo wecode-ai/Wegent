@@ -37,6 +37,7 @@ use serde_json::Value;
 
 use crate::admin_service_keys::AdminUser;
 use crate::auth::SessionUser;
+use crate::cloud_device_deletion::delete_cloud_device;
 use crate::device_identity::{DeviceKindRow, device_connection_route_id, runtime_device_id};
 use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
 use crate::devices::{internal_error, online_key};
@@ -71,12 +72,13 @@ const DEVICE_RECORD_FOR_UPDATE_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds
      WHERE kinds.id = ? AND kinds.user_id = ? AND kinds.namespace = 'default' \
      AND kinds.kind = 'Device' AND kinds.is_active = true FOR UPDATE";
 
-const DEVICE_RECORD_OWNER_QUERY: &str = "SELECT user_id FROM kinds \
+const ADMIN_DEVICE_RECORD_QUERY: &str = "SELECT user_id, json FROM kinds \
      WHERE id = ? AND namespace = 'default' AND kind = 'Device' AND is_active = true";
 
 #[derive(brz_mysql::FromMysqlRow)]
-struct DeviceRecordOwner {
+struct AdminDeviceRecord {
     user_id: i32,
+    json: Value,
 }
 
 /// Probe each physical subtask table when the deployment shards by task ID.
@@ -192,11 +194,11 @@ async fn delete_admin_device_record(
     record_id: i64,
     #[auth] admin: AdminUser,
 ) -> Result<DeviceRecordRemoved, FastApiError> {
-    let owner: DeviceRecordOwner = state
+    let device: AdminDeviceRecord = state
         .mysql
         .with_transaction(async |transaction| {
             transaction
-                .fetch_optional(DEVICE_RECORD_OWNER_QUERY, (record_id,))
+                .fetch_optional(ADMIN_DEVICE_RECORD_QUERY, (record_id,))
                 .await
         })
         .await
@@ -205,14 +207,23 @@ async fn delete_admin_device_record(
             internal_error()
         })?
         .ok_or_else(record_not_found)?;
-    let removed = delete_device_record(state, i64::from(owner.user_id), record_id, true).await?;
+    let user_id = i64::from(device.user_id);
+    let spec = &device.json["spec"];
+    let message = if spec["deviceType"].as_str() == Some(CLOUD_DEVICE_TYPE) {
+        delete_cloud_device(state, user_id, record_id, spec).await?;
+        "Cloud device deleted"
+    } else {
+        delete_device_record(state, user_id, record_id, true)
+            .await?
+            .message
+    };
     tracing::info!(
         admin_id = admin.0.id,
-        owner_id = owner.user_id,
+        owner_id = user_id,
         record_id,
         "admin removed device registration"
     );
-    Ok(removed)
+    Ok(DeviceRecordRemoved { message })
 }
 
 #[tracing::instrument(name = "device.record.delete", skip(state))]
@@ -335,7 +346,11 @@ where
         return Ok(RecordDeletion::NotFound);
     };
 
-    if offline_only || device.json["spec"]["deviceType"].as_str() != Some(CLOUD_DEVICE_TYPE) {
+    let is_cloud = device.json["spec"]["deviceType"].as_str() == Some(CLOUD_DEVICE_TYPE);
+    if offline_only && is_cloud {
+        return Ok(RecordDeletion::Conflict);
+    }
+    if !is_cloud {
         match require_offline_and_idle(transaction, redis, user_id, &device, subtask_tables).await?
         {
             GuardDecision::Offline => {}
