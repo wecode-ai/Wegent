@@ -3,6 +3,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from '../modules/shared.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 import {
   assistantMessage,
   createSse,
@@ -124,6 +125,12 @@ export function createDesktopScenario(options) {
           text: result,
           timeoutMs: options.modelResponseTimeoutMs,
         })
+        await until(
+          () => rpc('runtime.tasks.get', { taskId: 'stand-in-chat-0-primary-collaboration' }),
+          result => result.task?.running === false,
+          'The homepage model turn must settle before advancing the model fixture',
+          options.modelResponseTimeoutMs
+        )
         assert.equal(
           Number(await control.command('getElementCount', HOME)),
           1,
@@ -137,7 +144,7 @@ export function createDesktopScenario(options) {
       ).task
       assert.ok(before.threadId)
       assert.equal(before.runtimeHandle.origin.conversationScope, 'collaboration')
-      const unchanged = await rpc('todos.get', { project_id: project.id, item_id: issue.id })
+      const unchanged = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
       assert.equal(unchanged.description, ORIGINAL)
       phase = 1
       issue = unchanged
@@ -145,7 +152,7 @@ export function createDesktopScenario(options) {
         `${MARKER}: append the agreed acceptance criterion to the Issue description.`,
         WRITE_RESULT
       )
-      const updated = await rpc('todos.get', { project_id: project.id, item_id: issue.id })
+      const updated = await rpc('todos.get', { project_id: project.id, task_id: issue.id })
       assert.equal(updated.description, UPDATED)
       assert.equal(updated.title, issue.title)
       assert.equal(updated.status, issue.status)
