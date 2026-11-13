@@ -630,6 +630,87 @@ async fn idle_restart_preserves_pending_reads_until_the_native_response() {
 }
 
 #[tokio::test]
+async fn live_background_terminal_query_reads_native_processes_across_pages() {
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let mut client = CodexAppServerClient::new("codex-background-terminal-list-test");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    let query_client = client.clone();
+    let query = tokio::spawn(async move {
+        query_client
+            .has_live_background_terminal(&["thread-1".to_owned()])
+            .await
+    });
+
+    let first_request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(id) = pending.lock().await.keys().next().copied() {
+                break id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first background terminal page request should be sent");
+    pending
+        .lock()
+        .await
+        .remove(&first_request)
+        .unwrap()
+        .sender
+        .send(Ok(json!({"data": [], "nextCursor": "next"})))
+        .unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if pending.lock().await.keys().any(|id| *id != first_request) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the next background terminal page request should be sent");
+    let next_request = pending
+        .lock()
+        .await
+        .keys()
+        .copied()
+        .find(|id| *id != first_request)
+        .unwrap();
+    pending
+        .lock()
+        .await
+        .remove(&next_request)
+        .unwrap()
+        .sender
+        .send(Ok(json!({
+            "data": [{"itemId": "command-1", "processId": "42"}],
+            "nextCursor": null
+        })))
+        .unwrap();
+
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(5), query)
+            .await
+            .unwrap()
+            .unwrap(),
+        Ok(true)
+    );
+    client.restart().await;
+}
+
+#[tokio::test]
 async fn auth_mutation_is_rejected_while_a_turn_is_active() {
     let client = CodexAppServerClient::new("codex-auth-mutation-active-test");
     client.mark_thread_active("thread-1").await;

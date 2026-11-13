@@ -707,6 +707,71 @@ impl CodexAppServerClient {
         Ok(())
     }
 
+    /// Reads live process state because completed transcript persistence can lag a finished turn.
+    pub async fn has_live_background_terminal(
+        &self,
+        thread_ids: &[String],
+    ) -> Result<bool, String> {
+        if thread_ids.is_empty() {
+            return Ok(false);
+        }
+        {
+            let mut state = self.state.lock().await;
+            let running = state
+                .process
+                .as_mut()
+                .is_some_and(|process| !process.has_exited());
+            if !running {
+                return Ok(false);
+            }
+        }
+        for thread_id in thread_ids.iter().cloned().collect::<BTreeSet<_>>() {
+            let mut cursor = None;
+            let mut seen_cursors = HashSet::new();
+            loop {
+                let response = match self
+                    .request_existing(
+                        "thread/backgroundTerminals/list",
+                        json!({"threadId": thread_id, "cursor": cursor, "limit": 100}),
+                    )
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let mut state = self.state.lock().await;
+                        let running = state
+                            .process
+                            .as_mut()
+                            .is_some_and(|process| !process.has_exited());
+                        return if running { Err(error) } else { Ok(false) };
+                    }
+                };
+                let data = response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        "thread/backgroundTerminals/list response missing data".to_owned()
+                    })?;
+                if !data.is_empty() {
+                    return Ok(true);
+                }
+                let Some(next_cursor) = response
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .filter(|cursor| !cursor.is_empty())
+                    .map(str::to_owned)
+                else {
+                    break;
+                };
+                if !seen_cursors.insert(next_cursor.clone()) {
+                    return Err("thread/backgroundTerminals/list repeated a cursor".to_owned());
+                }
+                cursor = Some(next_cursor);
+            }
+        }
+        Ok(false)
+    }
+
     pub async fn mutate_auth_if_idle<F>(&self, mutation: F) -> Result<(), CodexIdleMutationError>
     where
         F: FnOnce() -> Result<(), String>,

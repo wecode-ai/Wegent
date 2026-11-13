@@ -923,7 +923,10 @@ impl RuntimeWorkRpcHandler {
             .count();
         let force = bool_field(&payload, "force").unwrap_or(false);
         let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
-        let background_terminal_count = self.background_terminal_count();
+        let background_terminal_count = self
+            .background_terminal_work_count()
+            .await
+            .map_err(|error| AppIpcError::new("codex_idle_status_failed", error))?;
         if (active_task_count > 0 || background_terminal_count > 0) && if_idle && !force {
             return Ok(json!({
                 "restarted": false,

@@ -89,7 +89,11 @@ impl RuntimeWorkRpcHandler {
             .expect("runtime turn scheduler lock should not be poisoned")
             .active_task_ids
             .len();
-        if active_tasks > 0 || self.background_terminal_count() > 0 {
+        let background_terminal_work_count = self
+            .background_terminal_work_count()
+            .await
+            .map_err(|error| AppIpcError::new("bundled_plugin_update_failed", error))?;
+        if active_tasks > 0 || background_terminal_work_count > 0 {
             return Ok(json!({"status": "deferred", "updated": false}));
         }
         let result = self
@@ -134,11 +138,15 @@ impl RuntimeWorkRpcHandler {
             let configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
             // Prevent a turn from starting while background terminal state is checked.
             let turn_admission = self.turn_queue_operation.lock().await;
-            let background_terminal_wake = self.background_terminal_wake.notified();
-            if self.background_terminal_count() > 0 {
+            let mut background_terminal_changed = self.background_terminal_changed.subscribe();
+            let background_terminal_work_count = self
+                .background_terminal_work_count()
+                .await
+                .map_err(|error| AppIpcError::new(error_code, error))?;
+            if background_terminal_work_count > 0 {
                 drop(turn_admission);
                 drop(configuration);
-                background_terminal_wake.await;
+                let _ = background_terminal_changed.changed().await;
                 continue;
             }
             return self
