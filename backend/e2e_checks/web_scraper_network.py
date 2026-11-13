@@ -12,7 +12,9 @@ from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from crawl4ai import AsyncWebCrawler, BrowserConfig
-from playwright.async_api import Browser, Error, async_playwright
+from playwright.async_api import Browser, Error
+from playwright.async_api import TimeoutError as BrowserTimeoutError
+from playwright.async_api import async_playwright
 from websockets.asyncio.server import ServerConnection, serve
 
 from app.services.web_scraper.browser_security import (
@@ -89,9 +91,12 @@ ws.onmessage = () => {{ document.body.dataset.ws = 'ok'; ws.close(); }};
 const blocked = new WebSocket('{blocked_ws}');
 blocked.onerror = () => {{ document.body.dataset.blockedWs = 'ok'; }};
 window.open('{loopback}/blocked-popup', '_blank');
-navigator.serviceWorker.register('/worker.js').catch(() => {{
-  document.body.dataset.worker = 'blocked';
-}});
+navigator.serviceWorker.register('/worker.js').then(
+  registration => {{
+    document.body.dataset.worker = registration ? 'unexpected-registration' : 'blocked';
+  }},
+  () => {{ document.body.dataset.worker = 'blocked'; }}
+);
 const worker = new Worker(URL.createObjectURL(new Blob([`
 fetch('{private}/worker-resource').then(() => postMessage('allowed'));
 fetch('{loopback}/blocked-worker').catch(() => postMessage('blocked'));
@@ -110,12 +115,30 @@ async def check_browser(browser: Browser, guard: WebScraperUrlGuard) -> None:
     await installed.begin_navigation(context, page, navigation)
     await page.goto(WikiHandler.base_url + "/safe-hop", wait_until="load")
     assert page.url == WikiHandler.base_url + "/wiki"
-    await page.wait_for_function(
-        "document.body.dataset.ws === 'ok' && document.body.dataset.worker === 'blocked'"
-        " && document.body.dataset.worker_allowed === 'ok'"
-        " && document.body.dataset.worker_blocked === 'ok'"
-    )
+    try:
+        await page.wait_for_function(
+            "document.body.dataset.ws === 'ok' && document.body.dataset.worker === 'blocked'"
+            " && document.body.dataset.worker_allowed === 'ok'"
+            " && document.body.dataset.worker_blocked === 'ok'"
+        )
+    except BrowserTimeoutError as error:
+        signals = await page.evaluate(
+            "Object.fromEntries(['ws', 'worker', 'worker_allowed', 'worker_blocked',"
+            " 'blockedWs'].map(key => [key, document.body.dataset[key] ?? null]))"
+        )
+        hits = {
+            path.split("?", 1)[0]: count for path, count in WikiHandler.hits.items()
+        }
+        raise AssertionError(
+            f"Browser request checks did not settle: signals={signals!r} hits={hits!r}"
+        ) from error
     navigation.raise_if_blocked()
+    registrations = await page.evaluate(
+        "async () => (await navigator.serviceWorker.getRegistrations()).length"
+    )
+    assert (
+        registrations == 0
+    ), f"Unexpected service-worker registrations: {registrations}"
     assert "Public reference page" in await page.content()
     assert WikiHandler.hits["/frame"] > 0
     assert WikiHandler.hits["/allowed-resource"] > 0
