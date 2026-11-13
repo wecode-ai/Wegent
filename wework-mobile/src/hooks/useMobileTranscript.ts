@@ -17,6 +17,7 @@ interface ConversationSnapshot {
   loaded: boolean
   touchedAt: number
   buffered: ChatAction[]
+  paginationGeneration: number
   hydrationMessages?: ChatMessage[]
   pending?: Promise<RuntimeTranscriptResponse | null>
   older?: Promise<void>
@@ -45,6 +46,7 @@ export function useMobileTranscript(
         loaded: false,
         touchedAt: Date.now(),
         buffered: [],
+        paginationGeneration: 0,
       }
       entries.current.set(key, entry)
       while (entries.current.size > MAX_CONVERSATIONS) {
@@ -104,6 +106,35 @@ export function useMobileTranscript(
     setLoadingMoreMessagesBefore(false)
   }, [])
 
+  const fail = useCallback(
+    (address: RuntimeTaskAddress, error: string) => {
+      if (
+        !currentAddress.current ||
+        runtimeTaskKey(currentAddress.current) !== runtimeTaskKey(address)
+      )
+        return
+      setLoading(false)
+      onError(error)
+    },
+    [currentAddress, onError]
+  )
+
+  const rename = useCallback((previous: RuntimeTaskAddress, next: RuntimeTaskAddress) => {
+    const previousKey = runtimeTaskKey(previous)
+    const nextKey = runtimeTaskKey(next)
+    if (previousKey === nextKey) return
+    const entry = entries.current.get(previousKey)
+    if (!entry) return
+    entries.current.delete(previousKey)
+    entries.current.set(nextKey, {
+      ...entry,
+      buffered: [],
+      hydrationMessages: undefined,
+      pending: undefined,
+      older: undefined,
+    })
+  }, [])
+
   const dispatchMessages = useCallback(
     (action: ChatAction) => {
       const address = currentAddress.current
@@ -140,8 +171,11 @@ export function useMobileTranscript(
             entry.loaded
           )
           entry.messages = hydrated.messages
-          if (!entry.loaded || hydrated.resetPagination)
+          if (!entry.loaded || hydrated.resetPagination) {
             entry.beforeCursor = transcript.beforeCursor ?? null
+            entry.paginationGeneration += 1
+            entry.older = undefined
+          }
           entry.loaded = true
           entry.title = transcript.title
           entry.touchedAt = Date.now()
@@ -176,9 +210,14 @@ export function useMobileTranscript(
     if (entry.older) return entry.older
     if (!entry.beforeCursor) return
     const beforeCursor = entry.beforeCursor
-    entry.older = stream
+    const generation = entry.paginationGeneration
+    const isCurrentPage = () =>
+      entries.current.get(runtimeTaskKey(address)) === entry &&
+      entry.paginationGeneration === generation
+    const request = stream
       .getTranscript(address, { beforeCursor })
       .then(transcript => {
+        if (!isCurrentPage()) return
         entry.messages = chatReducer(entry.messages, {
           type: 'prepend',
           messages: transcript.messages,
@@ -194,16 +233,18 @@ export function useMobileTranscript(
       })
       .catch(cause => {
         if (
-          entries.current.get(runtimeTaskKey(address)) === entry &&
+          isCurrentPage() &&
           currentAddress.current &&
           runtimeTaskKey(currentAddress.current) === runtimeTaskKey(address)
         )
           onError(cause instanceof Error ? cause.message : String(cause))
       })
       .finally(() => {
+        if (!isCurrentPage() || entry.older !== request) return
         entry.older = undefined
         publish(address, entry)
       })
+    entry.older = request
     publish(address, entry)
     return entry.older
   }, [currentAddress, entryFor, onError, publish, stream])
@@ -223,6 +264,8 @@ export function useMobileTranscript(
     loadingMoreMessagesBefore,
     activate,
     reset,
+    fail,
+    rename,
     dispatchMessages,
     reloadTranscript,
     loadMoreMessagesBefore,

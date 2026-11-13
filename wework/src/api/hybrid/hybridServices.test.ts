@@ -1336,6 +1336,73 @@ describe('createHybridWorkbenchServices', () => {
     ])
   })
 
+  it('searches each remote App through its scoped runtime request without aggregate duplicates', async () => {
+    mocks.cloudListDevices.mockResolvedValue(
+      [11, 22].map(id => ({
+        id,
+        device_id: `app-record-${id}`,
+        execution_target_id: `app-record-${id}`,
+        runtime_instance_id: `installation-${id}`,
+        device_type: 'app',
+        status: 'online',
+        name: `Computer ${id}`,
+        bind_shell: 'claudecode',
+        runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+      }))
+    )
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async (method, _params, deviceId) => {
+      expect(method).toBe('runtime.tasks.search')
+      return {
+        items: [
+          {
+            address: { deviceId, taskId: 'task' },
+            title: deviceId,
+            updatedAt: '2026-11-13T00:00:00Z',
+          },
+        ],
+      }
+    })
+    const response = await createServices().runtimeWorkApi!.searchRuntimeWork({
+      source: 'cloud',
+      query: 'task',
+      limit: 2,
+    })
+    expect(response.items.map(item => item.address.deviceId)).toEqual([
+      'app-record-11',
+      'app-record-22',
+    ])
+    expect(mocks.cloudSearchRuntimeWork).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps cloud discovery available when local identity cannot be loaded, excluding unverified Apps', async () => {
+    mocks.localListDevices.mockRejectedValueOnce(new Error('Local IPC unavailable'))
+    const cloud = {
+      id: 1,
+      device_id: 'cloud-device',
+      device_type: 'cloud',
+      name: 'Cloud',
+      status: 'online',
+      bind_shell: 'claudecode',
+    }
+    mocks.cloudListDevices.mockResolvedValue([
+      cloud,
+      {
+        ...cloud,
+        id: 2,
+        device_id: 'app-record-2',
+        execution_target_id: 'app-record-2',
+        runtime_instance_id: 'unknown-installation',
+        device_type: 'app',
+        runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+      },
+    ])
+    const services = createServices()
+    const devices = await services.cloudBackgroundApi!.listDevices!()
+    expect(devices.map(device => device.device_id)).toEqual(['cloud-device'])
+    expect(mocks.cloudListDevices).toHaveBeenCalledOnce()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.localSidebarIdentity.mockReset()

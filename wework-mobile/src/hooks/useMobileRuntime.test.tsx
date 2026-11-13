@@ -321,6 +321,50 @@ describe('creating a conversation on the only computer', () => {
     expect(mocks.preflight).not.toHaveBeenCalled()
   })
 
+  it('finishes loading an uncached conversation when its subscription fails and recovers', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    mocks.subscribeReady.mockRejectedValueOnce(new Error('Realtime unavailable'))
+    await act(() => state.openConversation(state.conversations[0]!))
+    expect(state.conversationLoading).toBe(false)
+    expect(state.error).toBe('Realtime unavailable')
+    expect(mocks.transcript).not.toHaveBeenCalled()
+    await act(() => state.openConversation(state.conversations[0]!))
+    expect(state.error).toBeNull()
+    expect(state.conversationLoading).toBe(false)
+    expect(mocks.transcript).toHaveBeenCalledOnce()
+  })
+
+  it('does not end another conversation loading when an old subscription fails', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    const old = deferred<void>()
+    const current = deferred<void>()
+    mocks.subscribeReady.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+    const first = state.conversations[0]!
+    const second = { ...first, address: { ...first.address, taskId: 'second' } }
+    let oldOpen!: Promise<void>
+    let currentOpen!: Promise<void>
+    await act(() => {
+      oldOpen = state.openConversation(first)
+    })
+    await act(() => {
+      currentOpen = state.openConversation(second)
+    })
+    await act(async () => {
+      old.reject(new Error('Old subscription unavailable'))
+      await oldOpen
+    })
+    expect(state.conversationLoading).toBe(true)
+    expect(state.error).toBeNull()
+    await act(async () => {
+      current.resolve()
+      await currentOpen
+    })
+    expect(state.currentAddress?.taskId).toBe('second')
+    expect(state.conversationLoading).toBe(false)
+  })
+
   it('preflights only a new cloud workspace and ignores equivalent workspace objects', async () => {
     const cloud: DeviceInfo = {
       ...computer,
@@ -393,6 +437,63 @@ describe('creating a conversation on the only computer', () => {
       taskId: payload.taskId,
       workspacePath: '/Users/owner/Documents/Codex/task',
     })
+  })
+
+  it('uses the same creatable device as the composer when the selected device is read-only', async () => {
+    const readOnly: DeviceInfo = {
+      ...computer,
+      id: 12,
+      device_id: 'read-only-computer',
+      execution_target_id: 'app-record-12',
+      runtime_features: {
+        schemaVersion: 4,
+        remoteTaskAccess: { version: 1, enabled: true, taskCreation: false },
+      },
+    }
+    mocks.devices.mockResolvedValue({ items: [computer, readOnly] })
+    await mount()
+    await act(() => state.selectDevice('app-record-12'))
+    await act(async () => {
+      expect(await state.send('你好')).toBe(true)
+    })
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'app-record-11' })
+    )
+  })
+
+  it('moves the draft to the canonical task ID before its first live event', async () => {
+    await mount()
+    mocks.create.mockResolvedValue({ accepted: true, taskId: 'canonical', workspacePath: '/work' })
+    await act(async () => {
+      expect(await state.send('你好')).toBe(true)
+    })
+    const [scope, listener] = mocks.conversationSubscribe.mock.calls.at(-1)!
+    expect(scope.taskId).toBe('canonical')
+    await act(() =>
+      listener({
+        name: 'response.output_text.delta',
+        payload: { taskId: 'canonical', subtaskId: 'turn', data: { delta: 'Live', offset: 0 } },
+      })
+    )
+    expect(state.messages.map(message => message.content)).toEqual(['你好', 'Live'])
+    expect(state.currentAddress?.taskId).toBe('canonical')
+  })
+
+  it('does not navigate back when task creation finishes after leaving the conversation', async () => {
+    await mount()
+    const created = deferred<{ accepted: boolean; taskId: string; workspacePath: string }>()
+    mocks.create.mockReturnValue(created.promise)
+    let send!: Promise<boolean>
+    await act(() => {
+      send = state.send('你好')
+    })
+    await act(() => state.startNewConversation())
+    await act(async () => {
+      created.resolve({ accepted: true, taskId: 'canonical', workspacePath: '/work' })
+      expect(await send).toBe(true)
+    })
+    expect(state.currentAddress).toBeNull()
+    expect(state.messages).toEqual([])
   })
 
   it.each(['cloud', 'remote'] as const)(

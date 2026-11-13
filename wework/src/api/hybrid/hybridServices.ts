@@ -611,6 +611,12 @@ export function createHybridWorkbenchServices(
             ...requestOptions,
             deviceId: logicalDeviceId,
           }),
+        searchRuntimeWork: (request: RuntimeWorkSearchRequest) =>
+          cloudRuntimeIpc.request<RuntimeWorkSearchResponse>(
+            'runtime.tasks.search',
+            { ...request },
+            logicalDeviceId
+          ),
       }
       cloudRuntimeApis.set(logicalDeviceId, api)
       return api
@@ -679,17 +685,25 @@ export function createHybridWorkbenchServices(
     return devices
   }
   const fetchCloudDevices = async (signal?: AbortSignal) => {
-    if (rememberedLocalDevices.length === 0) await listLocalDevices(signal)
     const revision = nextCloudDevicesRevision
     nextCloudDevicesRevision += 1
-    const discoveredDevices = signal
-      ? await cloudServices.deviceApi.listDevices({ signal })
-      : await cloudServices.deviceApi.listDevices()
+    const [local, cloud] = await Promise.allSettled([
+      rememberedLocalDevices.length === 0 ? listLocalDevices(signal) : rememberedLocalDevices,
+      signal
+        ? cloudServices.deviceApi.listDevices({ signal })
+        : cloudServices.deviceApi.listDevices(),
+    ])
+    signal?.throwIfAborted()
+    if (cloud.status === 'rejected') throw cloud.reason
+    if (local.status === 'rejected')
+      console.warn('[Wework] Local identity unavailable during cloud discovery', local.reason)
+    const discoveredDevices = cloud.value
     const devices = discoveredDevices.filter(
       device =>
         isRemoteTaskDevice(device) &&
         (device.device_type !== 'app' ||
-          (!isLocalDeviceId(device.device_id) &&
+          (rememberedLocalDevices.length > 0 &&
+            !isLocalDeviceId(device.device_id) &&
             !rememberedLocalDevices.some(local =>
               workbenchDevicesShareRuntimeIdentity(local, device)
             )))

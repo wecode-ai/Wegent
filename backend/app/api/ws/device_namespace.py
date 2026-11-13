@@ -3281,7 +3281,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     "device_id": relay_device_id,
                 },
             }
-        if personal_task_access_allowed or projected:
+        if personal_task_access_allowed or (projected and projected.get("message")):
             await get_sio().emit(
                 WEWORK_RUNTIME_EVENT,
                 relay_payload,

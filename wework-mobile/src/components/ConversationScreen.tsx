@@ -17,7 +17,7 @@ import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { reduceModelControlLayer } from '@/domain/modelControlPresentation'
-import { mobileCreatableDevices } from '@/domain/deviceOrdering'
+import { mobileCreatableDevices, selectedOnlineDeviceId } from '@/domain/deviceOrdering'
 import {
   modelLabel,
   reasoningEfforts,
@@ -102,9 +102,12 @@ export function ConversationScreen(props: ConversationScreenProps) {
 
   const onlineDevices = mobileCreatableDevices(props.devices)
   const configurationDevice =
-    onlineDevices.find(device => device.device_id === props.selectedDeviceId) ??
-    onlineDevices[0] ??
-    null
+    onlineDevices.find(
+      device =>
+        device.device_id ===
+        (props.selectedWorkspace?.deviceId ??
+          selectedOnlineDeviceId(onlineDevices, props.selectedDeviceId))
+    ) ?? null
   const availableWorkspaces = props.workspaces.filter(
     item => item.workspace.available && item.workspace.deviceId === configurationDevice?.device_id
   )

@@ -26,6 +26,7 @@ const TOGGLE = '[data-testid="remote-task-access-toggle"]'
 const LOCAL_PROMPT = 'WEWORK_LOCAL_TASK_REMOTE_ACCESS'
 const REMOTE_PROMPT = 'WEWORK_CONTINUE_ORIGINAL_LOCAL_TASK'
 const CREATE_PROMPT = 'WEWORK_CREATE_FROM_PHONE_ON_LOCAL_COMPUTER'
+const PRIVATE_PROMPT = 'WEWORK_LOCAL_TASK_AFTER_REMOTE_ACCESS_REVOCATION'
 const COMPLETE = `${REMOTE_PROMPT}_COMPLETE`
 const taskId = task => task.taskId ?? task.localTaskId ?? task.id
 const tasks = work => (work.workspaces ?? []).flatMap(workspace => workspace.tasks ?? [])
@@ -64,7 +65,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const input = inputUserMessageTexts(body).join('\n')
-      const prompt = [CREATE_PROMPT, REMOTE_PROMPT, LOCAL_PROMPT].find(value =>
+      const prompt = [CREATE_PROMPT, REMOTE_PROMPT, LOCAL_PROMPT, PRIVATE_PROMPT].find(value =>
         input.includes(value)
       )
       assert.ok(prompt, 'Unexpected model request outside the task-access case')
@@ -252,7 +253,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       const created = await createdResponse.json()
       assert.equal(created.accepted, true)
       assert.equal(created.taskId, createdTaskId)
-      assert.ok(created.workspacePath.includes('/Documents/Codex/'))
+      assert.ok(created.workspacePath.replaceAll('\\', '/').includes('/Documents/Codex/'))
       await verifyLiveStreaming(CREATE_PROMPT, createdTaskId)
       await until(
         () => events.filter(event => event.payload?.taskId === createdTaskId),
@@ -346,6 +347,34 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       assert.equal(createRevoked.ok, false, 'Creation remained available after revocation')
       assert.equal(createRevoked.error.code, 'remote_control_disabled')
       await control.command('navigate', 'body', { value: '/' })
+      const privateBefore = new Set(
+        tasks(JSON.parse(await control.command('getLocalRuntimeWork', 'body'))).map(taskId)
+      )
+      const eventOffset = events.length
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await selectE2EModel(control)
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PRIVATE_PROMPT })
+      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]')
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        { text: `${PRIVATE_PROMPT}_COMPLETE`, timeoutMs: workbenchReadyTimeoutMs }
+      )
+      const privateWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+      const privateTask = tasks(privateWork).find(item => !privateBefore.has(taskId(item)))
+      assert.ok(privateTask, 'Local execution must remain available after remote revocation')
+      const observeUntil = Date.now() + 1000
+      await until(
+        () => {
+          assert.ok(
+            !events.slice(eventOffset).some(event => event.payload?.taskId === taskId(privateTask)),
+            'A connected remote reader received private task events after revocation'
+          )
+          return Date.now() >= observeUntil
+        },
+        done => done,
+        'Private-event observation did not finish'
+      )
     },
     async cleanup() {
       for (const gate of gates.values()) {

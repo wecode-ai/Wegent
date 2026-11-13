@@ -50,6 +50,7 @@ export class RuntimeStream {
   private lifecycleListener: LifecycleListener | null = null
   private lifecycleReconnectListener: (() => void) | null = null
   private accessToken: string
+  private hasConnected = false
   private scopedEventCount = 0
 
   constructor(
@@ -66,6 +67,9 @@ export class RuntimeStream {
       logger: console,
     })
     this.client.socket.on(RUNTIME_EVENT, envelope => this.onEvent(envelope))
+    this.client.subscribe(state => {
+      if (state.isConnected) this.hasConnected = true
+    })
     this.client.onReconnect(() => {
       this.reconnectListener?.()
       this.lifecycleReconnectListener?.()
@@ -80,7 +84,7 @@ export class RuntimeStream {
     this.accessToken = token
     if (!this.client.socket.connected) {
       this.client.disconnect()
-      void this.client.connect()
+      void this.client.connect(undefined, this.hasConnected)
     }
   }
 

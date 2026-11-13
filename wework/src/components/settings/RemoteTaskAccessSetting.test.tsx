@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RemoteTaskAccessSetting } from './RemoteTaskAccessSetting'
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn(), t: (key: string) => key }))
+vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: mocks.t }) }))
 vi.mock('@/desktop/remoteTaskAccess', () => ({
   getRemoteTaskAccess: mocks.get,
   setRemoteTaskAccess: mocks.set,
@@ -12,6 +13,7 @@ vi.mock('@/desktop/remoteTaskAccess', () => ({
 describe('RemoteTaskAccessSetting', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.t = (key: string) => key
     mocks.get.mockResolvedValue({ enabled: false })
     mocks.set.mockImplementation(async enabled => ({ enabled }))
   })
@@ -48,6 +50,38 @@ describe('RemoteTaskAccessSetting', () => {
     render(<RemoteTaskAccessSetting />)
     expect(await screen.findByRole('alert')).toHaveTextContent('remote_task_access_load_failed')
     expect(screen.getByTestId('remote-task-access-toggle')).toBeDisabled()
+  })
+
+  it('retries a failed local read without leaving the settings page', async () => {
+    mocks.get.mockRejectedValueOnce(new Error('unavailable'))
+    render(<RemoteTaskAccessSetting />)
+    await screen.findByRole('alert')
+    await userEvent.click(screen.getByTestId('remote-task-access-retry'))
+    const toggle = screen.getByTestId('remote-task-access-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(mocks.get).toHaveBeenCalledTimes(2)
+    expect(mocks.set).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('finishes a pending save when the interface language changes', async () => {
+    let completeSave!: (settings: { enabled: boolean }) => void
+    mocks.set.mockReturnValue(
+      new Promise(resolve => {
+        completeSave = resolve
+      })
+    )
+    const { rerender } = render(<RemoteTaskAccessSetting />)
+    const toggle = screen.getByTestId('remote-task-access-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await userEvent.click(toggle)
+    mocks.t = (key: string) => `translated:${key}`
+    rerender(<RemoteTaskAccessSetting />)
+    await act(async () => completeSave({ enabled: true }))
+    expect(toggle).toBeEnabled()
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(mocks.get).toHaveBeenCalledOnce()
   })
 
   it('ignores focus refresh during a local save and rejects stale refresh responses', async () => {

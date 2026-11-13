@@ -97,6 +97,38 @@ describe('RuntimeStream', () => {
     )
   })
 
+  it('recovers conversation and lifecycle state after refreshing credentials during an outage', async () => {
+    vi.useFakeTimers()
+    const stream = await createStream(config)
+    const conversationRecovered = vi.fn()
+    const lifecycleRecovered = vi.fn()
+    await stream.subscribe({ deviceId: 'device', taskId: 'task' }, vi.fn(), conversationRecovered)
+    stream.subscribeLifecycle(vi.fn(), lifecycleRecovered)
+    const raw = vi.mocked(io).mock.results.at(-1)!.value
+    raw.connected = false
+    handlers.get('disconnect')?.('transport close')
+    stream.updateAccessToken('fresh-token')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(conversationRecovered).toHaveBeenCalledOnce()
+    expect(lifecycleRecovered).toHaveBeenCalledOnce()
+    expect(io).toHaveBeenLastCalledWith(
+      'wss://stream.wegent.example/wework-runtime',
+      expect.objectContaining({ auth: { token: 'fresh-token', client_origin: 'wework' } })
+    )
+  })
+
+  it('does not report recovery when refreshed credentials establish the first connection', async () => {
+    connect.mockImplementation(() => undefined)
+    const stream = await createStream(config)
+    const recovered = vi.fn()
+    stream.subscribeLifecycle(vi.fn(), recovered)
+    stream.updateAccessToken('fresh-token')
+    await Promise.resolve()
+    vi.mocked(io).mock.results.at(-1)!.value.connected = true
+    handlers.get('connect')?.()
+    expect(recovered).not.toHaveBeenCalled()
+  })
+
   it('waits for namespace authentication before a subscription is ready', async () => {
     connect.mockImplementation(() => undefined)
     const stream = await createStream(config)

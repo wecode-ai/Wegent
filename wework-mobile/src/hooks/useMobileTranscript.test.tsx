@@ -342,6 +342,44 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     expect(state.hasMoreMessagesBefore).toBe(false)
   })
 
+  it('invalidates older pages after a disjoint refresh without clearing a newer request', async () => {
+    await load()
+    const stale = deferred<RuntimeTranscriptResponse>()
+    getTranscript.mockReturnValueOnce(stale.promise)
+    let staleRead!: Promise<void>
+    await act(() => {
+      staleRead = state.loadMoreMessagesBefore()
+    })
+    getTranscript.mockResolvedValueOnce(page('latest', 'new-gap'))
+    await act(async () => {
+      await state.reloadTranscript(first)
+    })
+    expect(state.loadingMoreMessagesBefore).toBe(false)
+    const current = deferred<RuntimeTranscriptResponse>()
+    getTranscript.mockReturnValueOnce(current.promise)
+    let currentRead!: Promise<void>
+    await act(() => {
+      currentRead = state.loadMoreMessagesBefore()
+    })
+    expect(getTranscript).toHaveBeenLastCalledWith(first, { beforeCursor: 'new-gap' })
+    await act(async () => {
+      stale.resolve(page('stale history', 'wrong-cursor'))
+      await staleRead
+    })
+    expect(state.messages.map(message => message.content)).toEqual(['latest'])
+    expect(state.loadingMoreMessagesBefore).toBe(true)
+    await act(async () => {
+      current.resolve(page('middle', 'new-middle'))
+      await currentRead
+    })
+    expect(state.messages.map(message => message.content)).toEqual(['middle', 'latest'])
+    expect(state.loadingMoreMessagesBefore).toBe(false)
+    await act(async () => {
+      await state.loadMoreMessagesBefore()
+    })
+    expect(getTranscript).toHaveBeenLastCalledWith(first, { beforeCursor: 'new-middle' })
+  })
+
   it('discards revoked-device snapshots and prevents a late read from restoring them', async () => {
     const pending = deferred<RuntimeTranscriptResponse>()
     getTranscript.mockReturnValue(pending.promise)

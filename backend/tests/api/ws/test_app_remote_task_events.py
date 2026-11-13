@@ -17,7 +17,9 @@ async def test_app_stream_revocation_and_record_scoped_identity(
     sio = AsyncMock()
     publish = AsyncMock()
     projection = (
-        {"mode": "snapshot", "message": {"projectId": "project-1"}} if project else None
+        {"mode": "snapshot", "message": {"projectId": "project-1"}}
+        if project
+        else {"message": None, "mode": None, "workflow_continuation": None}
     )
     persist = AsyncMock(return_value=projection)
     monkeypatch.setattr(

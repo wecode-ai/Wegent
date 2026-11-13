@@ -180,6 +180,8 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     loadingMoreMessagesBefore,
     activate: activateTranscript,
     reset: resetTranscript,
+    fail: failTranscript,
+    rename: renameTranscript,
     dispatchMessages,
     reloadTranscript,
     loadMoreMessagesBefore,
@@ -582,12 +584,10 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
         await subscribe(item.address)
         await reloadTranscript(item.address)
       } catch (cause) {
-        if (sameRuntimeAddress(currentAddressRef.current, item.address)) {
-          setError(messageFrom(cause))
-        }
+        failTranscript(item.address, messageFrom(cause))
       }
     },
-    [activateTranscript, publishSelectedDevice, reloadTranscript, subscribe, work]
+    [activateTranscript, failTranscript, publishSelectedDevice, reloadTranscript, subscribe, work]
   )
 
   const startNewConversation = useCallback(
@@ -657,8 +657,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
 
         const requestedDeviceId =
           selectedWorkspace?.deviceId ??
-          selectedDeviceId ??
-          selectedOnlineDeviceId(mobileCreatableDevices(devicesRef.current), null)
+          selectedOnlineDeviceId(mobileCreatableDevices(devicesRef.current), selectedDeviceId)
         if (!requestedDeviceId) throw new Error('没有可用的在线执行器')
         if (
           !mobileCreatableDevices(devicesRef.current).some(
@@ -729,12 +728,17 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
           taskId: response.taskId,
           workspacePath: response.workspacePath,
         }
-        currentAddressRef.current = resolvedAddress
-        setCurrentAddress(resolvedAddress)
         if (response.taskId !== taskId) {
+          renameTranscript(provisionalAddress, resolvedAddress)
           sendTransition = lifecycle.renameSend(sendTransition, resolvedAddress)
           publishTaskLifecycle()
-          await subscribe(resolvedAddress)
+        }
+        if (sameRuntimeAddress(currentAddressRef.current, provisionalAddress)) {
+          provisionalAddress = resolvedAddress
+          currentAddressRef.current = resolvedAddress
+          setCurrentAddress(resolvedAddress)
+          activateTranscript(resolvedAddress)
+          if (response.taskId !== taskId) await subscribe(resolvedAddress)
         }
         void reloadWork(resolvedAddress.deviceId).catch(cause => setError(messageFrom(cause)))
         return true
@@ -774,6 +778,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       lifecycle,
       publishTaskLifecycle,
       reloadWork,
+      renameTranscript,
       selectedDeviceId,
       selectedModel,
       selectedModelOptions,

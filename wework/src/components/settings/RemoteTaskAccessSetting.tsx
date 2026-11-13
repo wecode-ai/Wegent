@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { getRemoteTaskAccess, setRemoteTaskAccess } from '@/desktop/remoteTaskAccess'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './settings-ui'
@@ -8,41 +9,40 @@ export function RemoteTaskAccessSetting() {
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<'load' | 'save' | null>(null)
   const [loaded, setLoaded] = useState(false)
   const revision = useRef(0)
   const savingRef = useRef(false)
 
+  const refresh = useCallback(() => {
+    if (savingRef.current) return
+    const request = ++revision.current
+    setLoading(true)
+    setLoaded(false)
+    setError(null)
+    void getRemoteTaskAccess().then(
+      settings => {
+        if (request !== revision.current) return
+        setEnabled(settings.enabled)
+        setLoaded(true)
+        setLoading(false)
+      },
+      () => {
+        if (request !== revision.current) return
+        setError('load')
+        setLoading(false)
+      }
+    )
+  }, [])
+
   useEffect(() => {
-    let active = true
-    const refresh = () => {
-      if (savingRef.current) return
-      const request = ++revision.current
-      setLoading(true)
-      setLoaded(false)
-      void getRemoteTaskAccess().then(
-        settings => {
-          if (!active || request !== revision.current) return
-          setEnabled(settings.enabled)
-          setLoaded(true)
-          setError(null)
-          setLoading(false)
-        },
-        () => {
-          if (!active || request !== revision.current) return
-          setError(t('workbench.remote_task_access_load_failed'))
-          setLoading(false)
-        }
-      )
-    }
     refresh()
     window.addEventListener('focus', refresh)
     return () => {
-      active = false
       revision.current += 1
       window.removeEventListener('focus', refresh)
     }
-  }, [t])
+  }, [refresh])
 
   const save = async (next: boolean) => {
     const request = ++revision.current
@@ -53,7 +53,7 @@ export function RemoteTaskAccessSetting() {
       const settings = await setRemoteTaskAccess(next)
       if (request === revision.current) setEnabled(settings.enabled)
     } catch {
-      if (request === revision.current) setError(t('workbench.remote_task_access_save_failed'))
+      if (request === revision.current) setError('save')
     } finally {
       savingRef.current = false
       if (request === revision.current) setSaving(false)
@@ -78,9 +78,20 @@ export function RemoteTaskAccessSetting() {
         />
       </SettingsGroup>
       {error ? (
-        <p role="alert" className="mt-2 text-sm text-red-500">
-          {error}
-        </p>
+        <div role="alert" className="mt-2 flex items-center gap-2 text-sm text-destructive">
+          {t(`workbench.remote_task_access_${error}_failed`)}
+          {error === 'load' ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="remote-task-access-retry"
+              onClick={refresh}
+              disabled={loading || saving}
+            >
+              {t('workbench.retry')}
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </section>
   )
