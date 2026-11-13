@@ -1566,7 +1566,9 @@
       "upgrade_all_local_failed": "Failed to upgrade local devices",
       "restart_failed": "Failed to send restart command",
       "restart_all_cloud_failed": "Failed to restart cloud devices",
-      "migrate_failed": "Failed to send migrate command"
+      "migrate_failed": "Failed to send migrate command",
+      "delete_failed": "Failed to remove the device registration",
+      "delete_online": "This device is online or still has tasks and cannot be removed"
     },
     "actions": {
       "upgrade": "Upgrade",
@@ -1575,11 +1577,15 @@
       "restart": "Restart",
       "restart_all_cloud": "Restart All Cloud Devices",
       "migrate": "Migrate",
+      "delete": "Delete",
+      "delete_success": "Device registration removed",
       "upgrade_sent": "Upgrade command sent",
       "restart_sent": "Restart command sent",
       "migrate_sent": "Migrate command sent"
     },
     "confirm": {
+      "delete_title": "Remove device registration",
+      "delete_message": "Remove the registration for {{user}}’s device “{{name}}”? The device will register again if it reconnects.",
       "upgrade_all_local_title": "Confirm Upgrade All Local Devices",
       "upgrade_all_local_message": "This will send upgrade commands to all eligible local devices and may affect running tasks. Confirm before continuing.",
       "upgrade_all_local_confirm": "Confirm Upgrade",

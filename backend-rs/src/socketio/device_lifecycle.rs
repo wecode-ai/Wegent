@@ -25,7 +25,7 @@ use brz_socket_io::{ClientError, Reply};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::device_identity_lock::IdentityLock;
+use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
 use crate::json_compat::python_json_value;
 use crate::socketio::device::{self, DeviceType, RegisterPayload};
 use crate::socketio::runtime::{DeviceJob, SocketEmitters, SocketRuntime};
@@ -144,9 +144,6 @@ where
         }
     }
 }
-
-/// Bound registration work under the identity lock.
-const IDENTITY_LOCK_BODY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `_register_device_session`: the registration body (no identity lock).
 async fn register_session(

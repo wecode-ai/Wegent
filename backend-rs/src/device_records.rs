@@ -4,10 +4,12 @@
 
 //! `DELETE /api/devices/records/{record_id}`: record-scoped removal of one
 //! owned Device registration.
+//! The admin route resolves the owner by record ID and always requires the
+//! device to be offline and idle.
 //!
 //! Mirrors `app.api.endpoints.devices.delete_device_by_record`, which runs
 //! `app.services.device.record_operations.delete_device_record` inside
-//! `app.services.device.record_operations.app_identity_lock`:
+//! `app.services.device.record_operations.device_identity_lock`:
 //!
 //! 1. the Redis identity lock `device:identity-lock:{user_id}` covering the
 //!    database-to-online transition — `redis.asyncio` `Lock` with
@@ -33,11 +35,11 @@ use brz_redis::{Redis, RedisBytes};
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::auth::{SessionUser, UserRow};
-use crate::device_identity_lock::IdentityLock;
-use crate::devices::{
-    DeviceKindRow, DeviceSpecInput, DeviceType, internal_error, online_key, record_route_id, spec,
-};
+use crate::admin_service_keys::AdminUser;
+use crate::auth::SessionUser;
+use crate::device_identity::{DeviceKindRow, device_connection_route_id};
+use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
+use crate::devices::{internal_error, online_key};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
@@ -69,6 +71,14 @@ const DEVICE_RECORD_FOR_UPDATE_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds
      WHERE kinds.id = ? AND kinds.user_id = ? AND kinds.namespace = 'default' \
      AND kinds.kind = 'Device' AND kinds.is_active = true FOR UPDATE";
 
+const DEVICE_RECORD_OWNER_QUERY: &str = "SELECT user_id FROM kinds \
+     WHERE id = ? AND namespace = 'default' AND kind = 'Device' AND is_active = true";
+
+#[derive(brz_mysql::FromMysqlRow)]
+struct DeviceRecordOwner {
+    user_id: i32,
+}
+
 /// `subtask_store.has_active_by_executor_names`. The deployment's sharded
 /// subtask store does not override the base implementation, which queries the
 /// default `Subtask` model, so the read always targets the base `subtasks`
@@ -98,16 +108,45 @@ async fn delete_device_by_record(
     record_id: i64,
     #[auth] user: SessionUser,
 ) -> Result<DeviceRecordRemoved, FastApiError> {
-    delete_device_record(state, user.0, record_id).await
+    delete_device_record(state, i64::from(user.id), record_id, false).await
 }
 
-/// Handler for `DELETE /api/devices/records/{record_id}`.
+#[brz_http_server::delete("/api/admin/device-monitor/devices/records/:record_id")]
+async fn delete_admin_device_record(
+    #[inject(state)] state: &AppState,
+    record_id: i64,
+    #[auth] admin: AdminUser,
+) -> Result<DeviceRecordRemoved, FastApiError> {
+    let owner: DeviceRecordOwner = state
+        .mysql
+        .with_transaction(async |transaction| {
+            transaction
+                .fetch_optional(DEVICE_RECORD_OWNER_QUERY, (record_id,))
+                .await
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, record_id, "device record owner lookup failed");
+            internal_error()
+        })?
+        .ok_or_else(record_not_found)?;
+    let removed = delete_device_record(state, i64::from(owner.user_id), record_id, true).await?;
+    tracing::info!(
+        admin_id = admin.0.id,
+        owner_id = owner.user_id,
+        record_id,
+        "admin removed device registration"
+    );
+    Ok(removed)
+}
+
+#[tracing::instrument(name = "device.record.delete", skip(state))]
 async fn delete_device_record(
     state: &AppState,
-    user: UserRow,
+    user_id: i64,
     record_id: i64,
+    offline_only: bool,
 ) -> Result<DeviceRecordRemoved, FastApiError> {
-    let user_id = i64::from(user.id);
     // `cache_manager._get_client()` needs the application Redis service; the
     // endpoint renders every Redis failure as its 503.
     let Some(redis) = state.redis.as_ref() else {
@@ -128,29 +167,33 @@ async fn delete_device_record(
         }
     };
 
-    let outcome = state
-        .mysql
-        .with_transaction(async |transaction| {
-            delete_record_in(transaction, redis, user_id, record_id).await
-        })
-        .await;
+    let outcome = tokio::time::timeout(
+        IDENTITY_LOCK_BODY_TIMEOUT,
+        state.mysql.with_transaction(async |transaction| {
+            delete_record_in(transaction, redis, user_id, record_id, offline_only).await
+        }),
+    )
+    .await;
 
-    // `async with client.lock(...)` releases before the endpoint returns; a
-    // release failure is itself a `RedisError` mapped to 503, whether or not
-    // the guarded work succeeded.
+    // Preserve the owner endpoint's error mapping. Report a committed admin
+    // removal as successful even if releasing the lease fails.
     if let Err(error) = lock.release().await {
         tracing::error!(%error, user_id, "device identity lock release failed");
-        return Err(status_unavailable());
+        if !offline_only || !matches!(&outcome, Ok(Ok(RecordDeletion::Deleted))) {
+            return Err(status_unavailable());
+        }
     }
+
+    let outcome = outcome.map_err(|_| {
+        tracing::warn!(user_id, record_id, "device record deletion timed out");
+        status_unavailable()
+    })?;
 
     match outcome {
         Ok(RecordDeletion::Deleted) => Ok(DeviceRecordRemoved {
             message: REMOVED_MESSAGE,
         }),
-        Ok(RecordDeletion::NotFound) => Err(FastApiError::detail(
-            brz_http_server::StatusCode::NOT_FOUND,
-            "Device record not found",
-        )),
+        Ok(RecordDeletion::NotFound) => Err(record_not_found()),
         Ok(RecordDeletion::Conflict) => Err(FastApiError::detail(
             brz_http_server::StatusCode::CONFLICT,
             IDENTITY_CONFLICT_MESSAGE,
@@ -191,6 +234,7 @@ async fn delete_record_in<T, R>(
     redis: &R,
     user_id: i64,
     record_id: i64,
+    offline_only: bool,
 ) -> Result<RecordDeletion, MysqlError>
 where
     T: MysqlTransaction,
@@ -208,20 +252,8 @@ where
         return Ok(RecordDeletion::NotFound);
     };
 
-    let device_spec = spec(&device);
-    let device_type = DeviceType::from_spec(&device_spec);
-    // `device.json.get("spec", {}).get("deviceType") != "cloud"`.
-    if device_spec.device_type_value() != Some(CLOUD_DEVICE_TYPE) {
-        match require_offline_and_idle(
-            transaction,
-            redis,
-            user_id,
-            &device,
-            &device_spec,
-            device_type,
-        )
-        .await?
-        {
+    if offline_only || device.json["spec"]["deviceType"].as_str() != Some(CLOUD_DEVICE_TYPE) {
+        match require_offline_and_idle(transaction, redis, user_id, &device).await? {
             GuardDecision::Offline => {}
             GuardDecision::Online => return Ok(RecordDeletion::Conflict),
             GuardDecision::Unavailable => return Ok(RecordDeletion::StatusUnavailable),
@@ -252,22 +284,19 @@ enum GuardDecision {
     Undecodable,
 }
 
-/// `_require_offline_and_idle`: only cloud registrations may be removed while
-/// online or busy. An older running server may still publish under the logical
+/// An older running server may still publish under the logical
 /// device name, so both the record-scoped route and the name are read.
 async fn require_offline_and_idle<T, R>(
     transaction: &mut T,
     redis: &R,
     user_id: i64,
     device: &DeviceKindRow,
-    device_spec: &DeviceSpecInput,
-    device_type: DeviceType,
 ) -> Result<GuardDecision, MysqlError>
 where
     T: MysqlTransaction,
     R: Redis,
 {
-    let route_id = record_route_id(device, device_type);
+    let route_id = device_connection_route_id(device);
     let keys = vec![
         online_key(user_id, &route_id),
         online_key(user_id, &device.name),
@@ -289,7 +318,7 @@ where
         Ok(value) => value,
         Err(()) => return Ok(GuardDecision::Undecodable),
     };
-    let runtime = device_spec.runtime_instance_id_value();
+    let runtime = device.json["spec"].get("runtimeInstanceId");
     let running = active_subtask_by_executor(transaction, user_id, &route_id, &device.name).await?;
 
     let online_reported = online.as_ref().is_some_and(python_truthy);
@@ -298,7 +327,7 @@ where
     let legacy_conflict = legacy
         .as_ref()
         .filter(|value| python_truthy(value))
-        .is_some_and(|legacy| legacy_matches_runtime(legacy, runtime.as_ref()));
+        .is_some_and(|legacy| legacy_matches_runtime(legacy, runtime));
     Ok(if online_reported || running || legacy_conflict {
         GuardDecision::Online
     } else {
@@ -353,6 +382,13 @@ fn decode_online_document(value: Option<&RedisBytes>) -> Result<Option<Value>, (
 /// Python truthiness of a decoded JSON value (`bool(value)`).
 use brz_json::adapters::python_truthy;
 
+fn record_not_found() -> FastApiError {
+    FastApiError::detail(
+        brz_http_server::StatusCode::NOT_FOUND,
+        "Device record not found",
+    )
+}
+
 /// The endpoint's 503 (`HTTPException(503, "Device status is temporarily
 /// unavailable")`).
 fn status_unavailable() -> FastApiError {
@@ -382,6 +418,31 @@ struct ActiveSubtaskRow {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn admin_delete_is_registered_and_selected_by_the_gateway() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let table = crate::RouteTable::compile(crate::load_routes_config(&path).unwrap()).unwrap();
+        assert!(table.matches(
+            &http::Method::DELETE,
+            "/api/admin/device-monitor/devices/records/123"
+        ));
+        assert!(!table.matches(
+            &http::Method::GET,
+            "/api/admin/device-monitor/devices/records/123"
+        ));
+
+        const DELETE: u16 = 1;
+        let registered = brz_http_server::__private::inventory::iter::<
+            crate::__http_registry_http_apis::Entry,
+        >()
+        .flat_map(|entry| (entry.0.routes)())
+        .any(|route| {
+            route.path == "/api/admin/device-monitor/devices/records/:record_id"
+                && route.methods & DELETE != 0
+        });
+        assert!(registered);
+    }
 
     #[test]
     fn python_truthiness_follows_the_source_booleans() {

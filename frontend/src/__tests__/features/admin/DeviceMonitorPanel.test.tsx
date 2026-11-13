@@ -6,7 +6,8 @@ import '@testing-library/jest-dom'
 import React from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import DeviceMonitorPanel from '@/features/admin/components/DeviceMonitorPanel'
-import { adminApis } from '@/apis/admin'
+import { adminApis, type AdminDeviceInfo } from '@/apis/admin'
+import { ApiError } from '@/apis/client'
 import { toast } from 'sonner'
 
 const mockAdminTranslations: Record<string, string> = {
@@ -54,6 +55,7 @@ jest.mock('@/apis/admin', () => {
       upgradeDevice: jest.fn(),
       restartDevice: jest.fn(),
       migrateDevice: jest.fn(),
+      deleteDeviceRecord: jest.fn(),
       restartAllCloudDevices,
       upgradeAllLocalDevices,
       getDeviceBatchStatus: jest.fn(),
@@ -228,6 +230,22 @@ describe('DeviceMonitorPanel', () => {
   const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
   const mockedToast = toast as jest.Mocked<typeof toast>
 
+  const offlineDevice: AdminDeviceInfo = {
+    id: 42,
+    device_id: 'shared-device-name',
+    name: 'Offline workstation',
+    status: 'offline',
+    device_type: 'app',
+    bind_shell: 'claudecode',
+    user_id: 7,
+    user_name: 'alice',
+    client_ip: null,
+    executor_version: null,
+    slot_used: 0,
+    slot_max: 0,
+    created_at: null,
+  }
+
   beforeEach(() => {
     jest.clearAllMocks()
 
@@ -275,6 +293,67 @@ describe('DeviceMonitorPanel', () => {
         items: [],
       })
     )
+  })
+
+  it('only offers deletion for offline records and refreshes the list after confirmation', async () => {
+    const onlineDevice = { ...offlineDevice, id: 43, status: 'online' as const }
+    const busyDevice = { ...offlineDevice, id: 44, status: 'busy' as const }
+    mockedAdminApis.getDevices
+      .mockResolvedValueOnce({ total: 3, items: [offlineDevice, onlineDevice, busyDevice] })
+      .mockResolvedValueOnce({ total: 2, items: [onlineDevice, busyDevice] })
+    mockedAdminApis.deleteDeviceRecord.mockResolvedValue({ message: 'Device registration removed' })
+    render(<DeviceMonitorPanel />)
+
+    fireEvent.click(await screen.findByTestId('admin-delete-device-42'))
+    expect(screen.queryByTestId('admin-delete-device-43')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('admin-delete-device-44')).not.toBeInTheDocument()
+    expect(mockedAdminApis.deleteDeviceRecord).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+    await waitFor(() => {
+      expect(mockedAdminApis.deleteDeviceRecord).toHaveBeenCalledWith(42)
+      expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(2)
+      expect(mockedAdminApis.getDeviceStats).toHaveBeenCalledTimes(2)
+      expect(mockedAdminApis.getDeviceStats).toHaveBeenLastCalledWith(true)
+      expect(screen.queryByTestId('admin-delete-device-42')).not.toBeInTheDocument()
+    })
+    expect(screen.getAllByTestId('device-card-shared-device-name')).toHaveLength(2)
+  })
+
+  it('returns to the preceding page when deleting the final row on the last page', async () => {
+    const remaining = { ...offlineDevice, id: 43, name: 'Remaining device' }
+    mockedAdminApis.getDevices
+      .mockResolvedValueOnce({ total: 21, items: [remaining] })
+      .mockResolvedValueOnce({ total: 21, items: [offlineDevice] })
+      .mockResolvedValueOnce({ total: 20, items: [] })
+      .mockResolvedValueOnce({ total: 20, items: [remaining] })
+    mockedAdminApis.deleteDeviceRecord.mockResolvedValue({ message: 'Device registration removed' })
+    render(<DeviceMonitorPanel />)
+
+    fireEvent.click(await screen.findByTestId('next-page-button'))
+    fireEvent.click(await screen.findByTestId('admin-delete-device-42'))
+    fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+
+    expect(await screen.findByText('Remaining device')).toBeInTheDocument()
+    expect(mockedAdminApis.getDevices.mock.calls.map(([page]) => page)).toEqual([1, 2, 2, 1])
+  })
+
+  it('refreshes the device state when the server rejects deletion because the device reconnected', async () => {
+    mockedAdminApis.getDevices
+      .mockResolvedValueOnce({ total: 1, items: [offlineDevice] })
+      .mockResolvedValueOnce({ total: 1, items: [{ ...offlineDevice, status: 'online' }] })
+    mockedAdminApis.deleteDeviceRecord.mockRejectedValue(new ApiError('Device is online', 409))
+    render(<DeviceMonitorPanel />)
+
+    fireEvent.click(await screen.findByTestId('admin-delete-device-42'))
+    fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+
+    await waitFor(() => {
+      expect(mockedToast.error).toHaveBeenCalledWith('device_monitor.errors.delete_online')
+      expect(screen.queryByTestId('admin-delete-device-42')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('device-card-shared-device-name')).toBeInTheDocument()
+    expect(mockedToast.success).not.toHaveBeenCalled()
   })
 
   it('renders bulk action labels from the admin namespace', async () => {

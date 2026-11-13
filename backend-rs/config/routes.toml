@@ -177,6 +177,9 @@ path = "/api/devices"
 #methods = ["DELETE"]
 #path = "/api/devices/records/:record_id"
 [[routes]]
+methods = ["DELETE"]
+path = "/api/admin/device-monitor/devices/records/:record_id"
+[[routes]]
 methods = ["GET"]
 path = "/api/users/welcome-config"
 #[[routes]]
