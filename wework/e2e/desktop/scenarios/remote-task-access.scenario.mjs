@@ -29,6 +29,11 @@ const REMOTE_PROMPT = 'WEWORK_CONTINUE_ORIGINAL_LOCAL_TASK'
 const CREATE_PROMPT = 'WEWORK_CREATE_FROM_PHONE_ON_LOCAL_COMPUTER'
 const PRIVATE_PROMPT = 'WEWORK_LOCAL_TASK_AFTER_REMOTE_ACCESS_REVOCATION'
 const COMPLETE = `${REMOTE_PROMPT}_COMPLETE`
+const CLOUD_MODEL_SELECTION = {
+  modelName: CLOUD_PUBLIC_MODEL_NAME,
+  modelType: 'public',
+  options: CLOUD_PUBLIC_MODEL_OPTIONS,
+}
 const taskId = task => task.taskId ?? task.localTaskId ?? task.id
 const tasks = work => (work.workspaces ?? []).flatMap(workspace => workspace.tasks ?? [])
 const decode = value =>
@@ -245,14 +250,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
           workspaceKind: 'chat',
           runtime: 'codex',
           message: CREATE_PROMPT,
-          modelId: CLOUD_PUBLIC_MODEL_NAME,
-          modelType: 'public',
-          modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
-          modelSelection: {
-            modelName: CLOUD_PUBLIC_MODEL_NAME,
-            modelType: 'public',
-            options: CLOUD_PUBLIC_MODEL_OPTIONS,
-          },
+          modelId: CLOUD_MODEL_SELECTION.modelName,
+          modelType: CLOUD_MODEL_SELECTION.modelType,
+          modelOptions: CLOUD_MODEL_SELECTION.options,
+          modelSelection: CLOUD_MODEL_SELECTION,
         }),
       })
       assert.equal(createdResponse.ok, true, `Remote creation failed: ${createdResponse.status}`)
@@ -295,7 +296,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
           address,
           message: REMOTE_PROMPT,
           clientUserMessageId: 'mobile-continuation',
-          modelSelection: { modelName: CLOUD_PUBLIC_MODEL_NAME, modelType: 'public' },
+          modelSelection: CLOUD_MODEL_SELECTION,
         }),
       })
       assert.equal(response.ok, true, `Remote continuation failed: ${await response.text()}`)
