@@ -154,7 +154,7 @@ export function createDesktopScenario({
       'AI assistance must not submit or accept the human Issue'
     )
     await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
     return bindings[0]
   }
   async function runLocalTask(control) {
@@ -363,7 +363,7 @@ export function createDesktopScenario({
       'Reopening and retrying must not create a second Issue'
     )
     await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
     console.log(
       `[desktop-e2e] PASS draft-recovery: Issue ${issueId} survived a real binding transport failure and composer unmount without duplicate creation`
     )
