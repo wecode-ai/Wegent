@@ -133,7 +133,7 @@ def verify(engine, url):
             try:
                 ensure_plugin_state(db, 1, "plugin-17", installed_kind_id=17)
             except PluginWriteError as error:
-                assert str(error) == "plugin_write_conflict"
+                assert error.code == "plugin_write_conflict"
                 db.rollback()
             else:
                 raise AssertionError(

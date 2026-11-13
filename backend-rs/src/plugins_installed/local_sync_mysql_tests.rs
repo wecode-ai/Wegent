@@ -264,7 +264,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (?,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())", (owner,document.clone())).await?;
         }
         let rejected = post(owner,"/api/plugins/local-sync",json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"invalid-history","operationId":"unknown"})).await;
-        assert_eq!(rejected.status(), brz_http::StatusCode::CONFLICT);
+        assert_eq!(rejected.status(), brz_http::StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
             rejected.json::<Value>().await?["detail"],
             "plugin_write_conflict"
