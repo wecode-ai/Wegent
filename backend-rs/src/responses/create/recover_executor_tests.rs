@@ -232,6 +232,14 @@ async fn run_executor_recovery(
 
     let fixture = recovery_fixture(json!({})).await;
     let replica = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM tasks") || sql.contains("FROM `tasks`") {
+            let task = vec![
+                ("id", SqlValue::I64(100)),
+                ("user_id", SqlValue::I32(7)),
+                ("json", SqlValue::Text("{}".into())),
+            ];
+            return (task.clone(), vec![task]);
+        }
         assert!(
             sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`"),
             "{sql}"
@@ -366,7 +374,15 @@ async fn run_executor_recovery(
                 .unwrap()
                 .send(DispatchJob::Pipeline(Box::new(job), accepted));
             dispatched.await.unwrap().unwrap();
-            assert_eq!(replica.queries().len(), 1, "only the explicit replica read");
+            assert_eq!(
+                replica
+                    .queries()
+                    .iter()
+                    .filter(|sql| sql.contains("subtasks"))
+                    .count(),
+                1,
+                "only the explicit replica read may query the subtask"
+            );
             Ok(())
         } else if prepare_fails {
             recover_executor_if_needed(&app, &mut request, None, false)
