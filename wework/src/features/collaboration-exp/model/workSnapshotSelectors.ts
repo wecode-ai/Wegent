@@ -18,7 +18,7 @@ import type {
 const emptyCounts = (): ExperienceWorkCounts => ({ waiting: 0, running: 0, completed: 0 })
 
 function roleIdentity(id: string | null): string | null {
-  return id === '@primary' || id === 'default' ? null : id
+  return id === '@primary' ? null : id
 }
 
 function workState(item: RuntimeTaskReminderItem): ExperienceWorkState {

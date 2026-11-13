@@ -25,9 +25,7 @@ export function selectAssistantSummary(
   return {
     state: 'ready',
     roles: [
-      ...(settings.primary
-        ? [{ id: null, name: null, enabled: settings.primary.enabled, isDefault: true }]
-        : []),
+      { id: null, name: null, enabled: settings.primary?.enabled !== false, isDefault: true },
       ...settings.roles.map(role => ({
         id: role.id,
         name: role.name || null,

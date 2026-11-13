@@ -67,9 +67,9 @@ export function TeamRelay({
               <li key={node.id ?? '@primary'} className="experience-team-relay-member">
                 <button
                   type="button"
-                  data-testid={`${testId}-node-${node.id ?? 'default'}`}
+                  data-testid={`${testId}-node-${node.id ?? '@primary'}`}
                   data-state={ready ? node.state : 'unknown'}
-                  data-assistant-id={node.id ?? 'default'}
+                  data-assistant-id={node.id ?? '@primary'}
                   data-waiting-count={ready ? node.counts.waiting : undefined}
                   data-running-count={ready ? node.counts.running : undefined}
                   data-completed-count={ready ? node.counts.completed : undefined}

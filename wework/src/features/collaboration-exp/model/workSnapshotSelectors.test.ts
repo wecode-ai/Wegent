@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import { experienceIssueFixture, experienceProjectFixture } from './fixtures'
+import { newStandInRole } from '@/api/personalStandIn'
+import {
+  experienceIssueFixture,
+  experienceProjectFixture,
+  experienceStandInFixture,
+} from './fixtures'
+import { selectAssistantSummary } from './assistantSelectors'
 import { selectTaskRows } from './taskSelectors'
 import { selectExperienceWorkSnapshot } from './workSnapshotSelectors'
 import type { ExperienceTaskRow, ExperienceWorkSnapshotInput } from './types'
@@ -14,7 +20,7 @@ const roles: ExperienceWorkSnapshotInput['roles'] = [
 
 function work(
   taskId: string,
-  roleId = 'default',
+  roleId = '@primary',
   task: Partial<RuntimeTaskSummary> = {},
   deviceId = 'device-1'
 ): RuntimeTaskReminderItem {
@@ -45,6 +51,75 @@ function row(id: string, overrides: Partial<ExperienceTaskRow> = {}): Experience
 }
 
 describe('selectExperienceWorkSnapshot', () => {
+  it('keeps native initial primary and default role identities distinct', () => {
+    const summary = selectAssistantSummary({
+      viewer: 7,
+      settings: experienceStandInFixture({
+        version: 0,
+        primary: undefined,
+        roles: [newStandInRole('device-1', 'default')],
+      }),
+    })
+    const snapshot = selectExperienceWorkSnapshot({ roles: summary.roles, work: [] })
+    expect(snapshot.team).toEqual([
+      {
+        id: null,
+        name: null,
+        enabled: true,
+        isDefault: true,
+        state: 'idle',
+        counts: { waiting: 0, running: 0, completed: 0 },
+      },
+      {
+        id: 'default',
+        name: null,
+        enabled: false,
+        isDefault: false,
+        state: 'idle',
+        counts: { waiting: 0, running: 0, completed: 0 },
+      },
+    ])
+  })
+
+  it('attributes primary and default role work and decisions without merging or overwriting', () => {
+    const summary = selectAssistantSummary({
+      viewer: 7,
+      settings: experienceStandInFixture({
+        roles: [{ ...newStandInRole('device-1', 'default'), name: 'Development', enabled: true }],
+      }),
+    })
+    const snapshot = selectExperienceWorkSnapshot({
+      roles: summary.roles,
+      work: [
+        work('primary-running', '@primary', { running: true }),
+        work('default-completed', 'default', { status: 'done' }),
+      ],
+      pendingDecisions: [
+        { id: 'default-decision', summary: 'Review implementation', roleId: 'default' },
+      ],
+    })
+    expect(snapshot.counts).toEqual({ waiting: 1, running: 1, completed: 1 })
+    expect(snapshot.team).toEqual([
+      {
+        id: null,
+        name: null,
+        enabled: true,
+        isDefault: true,
+        state: 'running',
+        counts: { waiting: 0, running: 1, completed: 0 },
+      },
+      {
+        id: 'default',
+        name: 'Development',
+        enabled: true,
+        isDefault: false,
+        state: 'waiting',
+        counts: { waiting: 1, running: 0, completed: 1 },
+      },
+    ])
+    expect(snapshot.items.map(item => item.roleIds)).toEqual([[null], ['default'], ['default']])
+  })
+
   it('uses one waiting-over-running-over-idle relay rule and keeps completed members idle', () => {
     const snapshot = selectExperienceWorkSnapshot({
       roles,

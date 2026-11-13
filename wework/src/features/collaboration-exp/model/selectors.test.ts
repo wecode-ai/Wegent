@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceIssueCollaborator } from '@wegent/collaboration'
+import { newStandInRole } from '@/api/personalStandIn'
 import {
   selectAssistantSummary,
   selectPrivateConversations,
@@ -577,12 +578,38 @@ describe('experience assistant summary', () => {
     expect(JSON.stringify(result)).not.toMatch(/Private|SECRET/)
   })
 
-  it('does not invent a default role or reveal another user settings', () => {
+  it('projects the native implicit primary separately from the initial disabled default role', () => {
+    const settings = standIn({
+      version: 0,
+      primary: undefined,
+      roles: [newStandInRole('device-1', 'default')],
+    })
+    expect(selectAssistantSummary({ viewer: 7, settings }).roles).toEqual([
+      { id: null, name: null, enabled: true, isDefault: true },
+      { id: 'default', name: null, enabled: false, isDefault: false },
+    ])
+    expect(settings.primary).toBeUndefined()
+    expect(settings.roles[0].enabled).toBe(false)
+  })
+
+  it('preserves an explicitly disabled primary rather than enabling its intake', () => {
+    const settings = standIn()
+    settings.primary!.enabled = false
+    expect(selectAssistantSummary({ viewer: 7, settings }).roles).toEqual([
+      { id: null, name: null, enabled: false, isDefault: true },
+    ])
+  })
+
+  it('does not project an implicit primary without owned settings or reveal another owner', () => {
     expect(selectAssistantSummary({ viewer: 7, settings: undefined }).state).toBe('unknown')
-    expect(
-      selectAssistantSummary({ viewer: 7, settings: standIn({ primary: undefined }) }).roles
-    ).toEqual([])
-    expect(selectAssistantSummary({ viewer: 7, settings: standIn({ userId: 8 }) })).toEqual({
+    expect(selectAssistantSummary({ viewer: 7, settings: undefined }).roles).toEqual([])
+    expect(selectAssistantSummary({ viewer: 7, settings: null }).roles).toEqual([])
+    const settings = standIn({
+      userId: 8,
+      primary: undefined,
+      roles: [{ ...newStandInRole('device-1', 'default'), name: 'SECRET role' }],
+    })
+    expect(selectAssistantSummary({ viewer: 7, settings })).toEqual({
       state: 'hidden',
       roles: [],
       pendingDecisions: [],

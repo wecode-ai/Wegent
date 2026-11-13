@@ -48,10 +48,7 @@ function fromMetadata(
     origin.initiatedBy === 'stand_in' &&
     typeof origin.sourceTaskId === 'string' &&
     origin.sourceTaskId ===
-      standInConversationTaskId(
-        source.ownerUserId,
-        roleId === '@primary' || roleId === 'default' ? undefined : roleId
-      )
+      standInConversationTaskId(source.ownerUserId, roleId === '@primary' ? undefined : roleId)
   const accepted =
     source.accepted?.ownerUserId === source.ownerUserId &&
     source.accepted.address.deviceId === address.deviceId &&

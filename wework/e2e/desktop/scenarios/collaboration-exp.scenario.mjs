@@ -371,6 +371,12 @@ export function createDesktopScenario({
         assert.equal(Number(await control.command('getElementCount', TAB)), 0)
 
         await click(control, '[data-testid="workspace-tab-select-fixed-task"]')
+        // Selecting a fixed tab restores its retained route, including the notification's board.
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', `${ACTIVE} ${ACTIVE_WORKBENCH_SELECTOR}`, {
+          visible: true,
+        })
+        assert.equal(await control.command('getRoute', 'body'), '/')
         await createSingleRootLocalProject(
           control,
           workspacePath,

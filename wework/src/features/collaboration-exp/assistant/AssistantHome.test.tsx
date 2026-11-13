@@ -166,7 +166,7 @@ function runningCatalog(publicExecution = false): RuntimeWorkListResponse {
             runtimeHandle: {
               origin: {
                 initiatedBy: 'stand_in',
-                standInId: 'default',
+                standInId: '@primary',
                 userId: 7,
                 deviceId: 'device-1',
                 ...(publicExecution
@@ -219,7 +219,7 @@ describe('AssistantHome', () => {
         </>
       )
       const view = render(content)
-      for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-default'))
+      for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-@primary'))
         expect(node).toHaveAttribute('data-state', 'unknown')
       expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('—')
       fireEvent.click(screen.getByText('Original private discussion'))
@@ -244,7 +244,7 @@ describe('AssistantHome', () => {
           <AssistantTeamRelay active projects={[]} />
         </>
       )
-      for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-default'))
+      for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-@primary'))
         expect(node).toHaveAttribute('data-state', 'running')
       expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('1')
       expect(api.conversation).not.toHaveBeenCalled()
@@ -287,7 +287,7 @@ describe('AssistantHome', () => {
       {
         id: 'waiting',
         taskId: 'waiting-task',
-        roleId: 'default',
+        roleId: '@primary',
         title: 'Choose release scope',
         status: 'pending',
         messageCount: 1,
@@ -327,7 +327,7 @@ describe('AssistantHome', () => {
     )
     for (const relay of screen.getAllByTestId('collaboration-exp-team-relay')) {
       expect(
-        within(relay).getByTestId('collaboration-exp-team-relay-node-default')
+        within(relay).getByTestId('collaboration-exp-team-relay-node-@primary')
       ).toHaveAttribute('data-state', 'waiting')
       expect(
         within(relay).getByTestId('collaboration-exp-team-relay-node-reviewer')
@@ -364,7 +364,7 @@ describe('AssistantHome', () => {
     expect(screen.getByTestId('collaboration-exp-team-relay-unavailable')).toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-exp-assistant-snapshot')).not.toBeInTheDocument()
     expect(
-      screen.queryByTestId('collaboration-exp-team-relay-node-default')
+      screen.queryByTestId('collaboration-exp-team-relay-node-@primary')
     ).not.toBeInTheDocument()
     expect(screen.getByTestId('collaboration-exp-assistant-team-toggle')).toBeDisabled()
     expect(screen.getByTestId('collaboration-exp-assistant-retry')).toBeEnabled()
@@ -374,7 +374,7 @@ describe('AssistantHome', () => {
     mocks.source.inboxReady = false
     mocks.source.proposalsReady = false
     const view = render(<AssistantHome active />)
-    const node = screen.getByTestId('collaboration-exp-team-relay-node-default')
+    const node = screen.getByTestId('collaboration-exp-team-relay-node-@primary')
     expect(node).toHaveAttribute('data-state', 'unknown')
     expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent('—')
     mocks.source.inboxReady = true
@@ -383,7 +383,7 @@ describe('AssistantHome', () => {
     expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('—')
     mocks.source.proposalsReady = true
     view.rerender(<AssistantHome active />)
-    expect(screen.getByTestId('collaboration-exp-team-relay-node-default')).toBe(node)
+    expect(screen.getByTestId('collaboration-exp-team-relay-node-@primary')).toBe(node)
     expect(node).toHaveAttribute('data-state', 'idle')
     expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('0')
   })

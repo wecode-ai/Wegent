@@ -65,7 +65,7 @@ it('names each real team state without relying on color or motion', () => {
     '3'
   )
   expect(screen.queryByText(/online/i)).not.toBeInTheDocument()
-  expect(screen.getByTestId('collaboration-exp-team-relay-node-default')).toHaveAttribute(
+  expect(screen.getByTestId('collaboration-exp-team-relay-node-@primary')).toHaveAttribute(
     'title',
     'Default assistant · Awaiting confirmation · 2'
   )
@@ -76,7 +76,7 @@ it('opens existing management with the exact role identity and exposes all compa
   render(<TeamRelay nodes={nodes} onManage={manage} />)
   fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-node-reviewer'))
   expect(manage).toHaveBeenLastCalledWith('reviewer')
-  fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-node-default'))
+  fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-node-@primary'))
   expect(manage).toHaveBeenLastCalledWith(undefined)
   fireEvent.click(screen.getByRole('button', { name: 'View all 3 assistants' }))
   expect(manage).toHaveBeenLastCalledWith()
@@ -87,5 +87,32 @@ it('preserves an unknown team instead of inventing a standing-by default assista
   expect(screen.getByTestId('collaboration-exp-team-relay-unavailable')).toHaveTextContent(
     'not available yet'
   )
-  expect(screen.queryByTestId('collaboration-exp-team-relay-node-default')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('collaboration-exp-team-relay-node-@primary')).not.toBeInTheDocument()
+})
+
+it('keeps the primary and a native default role uniquely addressable and opens their own settings', () => {
+  const manage = vi.fn()
+  render(
+    <TeamRelay
+      nodes={[
+        nodes[0],
+        {
+          ...nodes[2],
+          id: 'default',
+          name: 'Development',
+        },
+      ]}
+      onManage={manage}
+    />
+  )
+  const primary = screen.getByTestId('collaboration-exp-team-relay-node-@primary')
+  const specialist = screen.getByTestId('collaboration-exp-team-relay-node-default')
+  expect(primary).toHaveAttribute('data-assistant-id', '@primary')
+  expect(specialist).toHaveAttribute('data-assistant-id', 'default')
+  expect(primary).toHaveTextContent('Default assistant')
+  expect(specialist).toHaveTextContent('Development')
+  fireEvent.click(primary)
+  expect(manage).toHaveBeenLastCalledWith(undefined)
+  fireEvent.click(specialist)
+  expect(manage).toHaveBeenLastCalledWith('default')
 })

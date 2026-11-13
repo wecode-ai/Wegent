@@ -40,6 +40,38 @@ function source(overrides: Partial<AssistantConversationSource> = {}): Assistant
 }
 
 describe('assistant private conversation ownership', () => {
+  it.each([
+    ['@primary', 'stand-in-chat-7-primary', true],
+    ['default', 'stand-in-chat-7-role-default', true],
+    ['default', 'stand-in-chat-7-primary', false],
+    ['@primary', 'stand-in-chat-7-role-default', false],
+  ] as const)(
+    'validates delegated %s work against its exact native source %s',
+    (standInId, sourceTaskId, expected) => {
+      const delegatedAddress = { deviceId: 'device-1', taskId: 'delegated-task' }
+      const delegatedOrigin = {
+        ...origin,
+        type: 'stand_in_task',
+        initiatedBy: 'stand_in',
+        standInId,
+        sourceTaskId,
+      }
+      const owned = source({
+        runtimeWork: experienceRuntimeFixture([
+          {
+            taskId: delegatedAddress.taskId,
+            title: 'Delegated work',
+            runtimeHandle: { origin: delegatedOrigin },
+          },
+        ]),
+      })
+      const selected = selectAssistantConversation(owned, delegatedAddress)
+      expect(Boolean(selected)).toBe(expected)
+      expect(selectAssistantConversations(owned)).toEqual(selected ? [selected] : [])
+      expect(selectAssistantConversation({ ...owned, ownerUserId: 8 }, delegatedAddress)).toBeNull()
+    }
+  )
+
   it('restores only an exact current owned native identity and uses its real thread and timestamp', () => {
     const selected = selectAssistantConversation(source(), address)
     expect(selected?.address).toMatchObject({
