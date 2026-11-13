@@ -291,14 +291,13 @@ class RedisCache:
         key: str,
         value: Any,
         expire: int | None = settings.REPO_CACHE_EXPIRED_TIME,
+        *,
+        only_if_present: bool = False,
     ) -> bool:
         """Set a value without hiding Redis failures."""
         async with self._client_context() as client:
             payload = orjson.dumps(value)
-            if expire is None:
-                ok = await client.set(key, payload)
-            else:
-                ok = await client.set(key, payload, ex=expire)
+            ok = await client.set(key, payload, ex=expire, xx=only_if_present)
         return bool(ok)
 
     async def setnx(

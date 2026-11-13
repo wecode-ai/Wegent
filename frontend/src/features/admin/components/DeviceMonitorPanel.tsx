@@ -131,6 +131,7 @@ export function DeviceMonitorPanel() {
     {}
   )
   const latestStatsRequestRef = useRef(0)
+  const pendingForcedStatsRequest = useRef<Promise<void> | null>(null)
   const latestDevicesRequestRef = useRef(0)
   const [upgradeStates, setUpgradeStates] = useState<Record<string, DeviceUpgradeState>>({})
   const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -176,23 +177,34 @@ export function DeviceMonitorPanel() {
   }, [versionFilter, appliedVersionFilter])
 
   const loadStats = useCallback(
-    async (refresh = false) => {
+    (refresh = false) => {
+      if (!refresh && pendingForcedStatsRequest.current) {
+        return pendingForcedStatsRequest.current
+      }
       const requestId = ++latestStatsRequestRef.current
       setIsStatsLoading(true)
-      try {
-        const data = await adminApis.getDeviceStats(refresh)
-        if (requestId === latestStatsRequestRef.current) setStats(data)
-      } catch (error) {
-        if (requestId === latestStatsRequestRef.current) {
-          console.error('Failed to load device stats:', error)
-          toast.error(t('device_monitor.errors.load_stats_failed'))
-        }
-      } finally {
-        if (requestId === latestStatsRequestRef.current) {
-          setIsStatsLoading(false)
-          setHasLoadedStats(true)
-        }
-      }
+      const request = adminApis
+        .getDeviceStats(refresh)
+        .then(data => {
+          if (requestId === latestStatsRequestRef.current) setStats(data)
+        })
+        .catch(error => {
+          if (requestId === latestStatsRequestRef.current) {
+            console.error('Failed to load device stats:', error)
+            toast.error(t('device_monitor.errors.load_stats_failed'))
+          }
+        })
+        .finally(() => {
+          if (pendingForcedStatsRequest.current === request) {
+            pendingForcedStatsRequest.current = null
+          }
+          if (requestId === latestStatsRequestRef.current) {
+            setIsStatsLoading(false)
+            setHasLoadedStats(true)
+          }
+        })
+      if (refresh) pendingForcedStatsRequest.current = request
+      return request
     },
     [t]
   )
@@ -606,7 +618,13 @@ export function DeviceMonitorPanel() {
             />
             {t('device_monitor.actions.restart_all_cloud')}
           </Button>
-          <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isRefreshing}>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            data-testid="refresh-admin-devices"
+          >
             <RefreshCw
               className={cn('h-4 w-4', (isRefreshing || isStatsLoading) && 'animate-spin')}
             />

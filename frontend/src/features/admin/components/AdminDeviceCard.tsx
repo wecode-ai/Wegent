@@ -123,7 +123,7 @@ export function AdminDeviceCard({
       className="p-3 bg-base hover:bg-hover transition-colors"
       data-testid={`device-card-${device.device_id}`}
     >
-      <div className="flex items-start justify-between min-w-0 gap-4">
+      <div className="flex min-w-0 flex-col items-start justify-between gap-4 md:flex-row">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="font-medium text-text-primary">{device.name}</span>
@@ -180,7 +180,7 @@ export function AdminDeviceCard({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-11 w-11 md:h-8 md:w-8"
                     disabled={!canUpgrade || !!actionLoading[upgradeKey] || isUpgradeInProgress}
                     onClick={() => handleUpgrade(device)}
                     data-testid={`upgrade-device-${device.device_id}`}
@@ -212,7 +212,7 @@ export function AdminDeviceCard({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-11 w-11 md:h-8 md:w-8"
                     disabled={!!actionLoading[restartKey]}
                     onClick={() => handleRestart(device)}
                     data-testid={`restart-device-${device.device_id}`}
@@ -233,7 +233,7 @@ export function AdminDeviceCard({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-11 w-11 md:h-8 md:w-8"
                     disabled={!!actionLoading[migrateKey]}
                     onClick={() => handleMigrate(device)}
                     data-testid={`migrate-device-${device.device_id}`}

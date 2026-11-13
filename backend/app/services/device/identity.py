@@ -182,6 +182,23 @@ def lock_device_owner(db: Session, user_id: int) -> None:
         db.query(User.id).filter(User.id == user_id).with_for_update().first()
 
 
+def lock_online_device_for_binding(
+    db: Session, user_id: int, device_id: str
+) -> str | None:
+    """Hold the owner lock through the caller's executor binding commit."""
+    from app.core.cache import cache_manager
+
+    lock_device_owner(db, user_id)
+    device = resolve_owned_device_alias(db, user_id=user_id, device_id=device_id)
+    if device is None:
+        return None
+    route_id = device_connection_route_id(device)
+    online = cache_manager.get_sync_or_raise(f"device:online:{user_id}:{route_id}")
+    return (
+        route_id if matching_online_info(device.json.get("spec", {}), online) else None
+    )
+
+
 def validate_persistent_runtime_instance_id(
     device_json: dict[str, Any],
     runtime_instance_id: str | None,

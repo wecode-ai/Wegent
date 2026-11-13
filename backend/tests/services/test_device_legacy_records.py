@@ -291,3 +291,32 @@ async def test_offline_only_checks_cloud_runtime_route_and_preserves_cloud_remov
     test_db.refresh(row)
     assert row.is_active is True
     assert await record_operations.delete_device_record(test_db, 7, row.id) is True
+
+
+@pytest.mark.parametrize("status", ["claimed", "running", "cancel_requested"])
+async def test_offline_only_rejects_active_project_execution(
+    test_db, records, isolated_cache, status
+):
+    from app.models.loop_item_execution import LoopItemExecution
+
+    device = records[0]
+    execution = LoopItemExecution(
+        executor_owner_user_id=device.user_id,
+        runtime_device_id=record_route_id(device),
+        runtime_instance_id=device.json["spec"]["runtimeInstanceId"],
+        status=status,
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    with pytest.raises(DeviceIdentityConflictError, match="online or busy"):
+        await record_operations.delete_device_record(
+            test_db, device.user_id, device.id, offline_only=True
+        )
+    assert device.is_active
+
+    execution.status = "completed"
+    test_db.commit()
+    assert await record_operations.delete_device_record(
+        test_db, device.user_id, device.id, offline_only=True
+    )

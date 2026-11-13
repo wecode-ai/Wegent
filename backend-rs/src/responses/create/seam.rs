@@ -620,6 +620,7 @@ async fn set_subtask_executor(
     request: &ExecutionRequest,
     runtime_device_id: &str,
 ) -> Result<(), FastApiError> {
+    let redis = state.redis.as_ref().ok_or_else(FastApiError::internal)?;
     let tables = state.task_store.table_templates();
     let mysql = state
         .mysql
@@ -639,7 +640,10 @@ async fn set_subtask_executor(
             FastApiError::internal()
         })?;
     if row.is_none() {
-        return Ok(());
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::NOT_FOUND,
+            "Subtask not found",
+        ));
     }
     // `_set_subtask_executor`'s subtask session also loads the subtask's
     // contexts (`WHERE subtask_id IN (?) ORDER BY id ASC`) before the update.
@@ -658,8 +662,20 @@ async fn set_subtask_executor(
         })?;
     use brz_mysql::MysqlTransaction as _;
     let now = chrono::Local::now().naive_local();
-    mysql
+    let bound = mysql
         .with_transaction(async |transaction| {
+            let registration = crate::device_records::lock_online_device_for_binding(
+                transaction,
+                redis,
+                request.user_id,
+                runtime_device_id,
+            )
+            .await?;
+            if !registration.is_some_and(|device| {
+                crate::device_identity::device_connection_route_id(&device) == runtime_device_id
+            }) {
+                return Ok(false);
+            }
             transaction
                 .execute(
                     format!(
@@ -675,13 +691,19 @@ async fn set_subtask_executor(
                     ),
                 )
                 .await?;
-            Ok(())
+            Ok(true)
         })
         .await
         .map_err(|error| {
             tracing::error!(%error, subtask_id = request.subtask_id, "executor update failed");
             FastApiError::internal()
         })?;
+    if !bound {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "Selected device is offline",
+        ));
+    }
     Ok(())
 }
 

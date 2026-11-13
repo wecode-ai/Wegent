@@ -203,6 +203,7 @@ pub(super) async fn reserve(
     canonical_device: &str,
 ) -> MysqlResult<bool> {
     app.mysql.with_transaction(async |tx| {
+        crate::device_records::lock_device_owner(tx, command.owner_user_id).await?;
         let Some(issue) = store::locked(tx, "task", &candidate.loop_item_id).await? else {
             return Ok(false);
         };

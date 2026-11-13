@@ -23,6 +23,8 @@ from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.device.identity import lock_online_device_for_binding
+from app.services.device.record_operations import device_identity_lock
 from app.services.device_service import device_service
 from app.stores.tasks import subtask_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
@@ -77,44 +79,50 @@ async def route_task_to_device(
 
     from app.services.execution import TaskRequestBuilder, execution_dispatcher
 
-    # Verify device is online
-    device_info = await device_service.get_device_online_info(user_id, device_id)
-    if not device_info:
-        raise HTTPException(status_code=400, detail="Selected device is offline")
+    async with device_identity_lock(user_id):
+        try:
+            # Reload task rows in the caller’s transaction.
+            local_subtask = subtask_store.get_by_id(db, subtask_id=subtask.id)
 
-    # Re-query ORM objects within this session to avoid cross-session issues
-    local_subtask = subtask_store.get_by_id(db, subtask_id=subtask.id)
+            if not local_subtask:
+                raise HTTPException(status_code=404, detail="Subtask not found")
 
-    if not local_subtask:
-        raise HTTPException(status_code=404, detail="Subtask not found")
+            route_id = lock_online_device_for_binding(db, user_id, device_id)
+            if route_id is None:
+                raise HTTPException(
+                    status_code=400, detail="Selected device is offline"
+                )
 
-    # Update Task CRD with device_id for historical task tracking
-    local_task = task_store.get_by_id(db, task_id=task.id)
-    if local_task and local_task.kind == "Task":
-        from app.schemas.kind import Task as TaskCRD
+            # Update Task CRD with device_id for historical task tracking
+            local_task = task_store.get_by_id(db, task_id=task.id)
+            if local_task and local_task.kind == "Task":
+                from app.schemas.kind import Task as TaskCRD
 
-        task_crd = TaskCRD.model_validate(local_task.json)
-        if not task_crd.spec.device_id or task_crd.spec.device_id != device_id:
-            task_crd.spec.device_id = device_id
-            task_store.update_json(
+                task_crd = TaskCRD.model_validate(local_task.json)
+                if not task_crd.spec.device_id or task_crd.spec.device_id != device_id:
+                    task_crd.spec.device_id = device_id
+                    task_store.update_json(
+                        db,
+                        task=local_task,
+                        payload=task_crd.model_dump(mode="json"),
+                    )
+                    logger.info(
+                        f"[DeviceRouter] Updated Task {task.id} with device_id={device_id}"
+                    )
+
+            # Update subtask with device executor info
+            subtask_store.update_fields(
                 db,
-                task=local_task,
-                payload=task_crd.model_dump(mode="json"),
+                subtask=local_subtask,
+                executor_name=f"device-{route_id}",
+                executor_namespace=f"user-{user_id}",
+                status=SubtaskStatus.RUNNING,
+                started_at=datetime.now(),
             )
-            logger.info(
-                f"[DeviceRouter] Updated Task {task.id} with device_id={device_id}"
-            )
-
-    # Update subtask with device executor info
-    subtask_store.update_fields(
-        db,
-        subtask=local_subtask,
-        executor_name=f"device-{device_id}",
-        executor_namespace=f"user-{user_id}",
-        status=SubtaskStatus.RUNNING,
-        started_at=datetime.now(),
-    )
-    db.commit()
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     # Refresh to get updated state
     db.refresh(local_subtask)
@@ -154,7 +162,7 @@ async def route_task_to_device(
 
     # Dispatch task via ExecutionDispatcher
     # When device_id is specified, ExecutionDispatcher uses WebSocket mode
-    await execution_dispatcher.dispatch(request, device_id=device_id)
+    await execution_dispatcher.dispatch(request, device_id=route_id)
 
     logger.info(
         f"[DeviceRouter] Task routed to device: task_id={task.id}, "
@@ -165,7 +173,7 @@ async def route_task_to_device(
     from app.core.socketio import get_sio
 
     sio = get_sio()
-    await _broadcast_device_slot_update(sio, db, user_id, device_id)
+    await _broadcast_device_slot_update(sio, db, user_id, route_id)
 
     return True
 

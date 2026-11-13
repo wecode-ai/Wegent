@@ -320,6 +320,32 @@ describe('DeviceMonitorPanel', () => {
     expect(screen.getAllByTestId('device-card-shared-device-name')).toHaveLength(2)
   })
 
+  it('shares the pending fresh counts with a manual refresh after deletion', async () => {
+    const staleStats = await mockedAdminApis.getDeviceStats()
+    mockedAdminApis.getDeviceStats.mockClear()
+    let finishRefresh!: (stats: typeof staleStats) => void
+    const freshStats = new Promise<typeof staleStats>(resolve => {
+      finishRefresh = resolve
+    })
+    mockedAdminApis.getDeviceStats.mockResolvedValueOnce({ ...staleStats, total: 7 })
+    mockedAdminApis.getDeviceStats.mockReturnValueOnce(freshStats)
+    mockedAdminApis.getDevices
+      .mockResolvedValueOnce({ total: 1, items: [offlineDevice] })
+      .mockResolvedValue({ total: 0, items: [] })
+    mockedAdminApis.deleteDeviceRecord.mockResolvedValue({ message: 'Device registration removed' })
+    render(<DeviceMonitorPanel />)
+
+    fireEvent.click(await screen.findByTestId('admin-delete-device-42'))
+    fireEvent.click(screen.getByTestId('confirm-admin-delete-device'))
+    await waitFor(() => expect(mockedAdminApis.getDeviceStats).toHaveBeenLastCalledWith(true))
+    fireEvent.click(screen.getByTestId('refresh-admin-devices'))
+    expect(mockedAdminApis.getDeviceStats.mock.calls).toEqual([[false], [true]])
+
+    await act(async () => finishRefresh({ ...staleStats, total: 6 }))
+    expect(screen.getByText('6')).toBeInTheDocument()
+    expect(screen.getByTestId('refresh-admin-devices')).toBeEnabled()
+  })
+
   it('returns to the preceding page when deleting the final row on the last page', async () => {
     const remaining = { ...offlineDevice, id: 43, name: 'Remaining device' }
     mockedAdminApis.getDevices

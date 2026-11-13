@@ -37,7 +37,7 @@ use serde_json::Value;
 
 use crate::admin_service_keys::AdminUser;
 use crate::auth::SessionUser;
-use crate::device_identity::{DeviceKindRow, device_connection_route_id};
+use crate::device_identity::{DeviceKindRow, device_connection_route_id, runtime_device_id};
 use crate::device_identity_lock::{IDENTITY_LOCK_BODY_TIMEOUT, IdentityLock};
 use crate::devices::{internal_error, online_key};
 use crate::http_compat::FastApiError;
@@ -79,15 +79,82 @@ struct DeviceRecordOwner {
     user_id: i32,
 }
 
-/// `subtask_store.has_active_by_executor_names`. The deployment's sharded
-/// subtask store does not override the base implementation, which queries the
-/// default `Subtask` model, so the read always targets the base `subtasks`
-/// table and never a shard.
+/// Probe each physical subtask table when the deployment shards by task ID.
 const ACTIVE_SUBTASK_BY_EXECUTOR_QUERY: &str = "SELECT subtasks.id AS subtasks_id \n\
-     FROM subtasks \n\
+     FROM {table} AS subtasks \n\
      WHERE subtasks.user_id = ? \
      AND subtasks.executor_name IN (?, ?) \
      AND subtasks.status IN ('PENDING', 'RUNNING') \n LIMIT 1";
+
+async fn has_active_project_execution(
+    transaction: &mut impl MysqlTransaction,
+    user_id: i64,
+    device: &DeviceKindRow,
+) -> Result<bool, MysqlError> {
+    let statuses = crate::socketio::execution_aggregate::CAPACITY_STATUSES;
+    let route = runtime_device_id(device);
+    let connection = device_connection_route_id(device);
+    let instance = device.json["spec"]["runtimeInstanceId"]
+        .as_str()
+        .unwrap_or_default();
+    let row: Option<(i64,)> = transaction
+        .fetch_optional(
+            format!(
+                "SELECT id FROM loop_item_executions WHERE executor_owner_user_id = ? \
+            AND runtime_device_id IN (?, ?) AND runtime_device_id <> '' \
+            AND (runtime_instance_id = '' OR ? = '' OR runtime_instance_id = ?) \
+            AND status IN ({statuses}) LIMIT 1"
+            ),
+            (
+                user_id,
+                route.as_str(),
+                connection.as_str(),
+                instance,
+                instance,
+            ),
+        )
+        .await?;
+    Ok(row.is_some())
+}
+
+pub(crate) async fn lock_device_owner(
+    transaction: &mut impl MysqlTransaction,
+    user_id: i64,
+) -> Result<(), MysqlError> {
+    let _owner: Option<LockOwnerRow> = transaction
+        .fetch_optional(LOCK_DEVICE_OWNER_QUERY, (user_id,))
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn lock_online_device_for_binding<T: MysqlTransaction>(
+    transaction: &mut T,
+    redis: &impl Redis,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Option<DeviceKindRow>, MysqlError> {
+    lock_device_owner(transaction, user_id).await?;
+    let mut query = &mut *transaction;
+    let Some(device) =
+        crate::device_identity::resolve_owned_device_alias_on(&mut query, user_id, device_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+    let route = device_connection_route_id(&device);
+    let online = crate::device_online_state::read_online_state_with(redis, user_id, &route)
+        .await
+        .map_err(|()| MysqlError::InvalidQuery {
+            reason: "Device online state is unavailable".into(),
+        })?;
+    Ok(online
+        .filter(|value| {
+            let runtime = device.json["spec"]["runtimeInstanceId"].as_str();
+            value.as_object().is_some_and(|info| !info.is_empty())
+                && runtime.is_none_or(|id| value["runtime_instance_id"].as_str() == Some(id))
+        })
+        .map(|_| device))
+}
 
 /// `db.commit()`'s flush of the dirty `Kind` row: `is_active` and the
 /// Python-side `onupdate` `updated_at`.
@@ -167,10 +234,19 @@ async fn delete_device_record(
         }
     };
 
+    let subtask_tables = state.task_store.subtask_tables();
     let outcome = tokio::time::timeout(
         IDENTITY_LOCK_BODY_TIMEOUT,
         state.mysql.with_transaction(async |transaction| {
-            delete_record_in(transaction, redis, user_id, record_id, offline_only).await
+            delete_record_in(
+                transaction,
+                redis,
+                user_id,
+                record_id,
+                offline_only,
+                &subtask_tables,
+            )
+            .await
         }),
     )
     .await;
@@ -235,14 +311,13 @@ async fn delete_record_in<T, R>(
     user_id: i64,
     record_id: i64,
     offline_only: bool,
+    subtask_tables: &[String],
 ) -> Result<RecordDeletion, MysqlError>
 where
     T: MysqlTransaction,
     R: Redis,
 {
-    let _owner: Option<LockOwnerRow> = transaction
-        .fetch_optional(LOCK_DEVICE_OWNER_QUERY, (user_id,))
-        .await?;
+    lock_device_owner(transaction, user_id).await?;
 
     let Some(device) = transaction
         .fetch_optional::<_, _, DeviceKindRow>(DEVICE_RECORD_FOR_UPDATE_QUERY, (record_id, user_id))
@@ -253,11 +328,15 @@ where
     };
 
     if offline_only || device.json["spec"]["deviceType"].as_str() != Some(CLOUD_DEVICE_TYPE) {
-        match require_offline_and_idle(transaction, redis, user_id, &device).await? {
+        match require_offline_and_idle(transaction, redis, user_id, &device, subtask_tables).await?
+        {
             GuardDecision::Offline => {}
             GuardDecision::Online => return Ok(RecordDeletion::Conflict),
             GuardDecision::Unavailable => return Ok(RecordDeletion::StatusUnavailable),
             GuardDecision::Undecodable => return Ok(RecordDeletion::Undecodable),
+        }
+        if has_active_project_execution(transaction, user_id, &device).await? {
+            return Ok(RecordDeletion::Conflict);
         }
     }
 
@@ -291,6 +370,7 @@ async fn require_offline_and_idle<T, R>(
     redis: &R,
     user_id: i64,
     device: &DeviceKindRow,
+    subtask_tables: &[String],
 ) -> Result<GuardDecision, MysqlError>
 where
     T: MysqlTransaction,
@@ -319,7 +399,6 @@ where
         Err(()) => return Ok(GuardDecision::Undecodable),
     };
     let runtime = device.json["spec"].get("runtimeInstanceId");
-    let running = active_subtask_by_executor(transaction, user_id, &route_id, &device.name).await?;
 
     let online_reported = online.as_ref().is_some_and(python_truthy);
     // `legacy.get("runtime_instance_id")` names this record's Runtime, or the
@@ -328,11 +407,15 @@ where
         .as_ref()
         .filter(|value| python_truthy(value))
         .is_some_and(|legacy| legacy_matches_runtime(legacy, runtime));
-    Ok(if online_reported || running || legacy_conflict {
-        GuardDecision::Online
-    } else {
-        GuardDecision::Offline
-    })
+    if online_reported || legacy_conflict {
+        return Ok(GuardDecision::Online);
+    }
+    for table in subtask_tables {
+        if active_subtask_by_executor(transaction, table, user_id, &route_id, &device.name).await? {
+            return Ok(GuardDecision::Online);
+        }
+    }
+    Ok(GuardDecision::Offline)
 }
 
 /// `legacy and (not runtime or legacy.get("runtime_instance_id") == runtime)`.
@@ -349,6 +432,7 @@ fn legacy_matches_runtime(legacy: &Value, runtime: Option<&Value>) -> bool {
 /// pending or running subtask on either identity of the device.
 async fn active_subtask_by_executor<T: MysqlTransaction>(
     transaction: &mut T,
+    table: &str,
     user_id: i64,
     route_id: &str,
     name: &str,
@@ -356,7 +440,7 @@ async fn active_subtask_by_executor<T: MysqlTransaction>(
     let executor_names = [format!("device-{route_id}"), format!("device-{name}")];
     let row: Option<ActiveSubtaskRow> = transaction
         .fetch_optional(
-            ACTIVE_SUBTASK_BY_EXECUTOR_QUERY,
+            ACTIVE_SUBTASK_BY_EXECUTOR_QUERY.replace("{table}", table),
             (
                 user_id,
                 executor_names[0].as_str(),

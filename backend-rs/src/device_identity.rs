@@ -367,7 +367,7 @@ fn runtime_instance_id(device: &DeviceKindRow) -> Option<String> {
 }
 
 /// Source `app/services/device/runtime_route.py::_runtime_device_id`.
-fn runtime_device_id(device: &DeviceKindRow) -> String {
+pub(crate) fn runtime_device_id(device: &DeviceKindRow) -> String {
     if DeviceType::from_spec(&device.spec()) == DeviceType::App {
         return record_route_id(device);
     }

@@ -171,16 +171,16 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
         .preserve_history
         .then(|| data.spec["historyMessageCount"].as_i64().unwrap_or(10));
     super::super::git_credentials::enrich(app, &mut request).await?;
-    mark_running(
-        app,
-        setup.task_id,
-        setup.assistant_subtask_id,
-        data.subscription.user_id,
-    )
-    .await?;
     if let Some(device) = data.device.as_deref() {
         dispatch_device(app, &request, device).await?
     } else {
+        mark_running(
+            app,
+            setup.task_id,
+            setup.assistant_subtask_id,
+            data.subscription.user_id,
+        )
+        .await?;
         super::super::project::managed::dispatch(app, &request).await?
     }
     Ok(
@@ -202,22 +202,41 @@ async fn dispatch_device(
         .redis
         .as_ref()
         .context("Redis is unavailable for device execution")?;
-    let identity =
-        crate::device_identity::resolve_runtime_route_identity(&app.mysql, request.user_id, device)
-            .await?
-            .context("Device not found or access denied")?;
     let tables = app.task_store.table_templates();
     let mysql = app
         .mysql
         .route(crate::task_routing::ByTaskId(request.task_id as u64));
-    mysql.with_transaction(async|tx|{tx.execute(format!("UPDATE {} SET executor_name=?,executor_namespace=?,executor_deleted_at=0 WHERE id=? AND task_id=? AND user_id=? AND status='RUNNING'",tables.subtasks),(format!("device-{}",identity.runtime_device_id),format!("user-{}",request.user_id),request.subtask_id,request.task_id,request.user_id)).await?;Ok(())}).await?;
+    let route = mysql.with_transaction(async |tx| {
+        let Some(registration) = crate::device_records::lock_online_device_for_binding(
+            tx, redis, request.user_id, device,
+        ).await? else {
+            return Ok(None);
+        };
+        let route = crate::device_identity::device_connection_route_id(&registration);
+        let updated = tx.execute(
+            format!("UPDATE {} SET executor_name=?,executor_namespace=?,executor_deleted_at=0, \
+                status='RUNNING',updated_at=NOW() WHERE id=? AND task_id=? AND user_id=? \
+                AND status IN ('PENDING','RUNNING')", tables.subtasks),
+            (format!("device-{route}"),format!("user-{}",request.user_id),
+             request.subtask_id,request.task_id,request.user_id),
+        ).await?;
+        if updated.rows_affected != 1 {
+            return Ok(None);
+        }
+        tx.execute(
+            format!("UPDATE {} SET json=JSON_SET(json,'$.status.status','RUNNING','$.status.updatedAt',?),updated_at=NOW() \
+                WHERE id=? AND user_id=? AND JSON_UNQUOTE(JSON_EXTRACT(json,'$.status.status'))='PENDING'", tables.tasks),
+            (model::iso(chrono::Local::now().naive_local()),request.task_id,request.user_id),
+        ).await?;
+        Ok(Some(route))
+    }).await?.context("Device is offline or the subtask is no longer dispatchable")?;
     let mut data = serde_json::to_value(request)?;
     if let Some(user) = data["user"].as_object_mut() {
         user.remove("git_token");
         user.remove("gitToken");
     }
     data["git_auth_transport"] = json!("device_local");
-    redis.publish::<_,_>("socketio",serde_json::to_string(&json!({"method":"emit","event":"task:execute","data":[data],"namespace":"/local-executor","room":format!("device:{}:{}",request.user_id,identity.runtime_device_id)}))?).await?;
+    redis.publish::<_,_>("socketio",serde_json::to_string(&json!({"method":"emit","event":"task:execute","data":[data],"namespace":"/local-executor","room":format!("device:{}:{route}",request.user_id)}))?).await?;
     Ok(())
 }
 pub(crate) async fn cancel_task(app: &AppState, task: i64, user: i64) -> Result<bool> {

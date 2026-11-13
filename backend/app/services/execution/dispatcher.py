@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
+from app.services.device.identity import lock_online_device_for_binding
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -430,28 +431,29 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        db = SessionLocal()
-        try:
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-            if subtask:
+        if user_id is None:
+            raise ValueError("Device dispatch requires an authenticated user")
+
+        def bind() -> None:
+            with SessionLocal() as db:
+                if lock_online_device_for_binding(db, user_id, device_id) != device_id:
+                    raise RuntimeError("Selected device is offline")
+                subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+                if subtask is None:
+                    raise RuntimeError("Subtask not found")
                 subtask_store.update_executor_info(
                     db,
                     subtask=subtask,
                     executor_name=f"device-{device_id}",
-                    executor_namespace=f"user-{user_id}" if user_id else "",
+                    executor_namespace=f"user-{user_id}",
                 )
                 db.commit()
                 logger.info(
                     f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
                     f"executor_name=device-{device_id}"
                 )
-        except Exception as e:
-            logger.error(
-                f"[ExecutionDispatcher] Failed to set executor on subtask {subtask_id}: {e}"
-            )
-            db.rollback()
-        finally:
-            db.close()
+
+        await asyncio.to_thread(bind)
 
     def supports_streaming(self, request: ExecutionRequest) -> bool:
         """Check if the request supports streaming.

@@ -528,7 +528,19 @@ pub async fn update_online_status(
     };
     data.insert("status".into(), Value::String(status.into()));
     data.insert("last_heartbeat".into(), Value::String(local_isoformat()));
-    set_online(state, user_id, route_id, &Value::Object(data)).await
+    redis
+        .set_with(
+            crate::device_online_state::online_key(user_id, route_id),
+            Value::Object(data).to_string(),
+            SetOptions::default()
+                .with_expiration(SetExpiration::Seconds(ONLINE_TTL_SECONDS))
+                .if_present(),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, user_id, "device status update failed");
+            false
+        })
 }
 
 /// Reads the device online state (`cache_manager.get_or_raise`).

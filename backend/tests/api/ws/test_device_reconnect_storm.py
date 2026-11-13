@@ -129,6 +129,11 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
         AsyncMock(return_value=True),
     )
 
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(side_effect=[{"socket_id": "sid-1"}, None]),
+    )
     payload = {
         "device_id": "device-1",
         "name": "MacBook",
@@ -149,6 +154,10 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
         "device_route_id": "device-1",
     }
     assert len(upsert_calls) == 1
+
+    # A missing online key may mean this registration was removed.
+    assert (await namespace.on_device_register("sid-3", payload))["success"]
+    assert len(upsert_calls) == 2
 
 
 @pytest.mark.asyncio
@@ -604,6 +613,57 @@ async def test_stale_heartbeat_does_not_overwrite_newer_device_socket(monkeypatc
 
     assert result == {"error": "Stale device connection"}
     refresh_heartbeat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_expired_heartbeat_waits_for_removal_and_checks_registration(monkeypatch):
+    namespace = DeviceNamespace()
+    identity_lock = asyncio.Lock()
+    recovering = asyncio.Event()
+
+    @asynccontextmanager
+    async def lock(user_id):
+        assert user_id == 7
+        recovering.set()
+        async with identity_lock:
+            yield
+
+    monkeypatch.setattr(device_namespace, "device_identity_lock", lock)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "refresh_device_heartbeat",
+        AsyncMock(return_value=False),
+    )
+    restore_online = AsyncMock()
+    monkeypatch.setattr(
+        device_namespace.device_service, "set_device_online", restore_online
+    )
+    lookup = AsyncMock(return_value=False)
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", lookup)
+
+    async with identity_lock:
+        heartbeat = asyncio.create_task(
+            namespace.on_device_heartbeat("sid-old", {"device_id": "device-1"})
+        )
+        await asyncio.wait_for(recovering.wait(), timeout=1)
+        lookup.assert_not_awaited()
+
+    assert await asyncio.wait_for(heartbeat, timeout=1) == {
+        "error": "Device is not registered"
+    }
+    lookup.assert_awaited_once()
+    restore_online.assert_not_awaited()
 
 
 @pytest.mark.asyncio

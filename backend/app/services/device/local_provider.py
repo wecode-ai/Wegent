@@ -450,11 +450,13 @@ class LocalDeviceProvider(BaseDeviceProvider):
         runtime_instance_id: Optional[str] = None,
         runtime_capacity: Optional[Dict[str, Any]] = None,
         runtime_features: Optional[Dict[str, Any]] = None,
+        *,
+        socket_id: str | None = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
         data = await cache_manager.get_or_raise(key)
-        if data:
+        if data and (socket_id is None or data.get("socket_id") == socket_id):
             data["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             if running_task_ids is not None:
                 data["running_task_ids"] = running_task_ids
@@ -470,7 +472,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             data["runtime_capacity"] = runtime_capacity
             data["runtime_features"] = runtime_features
             result = await cache_manager.set_or_raise(
-                key, data, expire=DEVICE_ONLINE_TTL
+                key, data, expire=DEVICE_ONLINE_TTL, only_if_present=True
             )
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "
@@ -586,7 +588,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             data["status"] = status
             data["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             result = await cache_manager.set_or_raise(
-                key, data, expire=DEVICE_ONLINE_TTL
+                key, data, expire=DEVICE_ONLINE_TTL, only_if_present=True
             )
             logger.debug(
                 f"[LocalDeviceProvider] update_status: key={key}, status={status}"
