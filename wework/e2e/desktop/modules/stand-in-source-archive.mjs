@@ -94,7 +94,10 @@ export function createSourceArchiveRegression(options, providerId) {
           'New source messages must execute and reuse the current unarchived work'
         )
       try {
-        await publish('first')
+        await writeFile(
+          records,
+          JSON.stringify([...JSON.parse(before), { id: 'archive-record', value: '[]' }])
+        )
         const page = await rpc('runtime.connections.resources', {
           providerId,
           kind: 'record',
@@ -117,6 +120,7 @@ export function createSourceArchiveRegression(options, providerId) {
           ROLE
         )
         original = prepared.original
+        await publish('first')
         const firstResult = await settled(1, 1, 'first')
         const first = firstResult.latest
         assert.equal((await rpc('runtime.tasks.archive', { taskId: first.taskId })).accepted, true)
