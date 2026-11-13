@@ -448,16 +448,25 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
     fileSize: 100 * 1024 * 1024 + 1,
     value: 'YQ==',
   })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.text.includes('test-large-generated.bin') &&
-      snapshot.testIds.includes('attachment-badge') &&
-      !snapshot.testIds.includes('uploading-attachment-badge') &&
-      !snapshot.testIds.includes('attachment-error-badge'),
-    'A generated local attachment above 100 MiB did not finish staging',
-    60_000,
-    ACTIVE_WORKBENCH_SELECTOR
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="attachment-badge"]`,
+    {
+      text: 'test-large-generated.bin',
+      visible: true,
+      // Staging this file requires over 260 sequential renderer-to-host chunks.
+      timeoutMs: 75_000,
+    }
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} :is([data-testid="uploading-attachment-badge"], [data-testid="attachment-error-badge"])`
+      )
+    ),
+    0,
+    'The generated attachment must finish staging without an error'
   )
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')

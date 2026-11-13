@@ -638,6 +638,7 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         &request,
         Some(&active),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "Continuation output".to_owned(),

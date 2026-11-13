@@ -125,7 +125,7 @@ impl RuntimeWorkRpcHandler {
         tokio::pin!(prepare);
         let prepared = loop {
             let cancelled = self
-                .preparing_worktree_turns
+                .preparing_turns
                 .lock()
                 .expect("preparation map poisoned")
                 .get(&turn.local_task_id)

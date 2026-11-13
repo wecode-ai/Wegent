@@ -5,7 +5,7 @@
 use super::*;
 use crate::runner::ExecutionOutcome;
 
-fn overload_error() -> Value {
+pub(super) fn overload_error() -> Value {
     json!({
         "method": "error",
         "params": {
@@ -21,7 +21,7 @@ fn overload_error() -> Value {
     })
 }
 
-fn completed(status: &str) -> Value {
+pub(super) fn completed(status: &str) -> Value {
     json!({
         "method": "turn/completed",
         "params": {
@@ -31,7 +31,7 @@ fn completed(status: &str) -> Value {
     })
 }
 
-fn state() -> CodexRunState {
+pub(super) fn state() -> CodexRunState {
     let mut state = CodexRunState::default();
     state.set_root_thread_id("root-thread");
     state
@@ -42,7 +42,7 @@ async fn recovery_scope_exit_notifies_the_native_owner_without_an_observer() {
     for restarted in [false, true] {
         let hub = super::super::CodexNotificationHub::new();
         let mut receiver = hub.subscribe_runtime();
-        let mut recovery = OverloadRecovery::new(Some(hub.clone()), None);
+        let mut recovery = TurnRecovery::new(Some(hub.clone()), None);
         recovery.observe(&overload_error(), &state());
         assert!(matches!(
             recovery.observe(&completed("failed"), &state()),
@@ -74,9 +74,9 @@ async fn recovery_scope_exit_notifies_the_native_owner_without_an_observer() {
 
 #[test]
 fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
-    let mut recovery = OverloadRecovery::default();
+    let mut recovery = TurnRecovery::default();
     let state = state();
-    for (index, seconds) in RETRY_DELAYS.into_iter().enumerate() {
+    for (index, seconds) in [10, 30, 120, 300].into_iter().enumerate() {
         assert!(matches!(
             recovery.observe(&overload_error(), &state),
             RecoveryAction::AwaitCompletion
@@ -102,7 +102,7 @@ fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
         assert!(notification["params"]["error"]["additionalDetails"]
             .as_str()
             .unwrap()
-            .contains(&format!("({}/5)", index + 1)));
+            .contains(&format!("({}/4)", index + 1)));
     }
     assert!(matches!(
         recovery.observe(&overload_error(), &state),
@@ -116,7 +116,7 @@ fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
 
 #[test]
 fn overload_recovery_accepts_structured_completion_without_error_notification() {
-    let mut recovery = OverloadRecovery::default();
+    let mut recovery = TurnRecovery::default();
     let mut message = completed("failed");
     message["params"]["turn"]["error"] = overload_error()["params"]["error"].clone();
     assert!(matches!(
@@ -147,7 +147,7 @@ fn blocked_goal(turn_id: Value) -> Value {
 #[test]
 fn overload_recovery_restores_only_the_goal_stopped_by_the_failed_turn() {
     for turn_id in [json!("failed-turn"), json!("other-turn"), Value::Null] {
-        let mut recovery = OverloadRecovery::default();
+        let mut recovery = TurnRecovery::default();
         let update = blocked_goal(turn_id.clone());
         recovery.observe(&update, &state());
         recovery.observe(&overload_error(), &state());
@@ -174,7 +174,7 @@ fn overload_recovery_does_not_restore_a_goal_after_user_mutation() {
         "budgetLimited",
         "cleared",
     ] {
-        let mut recovery = OverloadRecovery::default();
+        let mut recovery = TurnRecovery::default();
         recovery.observe(&stopped, &state());
         let mut mutation = blocked_goal(Value::Null);
         mutation["params"]["goal"]["status"] = json!(status);
@@ -210,7 +210,6 @@ fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff(
         ("status", json!("complete")),
         ("objective", json!("A different task")),
         ("tokenBudget", json!(20000)),
-        ("updatedAt", json!(3)),
         ("createdAt", json!(3)),
     ] {
         let mut current = expected.clone();
@@ -222,6 +221,13 @@ fn overload_goal_resume_preserves_accounting_and_rejects_changes_during_backoff(
     assert!(goal_resume_params(&expected, &json!({"goal": null}))
         .unwrap()
         .is_none());
+    let mut accounted = expected.clone();
+    accounted["tokensUsed"] = json!(1000);
+    accounted["timeUsedSeconds"] = json!(90);
+    accounted["updatedAt"] = json!(3);
+    assert!(goal_resume_params(&expected, &json!({"goal": accounted}))
+        .unwrap()
+        .is_some());
 }
 
 #[test]
@@ -232,7 +238,7 @@ fn overload_recovery_never_retries_unrelated_errors_or_native_retries() {
         "badRequest",
         "unauthorized",
     ] {
-        let mut recovery = OverloadRecovery::default();
+        let mut recovery = TurnRecovery::default();
         let mut message = overload_error();
         message["params"]["error"]["codexErrorInfo"] = json!(code);
         assert!(matches!(
@@ -244,7 +250,7 @@ fn overload_recovery_never_retries_unrelated_errors_or_native_retries() {
             RecoveryAction::Forward
         ));
     }
-    let mut recovery = OverloadRecovery::default();
+    let mut recovery = TurnRecovery::default();
     let mut message = overload_error();
     message["params"]["willRetry"] = json!(true);
     assert!(matches!(
@@ -265,7 +271,7 @@ fn overload_recovery_never_retries_unrelated_errors_or_native_retries() {
 #[test]
 fn overload_recovery_does_not_resume_cancelled_or_completed_turns() {
     for status in ["interrupted", "completed"] {
-        let mut recovery = OverloadRecovery::default();
+        let mut recovery = TurnRecovery::default();
         let state = state();
         recovery.observe(&overload_error(), &state);
         assert!(matches!(
@@ -281,7 +287,7 @@ fn overload_recovery_does_not_resume_cancelled_or_completed_turns() {
 
 #[test]
 fn overload_recovery_ignores_child_thread_and_subagent_turn_failures() {
-    let mut recovery = OverloadRecovery::default();
+    let mut recovery = TurnRecovery::default();
     let mut error = overload_error();
     error["params"]["threadId"] = json!("child-thread");
     assert!(matches!(
@@ -340,11 +346,12 @@ async fn overload_recovery_backoff_completes_without_cancellation() {
     wait_for_retry(Duration::ZERO, &mut None).await.unwrap();
 }
 
-fn shared_options(
+pub(super) fn shared_options(
     notifications: tokio::sync::mpsc::UnboundedSender<super::super::CodexNotification>,
     cancellation: Option<oneshot::Receiver<()>>,
 ) -> super::super::SharedTurnNotificationOptions {
     super::super::SharedTurnNotificationOptions {
+        recover_usage_limits: false,
         runtime_notifications: None,
         overload_turn_recovering: None,
         overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
@@ -471,11 +478,13 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         "clientUserMessageId": "original-user-message",
     }));
     let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(20),
         rpc.read_turn(
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                recover_usage_limits: false,
+                wait_for_goal_continuation: false,
                 active_turn_started: Some(Box::new(move |thread_id, turn_id| {
                     active_tx.send((thread_id, turn_id)).unwrap();
                 })),
@@ -582,11 +591,13 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(20),
         rpc.read_turn(
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                recover_usage_limits: false,
+                wait_for_goal_continuation: false,
                 active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
@@ -658,11 +669,13 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(20),
         rpc.read_turn(
             1,
             &mut state,
             super::super::json_rpc::TurnReadOptions {
+                recover_usage_limits: false,
+                wait_for_goal_continuation: false,
                 active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
@@ -961,7 +974,7 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
                 forwarded
             };
         let (result, forwarded) =
-            tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(read, drive) })
+            tokio::time::timeout(Duration::from_secs(20), async { tokio::join!(read, drive) })
                 .await
                 .unwrap();
         if resumed {

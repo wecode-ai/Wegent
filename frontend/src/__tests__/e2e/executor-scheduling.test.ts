@@ -19,7 +19,7 @@ const independent = new Set([
 const expectedCounts: Record<string, number> = {
   'global-setup.ts': 1,
   'global-teardown.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 20,
+  'tasks/agent-conversation-regression.spec.ts': 22,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
   'tasks/executor-workspace-recovery.spec.ts': 1,
@@ -123,6 +123,16 @@ describe('Executor scheduling boundaries', () => {
     expect(
       identities.has(
         'tasks/claude-background-lifecycle.spec.ts:ClaudeCode persists a child message above 1 MiB and completes after a real background notification'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:Socket.IO binds a Git checkout on the first turn and reuses it on follow-up'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/agent-conversation-regression.spec.ts:Socket.IO rejects a whitespace-only Git URL before dispatch'
       )
     ).toBe(true)
     expect(counts).toEqual(expectedCounts)

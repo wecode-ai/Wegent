@@ -33,11 +33,12 @@ fn interrupted_by_runtime_stop(result: &Result<crate::agents::CodexAppServerTurn
 
 fn initial_turn_presentation(request: &ExecutionRequest) -> Option<(String, Option<String>)> {
     // A recovered Goal continues autonomously; it does not submit the persisted user message again.
-    if request
-        .extra
-        .get(RESUME_GOAL_ONLY_MARKER)
-        .and_then(Value::as_bool)
-        == Some(true)
+    if request.extra.contains_key(quota_recovery::MARKER)
+        || request
+            .extra
+            .get(RESUME_GOAL_ONLY_MARKER)
+            .and_then(Value::as_bool)
+            == Some(true)
     {
         return None;
     }
@@ -215,12 +216,13 @@ pub(super) fn remove_worktree_turns_after_restart(
 ) -> usize {
     let initial_count = turns.len();
     turns.retain(|turn| {
-        if turn
-            .request
-            .extra
-            .get(RESUME_GOAL_ONLY_MARKER)
-            .and_then(Value::as_bool)
-            == Some(true)
+        if turn.request.extra.contains_key(quota_recovery::MARKER)
+            || turn
+                .request
+                .extra
+                .get(RESUME_GOAL_ONLY_MARKER)
+                .and_then(Value::as_bool)
+                == Some(true)
         {
             return true;
         }
@@ -332,6 +334,7 @@ impl RuntimeWorkRpcHandler {
         previous: Option<&RuntimeTurnScheduler>,
         starting: &[SpawnTurnRequest],
     ) -> Result<(), AppIpcError> {
+        let quota_turns = turns.clone();
         let admissions = previous.map(|previous| {
             (
                 previous
@@ -398,6 +401,9 @@ impl RuntimeWorkRpcHandler {
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
+        self.project_quota_waits(&quota_turns);
+        self.ensure_quota_waker();
+        self.quota_wake.notify_one();
         Ok(())
     }
 
@@ -499,7 +505,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             if queue_only
                 || !scheduler.has_capacity(&turn)
-                || scheduler.has_queued_kind(turn.task_kind())
+                || scheduler.has_ready_queued_kind(turn.task_kind())
             {
                 return Err(AppIpcError::new("runtime_schedule_capacity", "Scheduled work cannot enter a delayed queue; retry when execution capacity is available"));
             }
@@ -534,6 +540,12 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
             scheduler.refresh_automatic_waits(&self.store, Some(&local_task_id));
+            if !turn.request.extra.contains_key(quota_recovery::MARKER) {
+                scheduler.queued_turns.retain(|queued| {
+                    queued.local_task_id != local_task_id
+                        || !queued.request.extra.contains_key(quota_recovery::MARKER)
+                });
+            }
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
@@ -573,7 +585,7 @@ impl RuntimeWorkRpcHandler {
             return Err(error);
         }
         if let Some(turn) = turn_to_start.as_ref() {
-            self.reserve_worktree_preparation(turn);
+            self.reserve_turn_preparation(turn);
         }
         drop(_operation);
         if let Some(turn) = turn_to_start {
@@ -915,8 +927,10 @@ impl RuntimeWorkRpcHandler {
         Ok(())
     }
 
-    pub(super) fn reserve_worktree_preparation(&self, turn: &SpawnTurnRequest) {
-        if !project_preparation::needs_preparation(turn) {
+    pub(super) fn reserve_turn_preparation(&self, turn: &SpawnTurnRequest) {
+        if !project_preparation::needs_preparation(turn)
+            && !turn.request.extra.contains_key(quota_recovery::MARKER)
+        {
             return;
         }
         self.store.update_task(&turn.local_task_id, |link| {
@@ -925,22 +939,22 @@ impl RuntimeWorkRpcHandler {
             link.thread_status = "active".to_owned();
             link.updated_at = now_ms();
         });
-        self.preparing_worktree_turns
+        self.preparing_turns
             .lock()
-            .expect("preparing worktree turn map lock should not be poisoned")
+            .expect("preparing turn map lock should not be poisoned")
             .insert(
                 turn.local_task_id.clone(),
-                PreparingWorktreeTurn {
+                PreparingTurn {
                     cancellation_requested: false,
                 },
             );
     }
 
-    pub(super) fn cancel_preparing_worktree_turn(&self, local_task_id: &str) -> bool {
+    pub(super) fn cancel_preparing_turn(&self, local_task_id: &str) -> bool {
         let mut preparing = self
-            .preparing_worktree_turns
+            .preparing_turns
             .lock()
-            .expect("preparing worktree turn map lock should not be poisoned");
+            .expect("preparing turn map lock should not be poisoned");
         let Some(preparation) = preparing.get_mut(local_task_id) else {
             return false;
         };
@@ -954,9 +968,9 @@ impl RuntimeWorkRpcHandler {
     ) -> bool {
         for attempt in 0..=WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS {
             let preparing = self
-                .preparing_worktree_turns
+                .preparing_turns
                 .lock()
-                .expect("preparing worktree turn map lock should not be poisoned")
+                .expect("preparing turn map lock should not be poisoned")
                 .contains_key(local_task_id);
             if !preparing {
                 return true;
@@ -1064,9 +1078,9 @@ impl RuntimeWorkRpcHandler {
         if preparation.is_ok() {
             {
                 let mut preparing = self
-                    .preparing_worktree_turns
+                    .preparing_turns
                     .lock()
-                    .expect("preparing worktree turn map lock should not be poisoned");
+                    .expect("preparing turn map lock should not be poisoned");
                 if !preparing
                     .get(&turn.local_task_id)
                     .is_some_and(|preparation| preparation.cancellation_requested)
@@ -1085,9 +1099,9 @@ impl RuntimeWorkRpcHandler {
         }
         let cancelled = {
             let mut preparing = self
-                .preparing_worktree_turns
+                .preparing_turns
                 .lock()
-                .expect("preparing worktree turn map lock should not be poisoned");
+                .expect("preparing turn map lock should not be poisoned");
             preparing
                 .remove(&turn.local_task_id)
                 .is_some_and(|preparation| preparation.cancellation_requested)
@@ -1107,6 +1121,11 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn start_queued_turn(&self, turn: SpawnTurnRequest) {
+        if turn.request.extra.contains_key(quota_recovery::MARKER) {
+            let handler = self.clone();
+            tokio::spawn(async move { handler.start_quota_turn(turn).await });
+            return;
+        }
         if project_preparation::needs_preparation(&turn) {
             let handler = self.clone();
             tokio::spawn(async move {
@@ -1346,8 +1365,18 @@ impl RuntimeWorkRpcHandler {
             Value::String(turn.local_task_id.clone()),
         );
         self.apply_backend_connection(&mut turn.request);
+        let original_quota_model = turn
+            .request
+            .extra
+            .contains_key(quota_recovery::MARKER)
+            .then(|| turn.request.model_config.clone());
         let execution_context = self
             .resolve_local_model_reference(&mut turn.request, &turn.local_task_id)
+            .and_then(|()| {
+                original_quota_model.as_ref().map_or(Ok(()), |original| {
+                    quota_recovery::validate_model(original, &turn.request.model_config)
+                })
+            })
             .map_err(|error| error.message)
             .and_then(|_| self.refresh_stand_in_context(&mut turn.request));
         crate::runtime_work::api_context::inject_current_session(
@@ -1359,6 +1388,8 @@ impl RuntimeWorkRpcHandler {
             self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
             return;
         }
+        let recovery_turn = turn.clone();
+        let recovery_account = codex_accounts::quota_account_identity(&turn.request);
         let SpawnTurnRequest {
             task_kind: _,
             local_task_id,
@@ -1399,8 +1430,31 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        let execution_id = if request.extra.contains_key(quota_recovery::MARKER) {
+            let mut preparing = self
+                .preparing_turns
+                .lock()
+                .expect("preparation map poisoned");
+            if preparing
+                .get(&local_task_id)
+                .map_or(true, |preparation| preparation.cancellation_requested)
+            {
+                preparing.remove(&local_task_id);
+                drop(preparing);
+                self.store.update_task(&local_task_id, |link| {
+                    crate::runtime_work::lifecycle::settle_native_execution(link, "cancelled");
+                });
+                let handler = self.clone();
+                tokio::spawn(async move { handler.finish_quota_command(&recovery_turn).await });
+                return;
+            }
+            let execution =
+                self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+            preparing.remove(&local_task_id);
+            execution
+        } else {
+            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx)
+        };
         self.active_local_executions
             .lock()
             .expect("active local execution map lock should not be poisoned")
@@ -1584,7 +1638,7 @@ impl RuntimeWorkRpcHandler {
             let overload_turn_recovering: CodexActiveTurnCallback = Box::new(move |_, turn_id| {
                 recovery_handler.record_overload_recovery_turn(&recovery_local_task_id, &turn_id);
             });
-            let result = async {
+            let mut result = async {
                 execution_context?;
                 handler
                     .validate_project_coordinator_request(&request)
@@ -1595,6 +1649,9 @@ impl RuntimeWorkRpcHandler {
                     .run_turn_with_cancel(
                         request.clone(),
                         CodexAppServerTurnOptions {
+                            recover_usage_limits: true,
+                            quota_resume: quota_recovery::wait(&recovery_turn)
+                                .map(|wait| wait.recovery),
                             defer_interactive_forms: false,
                             direct_thread_id,
                             fork_thread_id,
@@ -1640,6 +1697,43 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
+            if let Some(recovery) = result
+                .as_mut()
+                .ok()
+                .and_then(|turn| turn.quota_recovery.take())
+            {
+                let deferred = match recovery_account {
+                    Ok(account) => {
+                        handler
+                            .defer_quota_turn(recovery_turn, execution_id, recovery, account)
+                            .await
+                    }
+                    Err(error) => Err(AppIpcError::new("quota_recovery_unavailable", error)),
+                };
+                match deferred {
+                    Ok(true) => {
+                        scheduled_turn_guard.command_id = None;
+                        handler.persist_and_clear_active_codex_transcript(
+                            &turn_local_task_id,
+                            "completed",
+                            hook_turn
+                                .lock()
+                                .expect("hook turn context poisoned")
+                                .as_ref()
+                                .map(|turn| turn.turn_id.as_str()),
+                        );
+                        handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                        handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+                        handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
+                        return;
+                    }
+                    Ok(false) => {
+                        result = Err("Quota recovery cancelled by newer task activity".to_owned())
+                    }
+                    Err(error) => result = Err(error.message),
+                }
+                scheduled_turn_guard.command_outcome = Some(command_journal::CommandState::Failed);
+            }
             if !handler.is_current_local_task_execution(&turn_local_task_id, execution_id) {
                 log_executor_event(
                     "runtime work stale execution result ignored",
@@ -1751,7 +1845,7 @@ impl RuntimeWorkRpcHandler {
         self.is_active_local_task(local_task_id)
             || self.is_queued_local_task(local_task_id)
             || self
-                .preparing_worktree_turns
+                .preparing_turns
                 .lock()
                 .expect("preparation map poisoned")
                 .contains_key(local_task_id)
@@ -1762,6 +1856,11 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
     ) -> Result<bool, AppIpcError> {
         let _operation = self.turn_queue_operation.lock().await;
+        // Cancellation and queue-to-preparation admission share this transaction.
+        // A checking turn must not repark after cancellation found no queued turn.
+        if self.cancel_preparing_turn(local_task_id) {
+            self.request_active_turn_stop(local_task_id);
+        }
         let (previous, remaining_turns) = {
             let mut scheduler = self
                 .turn_scheduler
@@ -1835,7 +1934,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         for turn in &turns {
-            self.reserve_worktree_preparation(turn);
+            self.reserve_turn_preparation(turn);
         }
         drop(_operation);
         for turn in turns {
@@ -1875,7 +1974,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
         for turn in &turns {
-            self.reserve_worktree_preparation(turn);
+            self.reserve_turn_preparation(turn);
         }
         drop(_operation);
         for turn in turns {
@@ -1884,6 +1983,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn resume_persisted_turns(&self) {
+        self.ensure_quota_waker();
         let _operation = self.turn_queue_operation.lock().await;
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
@@ -1913,7 +2013,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         for turn in &turns {
-            self.reserve_worktree_preparation(turn);
+            self.reserve_turn_preparation(turn);
         }
         drop(_operation);
         for turn in turns {

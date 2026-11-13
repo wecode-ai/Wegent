@@ -64,6 +64,15 @@ fn apply_local_execution_state(
     queue_position: Option<usize>,
 ) {
     if let Some(queue_position) = queue_position {
+        if link.runtime == "codex" {
+            // The durable queue owns admission even when history reconciliation
+            // has just projected the preceding failed turn as idle.
+            let recovering = crate::runtime_work::lifecycle::native_execution_state(link)
+                .is_some_and(|state| {
+                    state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Recovering
+                });
+            crate::runtime_work::lifecycle::queue_native_execution(link, queue_position, recovering);
+        }
         link.running = false;
         link.status = "queued".to_owned();
         link.thread_status = if link.thread_id.is_some() {

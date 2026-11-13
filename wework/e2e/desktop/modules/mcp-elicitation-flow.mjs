@@ -32,14 +32,14 @@ import {
 } from './workspace-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 
-async function assertDeadlineCountdown(control, durationMs) {
+async function assertElicitationCountdown(control, durationMs) {
   const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
   const time = countdown.match(/\b(\d+):([0-5]\d)\b/)
-  assert.ok(time, `MCP deadline did not display a countdown: ${countdown}`)
+  assert.ok(time, `Expected an MCP countdown in minutes and seconds, got "${countdown}"`)
   const seconds = Number(time[1]) * 60 + Number(time[2])
   assert.ok(
-    seconds <= durationMs / 1000,
-    `MCP deadline exceeded the configured ${durationMs}ms: ${countdown}`
+    seconds > 0 && seconds <= Math.ceil(durationMs / 1000),
+    `MCP countdown "${countdown}" must be within the configured ${durationMs}ms deadline`
   )
 }
 
@@ -81,7 +81,7 @@ async function verifyMcpElicitationInFullAccess(control) {
   for (const expectedText of ['访问范围', '所有人', '仅自己']) {
     assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
   }
-  await assertDeadlineCountdown(control, MCP_FORM_TIMEOUT_MS)
+  await assertElicitationCountdown(control, MCP_FORM_TIMEOUT_MS)
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
@@ -382,7 +382,7 @@ async function verifyElicitationTimeout(control, taskId, evidencePath, scenario,
   const original = await readPendingElicitation(control, taskId)
   const remainingSeconds = Math.ceil((original.expiresAtUnixMs - Date.now()) / 1000)
   assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
-  await assertDeadlineCountdown(control, durationMs)
+  await assertElicitationCountdown(control, durationMs)
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(
     record => record.event === 'timeout_elicitation_request' && record.scenario === scenario
