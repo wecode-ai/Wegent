@@ -237,6 +237,8 @@ const mocks = vi.hoisted(() => {
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
+      sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
+      interruptAndSendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true }),
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
@@ -1064,6 +1066,52 @@ describe('qualified local sidebar routing', () => {
 })
 
 describe('local project execution ownership', () => {
+  it.each(['request', 'handle'] as const)(
+    'keeps remote local-project continuations on the target computer (%s origin)',
+    async originSource => {
+      mocks.localListDevices.mockResolvedValue([
+        { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+      ])
+      mocks.cloudListDevices.mockResolvedValue([
+        {
+          id: 22,
+          device_id: 'app-record-22',
+          execution_target_id: 'app-record-22',
+          runtime_instance_id: 'installation-b',
+          device_type: 'app',
+          status: 'online',
+          runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+        },
+      ])
+      const services = createServices()
+      await services.deviceApi.listDevices()
+      await services.cloudBackgroundApi!.listDevices!()
+      const origin = {
+        type: 'project_automation' as const,
+        projectStore: 'local' as const,
+        cloudProjectId: 'project',
+        loopItemId: 'issue',
+      }
+      const followup = {
+        address: {
+          deviceId: 'app-record-22',
+          taskId: 'peer-project-task',
+          ...(originSource === 'handle' ? { runtimeHandle: { origin } } : {}),
+        },
+        message: 'continue on the selected computer',
+        ...(originSource === 'request' ? { origin } : {}),
+      }
+      for (const method of ['sendRuntimeMessage', 'interruptAndSendRuntimeMessage'] as const) {
+        mocks.localOnlyServices.runtimeWorkApi[method].mockClear()
+        mocks.cloudServices.runtimeWorkApi[method].mockClear()
+        await services.runtimeWorkApi![method](followup)
+        expect(mocks.cloudServices.runtimeWorkApi[method]).toHaveBeenCalledExactlyOnceWith(followup)
+        expect(mocks.localOnlyServices.runtimeWorkApi[method]).not.toHaveBeenCalled()
+      }
+      expect(followup.address.deviceId).toBe('app-record-22')
+    }
+  )
+
   it('uses the registered cloud device in the Issue execution grant without changing the local route', async () => {
     mocks.localListDevices.mockResolvedValue([
       { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },

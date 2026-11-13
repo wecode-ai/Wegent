@@ -1170,9 +1170,10 @@ export function createHybridWorkbenchServices(
     },
     sendRuntimeMessage(data: RuntimeSendRequest) {
       if (
-        data.origin?.projectStore === 'local' ||
-        (data.address.runtimeHandle?.origin as { projectStore?: string } | undefined)
-          ?.projectStore === 'local'
+        isLocalDeviceId(data.address.deviceId) &&
+        (data.origin?.projectStore === 'local' ||
+          (data.address.runtimeHandle?.origin as { projectStore?: string } | undefined)
+            ?.projectStore === 'local')
       ) {
         return localProjectServices.runtimeWorkApi!.sendRuntimeMessage(data)
       }
@@ -1180,9 +1181,10 @@ export function createHybridWorkbenchServices(
     },
     interruptAndSendRuntimeMessage(data) {
       if (
-        data.origin?.projectStore === 'local' ||
-        (data.address.runtimeHandle?.origin as { projectStore?: string } | undefined)
-          ?.projectStore === 'local'
+        isLocalDeviceId(data.address.deviceId) &&
+        (data.origin?.projectStore === 'local' ||
+          (data.address.runtimeHandle?.origin as { projectStore?: string } | undefined)
+            ?.projectStore === 'local')
       ) {
         return localProjectServices.runtimeWorkApi!.interruptAndSendRuntimeMessage(data)
       }
