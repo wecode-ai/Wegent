@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use brz_mysql::{Json, Mysql as _, MysqlResult, MysqlRow, MysqlTransaction as _};
+use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction as _};
 use brz_socket_io::{ClientError, Reply};
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
