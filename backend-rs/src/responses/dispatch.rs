@@ -499,37 +499,27 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
         completion, emitter,
         event::{EventType, ExecutionEvent},
     };
-    let Some(redis) = consumer.redis.as_ref() else {
-        completion::persist_executor_failure(
-            &consumer.mysql,
-            consumer.tables,
-            subtask_id,
-            message,
-            code,
-        )
-        .await;
-        return;
-    };
     let app = consumer.app.upgrade();
-    let ctx = completion::Completion {
+    let ctx = consumer.redis.as_ref().map(|redis| completion::Completion {
         app: app.as_deref(),
         mysql: &consumer.mysql,
         redis,
         tables: consumer.tables,
         executor_manager: &consumer.executor_manager,
-    };
-    let result = completion::complete_terminal_event(
-        &ctx,
+    });
+    let result = completion::complete_executor_failure(
+        &consumer.mysql,
+        consumer.tables,
+        ctx.as_ref(),
         task_id,
         subtask_id,
-        "FAILED",
-        None,
-        Some(message),
-        Some(code),
-        None,
-        None,
+        message,
+        code,
     )
     .await;
+    let (Some(redis), Some(result)) = (consumer.redis.as_ref(), result) else {
+        return;
+    };
     let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
     event.message_id = message_id;
     event.error = Some(message.to_owned());
@@ -539,14 +529,8 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
     {
         tracing::warn!(%error, task_id, subtask_id, "executor failure callback publish failed");
     }
-    if let Err(error) = emitter::emit_terminal_frames(
-        redis,
-        &event,
-        Some(user_id),
-        result.as_ref().unwrap_or(&Value::Null),
-        None,
-    )
-    .await
+    if let Err(error) =
+        emitter::emit_terminal_frames(redis, &event, Some(user_id), &result, None).await
     {
         tracing::warn!(%error, task_id, subtask_id, "executor failure notification failed");
     }

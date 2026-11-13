@@ -748,6 +748,11 @@ pub(crate) async fn recover_before_dispatch(
         (&message, "container_error"),
     )
     .await;
+    tracing::info!(
+        task_id = request.task_id,
+        subtask_id = request.subtask_id,
+        "executor recovery failure handled"
+    );
     Err(FastApiError::detail(
         StatusCode::INTERNAL_SERVER_ERROR,
         message,

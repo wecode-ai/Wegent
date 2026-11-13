@@ -45,6 +45,7 @@ pub(super) async fn dispatch_next(
     let task_id = advance.task_id;
     let subtask_id = advance.pair.assistant_subtask_id;
     let user_id = advance.user_id;
+    let message_id = advance.message_id + 1;
     if let Err(error) = dispatch_execution(state, advance).await {
         tracing::error!(
             ?error,
@@ -52,36 +53,15 @@ pub(super) async fn dispatch_next(
             subtask_id,
             "pipeline next-stage dispatch failed"
         );
-        if let Some(redis) = state.redis.as_ref() {
-            let ctx = super::completion::Completion {
-                app: Some(state),
-                mysql: &state.mysql,
-                redis,
-                tables: super::tables(state),
-                executor_manager: &state.executor_manager,
-            };
-            super::completion::persist_completed_result(
-                &ctx,
-                task_id,
-                subtask_id,
-                "FAILED",
-                None,
-                Some("Pipeline stage dispatch failed"),
-                None,
-                None,
-            )
-            .await;
-            if let Err(error) = super::socketio::publish_emit_in_room(
-                redis,
-                "task:status",
-                &format!("user:{user_id}"),
-                json!({"task_id":task_id,"status":"FAILED","progress":null}),
-            )
-            .await
-            {
-                tracing::error!(%error, task_id, "pipeline dispatch-failure status emit failed");
-            }
-        }
+        crate::responses::dispatch::finalize_executor_failure(
+            &crate::responses::dispatch::ConsumerState::from_app(state),
+            task_id,
+            subtask_id,
+            user_id,
+            Some(message_id),
+            ("Pipeline stage dispatch failed", "EXECUTOR_DISPATCH_FAILED"),
+        )
+        .await;
     }
     Ok(())
 }
@@ -168,16 +148,20 @@ async fn dispatch_execution(
             .get("protocol")
             .and_then(Value::as_str),
     });
-    let recovered = if target.mode == routing::CommunicationMode::HttpCallback {
-        seam::recover_before_dispatch(state, &mut execution, None).await?
-    } else {
-        false
-    };
     let tables = state
         .task_store
         .message_edit_tables(advance.task_id)
         .await
         .map_err(dependency)?;
+    let recovered = if target.mode == routing::CommunicationMode::HttpCallback {
+        match seam::recover_before_dispatch(state, &mut execution, None).await {
+            Ok(recovered) => recovered,
+            // Recovery owns failure persistence and notification.
+            Err(_) => return Ok(()),
+        }
+    } else {
+        false
+    };
     let mysql = state
         .mysql
         .route(crate::task_routing::ByTaskId(advance.task_id as u64));
@@ -199,11 +183,11 @@ async fn dispatch_execution(
         transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
             (crate::json_compat::python_json_value(&advance.task_json), now, advance.task_id)).await?;
         Ok(true)
-    }).await.map_err(dependency)?;
-    if !running {
-        if recovered {
-            crate::responses::create::discard_recovered_executor(state, &execution).await;
-        }
+    }).await;
+    if recovered && !matches!(running, Ok(true)) {
+        crate::responses::create::discard_recovered_executor(state, &execution).await;
+    }
+    if !running.map_err(dependency)? {
         return Ok(());
     }
     if routing::supports_streaming(&target) || target.mode == routing::CommunicationMode::Inprocess

@@ -39,6 +39,18 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
     task_id: i64,
     changed_subtask_id: i64,
 ) -> bool {
+    write_derived_task_status(tables, mysql, task_id, changed_subtask_id, None)
+        .await
+        .unwrap_or_default()
+}
+
+pub(super) async fn write_derived_task_status<T: MysqlTransaction>(
+    tables: sql::Tables,
+    mysql: &mut T,
+    task_id: i64,
+    changed_subtask_id: i64,
+    required_status: Option<&str>,
+) -> Option<bool> {
     // `task_store.get_task_by_states(...).first()`: the active two-state task
     // read through the ORM's labeled projection, with no row lock.
     let task: Option<MysqlRow> = read_status(
@@ -51,17 +63,14 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
         task_id,
         "task",
     )
-    .flatten();
-    let Some(task) = task else {
-        return false;
-    };
+    .flatten()?;
     let owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
 
     // `list_assistant_by_task`'s owner guard, then the ordered listing.
     // `_update_task_status_sync` wraps the whole block in `try/except`: a
     // failed read logs and aborts before any later write.
-    let Some(_owner) = read_status::<Vec<MysqlRow>>(
+    read_status::<Vec<MysqlRow>>(
         mysql
             .fetch_all(
                 sql::owner_matches_task_id_statement(tables.tasks),
@@ -70,23 +79,23 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
             .await,
         task_id,
         "owner_guard",
-    ) else {
-        return false;
-    };
-    let Some(subtasks) = read_status(
+    )?;
+    let subtasks = read_status(
         mysql
             .fetch_all(sql::assistant_subtasks(tables), (task_id,))
             .await
             .and_then(crate::task_store_listing::order_assistant_subtasks),
         task_id,
         "assistant_subtasks",
-    ) else {
-        return false;
-    };
-    let Some(last) = subtasks.last() else {
-        return false;
-    };
+    )?;
+    let last = subtasks.last()?;
     let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
+    if let Some(required) = required_status
+        && (last_status != required
+            || subtask_column::<i64>(last, "id") != Some(changed_subtask_id))
+    {
+        return None;
+    }
     // `list_assistant_by_task` labels its columns too, so the last subtask's
     // result — the payload `_apply_status_update` writes into the task CRD's
     // `status.result` — is decoded positionally.
@@ -99,16 +108,13 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
     let changed: Option<MysqlRow> = if !found && last_result.is_none() {
         // `read_status` returns `None` on a store failure; abort before writing
         // rather than treating the failure as "no row".
-        let Some(row) = read_status(
+        read_status(
             mysql
                 .fetch_optional(sql::subtask_by_id(tables), (changed_subtask_id,))
                 .await,
             task_id,
             "changed_subtask",
-        ) else {
-            return false;
-        };
-        row
+        )?
     } else {
         None
     };
@@ -117,15 +123,15 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
     }
 
     let Some(Value::Object(mut payload)) = task_json else {
-        return false;
+        return None;
     };
     let Some(Value::Object(status_object)) = payload.get("status").cloned() else {
-        return false;
+        return None;
     };
     let Some(decision) =
         collaboration_status(tables, mysql, task_id, &payload, last, &last_status).await
     else {
-        return false;
+        return None;
     };
     let new_status = decision.status;
     let progress = decision.progress;
@@ -167,12 +173,17 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
     // A single statement runs on the pooled connection's autocommit; no
     // explicit transaction or COMMIT is needed. A failed write aborts the
     // source's `try/except` before it can hand back an advance intent.
-    if let Err(failure) = mysql
+    match mysql
         .execute(sql, (json_text, row_updated_at, task_id))
         .await
     {
-        tracing::warn!(%failure, "callback task update failed");
-        return false;
+        Ok(result) if required_status.is_none() || result.rows_affected != 0 => {
+            Some(decision.auto_advance)
+        }
+        Ok(_) => None,
+        Err(failure) => {
+            tracing::warn!(%failure, "callback task update failed");
+            None
+        }
     }
-    decision.auto_advance
 }

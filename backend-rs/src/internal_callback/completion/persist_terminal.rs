@@ -78,6 +78,7 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
     error: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
+    require_pending: bool,
 ) -> Option<(i64, MysqlRow, Option<String>)> {
     let row: MysqlRow = mysql
         .fetch_optional(sql::subtask_by_id(tables), (subtask_id,))
@@ -121,7 +122,10 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
     let namespace = executor_namespace.unwrap_or_default();
     let name = executor_name.unwrap_or_default();
     let error = error.unwrap_or_default();
-    let sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
+    let mut sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
+    if require_pending {
+        sql.push_str(" AND status IN ('PENDING', 'RUNNING')");
+    }
 
     // Read and write on the same writer transaction; metrics publish after commit.
     let outcome = match (with_executor, with_error, with_result) {
@@ -223,11 +227,16 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
                 .await
         }
     };
-    if let Err(failure) = outcome {
-        tracing::warn!(%failure, "callback subtask update failed");
-        return None;
+    match outcome {
+        Ok(result) if !require_pending || result.rows_affected != 0 => {
+            Some((owner_task_id, row, metrics_message))
+        }
+        Ok(_) => None,
+        Err(failure) => {
+            tracing::warn!(%failure, "callback subtask update failed");
+            None
+        }
     }
-    Some((owner_task_id, row, metrics_message))
 }
 
 #[cfg(test)]

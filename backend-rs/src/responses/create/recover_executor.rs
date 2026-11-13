@@ -218,16 +218,18 @@ async fn recover_executor(
             }
         });
 
-    if restore_archive
-        && let Err(error) =
+    let recovered = async {
+        if restore_archive {
             restore_archive_for_executor(state, request, &task, &executor.executor_name, namespace)
-                .await
-    {
+                .await?;
+        }
+        save_recovered_binding(state, request, subtask, &executor.executor_name, namespace).await
+    };
+    if let Err(error) = recovered.await {
         delete_prepared_executor(state, request.task_id, &executor.executor_name, namespace).await;
         return Err(error);
     }
 
-    save_recovered_binding(state, request, subtask, &executor.executor_name, namespace).await?;
     request.executor_name = Some(executor.executor_name);
     request.executor_namespace = Some(namespace.to_owned());
     request.skip_git_clone = prepare.skip_git_clone;

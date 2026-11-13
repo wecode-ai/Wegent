@@ -263,6 +263,7 @@ async fn write_terminal_subtask<M: Mysql>(
                 error,
                 executor_name,
                 executor_namespace,
+                false,
             )
             .await)
         })
@@ -271,35 +272,56 @@ async fn write_terminal_subtask<M: Mysql>(
         .flatten()
 }
 
-pub(crate) async fn persist_executor_failure<M: Mysql>(
+pub(super) async fn persist_executor_failure<M: Mysql>(
     mysql: &M,
     tables: sql::Tables,
+    task_id: i64,
     subtask_id: i64,
+    result: &Value,
     message: &str,
-    code: &str,
-) {
-    let result = Value::Object(super::collect::failure_details(message, code));
-    if let Some((task_id, _, _)) = write_terminal_subtask(
-        mysql,
-        tables,
-        subtask_id,
-        "FAILED",
-        Some(&result),
-        Some(message),
-        None,
-        None,
-    )
-    .await
-    {
-        write_task_status(mysql, tables, task_id, subtask_id).await;
-    }
+) -> Option<(MysqlRow, Option<String>)> {
+    // Serialize with cancellation on the task row before touching the subtask.
+    // Both rows must commit before any failure notification can be published.
+    mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
+        .with_transaction(async |transaction| {
+            let task: Option<MysqlRow> = transaction
+                .fetch_optional(
+                    format!("{} FOR UPDATE", sql::active_task_projection_statement(tables.tasks)),
+                    (task_id,),
+                )
+                .await?;
+            let status = task.as_ref().and_then(|row| task_column::<Json<Value>>(row, "json"));
+            if !status.as_ref().is_some_and(|json| {
+                matches!(json.0.pointer("/status/status").and_then(Value::as_str), Some("PENDING" | "RUNNING"))
+            }) {
+                return Ok(None);
+            }
+            let Some((owner_task_id, row, metrics_message)) = update_subtask_status_on(
+                tables, transaction, subtask_id, "FAILED", Some(result), Some(message), None, None, true,
+            ).await else {
+                return Ok(None);
+            };
+            if owner_task_id != task_id
+                || persist_status::write_derived_task_status(tables, transaction, task_id, subtask_id, Some("FAILED")).await.is_none()
+            {
+                return Err(brz_mysql::MysqlError::InvalidQuery {
+                    reason: "Executor failure did not update its task".into(),
+                });
+            }
+            Ok(Some((row, metrics_message)))
+        })
+        .await
+        .inspect_err(|error| tracing::warn!(task_id, subtask_id, %error, "executor failure transaction failed"))
+        .ok()
+        .flatten()
 }
 
 /// `TaskRunMetricHooks._after_commit` (`app/services/task_run_metric_hooks.py:157-175`):
 /// a committed assistant-subtask mutation publishes the task-run metrics. The
 /// hook logs and swallows a store failure, so a Redis error leaves the caller's
 /// committed result intact.
-async fn publish_task_run_metrics<M: Mysql, R: Redis>(
+pub(super) async fn publish_task_run_metrics<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     row: &MysqlRow,
     subtask_id: i64,
