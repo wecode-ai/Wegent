@@ -341,8 +341,20 @@ try {
   test('reads enabled state only for the requested bundle plugins', async () => {
     const fixture = await createFixture()
     try {
+      await fixture.writePackage('residual-plugin', {
+        name: 'residual-plugin',
+        version: '1.0.0',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })
       await expect(
-        fixture.manager().enabledStates(['dsh-alpha', 'plain-runtime-library', 'missing-plugin'])
+        fixture
+          .manager()
+          .enabledStates([
+            'dsh-alpha',
+            'plain-runtime-library',
+            'missing-plugin',
+            'residual-plugin',
+          ])
       ).resolves.toEqual(new Map([['dsh-alpha', true]]))
     } finally {
       await fixture.remove()
