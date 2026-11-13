@@ -51,6 +51,7 @@ from app.models import *  # noqa: F401,F403
 from app.services.auth.internal_service_token import (
     require_internal_service_token_configured,
 )
+from app.services.execution.package_runtime import IMAGE_EXECUTION_PATH
 from app.services.jobs import start_background_jobs, stop_background_jobs
 from app.services.plugin_write_resources import close_plugin_write_resources
 from shared.telemetry.context.large_data import log_json_body
@@ -77,6 +78,7 @@ SENSITIVE_QUERY_PARAM_NAMES = {"access_token", "api_key", "signature", "token"}
 SENSITIVE_HTTP_BODY_PATHS = {
     f"{settings.API_PREFIX}/external/oauth/revoke",
     f"{settings.API_PREFIX}/external/oauth/token",
+    IMAGE_EXECUTION_PATH,
 }
 
 # Initialize logging at module level for use in lifespan
@@ -141,7 +143,7 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
 
 
 def _should_capture_http_body(path: str) -> bool:
-    if path in SENSITIVE_HTTP_BODY_PATHS:
+    if path.rstrip("/") in SENSITIVE_HTTP_BODY_PATHS:
         return False
     return not (
         path.startswith(f"{settings.API_PREFIX}/sites/")
