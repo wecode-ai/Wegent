@@ -1567,15 +1567,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       <Button variant="ghost" data-testid="bot-skills-retry" onClick={reloadSkills}>
                         {t('common:skills.loading_failed')} · {t('common:actions.retry')}
                       </Button>
-                    ) : loadingSkills ? (
+                    ) : null}
+                    {loadingSkills && (
                       <div className="text-sm text-text-muted">
                         {t('common:skills.loading_skills')}
                       </div>
-                    ) : availableSkills.length === 0 && selectedSkills.length === 0 ? (
-                      <div className="text-sm text-text-muted">
-                        {t('common:skills.no_skills_available')}
-                      </div>
-                    ) : (
+                    )}
+                    {!loadingSkills &&
+                      !skillsError &&
+                      availableSkills.length === 0 &&
+                      selectedSkills.length === 0 && (
+                        <div className="text-sm text-text-muted">
+                          {t('common:skills.no_skills_available')}
+                        </div>
+                      )}
+                    {(availableSkills.length > 0 || selectedSkills.length > 0) && (
                       <div className="space-y-2">
                         {availableSkills.length > 0 && (
                           <RichSkillSelector

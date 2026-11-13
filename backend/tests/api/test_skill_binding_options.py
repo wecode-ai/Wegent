@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import event
 
 from app.core.security import create_access_token
+from app.models.resource_member import ResourceMember
 from tests.api.test_skills_api import TestSkillsAPI as _SkillApiHelpers
 from tests.api.test_skills_api import (
     _add_group_member,
@@ -11,6 +12,7 @@ from tests.api.test_skills_api import (
     _create_user,
 )
 from tests.services.adapters.test_bot_kinds_permissions import _create_bot
+from tests.services.test_skill_binding_service import _create_skill
 
 
 @pytest.mark.api
@@ -139,4 +141,57 @@ def test_binding_options_require_permission_to_edit_bot(
         headers={"Authorization": f"Bearer {test_token}"},
         params={"binding_bot_id": bot.id},
     )
+    assert response.status_code == 403
+
+
+@pytest.mark.api
+@pytest.mark.parametrize("namespace", ["binding-space", " binding-space "])
+def test_binding_options_use_canonical_namespace(
+    test_client, test_db, test_user, test_admin_user, test_token, namespace
+):
+    group = _create_group(test_db, test_admin_user, "binding-space")
+    _add_group_member(test_db, group, test_user, "Reporter")
+    skill = _create_skill(test_db, user_id=test_admin_user.id, name="group-option")
+    skill.namespace = group.name
+    test_db.commit()
+
+    response = test_client.get(
+        "/api/v1/kinds/skills",
+        headers={"Authorization": f"Bearer {test_token}"},
+        params={"binding_namespace": namespace},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [
+        int(item["metadata"]["labels"]["id"]) for item in response.json()["items"]
+    ] == [skill.id]
+
+
+@pytest.mark.api
+def test_binding_options_recheck_group_membership_even_for_bot_owner(
+    test_client, test_db, test_user, test_admin_user, test_token
+):
+    group = _create_group(test_db, test_admin_user, "binding-revoked")
+    _add_group_member(test_db, group, test_user, "Developer")
+    bot = _create_bot(test_db, user_id=test_user.id, namespace=group.name)
+    headers = {"Authorization": f"Bearer {test_token}"}
+    params = {"binding_bot_id": bot.id}
+    assert (
+        test_client.get(
+            "/api/v1/kinds/skills", headers=headers, params=params
+        ).status_code
+        == 200
+    )
+
+    # Revocation must apply even when the Bot ownership is retained.
+    test_db.query(ResourceMember).filter(
+        ResourceMember.resource_type == "Namespace",
+        ResourceMember.resource_id == group.id,
+        ResourceMember.entity_type == "user",
+        ResourceMember.entity_id == str(test_user.id),
+    ).delete(synchronize_session=False)
+    test_db.commit()
+    assert bot.user_id == test_user.id
+
+    response = test_client.get("/api/v1/kinds/skills", headers=headers, params=params)
     assert response.status_code == 403

@@ -119,8 +119,12 @@ jest.mock('@/features/settings/components/McpConfigSection', () => {
   return MockMcpConfigSection
 })
 jest.mock('@/features/settings/components/skills/SkillManagementModal', () => {
-  function MockSkillManagementModal() {
-    return null
+  function MockSkillManagementModal({ onSkillsChange }: { onSkillsChange: () => void }) {
+    return (
+      <button data-testid="refresh-skills" onClick={onSkillsChange}>
+        Refresh skills
+      </button>
+    )
   }
 
   return MockSkillManagementModal
@@ -567,6 +571,45 @@ describe('BotEdit default knowledge bases', () => {
     expect((await screen.findAllByText('Repo Reader')).length).toBeGreaterThan(0)
     expect(screen.getByTitle('Preload Skills')).toBeInTheDocument()
     expect(screen.getByText('Check skills to preload them.')).toBeInTheDocument()
+  })
+
+  test('keeps skill choices and selected bindings through pending and failed refreshes', async () => {
+    const skill = {
+      id: 5,
+      name: 'repo-reader',
+      namespace: 'default',
+      description: 'Read repository',
+      displayName: 'Repo Reader',
+      visible: true,
+      is_active: true,
+      is_public: false,
+      user_id: 7,
+    }
+    mockedFetchUnifiedSkillsList.mockResolvedValueOnce([skill])
+    await renderBotEdit({
+      skills: ['repo-reader'],
+      skill_refs: {
+        'repo-reader': { skill_id: 5, namespace: 'default', is_public: false },
+      },
+    })
+    expect(await screen.findByTestId('rich-skill-selector')).toBeInTheDocument()
+    let rejectRefresh!: (error: Error) => void
+    mockedFetchUnifiedSkillsList.mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectRefresh = reject
+        })
+    )
+    fireEvent.click(screen.getByTestId('refresh-skills'))
+    expect(screen.getByTestId('rich-skill-selector')).toBeInTheDocument()
+    expect(screen.getByTitle('Preload Skills')).toBeInTheDocument()
+    await act(async () => rejectRefresh(new Error('unavailable')))
+    expect(await screen.findByTestId('bot-skills-retry')).toBeInTheDocument()
+    expect(screen.getByTestId('rich-skill-selector')).toBeInTheDocument()
+    expect(screen.getByTitle('Preload Skills')).toBeInTheDocument()
+    mockedFetchUnifiedSkillsList.mockResolvedValueOnce([skill])
+    fireEvent.click(screen.getByTestId('bot-skills-retry'))
+    await waitFor(() => expect(screen.queryByTestId('bot-skills-retry')).not.toBeInTheDocument())
   })
 
   test('shows hidden public skills as selectable when editing public bots', async () => {

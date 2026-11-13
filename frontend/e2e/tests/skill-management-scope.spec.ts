@@ -456,6 +456,7 @@ test.describe('Agent skill management scope', () => {
         dialog.locator('[data-testid^="capability-scope-group-"][data-state="checked"]')
       ).toHaveCount(1)
       await expect(target).toBeChecked()
+      await dialog.getByTestId('simple-section-advanced-trigger').click()
       await dialog.getByTestId('select-mode-label-pipeline').click()
       await expect(dialog.getByTestId('select-mode-radio-pipeline')).toBeChecked()
       await cloneBot(
@@ -511,6 +512,14 @@ test.describe('Agent skill management scope', () => {
         name: skillName,
       })
       fixture.createdSkillIds.push(shared.id)
+      // MySQL PAD SPACE comparisons must not turn default-space into group access.
+      const paddedDefault = await fixture.userApi.get<{
+        items: Array<{ metadata: { labels: { id: string } } }>
+      }>('/api/v1/kinds/skills?binding_namespace=default%20')
+      expect(paddedDefault.status, JSON.stringify(paddedDefault.data)).toBe(200)
+      const optionIds = paddedDefault.data!.items.map(item => Number(item.metadata.labels.id))
+      expect(optionIds).toContain(fixture.personalSkillId)
+      expect(optionIds).not.toContain(shared.id)
       const share = async (groups: string[]) => {
         const response = await fixture.adminApi.post(
           `/api/v1/kinds/skills/${shared.id}/bindings/groups`,

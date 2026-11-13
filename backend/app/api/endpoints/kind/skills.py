@@ -455,11 +455,8 @@ def list_skills(
                 db, bot=bot, user_id=current_user.id, required_role=BaseRole.Developer
             )
             binding_namespace = bot.namespace or "default"
-        else:
-            normalize_binding_groups(
-                db, current_user.id, [binding_namespace or "default"]
-            )
-        binding_namespace = binding_namespace or "default"
+        binding_namespace = (binding_namespace or "").strip() or "default"
+        normalize_binding_groups(db, current_user.id, [binding_namespace])
         groups = normalize_binding_groups(db, current_user.id, target_group_names)
         policy = SkillBindingPolicy.load(db, current_user.id, binding_namespace, groups)
         return SkillList(

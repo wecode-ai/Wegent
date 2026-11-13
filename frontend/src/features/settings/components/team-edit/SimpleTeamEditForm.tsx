@@ -451,28 +451,28 @@ export default function SimpleTeamEditForm({
                           >
                             {t('common:skills.loading_failed')} · {t('common:actions.retry')}
                           </Button>
-                        ) : loadingSkills ? (
+                        ) : null}
+                        {loadingSkills && (
                           <div className="flex h-9 items-center rounded-md border border-border bg-base px-3 text-sm text-text-muted">
                             {t('common:skills.loading_skills')}
                           </div>
-                        ) : (
-                          <RichSkillSelector
-                            skills={availableSkills}
-                            selectedSkillNames={selectedSkills}
-                            onSelectSkill={skill => {
-                              if (!skill || selectedSkills.includes(skill.name)) return
-                              onSkillsChange([...selectedSkills, skill.name], {
-                                ...selectedSkillRefs,
-                                [skill.name]: {
-                                  skill_id: skill.id,
-                                  namespace: skill.namespace || 'default',
-                                  is_public: skill.is_public || false,
-                                },
-                              })
-                            }}
-                            placeholder={t('common:skills.select_skill_to_add')}
-                          />
                         )}
+                        <RichSkillSelector
+                          skills={availableSkills}
+                          selectedSkillNames={selectedSkills}
+                          onSelectSkill={skill => {
+                            if (!skill || selectedSkills.includes(skill.name)) return
+                            onSkillsChange([...selectedSkills, skill.name], {
+                              ...selectedSkillRefs,
+                              [skill.name]: {
+                                skill_id: skill.id,
+                                namespace: skill.namespace || 'default',
+                                is_public: skill.is_public || false,
+                              },
+                            })
+                          }}
+                          placeholder={t('common:skills.select_skill_to_add')}
+                        />
                       </div>
                       <Button
                         type="button"
