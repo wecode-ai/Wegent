@@ -550,7 +550,6 @@ class PipelineStageService:
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
         task.updated_at = datetime.now()
         flag_modified(task, "json")
-        db.commit()
 
         logger.info(
             "[Pipeline] auto_advance: Ready for next stage %s (bot=%s, bot_id=%s) for task %s",

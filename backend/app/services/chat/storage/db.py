@@ -17,6 +17,7 @@ Other modules can use run_sync_in_executor() to wrap their sync DB functions.
 """
 
 import asyncio
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -56,6 +57,37 @@ class PipelineAutoAdvanceIntent:
     user_id: int
     completed_subtask_id: int
     advance_info: dict[str, Any]
+    next_pair: tuple[int, int] | None = None
+
+    @property
+    def label(self) -> str:
+        return f"pipelineAutoAdvance:{self.completed_subtask_id}"
+
+    def write(self, payload: dict[str, Any]) -> None:
+        metadata = payload.setdefault("metadata", {})
+        labels = metadata.get("labels") or {}
+        labels[self.label] = json.dumps(
+            {"advance_info": self.advance_info, "next_pair": self.next_pair}
+        )
+        metadata["labels"] = labels
+
+    @classmethod
+    def read(
+        cls, task: TaskResource, completed_subtask_id: int
+    ) -> Optional["PipelineAutoAdvanceIntent"]:
+        labels = task.json.get("metadata", {}).get("labels") or {}
+        saved = labels.get(f"pipelineAutoAdvance:{completed_subtask_id}")
+        if saved is None:
+            return None
+        data = json.loads(saved)
+        pair = data["next_pair"]
+        return cls(
+            task.id,
+            task.user_id,
+            completed_subtask_id,
+            data["advance_info"],
+            (pair[0], pair[1]) if pair is not None else None,
+        )
 
 
 @dataclass
@@ -63,6 +95,7 @@ class TaskStatusUpdateResult:
     """Post-commit work discovered while updating task status."""
 
     auto_advance: Optional[PipelineAutoAdvanceIntent] = None
+    replay_result: dict[str, Any] | None = None
 
 
 @contextmanager
@@ -117,14 +150,18 @@ class DatabaseHandler:
         )
         if update_result is None:
             return False
-        if update_result and update_result.auto_advance:
+        if update_result.auto_advance:
             from app.services.chat.pipeline_advance import (
                 advance_pipeline_stage_from_auto_completion,
             )
 
-            await advance_pipeline_stage_from_auto_completion(
+            if not await advance_pipeline_stage_from_auto_completion(
                 update_result.auto_advance
-            )
+            ):
+                return False
+            if result is not None and update_result.replay_result is not None:
+                result.clear()
+                result.update(update_result.replay_result)
         return True
 
     def _update_subtask_sync(
@@ -168,7 +205,6 @@ class DatabaseHandler:
                     if (
                         subtask is None
                         or subtask.task_id != task_id
-                        or subtask.status.value in _TERMINAL_STATUSES
                         or subtask.status == SubtaskStatus.DELETE
                     ):
                         return None
@@ -182,6 +218,16 @@ class DatabaseHandler:
                             or subtask.executor_namespace != f"user-{owner}"
                         ):
                             return None
+
+                    if subtask.status.value in _TERMINAL_STATUSES:
+                        if status == subtask.status.value == "COMPLETED":
+                            pending = PipelineAutoAdvanceIntent.read(task, subtask_id)
+                            if pending is not None:
+                                return TaskStatusUpdateResult(
+                                    auto_advance=pending,
+                                    replay_result=subtask.result or {},
+                                )
+                        return None
 
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 
@@ -359,7 +405,7 @@ class DatabaseHandler:
                 advance_subtask.id,
                 advance_subtask.status.value,
             )
-            if advance_info:
+            if advance_info and advance_subtask.id == last_subtask.id:
                 task_crd.status.status = "PENDING"
                 task_crd.status.progress = 0
                 update_result.auto_advance = PipelineAutoAdvanceIntent(
@@ -369,9 +415,10 @@ class DatabaseHandler:
                     advance_info=advance_info,
                 )
 
-        task_stores.task_store.update_json(
-            db, task=task, payload=task_crd.model_dump(mode="json")
-        )
+        payload = task_crd.model_dump(mode="json")
+        if update_result.auto_advance is not None:
+            update_result.auto_advance.write(payload)
+        task_stores.task_store.update_json(db, task=task, payload=payload)
 
         return update_result
 

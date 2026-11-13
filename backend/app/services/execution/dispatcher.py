@@ -84,6 +84,8 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         device_id: Optional[str] = None,
         emitter: Optional[ResultEmitter] = None,
+        *,
+        already_running: bool = False,
     ) -> None:
         """Unified dispatch entry point for task execution.
 
@@ -159,7 +161,8 @@ class ExecutionDispatcher:
 
             # Update subtask status to RUNNING before dispatching
             # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-            await self._update_subtask_to_running(request.subtask_id)
+            if not already_running:
+                await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
                 await self._dispatch_sse(request, target, wrapped_emitter)

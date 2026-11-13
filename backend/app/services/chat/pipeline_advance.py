@@ -6,77 +6,274 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy.orm import Session, make_transient
 
 from app.api.ws.events import ServerEvents
+from app.core.async_utils import run_in_threadpool_with_cleanup
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.core.distributed_lock import distributed_lock
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import TaskCreationParams, create_chat_task
-from app.services.chat.storage.db import PipelineAutoAdvanceIntent
+from app.services.chat.storage.db import (
+    PipelineAutoAdvanceIntent,
+    TerminalPersistenceError,
+)
+from app.services.chat.storage.task_manager import (
+    initialize_redis_chat_history,
+    schedule_chat_memory_save,
+)
 from app.services.chat.trigger import trigger_ai_response_unified
+from app.services.chat.trigger.group_chat import (
+    is_task_group_chat,
+    notify_group_members_task_updated,
+)
+from app.services.chat.trigger.lifecycle import prepare_execution_session
+from app.services.chat.trigger.unified import build_execution_request
 from app.services.context import context_service
-from app.stores.tasks import task_store
+from app.services.task_fork_history import task_fork_history_resolver
+from app.stores.tasks import subtask_store, task_store
+
+if TYPE_CHECKING:
+    from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PipelineHandoff:
+    user_subtask: Subtask
+    assistant_subtask: Subtask
+
+
 async def advance_pipeline_stage_from_auto_completion(
     intent: PipelineAutoAdvanceIntent,
-) -> Optional[dict[str, Any]]:
-    """Continue a pipeline after a stage completed without manual confirmation."""
-    db = SessionLocal()
+) -> bool:
+    """Resume the committed handoff and acknowledge only after dispatch is queued."""
     try:
-        task = task_store.get_regular_active_task(db, task_id=intent.task_id)
-        if not task:
-            logger.warning(
-                "[PipelineAdvance] Auto advance skipped; task not found: %s",
-                intent.task_id,
-            )
-            return None
+        async with distributed_lock.acquire_watchdog_context_async(
+            f"pipeline-auto-advance:{intent.completed_subtask_id}"
+        ) as acquired:
+            if not acquired:
+                raise RuntimeError("Pipeline handoff is already in progress")
+            return await _resume_auto_advance(intent)
+    except Exception as exc:
+        raise TerminalPersistenceError(
+            f"Could not advance pipeline after subtask {intent.completed_subtask_id}"
+        ) from exc
 
-        user = db.query(User).filter(User.id == intent.user_id).first()
-        if not user:
-            logger.warning(
-                "[PipelineAdvance] Auto advance skipped; user not found: %s",
-                intent.user_id,
-            )
-            return None
 
-        task_crd = Task.model_validate(task.json)
-        team = pipeline_stage_service.get_team_for_task(db, task, task_crd)
-        if not team:
-            logger.warning(
-                "[PipelineAdvance] Auto advance skipped; team not found: task=%s",
-                intent.task_id,
-            )
-            return None
-
-        payload = _default_pipeline_payload(task)
-        return await advance_pipeline_stage_and_send(
-            db=db,
-            user=user,
-            team=team,
-            task_id=intent.task_id,
-            message=None,
-            payload=payload,
-            skip_sid=None,
-            auth_token="",
-            completed_subtask_id=intent.completed_subtask_id,
-            auto_advance_info=intent.advance_info,
+async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
+    with SessionLocal() as db:
+        prepared = await run_in_threadpool_with_cleanup(
+            _prepare_auto_advance, db, intent
         )
-    finally:
-        db.close()
+        if prepared is None:
+            return False
+
+        task, user, team, pending, result = prepared
+        history = task_fork_history_resolver.resolve_for_task(
+            db,
+            task_id=task.id,
+            user_id=user.id,
+            current_task=task,
+            before_message_id=result.user_subtask.message_id,
+        )
+        existing_subtasks = [item.subtask for item in history]
+        await initialize_redis_chat_history(task.id, existing_subtasks)
+        if is_task_group_chat(task, False):
+            await notify_group_members_task_updated(db, task, user.id)
+
+        message = result.user_subtask.prompt
+        request = await build_execution_request(
+            task=task,
+            assistant_subtask=result.assistant_subtask,
+            team=team,
+            user=user,
+            message=message,
+            payload=_default_pipeline_payload(task),
+            user_subtask_id=result.user_subtask.id,
+            previous_bot_id=_previous_bot_id(db, pending.completed_subtask_id),
+        )
+        await _emit_task_status(task.id, "RUNNING", 0)
+        await _emit_user_message(
+            db=db,
+            user_subtask=result.user_subtask,
+            task_id=task.id,
+            message=message,
+            user=user,
+            task_room=f"task:{task.id}",
+            skip_sid=None,
+        )
+        # Keep the claim and scheduling in the same event-loop turn.
+        if not _claim_auto_advance(pending):
+            return False
+        asyncio.create_task(_dispatch_claimed_stage(request))
+        try:
+            schedule_chat_memory_save(
+                db, task, result.user_subtask, user, team, existing_subtasks
+            )
+        except Exception:
+            logger.exception("Could not schedule memory save for task %s", task.id)
+        return True
+
+
+def _prepare_auto_advance(
+    db: Session, intent: PipelineAutoAdvanceIntent
+) -> tuple[TaskResource, User, Kind, PipelineAutoAdvanceIntent, PipelineHandoff] | None:
+    task = task_store.get_by_id_for_update(db, task_id=intent.task_id)
+    if not task or task.is_active != TaskResource.STATE_ACTIVE:
+        return None
+    pending = PipelineAutoAdvanceIntent.read(task, intent.completed_subtask_id)
+    if pending is None:
+        return None
+
+    user = db.get(User, pending.user_id)
+    team = pipeline_stage_service.get_team_for_task(
+        db, task, Task.model_validate(task.json)
+    )
+    if not user or not team:
+        raise LookupError("Pipeline owner or team not found")
+
+    handoff = _prepare_handoff_pair(db, user, team, task, pending)
+    db.commit()
+    if handoff is None:
+        return None
+    return task, user, team, pending, handoff
+
+
+def _prepare_handoff_pair(
+    db: Session,
+    user: User,
+    team: Kind,
+    task: TaskResource,
+    intent: PipelineAutoAdvanceIntent,
+) -> PipelineHandoff | None:
+    latest = subtask_store.get_latest_assistant_by_statuses(
+        db,
+        task_id=task.id,
+        owner_user_id=task.user_id,
+        statuses=[status for status in SubtaskStatus if status != SubtaskStatus.DELETE],
+    )
+    expected_id = (
+        intent.next_pair[1] if intent.next_pair else intent.completed_subtask_id
+    )
+    expected_status = (
+        SubtaskStatus.PENDING if intent.next_pair else SubtaskStatus.COMPLETED
+    )
+    current_stage = task.json["spec"].get("currentStage") or 0
+    next_stage = intent.advance_info["next_stage_index"]
+    if (
+        not latest
+        or latest.id != expected_id
+        or latest.status != expected_status
+        or current_stage != (next_stage if intent.next_pair else next_stage - 1)
+    ):
+        _clear_auto_advance(db, task, intent)
+        return None
+
+    if intent.next_pair:
+        user_subtask = subtask_store.get_basic_by_id(db, subtask_id=intent.next_pair[0])
+        if not user_subtask:
+            raise LookupError("Pipeline handoff message not found")
+        return PipelineHandoff(user_subtask, latest)
+
+    advance = pipeline_stage_service.pipeline_auto_advance(
+        db=db,
+        task_id=task.id,
+        user_id=user.id,
+        completed_subtask_id=intent.completed_subtask_id,
+        advance_info=intent.advance_info,
+    )
+    if not advance.get("success"):
+        raise RuntimeError(advance.get("error", "Pipeline advance failed"))
+
+    handoff = advance.get("handoff_message", "")
+    params = _handoff_params(handoff, _default_pipeline_payload(task), advance)
+    session = prepare_execution_session(
+        db=db,
+        user=user,
+        team=team,
+        input_text=handoff,
+        task_params=params,
+        task_id=task.id,
+        bot_ids_override=params.pipeline_bot_ids,
+        commit=False,
+    )
+    if not session.assistant_subtask:
+        raise LookupError("Pipeline handoff assistant not created")
+    intent.next_pair = (session.user_subtask.id, session.assistant_subtask.id)
+    document = session.task.json
+    intent.write(document)
+    task_store.update_json(db, task=session.task, payload=document)
+    return PipelineHandoff(session.user_subtask, session.assistant_subtask)
+
+
+def _previous_bot_id(db: Session, subtask_id: int) -> int | None:
+    subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+    return subtask.bot_ids[0] if subtask and subtask.bot_ids else None
+
+
+def _clear_auto_advance(
+    db: Session, task: TaskResource, intent: PipelineAutoAdvanceIntent
+) -> None:
+    document = task.json
+    document["metadata"]["labels"].pop(intent.label)
+    task_store.update_json(db, task=task, payload=document)
+
+
+def _claim_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
+    if intent.next_pair is None:
+        raise ValueError("Pipeline handoff pair is required")
+    _, assistant_id = intent.next_pair
+    with SessionLocal() as db:
+        task = task_store.get_by_id_for_update(db, task_id=intent.task_id)
+        if not task or task.is_active != TaskResource.STATE_ACTIVE:
+            return False
+        pending = PipelineAutoAdvanceIntent.read(task, intent.completed_subtask_id)
+        if pending is None or pending.next_pair != intent.next_pair:
+            return False
+        claimed = subtask_store.transition_status(
+            db,
+            subtask_id=assistant_id,
+            task_id=task.id,
+            owner_user_id=intent.user_id,
+            role=SubtaskRole.ASSISTANT,
+            from_status=SubtaskStatus.PENDING,
+            to_status=SubtaskStatus.RUNNING,
+        )
+        _clear_auto_advance(db, task, intent)
+        if claimed:
+            document = task.json
+            document["status"]["status"] = "RUNNING"
+            task_store.update_json(db, task=task, payload=document)
+        db.commit()
+
+    return claimed
+
+
+async def _dispatch_claimed_stage(request: "ExecutionRequest") -> None:
+    from app.services.execution import execution_dispatcher
+
+    try:
+        await execution_dispatcher.dispatch(request, already_running=True)
+    except Exception:
+        logger.exception(
+            "[PipelineAdvance] Failed to dispatch next stage: task_id=%s subtask_id=%s",
+            request.task_id,
+            request.subtask_id,
+        )
 
 
 async def advance_pipeline_stage_and_send(
@@ -89,26 +286,13 @@ async def advance_pipeline_stage_and_send(
     payload: Any,
     skip_sid: Optional[str],
     auth_token: str,
-    completed_subtask_id: Optional[int] = None,
-    auto_advance_info: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Advance a pipeline stage and send the handoff as the next user message."""
-    if auto_advance_info is not None:
-        if completed_subtask_id is None:
-            return {"error": "Completed stage is required for auto-advance"}
-        advance_result = pipeline_stage_service.pipeline_auto_advance(
-            db=db,
-            task_id=task_id,
-            user_id=user.id,
-            completed_subtask_id=completed_subtask_id,
-            advance_info=auto_advance_info,
-        )
-    else:
-        advance_result = pipeline_stage_service.pipeline_confirm(
-            db=db,
-            task_id=task_id,
-            user_id=user.id,
-        )
+    """Confirm a pipeline stage and send the handoff as the next user message."""
+    advance_result = pipeline_stage_service.pipeline_confirm(
+        db=db,
+        task_id=task_id,
+        user_id=user.id,
+    )
 
     if not advance_result.get("success"):
         logger.error(
@@ -130,9 +314,7 @@ async def advance_pipeline_stage_and_send(
     handoff_message = (message or "").strip() or advance_result.get(
         "handoff_message", ""
     )
-    pipeline_bot_ids = [advance_result["next_stage_bot_id"]]
     previous_bot_id = advance_result.get("current_stage_bot_id")
-
     _, rag_prompt = await process_context_and_rag(
         message=handoff_message,
         contexts=getattr(payload, "contexts", None),
@@ -140,39 +322,12 @@ async def advance_pipeline_stage_and_send(
         user_id=user.id,
         db=db,
     )
-
-    params = TaskCreationParams(
-        message=handoff_message,
-        title=getattr(payload, "title", None),
-        model_id=getattr(payload, "force_override_bot_model", None),
-        force_override_bot_model=getattr(payload, "force_override_bot_model", None)
-        is not None,
-        force_override_bot_model_type=getattr(
-            payload, "force_override_bot_model_type", None
-        ),
-        model_options=getattr(payload, "model_options", None),
-        task_type=getattr(payload, "task_type", None),
-        additional_skills=_additional_skills_to_dicts(
-            getattr(payload, "additional_skills", None)
-        ),
-        pipeline_bot_ids=pipeline_bot_ids,
-        previous_bot_id=previous_bot_id,
-        pipeline_context_passing=advance_result.get("context_passing"),
-        skip_status_check=True,
-        device_id=getattr(payload, "device_id", None),
-        project_id=getattr(payload, "project_id", None),
-        client_origin=getattr(payload, "client_origin", CLIENT_ORIGIN_FRONTEND),
-        generate_params=_generate_params_to_dict(
-            getattr(payload, "generate_params", None)
-        ),
-    )
-
     result = await create_chat_task(
         db=db,
         user=user,
         team=team,
         message=handoff_message,
-        params=params,
+        params=_handoff_params(handoff_message, payload, advance_result),
         task_id=task_id,
         should_trigger_ai=True,
         rag_prompt=rag_prompt,
@@ -225,6 +380,36 @@ async def advance_pipeline_stage_and_send(
         "subtask_id": result.user_subtask.id,
         "message_id": result.user_subtask.message_id,
     }
+
+
+def _handoff_params(
+    handoff_message: str, payload: Any, advance_result: dict[str, Any]
+) -> TaskCreationParams:
+    return TaskCreationParams(
+        message=handoff_message,
+        title=getattr(payload, "title", None),
+        model_id=getattr(payload, "force_override_bot_model", None),
+        force_override_bot_model=getattr(payload, "force_override_bot_model", None)
+        is not None,
+        force_override_bot_model_type=getattr(
+            payload, "force_override_bot_model_type", None
+        ),
+        model_options=getattr(payload, "model_options", None),
+        task_type=getattr(payload, "task_type", None),
+        additional_skills=_additional_skills_to_dicts(
+            getattr(payload, "additional_skills", None)
+        ),
+        pipeline_bot_ids=[advance_result["next_stage_bot_id"]],
+        previous_bot_id=advance_result.get("current_stage_bot_id"),
+        pipeline_context_passing=advance_result.get("context_passing"),
+        skip_status_check=True,
+        device_id=getattr(payload, "device_id", None),
+        project_id=getattr(payload, "project_id", None),
+        client_origin=getattr(payload, "client_origin", CLIENT_ORIGIN_FRONTEND),
+        generate_params=_generate_params_to_dict(
+            getattr(payload, "generate_params", None)
+        ),
+    )
 
 
 def _default_pipeline_payload(task: TaskResource) -> SimpleNamespace:
