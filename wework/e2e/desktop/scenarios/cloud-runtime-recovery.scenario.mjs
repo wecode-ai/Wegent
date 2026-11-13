@@ -177,10 +177,20 @@ export function createDesktopScenario(options) {
       await notifications.verify(cloud, control)
     },
     async cleanup() {
-      finishModel?.()
-      await notifications.cleanup()
-      await proxy?.stop()
-      await existing.cleanup?.()
+      const errors = []
+      for (const cleanup of [
+        () => finishModel?.(),
+        () => notifications.cleanup(),
+        () => proxy?.stop(),
+        () => existing.cleanup?.(),
+      ]) {
+        try {
+          await cleanup()
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Cloud recovery cleanup failed')
     },
   }
 }

@@ -338,7 +338,8 @@ async fn dingtalk(
     let (client_id, client_secret) =
         dingtalk_credentials(config).context("Missing DingTalk credentials")?;
     let recipient = dingtalk_recipient(state, session).await?;
-    let access = dingtalk_access_token(client, client_id, client_secret).await?;
+    let api = dingtalk_api_base(config);
+    let access = dingtalk_access_token_at(client, client_id, client_secret, api).await?;
     if config["notification_card"].is_object() {
         const BUILTIN: &str = "1366a1eb-bc54-4859-ac88-517c56a9acb1.schema";
         let template = config["notification_card"]["template_id"]
@@ -359,7 +360,7 @@ async fn dingtalk(
         let card = json!({"outTrackId":super::uuid(),"cardTemplateId":template,"openSpaceId":format!("dtv1.card//IM_ROBOT.{recipient}"),"cardData":{"cardParamMap":params},"imRobotOpenSpaceModel":{"supportForward":true,"lastMessageI18n":{"ZH_CN":headline}},"imRobotOpenDeliverModel":{"spaceType":"IM_ROBOT"}});
         match http_json(
             client,
-            "https://api.dingtalk.com/v1.0/card/instances/createAndDeliver",
+            &format!("{api}/v1.0/card/instances/createAndDeliver"),
             Some((access.token.as_str(), "x-acs-dingtalk-access-token")),
             &card,
         )
@@ -385,7 +386,7 @@ async fn dingtalk(
     let parameters = serde_json::to_string(
         &json!({"title":title.chars().take(50).collect::<String>(),"text":markdown}),
     )?;
-    http_json(client,"https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",Some((access.token.as_str(),"x-acs-dingtalk-access-token")),&json!({"robotCode":client_id,"userIds":[recipient],"msgKey":"sampleMarkdown","msgParam":parameters})).await?;
+    http_json(client,&format!("{api}/v1.0/robot/oToMessages/batchSend"),Some((access.token.as_str(),"x-acs-dingtalk-access-token")),&json!({"robotCode":client_id,"userIds":[recipient],"msgKey":"sampleMarkdown","msgParam":parameters})).await?;
     Ok(())
 }
 
@@ -775,6 +776,124 @@ mod telegram_protocol_tests {
             .unwrap();
             assert_eq!(result["message_id"], 21);
             server.await.unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod dingtalk_protocol_tests {
+    use super::*;
+    use brz_http_server::{Handler, NoAuthenticator, Request, Response, StatusCode};
+    use std::sync::{Arc, Mutex};
+
+    struct DingTalkApi {
+        requests: Arc<Mutex<Vec<(String, Value)>>>,
+        reject_card: bool,
+    }
+
+    impl Handler for DingTalkApi {
+        async fn call<'a>(&'a self, request: Request<'a>, _: &'a NoAuthenticator) -> Response {
+            assert_eq!(request.method(), "POST");
+            let body: Value = serde_json::from_slice(request.body()).unwrap();
+            let path = request.path();
+            let response = if path == "/v1.0/oauth2/accessToken" {
+                assert_eq!(body, json!({"appKey":"ci-app","appSecret":"ci-secret"}));
+                br#"{"accessToken":"ci-token","expireIn":7200}"#.as_slice()
+            } else {
+                assert_eq!(
+                    request.header("x-acs-dingtalk-access-token"),
+                    Some(b"ci-token".as_slice())
+                );
+                match path {
+                    "/v1.0/card/instances/createAndDeliver" if self.reject_card => {
+                        br#"{"code":"rejected"}"#.as_slice()
+                    }
+                    "/v1.0/card/instances/createAndDeliver" => br#"{"code":"0"}"#.as_slice(),
+                    "/v1.0/robot/oToMessages/batchSend" => {
+                        assert_eq!(body["robotCode"], "ci-app");
+                        assert_eq!(body["userIds"], json!(["ci-staff"]));
+                        assert_eq!(body["msgKey"], "sampleMarkdown");
+                        let params: Value =
+                            serde_json::from_str(body["msgParam"].as_str().unwrap()).unwrap();
+                        assert!(params["text"].as_str().unwrap().contains("CI notification"));
+                        br#"{"processQueryKey":"ci-message"}"#.as_slice()
+                    }
+                    _ => panic!("Unexpected DingTalk API request: {path}"),
+                }
+            };
+            self.requests.lock().unwrap().push((path.to_owned(), body));
+            Response::static_bytes(StatusCode::OK, response).content_type("application/json")
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_notifications_use_the_configured_host_for_auth_cards_and_markdown() {
+        for (card, reject_card) in [(false, false), (true, false), (true, true)] {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let server = brz_http_server::Server::bind(
+                "127.0.0.1:0".parse().unwrap(),
+                DingTalkApi {
+                    requests: requests.clone(),
+                    reject_card,
+                },
+            )
+            .await
+            .unwrap();
+            let api = format!("http://{}/", server.local_addr().unwrap());
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(server.serve_until(async {
+                let _ = stopped.await;
+            }));
+            // Explicit staff identity needs no database lookup. Keep even the
+            // unused SQL dependency bound to an isolated loopback listener.
+            let unused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mysql = brz_mysql::MysqlService::connect_lazy(&format!(
+                "mysql://ci:ci@{}/unused",
+                unused.local_addr().unwrap()
+            ))
+            .unwrap();
+            let state = crate::app_test_support::app(mysql);
+            let mut config =
+                json!({"client_id":"ci-app","client_secret":"ci-secret","api_base_url":api});
+            if card {
+                config["notification_card"] = json!({});
+            }
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                dingtalk(
+                    &state,
+                    &im_client().unwrap(),
+                    &json!({"proactive_recipient_id":"ci-staff"}),
+                    &config,
+                    "assignment",
+                    "CI title",
+                    "CI notification",
+                    &json!({}),
+                    &[],
+                    "CI notification",
+                    &[],
+                ),
+            )
+            .await;
+            let _ = stop.send(());
+            task.await.unwrap().unwrap();
+            result
+                .expect("DingTalk protocol request timed out")
+                .unwrap();
+            let paths: Vec<String> = requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect();
+            let mut expected = vec!["/v1.0/oauth2/accessToken"];
+            if card {
+                expected.push("/v1.0/card/instances/createAndDeliver");
+            }
+            if !card || reject_card {
+                expected.push("/v1.0/robot/oToMessages/batchSend");
+            }
+            assert_eq!(paths, expected);
         }
     }
 }
