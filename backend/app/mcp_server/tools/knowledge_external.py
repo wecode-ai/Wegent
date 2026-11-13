@@ -423,7 +423,14 @@ def _get_document_content_sync(
     offset: int,
     limit: int,
 ) -> str:
+    from app.services.knowledge.read_reporting import (
+        report_read,
+        suppressed_read_events,
+    )
+
     db = SessionLocal()
+    event_result = {"id": document_id, "error_code": "DOCUMENT_READ_FAILED"}
+    suppression = suppressed_read_events.set(True)
     try:
         access = get_document_access_or_raise(
             db,
@@ -436,6 +443,8 @@ def _get_document_content_sync(
             offset=offset,
             limit=limit,
             knowledge_base_ids=[access.knowledge_base_id],
+            user_id=user_id,
+            actor_user_id=user_id,
             entrypoint="mcp",
             searchable_only=False,
         )
@@ -447,7 +456,7 @@ def _get_document_content_sync(
         if result.get("error"):
             return _json_error(result["error"], "forbidden")
 
-        return ExternalDocumentContentResponse(
+        response = ExternalDocumentContentResponse(
             document_id=document_id,
             node_id=f"document:{document_id}",
             knowledge_base_id=access.knowledge_base_id,
@@ -462,12 +471,25 @@ def _get_document_content_sync(
             has_more=result["has_more"],
             index_status=_document_index_status(access.document),
         ).model_dump_json()
+        event_result = result
+        return response
     except ExternalDocumentAccessError as exc:
         return _json_error(str(exc), exc.code)
     except Exception as exc:
         logger.exception("wegent_kb_get_document_content failed: %s", exc)
         return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
     finally:
+        suppressed_read_events.reset(suppression)
+        try:
+            report_read(
+                event_result,
+                user_id=user_id,
+                actor_user_id=user_id,
+                subtask_id=None,
+                entrypoint="mcp",
+            )
+        except Exception:
+            logger.debug("Failed to report MCP document read", exc_info=True)
         db.close()
 
 

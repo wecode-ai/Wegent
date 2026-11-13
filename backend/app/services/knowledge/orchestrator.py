@@ -68,6 +68,7 @@ from app.services.knowledge.external_refresh_snapshot import (
     stage_external_refresh_attachment,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.read_reporting import report_single_read
 from app.services.knowledge.retrieval_profile import load_profile
 from app.services.knowledge.retrieval_resource_resolver import (
     resolve_embedding_model_resource,
@@ -918,6 +919,7 @@ class KnowledgeOrchestrator:
         if not document.attachment_id:
             raise ValueError("Document content is not ready for preview")
 
+    @report_single_read
     def read_document_content(
         self,
         db: Session,

@@ -163,6 +163,7 @@ class DocumentReadService:
         knowledge_base_ids: Optional[list[int]] = None,
         user_subtask_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        actor_user_id: Optional[int] = None,
         entrypoint: Optional[str] = None,
         searchable_only: bool = True,
     ) -> list[Dict[str, Any]]:
@@ -201,13 +202,13 @@ class DocumentReadService:
                         "error_code": DOCUMENT_READ_ERROR_NOT_FOUND,
                     }
                 )
-                if len(results) <= 128:
-                    report_read(
-                        results[-1],
-                        user_id=user_id,
-                        subtask_id=user_subtask_id,
-                        entrypoint=entrypoint,
-                    )
+                report_read(
+                    results[-1],
+                    user_id=user_id,
+                    actor_user_id=actor_user_id,
+                    subtask_id=user_subtask_id,
+                    entrypoint=entrypoint,
+                )
                 continue
 
             if allowed_kb_ids and document.kind_id not in allowed_kb_ids:
@@ -224,13 +225,13 @@ class DocumentReadService:
                         "error_code": DOCUMENT_READ_ERROR_ACCESS_DENIED,
                     }
                 )
-                if len(results) <= 128:
-                    report_read(
-                        results[-1],
-                        user_id=user_id,
-                        subtask_id=user_subtask_id,
-                        entrypoint=entrypoint,
-                    )
+                report_read(
+                    results[-1],
+                    user_id=user_id,
+                    actor_user_id=actor_user_id,
+                    subtask_id=user_subtask_id,
+                    entrypoint=entrypoint,
+                )
                 continue
 
             attachment = attachments_by_id.get(document.attachment_id)
@@ -249,13 +250,13 @@ class DocumentReadService:
                 )
             )
             document_ids_by_kb.setdefault(document.kind_id, []).append(document.id)
-            if len(results) <= 128:
-                report_read(
-                    results[-1],
-                    user_id=user_id,
-                    subtask_id=user_subtask_id,
-                    entrypoint=entrypoint,
-                )
+            report_read(
+                results[-1],
+                user_id=user_id,
+                actor_user_id=actor_user_id,
+                subtask_id=user_subtask_id,
+                entrypoint=entrypoint,
+            )
 
         if user_subtask_id and user_id is not None and user_id > 0:
             try:

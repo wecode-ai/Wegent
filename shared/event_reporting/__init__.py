@@ -8,7 +8,6 @@ from .dimensions import (
     set_actor_provider,
     set_knowledge_base_provider,
 )
-from .knowledge import emit_kb_event
 from .reporter import (
     EventReceiver,
     emit_event,
@@ -23,7 +22,6 @@ __all__ = [
     "EventReceiver",
     "KnowledgeBaseDimensions",
     "emit_event",
-    "emit_kb_event",
     "get_event_observation_limit",
     "is_event_reporting_enabled",
     "register_event_receiver",

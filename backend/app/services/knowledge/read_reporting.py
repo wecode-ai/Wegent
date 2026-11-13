@@ -1,6 +1,8 @@
 """Content-free facts from the original per-document response."""
 
 from contextvars import ContextVar
+from functools import wraps
+from inspect import signature
 from typing import Any
 
 from shared.event_reporting.catalogs.knowledge import observe
@@ -8,6 +10,45 @@ from shared.event_reporting.catalogs.knowledge import observe
 suppressed_read_events: ContextVar[bool] = ContextVar(
     "suppressed_read_events", default=False
 )
+
+
+def report_single_read(function):
+    """Report a single read after its complete response has been validated."""
+    call_signature = signature(function)
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        arguments = call_signature.bind(*args, **kwargs).arguments
+        try:
+            user_id = getattr(arguments["user"], "id", None)
+        except Exception:
+            user_id = None
+        event_result = {
+            "id": arguments["document_id"],
+            "error_code": "DOCUMENT_READ_FAILED",
+        }
+        token = suppressed_read_events.set(True)
+        try:
+            result = function(*args, **kwargs)
+            try:
+                event_result = {**result.model_dump(), "id": result.document_id}
+            except Exception:
+                pass
+            return result
+        finally:
+            suppressed_read_events.reset(token)
+            try:
+                report_read(
+                    event_result,
+                    user_id=user_id,
+                    actor_user_id=user_id,
+                    subtask_id=None,
+                    entrypoint=arguments.get("entrypoint"),
+                )
+            except Exception:
+                pass
+
+    return wrapped
 
 
 def report_read(

@@ -364,6 +364,7 @@ def get_document_content_open(
             document_id=document_id,
             offset=offset,
             limit=limit,
+            entrypoint="openapi",
         )
     except ValueError as exc:
         _raise_open_knowledge_http_error(exc)
