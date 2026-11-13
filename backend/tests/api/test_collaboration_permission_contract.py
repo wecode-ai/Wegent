@@ -507,3 +507,62 @@ def test_cp09_cp13_enabled_agents_and_assignment_entry_points(test_client, scope
             test_client.post(path, headers=scope["member"], json=body).status_code
             == 403
         )
+
+
+@pytest.mark.parametrize(
+    ("project_security", "parent_security", "expected_security"),
+    [
+        ("open", "related", "related"),
+        ("related", "open", "related"),
+        ("open", "open", "open"),
+        ("related", "related", "related"),
+    ],
+)
+def test_cp14_child_creation_never_widens_parent_or_project_visibility(
+    test_client, test_db, scope, project_security, parent_security, expected_security
+):
+    invite(test_client, scope, "Developer")
+    project_id = scope["project"]["id"]
+    project = test_db.get(CloudProject, int(project_id))
+    project.metadata_json = {
+        **project.metadata_json,
+        "default_issue_security": project_security,
+    }
+    test_db.commit()
+    parent = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/loop-items",
+        headers=scope["owner"],
+        json={"title": "Source discussion", "notify_assignee": False},
+    )
+    assert parent.status_code == 201, parent.text
+    source = parent.json()
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{source['id']}",
+        headers=scope["owner"],
+        json={"version": source["version"], "security_level": parent_security},
+    )
+    assert updated.status_code == 200, updated.text
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{project_id}/loop-items",
+        headers=scope["owner"],
+        json={
+            "title": "Child from comment",
+            "description": "Private source comment",
+            "parent_id": source["id"],
+            "notify_assignee": False,
+        },
+    )
+    assert child.status_code == 201, child.text
+    result = child.json()
+    assert result["security_level"] == expected_security
+    outsider = test_client.get(
+        f"/api/v1/loop-items/{result['id']}", headers=scope["member"]
+    )
+    assert outsider.status_code == (404 if expected_security == "related" else 200)
+    if parent_security == "related":
+        denied = test_client.post(
+            f"/api/v1/cloud-projects/{project_id}/loop-items",
+            headers=scope["member"],
+            json={"title": "Hidden parent", "parent_id": source["id"]},
+        )
+        assert denied.status_code == 404

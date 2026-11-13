@@ -599,6 +599,7 @@ class LoopItemService:
         db.delete(collaborator)
         db.commit()
 
+    @trace_sync("loop_items.create", tracer_name="backend")
     def create(
         self,
         db: Session,
@@ -618,8 +619,10 @@ class LoopItemService:
             user_id,
             BaseRole.Developer,
         )
+        parent = None
         if values.parent_id is not None:
-            self._require_parent(db, values.parent_id, cloud_project_id)
+            parent = self._require_parent(db, values.parent_id, cloud_project_id)
+            self._require_item_access(db, parent, user_id)
         project = (
             db.query(CloudProject)
             .filter(CloudProject.id == cloud_project_id)
@@ -653,7 +656,11 @@ class LoopItemService:
         task_metadata: dict[str, Any] = {}
         if milestone_id is not None:
             task_metadata["milestone_id"] = milestone_id
-        task_metadata["security_level"] = default_issue_security(project)
+        task_metadata["security_level"] = (
+            "related"
+            if parent is not None and item_security(parent, project) == "related"
+            else default_issue_security(project)
+        )
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
         elif values.parent_id is None and apply_project_workflow:

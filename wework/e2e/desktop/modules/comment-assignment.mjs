@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 
 /** Exercise comment handoff against real project members, comments and assignment APIs. */
-export async function verifyCommentAssignment(control, { request, project, owner, member }) {
+export async function verifyCommentAssignment(
+  control,
+  { request, memberRequest, project, owner, member }
+) {
   const content = '[data-workspace-tab-content][aria-hidden="false"]'
   const scoped = selector => `${content} ${selector}`
   const issue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
@@ -81,6 +84,10 @@ export async function verifyCommentAssignment(control, { request, project, owner
   )
   assert.equal(after.length, comments.length)
 
+  await request(`/api/v1/loop-items/${issue.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ version: restored.version, security_level: 'related' }),
+  })
   // Story: sending a child assignment retains the original discussion and never reassigns the parent.
   const childBody = '把这条不含提及的评论分派成子事项'
   await control.command('select', `${form} [data-testid="task-comment-form-assignment-mode"]`, {
@@ -99,6 +106,8 @@ export async function verifyCommentAssignment(control, { request, project, owner
     item => item.parent_id === issue.id && item.title === childBody
   )
   assert.ok(createdChild, 'The comment must create a real child Issue')
+  assert.equal(createdChild.security_level, 'related')
+  assert.equal((await memberRequest(`/api/v1/loop-items/${createdChild.id}`)).can_view_detail, true)
   assert.equal(String(createdChild.assignee_user_id), String(member.id))
   assert.equal(
     String((await request(`/api/v1/loop-items/${issue.id}`)).assignee_user_id),
@@ -137,6 +146,8 @@ export async function verifyCommentAssignment(control, { request, project, owner
     item => item.parent_id === issue.id && item.title === childBody && item.id !== createdChild.id
   )
   assert.ok(copied)
+  assert.equal(copied.security_level, 'related')
+  await memberRequest(`/api/v1/loop-items/${copied.id}`, 404)
   assert.equal(String(copied.assignee_user_id), String(owner.id))
   const childComments = await request(
     `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
