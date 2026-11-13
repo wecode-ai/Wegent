@@ -74,7 +74,6 @@ pub(crate) async fn prepare_on(
             actor: input.assigner,
             automatic: authority::truthy(&input.context["run_id"]),
             selection: &input.runtime_selection,
-            explicit_device: !input.device_id.is_empty(),
         }
         .permits_owner(
             super::device_access::personal_owner(input.owner, &device.json),

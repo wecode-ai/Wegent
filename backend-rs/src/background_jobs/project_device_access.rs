@@ -29,7 +29,6 @@ pub(crate) struct DeviceAccess<'a> {
     pub actor: i64,
     pub automatic: bool,
     pub selection: &'a Value,
-    pub explicit_device: bool,
 }
 
 impl DeviceAccess<'_> {
@@ -42,7 +41,7 @@ impl DeviceAccess<'_> {
             .get("runner_routing")
             .filter(|v| v.is_object())
         else {
-            return self.explicit_device;
+            return false;
         };
         std::iter::once(route)
             .chain(
@@ -105,7 +104,6 @@ mod tests {
                     actor,
                     automatic,
                     selection: &selection,
-                    explicit_device: true
                 }
                 .permits_owner(owner, 42),
                 expected
@@ -124,7 +122,6 @@ mod tests {
                 actor: 7,
                 automatic: false,
                 selection: &selection,
-                explicit_device: true
             }
             .permits_owner(7, 42)
         );
@@ -135,32 +132,22 @@ mod tests {
                 actor: 7,
                 automatic: false,
                 selection: &selection,
-                explicit_device: false
             }
             .permits_owner(7, 42)
         );
     }
 
     #[test]
-    fn legacy_unbound_requests_do_not_turn_into_personal_device_pools() {
-        let selection = json!({});
-        assert!(
-            !DeviceAccess {
-                actor: 7,
-                automatic: false,
-                selection: &selection,
-                explicit_device: false
-            }
-            .permits_owner(7, 42)
-        );
-        assert!(
-            DeviceAccess {
-                actor: 7,
-                automatic: false,
-                selection: &selection,
-                explicit_device: true
-            }
-            .permits_owner(7, 42)
-        );
+    fn unrouted_requests_do_not_turn_into_personal_device_pools() {
+        for selection in [json!({}), json!({"runner_routing":null})] {
+            assert!(
+                !DeviceAccess {
+                    actor: 7,
+                    automatic: false,
+                    selection: &selection,
+                }
+                .permits_owner(7, 42)
+            );
+        }
     }
 }

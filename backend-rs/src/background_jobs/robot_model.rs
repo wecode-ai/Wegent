@@ -70,7 +70,6 @@ impl Execution {
             actor: self.assigner_user_id,
             automatic: self.automatic(),
             selection: &self.selection(),
-            explicit_device: !self.execution_device_id.is_empty(),
         }
         .permits_owner(owner, device)
     }
@@ -132,6 +131,20 @@ mod tests {
         let mut intent = row.intent();
         intent["origin_context"] = json!({"run_id":"run-1"});
         row.execution_payload = intent.to_string();
+        assert!(!row.permits_personal_device(7, 42));
+    }
+
+    #[test]
+    fn claimed_unrouted_execution_does_not_gain_personal_authority() {
+        let mut row = execution("queued", None);
+        row.assigner_user_id = 7;
+        row.execution_payload = json!({"runtime_selection":{}}).to_string();
+        assert!(!row.permits_personal_device(7, 42));
+        row.status = "claimed".into();
+        row.execution_device_id = "app-record-42".into();
+        row.runtime_device_id = "app-record-42".into();
+        assert!(!row.permits_personal_device(7, 42));
+        row.status = "running".into();
         assert!(!row.permits_personal_device(7, 42));
     }
 

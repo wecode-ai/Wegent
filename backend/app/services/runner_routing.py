@@ -513,7 +513,7 @@ def personal_execution_device(execution: Any, device: Kind) -> bool:
     selection = execution.runtime_selection
     route = selection.get("runner_routing")
     if not isinstance(route, dict):
-        return bool(execution.execution_device_id)
+        return False
     routes = [route, *selection.get("group_runner_requirements", {}).values()]
     return all(
         item.get("execution_policy", {}).get("mode") == "fixed"

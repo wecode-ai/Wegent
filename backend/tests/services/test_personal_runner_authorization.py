@@ -203,3 +203,35 @@ def test_cp11_cp12_automation_cannot_reuse_a_manual_owner_snapshot(
         automation_run_id="automatic-run" if automation == "column" else None,
     )
     assert not execution_device_authorized(test_db, execution, devices[0])
+
+
+def test_cp12_cp15_claimed_unrouted_execution_keeps_shared_authority(
+    test_db, routing_setup
+):
+    user, devices, issue = routing_setup
+    execution = LoopItemExecution(
+        loop_item_id=issue.id,
+        cloud_project_id=issue.cloud_project_id,
+        assigner_user_id=user.id,
+        executor_owner_user_id=user.id,
+        execution_environment="local",
+        status="queued",
+        execution_payload=json.dumps({"runtime_selection": {}}),
+    )
+    test_db.add(execution)
+    test_db.flush()
+    assert not execution.execution_device_id
+
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        owner_user_id=user.id,
+        execution_device_id=devices[0].name,
+        environment="local",
+        runtime_instance_id="shared-runtime",
+    )
+
+    assert claimed is not None
+    assert claimed.id == execution.id
+    assert claimed.execution_device_id == devices[0].name
+    remove_device_sharing(test_db, devices)
+    assert not execution_authorized(test_db, claimed)
