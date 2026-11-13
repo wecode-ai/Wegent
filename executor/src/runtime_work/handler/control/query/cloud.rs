@@ -60,7 +60,10 @@ impl RuntimeWorkRpcHandler {
                         return Ok(None);
                     }
                     if let Some(query) = args["query"].as_str() {
-                        if text_match(view["title"].as_str().unwrap_or_default(), query).is_none() {
+                        if text_match(view["title"].as_str().unwrap_or_default(), query).is_none()
+                            && text_match(view["workspacePath"].as_str().unwrap_or_default(), query)
+                                .is_none()
+                        {
                             let messages = self
                                 .cloud_messages(
                                     context,

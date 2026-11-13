@@ -32,7 +32,9 @@ use crate::task_store::task_update_timestamp;
 use super::chat_support::{access_denied, error_ack, expired, internal_error};
 
 /// `CANCEL_KEY_PREFIX`.
-const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
+pub(crate) fn cancel_key(subtask_id: i64) -> String {
+    format!("chat:cancel:{subtask_id}")
+}
 /// `CANCEL_FLAG_TTL`.
 const CANCEL_FLAG_TTL: u64 = 300;
 /// `settings.CANCELLING_STUCK_TIMEOUT_SECONDS`.
@@ -245,7 +247,7 @@ async fn deliver_cancel(
             return Ok(false);
         };
         use brz_redis::Redis as _;
-        let key = format!("{CANCEL_KEY_PREFIX}{subtask_id}");
+        let key = cancel_key(subtask_id);
         return match redis.set_ex(key.as_str(), CANCEL_FLAG_TTL, "true").await {
             Ok(()) => Ok(true),
             Err(error) => {

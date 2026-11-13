@@ -161,6 +161,21 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test.each([true, false])('preserves explicit archive state %s in work changes', archived => {
+    const onRuntimeWorkChanged = vi.fn()
+    emitResponseApiEvent(
+      { onRuntimeWorkChanged },
+      'runtime.work.changed',
+      { taskId: 'task-1', deviceId: 'device-1', data: { archived } },
+      createResponseApiStreamState()
+    )
+    expect(onRuntimeWorkChanged).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      deviceId: 'device-1',
+      archived,
+    })
+  })
+
   test('maps background archive cleanup failures with workspace identity', () => {
     const onRuntimeWorkChanged = vi.fn()
     emitResponseApiEvent(

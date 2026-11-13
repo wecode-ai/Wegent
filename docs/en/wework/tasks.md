@@ -26,6 +26,14 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+### Model overload and quota recovery
+
+Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
+
+When subscription usage is exhausted, the task waits in the queue and releases its execution slot. The composer shows the reset countdown. At that time, Wework checks usage again and continues with the original model, including a persistent goal stopped by the usage limit. If no reset time is available, it checks once per minute. Waiting records survive a Wework restart on the same device; execution requires the application to be running.
+
+Click **Cancel automatic recovery** beside the composer countdown to stop recovery. Pausing, editing or deleting its goal, or sending new task input, invalidates the old wait. Changed account, model configuration or conversation requires a new execution request. An exhausted task budget still requires a budget adjustment before continuing.
+
 <a id="sidebar-task-management"></a>
 
 ### Sidebar task management
@@ -38,7 +46,19 @@ Goals may be active, paused, blocked, budget/usage-limited or complete. Exhauste
 | Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage                                                                                                                                                                                                                                                                                                                            |
 | Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                                                                                                                                                                                                                                                                                                                                               |
 
+<a id="conversation-interactions"></a>
+
+### Interact inside a conversation
+
+The same capability applies to finding conversations, restoring archived items and selecting targets for operations. Standalone tasks are conversations: ask AI to find a task you accidentally removed, including archived candidates, without first providing its exact title or the time of the action. Describe your goal in the **Codex conversation composer**, then use the buttons, lists or forms in the reply. The interface is generated for your request. To recover an archived conversation, select **Restore** in the candidate list, then use **Open conversation** after restoration succeeds. Permanent deletion differs from archiving; the restoration tool handles conversations that are still archived. When no operation tool exists, a button can open an existing feature. Existing permissions still apply; navigation itself does not perform the operation.
+
+The interface height follows its content, and saved interaction state is restored when you reopen the conversation. You can scroll the conversation with the pointer over a card. Scrollable controls consume wheel movement first, then pass remaining movement to the conversation at their boundary. Use **Expand** for more space and return to the message afterwards. This capability requires personal control access in a Codex conversation and does not grant extra authority to delegated executions.
+
+<a id="personal-schedules"></a>
+
 ### Personal scheduled tasks
+
+In the **Codex conversation composer**, describe an operation such as “Create a task for today at 18:00”. The AI can generate an interactive interface inside the message for that scenario, prefill known values and let you complete missing fields in its form. Submitting calls real tools and displays their results in place. New schedules inherit the current conversation’s model, workspace and execution settings; Wework must remain running on the owning device.
 
 <!-- ui-source: src/features/automations/AutomationsPage.tsx -->
 

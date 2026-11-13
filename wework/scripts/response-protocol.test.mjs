@@ -328,6 +328,35 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('reports the exact failed discovery instead of repeating it until the UI times out', () => {
+    const request = {
+      tools: [{ type: 'custom', name: 'exec' }],
+      input: [
+        {
+          type: 'custom_tool_call_output',
+          call_id: 'other-search',
+          output: 'Unrelated discovery output',
+        },
+        {
+          type: 'custom_tool_call_output',
+          call_id: 'search-context',
+          output: 'Native discovery execution failed',
+        },
+      ],
+    }
+    expect(() =>
+      mcpToolRequestEvents(request, {
+        toolName: 'get_current_context',
+        directToolName: 'mcp__wework_space__get_current_context',
+        argumentsValue: {},
+        searchCallId: 'search-context',
+        toolCallId: 'read-context',
+      })
+    ).toThrow(
+      'Native discovery did not expose mcp__wework_space__get_current_context: Native discovery execution failed'
+    )
+  })
+
   test('does not select a same-named tool from another MCP server', () => {
     expect(() =>
       selectMcpToolRequest(
