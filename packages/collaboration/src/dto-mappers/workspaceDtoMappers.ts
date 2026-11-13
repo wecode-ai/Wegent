@@ -252,6 +252,7 @@ export function mapCollaborationWorkspaceDto(
   const setupSteps =
     executionEnvironment.setup_steps ?? executionEnvironment.setupSteps;
   return {
+    is_system_default: row.is_system_default === true,
     id: String(row.id),
     location: "cloud",
     ...((row.owner_user_id ?? row.ownerUserId) === undefined

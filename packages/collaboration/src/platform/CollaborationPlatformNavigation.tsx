@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Bot,
   ChevronRight,
@@ -80,27 +80,17 @@ export function CollaborationPlatformNavigation({
   )?.workspace_id;
   const selectedWorkspaceId =
     host.location.workspaceId ?? selectedProjectWorkspaceId ?? null;
-  const firstWorkspaceId = navigationWorkspaces[0]?.workspace.id ?? null;
-  const autoExpandedWorkspaceId = selectedWorkspaceId ?? firstWorkspaceId;
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(
+  const autoExpandedWorkspaceId =
+    selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id ?? null;
+  const [workspaceExpansion, setWorkspaceExpansion] = useState<
+    Map<string, boolean>
+  >(
     () =>
-      new Set(
-        autoExpandedWorkspaceId
-          ? [autoExpandedWorkspaceId]
-          : navigationWorkspaces
-              .slice(0, 1)
-              .map(({ workspace }) => workspace.id),
-      ),
+      new Map(autoExpandedWorkspaceId ? [[autoExpandedWorkspaceId, true]] : []),
   );
   const [autoExpandedWorkspaceSelection, setAutoExpandedWorkspaceSelection] =
     useState<string | null>(autoExpandedWorkspaceId);
   const projectFirst = host.capabilities.projectNavigation === "projects";
-  const [workspacesExpanded, setWorkspacesExpanded] = useState(!projectFirst);
-  useEffect(() => {
-    if (projectFirst && host.location.workspaceId && !host.location.projectId) {
-      setWorkspacesExpanded(true);
-    }
-  }, [projectFirst, host.location.workspaceId, host.location.projectId]);
   const [retryingNavigation, setRetryingNavigation] = useState(false);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
   // Expansion follows the selected workspace during render so it cannot land
@@ -108,9 +98,11 @@ export function CollaborationPlatformNavigation({
   if (autoExpandedWorkspaceSelection !== autoExpandedWorkspaceId) {
     setAutoExpandedWorkspaceSelection(autoExpandedWorkspaceId);
     if (autoExpandedWorkspaceId) {
-      setExpandedWorkspaceIds((current) => {
-        if (current.has(autoExpandedWorkspaceId)) return current;
-        return new Set([...current, autoExpandedWorkspaceId]);
+      setWorkspaceExpansion((current) => {
+        if (current.get(autoExpandedWorkspaceId) === true) return current;
+        const next = new Map(current);
+        next.set(autoExpandedWorkspaceId, true);
+        return next;
       });
     }
   }
@@ -128,12 +120,209 @@ export function CollaborationPlatformNavigation({
       issueId: null,
     });
   const toggleWorkspace = (workspaceId: string) => {
-    setExpandedWorkspaceIds((current) => {
-      const next = new Set(current);
-      if (next.has(workspaceId)) next.delete(workspaceId);
-      else next.add(workspaceId);
+    setWorkspaceExpansion((current) => {
+      const next = new Map(current);
+      next.set(workspaceId, !(current.get(workspaceId) ?? projectFirst));
       return next;
     });
+  };
+  const localWorkspace = workspaces.find(
+    (workspace) => workspace.location === "local",
+  );
+  const createWorkspaceButton = canCreateWorkspace ? (
+    <button
+      type="button"
+      className="collaboration-workspace-section-create"
+      aria-label={messages.createWorkspace}
+      title={messages.createWorkspace}
+      data-testid="collaboration-workspace-create"
+      onClick={onCreateWorkspace}
+    >
+      <span data-testid="collaboration-workspace-sidebar-create">
+        <FolderPlus aria-hidden="true" />
+      </span>
+    </button>
+  ) : null;
+  const renderWorkspaceGroup = ({
+    workspace: candidate,
+    canOpen,
+  }: ReturnType<typeof buildWorkspaceNavigation>["workspaces"][number]) => {
+    const expanded = workspaceExpansion.get(candidate.id) ?? projectFirst;
+    const candidateProjects = projectsByWorkspace.get(candidate.id) ?? [];
+    const workspaceActive =
+      host.location.workspaceId === candidate.id && !host.location.projectId;
+    const canManageWorkspace =
+      canOpen &&
+      "access_role" in candidate &&
+      (candidate.access_role === "Owner" ||
+        candidate.access_role === "Maintainer");
+    return (
+      <section
+        className="collaboration-workspace-group"
+        data-testid={`collaboration-workspace-tree-${candidate.id}`}
+        key={candidate.id}
+      >
+        <div
+          className={`collaboration-workspace-row${
+            workspaceActive ? " active" : ""
+          }${canManageWorkspace ? " has-actions" : ""}`}
+        >
+          {canOpen ? (
+            <button
+              type="button"
+              className="collaboration-workspace-identity"
+              data-testid={
+                host.location.workspaceId === candidate.id
+                  ? "collaboration-workspace-nav-projects"
+                  : `collaboration-workspace-home-${candidate.id}`
+              }
+              aria-current={workspaceActive ? "page" : undefined}
+              onClick={() =>
+                openWorkspaceHome(candidate.id, candidate.location)
+              }
+            >
+              <span
+                className="collaboration-workspace-folder"
+                aria-hidden="true"
+              >
+                <FolderOpen />
+              </span>
+              <span
+                className="collaboration-workspace-title-block"
+                data-testid={`collaboration-workspace-${candidate.id}`}
+              >
+                <span className="collaboration-workspace-title">
+                  {candidate.name}
+                </span>
+              </span>
+            </button>
+          ) : (
+            <div
+              className="collaboration-workspace-identity"
+              data-testid="collaboration-project-parent-workspace-context"
+            >
+              <span
+                className="collaboration-workspace-folder"
+                aria-hidden="true"
+              >
+                <FolderOpen />
+              </span>
+              <span
+                className="collaboration-workspace-title-block"
+                data-testid={`collaboration-workspace-${candidate.id}`}
+              >
+                <span className="collaboration-workspace-title">
+                  {candidate.name}
+                </span>
+              </span>
+            </div>
+          )}
+          {canManageWorkspace ? (
+            <div className="collaboration-workspace-actions">
+              <ActionMenu
+                ariaLabel={messages.settings}
+                icon={Ellipsis}
+                items={[
+                  {
+                    label: messages.addProject,
+                    icon: Plus,
+                    testId: "collaboration-workspace-nav-create-project",
+                    children: [
+                      {
+                        label: messages.blankProject,
+                        icon: SquarePen,
+                        testId:
+                          "collaboration-workspace-nav-create-blank-project",
+                        onSelect: () => onCreateProject(candidate.id, "blank"),
+                      },
+                      ...(candidate.location === "local" &&
+                      host.renderProjectImporter
+                        ? [
+                            {
+                              label: messages.addFolder,
+                              icon: FolderPlus,
+                              testId: "collaboration-workspace-nav-add-folder",
+                              onSelect: () =>
+                                onCreateProject(candidate.id, "folder"),
+                            },
+                            {
+                              label: messages.importExistingProject,
+                              icon: FolderOpen,
+                              testId:
+                                "collaboration-workspace-nav-import-existing-project",
+                              onSelect: () =>
+                                onCreateProject(candidate.id, "existing"),
+                            },
+                          ]
+                        : []),
+                    ],
+                  },
+                  {
+                    separator: true,
+                    label: "",
+                    testId: "collaboration-workspace-nav-project-separator",
+                  },
+                  {
+                    label: messages.settings,
+                    icon: Settings,
+                    testId: "collaboration-workspace-nav-settings",
+                    onSelect: () => {
+                      host.navigate({
+                        platformView: "spaces",
+                        workspaceId: candidate.id,
+                        workspaceView: "settings",
+                        projectId: null,
+                        projectView: "board",
+                        issueId: null,
+                      });
+                    },
+                  },
+                ]}
+                placement="bottom-end"
+                showTriggerTooltip={false}
+                testId={
+                  host.location.workspaceId === candidate.id
+                    ? "collaboration-workspace-actions"
+                    : `collaboration-workspace-actions-${candidate.id}`
+                }
+                triggerClassName="collaboration-workspace-action-trigger"
+              />
+            </div>
+          ) : null}
+          {candidateProjects.length > 0 ? (
+            <button
+              type="button"
+              className="collaboration-workspace-toggle"
+              aria-expanded={expanded}
+              aria-label={
+                expanded ? messages.collapseWorkspace : messages.expandWorkspace
+              }
+              data-testid={`collaboration-workspace-toggle-${candidate.id}`}
+              onClick={() => toggleWorkspace(candidate.id)}
+            >
+              <ChevronRight aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        {expanded ? (
+          <nav
+            className="collaboration-workspace-project-list"
+            aria-label={`${candidate.name} · ${messages.projects}`}
+          >
+            {candidateProjects.map((project) => (
+              <ProjectNavigationRow
+                key={project.id}
+                project={project}
+                host={host}
+                messages={messages}
+                onNewConversation={onNewConversation}
+                onArchiveProject={onArchiveProject}
+              />
+            ))}
+          </nav>
+        ) : null}
+      </section>
+    );
   };
   return (
     <aside
@@ -337,111 +526,19 @@ export function CollaborationPlatformNavigation({
           </nav>
         </>
       ) : null}
-      {projectFirst
-        ? (["local", "cloud"] as const).map((location) => (
-            <section
-              key={location}
-              data-testid={`collaboration-project-group-${location}`}
-            >
-              <div className="collaboration-workspace-section-heading">
-                <span className="collaboration-workspace-section-title">
-                  {location === "local"
-                    ? messages.localProjects
-                    : messages.remoteProjects}
-                </span>
-                <div className="collaboration-workspace-section-actions">
-                  <button
-                    type="button"
-                    className="collaboration-workspace-section-create"
-                    aria-label={
-                      location === "local"
-                        ? messages.createLocalProject
-                        : messages.createRemoteProject
-                    }
-                    title={
-                      location === "local"
-                        ? messages.createLocalProject
-                        : messages.createRemoteProject
-                    }
-                    data-testid={`collaboration-project-create-${location}`}
-                    onClick={() => onCreateStandaloneProject(location)}
-                    disabled={
-                      location === "local" &&
-                      !workspaces.some(
-                        (workspace) => workspace.location === "local",
-                      )
-                    }
-                  >
-                    <Plus aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-              <nav
-                className="collaboration-workspace-project-list"
-                aria-label={
-                  location === "local"
-                    ? messages.localProjects
-                    : messages.remoteProjects
-                }
-              >
-                {projects
-                  .filter(
-                    (project) =>
-                      (project.project_store === "local"
-                        ? "local"
-                        : "cloud") === location,
-                  )
-                  .map((project) => (
-                    <ProjectNavigationRow
-                      key={project.id}
-                      project={project}
-                      host={host}
-                      messages={messages}
-                      onNewConversation={onNewConversation}
-                      onArchiveProject={onArchiveProject}
-                    />
-                  ))}
-              </nav>
-            </section>
-          ))
-        : null}
-      <div className="collaboration-workspace-section-heading">
-        {fullSidebar && !projectFirst ? (
+      {!projectFirst ? (
+        <div className="collaboration-workspace-section-heading">
           <span
             className="collaboration-workspace-section-title"
             data-testid="collaboration-workspaces-section-title"
           >
             {messages.collaborationSpaces}
           </span>
-        ) : (
-          <button
-            type="button"
-            className="collaboration-workspace-section-toggle"
-            aria-expanded={workspacesExpanded}
-            data-testid="collaboration-workspaces-section-toggle"
-            onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
-          >
-            <span>{messages.collaborationSpaces}</span>
-            <ChevronRight aria-hidden="true" />
-          </button>
-        )}
-        {canCreateWorkspace ? (
           <div className="collaboration-workspace-section-actions">
-            <button
-              type="button"
-              className="collaboration-workspace-section-create"
-              aria-label={messages.createWorkspace}
-              title={messages.createWorkspace}
-              data-testid="collaboration-workspace-create"
-              onClick={onCreateWorkspace}
-            >
-              <span data-testid="collaboration-workspace-sidebar-create">
-                <FolderPlus aria-hidden="true" />
-              </span>
-            </button>
+            {createWorkspaceButton}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {navigationIncomplete ? (
         <div
           className="collaboration-navigation-error"
@@ -467,183 +564,103 @@ export function CollaborationPlatformNavigation({
           </button>
         </div>
       ) : null}
-      {(!projectFirst && fullSidebar) || workspacesExpanded ? (
-        <div className="collaboration-workspace-tree">
-          {navigationWorkspaces.map(({ workspace: candidate, canOpen }) => {
-            const expanded = expandedWorkspaceIds.has(candidate.id);
-            const candidateProjects =
-              projectsByWorkspace.get(candidate.id) ?? [];
-            const workspaceActive =
-              host.location.workspaceId === candidate.id &&
-              !host.location.projectId;
-            const canManageWorkspace =
-              canOpen &&
-              "access_role" in candidate &&
-              (candidate.access_role === "Owner" ||
-                candidate.access_role === "Maintainer");
-            return (
-              <section
-                className="collaboration-workspace-group"
-                data-testid={`collaboration-workspace-tree-${candidate.id}`}
-                key={candidate.id}
+      {projectFirst
+        ? (["local", "cloud"] as const).map((location) => (
+            <section
+              key={location}
+              className={`collaboration-project-group-${location}`}
+              data-testid={`collaboration-project-group-${location}`}
+            >
+              <div
+                data-testid={
+                  location === "local" && localWorkspace
+                    ? `collaboration-workspace-tree-${localWorkspace.id}`
+                    : undefined
+                }
               >
-                <div
-                  className={`collaboration-workspace-row${
-                    workspaceActive ? " active" : ""
-                  }${canManageWorkspace ? " has-actions" : ""}`}
-                >
-                  {canOpen ? (
+                <div className="collaboration-workspace-section-heading">
+                  {location === "local" && localWorkspace ? (
                     <button
                       type="button"
-                      className="collaboration-workspace-identity"
+                      className="collaboration-workspace-identity collaboration-local-projects-heading"
                       data-testid={
-                        host.location.workspaceId === candidate.id
+                        host.location.workspaceId === localWorkspace.id
                           ? "collaboration-workspace-nav-projects"
-                          : `collaboration-workspace-home-${candidate.id}`
+                          : `collaboration-workspace-home-${localWorkspace.id}`
                       }
-                      aria-current={workspaceActive ? "page" : undefined}
+                      aria-current={
+                        host.location.workspaceId === localWorkspace.id &&
+                        !host.location.projectId
+                          ? "page"
+                          : undefined
+                      }
                       onClick={() =>
-                        openWorkspaceHome(candidate.id, candidate.location)
+                        openWorkspaceHome(localWorkspace.id, "local")
                       }
                     >
                       <span
-                        className="collaboration-workspace-folder"
-                        aria-hidden="true"
+                        data-testid={`collaboration-workspace-${localWorkspace.id}`}
                       >
-                        <FolderOpen />
-                      </span>
-                      <span
-                        className="collaboration-workspace-title-block"
-                        data-testid={`collaboration-workspace-${candidate.id}`}
-                      >
-                        <span className="collaboration-workspace-title">
-                          {candidate.name}
-                        </span>
+                        {messages.localProjects}
                       </span>
                     </button>
                   ) : (
-                    <div
-                      className="collaboration-workspace-identity"
-                      data-testid="collaboration-project-parent-workspace-context"
-                    >
-                      <span
-                        className="collaboration-workspace-folder"
-                        aria-hidden="true"
-                      >
-                        <FolderOpen />
-                      </span>
-                      <span
-                        className="collaboration-workspace-title-block"
-                        data-testid={`collaboration-workspace-${candidate.id}`}
-                      >
-                        <span className="collaboration-workspace-title">
-                          {candidate.name}
-                        </span>
-                      </span>
-                    </div>
+                    <span className="collaboration-workspace-section-title">
+                      {location === "local"
+                        ? messages.localProjects
+                        : messages.remoteProjects}
+                    </span>
                   )}
-                  {canManageWorkspace ? (
-                    <div className="collaboration-workspace-actions">
-                      <ActionMenu
-                        ariaLabel={messages.settings}
-                        icon={Ellipsis}
-                        items={[
-                          {
-                            label: messages.addProject,
-                            icon: Plus,
-                            testId:
-                              "collaboration-workspace-nav-create-project",
-                            children: [
-                              {
-                                label: messages.blankProject,
-                                icon: SquarePen,
-                                testId:
-                                  "collaboration-workspace-nav-create-blank-project",
-                                onSelect: () =>
-                                  onCreateProject(candidate.id, "blank"),
-                              },
-                              ...(candidate.location === "local" &&
-                              host.renderProjectImporter
-                                ? [
-                                    {
-                                      label: messages.addFolder,
-                                      icon: FolderPlus,
-                                      testId:
-                                        "collaboration-workspace-nav-add-folder",
-                                      onSelect: () =>
-                                        onCreateProject(candidate.id, "folder"),
-                                    },
-                                    {
-                                      label: messages.importExistingProject,
-                                      icon: FolderOpen,
-                                      testId:
-                                        "collaboration-workspace-nav-import-existing-project",
-                                      onSelect: () =>
-                                        onCreateProject(
-                                          candidate.id,
-                                          "existing",
-                                        ),
-                                    },
-                                  ]
-                                : []),
-                            ],
-                          },
-                          {
-                            separator: true,
-                            label: "",
-                            testId:
-                              "collaboration-workspace-nav-project-separator",
-                          },
-                          {
-                            label: messages.settings,
-                            icon: Settings,
-                            testId: "collaboration-workspace-nav-settings",
-                            onSelect: () => {
-                              host.navigate({
-                                platformView: "spaces",
-                                workspaceId: candidate.id,
-                                workspaceView: "settings",
-                                projectId: null,
-                                projectView: "board",
-                                issueId: null,
-                              });
-                            },
-                          },
-                        ]}
-                        placement="bottom-end"
-                        showTriggerTooltip={false}
-                        testId={
-                          host.location.workspaceId === candidate.id
-                            ? "collaboration-workspace-actions"
-                            : `collaboration-workspace-actions-${candidate.id}`
-                        }
-                        triggerClassName="collaboration-workspace-action-trigger"
-                      />
-                    </div>
-                  ) : null}
-                  {!projectFirst ? (
+                  <div className="collaboration-workspace-section-actions">
+                    {location === "cloud" ? createWorkspaceButton : null}
                     <button
                       type="button"
-                      className="collaboration-workspace-toggle"
-                      aria-expanded={expanded}
+                      className="collaboration-workspace-section-create"
                       aria-label={
-                        expanded
-                          ? messages.collapseWorkspace
-                          : messages.expandWorkspace
+                        location === "local"
+                          ? messages.createLocalProject
+                          : messages.createRemoteProject
                       }
-                      data-testid={`collaboration-workspace-toggle-${candidate.id}`}
-                      onClick={() => toggleWorkspace(candidate.id)}
+                      title={
+                        location === "local"
+                          ? messages.createLocalProject
+                          : messages.createRemoteProject
+                      }
+                      data-testid={`collaboration-project-create-${location}`}
+                      onClick={() => onCreateStandaloneProject(location)}
+                      disabled={
+                        location === "local" &&
+                        !workspaces.some(
+                          (workspace) => workspace.location === "local",
+                        )
+                      }
                     >
-                      <ChevronRight aria-hidden="true" />
+                      <Plus aria-hidden="true" />
                     </button>
-                  ) : null}
+                  </div>
                 </div>
-                {expanded && !projectFirst ? (
-                  <nav
-                    className="collaboration-workspace-project-list"
-                    aria-label={`${candidate.name} · ${messages.projects}`}
-                  >
-                    {candidateProjects.map((project) => (
+                <nav
+                  className="collaboration-workspace-project-list"
+                  aria-label={
+                    location === "local"
+                      ? messages.localProjects
+                      : messages.remoteProjects
+                  }
+                >
+                  {projects
+                    .filter(
+                      (project) =>
+                        (location === "local" ||
+                          !project.workspace_id ||
+                          !navigationWorkspaces.some(
+                            ({ workspace }) =>
+                              workspace.id === project.workspace_id,
+                          )) &&
+                        (project.project_store === "local"
+                          ? "local"
+                          : "cloud") === location,
+                    )
+                    .map((project) => (
                       <ProjectNavigationRow
                         key={project.id}
                         project={project}
@@ -653,11 +670,22 @@ export function CollaborationPlatformNavigation({
                         onArchiveProject={onArchiveProject}
                       />
                     ))}
-                  </nav>
-                ) : null}
-              </section>
-            );
-          })}
+                </nav>
+                <div className="collaboration-workspace-tree">
+                  {navigationWorkspaces
+                    .filter(
+                      ({ workspace }) =>
+                        location === "cloud" && workspace.location === "cloud",
+                    )
+                    .map(renderWorkspaceGroup)}
+                </div>
+              </div>
+            </section>
+          ))
+        : null}
+      {!projectFirst ? (
+        <div className="collaboration-workspace-tree">
+          {navigationWorkspaces.map(renderWorkspaceGroup)}
         </div>
       ) : null}
       {footer ? (

@@ -40,6 +40,7 @@ class CollaborationWorkspace:
     version: int
     created_at: datetime
     updated_at: datetime
+    is_system_default: bool = False
 
 
 def workspace_from_kind(kind: Kind) -> CollaborationWorkspace:
@@ -66,6 +67,7 @@ def workspace_from_kind(kind: Kind) -> CollaborationWorkspace:
         version=int(status_value.get("version") or 1),
         created_at=kind.created_at,
         updated_at=kind.updated_at,
+        is_system_default=bool(spec.get("isSystemDefault")),
     )
 
 
@@ -76,6 +78,7 @@ def workspace_kind_payload(
     namespace: str,
     public_id: str,
     is_default: bool,
+    is_system_default: bool = False,
     execution_environment: dict[str, Any] | None = None,
     version: int = 1,
     created_by_user_id: int | None = None,
@@ -92,6 +95,7 @@ def workspace_kind_payload(
         "spec": {
             "description": description,
             "isDefault": is_default,
+            **({"isSystemDefault": True} if is_system_default else {}),
             "executionEnvironment": execution_environment or {},
         },
         "status": {

@@ -1003,24 +1003,28 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.name,
     );
     expect(
-      byTestId("collaboration-workspaces-section-toggle").getAttribute(
-        "aria-expanded",
+      container.querySelector(
+        '[data-testid="collaboration-workspaces-section-toggle"]',
       ),
-    ).toBe("false");
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-workspaces-section-title"]',
+      ),
+    ).toBeNull();
     expect(
       container.querySelector(
         '[data-testid="collaboration-project-parent-workspace-context"]',
       ),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(
       container.querySelector(
         '[data-testid="collaboration-project-menu-project-1"]',
       ),
     ).toBeNull();
-    await click(byTestId("collaboration-workspaces-section-toggle"));
     expect(
       container.querySelector(".collaboration-workspace-toggle"),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(
       byTestId("collaboration-project-parent-workspace-context").textContent,
     ).toContain(workspace.name);
@@ -1066,6 +1070,158 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.workspaces!.create).not.toHaveBeenCalled();
   });
 
+  it.each([groupWorkspace.id, ""])(
+    "creates a project with workspace selection '%s' while preserving the entered name",
+    async (workspaceId) => {
+      const { api } = createApi({
+        initialWorkspaces: [workspace, groupWorkspace, localWorkspace],
+        initialProjects: [],
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          capabilities={{
+            automation: false,
+            dingtalkAitable: false,
+            projectNavigation: "projects",
+          }}
+        />,
+      );
+      await click(byTestId("collaboration-project-create-cloud"));
+      const name = portalByTestId(
+        "collaboration-project-name-input",
+      ) as HTMLInputElement;
+      await change(name, "Grouped remote project");
+      const select = portalByTestId(
+        "collaboration-project-workspace-select",
+      ) as HTMLSelectElement;
+      expect(Array.from(select.options, (option) => option.value)).toEqual([
+        "",
+        workspace.id,
+        groupWorkspace.id,
+      ]);
+      await change(select, workspace.id);
+      await change(select, groupWorkspace.id);
+      await change(select, workspaceId);
+      expect(name.value).toBe("Grouped remote project");
+      await click(portalByTestId("collaboration-project-create-confirm"));
+      expect(api.projects.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Grouped remote project",
+          workspaceId: workspaceId || undefined,
+        }),
+      );
+    },
+  );
+
+  it("opens and collapses projects under their space without duplicating projects", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectNavigation: "projects",
+        }}
+      />,
+    );
+    const groupedProjectId = `collaboration-workspace-project-${project.id}`;
+    expect(byTestId(groupedProjectId).textContent).toContain(project.name);
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`),
+    ).toBeTruthy();
+    expect(
+      container.querySelectorAll(`[data-testid="${groupedProjectId}"]`),
+    ).toHaveLength(1);
+    expect(
+      byTestId("collaboration-project-group-cloud").contains(
+        byTestId(groupedProjectId),
+      ),
+    ).toBe(true);
+    await click(byTestId(`collaboration-workspace-toggle-${workspace.id}`));
+    expect(
+      container.querySelector(`[data-testid="${groupedProjectId}"]`),
+    ).toBeNull();
+    await click(byTestId(`collaboration-workspace-toggle-${workspace.id}`));
+    await click(byTestId(groupedProjectId));
+    expect(JSON.parse(byTestId("test-location").textContent!)).toMatchObject({
+      workspaceId: workspace.id,
+      projectId: project.id,
+    });
+  });
+
+  it("keeps one project row per project when the cloud connection recovers", async () => {
+    const localProject = {
+      ...project,
+      id: "local-project",
+      project_store: "local" as const,
+      workspace_id: localWorkspace.id,
+    };
+    const ungroupedProject = {
+      ...project,
+      id: "ungrouped-project",
+      workspace_id: null,
+    };
+    const { api: localApi } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [localProject],
+    });
+    const { api: cloudApi } = createApi({
+      initialWorkspaces: [workspace],
+      initialProjects: [project, ungroupedProject],
+    });
+    vi.mocked(cloudApi.projects.list).mockRejectedValue(
+      new Error("cloud offline"),
+    );
+    await render(
+      <PlatformHarness
+        api={localApi}
+        navigationApis={[localApi, cloudApi]}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectNavigation: "projects",
+        }}
+      />,
+    );
+    expect(
+      byTestId(`collaboration-workspace-project-${localProject.id}`),
+    ).toBeTruthy();
+    vi.mocked(cloudApi.projects.list).mockResolvedValue([
+      project,
+      ungroupedProject,
+    ]);
+    await click(byTestId("collaboration-navigation-retry"));
+    for (const item of [localProject, project, ungroupedProject]) {
+      expect(
+        container.querySelectorAll(
+          `[data-testid="collaboration-workspace-project-${item.id}"]`,
+        ),
+      ).toHaveLength(1);
+    }
+    expect(
+      byTestId(`collaboration-workspace-tree-${workspace.id}`).contains(
+        byTestId(`collaboration-workspace-project-${project.id}`),
+      ),
+    ).toBe(true);
+    expect(
+      byTestId("collaboration-project-group-cloud").contains(
+        byTestId(`collaboration-workspace-project-${ungroupedProject.id}`),
+      ),
+    ).toBe(true);
+    expect(
+      byTestId(`collaboration-workspace-tree-${workspace.id}`).contains(
+        byTestId(`collaboration-workspace-project-${ungroupedProject.id}`),
+      ),
+    ).toBe(false);
+    expect(
+      byTestId("collaboration-project-group-local").contains(
+        byTestId(`collaboration-workspace-project-${localProject.id}`),
+      ),
+    ).toBe(true);
+  });
+
   it("creates a local project in the existing local storage scope", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
@@ -1082,6 +1238,19 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
     await click(byTestId("collaboration-project-create-local"));
+    expect(
+      byTestId("collaboration-project-group-local").textContent,
+    ).not.toContain("本地空间");
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-workspace-toggle-wework-local-workspace"]',
+      ),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        '[data-testid="collaboration-project-workspace-select"]',
+      ),
+    ).toBeNull();
     await change(
       portalByTestId("collaboration-project-name-input") as HTMLInputElement,
       "Direct local project",
@@ -1094,6 +1263,48 @@ describe("CollaborationPlatformApp real component flow", () => {
       }),
     );
     expect(api.workspaces!.create).not.toHaveBeenCalled();
+  });
+
+  it("selects the existing personal default once without exposing an unassigned option", async () => {
+    const defaultSpace = {
+      ...workspace,
+      id: "system-default",
+      name: "Renamed default",
+      is_system_default: true,
+    };
+    const { api } = createApi({
+      initialWorkspaces: [defaultSpace, groupWorkspace],
+      initialProjects: [],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          projectNavigation: "projects",
+        }}
+      />,
+    );
+    await click(byTestId("collaboration-project-create-cloud"));
+    const select = portalByTestId(
+      "collaboration-project-workspace-select",
+    ) as HTMLSelectElement;
+    expect(Array.from(select.options, (option) => option.value)).toEqual([
+      defaultSpace.id,
+      groupWorkspace.id,
+    ]);
+    expect(select.value).toBe(defaultSpace.id);
+    expect(select.options[0].text).toBe("默认空间");
+    expect(select.textContent).not.toContain("尚未加入空间");
+    await change(
+      portalByTestId("collaboration-project-name-input") as HTMLInputElement,
+      "Default project",
+    );
+    await click(portalByTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: defaultSpace.id }),
+    );
   });
 
   it("requires cloud login before creating a remote project", async () => {
