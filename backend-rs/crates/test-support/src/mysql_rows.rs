@@ -144,6 +144,7 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
 
 pub struct MysqlRows {
     pub mysql: brz_mysql::MysqlService,
+    pub url: String,
     server: tokio::task::JoinHandle<()>,
     queries: Arc<Mutex<Vec<String>>>,
 }
@@ -181,6 +182,7 @@ impl MysqlRows {
         });
         Self {
             mysql: brz_mysql::MysqlService::connect_lazy(&url).unwrap(),
+            url,
             server,
             queries,
         }

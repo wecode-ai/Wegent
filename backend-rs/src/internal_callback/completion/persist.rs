@@ -4,7 +4,7 @@
 
 //! `persist_completed_result` and the task-status update it triggers
 //! (`app/services/chat/storage/db.py`, `app/services/chat/trigger/lifecycle.py`).
-use brz_mysql::{FromMysqlCol, Json, Mysql, MysqlRow, MysqlTransaction};
+use brz_mysql::{FromMysqlCol, Json, Mysql, MysqlError, MysqlResult, MysqlRow, MysqlTransaction};
 use brz_redis::Redis;
 use chrono::NaiveDateTime;
 use serde_json::{Map, Value};
@@ -313,9 +313,9 @@ fn subtask_metric_event(
 ///
 /// Exposed so the create path's focused test can pin the read and its position
 /// without a database.
-pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] {
+fn running_transition_statements(tables: sql::Tables) -> [String; 3] {
     [
-        sql::subtask_by_id(tables),
+        format!("{} FOR UPDATE", sql::subtask_by_id(tables)),
         sql::contexts_by_subtask(),
         sql::update_subtask_running(tables),
     ]
@@ -330,42 +330,59 @@ pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] 
 pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     subtask_id: i64,
-) {
-    let [read_subtask, read_contexts, update_running] = running_transition_statements(ctx.tables);
-    let mysql = ctx
-        .mysql
-        .route(crate::task_routing::ByTaskId(subtask_id as u64));
-    let row: Option<MysqlRow> = mysql
-        .fetch_optional(read_subtask, (subtask_id,))
-        .await
-        .ok()
-        .flatten();
-    // `_update_subtask_sync`'s `if not subtask: return None`: a vanished row
-    // ends the transition without an error, a write, or after-commit metrics.
-    let Some(row) = row else {
-        return;
+) -> MysqlResult<bool> {
+    let Some((task_id, row)) = commit_subtask_running(ctx.mysql, ctx.tables, subtask_id).await?
+    else {
+        return Ok(false);
     };
-    // `SubtaskStore.get_by_id` eager-loads `Subtask.contexts`.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(read_contexts, (subtask_id,))
-        .await
-        .unwrap_or_default();
-    let task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
-    let now = local_datetime();
-    // A single statement runs on the pooled connection's autocommit; no
-    // explicit transaction or COMMIT is needed.
-    if let Err(failure) = mysql
-        .execute(update_running, ("RUNNING", now.as_str(), subtask_id))
-        .await
-    {
-        tracing::warn!(%failure, "subtask running update failed");
-        return;
+    if subtask_column::<String>(&row, "status").as_deref() == Some("PENDING") {
+        publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
     }
-    // `_before_flush` tracks the status change (`record_total=False`,
-    // `sync_failure=True`) and `_after_commit` publishes it. A RUNNING subtask
-    // carries no error message, so the failure reason is empty.
-    publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
     update_task_status(ctx, task_id, subtask_id).await;
+    Ok(true)
+}
+
+/// The turn may have just been created. Lock and update its row on the writer
+/// so dispatch can rely on the committed status regardless of replica lag.
+pub(crate) async fn commit_subtask_running<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    subtask_id: i64,
+) -> MysqlResult<Option<(i64, MysqlRow)>> {
+    let [read_subtask, read_contexts, update_running] = running_transition_statements(tables);
+    mysql
+        .route(crate::task_routing::ByTaskId(subtask_id as u64))
+        .with_transaction(async |tx| {
+            let Some(row) = tx
+                .fetch_optional::<_, _, MysqlRow>(read_subtask, (subtask_id,))
+                .await?
+            else {
+                return Ok(None);
+            };
+            if subtask_column::<String>(&row, "role").as_deref() != Some("ASSISTANT") {
+                return Ok(None);
+            }
+            let Some(task_id) = subtask_column::<i64>(&row, "task_id") else {
+                return Err(MysqlError::ColumnNotFound("task_id".into()));
+            };
+            match subtask_column::<String>(&row, "status").as_deref() {
+                Some("RUNNING") => {}
+                Some("PENDING") => {
+                    // Preserve the eager context read in the dispatch transaction.
+                    let _: Vec<MysqlRow> = tx.fetch_all(read_contexts, (subtask_id,)).await?;
+                    let now = local_datetime();
+                    let updated = tx
+                        .execute(update_running, ("RUNNING", now.as_str(), subtask_id))
+                        .await?;
+                    if updated.rows_affected != 1 {
+                        return Ok(None);
+                    }
+                }
+                _ => return Ok(None),
+            }
+            Ok(Some((task_id, row)))
+        })
+        .await
 }
 
 /// `_update_task_status_sync`: re-derive the task's status from its assistant

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Focused test for the RUNNING transition's read-before-update.
+//! Tests for the writer transaction that prepares a subtask for dispatch.
 //!
 //! `ExecutionDispatcher._update_subtask_to_running` ->
 //! `db_handler.update_subtask_status` -> `_update_subtask_sync` reads the
@@ -14,12 +14,16 @@
 //! ORDER BY id ASC`, then the `status='RUNNING'` update.
 use std::time::Duration;
 
-use brz_mysql::{MysqlResult, MysqlRouteKey, MysqlRouteOutput, MysqlRouting};
+use brz_mysql::{
+    FromMysqlRow, MysqlResult, MysqlRouteKey, MysqlRouteOutput, MysqlRouting, MysqlService,
+    MysqlServiceOptions,
+};
 use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, Redis, RedisResult, RedisValues};
 
-use super::{mark_subtask_running, running_transition_statements};
+use super::{commit_subtask_running, mark_subtask_running, running_transition_statements};
 use crate::internal_callback::completion::{Completion, Tables};
 use crate::sql_test_support::mysql_pool_server;
+use crate::sql_test_support::mysql_rows::{MysqlRows, Value as MysqlValue};
 
 /// Deployment shard policy for the test: every `{{subtasks}}` template renders
 /// the recorded physical table. The production policy lives in the internal
@@ -129,7 +133,7 @@ fn the_running_transition_statements_keep_the_recorded_order_and_predicates() {
         read_subtask
     );
     assert!(
-        read_subtask.contains("WHERE {{subtasks}}.id = ? LIMIT 1"),
+        read_subtask.contains("WHERE {{subtasks}}.id = ? LIMIT 1 FOR UPDATE"),
         "{}",
         read_subtask
     );
@@ -183,7 +187,11 @@ async fn the_running_transition_reads_the_subtask_from_its_shard_first() {
         // The fake server answers prepared statements with a SQL error, so the
         // read fails and the transition stops before the contexts read and the
         // status write.
-        mark_subtask_running(&ctx, 801_406_538_674_542).await;
+        assert!(
+            mark_subtask_running(&ctx, 801_406_538_674_542)
+                .await
+                .is_err()
+        );
 
         stop.send(()).unwrap();
         let queries = server.await.unwrap();
@@ -199,10 +207,103 @@ async fn the_running_transition_reads_the_subtask_from_its_shard_first() {
             "the read keeps the ORM's labeled projection: {read}"
         );
         assert!(
-            read.contains("WHERE `subtasks_0711`.id = ?") && read.trim_end().ends_with("LIMIT 1"),
-            "the read keeps the by-id predicate and LIMIT 1: {read}"
+            read.contains("WHERE `subtasks_0711`.id = ?")
+                && read.trim_end().ends_with("LIMIT 1 FOR UPDATE"),
+            "the read locks the selected row: {read}"
         );
     })
     .await
     .expect("the RUNNING read should be prepared within the test timeout");
+}
+
+#[tokio::test]
+#[ignore = "requires WEGENT_TEST_MYSQL_ADDRESS; uses an isolated MySQL schema and a lagging reader fixture"]
+async fn running_transition_commits_before_dispatch_when_replica_has_no_subtask()
+-> anyhow::Result<()> {
+    crate::migrations::mysql_tests::isolated(verify_running_transition).await
+}
+
+async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Schema {
+        name: String,
+    }
+    #[derive(FromMysqlRow)]
+    struct Status {
+        status: String,
+    }
+
+    crate::migrations::upgrade(writer).await?;
+    writer
+        .execute(
+            "INSERT INTO subtasks (id, user_id, task_id, team_id, title, bot_ids, `role`, \
+                executor_deleted_at, message_id, status, progress, created_at, updated_at, \
+                completed_at, sender_type, sender_user_id, reply_to_subtask_id) \
+             VALUES (42, 7, 12, 3, '', '[]', 'ASSISTANT', 0, 42, 'PENDING', 0, NOW(), NOW(), NOW(), 'TEAM', 0, 0), \
+                    (43, 7, 12, 3, '', '[]', 'ASSISTANT', 0, 43, 'CANCELLED', 0, NOW(), NOW(), NOW(), 'TEAM', 0, 0)",
+            (),
+        )
+        .await?;
+    let schema: Schema = writer.fetch_one("SELECT DATABASE() AS name", ()).await?;
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
+    let replica = MysqlRows::start_results(|_| {
+        (vec![("status", MysqlValue::Text("PENDING".into()))], vec![])
+    })
+    .await;
+    let mysql = MysqlService::connect_lazy_read_write_named_with_options(
+        &format!("mysql://root@{address}/{}?ssl-mode=disabled", schema.name),
+        &replica.url,
+        "running-transition-lag",
+        MysqlServiceOptions::default().with_query_timeout(Duration::from_secs(5)),
+    )?;
+    let status_query = "SELECT status FROM subtasks WHERE id = ?";
+    assert!(
+        mysql
+            .fetch_optional::<_, _, Status>(status_query, (42,))
+            .await?
+            .is_none()
+    );
+    let tables = Tables {
+        tasks: "tasks",
+        subtasks: "subtasks",
+    };
+
+    let updated = commit_subtask_running(&mysql, tables, 42).await?;
+    assert_eq!(updated.map(|(task_id, _)| task_id), Some(12));
+    // A different writer connection can see the committed status as soon as
+    // the dispatch prerequisite returns. The reader still has no row.
+    let current: Status = writer.fetch_one(status_query, (42,)).await?;
+    assert_eq!(current.status, "RUNNING");
+    assert!(
+        mysql
+            .fetch_optional::<_, _, Status>(status_query, (42,))
+            .await?
+            .is_none()
+    );
+    assert_eq!(replica.queries(), [status_query, status_query]);
+
+    assert!(commit_subtask_running(&mysql, tables, 43).await?.is_none());
+    assert!(commit_subtask_running(&mysql, tables, 44).await?.is_none());
+    let cancelled: Status = writer.fetch_one(status_query, (43,)).await?;
+    assert_eq!(cancelled.status, "CANCELLED");
+
+    writer
+        .execute("UPDATE subtasks SET status = 'PENDING' WHERE id = 42", ())
+        .await?;
+    writer
+        .execute(
+            "CREATE TRIGGER reject_running_transition BEFORE UPDATE ON subtasks FOR EACH ROW \
+         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'rejected by test fixture'",
+            (),
+        )
+        .await?;
+    let failure = commit_subtask_running(&mysql, tables, 42)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.database_sql_state(), Some("45000"));
+    let pending: Status = writer.fetch_one(status_query, (42,)).await?;
+    assert_eq!(pending.status, "PENDING");
+    assert_eq!(replica.queries(), [status_query, status_query]);
+    mysql.close().await;
+    Ok(())
 }

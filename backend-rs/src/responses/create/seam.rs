@@ -245,7 +245,10 @@ pub async fn dispatch_create(
         // `_update_subtask_to_running` (`dispatcher.py:166`): every dispatch
         // mode flips the assistant subtask to RUNNING before it is dispatched,
         // and the committed change re-derives the Task CRD's status.
-        mark_subtask_running(state, request.subtask_id).await;
+        if let Err(error) = mark_subtask_running(state, request.subtask_id).await {
+            persist_dispatch_start_failure(state, &request, &error).await;
+            return Err(error);
+        }
     }
     if matches!(branch, CreateBranch::CallbackStream | CreateBranch::Queued) {
         // `openapi_responses.py:1323-1379`: an executor target still streams
@@ -488,23 +491,57 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
     .await;
 }
 
-/// `ExecutionDispatcher._update_subtask_to_running`
-/// (`app/services/execution/dispatcher.py:335-355`): mark the dispatched
-/// assistant subtask RUNNING and re-derive the Task CRD. The source's
-/// `update_subtask_status` commits before the task status update, and its
-/// after-commit hook publishes the run metrics; a store failure only logs.
-pub(crate) async fn mark_subtask_running(state: &AppState, subtask_id: i64) {
-    let Some(redis) = state.redis.as_ref() else {
-        return;
+const SUBTASK_NOT_DISPATCHABLE: &str = "Assistant subtask is no longer dispatchable";
+
+pub(crate) fn is_subtask_not_dispatchable(error: &FastApiError) -> bool {
+    error.status() == StatusCode::CONFLICT
+        && error.detail_message() == Some(SUBTASK_NOT_DISPATCHABLE)
+}
+
+async fn persist_dispatch_start_failure(
+    state: &AppState,
+    request: &ExecutionRequest,
+    error: &FastApiError,
+) {
+    if error.status().is_server_error() {
+        persist_build_failure(
+            state,
+            request.task_id,
+            request.subtask_id,
+            build_failure_message(error),
+        )
+        .await;
+    }
+}
+
+/// Require the assistant subtask to be RUNNING on the writer before dispatch.
+async fn mark_subtask_running(state: &AppState, subtask_id: i64) -> Result<(), FastApiError> {
+    let tables = crate::internal_callback::tables(state);
+    let running = if let Some(redis) = state.redis.as_ref() {
+        let ctx = completion::Completion {
+            app: Some(state),
+            mysql: &state.mysql,
+            redis,
+            tables,
+            executor_manager: &state.executor_manager,
+        };
+        completion::mark_subtask_running(&ctx, subtask_id).await
+    } else {
+        completion::commit_subtask_running(&state.mysql, tables, subtask_id)
+            .await
+            .map(|row| row.is_some())
     };
-    let ctx = completion::Completion {
-        app: Some(state),
-        mysql: &state.mysql,
-        redis,
-        tables: crate::internal_callback::tables(state),
-        executor_manager: &state.executor_manager,
-    };
-    completion::mark_subtask_running(&ctx, subtask_id).await;
+    if running.map_err(|error| {
+        tracing::error!(%error, subtask_id, "subtask running transition failed");
+        FastApiError::internal()
+    })? {
+        Ok(())
+    } else {
+        Err(FastApiError::detail(
+            StatusCode::CONFLICT,
+            SUBTASK_NOT_DISPATCHABLE,
+        ))
+    }
 }
 
 /// `ExecutionDispatcher._resolve_device_route_id` (`dispatcher.py:391-415`):
@@ -696,9 +733,12 @@ pub(super) async fn dispatch_executor_after_subscribe(
     request: &ExecutionRequest,
     target_url: Option<&str>,
     request_id: &str,
-) {
+) -> Result<(), FastApiError> {
     super::recover_executor::recover_executor_if_needed(state, request).await;
-    mark_subtask_running(state, request.subtask_id).await;
+    if let Err(error) = mark_subtask_running(state, request.subtask_id).await {
+        persist_dispatch_start_failure(state, request, &error).await;
+        return Err(error);
+    }
     if let Some(url) = target_url {
         if super::package_runtime::is_target(url) {
             enqueue_chat_shell_dispatch(state, Some(url), request.clone(), request_id);
@@ -708,6 +748,7 @@ pub(super) async fn dispatch_executor_after_subscribe(
             enqueue_executor_dispatch(state, url, request, None);
         }
     }
+    Ok(())
 }
 
 /// `_dispatch_http_callback`: admit the fire-and-forget executor-manager
@@ -842,7 +883,7 @@ pub(crate) async fn dispatch_chat_turn(
             == Some("video"),
         model_protocol: request.model_config.get("protocol").and_then(Value::as_str),
     });
-    mark_subtask_running(state, request.subtask_id).await;
+    mark_subtask_running(state, request.subtask_id).await?;
     if target.mode == routing::CommunicationMode::Websocket {
         let Some(route) = resolved_device.as_deref() else {
             tracing::error!(task_id = request.task_id, "device dispatch has no route");

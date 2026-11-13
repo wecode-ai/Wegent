@@ -437,7 +437,15 @@ impl Bridge {
                 Some(url),
                 &self.request_id,
             )
-            .await;
+            .await
+            .map_err(|error| {
+                BridgeFailure::generic(
+                    error
+                        .detail_message()
+                        .unwrap_or("Execution could not start")
+                        .to_owned(),
+                )
+            })?;
         }
         Ok(())
     }

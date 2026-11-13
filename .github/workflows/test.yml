@@ -273,6 +273,13 @@ jobs:
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
 
+      - name: Verify dispatch readiness with a lagging MySQL reader
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib running_transition_commits_before_dispatch_when_replica_has_no_subtask -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/running-transition-mysql.log
+
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
         env:
