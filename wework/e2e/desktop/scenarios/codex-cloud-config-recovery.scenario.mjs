@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { restartCodexWhenIdle } from '../modules/executor-restart-readiness.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
@@ -185,18 +184,11 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         })
       }
       const restoreOfficial = async name => {
-        // The completed task can still be releasing its native turn when the
-        // next auth mode is requested; wait for the idle-only restart to admit.
-        await restartCodexWhenIdle(
-          () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
-          RECOVERY_TIMEOUT_MS
-        )
         model.recoverBundle()
         // A completed task can still have a native composer prediction or read
         // in flight. Reuse the idle-only restart gate before changing auth modes.
         const idleRestart = await waitForValue(
-          async () =>
-            JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
           value => value.restarted === true,
           'The native Codex process did not become idle before restoring official auth',
           RECOVERY_TIMEOUT_MS
