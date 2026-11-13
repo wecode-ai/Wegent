@@ -224,11 +224,13 @@ classify_workbench_path() {
       return
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
-    wework/src/components/layout/DesktopSidebar.tsx)
+    wework/src/components/layout/DesktopSidebar.tsx | \
+      wework/src/components/layout/DesktopSidebarPrimitives.tsx)
       select_target "core:priority-filter"
       select_target "core:core-task-flow"
       select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
+      select_target "core:workspace-tabs"
       return
       ;;
 

@@ -18,6 +18,7 @@ import {
   assertFullscreenIssueComposerColumnAtWindowSize,
 } from './issue-composer-layout.mjs'
 import { verifyWorkspaceTabReturn } from './workspace-tab-return.mjs'
+import { assertRegionBlurred } from './image-edge-evidence.mjs'
 import {
   verifyNewTaskBoardAssociation,
   waitForViewedIssueRead,
@@ -988,6 +989,19 @@ async function verifyWorkspaceIssueCreation(control) {
   const createIssueFullscreen = `${createIssueDialog} [data-testid="cloud-todo-create-fullscreen"]`
   const createIssueContent = `${createIssueDialog} [data-testid="cloud-todo-create-content"]`
   const createIssueFooter = `${createIssueDialog} [data-testid="cloud-todo-create-footer"]`
+  const projectsCreateButton = '[data-testid="projects-create-button"]'
+  await control.command('scrollIntoView', projectsCreateButton)
+  await control.command('waitFor', projectsCreateButton, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const [projectsCreateButtonMetrics] = JSON.parse(
+    await control.command('getElementMetrics', projectsCreateButton)
+  )
+  const sharpSidebarScreenshot = await captureVerificationScreenshot(
+    control,
+    'workspace-issue-00-sidebar-sharp.png'
+  )
   await control.command('clickWhenEnabled', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
@@ -1029,6 +1043,21 @@ async function verifyWorkspaceIssueCreation(control) {
     value: issueDescription,
   })
   await captureVerificationScreenshot(control, 'workspace-issue-01-ready.png')
+  const blurredSidebarScreenshot = await captureVerificationScreenshot(
+    control,
+    'workspace-issue-01-sidebar-blurred.png'
+  )
+  const blurEvidence = await assertRegionBlurred({
+    beforePath: sharpSidebarScreenshot,
+    afterPath: blurredSidebarScreenshot,
+    rect: projectsCreateButtonMetrics,
+    label: 'Projects add icon behind the workspace Issue composer',
+  })
+  if (blurEvidence) {
+    console.log(
+      `[workspace-issue] project-space icon blur evidence ${JSON.stringify(blurEvidence)}`
+    )
+  }
   await control.command('click', `${createIssueDialog} [data-testid="cloud-todo-modal-close"]`)
   await control.command('waitFor', createIssuePanel, {
     visible: false,
