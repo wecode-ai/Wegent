@@ -441,6 +441,10 @@ export function createDesktopScenario({
       })
       await reloadMainWindow(control, 'The standalone project catalog did not reload')
       await control.command(
+        'waitFor',
+        inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
+      )
+      await control.command(
         'click',
         inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
       )
