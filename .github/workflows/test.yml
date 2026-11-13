@@ -714,6 +714,12 @@ jobs:
         working-directory: ./knowledge_runtime
         run: uv run --no-sync pytest tests/ -v
 
+      - name: Verify converter locked build and unit tests
+        working-directory: ./knowledge_doc_converter
+        run: |
+          uv sync --dev --frozen
+          uv run --no-sync pytest tests/ -v
+
   test-frontend:
     name: Test Frontend
     needs: changes
