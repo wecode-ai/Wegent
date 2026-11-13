@@ -229,26 +229,25 @@ impl SocketEmitters {
     /// A live transport can outlast its Redis presence and an App rebind.
     /// Deliver assigned work to the published socket, even if older sockets
     /// still belong to the room.
-    pub(super) async fn emit_current_device_work(
+    pub(in crate::socketio) async fn emit_current_device_work(
         &self,
         state: &crate::state::AppState,
         owner: i64,
         route: &str,
-        frame: &super::device_sync::AdapterEmit,
+        frame: &crate::socketio::device_sync::AdapterEmit,
     ) {
         let Some(namespace) = self.io.of(EXECUTOR_NAMESPACE) else {
             return;
         };
         let sockets = namespace.to(frame.room.clone()).sockets();
         let guarded = |socket: &SocketRef| {
-            brz_socket_io::__private::session::<super::session::DeviceSession, _>(socket).is_ok_and(
-                |session| {
-                    super::device_heartbeat::requires_current_app_binding(
+            brz_socket_io::__private::session::<crate::socketio::session::DeviceSession, _>(socket)
+                .is_ok_and(|session| {
+                    crate::socketio::device_heartbeat::requires_current_app_binding(
                         state,
                         &session.snapshot(),
                     )
-                },
-            )
+                })
         };
         let current = if sockets.iter().any(&guarded) {
             crate::device_online_state::read_online_state::<Value>(state, owner, route)
@@ -261,7 +260,7 @@ impl SocketEmitters {
         let current_id = current
             .as_ref()
             .and_then(|value| value["socket_id"].as_str());
-        let args = super::device_sync::ArgsTuple(&frame.args);
+        let args = crate::socketio::device_sync::ArgsTuple(&frame.args);
         for socket in sockets {
             let id = socket.id.to_string();
             if frame.skip_sid.as_deref() == Some(&id)

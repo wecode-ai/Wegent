@@ -2,7 +2,6 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use brz_redis::{
     EncodeRedisArg, EncodeRedisArgs, ErrorKind, FromRedisBulk, Redis, RedisBytes, RedisError,
