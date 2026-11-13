@@ -384,7 +384,7 @@ export function createDesktopScenario({
           return items.some(
             item =>
               item.title === executionMarker &&
-              String(item.metadata?.collaboration_group?.id) === String(copiedGroups.items[0].id)
+              String(item.assignee_group_id) === String(copiedGroups.items[0].id)
           )
         },
         true,
