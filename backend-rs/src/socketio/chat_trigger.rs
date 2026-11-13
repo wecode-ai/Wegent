@@ -499,7 +499,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
     let created_task = created_task(turn, &request, &request_title);
     seam::dispatch_chat_turn(
         state,
-        &request,
+        &mut request,
         &request_id,
         created_task,
         turn.device_id.as_deref(),

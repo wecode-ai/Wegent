@@ -5,14 +5,13 @@
 //! The task-status update `_update_task_status_sync` performs after a
 //! completion callback (`app/services/chat/storage/db.py`). Split from
 //! [`persist`](super) so the file stays within the source-size bound.
-use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow, MysqlTransaction};
-use brz_redis::Redis;
+use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::{Value, json};
 
 use super::sql;
 use super::{
-    Completion, collaboration_status, complete_task_model, local_datetime, local_isoformat,
-    render_task_crd, subtask_column, task_column,
+    collaboration_status, complete_task_model, local_datetime, local_isoformat, render_task_crd,
+    subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
 
@@ -34,20 +33,31 @@ pub(crate) fn read_status<T>(
     }
 }
 
-pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransaction>(
-    ctx: &Completion<'_, M, R>,
+pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
+    tables: sql::Tables,
     mysql: &mut T,
     task_id: i64,
     changed_subtask_id: i64,
 ) -> bool {
-    // Lock the Task before deriving its status so cancellation and a newer
-    // turn cannot be overwritten by a callback that read an older snapshot.
-    let task: Option<MysqlRow> = read_status(
+    write_derived_task_status(tables, mysql, task_id, changed_subtask_id, None)
+        .await
+        .unwrap_or_default()
+}
+
+pub(super) async fn write_derived_task_status<T: MysqlTransaction>(
+    tables: sql::Tables,
+    mysql: &mut T,
+    task_id: i64,
+    changed_subtask_id: i64,
+    required_status: Option<&str>,
+) -> Option<bool> {
+    // Serialize the derived status with cancellation and new turns.
+    let task = read_status(
         mysql
-            .fetch_optional(
+            .fetch_optional::<_, _, MysqlRow>(
                 format!(
                     "{} FOR UPDATE",
-                    sql::active_task_projection_statement(ctx.tables.tasks)
+                    sql::active_task_projection_statement(tables.tasks)
                 ),
                 (task_id,),
             )
@@ -55,10 +65,7 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
         task_id,
         "task",
     )
-    .flatten();
-    let Some(task) = task else {
-        return false;
-    };
+    .flatten()?;
     let owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
     let task_status = task_json
@@ -66,40 +73,40 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
         .and_then(|task| task.pointer("/status/status"))
         .and_then(Value::as_str);
     if matches!(task_status, Some("CANCELLED" | "DELETE")) {
-        return false;
+        return None;
     }
 
     // `list_assistant_by_task`'s owner guard, then the ordered listing.
     // `_update_task_status_sync` wraps the whole block in `try/except`: a
     // failed read logs and aborts before any later write.
-    let Some(_owner) = read_status::<Vec<MysqlRow>>(
+    read_status::<Vec<MysqlRow>>(
         mysql
             .fetch_all(
-                sql::owner_matches_task_id_statement(ctx.tables.tasks),
+                sql::owner_matches_task_id_statement(tables.tasks),
                 (task_id, owner_user_id),
             )
             .await,
         task_id,
         "owner_guard",
-    ) else {
-        return false;
-    };
-    let Some(subtasks) = read_status(
+    )?;
+    let subtasks = read_status(
         mysql
-            .fetch_all(sql::assistant_subtasks(ctx.tables), (task_id,))
+            .fetch_all(sql::assistant_subtasks(tables), (task_id,))
             .await
             .and_then(crate::task_store_listing::order_assistant_subtasks),
         task_id,
         "assistant_subtasks",
-    ) else {
-        return false;
-    };
-    let Some(last) = subtasks.last() else {
-        return false;
-    };
+    )?;
+    let last = subtasks.last()?;
     let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
     if task_status == Some("CANCELLING") && last_status != "CANCELLED" {
-        return false;
+        return None;
+    }
+    if let Some(required) = required_status
+        && (last_status != required
+            || subtask_column::<i64>(last, "id") != Some(changed_subtask_id))
+    {
+        return None;
     }
     // `list_assistant_by_task` labels its columns too, so the last subtask's
     // result — the payload `_apply_status_update` writes into the task CRD's
@@ -113,16 +120,13 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     let changed: Option<MysqlRow> = if !found && last_result.is_none() {
         // `read_status` returns `None` on a store failure; abort before writing
         // rather than treating the failure as "no row".
-        let Some(row) = read_status(
+        read_status(
             mysql
-                .fetch_optional(sql::subtask_by_id(ctx.tables), (changed_subtask_id,))
+                .fetch_optional(sql::subtask_by_id(tables), (changed_subtask_id,))
                 .await,
             task_id,
             "changed_subtask",
-        ) else {
-            return false;
-        };
-        row
+        )?
     } else {
         None
     };
@@ -131,16 +135,13 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     }
 
     let Some(Value::Object(mut payload)) = task_json else {
-        return false;
+        return None;
     };
     let Some(Value::Object(status_object)) = payload.get("status").cloned() else {
-        return false;
+        return None;
     };
-    let Some(decision) =
-        collaboration_status(ctx, mysql, task_id, &payload, last, &last_status).await
-    else {
-        return false;
-    };
+    let decision =
+        collaboration_status(tables, mysql, task_id, &payload, last, &last_status).await?;
     let new_status = decision.status;
     let progress = decision.progress;
 
@@ -171,16 +172,27 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     complete_task_model(&mut payload);
     let json_text = python_dumps(&Value::Object(render_task_crd(payload)));
     let row_updated_at = local_datetime();
-    let sql = sql::update_task_json_statement(ctx.tables.tasks);
+    let mut sql = sql::update_task_json_statement(tables.tasks);
+    if last_status == "RUNNING" {
+        // A concurrent cancel can persist its intent after the status read.
+        sql.push_str(
+            " AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) NOT IN ('CANCELLING', 'CANCELLED')",
+        );
+    }
     // A single statement runs on the pooled connection's autocommit; no
     // explicit transaction or COMMIT is needed. A failed write aborts the
     // source's `try/except` before it can hand back an advance intent.
-    if let Err(failure) = mysql
+    match mysql
         .execute(sql, (json_text, row_updated_at, task_id))
         .await
     {
-        tracing::warn!(%failure, "callback task update failed");
-        return false;
+        Ok(result) if required_status.is_none() || result.rows_affected != 0 => {
+            Some(decision.auto_advance)
+        }
+        Ok(_) => None,
+        Err(failure) => {
+            tracing::warn!(%failure, "callback task update failed");
+            None
+        }
     }
-    decision.auto_advance
 }

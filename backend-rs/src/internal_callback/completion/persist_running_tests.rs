@@ -157,10 +157,8 @@ fn the_running_transition_statements_keep_the_recorded_order_and_predicates() {
     );
 }
 
-/// The RUNNING transition's first statement is the subtask read by primary key
-/// against the routed shard table, with the ORM's labeled full projection and
-/// `LIMIT 1`. The prepared statement reaches the server before any status
-/// flush, which is the position the recording shows.
+/// The writer must lock the parent Task on the routed shard before reading
+/// the assistant subtask or attempting a status update.
 #[tokio::test]
 async fn the_running_transition_locks_the_parent_task_on_its_shard_first() {
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -330,7 +328,7 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
         .await
         .unwrap_err();
     assert_eq!(failure.database_sql_state(), Some("45000"));
-    crate::responses::create::seam::test_dispatch_start_failure(mysql.clone(), 12, 42).await;
+    crate::responses::dispatch::test_dispatch_start_failure(mysql.clone(), 12, 42).await;
     let pending: Status = writer.fetch_one(status_query, (42,)).await?;
     assert_eq!(pending.status, "PENDING");
     let pending: brz_mysql::Json<serde_json::Value> = writer.fetch_one(task_query, ()).await?;

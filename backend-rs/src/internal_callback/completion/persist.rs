@@ -254,7 +254,7 @@ async fn update_subtask_status<M: Mysql, R: Redis>(
                 }
             }
             update_subtask_status_on(
-                ctx,
+                ctx.tables,
                 transaction,
                 task_id,
                 subtask_id,
@@ -274,11 +274,54 @@ async fn update_subtask_status<M: Mysql, R: Redis>(
     Ok(Some(()))
 }
 
+pub(super) async fn persist_executor_failure<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    task_id: i64,
+    subtask_id: i64,
+    result: &Value,
+    message: &str,
+) -> Option<(MysqlRow, Option<String>)> {
+    // Serialize with cancellation on the task row before touching the subtask.
+    // Both rows must commit before any failure notification can be published.
+    mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
+        .with_transaction(async |transaction| {
+            let task: Option<MysqlRow> = transaction
+                .fetch_optional(
+                    format!("{} FOR UPDATE", sql::active_task_projection_statement(tables.tasks)),
+                    (task_id,),
+                )
+                .await?;
+            let can_fail = task
+                .and_then(|row| task_column::<Json<Value>>(&row, "json"))
+                .is_some_and(|json| sql::dispatchable_task_status(&json.0).is_some());
+            if !can_fail || sql::latest_assistant_id(transaction, tables.subtasks, task_id).await? != Some(subtask_id) {
+                return Ok(None);
+            }
+            let Some((row, metrics_message)) = update_subtask_status_on(
+                tables, transaction, task_id, subtask_id, "FAILED", Some(result), Some(message), None, None,
+            ).await? else {
+                return Ok(None);
+            };
+            if persist_status::write_derived_task_status(tables, transaction, task_id, subtask_id, Some("FAILED")).await.is_none() {
+                return Err(brz_mysql::MysqlError::InvalidQuery {
+                    reason: "Executor failure did not update its task".into(),
+                });
+            }
+            Ok(Some((row, metrics_message)))
+        })
+        .await
+        .inspect_err(|error| tracing::warn!(task_id, subtask_id, %error, "executor failure transaction failed"))
+        .ok()
+        .flatten()
+}
+
 /// `TaskRunMetricHooks._after_commit` (`app/services/task_run_metric_hooks.py:157-175`):
 /// a committed assistant-subtask mutation publishes the task-run metrics. The
 /// hook logs and swallows a store failure, so a Redis error leaves the caller's
 /// committed result intact.
-async fn publish_task_run_metrics<M: Mysql, R: Redis>(
+pub(super) async fn publish_task_run_metrics<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     row: &MysqlRow,
     subtask_id: i64,
@@ -439,12 +482,19 @@ pub(crate) async fn update_task_status<M: Mysql, R: Redis>(
     task_id: i64,
     changed_subtask_id: i64,
 ) -> bool {
-    let mysql = ctx
-        .mysql
-        .route(crate::task_routing::ByTaskId(task_id as u64));
+    write_task_status(ctx.mysql, ctx.tables, task_id, changed_subtask_id).await
+}
+
+async fn write_task_status<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    task_id: i64,
+    changed_subtask_id: i64,
+) -> bool {
     match mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
         .with_transaction(async |transaction| {
-            Ok(update_task_status_on(ctx, transaction, task_id, changed_subtask_id).await)
+            Ok(update_task_status_on(tables, transaction, task_id, changed_subtask_id).await)
         })
         .await
     {
@@ -468,8 +518,8 @@ struct CollaborationStatus {
 
 /// `CollaborationStrategyFactory.get_strategy_for_task` plus
 /// `get_task_status_on_subtask_complete` and `get_auto_advance_info`.
-async fn collaboration_status<M: Mysql, R: Redis, T: MysqlTransaction>(
-    ctx: &Completion<'_, M, R>,
+async fn collaboration_status<T: MysqlTransaction>(
+    tables: sql::Tables,
     mysql: &mut T,
     task_id: i64,
     payload: &Map<String, Value>,
@@ -480,7 +530,7 @@ async fn collaboration_status<M: Mysql, R: Redis, T: MysqlTransaction>(
     // outcome decides whether the factory reads the task's Team at all.
     let regular_task_found = mysql
         .fetch_optional::<_, _, MysqlRow>(
-            sql::regular_active_task_statement(ctx.tables.tasks),
+            sql::regular_active_task_statement(tables.tasks),
             (task_id,),
         )
         .await

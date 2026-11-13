@@ -426,11 +426,8 @@ impl Bridge {
             ))
         })?;
         self.subscription = Some(subscription);
-        // Source order: subscribe, then `_dispatch_http_callback`'s recovery,
-        // RUNNING transition, run metrics, Task status, executor POST, and the
-        // `chat:start` emit (`openapi_responses.py:1352-1370`,
-        // `dispatcher.py:117-180,730-747`).
-        if let Some((url, request)) = self.callback_dispatch.as_ref() {
+        // Subscribe before submission so even a preparation failure can be streamed.
+        if let Some((url, request)) = self.callback_dispatch.as_mut() {
             super::seam::dispatch_executor_after_subscribe(
                 &app,
                 request,

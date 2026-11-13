@@ -141,13 +141,19 @@ pub(crate) fn start_event<R: Redis>(
     }
 }
 
+/// Input to an executor dispatch job.
+pub(crate) enum ExecutorDispatchBody {
+    Prepared(Result<crate::executor_binding::DispatchRequest, String>),
+    Recover(Box<ExecutionRequest>),
+}
+
 /// One background dispatch the create flow hands to the supervisor.
 pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `_dispatch_http_callback`: `POST {target}/v1/responses` with
     /// `stream=false, background=true`, then the `chat:start` emit.
     Executor {
         url: String,
-        body: Result<crate::executor_binding::DispatchRequest, String>,
+        body: ExecutorDispatchBody,
         start: Option<ExecutorStart<R>>,
         consumer: Box<ConsumerState<M, R>>,
         task_id: i64,
@@ -385,21 +391,77 @@ where
             subtask_id,
             user_id,
             message_id,
-        } => match match body {
-            Ok(body) => send_executor(http, &url, &body).await,
-            Err(error) => Err(error),
-        } {
-            Ok(()) => {
-                if let Some(start) = start {
-                    emit_executor_start(start).await;
+        } => {
+            let body = match body {
+                ExecutorDispatchBody::Prepared(body) => body,
+                ExecutorDispatchBody::Recover(mut request) => {
+                    let Some(app) = consumer.app.upgrade() else {
+                        tracing::warn!(
+                            task_id,
+                            subtask_id,
+                            "application stopped before executor dispatch"
+                        );
+                        return;
+                    };
+                    let Ok(recovered) =
+                        super::create::seam::recover_before_dispatch(&app, &mut request, None)
+                            .await
+                    else {
+                        return;
+                    };
+                    if let Err(error) =
+                        super::create::seam::mark_subtask_running(&app, &request).await
+                    {
+                        if recovered {
+                            super::create::discard_recovered_executor(&app, &request).await;
+                        }
+                        if !error.status().is_server_error() {
+                            return;
+                        }
+                        finalize_executor_failure(
+                            &consumer,
+                            task_id,
+                            subtask_id,
+                            user_id,
+                            message_id,
+                            (
+                                "Could not commit executor startup state",
+                                "EXECUTOR_DISPATCH_FAILED",
+                            ),
+                        )
+                        .await;
+                        return;
+                    }
+                    crate::executor_binding::dispatch_request(&app, &request)
+                }
+            };
+            let outcome = match body {
+                Ok(body) => send_executor(http, &url, &body).await,
+                Err(error) => Err(error),
+            };
+            match outcome {
+                Ok(()) => {
+                    if let Some(start) = start {
+                        emit_executor_start(start).await;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
+                    finalize_executor_failure(
+                        &consumer,
+                        task_id,
+                        subtask_id,
+                        user_id,
+                        message_id,
+                        (
+                            "Could not dispatch execution to the executor",
+                            "EXECUTOR_DISPATCH_FAILED",
+                        ),
+                    )
+                    .await;
                 }
             }
-            Err(error) => {
-                tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
-                finalize_executor_failure(&consumer, task_id, subtask_id, user_id, message_id)
-                    .await;
-            }
-        },
+        }
         DispatchJob::ChatShell(job) => {
             let _ = run_chat_shell(*job).await;
         }
@@ -427,6 +489,42 @@ async fn send_executor(
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) async fn test_dispatch_start_failure(
+    mysql: MysqlService,
+    task_id: i64,
+    subtask_id: i64,
+) {
+    let app = crate::app_test_support::app(mysql);
+    app.completion_app.set(Arc::downgrade(&app)).ok().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let request = ExecutionRequest {
+        task_id,
+        subtask_id,
+        ..Default::default()
+    };
+    let http = HttpClient::builder().build().unwrap();
+    run(
+        &http,
+        DispatchJob::Executor {
+            url: format!("http://{}", listener.local_addr().unwrap()),
+            body: ExecutorDispatchBody::Recover(Box::new(request)),
+            start: None,
+            consumer: Box::new(ConsumerState::from_app(&app)),
+            task_id,
+            subtask_id,
+            user_id: 7,
+            message_id: None,
+        },
+    )
+    .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
+}
+
 async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
     if let Err(error) = crate::internal_callback::publish_chat_start(
         &start.redis,
@@ -449,59 +547,50 @@ async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
     }
 }
 
-async fn finalize_executor_failure<M: Mysql, R: Redis>(
+pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
     consumer: &ConsumerState<M, R>,
     task_id: i64,
     subtask_id: i64,
     user_id: i64,
     message_id: Option<i64>,
+    (message, code): (&str, &str),
 ) {
     use crate::internal_callback::{
         completion, emitter,
         event::{EventType, ExecutionEvent},
     };
-    let Some(redis) = consumer.redis.as_ref() else {
-        tracing::error!(
-            task_id,
-            subtask_id,
-            "executor failure cannot be finalized without Redis"
-        );
-        return;
-    };
     let app = consumer.app.upgrade();
-    let ctx = completion::Completion {
+    let ctx = consumer.redis.as_ref().map(|redis| completion::Completion {
         app: app.as_deref(),
         mysql: &consumer.mysql,
         redis,
         tables: consumer.tables,
         executor_manager: &consumer.executor_manager,
-    };
-    let message = "Could not dispatch execution to the executor";
-    let code = "EXECUTOR_DISPATCH_FAILED";
-    let result = completion::complete_terminal_event(
-        &ctx,
+    });
+    let result = completion::complete_executor_failure(
+        &consumer.mysql,
+        consumer.tables,
+        ctx.as_ref(),
         task_id,
         subtask_id,
-        "FAILED",
-        None,
-        Some(message),
-        Some(code),
-        None,
-        None,
+        message,
+        code,
     )
     .await;
+    let (Some(redis), Some(result)) = (consumer.redis.as_ref(), result) else {
+        return;
+    };
     let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
     event.message_id = message_id;
     event.error = Some(message.to_owned());
     event.error_code = Some(code.to_owned());
-    if let Err(error) = emitter::emit_terminal_frames(
-        redis,
-        &event,
-        Some(user_id),
-        result.as_ref().unwrap_or(&Value::Null),
-        None,
-    )
-    .await
+    if let Err(error) =
+        crate::internal_callback::session::publish_callback_event(redis, subtask_id, &event).await
+    {
+        tracing::warn!(%error, task_id, subtask_id, "executor failure callback publish failed");
+    }
+    if let Err(error) =
+        emitter::emit_terminal_frames(redis, &event, Some(user_id), &result, None).await
     {
         tracing::warn!(%error, task_id, subtask_id, "executor failure notification failed");
     }
