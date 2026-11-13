@@ -372,10 +372,10 @@ where
 {
     // Check ownership before alias mutations. The versioned branch reads its
     // protocol state once, after resolving the canonical device identity.
-    if result.desired_plugin_snapshot.is_some() {
-        if let Some(guard) = guard {
-            guard.check().await?;
-        }
+    if result.desired_plugin_snapshot.is_some()
+        && let Some(guard) = guard
+    {
+        guard.check().await?;
     }
     // `reconcile_plugin_device_rows` owns the first flush boundaries: the
     // superseded alias DELETE batch and the selected canonical `device_id`
