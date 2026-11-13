@@ -314,6 +314,9 @@ export async function verifyTerminalWireCompatibility(
         false,
         'Output emitted after revocation reached the frontend terminal'
       )
+      // Keep the browser socket and gateway alive until the Executor has
+      // received the forwarded ACK and retired the PTY.
+      await cloudEnvironment.waitForRevokedTerminalRetirement(sessionId)
       forcedEndDelivered = true
     } else {
       await terminalCall(socket, 'terminal:close', controlPayload())

@@ -1350,6 +1350,15 @@ class RealCloudEnvironment {
     )
   }
 
+  async waitForRevokedTerminalRetirement(sessionId) {
+    await waitForLogPattern(
+      this.remoteExecutorLogPath,
+      new RegExp(
+        `terminal session delivery rejected session_id=${sessionId} code=terminal_session_not_found `
+      )
+    )
+  }
+
   async restartCloudExecutor() {
     assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
     const previousDevice = await this.device(CLOUD_DEVICE_ID)
