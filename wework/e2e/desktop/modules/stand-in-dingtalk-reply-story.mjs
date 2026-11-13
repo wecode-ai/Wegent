@@ -31,6 +31,12 @@ export const REPLY_STORY_VALUES = Object.fromEntries(
       text: `${MARKER}: 请确认第${phase}项安排。`,
       reply: `第${phase}项安排已确认，我会按约定跟进。`,
       fact: `已回复第${phase}条原消息：第${phase}项安排已确认，我会按约定跟进。`,
+      ...(phase === 1
+        ? {
+            mentionOpenDingTalkIds: ['source-story-colleague'],
+            imageResourceId: '@source-story-image',
+          }
+        : {}),
     },
   ])
 )
@@ -133,6 +139,34 @@ export function createDingTalkReplyStory(options) {
       await mkdir(root, { recursive: true })
       await writeFile(join(root, 'baseline-path.txt'), originalBinary)
       await writeFile(join(root, 'replies.jsonl'), '')
+      await writeFile(
+        join(root, 'image.png'),
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1sAAAAASUVORK5CYII=',
+          'base64'
+        )
+      )
+      await writeFile(
+        join(root, 'history.json'),
+        JSON.stringify({
+          contractVersion: 'im.message-list.v1',
+          paginationKnown: true,
+          hasMore: false,
+          complete: true,
+          failedCount: 0,
+          failures: [],
+          messages: [
+            {
+              messageId: 'source-story-image-message',
+              conversationId: 'source-story-group',
+              text: '[图片消息](mediaId=@source-story-image)',
+              senderId: 'source-story-sender',
+              sender: 'Colleague',
+              createTime: new Date().toISOString(),
+            },
+          ],
+        })
+      )
       await writeFile(
         join(root, 'mentions.json'),
         JSON.stringify({
@@ -239,6 +273,10 @@ export function createDingTalkReplyStory(options) {
           'Approving one reply must not create a continuing grant'
         )
         assert.equal((await replies()).length, 1)
+        assert.equal((await replies())[0].mentions, 'source-story-colleague')
+        const imagePath = (await readFile(join(root, 'download-path.txt'), 'utf8')).trim()
+        assert.deepEqual(await readFile(imagePath), await readFile(join(root, 'image.png')))
+        await rm(imagePath)
         model.phase = 2
         await publish(2)
         await pendingApproval(control, rpc, 2)

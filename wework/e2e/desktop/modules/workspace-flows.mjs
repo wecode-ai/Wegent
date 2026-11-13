@@ -2106,7 +2106,7 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     firstBoardContent
   )
-  await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-row`)
+  await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-identity`)
   await control.command(
     'click',
     `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`

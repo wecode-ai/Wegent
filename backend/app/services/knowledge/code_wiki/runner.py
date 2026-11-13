@@ -151,6 +151,29 @@ def _language_of(knowledge_base: Kind) -> str:
     return _LANGUAGE_NAMES.get(code, "English")
 
 
+def _report_reclaimed_generations(
+    knowledge_base_id: int, generation_ids: Sequence[int]
+) -> None:
+    if not generation_ids:
+        return
+    from app.services.knowledge.code_wiki.version_store import WORKER_ABANDONED_CODE
+    from app.services.knowledge.event_logging import emit_fact_snapshots
+
+    emit_fact_snapshots(
+        (
+            "knowledge.code_wiki.generation.finished",
+            {
+                "kb_id": knowledge_base_id,
+                "status": "failure",
+                "fact_key_parts": (knowledge_base_id, generation_id),
+                "error_code": WORKER_ABANDONED_CODE,
+                "data": {"generation": generation_id},
+            },
+        )
+        for generation_id in generation_ids
+    )
+
+
 def start_run(
     db: Session,
     *,
@@ -281,6 +304,11 @@ def start_run(
         team_id_for_mode=execution_team_id,
     )
     if not started.started:
+        if started.reclaimed_generation_ids:
+            db.commit()
+            _report_reclaimed_generations(
+                knowledge_base.id, started.reclaimed_generation_ids
+            )
         return StartedRun(
             generation=None,
             reason=started.decision.reason,
@@ -341,7 +369,18 @@ def start_run(
 
     # Committed before the task exists, so that a task always has a version to report
     # into. See the module docstring for why the reverse ordering is worse.
+    from .reporting import generation_snapshot, report_generation
+
+    event_snapshot = generation_snapshot(generation)
     db.commit()
+    _report_reclaimed_generations(knowledge_base.id, started.reclaimed_generation_ids)
+
+    report_generation(
+        event_snapshot,
+        "started",
+        event_type="knowledge.code_wiki.generation.started",
+        trigger="scheduled" if background_execution_id > 0 else "manual",
+    )
 
     task_id = _create_task(
         db,
@@ -785,7 +824,13 @@ def _fail_without_a_task(
     live.status = WikiGenerationStatus.FAILED
     live.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     record_failure_reason(live, str(exc), code=FailureCode.TASK_NOT_CREATED)
+    from .reporting import generation_snapshot, report_generation
+
+    event_snapshot = generation_snapshot(live)
     db.commit()
+    report_generation(
+        event_snapshot, "failure", error_code=FailureCode.TASK_NOT_CREATED
+    )
 
 
 def republish_generation(
@@ -835,6 +880,7 @@ def republish_generation(
         effects=build_projection_side_effects(
             db, knowledge_base=knowledge_base, user=owner
         ),
+        trigger="code_wiki_republish",
     )
     logger.info(
         "[code_wiki] republished generation %s into kb %s: published=%s",

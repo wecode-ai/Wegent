@@ -295,13 +295,18 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     if normalized_status == "FAILED"
         && let Some(code) = error_code
     {
-        final_result.insert("error_type".into(), Value::String(code.to_string()));
-        if let Some(status_code) = extract_http_status_code(error_message.unwrap_or_default()) {
-            final_result.insert("error_code".into(), json!(status_code));
-        }
+        final_result.extend(failure_details(error_message.unwrap_or_default(), code));
     }
 
     Some(Value::Object(final_result))
+}
+
+pub(super) fn failure_details(message: &str, code: &str) -> Map<String, Value> {
+    let mut details = Map::from_iter([("error_type".into(), json!(code))]);
+    if let Some(status_code) = extract_http_status_code(message) {
+        details.insert("error_code".into(), json!(status_code));
+    }
+    details
 }
 
 /// `shared.utils.error_classifier.extract_http_status_code`: the first

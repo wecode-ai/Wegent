@@ -233,7 +233,7 @@ export const teamApis = {
     return apiClient.post(`/teams/${id}/share`)
   },
   async getTeamShareInfo(shareToken: string): Promise<TeamShareInfoResponse> {
-    return apiClient.get(`/teams/share/info?share_token=${shareToken}`)
+    return apiClient.get(`/teams/share/info?share_token=${encodeURIComponent(shareToken)}`)
   },
   async joinSharedTeam(data: TeamShareJoinRequest): Promise<void> {
     return apiClient.post('/teams/share/join', data)

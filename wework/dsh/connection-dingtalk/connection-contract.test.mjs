@@ -10,6 +10,7 @@ test('DingTalk declares its bounded read operations against its exact dependency
   const parsed = parseConnections(manifest)
   const declaration = parsed.providers[0].cliReadTools.dingtalk
   assert.deepEqual(Object.keys(declaration.operations).sort(), [
+    'downloadImage',
     'listConversation',
     'listDirectConversation',
     'listMentions',
@@ -29,7 +30,10 @@ test('DingTalk declares its bounded read operations against its exact dependency
   ])
   assert.equal(declaration.operations.listTopicReplies.parameters.topicId, '--topic-id')
   assert.equal(declaration.operations.listTopicReplies.parameters.direction, '--direction')
-  assert.equal(declaration.operations.searchMessages.parameters.conversationIds, undefined)
+  assert.equal(
+    declaration.operations.searchMessages.parameters.conversationIds,
+    '--conversation-ids'
+  )
   assert.deepEqual(declaration.operations.listConversation.command, [
     'chat',
     '+messages-list',
