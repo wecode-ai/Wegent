@@ -560,6 +560,10 @@ export async function completeLocalCollaborationFolderImport(control, projectNam
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function waitForFolderPathReady(control, expectedPath) {

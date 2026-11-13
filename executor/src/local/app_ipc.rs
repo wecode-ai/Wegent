@@ -1946,7 +1946,15 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
-    let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
+    let runtime = if method == "projects.list" {
+        wegent_runtime_logging::project_index_diagnostics::trace(
+            "projects_list.init",
+            TaskRuntime::from_env,
+        )
+    } else {
+        TaskRuntime::from_env()
+    }
+    .map_err(task_runtime_error)?;
     match method {
         "dws.auth_status" => serialize_task_value(
             runtime
