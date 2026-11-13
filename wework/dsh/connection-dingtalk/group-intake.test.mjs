@@ -46,6 +46,8 @@ function fixture() {
                 message('question'),
                 message('manual', 'own', { sendType: 'user' }),
                 message('automated', 'own', { sendType: 'user', messageAiSendFlag: 'DWS' }),
+                message('notification', 'wegent-bot', { sendType: 'robot' }),
+                message('other-ai', 'other', { sendType: 'user', messageAiSendFlag: 'DWS' }),
               ]),
               conversation('unselected', [message('foreign')]),
               conversation('feedback', [message('direct')], true),
