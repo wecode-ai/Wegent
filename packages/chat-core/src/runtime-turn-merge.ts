@@ -392,7 +392,6 @@ export function orderRuntimeConversationItems(
   items: RuntimeConversationItem[],
   observedAnchors?: ReadonlyMap<string, number>,
 ): RuntimeConversationItem[] {
-  if (!items.some((item) => item.position !== undefined)) return items;
   const anchors = new Map(
     observedAnchors ?? observedNativePositionAnchors(items, [items]),
   );
