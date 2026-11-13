@@ -126,6 +126,32 @@ describe('useTeamLeaderBot', () => {
     expect(result.current.bot).toBeUndefined()
     expect(result.current.pending).toBe(false)
   })
+
+  it('never exposes an old definition when reopening the same Team editor', async () => {
+    getTeam.mockResolvedValueOnce(detail)
+    let resolve!: (value: Team) => void
+    getTeam.mockReturnValueOnce(new Promise(value => (resolve = value)))
+    const snapshots: Array<Bot | undefined> = []
+    const { result, rerender } = renderHook(
+      ({ enabled }) => {
+        const state = useTeamLeaderBot(team, [], enabled)
+        snapshots.push(state.bot)
+        return state
+      },
+      { initialProps: { enabled: true } }
+    )
+    await waitFor(() => expect(result.current.bot).toEqual(privateBot))
+    rerender({ enabled: false })
+    snapshots.length = 0
+
+    rerender({ enabled: true })
+    expect(result.current.pending).toBe(true)
+    expect(snapshots.every(bot => bot === undefined)).toBe(true)
+    const updatedBot = { ...privateBot, system_prompt: 'Saved creator prompt' }
+    await act(async () => resolve({ ...detail, bots: [{ ...team.bots[0], bot: updatedBot }] }))
+    expect(result.current.bot).toEqual(updatedBot)
+    expect(result.current.pending).toBe(false)
+  })
 })
 
 describe('private model retention', () => {

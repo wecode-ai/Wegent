@@ -41,7 +41,10 @@ export function useTeamLeaderBot(team: Team | null, bots: Bot[], enabled: boolea
   } | null>(null)
 
   useEffect(() => {
-    if (!key || !teamId || !botId || catalogBot) return
+    if (!key || !teamId || !botId || catalogBot) {
+      setLoaded(null)
+      return
+    }
     const controller = new AbortController()
     setLoaded(null)
     const load = async () => {

@@ -10,8 +10,9 @@ import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 import { ApiClient, createApiClient } from '../utils/api-client'
 import { deleteDedicatedBotModel } from '../utils/cleanup-dedicated-bot-model'
 import { assertShellRecoveryPermission } from '../utils/shell-recovery-permission'
+import { assertLeaderReloadOnReopen, readTeamDetail } from '../utils/group-agent-editor'
 import { DataBuilders } from '../fixtures/data-builders'
-import type { Bot, Team, User } from '../../src/types/api'
+import type { User } from '../../src/types/api'
 import type { Group } from '../../src/types/group'
 
 const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
@@ -347,14 +348,6 @@ test.describe('Agent share scope', () => {
       const models: Array<{ api: ApiClient; path: string }> = []
       let groupCreated = false
       let page: Page | undefined
-      type TeamDetail = Omit<Team, 'bots'> & {
-        bots: Array<{ bot_id: number; role?: string; bot: Bot & { user_id: number } }>
-      }
-      const readTeam = async (api: ApiClient, teamId: number) => {
-        const response = await api.get<TeamDetail>(`/api/teams/${teamId}`)
-        expect(response.status, JSON.stringify(response.data)).toBe(200)
-        return response.data!
-      }
 
       try {
         const owner = await ownerApi.get<User>('/api/users/me')
@@ -399,7 +392,7 @@ test.describe('Agent share scope', () => {
             secondary_model_name: modelName,
           })
           expect(configured.status, JSON.stringify(configured.data)).toBe(200)
-          const original = await readTeam(creatorApi, team.teamId)
+          const original = await readTeamDetail(creatorApi, team.teamId)
           const definitionPath = `/api/v1/namespaces/default/bots/${prefix}-${suffix}-bot`
           const definition = await creatorApi.get<{ spec: Record<string, unknown> }>(definitionPath)
           expect(definition.status, JSON.stringify(definition.data)).toBe(200)
@@ -435,13 +428,16 @@ test.describe('Agent share scope', () => {
           await expect(dialog.getByTestId('simple-prompt-textarea')).toHaveValue(
             originalBot.system_prompt
           )
+          if (suffix === 'member') {
+            await assertLeaderReloadOnReopen(page!, creatorApi, team.teamId, team.botId)
+          }
           const displayName = `${prefix} ${suffix} edited by Owner`
           const prompt = `Owner updated the ${suffix}-created agent.`
           await dialog.getByTestId('team-display-name-input').fill(displayName)
           await dialog.getByTestId('simple-prompt-textarea').fill(prompt)
           await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click()
           await expect(dialog).toBeHidden()
-          const saved = await readTeam(creatorApi, team.teamId)
+          const saved = await readTeamDetail(creatorApi, team.teamId)
           expect(saved).toMatchObject({
             id: original.id,
             name: original.name,
