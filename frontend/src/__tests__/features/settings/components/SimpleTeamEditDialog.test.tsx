@@ -901,10 +901,8 @@ describe('Simple TeamEditDialog', () => {
     )
 
     await waitFor(() => {
-      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
       expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
-        scope: 'group',
-        groupName: 'engineering',
+        binding: { namespace: 'engineering', targetGroupNames: ['engineering'] },
       })
     })
   })
@@ -924,7 +922,9 @@ describe('Simple TeamEditDialog', () => {
     )
 
     await waitFor(() => {
-      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({ scope: 'personal' })
+      expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
+        binding: { namespace: 'default', targetGroupNames: [] },
+      })
     })
     expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'all' })
@@ -1826,8 +1826,7 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.click(await screen.findByTestId('simple-additional-capabilities-toggle'))
     await waitFor(() => {
       expect(mockedFetchUnifiedSkillsList).toHaveBeenCalledWith({
-        scope: 'group',
-        groupName: 'engineering',
+        binding: { botId: 10, namespace: 'default', targetGroupNames: ['engineering'] },
       })
       expect(screen.getByText('h52wbox-cloud')).toBeInTheDocument()
     })

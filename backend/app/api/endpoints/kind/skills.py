@@ -58,6 +58,10 @@ from app.services.auth import verify_skill_identity_token
 from app.services.git_skill import git_skill_service
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.resource_library_service import resource_library_service
+from app.services.skill_binding_policy import (
+    SkillBindingPolicy,
+    normalize_binding_groups,
+)
 from app.services.skill_binding_service import skill_binding_service
 
 router = APIRouter(prefix="/kinds/skills")
@@ -406,6 +410,9 @@ def list_skills(
         description="Task ID for task-based authorization. "
         "If provided, also searches skills owned by the task owner.",
     ),
+    binding_namespace: str | None = Query(None, description="Bot Skill binding target"),
+    binding_bot_id: int | None = Query(None, ge=1),
+    target_group_names: list[str] | None = Query(None, max_length=100),
     current_user: User = Depends(_get_current_user_or_skill_query_identity),
     db: Session = Depends(get_db),
 ):
@@ -428,6 +435,40 @@ def list_skills(
     using user A's team, and needs to find user A's private skills.
     Authorization is verified by checking if current_user is a member of the task.
     """
+    if binding_namespace is not None or binding_bot_id is not None:
+        from app.schemas.base_role import BaseRole
+        from app.services.adapters.bot_kinds import bot_kinds_service
+
+        if binding_bot_id is not None:
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == binding_bot_id,
+                    Kind.kind == "Bot",
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+            if bot is None:
+                raise HTTPException(status_code=404, detail="Bot not found")
+            bot_kinds_service._require_bot_permission(
+                db, bot=bot, user_id=current_user.id, required_role=BaseRole.Developer
+            )
+            binding_namespace = bot.namespace or "default"
+        else:
+            normalize_binding_groups(
+                db, current_user.id, [binding_namespace or "default"]
+            )
+        binding_namespace = binding_namespace or "default"
+        groups = normalize_binding_groups(db, current_user.id, target_group_names)
+        policy = SkillBindingPolicy.load(db, current_user.id, binding_namespace, groups)
+        return SkillList(
+            items=[
+                skill_kinds_service.to_skill_option(skill)
+                for skill in policy.list_skills(db, skip, limit)
+            ]
+        )
+
     if name:
         logger.info(
             f"[list_skills] Searching for skill: name={name}, namespace={namespace}, exact_match={exact_match}, user_id={current_user.id}"
