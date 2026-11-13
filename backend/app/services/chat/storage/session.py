@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 CANCEL_KEY_PREFIX = "chat:cancel:"
 # Cancellation flag TTL in seconds (5 minutes should be enough for any chat)
 CANCEL_FLAG_TTL = 300
+# The Responses stream can observe the committed terminal row before the cancel
+# endpoint publishes its flag. Serialize the publication against that cleanup.
+PUBLISH_CANCEL_UNLESS_SETTLED_SCRIPT = """
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+redis.call('SET', KEYS[1], 'true', 'EX', ARGV[1])
+return 1
+"""
 
 # Redis key prefix for streaming content cache
 STREAMING_KEY_PREFIX = "chat:streaming:"
@@ -296,7 +303,9 @@ class SessionManager:
 
         return cancel_event
 
-    async def cancel_stream(self, subtask_id: int) -> bool:
+    async def cancel_stream(
+        self, subtask_id: int, *, skip_settled: bool = False
+    ) -> bool:
         """
         Request cancellation of a streaming request.
 
@@ -305,6 +314,7 @@ class SessionManager:
 
         Args:
             subtask_id: The subtask ID to cancel
+            skip_settled: Skip Redis signaling if the Responses stream already settled
 
         Returns:
             bool: True if cancellation flag was set successfully
@@ -313,7 +323,21 @@ class SessionManager:
 
         # Set cancellation flag in Redis (cross-worker)
         try:
-            success = await self._cache.set(cancel_key, True, expire=CANCEL_FLAG_TTL)
+            if skip_settled:
+                async with self._cache._client_context() as client:
+                    success = bool(
+                        await client.eval(
+                            PUBLISH_CANCEL_UNLESS_SETTLED_SCRIPT,
+                            2,
+                            cancel_key,
+                            f"{CANCEL_KEY_PREFIX}settled:{subtask_id}",
+                            CANCEL_FLAG_TTL,
+                        )
+                    )
+            else:
+                success = await self._cache.set(
+                    cancel_key, True, expire=CANCEL_FLAG_TTL
+                )
         except Exception as e:
             logger.error(
                 f"Failed to set Redis cancel flag for subtask {subtask_id}: {e}"

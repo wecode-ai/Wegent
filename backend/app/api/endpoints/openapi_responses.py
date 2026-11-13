@@ -1886,8 +1886,9 @@ async def cancel_response(
                 task_store.update_json(db, task=task_kind, payload=document)
 
                 db.commit()
-                # The SSE owner may finish as soon as it sees the flag.
-                await session_manager.cancel_stream(running_subtask_id)
+                await session_manager.cancel_stream(
+                    running_subtask_id, skip_settled=True
+                )
                 db.refresh(task_kind)
                 db.refresh(running_subtask)
 

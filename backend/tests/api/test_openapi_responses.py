@@ -2273,6 +2273,9 @@ class TestOpenAPIResponsesCancel:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == f"resp_{task.id}"
+        mock_session_manager.cancel_stream.assert_awaited_once_with(
+            running_subtask.id, skip_settled=True
+        )
 
     @patch("app.services.chat.storage.session_manager")
     def test_cancel_response_chat_shell_group_member_success(

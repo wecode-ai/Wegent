@@ -37,6 +37,7 @@ use crate::internal_callback::emitter::StatusUpdatingEmitter;
 use crate::internal_callback::event::ExecutionEvent;
 use crate::internal_callback::is_cancelled;
 use crate::internal_callback::parser;
+use crate::socketio::chat_control::CANCEL_FLAG_TTL;
 use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
@@ -643,6 +644,20 @@ impl Bridge {
                 result,
                 error,
             })) => {
+                // The cancel endpoint commits COMPLETED before publishing.
+                // Block late writes without marking retryable terminal rows.
+                if status == "COMPLETED"
+                    && let Some(redis) = &self.redis
+                    && let Err(error) = redis
+                        .set_ex(
+                            format!("{CANCEL_KEY_PREFIX}settled:{}", self.subtask_id),
+                            CANCEL_FLAG_TTL,
+                            "true",
+                        )
+                        .await
+                {
+                    tracing::warn!(%error, subtask_id = self.subtask_id, "stream settlement flag could not be saved");
+                }
                 self.dispatch_exit_unregister().await;
                 self.cleanup().await;
                 self.state

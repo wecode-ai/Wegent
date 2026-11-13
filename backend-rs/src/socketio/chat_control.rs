@@ -35,7 +35,7 @@ pub(crate) fn cancel_key(subtask_id: i64) -> String {
     format!("chat:cancel:{subtask_id}")
 }
 /// `CANCEL_FLAG_TTL`.
-const CANCEL_FLAG_TTL: u64 = 300;
+pub(crate) const CANCEL_FLAG_TTL: u64 = 300;
 /// `settings.CANCELLING_STUCK_TIMEOUT_SECONDS`.
 const CANCELLING_STUCK_TIMEOUT_SECONDS: i64 = 1800;
 /// `DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS`.
