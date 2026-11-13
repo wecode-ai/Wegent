@@ -61,6 +61,21 @@ export function createDesktopScenario({
     retainedProcesses.set(name, identity)
   }
 
+  async function retainReadyClient(name) {
+    const identity = await waitForValue(
+      async () => {
+        const identities = await Promise.all(
+          (await starts(name)).map(pid => collectProcessInstanceIdentity(Number(pid)))
+        )
+        return identities.filter(Boolean)
+      },
+      live => live.length === 1 && live[0],
+      `The original ${name} MCP client did not remain uniquely identifiable after prediction forks exited`,
+      uiTimeoutMs
+    )
+    retainedProcesses.set(name, identity)
+  }
+
   async function assertRetained(names) {
     for (const name of names) {
       const expected = retainedProcesses.get(name)
@@ -115,6 +130,14 @@ export function createDesktopScenario({
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
+      // Prediction forks can start these same MCP binaries before the parent
+      // thread recovers. Only the parent should populate the lifecycle logs.
+      const preferences = JSON.parse(
+        await control.command('setAppPreferences', 'body', {
+          value: JSON.stringify({ replyPredictionsEnabled: false }),
+        })
+      )
+      assert.equal(preferences.replyPredictionsEnabled, false)
       await waitForValue(
         async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
         value => {
@@ -170,7 +193,7 @@ export function createDesktopScenario({
       for (const name of NAMES.slice(1, 3)) {
         const pids = await starts(name)
         assert.ok(pids.length >= 1, `The real ${name} MCP did not start after recovery`)
-        await retain(name, pids[0])
+        await retainReadyClient(name)
       }
       await run(control, 'stable')
       const recoveredLog = await readFile(log, 'utf8')

@@ -119,6 +119,16 @@ async function waitForSettled(control, timeoutMs) {
   throw new Error('The recovered executor stream remained in a running state')
 }
 
+async function waitForDroppedEvent(control, eventName, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const counts = JSON.parse(await control.command('getDroppedRuntimeEventCounts', 'body'))
+    if ((counts[eventName] ?? 0) > 0) return counts
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The renderer did not drop ${eventName} after reconnecting`)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
@@ -189,7 +199,6 @@ export function createDesktopScenario({
       assert.ok(taskId, 'The streaming conversation must retain its Runtime task')
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
-      releaseCompletionResolve()
       await Promise.race([
         control.awaitReadyAfter(readyCountBeforeReload),
         new Promise((_, reject) =>
@@ -201,10 +210,36 @@ export function createDesktopScenario({
       ])
       await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
 
+      // Prove that restoring an active turn schedules the executor check, and
+      // drop the terminal event only after the old renderer's flags are gone.
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.get' }),
+      })
+      await control.command('dropNextRuntimeEvent', 'body', {
+        value: 'response.completed',
+      })
+      releaseCompletionResolve()
+
       await control.command('waitFor', ASSISTANT_SELECTOR, {
         text: COMPLETION_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      const droppedEvents = await waitForDroppedEvent(control, 'response.completed', uiTimeoutMs)
+      assert.equal(
+        droppedEvents['response.completed'],
+        1,
+        'The renderer did not drop the terminal event after reconnecting'
+      )
+      const recoveredRequest = JSON.parse(
+        await control.command('awaitLocalExecutorRequestHold', 'body')
+      )
+      assert.equal(recoveredRequest.method, 'runtime.tasks.get')
+      assert.ok(
+        recoveredRequest.heldCount > 0,
+        'The lost terminal event did not trigger an executor settlement check'
+      )
+      await control.command('releaseLocalExecutorRequestHold', 'body')
+
       await waitForSettled(control, uiTimeoutMs)
       const assistantText = await control.command('getText', ASSISTANT_SELECTOR)
       assert.equal(
@@ -214,7 +249,7 @@ export function createDesktopScenario({
       )
       await captureScreenshot(
         control,
-        'executor-stream-recovery-01-completed-after-renderer-reload.png',
+        'executor-stream-recovery-01-completed-after-lost-terminal-event.png',
         ACTIVE_WORKBENCH_SELECTOR
       )
       active = false

@@ -199,7 +199,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(
         await control.command('getValue', '[data-testid="stand-in-role-name"]'),
-        `${PROJECT} 分身`
+        `${PROJECT} 助理`
       )
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-device"]'), '0')
@@ -619,7 +619,11 @@ export async function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '同时匹配两个分身', tags: ['review', 'docs'], assignee_user_id: USER_ID },
+          todo: {
+            title: '匹配两个助理时只自动接手一次',
+            tags: ['review', 'docs'],
+            assignee_user_id: USER_ID,
+          },
         },
         uiTimeoutMs
       )
@@ -627,20 +631,21 @@ export async function createDesktopScenario({
         await waitForExecution(control, tagged.id, modelResponseTimeoutMs, [
           index === 0 ? 'review' : 'docs',
         ])
-      await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review', 'docs'])
+      // Automatic intake selects one matching role in configured order.
+      await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review'])
       // Observe a full five-second scheduler interval plus timer jitter.
       await new Promise(resolve => setTimeout(resolve, 5500))
-      assert.equal(requests, 6, 'Each eligible stand-in must execute each assignment exactly once')
+      assert.equal(requests, 5, 'Each assignment must execute once through its selected assistant')
       assert.equal(agentRequests, 0, 'Independent roles must not inherit agent prompts')
       assert.deepEqual(
         tagRequests,
-        { review: 2, docs: 2 },
-        'Each matching role must use its own prompt'
+        { review: 2, docs: 1 },
+        'The first matching role must own an ambiguous assignment and use its own prompt'
       )
       assert.equal(
         (await requestExecutor(control, 'todos.bindings', { task_id: ambiguous.id }, uiTimeoutMs))
           .length,
-        2
+        1
       )
       assert.equal(
         (
@@ -737,17 +742,14 @@ export async function createDesktopScenario({
         {
           project_id: project.id,
           todo: {
-            title: '所有连接的分身分别处理',
+            title: '重叠标签只由一个助理处理',
             tags: ['review', 'docs'],
             assignee_user_id: USER_ID,
           },
         },
         uiTimeoutMs
       )
-      await waitForExecution(control, overlappingIssue.id, modelResponseTimeoutMs, [
-        'review',
-        'docs',
-      ])
+      await waitForExecution(control, overlappingIssue.id, modelResponseTimeoutMs, ['review'])
       const beforeReorder = { requests, ...tagRequests }
       personal = await requestExecutor(
         control,
@@ -871,7 +873,7 @@ export async function createDesktopScenario({
         await control.command('getAttribute', '[data-testid="stand-in-details-open"]', {
           value: 'aria-label',
         }),
-        '分身详情'
+        '助理详情'
       )
       await openStandInSettings(control)
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')

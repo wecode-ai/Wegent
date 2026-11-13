@@ -796,6 +796,7 @@ function PlatformHarness({
   renderProject,
   renderIssueComposer,
   renderStandInPage,
+  renderPersonalHome,
   openProjectConversation,
   currentUser,
   workspaceOwnerOptions,
@@ -810,6 +811,7 @@ function PlatformHarness({
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
+  renderPersonalHome?: CollaborationPlatformHostAdapter["renderPersonalHome"];
   openProjectConversation?: CollaborationPlatformHostAdapter["openProjectConversation"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
@@ -838,6 +840,7 @@ function PlatformHarness({
     cloudAccess,
     renderIssueComposer,
     renderStandInPage,
+    renderPersonalHome,
     openProjectConversation,
     currentUser,
     location,
@@ -995,6 +998,64 @@ describe("CollaborationPlatformApp real component flow", () => {
       }
     },
   );
+  it("renders the shared board for a standalone project without a workspace API", async () => {
+    const standalone = {
+      ...project,
+      workspace_id: null,
+      workspace_context: null,
+    };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [standalone],
+    });
+    await render(
+      <PlatformHarness
+        api={{ ...api, workspaces: undefined }}
+        start={{ ...initialLocation, projectId: standalone.id }}
+      />,
+    );
+    expect(byTestId("collaboration-tab-board")).toBeTruthy();
+    expect(container.textContent).toContain(issue.title);
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-platform-opening-project"]',
+      ),
+    ).toBeNull();
+  });
+  it("opens an authorized standalone project without waiting for a parent workspace", async () => {
+    const standalone = {
+      ...project,
+      workspace_id: null,
+      workspace_context: null,
+    };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [standalone],
+    });
+    const renderProject = vi.fn(
+      (context: CollaborationProjectRendererContext) => (
+        <div data-testid="standalone-project">{context.project.name}</div>
+      ),
+    );
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, projectId: standalone.id }}
+        renderProject={renderProject}
+      />,
+    );
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-platform-opening-project"]',
+      ),
+    ).toBeNull();
+    expect(byTestId("standalone-project").textContent).toBe(standalone.name);
+    expect(renderProject).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: standalone, workspace: null }),
+    );
+    expect(api.workspaces!.get).not.toHaveBeenCalled();
+    expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
+  });
   it("lists accessible projects by storage without requiring access to their parent space", async () => {
     const restrictedProject = {
       ...project,
@@ -3352,6 +3413,107 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(editor.value).toBe("unsaved");
   });
 
+  it.each(["self", "agent"])(
+    "records a new %s-owned Issue in the personal home without implicitly starting a task",
+    async (target) => {
+      const { api } = createApi();
+      vi.mocked(api.issues.create).mockResolvedValue({
+        ...issue,
+        description: "Ship the change",
+        assignee_user_id: target === "self" ? 7 : null,
+        assignee_agent_id: target === "agent" ? agent.id : null,
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          currentUser={{ id: 7, name: "李明" }}
+          renderPersonalHome={({ createIssue, createdIssue }) => (
+            <div>
+              {createIssue}
+              <output
+                data-testid="created-home-issue"
+                data-start={String(Boolean(createdIssue?.task))}
+              >
+                {createdIssue?.issue.description}
+              </output>
+            </div>
+          )}
+          renderIssueComposer={(props) => (
+            <div>
+              {props.ownerControl}
+              <button
+                data-testid="submit-home-work"
+                onClick={() => props.onSubmit("Ship the change")}
+              >
+                Create
+              </button>
+            </div>
+          )}
+        />,
+      );
+      await click(byTestId("collaboration-issue-owner"));
+      await click(
+        document.querySelector<HTMLElement>(
+          target === "self"
+            ? '[data-testid="collaboration-issue-owner-7"]'
+            : '[data-testid="collaboration-issue-owner-agent:' +
+                agent.id +
+                '"]',
+        )!,
+      );
+      await click(byTestId("submit-home-work"));
+      expect(byTestId("created-home-issue").textContent).toBe(
+        "Ship the change",
+      );
+      expect(byTestId("created-home-issue").getAttribute("data-start")).toBe(
+        "false",
+      );
+      expect(api.issues.create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([false, true])(
+    "clears a recovered Issue reference error while preserving member failure=%s",
+    async (memberFailure) => {
+      const { api } = createApi();
+      if (memberFailure)
+        vi.mocked(api.members.list).mockRejectedValueOnce(
+          new Error("member load failed"),
+        );
+      await render(
+        <PlatformHarness
+          api={api}
+          renderPersonalHome={({ createIssue }) => <>{createIssue}</>}
+          renderIssueComposer={(props) => (
+            <div>
+              <output data-testid="reference-error">{props.error}</output>
+              <button
+                data-testid="reference-on"
+                onClick={() => props.onChange("#")}
+              >
+                Reference
+              </button>
+              <button
+                data-testid="reference-off"
+                onClick={() => props.onChange("")}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        />,
+      );
+      const previous = byTestId("reference-error").textContent;
+      expect(Boolean(previous)).toBe(memberFailure);
+      vi.mocked(api.issues.list).mockRejectedValueOnce(new Error("offline"));
+      await click(byTestId("reference-on"));
+      expect(byTestId("reference-error").textContent).not.toBe("");
+      await click(byTestId("reference-off"));
+      await click(byTestId("reference-on"));
+      expect(byTestId("reference-error").textContent).toBe(previous);
+    },
+  );
+
   it("creates a personal Issue and retries Stand-in without creating it again", async () => {
     const { api } = createApi();
     const run = vi
@@ -3958,6 +4120,49 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
     expect(byTestId("test-empty-local-project-importer")).toBeTruthy();
   });
+
+  it.each(["local", "backend"] as const)(
+    "opens personal-home issues in their %s store without requiring workspace membership",
+    async (store) => {
+      const linkedProject = {
+        ...project,
+        project_store: store,
+        workspace_id: null,
+      };
+      const { api } = createApi({ initialProjects: [linkedProject] });
+      await render(
+        <PlatformHarness
+          api={api}
+          renderProject={() => <div />}
+          renderPersonalHome={({ onOpenIssue }) => (
+            <button
+              data-testid="test-my-home-open"
+              onClick={() =>
+                onOpenIssue({
+                  ...issue,
+                  project_key: project.project_key,
+                  project_name: project.name,
+                  has_active_task: false,
+                })
+              }
+            >
+              Open Issue
+            </button>
+          )}
+        />,
+      );
+      expect(byTestId("collaboration-primary-home").textContent).toContain(
+        "我的",
+      );
+      await click(byTestId("test-my-home-open"));
+      expect(JSON.parse(byTestId("test-location").textContent!)).toMatchObject({
+        collaborationDomain: store === "local" ? "local" : "cloud",
+        projectId: project.id,
+        workspaceId: null,
+        issueId: issue.id,
+      });
+    },
+  );
 
   it("shows Wework primary navigation before the non-collapsible spaces section", async () => {
     const { api } = createApi({
@@ -6974,6 +7179,12 @@ describe("Issue permission separation in the real shared editor", () => {
         '[data-testid="collaboration-assignment-target"]',
       ),
     ).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="cloud-todo-create-task"]'),
+    ).toHaveLength(1);
+    expect(
+      byTestId("cloud-todo-tasks").contains(byTestId("cloud-todo-create-task")),
+    ).toBe(true);
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
     titleScrollHeight.mockRestore();

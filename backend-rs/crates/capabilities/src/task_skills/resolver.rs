@@ -485,7 +485,7 @@ fn ref_meta_from_crd(value: Option<&SkillRefMetaInput>) -> SkillRefMeta {
 /// group-bound ids -> user-default bindings -> public. The source queries the
 /// `kinds` table directly with `db.query(Kind)` at every step (no
 /// reader), so the target issues the same direct SQL.
-async fn find_skill_by_name<M: Mysql, R: brz_redis::Redis>(
+pub async fn find_skill_by_name<M: Mysql, R: brz_redis::Redis>(
     kinds: &KindCacheStore<'_, M, R>,
     skill_name: &str,
     owner_user_id: i64,

@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertStartupSplashDragRegions } from './startup-splash-drag.mjs'
 
+const STARTUP_LOGO_CLEARANCE = 12
+
 export function parseStartupEvents(log) {
   return [...log.matchAll(/\[startup\]\s+\{([\s\S]*?)\}/g)].flatMap(match => {
     const body = match[1]
@@ -128,6 +130,23 @@ export function startupTimeoutObservation(state) {
   return rendererStageObservation(state, snapshot => !snapshot.timeoutHidden)
 }
 
+function assertStartupBrandLayout(state, label) {
+  const brand = state.brandBounds
+  const footer = state.dragRegions?.status?.bounds
+  assert.ok(brand, `${label} did not expose startup brand bounds`)
+  assert.ok(footer, `${label} did not expose startup footer bounds`)
+  assert.ok(brand.width > 0 && brand.height > 0, `${label} startup brand has invalid bounds`)
+  assert.ok(
+    brand.bottom <= footer.y - STARTUP_LOGO_CLEARANCE + 1,
+    `${label} startup brand overlaps the footer: ${JSON.stringify({ brand, footer })}`
+  )
+  assert.ok(
+    brand.left >= 0 && brand.right <= state.dragRegions.stage.bounds.width + 1,
+    `${label} startup brand is horizontally outside the splash: ${JSON.stringify(brand)}`
+  )
+  return brand
+}
+
 async function waitForHandlerLog(logPath, afterBytes, step, status) {
   const deadline = Date.now() + 10_000
   do {
@@ -145,13 +164,24 @@ async function clickSplash(control, testId) {
   await control.command('clickStartupSplash', 'body', { value: testId })
 }
 
+function visibleToastObservation(state, pattern, afterSequence) {
+  return [state, ...(state.observations ?? [])].find(
+    snapshot =>
+      snapshot.toastSequence > afterSequence &&
+      !snapshot.toastHidden &&
+      pattern.test(snapshot.toastText)
+  )
+}
+
 async function copyDiagnostics(control, testId, logPath) {
+  const before = await inspectSplash(control)
   const afterBytes = (await readFile(logPath)).length
   await clickSplash(control, testId)
   await waitForHandlerLog(logPath, afterBytes, 'startup-diagnostics-copy', 'completed')
   await waitForSplash(
     control,
-    state => !state.toastHidden && /诊断信息已复制|Diagnostics copied/.test(state.toastText),
+    state =>
+      visibleToastObservation(state, /诊断信息已复制|Diagnostics copied/, before.toastSequence),
     'Copying real startup diagnostics did not confirm success'
   )
   const diagnostics = await control.command('getClipboardText', 'body')
@@ -185,6 +215,7 @@ async function verifyOpenLogs(control, testId, logPath, blockedDirectory) {
   try {
     await rm(blockedDirectory, { recursive: true })
     await writeFile(blockedDirectory, 'A real file cannot be opened as the log directory.\n')
+    const before = await inspectSplash(control)
     const beforeFailure = (await readFile(logPath)).length
     await clickSplash(control, testId)
     const failed = await waitForHandlerLog(
@@ -196,8 +227,11 @@ async function verifyOpenLogs(control, testId, logPath, blockedDirectory) {
     const snapshot = await waitForSplash(
       control,
       state =>
-        !state.toastHidden &&
-        /无法打开日志目录|Could not open the log folder/.test(state.toastText),
+        visibleToastObservation(
+          state,
+          /无法打开日志目录|Could not open the log folder/,
+          before.toastSequence
+        ),
       'A real log-directory error did not reach the splash'
     )
     return { completed, failed, toastText: snapshot.toastText }
@@ -267,6 +301,38 @@ export async function verifyStartupSplashProgress({
   assert.ok(Date.now() - timeout.progress.startedAt >= timeout.progress.stage.timeoutMs)
   assert.equal(timeout.recoveryHidden, true)
   assert.match(timeout.timeoutTitle, /首次启动可能较慢|First startup can take longer/)
+  const slowBrand = assertStartupBrandLayout(slow, 'Slow startup')
+  const timeoutBrand = assertStartupBrandLayout(timeout, 'Timeout startup')
+  assert.ok(
+    Math.abs(timeoutBrand.width - slowBrand.width) <= 1 &&
+      Math.abs(timeoutBrand.height - slowBrand.height) <= 1,
+    `Startup brand size changed between slow and timeout states: ${JSON.stringify({ slowBrand, timeoutBrand })}`
+  )
+  const previousSplashSize = JSON.parse(
+    await control.command('setStartupSplashSize', 'body', {
+      value: JSON.stringify({ width: 1100, height: 620 }),
+    })
+  )
+  let resizedBrand
+  try {
+    const resized = await waitForSplash(
+      control,
+      state =>
+        !state.timeoutHidden &&
+        Math.abs(state.dragRegions?.status?.bounds?.width - 1100) <= 1 &&
+        state.brandBounds,
+      'The startup splash did not expose geometry after resizing'
+    )
+    resizedBrand = assertStartupBrandLayout(resized, 'Resized timeout startup')
+  } finally {
+    await control.command('setStartupSplashSize', 'body', {
+      value: JSON.stringify(previousSplashSize),
+    })
+  }
+  assert.ok(
+    resizedBrand.width >= timeoutBrand.width - 1 && resizedBrand.height >= timeoutBrand.height - 1,
+    `Startup brand shrank after resizing: ${JSON.stringify({ timeoutBrand, resizedBrand })}`
+  )
   const timeoutDiagnostics = await copyDiagnostics(control, 'startup-timeout-copy-button', logPath)
   assert.match(timeoutDiagnostics, /\[Startup result\]\nStartup is slow: stage renderer/)
   assert.match(timeoutDiagnostics, /\(no startup failure recorded\)/)
@@ -315,6 +381,6 @@ export async function verifyStartupSplashProgress({
   await writeFile(join(root, 'failure-diagnostics.txt'), failureDiagnostics)
   await writeFile(
     join(root, 'evidence.json'),
-    `${JSON.stringify({ slow, timeout, timeoutOpenLogs, failure, failureOpenLogs }, null, 2)}\n`
+    `${JSON.stringify({ slow, timeout, resizedBrand, timeoutOpenLogs, failure, failureOpenLogs }, null, 2)}\n`
   )
 }

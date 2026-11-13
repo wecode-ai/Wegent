@@ -20,6 +20,7 @@ let activeRuntimeChatStreamSubscriptions = 0
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 const STREAM_EVENT_BATCH_INTERVAL_MS = 16
 export const E2E_DROPPED_RUNTIME_EVENTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENTS__'
+export const E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY = '__WEWORK_E2E_DROPPED_RUNTIME_EVENT_COUNTS__'
 export const E2E_RUNTIME_EVENT_DISPATCHERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_DISPATCHERS__'
 export const E2E_RUNTIME_EVENT_LISTENERS_KEY = '__WEWORK_E2E_RUNTIME_EVENT_LISTENERS__'
 
@@ -294,11 +295,14 @@ function shouldDropRuntimeEventForE2E(eventName: string): boolean {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return false
   const root = globalThis as typeof globalThis & {
     [E2E_DROPPED_RUNTIME_EVENTS_KEY]?: string[]
+    [E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY]?: Record<string, number>
   }
   const droppedEvents = root[E2E_DROPPED_RUNTIME_EVENTS_KEY]
   const index = droppedEvents?.indexOf(eventName) ?? -1
   if (!droppedEvents || index < 0) return false
   droppedEvents.splice(index, 1)
+  const counts = (root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ??= {})
+  counts[eventName] = (counts[eventName] ?? 0) + 1
   return true
 }
 
