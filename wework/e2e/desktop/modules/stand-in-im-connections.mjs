@@ -259,7 +259,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       assert.ok(
         (
           await control.command('getText', `${panel} [data-testid="stand-in-im-connections"]`)
-        ).includes('已连接其他分身')
+        ).includes('已连接其他助理')
       )
       const nonexistentDevice = await fetch(
         `${cloud.backendUrl}/api/im/private-sessions/${keys[0]}/stand-in`,

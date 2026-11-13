@@ -658,6 +658,15 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
+        if eligible.iter().any(|role| {
+            existing.as_array().into_iter().flatten().any(|row| {
+                row["task_id"].as_str().is_some_and(|task| {
+                    self.assignment_handled_by_another_role(role, issue, binding, task)
+                })
+            })
+        }) {
+            return Ok(());
+        }
         self.dispatch_cloud_stand_in_roles(&eligible, issue, binding, &existing)
             .await
     }
@@ -784,6 +793,18 @@ impl RuntimeWorkRpcHandler {
         } else {
             Some(gate.lock().await)
         };
+        if config["manual"] != true {
+            let store =
+                LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+            let bindings = store
+                .list_task_bindings(issue["id"].as_str().unwrap_or_default())
+                .map_err(settings_error)?;
+            if bindings.iter().any(|row| {
+                self.assignment_handled_by_another_role(config, issue, binding, &row.task_id)
+            }) {
+                return Ok(());
+            }
+        }
         self.execute_stand_in_task(config, issue, binding).await
     }
 

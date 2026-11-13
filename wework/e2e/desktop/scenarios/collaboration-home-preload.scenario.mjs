@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
+import {
+  inCollaborationSidebar,
+  revealCollaborationSidebarElement,
+} from '../modules/workspace-flows.mjs'
 
 // Delay only delivery of an actual Backend snapshot. No API payload is mocked.
 export function createDesktopScenario({ uiTimeoutMs }) {
@@ -67,9 +71,13 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         }
         return null
       }
-      // Hold the batched personal-work page while search independently opens A.
+      // Hold the batched personal-work page while the sidebar independently opens A.
       // Releasing that old page must not replace the project's newer assignment.
-      await control.command('navigate', 'body', { value: '/todo?projectId=default-work-items' })
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command(
+        'clickWhenEnabled',
+        inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
+      )
       await control.command('waitFor', '[data-testid="personal-home"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -80,20 +88,12 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       )
       const held = proxy.requests.find(entry => entry.committedResponseHeld)
       assert.equal(held.status, 200)
-      await control.command('press', 'body', {
-        key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+k`,
-      })
-      await control.command('waitFor', '[data-testid="cloud-global-search-input"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('fill', '[data-testid="cloud-global-search-input"]', {
-        value: issue.title,
-      })
-      await control.command('waitFor', `[data-testid="cloud-global-search-result-${issue.id}"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', `[data-testid="cloud-global-search-result-${issue.id}"]`)
-      // Selecting a cloud Issue transitions from the personal-work host to
+      const projectEntry = inCollaborationSidebar(
+        `[data-testid="collaboration-workspace-project-${project.id}"]`
+      )
+      await revealCollaborationSidebarElement(control, projectEntry)
+      await control.command('clickWhenEnabled', projectEntry)
+      // Selecting a cloud project transitions from the personal-work host to
       // the project host. Assert the observable late-response contract across
       // that real navigation rather than assuming both hosts share an instance.
       await control.command('waitFor', `[data-testid="cloud-todo-card-${issue.id}"]`, {

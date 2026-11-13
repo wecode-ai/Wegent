@@ -2,6 +2,57 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[test]
+fn assignment_handled_by_another_role_preserves_scope_and_new_wakeups() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let config = json!({"id":"docs","userId":7,"projectStore":"local","projectId":"project"});
+    let issue = json!({"id":"issue"});
+    let binding = json!({"humanAssignmentId":"accepted"});
+    let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"accepted"});
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "original-task".into(),
+        status: "done".into(),
+        runtime_handle: json!({"origin":origin}),
+        ..RuntimeTaskLink::default()
+    });
+    assert!(handler.assignment_handled_by_another_role(&config, &issue, &binding, "original-task"));
+    assert!(!handler.assignment_handled_by_another_role(
+        &config,
+        &issue,
+        &json!({"humanAssignmentId":"reassigned"}),
+        "original-task"
+    ));
+    let mut manual = config.clone();
+    manual["manual"] = json!(true);
+    assert!(!handler.assignment_handled_by_another_role(
+        &manual,
+        &issue,
+        &binding,
+        "original-task"
+    ));
+    for (field, value) in [
+        ("userId", json!(8)),
+        ("projectStore", json!("cloud")),
+        ("cloudProjectId", json!("other-project")),
+        ("loopItemId", json!("other-issue")),
+        ("standInId", json!("docs")),
+    ] {
+        let mut foreign = origin.clone();
+        foreign[field] = value;
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "original-task".into(),
+            runtime_handle: json!({"origin":foreign}),
+            ..RuntimeTaskLink::default()
+        });
+        assert!(
+            !handler.assignment_handled_by_another_role(&config, &issue, &binding, "original-task"),
+            "{field}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn moved_roles_leave_existing_issue_work_on_its_original_device() {
     let root = tempfile::tempdir().unwrap();

@@ -14,6 +14,31 @@ pub(super) fn accepted_stand_in_result(result: Value) -> Result<Value, AppIpcErr
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn assignment_handled_by_another_role(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+        task_id: &str,
+    ) -> bool {
+        if config["manual"] == true || config["triggerCommentId"].is_string() {
+            return false;
+        }
+        let Some(task) = self.store.get_task_summary(task_id) else {
+            return false;
+        };
+        let origin = &task.runtime_handle["origin"];
+        origin["type"] == "issue_dispatch"
+            && origin["initiatedBy"] == "stand_in"
+            && origin["standInId"].is_string()
+            && origin["standInId"] != config["id"]
+            && origin["userId"] == config["userId"]
+            && origin["projectStore"] == config["projectStore"]
+            && origin["cloudProjectId"] == config["projectId"]
+            && origin["loopItemId"] == issue["id"]
+            && self.stand_in_assignment_is_handled(config, task_id, binding)
+    }
+
     pub(super) fn stand_in_role_runs_here(&self, role: &Value) -> bool {
         role["executionDeviceId"]
             .as_str()
