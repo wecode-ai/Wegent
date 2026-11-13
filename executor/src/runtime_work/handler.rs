@@ -204,6 +204,7 @@ mod submitted_model;
 mod supervisor;
 use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
 
+mod generated_issue_title;
 mod system;
 mod tasks;
 mod text_generation;
