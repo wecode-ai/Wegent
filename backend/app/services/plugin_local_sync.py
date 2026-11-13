@@ -14,9 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
 from app.schemas.installed_plugin import InstalledPlugin, InstalledPluginUpdateRequest
-from app.services.device.plugin_sync_protocol import lock_installed_plugin_state
+from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
@@ -193,14 +192,13 @@ def mutate_local_plugin(
         installed_id = (
             int(installed.metadata["labels"]["id"]) if installed else target_id
         )
-        row = db.get(Kind, int(installed_id))
-        state = _guard_intent_order(
-            db, user_id, instance_id, int(installed_id), intent_order
-        )
+        _guard_intent_order(db, user_id, instance_id, int(installed_id), intent_order)
         result = installed.model_dump(mode="json") if installed else None
+        state = lock_plugin_sync_state(db, user_id, merge=True)
         document = deepcopy(state.json)
         slots = document.setdefault("spec", {}).setdefault("localIntents", {})
         local = slots.setdefault(instance_id, {})
+        row = db.get(Kind, int(installed_id))
         local[str(installed_id)] = {
             "operationId": operation_id,
             "requestHash": request_hash,
@@ -217,36 +215,11 @@ def mutate_local_plugin(
 def _lookup_operation(
     db: Session, user_id: int, instance_id: str, operation_id: str
 ) -> dict[str, Any] | None:
-    from app.services.plugin_state_history import historical_slots
-
-    with db.no_autoflush:
-        states = (
-            db.query(PluginState)
-            .filter(
-                PluginState.user_id == user_id,
-            )
-            .all()
-        )
-    found = []
-    for state in states:
-        if state.plugin_key == "@legacy-v2":
-            continue
-        slots = state.json.get("spec", {}).get("localIntents", {}).get(instance_id, {})
-        if not isinstance(slots, dict):
-            raise HTTPException(409, "plugin_write_conflict")
-        found.extend(
-            slot for slot in slots.values() if slot.get("operationId") == operation_id
-        )
-    # Migration keeps orphan receipts whose old installation was removed by
-    # catalog repair. A projected plugin receipt takes precedence.
-    if not found:
-        found = [
-            slot
-            for slot in historical_slots(
-                db, user_id, instance_id, "localIntents", states
-            ).values()
-            if slot.get("operationId") == operation_id
-        ]
+    state = lock_plugin_sync_state(db, user_id, merge=True)
+    slots = state.json.get("spec", {}).get("localIntents", {}).get(instance_id, {})
+    if not isinstance(slots, dict):
+        raise HTTPException(409, "plugin_write_conflict")
+    found = [slot for slot in slots.values() if slot.get("operationId") == operation_id]
     if len(found) > 1:
         raise HTTPException(409, "plugin_write_conflict")
     return found[0] if found else None
@@ -327,13 +300,13 @@ def _guard_intent_order(
     order: int,
     *,
     advance: bool = True,
-) -> PluginState:
+) -> None:
     """Fence first-arrival replay as well as duplicate requests, under the lease.
 
     This watermark outlives operation retention. A rejected post-flush
     install is rolled back by run_plugin_operation together with all its writes.
     """
-    state = lock_installed_plugin_state(db, user_id, installed_id, merge=True)
+    state = lock_plugin_sync_state(db, user_id, merge=True)
     document = deepcopy(state.json)
     orders = document.setdefault("spec", {}).setdefault("localIntentOrders", {})
     if not isinstance(orders, dict) or not isinstance(orders.get(instance, {}), dict):
@@ -347,7 +320,6 @@ def _guard_intent_order(
     if advance:
         local[str(installed_id)] = order
         state.json = document
-    return state
 
 
 @contextmanager
@@ -374,22 +346,12 @@ def _rejection_context(
             )
             with db.no_autoflush:
                 accepted = _lookup_operation(db, user_id, instance, operation)
-            with db.no_autoflush:
-                states = db.query(PluginState).filter_by(user_id=user_id).all()
-            orders = {}
-            from app.services.plugin_state_history import historical_slots
-
-            orders.update(
-                historical_slots(db, user_id, instance, "localIntentOrders", states)
+            state = lock_plugin_sync_state(db, user_id)
+            orders = (
+                state.json.get("spec", {})
+                .get("localIntentOrders", {})
+                .get(instance, {})
             )
-            for state in states:
-                if state.plugin_key == "@legacy-v2":
-                    continue
-                orders.update(
-                    state.json.get("spec", {})
-                    .get("localIntentOrders", {})
-                    .get(instance, {})
-                )
             if not isinstance(orders, dict) or any(
                 type(value) is not int for value in orders.values()
             ):

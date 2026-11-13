@@ -544,9 +544,6 @@ pub(super) fn plugin_manifest_entry(
     if let Some(generation) = spec.sync_generation {
         entry.insert("plugin_sync_generation".to_owned(), json!(generation));
     }
-    if spec.scoped_sync {
-        entry.insert("plugin_sync_protocol_version".to_owned(), json!(3));
-    }
     entry.insert("marketplace".to_owned(), json!(spec.marketplace));
     entry.insert("enabled".to_owned(), json!(spec.enabled));
     entry.insert("version".to_owned(), json!(spec.version));

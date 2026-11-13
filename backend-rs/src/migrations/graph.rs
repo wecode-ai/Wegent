@@ -180,18 +180,18 @@ mod tests {
     #[test]
     fn checked_in_graph_preserves_all_legacy_revisions() {
         let graph = Graph::load().unwrap();
-        assert_eq!(graph.revisions.len(), 68);
-        assert_eq!(graph.head, "c7d8e9f0a1b2");
+        assert_eq!(graph.revisions.len(), 66);
+        assert_eq!(graph.head, "b1c2d3e4f5a6");
         assert_eq!(
             graph
                 .revisions
                 .iter()
                 .filter(|r| r.parents.len() > 1)
                 .count(),
-            7
+            6
         );
         let plan = graph.upgrade(&BTreeSet::new(), &graph.head).unwrap();
-        assert_eq!(plan.len(), 68);
+        assert_eq!(plan.len(), 66);
         let mut applied = BTreeSet::new();
         for revision in plan {
             assert!(revision.parents.iter().all(|p| applied.contains(p)));
@@ -224,28 +224,6 @@ mod tests {
         );
         applied.remove("580031eb7ddc");
         assert_eq!(graph.frontier(&applied).unwrap(), heads);
-    }
-
-    #[test]
-    fn plugin_and_share_heads_upgrade_without_replaying_applied_revisions() {
-        let graph = Graph::load().unwrap();
-        for (applied, missing) in [
-            ("a5b6c7d8e9f0", "b1c2d3e4f5a6"),
-            ("b1c2d3e4f5a6", "a5b6c7d8e9f0"),
-        ] {
-            let heads = BTreeSet::from([applied.into()]);
-            let plan = graph.upgrade(&heads, &graph.head).unwrap();
-            assert_eq!(
-                plan.iter().map(|r| r.revision.as_str()).collect::<Vec<_>>(),
-                [missing, graph.head.as_str()]
-            );
-        }
-        let heads = BTreeSet::from(["a5b6c7d8e9f0".into(), "b1c2d3e4f5a6".into()]);
-        let plan = graph.upgrade(&heads, &graph.head).unwrap();
-        assert_eq!(plan.len(), 1);
-        assert_eq!(plan[0].revision, graph.head);
-        assert!(plan[0].upgrade.as_ref().unwrap().is_empty());
-        assert!(plan[0].downgrade.as_ref().unwrap().is_empty());
     }
 
     #[test]

@@ -53,7 +53,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     upgrade(mysql).await?;
     check(mysql).await?;
     let tables: Vec<Name> = mysql.fetch_all("SELECT CAST(TABLE_NAME AS CHAR) AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()", ()).await?;
-    assert_eq!(tables.len(), 51);
+    assert_eq!(tables.len(), 50);
     assert!(
         !tables
             .iter()
@@ -69,7 +69,6 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     downgrade(mysql, "d47dd270f4b6").await?;
     upgrade(mysql).await?;
     check(mysql).await?;
-    verify_plugin_state_round_trip(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
     crate::background_jobs::robot::verify_issue_activity_projection(mysql).await?;
@@ -200,78 +199,5 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
     }
     let grants:Count=mysql.fetch_one("SELECT COUNT(*) AS n FROM resource_members WHERE resource_type='CloudProject' AND resource_id=101 AND entity_type='authenticated_users' AND entity_id='*'",()).await?;
     assert_eq!(grants.n, 0);
-    Ok(())
-}
-
-async fn verify_plugin_state_round_trip(mysql: &MysqlService) -> Result<()> {
-    downgrade(mysql, "f3a7c9e1b2d4").await?;
-    let document = serde_json::json!({"spec":{"revision":5,"generation":12,
-        "localIntents":{"native":{"70001":{"operationId":"persisted","intentOrder":7}}},
-        "localIntentOrders":{"native":{"70001":7}},
-        "devices":{"desktop":{"complete_generation":10,"plugins":{"70001":12}}}}});
-    mysql.execute("INSERT INTO kinds (id,user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (70001,70001,'InstalledPlugin','migration-plugin','default',?,0,NOW(),NOW()),(70002,70001,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())", (serde_json::json!({"spec":{"revision":3}}),document)).await?;
-    upgrade(mysql).await?;
-    #[derive(FromMysqlRow)]
-    struct Rows {
-        n: i64,
-    }
-    assert_eq!(
-        mysql
-            .fetch_one::<_, _, Rows>(
-                "SELECT COUNT(*) AS n FROM plugin_states WHERE user_id=70001",
-                ()
-            )
-            .await?
-            .n,
-        0
-    );
-    assert_eq!(mysql.fetch_one::<_,_,Rows>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=70001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
-    mysql
-        .with_transaction_options(
-            brz_mysql::MysqlTransactionOptions::default()
-                .with_isolation_level(brz_mysql::MysqlIsolationLevel::ReadCommitted),
-            async |tx| {
-                let mut query = &mut *tx;
-                crate::plugins_installed::state_store::ensure(
-                    &mut query,
-                    70001,
-                    "migration-plugin",
-                    70001,
-                )
-                .await?;
-                Ok(())
-            },
-        )
-        .await?;
-    #[derive(FromMysqlRow)]
-    struct Document {
-        document: serde_json::Value,
-    }
-    let state:Document=mysql.fetch_one("SELECT json AS document FROM plugin_states WHERE user_id=70001 AND plugin_key='migration-plugin'",()).await?;
-    assert_eq!(state.document["spec"]["generation"], 12);
-    assert_eq!(
-        state.document["spec"]["localIntentOrders"]["native"]["70001"],
-        7
-    );
-    assert_eq!(
-        state.document["spec"]["devices"]["desktop"]["complete_generation"],
-        10
-    );
-    mysql.execute("UPDATE plugin_states SET json=JSON_SET(json,'$.spec.generation',20) WHERE user_id=70001 AND plugin_key='migration-plugin'",()).await?;
-    downgrade(mysql, "f3a7c9e1b2d4").await?;
-    let restored:Document=mysql.fetch_one("SELECT json AS document FROM kinds WHERE user_id=70001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
-    assert_eq!(restored.document["spec"]["generation"], 20);
-    assert_eq!(
-        restored.document["spec"]["localIntents"]["native"]["70001"]["operationId"],
-        "persisted"
-    );
-    upgrade(mysql).await?;
-    check(mysql).await?;
-    mysql
-        .execute("DELETE FROM plugin_states WHERE user_id=70001", ())
-        .await?;
-    mysql
-        .execute("DELETE FROM kinds WHERE user_id=70001", ())
-        .await?;
     Ok(())
 }

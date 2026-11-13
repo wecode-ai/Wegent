@@ -30,7 +30,6 @@ def runtime_state_sync(plugin_requests, monkeypatch):
         session_factory=plugin_write_operations.get_db_session
     )
     service.supports_plugin_delta = AsyncMock(return_value=True)
-    service.plugin_sync_version = AsyncMock(return_value=2)
     monkeypatch.setattr(plugin_device_sync, "device_capability_sync_service", service)
     monkeypatch.setattr(endpoints, "device_capability_sync_service", service)
     monkeypatch.setattr(

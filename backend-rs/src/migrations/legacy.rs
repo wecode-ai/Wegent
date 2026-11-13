@@ -41,7 +41,6 @@ pub fn validate(revision: &Revision, down: bool) -> Result<()> {
                     | "c2f8d4a6b901"
                     | "c9d4e7f1a2b3"
                     | "e6f1a2b3c4d5"
-                    | "a5b6c7d8e9f0"
             ),
         "native migration {} is not registered",
         revision.revision
@@ -77,8 +76,6 @@ pub async fn execute(
             "b8e2c4f6a901" if down => super::collaboration::downgrade(tx).await,
             "b8e2c4f6a901" => super::collaboration::upgrade(tx).await,
             "c2f8d4a6b901" => super::plugin_publication::execute(tx, down).await,
-            "a5b6c7d8e9f0" if down => super::plugin_states::downgrade(tx).await,
-            "a5b6c7d8e9f0" => super::plugin_states::upgrade(tx).await,
             _ => unreachable!("validated native migration"),
         };
     }

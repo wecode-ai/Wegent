@@ -77,8 +77,7 @@ async def sync_plugin_change(
     device_id: str,
     installed_plugin_ids: list[int],
 ) -> DeviceCapabilitySyncResult:
-    version = await service.plugin_sync_version(user_id, device_id)
-    if version is None:
+    if not await service.supports_plugin_delta(user_id, device_id):
         return await service.sync_current_device_capabilities(
             user_id=user_id, device_id=device_id
         )
@@ -88,7 +87,6 @@ async def sync_plugin_change(
             service._session_factory,
             user_id=user_id,
             complete=False,
-            protocol_version=version,
             load_payload=lambda db: build_plugin_delta(
                 service,
                 db,
@@ -119,7 +117,6 @@ async def sync_selected_capabilities(
 ) -> DeviceCapabilitySyncResponse:
     """Keep the selected-capability API from bypassing plugin ordering fences."""
     if mode == "replace":
-        version = await service.plugin_sync_version(user_id, device_id)
 
         def build(db: Session) -> dict[str, Any]:
             selected = service.resolve_payload(
@@ -146,8 +143,6 @@ async def sync_selected_capabilities(
                 user_id=user_id,
                 load_payload=build,
                 complete=True,
-                protocol_version=version,
-                all_capabilities=True,
             ),
         )
     elif installed_plugin_ids:
@@ -202,7 +197,7 @@ async def dispatch_snapshot(
     key = (
         user_id,
         device_id,
-        json.dumps(payload["plugin_sync"], sort_keys=True),
+        payload["plugin_sync"]["generation"],
         json.dumps(capability_snapshot(payload), sort_keys=True),
         tuple(
             (str(item.get("installed_plugin_id")), item.get("download_path"))
@@ -283,10 +278,9 @@ def validate_ack(payload: dict[str, Any], response: dict[str, Any]) -> str | Non
         if (identity not in expected and not inferred_removal) or identity in seen:
             return "Device returned unexpected plugin acknowledgement items"
         seen.add(identity)
-        if type(item.get("generation")) is not int or item.get("generation") != (
-            metadata.get("revisions", {}).get(identity)
-            if metadata["version"] == 3
-            else metadata["generation"]
+        if (
+            type(item.get("generation")) is not int
+            or item.get("generation") != metadata["generation"]
         ):
             return "Device returned an obsolete plugin acknowledgement"
         if inferred_removal:

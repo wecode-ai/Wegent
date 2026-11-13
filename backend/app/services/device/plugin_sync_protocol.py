@@ -14,37 +14,28 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
-from app.services.plugin_state_store import LEGACY_SYNC_KEY, ensure_plugin_state
 from app.services.plugin_sync_revision import (
+    materialize_sync_state,
     remember_sync_revision,
 )
 from app.services.plugin_write_coordination import configure_plugin_session
 from shared.telemetry.decorators import trace_sync
 
 PLUGIN_SYNC_VERSION = 2
+PLUGIN_SYNC_STATE_KIND = "PluginSyncState"
+PLUGIN_SYNC_STATE_NAMESPACE = "plugin-sync"
+PLUGIN_SYNC_STATE_NAME = "account"
 
 
-def plugin_sync_version(runtime_features: Any) -> int | None:
+def supports_plugin_sync_v2(runtime_features: Any) -> bool:
     """Require an explicit supported protocol, never infer it from app versions."""
     if not isinstance(runtime_features, dict):
-        return None
+        return False
     advertisement = runtime_features.get("pluginSync")
     if not isinstance(advertisement, dict):
-        return None
-    supported = advertisement.get("supportedVersions", [])
-    if isinstance(supported, list) and any(
-        type(v) is int and v == 3 for v in supported
-    ):
-        return 3
+        return False
     version = advertisement.get("protocolVersion")
-    return version if type(version) is int and version in {2, 3} else None
-
-
-def supports_snapshot(runtime_features: Any, payload: dict) -> bool:
-    version = (payload.get("plugin_sync") or {}).get("version")
-    selected = plugin_sync_version(runtime_features)
-    return selected == version or (version == 2 and selected == 3)
+    return type(version) is int and version == PLUGIN_SYNC_VERSION
 
 
 @trace_sync("device.plugin_sync.snapshot", "backend.device")
@@ -54,8 +45,6 @@ def load_versioned_plugin_payload(
     user_id: int,
     load_payload: Callable[[Session], dict[str, Any]],
     complete: bool,
-    protocol_version: int = 2,
-    all_capabilities: bool = False,
 ) -> dict[str, Any]:
     """Commit a snapshot's sequence before dispatch, using a fresh DB session.
 
@@ -63,39 +52,12 @@ def load_versioned_plugin_payload(
     rather than reuse an earlier request's ORM objects or payload. Metadata CAS
     retries ensure a higher generation cannot describe an older committed state.
     """
-    if protocol_version == 3:
-        from app.services.device.plugin_scoped_sync import load_plugin_scoped_payload
-
-        return load_plugin_scoped_payload(
-            session_factory,
-            user_id=user_id,
-            load_payload=load_payload,
-            complete=complete,
-            all_capabilities=all_capabilities,
-        )
-    if protocol_version != 2:
-        raise ValueError("Unsupported plugin sync protocol")
     from app.services.plugin_write_operations import run_plugin_transaction
 
     def build(db: Session) -> tuple[dict[str, Any], int]:
-        from app.services.device.plugin_scoped_sync import _snapshot_fences
-        from app.services.plugin_sync_revision import require_snapshot_revision
-
         state = lock_plugin_sync_state(db, user_id)
         generation = _next_generation(state)
-        fences = _snapshot_fences(db, user_id)
-        for _installed, fence in fences:
-            require_snapshot_revision(db, fence)
         payload = dict(load_payload(db))
-        from app.services.device.plugin_scoped_sync import remember_runtime_identities
-
-        remember_runtime_identities(db, user_id, payload)
-        for _installed, fence in fences:
-            document = deepcopy(fence.json)
-            document.setdefault("spec", {})["generation"] = max(
-                _next_generation(fence) - 1, generation
-            )
-            fence.json = document
         document = deepcopy(state.json)
         document.setdefault("spec", {})["generation"] = generation
         state.json = document
@@ -123,14 +85,6 @@ def register_plugin_snapshot_intent(
     from app.services.plugin_device_identity import plugin_device_id
 
     metadata = payload["plugin_sync"]
-    if metadata["version"] == 3:
-        from app.services.device.plugin_scoped_sync import (
-            register_scoped_snapshot_intent,
-        )
-
-        return register_scoped_snapshot_intent(
-            session_factory, user_id=user_id, device_id=device_id, payload=payload
-        )
     from app.services.plugin_write_operations import run_plugin_transaction
 
     def register(db: Session) -> None:
@@ -152,64 +106,28 @@ def register_plugin_snapshot_intent(
     run_plugin_transaction(register, session_factory, attempts=8)
 
 
-def lock_plugin_sync_state(
-    db: Session,
-    user_id: int,
-    *,
-    merge: bool = False,
-    plugin_key: str = LEGACY_SYNC_KEY,
-    installed_kind_id: int = 0,
-) -> PluginState:
-    """Read one durable plugin identity; the reserved key serves legacy V2 only."""
+def lock_plugin_sync_state(db: Session, user_id: int, *, merge: bool = False) -> Kind:
+    """Read the protocol CAS fence before any desired-state snapshot reads."""
     configure_plugin_session(db)
-    creation = db.info.get("plugin_creation_revisions", {}).get((user_id, plugin_key))
-    rebind = creation is not None and any(
-        row.id == installed_kind_id
+    pending = [
+        row
+        for row in set(db.new) | set(db.dirty)
+        if isinstance(row, Kind)
         and row.user_id == user_id
-        and row.name == plugin_key
-        for row in db.info.get("plugin_new_installations", [])
-    )
-    state = ensure_plugin_state(
-        db,
-        user_id,
-        plugin_key,
-        installed_kind_id=installed_kind_id,
-        previous_installed_id=creation.installed_kind_id if rebind else None,
-    )
-    remember_sync_revision(db, state, merge=merge)
-    return state
+        and row.kind == PLUGIN_SYNC_STATE_KIND
+        and row.namespace == PLUGIN_SYNC_STATE_NAMESPACE
+        and row.name == PLUGIN_SYNC_STATE_NAME
+    ]
+    if pending:
+        # Batch recording re-enters with autoflush disabled. Preserve earlier
+        # devices' changes before the locking read refreshes this identity.
+        db.flush(pending)
+    row = _sync_state(db, user_id)
+    remember_sync_revision(db, row, merge=merge)
+    return row
 
 
-def lock_installed_plugin_state(
-    db: Session, user_id: int, installed_id: int, *, merge: bool = False
-) -> PluginState:
-    with db.no_autoflush:
-        installed = (
-            db.query(Kind.name)
-            .filter_by(
-                id=installed_id,
-                user_id=user_id,
-                kind="InstalledPlugin",
-                namespace="default",
-            )
-            .one_or_none()
-        )
-    if installed is None:
-        from app.services.plugin_write_errors import PluginWriteError
-
-        raise PluginWriteError("plugin_write_conflict")
-    return lock_plugin_sync_state(
-        db,
-        user_id,
-        merge=merge,
-        plugin_key=installed.name,
-        installed_kind_id=installed_id,
-    )
-
-
-def plugin_snapshot_watermark(
-    state: PluginState, device_id: str, installed_id: int
-) -> int:
+def plugin_snapshot_watermark(state: Kind, device_id: str, installed_id: int) -> int:
     device = (state.json.get("spec") or {}).get("devices", {}).get(device_id, {})
     return max(
         _generation(device.get("complete_generation", 0)),
@@ -218,7 +136,7 @@ def plugin_snapshot_watermark(
 
 
 def advance_plugin_snapshot_watermark(
-    state: PluginState,
+    state: Kind,
     device_id: str,
     *,
     generation: int,
@@ -242,7 +160,38 @@ def advance_plugin_snapshot_watermark(
     state.json = document
 
 
-def _next_generation(state: PluginState) -> int:
+def _sync_state(db: Session, user_id: int) -> Kind:
+    state = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == PLUGIN_SYNC_STATE_KIND,
+            Kind.namespace == PLUGIN_SYNC_STATE_NAMESPACE,
+            Kind.name == PLUGIN_SYNC_STATE_NAME,
+            Kind.is_active.is_(True),
+        )
+        .populate_existing()
+        .one_or_none()
+    )
+    if state is None:
+        materialize_sync_state(
+            db,
+            user_id,
+            {
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": PLUGIN_SYNC_STATE_KIND,
+                "metadata": {
+                    "name": PLUGIN_SYNC_STATE_NAME,
+                    "namespace": PLUGIN_SYNC_STATE_NAMESPACE,
+                },
+                "spec": {"generation": 0},
+            },
+        )
+        return _sync_state(db, user_id)
+    return state
+
+
+def _next_generation(state: Kind) -> int:
     spec = (state.json or {}).get("spec") or {}
     return _generation(spec.get("generation", 0)) + 1
 

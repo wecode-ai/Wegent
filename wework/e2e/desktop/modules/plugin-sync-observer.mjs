@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { isDeepStrictEqual } from 'node:util'
 
 function socketPacket(text, type) {
   const packet = text.match(new RegExp(`^${type}(\\/[^,]+,)?(\\d+)?(\\[.*)$`, 's'))
@@ -103,18 +102,10 @@ export function observePluginSyncTransport(proxy, { holdCapability = () => false
   return observation
 }
 
-export function pluginSyncGeneration(sync, installedId) {
-  return sync?.version === 3 ? sync.revisions[String(installedId)] : sync?.generation
-}
-
-export function latestPluginSyncRequest(requests, installedId) {
+export function latestPluginSyncRequest(requests) {
   return requests.reduce(
     (latest, request) =>
-      !latest ||
-      pluginSyncGeneration(request.pluginSync, installedId) >
-        pluginSyncGeneration(latest.pluginSync, installedId)
-        ? request
-        : latest,
+      !latest || request.pluginSync.generation > latest.pluginSync.generation ? request : latest,
     undefined
   )
 }
@@ -125,9 +116,8 @@ export function acknowledgedPluginGeneration(observation, plugin, installedId, b
   const request = observation.capabilities.find(
     value =>
       value.at >= baseline.at &&
-      pluginSyncGeneration(value.pluginSync, installedId) === plugin?.plugin_sync_generation &&
-      pluginSyncGeneration(value.pluginSync, installedId) >=
-        pluginSyncGeneration(baseline.pluginSync, installedId) &&
+      value.pluginSync?.generation === plugin?.plugin_sync_generation &&
+      value.pluginSync.generation >= baseline.pluginSync.generation &&
       value.pluginIds.includes(String(installedId))
   )
   if (!request) return null
@@ -139,7 +129,9 @@ export function acknowledgedPluginGeneration(observation, plugin, installedId, b
         value.namespace === request.namespace &&
         value.success === true &&
         value.pluginIds.includes(String(installedId)) &&
-        isDeepStrictEqual(value.pluginSync, request.pluginSync)
+        value.pluginSync?.version === request.pluginSync.version &&
+        value.pluginSync?.generation === request.pluginSync.generation &&
+        value.pluginSync?.complete === request.pluginSync.complete
     ) ?? null
   )
 }

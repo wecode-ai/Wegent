@@ -16,7 +16,7 @@ use crate::http_compat::FastApiError;
 mod scoped;
 pub(crate) use scoped::installation_write_revision;
 
-const LEASE_SECONDS: u64 = 30;
+const LEASE_SECONDS: u64 = 180;
 const ACQUIRE_WAIT: Duration = Duration::from_secs(3);
 /// redis-py `Lock.acquire`'s default `sleep` (`redis/lock.py`): a blocked
 /// acquisition retries one `SET ... NX PX` every 100ms and gives up when the
@@ -44,6 +44,7 @@ pub(crate) struct PluginWriteLease<'a, R: Redis> {
     key: String,
     token: String,
     user_id: i64,
+    name: String,
     additional: Vec<(String, String)>,
     installations: Option<Vec<i64>>,
     pub deadline: Instant,
@@ -75,7 +76,6 @@ pub(crate) fn business_revision(document: &serde_json::Value) -> MysqlResult<i64
 }
 
 impl<'a, R: Redis> PluginWriteLease<'a, R> {
-    #[cfg(test)]
     pub async fn acquire(redis: Option<&'a R>, user_id: i64) -> MysqlResult<Self> {
         let redis = redis.ok_or_else(|| coordination_error("plugin_write_unavailable"))?;
         let mut random = [0_u8; 16];
@@ -85,7 +85,6 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         Self::acquire_token(redis, user_id, token, ACQUIRE_WAIT).await
     }
 
-    #[cfg(test)]
     async fn acquire_token(
         redis: &'a R,
         user_id: i64,
@@ -128,6 +127,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                         key,
                         token,
                         user_id,
+                        name: name.to_owned(),
                         additional: Vec::new(),
                         installations: None,
                         deadline: Instant::now() + OPERATION_BUDGET,
@@ -150,25 +150,41 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         }
     }
 
-    /// Create the policy and claim its unique bootstrap identity together.
-    /// The database fence survives lease expiry and uncertain COMMIT.
+    /// Create the real account policy in a short transaction under the lease.
+    /// First creation has no database uniqueness guarantee if leases overlap;
+    /// later reads reject duplicates instead of choosing an arbitrary parent.
     pub async fn ensure_policy<M: Mysql>(&self, mysql: &M) -> MysqlResult<()> {
-        let ready = tokio::time::timeout_at(
-            self.deadline,
-            mysql.with_transaction(async |tx| {
-                Ok(load_policy(tx, self.user_id)
-                    .await?
-                    .is_some_and(|row| row.is_active == Some(true)))
-            }),
-        )
-        .await
-        .map_err(|_| coordination_error("plugin_write_busy"))??;
-        if ready {
-            return self.verify_owned().await;
-        }
+        let bootstrap = if self.name != "@account-policy" {
+            let ready = tokio::time::timeout_at(
+                self.deadline,
+                mysql.with_transaction(async |tx| {
+                    Ok(load_policy(tx, self.user_id)
+                        .await?
+                        .is_some_and(|row| row.is_active == Some(true)))
+                }),
+            )
+            .await
+            .map_err(|_| coordination_error("plugin_write_busy"))??;
+            if ready {
+                return self.verify_owned().await;
+            }
+            Some(
+                tokio::time::timeout_at(
+                    self.deadline,
+                    Self::acquire(Some(self.redis), self.user_id),
+                )
+                .await
+                .map_err(|_| coordination_error("plugin_write_busy"))??,
+            )
+        } else {
+            None
+        };
         let deadline = (Instant::now() + ACQUIRE_WAIT).min(self.deadline);
         let Ok(result) = tokio::time::timeout_at(deadline, async {
             self.verify_owned().await?;
+            if let Some(lease) = &bootstrap {
+                lease.verify_owned().await?;
+            }
             mysql
                 .with_transaction(async |transaction| {
                     ensure_policy_in(transaction, self.user_id).await?;
@@ -178,22 +194,31 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         })
         .await
         else {
-            // The unique bootstrap row remains protected by MySQL until the
-            // uncertain transaction commits or its connection rolls back.
+            // COMMIT may still complete after cancellation. Keep bootstrap fencing
+            // until expiry instead of admitting another first-policy creator.
             return Err(coordination_error("plugin_write_busy"));
         };
+        if matches!(&result, Ok(_) | Err(MysqlError::InvalidQuery { .. }))
+            && let Some(lease) = bootstrap
+        {
+            lease.release().await;
+        }
         result
     }
 
     /// Reuse an active transaction instead of waiting for a second pool slot.
     pub(crate) async fn ensure_policy_on<T: MysqlTransaction>(
-        &self,
+        &mut self,
         transaction: &mut T,
     ) -> MysqlResult<()> {
         if load_policy(transaction, self.user_id)
             .await?
             .is_none_or(|row| row.is_active != Some(true))
         {
+            if self.name != "@account-policy" {
+                let bootstrap = Self::acquire(Some(self.redis), self.user_id).await?;
+                self.include(bootstrap.for_installations(Vec::new()));
+            }
             self.verify_owned().await?;
             ensure_policy_in(transaction, self.user_id).await?;
         }
@@ -250,7 +275,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
                 .command(get)
                 .await
                 .map_err(|_| coordination_error("plugin_write_unavailable"))?;
-            if current.is_none_or(|value| value.as_ref() != token.as_bytes()) {
+            if !current.is_some_and(|value| value.as_ref() == token.as_bytes()) {
                 return Err(coordination_error("plugin_write_lease_lost"));
             }
         }
@@ -366,7 +391,6 @@ async fn ensure_policy_in<T: MysqlTransaction>(
     transaction: &mut T,
     user_id: i64,
 ) -> MysqlResult<()> {
-    transaction.execute("INSERT INTO plugin_states (user_id,plugin_key,json) VALUES (?,'@account-policy',?) ON DUPLICATE KEY UPDATE plugin_key=plugin_states.plugin_key", (user_id,super::state_store::initial_document("@account-policy"))).await?;
     if let Some(row) = load_policy(transaction, user_id).await? {
         return restore_policy(transaction, user_id, row).await;
     }

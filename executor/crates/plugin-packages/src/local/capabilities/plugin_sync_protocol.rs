@@ -13,7 +13,6 @@ mod pipeline;
 
 #[derive(Debug)]
 pub(super) struct PluginSyncRequest {
-    version: u64,
     generation: u64,
     complete: bool,
     plugins_only: bool,
@@ -32,8 +31,7 @@ impl PluginSyncRequest {
             }
             return Ok(None);
         };
-        let version = protocol.get("version").and_then(Value::as_u64).unwrap_or(0);
-        if !matches!(version, 2 | 3) {
+        if protocol.get("version").and_then(Value::as_u64) != Some(2) {
             return Err(invalid("Unsupported plugin sync protocol version"));
         }
         let generation = protocol
@@ -51,20 +49,12 @@ impl PluginSyncRequest {
             .and_then(Value::as_str)
             .unwrap_or("merge");
         let plugins_only = scope == Some("plugins") || scope == Some("plugin_delta");
-        let valid_scope =
-            matches!(
-                (complete, scope, mode),
-                (false, Some("plugin_delta"), "merge")
-                    | (true, Some("plugins"), "merge" | "replace")
-                    | (true, None | Some("all"), "replace")
-            ) || (version == 3 && !complete && mode == "merge" && matches!(scope, Some("plugins")))
-                || (version == 3
-                    && !complete
-                    && matches!(scope, None | Some("all"))
-                    && mode == "replace");
-        if version == 3 && complete {
-            return Err(invalid("Plugin-scoped snapshots require explicit removals"));
-        }
+        let valid_scope = matches!(
+            (complete, scope, mode),
+            (false, Some("plugin_delta"), "merge")
+                | (true, Some("plugins"), "merge" | "replace")
+                | (true, None | Some("all"), "replace")
+        );
         if !valid_scope
             || (plugins_only && (payload.get("skills").is_some() || payload.get("mcps").is_some()))
         {
@@ -84,14 +74,14 @@ impl PluginSyncRequest {
                 return Err(invalid("MCP name is required"));
             }
         }
-        let mut plugins = payload
+        let plugins = payload
             .get("plugins")
             .and_then(Value::as_array)
             .ok_or_else(|| invalid("Plugin sync requires a plugins array"))?
             .iter()
             .map(PluginSyncSpec::from_value)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut removals = match payload.get("removed_plugins") {
+        let removals = match payload.get("removed_plugins") {
             Some(value) => value
                 .as_array()
                 .ok_or_else(|| invalid("Plugin removals must be an array"))?
@@ -101,44 +91,14 @@ impl PluginSyncRequest {
             None => Vec::new(),
         };
         let mut keys = BTreeSet::new();
-        let mut ids = BTreeSet::new();
-        let mut legacy_keys = BTreeSet::new();
-        let mut upserts = BTreeSet::new();
-        for spec in &plugins {
-            if !upserts.insert(spec.key.clone()) {
-                return Err(invalid("Plugin sync contains duplicate plugin identities"));
-            }
-        }
         for spec in plugins.iter().chain(&removals) {
             if !spec.installed_plugin_id.is_some_and(|id| id > 0) {
                 return Err(invalid(
                     "Plugin sync requires a positive installed plugin id",
                 ));
             }
-            if !keys.insert((spec.key.clone(), spec.installed_plugin_id))
-                || (version == 3 && !ids.insert(spec.installed_plugin_id))
-                || (version == 2 && !legacy_keys.insert(spec.key.clone()))
-            {
+            if !keys.insert(spec.key.clone()) {
                 return Err(invalid("Plugin sync contains duplicate plugin identities"));
-            }
-        }
-        if version == 3 {
-            let revisions = protocol
-                .get("revisions")
-                .and_then(Value::as_object)
-                .ok_or_else(|| invalid("Plugin-scoped snapshots require revisions"))?;
-            for spec in plugins.iter_mut().chain(&mut removals) {
-                let key = spec
-                    .installed_plugin_id
-                    .expect("validated installation id")
-                    .to_string();
-                let revision = revisions
-                    .get(&key)
-                    .and_then(Value::as_u64)
-                    .filter(|v| *v > 0)
-                    .ok_or_else(|| invalid("Plugin revision must be a positive integer"))?;
-                spec.scoped_sync = true;
-                spec.sync_generation = Some(revision);
             }
         }
         let skills = value_array(payload.get("skills"))
@@ -146,7 +106,6 @@ impl PluginSyncRequest {
             .map(SkillSyncSpec::from_value)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Some(Self {
-            version,
             generation,
             complete,
             plugins_only,
@@ -154,14 +113,6 @@ impl PluginSyncRequest {
             removals,
             skills,
         }))
-    }
-
-    fn generation_for(&self, spec: &PluginSyncSpec) -> u64 {
-        if self.version == 3 {
-            spec.sync_generation.expect("validated plugin generation")
-        } else {
-            self.generation
-        }
     }
 }
 
@@ -382,13 +333,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             return Ok(acknowledgement(spec, generation, "superseded", "remove"));
         }
         if existing.as_ref().is_some_and(|plugin| {
-            plugin.get("installed_plugin_id").and_then(Value::as_i64) == spec.installed_plugin_id
-                && !is_reconcilable(&spec.key, plugin)
-        }) {
-            return Err(invalid("Refusing to remove an unmanaged plugin"));
-        }
-        self.remove_installation_aliases(spec, manifest, activation)?;
-        if existing.as_ref().is_some_and(|plugin| {
             plugin.get("installed_plugin_id").and_then(Value::as_i64) != spec.installed_plugin_id
         }) {
             // A different installation may still be materialized while this
@@ -398,6 +342,12 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                 .manifest
                 .save_with_revision_bump(manifest.clone())?;
             return Ok(acknowledgement(spec, generation, "removed", "remove"));
+        }
+        if existing
+            .as_ref()
+            .is_some_and(|plugin| !is_reconcilable(&spec.key, plugin))
+        {
+            return Err(invalid("Refusing to remove an unmanaged plugin"));
         }
         record_intent(manifest, spec, generation, true);
         self.store
@@ -496,47 +446,10 @@ fn is_superseded(manifest: &Value, spec: &PluginSyncSpec, generation: u64, remov
         .and_then(|entry| entry.get("generation"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let complete = complete_generation(manifest);
-    let alias_generation = state
-        .and_then(|s| s["entries"].as_object())
-        .into_iter()
-        .flat_map(|entries| entries.values())
-        .filter(|entry| entry["installed_plugin_id"].as_i64() == spec.installed_plugin_id)
-        .filter_map(|entry| entry["generation"].as_u64())
-        .max()
-        .unwrap_or(0);
-    let obsolete = generation < complete.max(stored_generation).max(alias_generation)
+    let obsolete = generation < complete_generation(manifest).max(stored_generation)
         || generation < removed_generation
         || (!removing && generation == removed_generation);
     obsolete && !coalescing::equivalent_request(manifest, spec, generation, removing)
-}
-
-impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
-    fn remove_installation_aliases(
-        &self,
-        spec: &PluginSyncSpec,
-        manifest: &mut Value,
-        activation: &mut activation_revision::ActivationRevision<'_>,
-    ) -> Result<(), CapabilitySyncError> {
-        let stale: Vec<_> = object_map(manifest.get("plugins"))
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|(key, entry)| {
-                key != &spec.key
-                    && entry["installed_plugin_id"].as_i64() == spec.installed_plugin_id
-                    && is_reconcilable(key, entry)
-            })
-            .collect();
-        if stale.is_empty() {
-            return Ok(());
-        }
-        let desired = object_map(manifest.get("plugins"))
-            .unwrap_or_default()
-            .into_keys()
-            .filter(|key| !stale.iter().any(|(old, _)| old == key))
-            .collect();
-        self.remove_managed_plugins(stale, &desired, manifest, activation)
-    }
 }
 
 fn record_generation(manifest: &mut Value, spec: &PluginSyncSpec, generation: u64, removed: bool) {

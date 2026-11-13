@@ -287,7 +287,6 @@ pub struct PluginSyncSpec {
     download_path: Option<String>,
     component_states: Value,
     sync_generation: Option<u64>,
-    scoped_sync: bool,
 }
 
 impl PluginSyncSpec {
@@ -337,7 +336,6 @@ impl PluginSyncSpec {
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
             sync_generation: None,
-            scoped_sync: false,
         })
     }
 
@@ -376,10 +374,6 @@ impl PluginSyncSpec {
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new())),
             sync_generation: plugin.get("plugin_sync_generation").and_then(Value::as_u64),
-            scoped_sync: plugin
-                .get("plugin_sync_protocol_version")
-                .and_then(Value::as_u64)
-                == Some(3),
         }
     }
 }

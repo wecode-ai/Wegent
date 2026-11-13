@@ -261,26 +261,3 @@ async fn full_scope_fence_survives_restart_and_resets_on_account_switch() {
         assert!(manifest["plugin_sync"].get("removals").is_none());
     }
 }
-
-#[tokio::test]
-async fn scoped_full_capabilities_have_a_separate_stream_from_plugin_reconciliation() {
-    let (_root, handler) = scope_fixture(false);
-    handler.apply_sync(full_all(100, vec![], 1)).await.unwrap();
-    let full = scoped(full_all(101, vec![], 2));
-    assert_eq!(handler.apply_sync(full).await.unwrap()["success"], true);
-    assert_non_plugin_state(&handler, 2);
-    handler
-        .apply_sync(scoped(delta(1000, vec![plugin("alpha", 1)], vec![])))
-        .await
-        .unwrap();
-    assert_non_plugin_state(&handler, 2);
-    // A delayed V2 full snapshot cannot overwrite an accepted scoped stream.
-    handler.apply_sync(full_all(99, vec![], 1)).await.unwrap();
-    assert_non_plugin_state(&handler, 2);
-    assert!(handler.store.manifest.load().unwrap()["plugins"]["alpha@wework"].is_object());
-    handler
-        .apply_sync(scoped(full_all(102, vec![], 3)))
-        .await
-        .unwrap();
-    assert_non_plugin_state(&handler, 3);
-}

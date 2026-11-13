@@ -2528,8 +2528,8 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
 ):
     monkeypatch.setattr(
         device_capability_sync_service,
-        "plugin_sync_version",
-        AsyncMock(return_value=None),
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
     )
     user_id = test_user.id
 
@@ -3256,8 +3256,8 @@ async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
 ):
     monkeypatch.setattr(
         device_capability_sync_service,
-        "plugin_sync_version",
-        AsyncMock(return_value=None),
+        "supports_plugin_delta",
+        AsyncMock(return_value=False),
     )
     user_id = test_user.id
     installed, release = _device_install(test_db, user_id)

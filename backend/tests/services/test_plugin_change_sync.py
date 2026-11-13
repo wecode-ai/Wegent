@@ -368,7 +368,6 @@ async def test_legacy_device_change_retains_existing_full_sync_protocol():
     legacy_result = DeviceCapabilitySyncResult(device_id="legacy", success=True)
     service = Mock(
         supports_plugin_delta=AsyncMock(return_value=False),
-        plugin_sync_version=AsyncMock(return_value=None),
         sync_current_device_capabilities=AsyncMock(return_value=legacy_result),
     )
     result = await sync_plugin_change(
@@ -397,7 +396,6 @@ async def test_new_current_device_does_not_wait_for_old_background_device(
 
     service = DeviceCapabilitySyncService()
     service.supports_plugin_delta = AsyncMock(return_value=True)
-    service.plugin_sync_version = AsyncMock(return_value=2)
     service.sync_plugin_change = AsyncMock(side_effect=sync_change)
     request_db = Mock()
     monkeypatch.setattr(
@@ -464,7 +462,6 @@ async def test_selected_replace_always_uses_fresh_complete_plugin_snapshot(
     test_db.commit()
     service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
     service.supports_plugin_delta = AsyncMock(return_value=True)
-    service.plugin_sync_version = AsyncMock(return_value=2)
     service.sync_device_payload = AsyncMock(
         side_effect=lambda **kwargs: _result(kwargs["payload"])
     )
@@ -505,7 +502,6 @@ async def test_selected_replace_preserves_generator_ids_in_fresh_snapshot(
     installed_mcp = _create_installed_mcp(test_db, test_user.id)
     service = DeviceCapabilitySyncService(session_factory=lambda: nullcontext(test_db))
     service.supports_plugin_delta = AsyncMock(return_value=True)
-    service.plugin_sync_version = AsyncMock(return_value=2)
     service.sync_device_payload = AsyncMock(
         side_effect=lambda **kwargs: _result(kwargs["payload"])
     )

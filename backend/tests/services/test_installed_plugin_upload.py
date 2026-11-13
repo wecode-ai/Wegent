@@ -18,7 +18,6 @@ from app.api.endpoints.installed_plugins import (
     update_installed_plugin,
 )
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
 from app.models.skill_binary import SkillBinary
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.schemas.installed_plugin import (
@@ -38,7 +37,7 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilityResolutionError,
     DeviceCapabilitySyncError,
 )
-from app.services.device.plugin_sync_protocol import lock_installed_plugin_state
+from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import InstalledPluginService
 from app.services.plugin_package_parser import (
     MAX_PLUGIN_PACKAGE_SIZE_BYTES,
@@ -132,28 +131,30 @@ def test_reinstall_preserves_a_renamed_installation_without_another_state(
 
     original = install()
     installed_id = int(original.metadata["labels"]["id"])
-    state = lock_installed_plugin_state(test_db, test_user.id, installed_id)
+    state = lock_plugin_sync_state(test_db, test_user.id)
     test_db.commit()
     row = test_db.get(Kind, installed_id)
     old_name = "renamed-existing-plugin"
     # Represent an existing catalog identity without invoking rename behavior.
     row.name = old_name
     row.is_active = active
-    state.plugin_key = old_name
-    state.json = {
-        **state.json,
-        "metadata": {**state.json["metadata"], "name": old_name},
-    }
     test_db.commit()
     state_id = state.id
     result = install()
     assert int(result.metadata["labels"]["id"]) == installed_id
     test_db.refresh(row)
     assert row.name == old_name and row.is_active
-    states = test_db.query(PluginState).filter_by(user_id=test_user.id).all()
-    assert [(s.id, s.plugin_key, s.installed_kind_id) for s in states] == [
-        (state_id, old_name, installed_id)
-    ]
+    states = (
+        test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            kind="PluginSyncState",
+            namespace="plugin-sync",
+            name="account",
+        )
+        .all()
+    )
+    assert [row.id for row in states] == [state_id]
 
 
 def test_upload_plugin_stores_package_in_database(test_db, test_user):

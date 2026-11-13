@@ -15,7 +15,6 @@ from app.services.device.capability_sync_service import device_capability_sync_s
 from app.services.device.plugin_change_sync import dispatch_snapshot
 from app.services.device.plugin_sync_protocol import (
     load_versioned_plugin_payload,
-    lock_installed_plugin_state,
     lock_plugin_sync_state,
 )
 from app.services.plugin_device_installation_service import (
@@ -69,16 +68,8 @@ def record_reconciliation_result(
         acquire_plugin_write_locks(
             db, ((user_id, installed_id) for installed_id in scopes)
         )
-        states = (
-            [
-                lock_installed_plugin_state(db, user_id, installed_id)
-                for installed_id in sorted(scopes)
-            ]
-            if (payload.get("plugin_sync") or {}).get("version") == 3
-            else [lock_plugin_sync_state(db, user_id)]
-        )
-        for state in states:
-            require_snapshot_revision(db, state)
+        state = lock_plugin_sync_state(db, user_id)
+        require_snapshot_revision(db, state)
         latest = device_capability_sync_service.build_desired_plugins(
             db, user_id=user_id, device_id=device_id
         )
@@ -90,20 +81,13 @@ def record_reconciliation_result(
             plugin_device_installation_service._record_device_sync_result(
                 db, user_id, result, installed_ids=scopes
             )
-            for state in states:
-                state.json = deepcopy(state.json)
+            state.json = deepcopy(state.json)
             db.commit()
         except OperationalError as error:
             if _is_mysql_deadlock(error):
                 raise PluginWriteError("plugin_write_conflict") from error
             raise
-        # A different plugin may be created while this snapshot's rows commit.
-        # Observe membership after commit without serializing its installation.
-        db.expire_all()
-        latest = device_capability_sync_service.build_desired_plugins(
-            db, user_id=user_id, device_id=device_id
-        )
-        return latest if plugin_snapshot(latest) != plugin_snapshot(payload) else None
+        return None
 
     return run_plugin_transaction(record, get_db_session, attempts=3, retry_busy=True)
 
@@ -140,7 +124,7 @@ def reconciliation_failure_detail(result: DeviceCapabilitySyncResult) -> str:
 async def reconcile_device_plugins(
     user_id: int, device_id: str
 ) -> PluginDeviceSyncResponse:
-    versioned = await device_capability_sync_service.plugin_sync_version(
+    versioned = await device_capability_sync_service.supports_plugin_delta(
         user_id, device_id
     )
 
@@ -151,7 +135,6 @@ async def reconcile_device_plugins(
             get_db_session,
             user_id=user_id,
             complete=True,
-            protocol_version=versioned,
             load_payload=lambda db: device_capability_sync_service.build_desired_plugins(
                 db,
                 user_id=user_id,

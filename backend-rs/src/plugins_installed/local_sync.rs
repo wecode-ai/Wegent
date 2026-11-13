@@ -17,8 +17,6 @@ use sha2::{Digest, Sha256};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SyncRequest {
     protocol_version: u32,
-    #[serde(default = "default_sync_version")]
-    plugin_sync_version: u32,
     instance_id: String,
     #[serde(default)]
     probe_only: bool,
@@ -34,13 +32,7 @@ struct SyncRequest {
 
 #[derive(FromMysqlRow)]
 struct StateRow {
-    plugin_key: String,
-    installed_kind_id: i64,
     json: Value,
-}
-
-fn default_sync_version() -> u32 {
-    2
 }
 
 pub(super) fn enabled() -> bool {
@@ -88,12 +80,6 @@ async fn local_sync(
     body: SyncRequest,
 ) -> Result<Value, FastApiError> {
     validate(body.protocol_version, &body.instance_id)?;
-    if !matches!(body.plugin_sync_version, 2 | 3) {
-        return Err(FastApiError::detail(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "LOCAL_SYNC_PROTOCOL_UNSUPPORTED",
-        ));
-    }
     if body.installed_plugin_id.is_some_and(|id| id <= 0) {
         return Err(FastApiError::detail(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -108,20 +94,14 @@ async fn local_sync(
     }
     if body.probe_only {
         return Ok(
-            json!({"enabled":enabled(),"protocolVersion":1,"contractRevision":3,"pluginSyncVersions":[2,3],"accountId":i64::from(user.id),"supports":["install","update","uninstall","reconcile"]}),
+            json!({"enabled":enabled(),"protocolVersion":1,"contractRevision":3,"accountId":i64::from(user.id),"supports":["install","update","uninstall","reconcile"]}),
         );
     }
     let mysql = state.mysql.clone();
-    tracing::info!(
-        user_id = i64::from(user.id),
-        plugin_sync_version = body.plugin_sync_version,
-        targeted = body.targeted,
-        "Plugin local snapshot requested"
-    );
+    let redis = state.redis.clone();
     super::auto_update::complete_auto_update(async move {
-        if body.plugin_sync_version == 2 {
-            super::plugin_sync_protocol::ensure_sync_state(&mysql, i64::from(user.id)).await?;
-        }
+        super::plugin_sync_protocol::ensure_sync_state(&mysql, redis.as_ref(), i64::from(user.id))
+            .await?;
         super::plugin_sync_protocol::retry_sync_write(
             super::plugin_sync_protocol::SNAPSHOT_WRITE_ATTEMPTS,
             || {
@@ -143,13 +123,9 @@ async fn local_plan(
     user_id: i64,
     body: &SyncRequest,
 ) -> MysqlResult<Value> {
-    if body.plugin_sync_version == 3 {
-        return local_plugin_plan(tx, user_id, body).await;
-    }
     use super::plugin_sync_protocol::{lock_plugin_sync_state, write_sync_state_document};
     let mut query = &mut *tx;
     let state = lock_plugin_sync_state(&mut query, user_id).await?;
-    let fences = super::state_store::snapshot_fences(&mut query, user_id, None).await?;
     let operation =
         read_operation(tx, user_id, &body.instance_id, body.operation_id.as_deref()).await?;
     if !enabled() && !has_instance(tx, user_id, &body.instance_id).await? {
@@ -197,10 +173,6 @@ async fn local_plan(
         Some(generation)
     };
     let mut query = &mut *tx;
-    let floor = document["spec"]["generation"]
-        .as_i64()
-        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
-    super::state_store::fence_legacy_snapshot(&mut query, &payload, fences, floor).await?;
     write_sync_state_document(
         &mut query,
         state.id,
@@ -221,65 +193,6 @@ async fn local_plan(
     )
 }
 
-async fn local_plugin_plan(
-    tx: &mut impl MysqlTransaction,
-    user_id: i64,
-    body: &SyncRequest,
-) -> MysqlResult<Value> {
-    let operation =
-        read_operation(tx, user_id, &body.instance_id, body.operation_id.as_deref()).await?;
-    if !enabled() && !has_instance(tx, user_id, &body.instance_id).await? {
-        return Err(coordination_error("LOCAL_SYNC_DISABLED"));
-    }
-    let target = if body.targeted {
-        Some(
-            operation["installedPluginId"]
-                .as_i64()
-                .or(body.installed_plugin_id)
-                .ok_or_else(|| coordination_error("SNAPSHOT_NOT_OWNED"))?,
-        )
-    } else {
-        None
-    };
-    let mut query = &mut *tx;
-    let fences = super::state_store::snapshot_fences(&mut query, user_id, target).await?;
-    let mut payload = if let Some(target) = target {
-        let mut payload = json!({"mode":"merge","scope":"plugins","plugins":[]});
-        if fences.iter().any(|f| f.installed.is_some()) {
-            restrict_local_plugin(&mut query, user_id, target, &mut payload)
-                .await
-                .map_err(|error| match error {
-                    super::desired_capabilities::BuildError::Mysql(error) => error,
-                    _ => coordination_error("plugin_write_unavailable"),
-                })?;
-        }
-        payload
-    } else {
-        build_local_plugins(&mut query, user_id)
-            .await
-            .map_err(|error| match error {
-                super::desired_capabilities::BuildError::Mysql(error) => error,
-                _ => coordination_error("plugin_write_unavailable"),
-            })?
-    };
-    super::state_store::add_tombstones(&mut payload, &fences);
-    let revision = hash(&capability_snapshot(&payload));
-    if !body.targeted
-        && body.known_revision.as_deref() == Some(&revision)
-        && body.actual_revision.as_deref() == Some(&revision)
-        && !body.recovery_pending
-    {
-        return Ok(
-            json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":true,"operation":operation}),
-        );
-    }
-    let generation =
-        super::state_store::publish_snapshot(&mut query, &mut payload, fences, None).await?;
-    Ok(
-        json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation}),
-    )
-}
-
 async fn read_operation(
     tx: &mut impl MysqlTransaction,
     user: i64,
@@ -289,46 +202,14 @@ async fn read_operation(
     let Some(operation) = operation else {
         return Ok(Value::Null);
     };
-    let rows: Vec<StateRow> = tx
-        .fetch_all(
-            "SELECT plugin_key,installed_kind_id,json FROM plugin_states WHERE user_id=?",
-            (user,),
-        )
-        .await?;
-    let mut found = Vec::new();
-    found.extend(
-        rows.iter()
-            .filter(|row| row.plugin_key != "@legacy-v2")
-            .filter_map(|row| row.json["spec"]["localIntents"][instance].as_object())
-            .flat_map(|slots| slots.values())
-            .filter(|slot| slot["operationId"] == operation),
-    );
-    let historical = if found.is_empty() {
-        let mut query = &mut *tx;
-        Some(super::state_history::legacy(&mut query, user).await?)
-    } else {
-        None
-    };
-    if let Some(document) = &historical {
-        let initialized: std::collections::BTreeSet<_> = rows
-            .iter()
-            .filter(|row| row.installed_kind_id > 0)
-            .map(|row| row.installed_kind_id.to_string())
-            .collect();
-        found.extend(
-            document["spec"]["localIntents"][instance]
-                .as_object()
-                .into_iter()
-                .flat_map(|slots| slots.iter())
-                .filter(|(id, _)| !initialized.contains(*id))
-                .map(|(_, slot)| slot)
-                .filter(|slot| slot["operationId"] == operation),
-        );
-    }
-    if found.len() > 1 {
+    let rows: Vec<StateRow> = tx.fetch_all("SELECT json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2", (user,)).await?;
+    if rows.len() > 1 {
         return Err(coordination_error("plugin_write_conflict"));
     }
-    let slot = found.first().copied();
+    let slot = rows
+        .first()
+        .and_then(|row| row.json["spec"]["localIntents"][instance].as_object())
+        .and_then(|slots| slots.values().find(|slot| slot["operationId"] == operation));
     let Some(slot) = slot else {
         return Ok(json!({"operationId":operation,"state":"unknown"}));
     };
@@ -363,21 +244,13 @@ async fn has_instance(
     user: i64,
     instance: &str,
 ) -> MysqlResult<bool> {
-    let rows: Vec<StateRow> = tx
-        .fetch_all(
-            "SELECT plugin_key,installed_kind_id,json FROM plugin_states WHERE user_id=?",
-            (user,),
-        )
-        .await?;
-    if rows
-        .iter()
-        .any(|row| row.json["spec"]["localIntentOrders"][instance].is_object())
-    {
-        return Ok(true);
+    let rows:Vec<StateRow>=tx.fetch_all("SELECT json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2",(user,)).await?;
+    if rows.len() > 1 {
+        return Err(coordination_error("plugin_write_conflict"));
     }
-    let mut query = &mut *tx;
-    let baseline = super::state_history::legacy(&mut query, user).await?;
-    Ok(baseline["spec"]["localIntentOrders"][instance].is_object())
+    Ok(rows
+        .first()
+        .is_some_and(|row| row.json["spec"]["localIntentOrders"][instance].is_object()))
 }
 
 #[cfg(test)]

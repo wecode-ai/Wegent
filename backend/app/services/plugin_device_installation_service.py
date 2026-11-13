@@ -221,10 +221,7 @@ class PluginDeviceInstallationService:
         for attempt in range(1, DEVICE_SYNC_WRITE_ATTEMPTS + 1):
             try:
                 if any(
-                    (item.desired_plugin_snapshot or {})
-                    .get("plugin_sync", {})
-                    .get("version")
-                    == 2
+                    item.desired_plugin_snapshot is not None
                     for item in response.results
                 ):
                     lock_plugin_sync_state(db, user_id, merge=True)
@@ -378,10 +375,7 @@ class PluginDeviceInstallationService:
                 DeviceCapabilitySyncResponse(success=result.success, results=[result]),
                 None,
             )
-        if reconcile and (
-            (result.desired_plugin_snapshot or {}).get("plugin_sync", {}).get("version")
-            == 2
-        ):
+        if reconcile and result.desired_plugin_snapshot is not None:
             lock_plugin_sync_state(db, user_id, merge=True)
         if reconcile:
             acquire_plugin_write_locks(db, ((user_id, item) for item in installed_ids))

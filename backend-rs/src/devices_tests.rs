@@ -310,31 +310,3 @@ fn runtime_features_extensions_follow_the_known_members() {
         })
     );
 }
-
-#[test]
-fn runtime_features_preserves_plugin_scoped_negotiation() {
-    let projected = crate::json_contract_tests::serialized(
-        runtime_features(&json!({
-            "runtime_features": {"schemaVersion":4,
-                "pluginSync":{"protocolVersion":2,"supportedVersions":[2,3],"unknown":true}}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        projected["pluginSync"],
-        json!({"protocolVersion":2,"supportedVersions":[2,3]})
-    );
-    for versions in [
-        json!(true),
-        json!("3"),
-        json!([true, 3]),
-        json!([0, 3]),
-        json!(["2", 3]),
-    ] {
-        let projected = crate::json_contract_tests::serialized(runtime_features(&json!({
-            "runtime_features":{"schemaVersion":4,"pluginSync":{"protocolVersion":2,"supportedVersions":versions}}
-        })).unwrap()).unwrap();
-        assert_eq!(projected["pluginSync"], json!({"protocolVersion":2}));
-    }
-}

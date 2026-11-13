@@ -2,137 +2,69 @@
 sidebar_position: 42
 ---
 
-# Plugin authentication and installation write coordination
+# Coordinating plugin authentication and installation writes
 
-Installation, update, removal, authentication and device acknowledgements share
-plugin Redis leases and database CAS. Different plugins have independent write
-scopes; devices changing one account installation share its scope.
+Plugins use Redis installation leases and CAS on existing business records. No table, column, or index is added, and neither `FOR UPDATE` nor MySQL named locks is used. Different plugins can install, update, uninstall, and authenticate concurrently; writes to the same installation coordinate with each other.
 
-## Identity and storage
+## Lease identity and duration
 
-`kinds/InstalledPlugin/default` remains authoritative intent and
-`plugin_device_installations` stores device outcomes. The new `plugin_states`
-table has a unique `(user_id, plugin_key)` identity and retains creation counters,
-synchronization generations, device watermarks, acceptance slots and intent order.
-The derived installation name is available before first installation.
-`installed_kind_id` preserves state identity through catalog-driven renames.
+Ordinary operations use `wegent:plugin-write:{user_id}:{InstalledPlugin.name}`. Device IDs are excluded because devices modify the same account installation. First installation uses the existing stable name derivation. Reinstalls and historical names resolve the existing record, acquire its actual name, and revalidate the identity afterward.
 
-No columns or indexes are added to shared `kinds`. There is no separate operation
-ledger, `FOR UPDATE`, or `GET_LOCK`.
+Python reuses `DistributedLock.owned_lock`; Rust shares the key, random owner token, and Redis NX protocol:
 
-## Redis leases
-
-The key is `wegent:plugin-write:{user_id}:{InstalledPlugin.name}`. Device identity
-cannot partition account-owned writes. Catalog repair also leases historical names.
-TTL is 30 seconds, single-target acquisition waits at most three seconds, and the
-transaction budget is 20 seconds. Python renews every ten seconds; Rust reuses
-bounded leases. Checks, renewal and release compare ownership tokens.
-
-Root commit, rollback and close release leases; savepoints do not. Batch scopes
-are sorted and do not wait separately for every busy target. Failures roll back
-before releasing acquired leases. Downloads, authentication adapters and device
-RPCs execute outside write transactions. Versioned preparation runs per plugin.
-Shared native configuration planning and comparison reuse the short publication
-mutex; downloads, extraction and runtime content verification stay outside it.
-
-## First creation and CAS
-
-Atomic insertion claims the plugin's unique state identity. MySQL protects that
-identity until COMMIT or rollback even when Redis expires first. Other plugin
-keys can commit independently. Python uses the existing bounded bootstrap pool
-and short database timeouts instead of holding business connections indefinitely.
-
-Installation changes, creation-counter CAS and installation-ID binding commit
-together. An expired first creator must still match its creation counter and
-unoccupied installation binding. Soft removal retains installation and state;
-reinstallation reuses their versions and watermarks.
-
-`spec.revision` represents installation intent. `spec.writeRevision` fences
-installation, authentication and device-row commits. Content replacement compares
-both; a successful write already performed in the transaction avoids a redundant
-second fence update. State uses revision CAS or atomic merging of independent
-device paths; watermarks never decrease. Savepoint rollback restores expected
-versions and cannot retain a false written marker.
-
-## Synchronization
-
-V3 captures plugin metadata revisions before reading intent, then CAS-publishes
-each included plugin. `plugin_sync.revisions[installedId]` orders that plugin;
-`intentRevisions[installedId]` identifies its intent revision. `complete=false`
-and `removed_plugins` explicitly identifies removals. Absence cannot remove an
-unrelated plugin.
-
-New state starts above its historical V2 generation baseline and then advances
-independently. Full Skills/MCP snapshots use a separate `@capabilities` stream;
-ordinary plugin operations never touch it. V2 snapshots retain `@legacy-v2` for aggregate generations and CAS the captured
-plugin revisions before publishing. V2 publication also raises the covered plugin generation floors so upgraded V3 clients advance beyond their stored legacy watermarks. Ordinary desired-state writes
-do not create or advance account aggregate synchronization state.
-
-Acknowledgements validate per-plugin generation, device watermarks, current intent
-revision and desired state. Conflicts replay only database transactions, never
-already-executed device operations. Deferred acknowledgement persistence does not
-turn a committed installation into a failed account mutation.
-
-Local HTTP full reconciliations queue within the same journal scope and reload
-the journal after admission, so overlapping checks cannot invalidate each other's
-scan evidence. Waiting holds no short journal lease; installation, update,
-removal and targeted sync bypass this queue. Other journal scopes remain independent.
-Queued checks revalidate foreground admission before scanning or submitting recovery.
-The existing scan file lock still protects workers after cancellation, and
-external publication continues to invalidate stale evidence.
-
-## Account authentication preference
-
-`ConnectorAuthPolicy/plugin-auth/account` remains the real account preference.
-Only explicit preference edits acquire its dedicated lease and advance its
-revision. Installation/update/removal do not depend on it. Authentication uses a
-conditional no-op update to validate the preference through commit.
-
-First policy creation claims `@account-policy` in the same new table and commits
-that identity with the policy in one short transaction. Ordinary authentication
-does not write this bootstrap identity. Duplicate policies and malformed versions
-fail explicitly without selecting an arbitrary preference or resetting it.
-Cloud automation leases only plugins that need a new device grant; already
-granted, revoked and disconnected connections do not broaden the lease scope.
-Socket authentication resolves that scope and initializes policy on its current
-transaction instead of waiting for a second connection from the same pool.
-
-## Migration, deployment and evidence
-
-`a5b6c7d8e9f0` creates an empty table without scanning, moving or deleting historical
-`kinds` data. First use atomically inserts the plugin's complete inherited generation,
-device watermarks, creation counters and request markers. Existing state is authoritative;
-losing unique-key inserts never overwrite it. The old active
-`PluginSyncState/plugin-sync/account` remains a read-only baseline. Unprojected historical
-requests remain recoverable, while initialized plugins use their new state. Ambiguous
-identities and invalid counters fail on first use without selecting or resetting data.
-
-Optional `backend/scripts/backfill_plugin_states.py` shares the foreground initializer
-and can coexist with lazy initialization. It defaults to read-only preview, supports
-user filters, batches and resume cursors, and skips existing state on every run.
-Run from `backend/`:
-
-```bash
-uv run python scripts/backfill_plugin_states.py --user-id 151
-uv run python scripts/backfill_plugin_states.py --apply --user-id 151
-uv run python scripts/backfill_plugin_states.py --apply --batch-size 100 --pause-ms 100
-uv run python scripts/backfill_plugin_states.py --apply --after-id <resume_after_id>
+```python
+distributed_lock.owned_lock(
+    f"wegent:plugin-write:{user_id}:{installation_name}",
+    expire_seconds=180,
+    blocking_timeout=3,
+    redis_client=plugin_redis_client,
+)
 ```
 
-Resume with the same user filter and the reported `resume_after_id`. An uncertain
-commit leaves the cursor before that row; the unique key protects replay. Downgrade
-merges maximum watermarks and latest receipts into retained legacy Kinds, creates
-missing Kinds only, then drops the table. Stop plugin writes during rollback.
-Drain old plugin transactions before switching Python and Rust together; old binaries
-must not keep modifying the frozen baseline. New backends serve old desktops through
-V2. Production migration, backfill and deployment are separate from local validation.
+- TTL is 180 seconds. Completed transactions release immediately by token.
+- A single lease waits at most 3 seconds; the operation budget stays 20 seconds. Python retains bounded renewal every 10 seconds; Rust starts no renewal task.
+- Savepoints retain the root lease. Batches acquire sorted identities; failure rolls back the complete transaction and releases acquired leases rather than preserving partial revocation or removal.
+- Ownership checks, renewal, and release compare tokens. Stale requests cannot release successor leases, and unavailable Redis causes an explicit failure.
+- No Redis user mutex encloses ordinary account plugin operations. Policy edits use `@account-policy`; initial creation of missing account sync metadata uses `@sync-init`. Neither encloses routine installation, update, or removal.
 
-Real MySQL regressions cover COMMIT crossing Redis expiry, same-plugin uniqueness,
-independent plugin progress, stale transactions, lifecycle operations,
-authentication and late acknowledgements. Existing Backend MySQL CI and desktop
-`plugin-write-coordination` / `plugin-registration-coordination` scenarios provide
-coverage; use evidence tied to the reviewed commit.
+An application or network timeout does not prove database transaction termination. The 180-second lease provides additional margin for short transactions. A process that exits without releasing may leave the same plugin unavailable for the remaining TTL; other plugins use independent keys.
 
-Correlate lease logs by `user_id`, `plugin_scope`, `session_id`, `operation` and
-`held_ms`. Acquisition contention, Redis failure, lost ownership and CAS conflicts
-are distinct conditions and do not all indicate a leaked lock.
+## Existing persistence
+
+Account desired state remains in `InstalledPlugin/default` Kind records; device materialization remains in `plugin_device_installations`.
+
+The existing `PluginSyncState/plugin-sync/account` Kind, scoped by `user_id`, retains generation, device watermarks, per-instance per-plugin intent order and latest acceptance markers, and `creationRevisions[installation name]`. There is no `plugin_states` table and no batch or lazy state transfer.
+
+`InstalledPlugin.spec.writeRevision` fences authentication, installation, and device writes. Installation intent `spec.revision` advances on desired-state changes. Missing historical revisions read as zero and advance through normal writes without bulk backfill.
+
+Before an installation row exists, its Redis lease protects reading its creation counter; commit compares that plugin's slot. Independent metadata paths merge into the account document. Final SQL writes can briefly contend on that shared row, without holding it across downloads, adapters, or IPC.
+
+Snapshots read the sync revision before desired state and CAS their generation. Acknowledgements verify generation, watermarks, installation intent, and current desired state before persistence. Ordinary authentication validates the real account policy without advancing its shared preference version; only edits to automatic authorization advance that version.
+
+## Accepted initialization boundary
+
+First creation of `PluginSyncState` and `ConnectorAuthPolicy` is coordinated by 180-second Redis metadata leases. Existing records use CAS.
+
+The explicitly accepted residual risk is an unresolved database COMMIT or suspended process outliving its lease: a successor can still see no committed record and insert again. Without database uniqueness, TTL and renewal cannot prove unique first creation. Duplicate records require explicit rejection and manual investigation. Human review must acknowledge this boundary; ordinary concurrency tests do not demonstrate safety for that fault.
+
+## Native and background synchronization
+
+V2 synchronization and account HTTP local operations remain in use. The desktop prepares plugins independently and shares only short manifest publication work. Equivalent HTTP/Socket deliveries share preparation and validate their own generations; target changes, updates, and removal end the old equivalence range.
+
+Foreground plugin operations do not join the full reconciliation queue. Full checks serialize scan evidence without holding the short journal lease while waiting, and revalidate plans after foreground activity. Refresh retains bounded deferral for `plugin_local_sync_busy` while foreground installation, update, and removal continue.
+
+Automatic authentication retains startup, reconnect, inventory-change, and local login/logout events plus a 300-second audit with per-process jitter of ±30 seconds. Preparation and read-only status queries do not acquire batch installation leases; credential writes acquire their target installation.
+
+## Deployment and existing development databases
+
+The former user lock and plugin leases are different protocols. Drain old plugin transactions and switch Python/Rust writers together instead of mixing protocols.
+
+Deploying this design from main needs no additional coordination table or state migration. Normal startup still applies main's existing migrations.
+
+If a development database ran this PR's table-based version, preserve a backup and use the native migration tool from `e677c1a84`: `wegent-backend-rs db downgrade b1c2d3e4f5a6`. It merges watermarks and latest receipts into the retained Kind before dropping the extra table, while preserving main's share-token migration. Verify the revision before starting this table-free version. Do not truncate the table or stamp past the state merge. This code change does not automatically alter development or production databases.
+
+## Verification
+
+Reuse existing plugin unit, real MySQL/Redis, and desktop checkpoint suites without new CI jobs. Cover independent 180-second leases, same-plugin contention and CAS, ordinary first-creation concurrency, account isolation, duplicate delivery, late acknowledgements, and foreground isolation from authentication and full reconciliation.
+
+The Redis test checks PTTL; HTTP identity cases remain imported by `test_plugin_write_races_mysql.py`. Desktop coverage uses `plugin-write-coordination` and local synchronization checkpoints. Strict uniqueness of initialization across lease expiration is outside this design's guarantees.

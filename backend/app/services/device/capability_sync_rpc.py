@@ -11,7 +11,7 @@ from typing import Any
 
 from socketio.exceptions import TimeoutError as SocketIOTimeoutError
 
-from app.services.device.plugin_sync_protocol import supports_snapshot
+from app.services.device.plugin_sync_protocol import supports_plugin_sync_v2
 from app.services.device.runtime_route import RuntimeRoute, runtime_route_resolver
 from app.services.device_service import device_service
 from shared.telemetry.decorators import trace_async
@@ -74,8 +74,8 @@ async def _call_on_routes(
                 raise ConnectionError(
                     "Device connection is unstable; retry synchronization"
                 )
-            if payload.get("plugin_sync") and not supports_snapshot(
-                current.online_info.get("runtime_features"), payload
+            if payload.get("plugin_sync") and not supports_plugin_sync_v2(
+                current.online_info.get("runtime_features")
             ):
                 raise ConnectionError(
                     "Device plugin sync capability changed; retry synchronization"

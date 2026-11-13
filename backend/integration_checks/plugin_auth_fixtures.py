@@ -16,7 +16,6 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
 from app.models.skill_binary import SkillBinary
 from app.models.user import User
 from app.schemas.plugin_account_auth import (
@@ -102,7 +101,6 @@ def sessions():
     for table in (
         User.__table__,
         Kind.__table__,
-        PluginState.__table__,
         SkillBinary.__table__,
     ):
         table.create(engine, checkfirst=True)
@@ -212,7 +210,6 @@ def created_context(sessions):
         for key in client.scan_iter(match=f"wegent:plugin-write:{value.user_id}:*"):
             client.delete(key)
         with sessions.begin() as db:
-            db.query(PluginState).filter(PluginState.user_id == value.user_id).delete()
             db.query(Kind).filter(Kind.user_id == value.user_id).delete()
             db.query(User).filter(User.id == value.user_id).delete()
 

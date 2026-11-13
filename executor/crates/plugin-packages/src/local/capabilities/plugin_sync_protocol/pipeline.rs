@@ -25,13 +25,10 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         let Accepted { jobs, mut results } = self.accept_plugin_intents(&request).await?;
         let mut changes = activation_revision::Changes::default();
         let mut completed = stream::iter(jobs.into_iter().enumerate().map(
-            |(index, (spec, removing))| {
-                let generation = request.generation_for(&spec);
-                async move {
-                    self.prepare_and_publish_plugin(spec, generation, removing)
-                        .await
-                        .map(|(result, changes)| (index, result, changes))
-                }
+            |(index, (spec, removing))| async move {
+                self.prepare_and_publish_plugin(spec, request.generation, removing)
+                    .await
+                    .map(|(result, changes)| (index, result, changes))
             },
         ))
         .buffer_unordered(MAX_PLUGIN_PREPARATIONS);
@@ -60,7 +57,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         crate::logging::log_executor_event(
             "plugin_sync_completed",
             &[
-                ("protocol_version", request.version.to_string()),
                 ("generation", request.generation.to_string()),
                 ("complete", request.complete.to_string()),
                 ("total_ms", started.elapsed().as_millis().to_string()),
@@ -88,7 +84,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             json!({"success":success, "changed":changes.changed,"requires_restart":changes.requires_restart,
             "scope":payload.get("scope").and_then(Value::as_str).unwrap_or("all"),
             "skills":skill_results,"plugins":results,
-            "plugin_sync":payload["plugin_sync"]}),
+            "plugin_sync":{"version":2,"generation":request.generation,"complete":request.complete}}),
         )
     }
 
@@ -136,9 +132,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     && !explicit.contains(&key)
                     && is_reconcilable(&key, &entry)
                 {
-                    let mut spec = PluginSyncSpec::from_manifest_entry(&key, &entry);
-                    spec.scoped_sync = false;
-                    removals.push(spec);
+                    removals.push(PluginSyncSpec::from_manifest_entry(&key, &entry));
                 }
             }
         }
@@ -151,20 +145,23 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             .map(|spec| (spec, true))
             .chain(request.plugins.iter().cloned().map(|spec| (spec, false)))
         {
-            let generation = request.generation_for(&spec);
-            if is_superseded(&manifest, &spec, generation, removing) {
+            if is_superseded(&manifest, &spec, request.generation, removing) {
                 accepted.results.push(acknowledgement(
                     &spec,
-                    generation,
+                    request.generation,
                     "superseded",
                     if removing { "remove" } else { "upsert" },
                 ));
             } else {
                 // Persist before downloads or lane waits. A newer removal or
                 // complete snapshot can fence an already preparing installation.
-                let first =
-                    coalescing::equivalent_generation(&original, &spec, generation, removing);
-                record_intent_from(&mut manifest, &spec, generation, removing, first);
+                let first = coalescing::equivalent_generation(
+                    &original,
+                    &spec,
+                    request.generation,
+                    removing,
+                );
+                record_intent_from(&mut manifest, &spec, request.generation, removing, first);
                 accepted.jobs.push((spec, removing));
             }
         }
@@ -298,7 +295,6 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
                     }
                 };
                 if result["status"] == "synced" {
-                    self.remove_installation_aliases(spec, &mut manifest, &mut activation)?;
                     record_generation(&mut manifest, spec, generation, false);
                 }
                 self.store.manifest.save_with_revision_bump(manifest)?;

@@ -67,12 +67,8 @@ export async function createDesktopScenario({
     assert.equal(request.deviceId, route, 'Plugin delta targeted the wrong Runtime route')
     assert.equal(request.scope, 'plugin_delta')
     assert.equal(request.mode, 'merge')
-    assert.equal(request.pluginSync?.version, 3)
+    assert.equal(request.pluginSync?.version, 2)
     assert.equal(request.pluginSync.complete, false)
-    const id = String(fixture.installedId)
-    assert.deepEqual(Object.keys(request.pluginSync.revisions), [id])
-    assert.ok(request.pluginSync.revisions[id] > 0)
-    assert.ok(request.pluginSync.intentRevisions[id] > 0)
     assert.deepEqual(request.pluginIds, [String(fixture.installedId)])
     assert.deepEqual(request.removedIds, [])
     assert.deepEqual(request.skills, [])
@@ -156,7 +152,7 @@ export async function createDesktopScenario({
       assertTargeted(remoteRequests, fixture, CLOUD_DEVICE_ID)
       assert.equal(
         remoteTraffic.acknowledgements.some(
-          ack => ack.id === remoteRequests[0].id && ack.namespace === remoteRequests[0].namespace
+          ack => ack.pluginSync?.generation === remoteRequests[0].pluginSync.generation
         ),
         false,
         'The foreground response was observed only after the background ACK was released'

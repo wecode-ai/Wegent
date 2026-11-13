@@ -206,8 +206,8 @@ async function verifySupersededEmptyRegistration({
   const gate = deviceProxy.holdNextCapabilitySync(
     payload =>
       (payload.scope ?? 'all') === 'all' &&
-      payload.plugin_sync?.version === 3 &&
-      payload.plugin_sync.complete === false &&
+      payload.plugin_sync?.version === 2 &&
+      payload.plugin_sync.complete === true &&
       payload.plugins?.length === 0 &&
       payload.skills?.some(skill => skill.name === old.name) &&
       payload.mcps?.some(mcp => mcp.name === old.name)
@@ -231,17 +231,11 @@ async function verifySupersededEmptyRegistration({
     const acknowledged = reconciliation.sync.results[0]
     assert.equal(acknowledged.success, true)
     assert.equal(acknowledged.scope, 'plugins')
-    assert.equal(acknowledged.plugin_sync.version, 3)
-    assert.equal(acknowledged.plugin_sync.complete, false)
-    assert.deepEqual(
-      acknowledged.plugins.map(plugin => [Number(plugin.id), plugin.status]),
-      [[item.installedId, 'removed']]
-    )
-    const id = String(item.installedId)
-    const removalGeneration = acknowledged.plugin_sync.revisions[id]
-    assert.ok(removalGeneration > held.pluginSync.revisions[id])
+    assert.deepEqual(acknowledged.plugins, [])
+    assert.equal(acknowledged.plugin_sync.complete, true)
+    assert.ok(acknowledged.plugin_sync.generation > held.pluginSync.generation)
     const beforeRelease = await manifest()
-    assert.equal(beforeRelease.plugin_sync.removals[id].generation, removalGeneration)
+    assert.equal(beforeRelease.plugin_sync.complete_generation, acknowledged.plugin_sync.generation)
     assert.ok(!hasCapabilities(beforeRelease, old), 'The held snapshot reached the Executor early')
     gate.release()
     const settled = await until(
@@ -255,8 +249,7 @@ async function verifySupersededEmptyRegistration({
         !value.skills?.[fresh.name] &&
         !value.mcps?.[fresh.name] &&
         value.plugin_sync?.full_generation === held.pluginSync.generation &&
-        value.plugin_sync?.removals?.[id]?.generation === removalGeneration &&
-        value.plugin_sync?.complete_generation === beforeRelease.plugin_sync.complete_generation,
+        value.plugin_sync?.complete_generation === acknowledged.plugin_sync.generation,
       'An overtaking empty plugin snapshot dropped the registered Skills/MCP full snapshot',
       timeoutMs
     )
@@ -281,7 +274,7 @@ async function verifySupersededEmptyRegistration({
     evidence.push({
       case: 'empty-plugin-snapshot-overtakes-registration-without-dropping-independent-capabilities',
       registrationGeneration: held.pluginSync.generation,
-      pluginGeneration: removalGeneration,
+      pluginGeneration: acknowledged.plugin_sync.generation,
       acknowledgement: gate.acknowledgement,
     })
   } finally {

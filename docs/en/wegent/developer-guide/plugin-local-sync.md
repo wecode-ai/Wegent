@@ -6,11 +6,13 @@ sidebar_position: 59
 
 Local install, uninstall, update and reconciliation use authenticated account HTTP and local IPC. Device registration, a device ID, Socket connectivity and other-device acknowledgements are not prerequisites. Ordinary local plugin commands keep their local authentication flow; managed account commands use the Native authorization below. Cloud and legacy clients retain Device/Socket permission checks.
 
+Plugin leases have a 180-second TTL. See [plugin write coordination](../../wework/developer-guide/plugin-write-coordination.md) for first-account metadata initialization boundaries and rollout requirements. This design does not guarantee unique first creation across lease expiry.
+
 ## State ownership
 
-`InstalledPlugin/default` remains authoritative account intent. One `plugin_states` table adds unique `(user_id, plugin_key)` identities without modifying shared `kinds` columns or indexes. No independent operation ledger or snapshot history is created. There are no records in a `plugin-local-sync` namespace.
+`InstalledPlugin/default` remains authoritative account intent. No new tables, migrations, independent operation records, snapshot history or receipt ledger are created. There are no records in a `plugin-local-sync` namespace.
 
-Each plugin state retains its own generation and device watermarks; `installed_kind_id` binds the original installation through catalog renames. `spec.localIntentOrders` fences old requests per instance/plugin. `spec.localIntents` retains only one latest acceptance marker per instance/plugin: operation ID, request hash, order, installed ID, action and installed revision. It stores no complete plugin copy or operation history. Markers, watermarks and account changes commit atomically under installation Redis leases and CAS.
+The existing `PluginSyncState/plugin-sync/account` retains generation and device watermarks. `spec.localIntentOrders` fences old requests per instance/plugin. `spec.localIntents` retains only one latest acceptance marker per instance/plugin: operation ID, request hash, order, installed ID, action and installed revision. It stores no complete plugin copy or operation history. Markers, watermarks and account changes commit atomically under installation Redis leases and CAS.
 
 Native persists original requests before HTTP in an account/Backend-scoped journal without tokens. The shared Socket/HTTP installer owns real files, manifests, generation ordering, tombstones, validation and publication.
 
@@ -71,7 +73,7 @@ Scans use the existing monotonic intent order to identify new foreground request
 The shared key is `wegent:plugin-write:{user_id}:{InstalledPlugin.name}`. Existing
 stable name derivation is available before first installation; legacy names also
 retain their own lease. Device identity cannot partition account-owned writes.
-TTL is 30 seconds, Python renewal is every 10 seconds, operation budget is 20
+TTL is 180 seconds, Python renewal is every 10 seconds, operation budget is 20
 seconds and single-target acquisition waits up to three seconds. Multi-target
 operations acquire sorted names without waiting and roll back before releasing
 partially acquired leases.
@@ -85,9 +87,11 @@ v2 generations, watermarks and desired-state comparisons reject obsolete receipt
 Healthy catalog reads take no installation write leases. Only detected catalog
 drift or duplicate groups are leased and revalidated before repair.
 
-The probe advertises `pluginSyncVersions=[2,3]` and new Native clients select 3. Runtime features retain `protocolVersion=2` for existing servers and explicitly advertise `supportedVersions=[2,3]` for V3 negotiation. V3 uses `plugin_sync.revisions[installedId]` and `intentRevisions[installedId]`. Snapshots carry `complete=false` and explicit `removed_plugins`; absence never removes another plugin. Full Skills/MCP snapshots use a separate `@capabilities` stream that ordinary plugin operations never touch.
-
-Snapshots capture plugin metadata revisions before reading intent, then CAS-publish included plugins. Desired-state mutations advance only their own plugin metadata. V3 acknowledgements validate each plugin's generation, device watermark, current intent revision and desired state. V2 snapshots use the `@legacy-v2` aggregate generation and CAS the captured plugin revisions before publishing. Ordinary mutations only advance their own state and never update the account aggregate. V2 publication also raises the covered plugin generation floors so upgraded V3 clients advance beyond their stored legacy watermarks. New plugin states inherit the V2 generation baseline only when created, then advance independently.
+Independent intent paths atomically merge into existing `PluginSyncState` JSON.
+Snapshot builders read its revision before reading installations, then CAS that
+revision together with generation. Desired-state mutations touch it in the same
+transaction, preventing older content from receiving a newer generation. Snapshot
+conflicts require rollback and reconstruction. No table or `FOR UPDATE` is added.
 
 Single-device and batch acknowledgements share one persistence entry point.
 Metadata CAS conflicts use the existing limit of three transaction attempts,
@@ -95,8 +99,8 @@ rolling back, releasing leases and rereading current state each time. Only datab
 writes are replayed, never remote execution. Busy locks in ordinary operations,
 unavailable Redis and lost leases still fail directly.
 
-Python full-snapshot reconciliation retains metadata CAS for catalog
-preparation and acknowledgement persistence; V3 fences only the involved plugins. Only these two database transactions
+Python full-snapshot reconciliation retains account-wide CAS for catalog
+preparation and acknowledgement persistence. Only these two database transactions
 may back off after contention, after rolling back and releasing all leases and
 sessions. They reread state at 50/100/200 ms intervals capped at 250 ms within each
 transaction's existing 20-second budget. Waiting to persist an acknowledgement
@@ -107,11 +111,17 @@ installation, update and removal requests are not resubmitted.
 Authentication validates the actual account policy using a final conditional no-op
 update until commit; ordinary authentication never advances that policy revision.
 Installation/update/uninstall do not depend on the policy. Genuine policy edits
-retain their dedicated lease; first metadata creation uses the new unique database identity. Local
+and first metadata initialization use short dedicated metadata leases. Local
 journal leases are released across HTTP, adapter and installer waits; existing
 per-plugin preparation and short manifest publication locks remain.
 
-Before a parent exists, atomic insertion claims its plugin state. The unique key remains protected until database COMMIT or rollback even if Redis expires. Installation creation then CAS-updates that plugin's creation counter and binds the installed ID in the installation transaction. An expired creator cannot overwrite the successor's binding. Soft removal retains the parent, counters and ordering watermarks; different plugins can commit independently.
+Before a parent exists, first installation acquires Redis NX and reads its name's
+counter in existing `PluginSyncState.spec.creationRevisions`. Commit compares and
+increments only that plugin's counter. Retaining it through uninstall rejects a
+resumed expired creator after a successor commits. Independent creations compare
+different slots; the shared metadata row is held only during final database writes,
+without network or adapter waits. Existing parents use their own `writeRevision`.
+Request retention reuses existing latest-acceptance slots and ordering watermarks.
 
 Old user keys and new plugin keys do not coordinate. Deployment and rollback must
 stop acceptance and drain old writers before switching both Python and Rust
@@ -140,7 +150,7 @@ are discarded. Device registration status remains accurate, and cloud Device
 grants and Runtime checks are unchanged. Ordinary local SDK commands retain their
 existing local authentication flow.
 
-The authorization channel adds no further tables, columns or execution ledger. Existing connection,
+No new tables, columns or execution ledger are added. Existing connection,
 migration and transfer records share their installation write lease. Optional
 JSON fields hold Native key grants (`localGrants`), keyed source observations
 (`nativeAuthSources`), pending login generations and Native lease ownership.
@@ -176,11 +186,3 @@ ciphertext compatibility, refresh/revocation and escrow replay. The existing
 CI-covered `plugin-account-auth-password` checkpoint also exercises local chat
 and install/update/uninstall after a real Backend registration rejection,
 without weakening its legacy assertions.
-
-## State migration
-
-`a5b6c7d8e9f0` creates an empty table without scanning or deleting historical data. First use inherits generations, device watermarks, creation counters, acceptance slots and request order per plugin, atomically inserting a complete document through its unique key. Existing state takes precedence; losing initializers cannot overwrite new data. Ambiguous identities and malformed counters fail explicitly on first use.
-
-The old active synchronization Kind remains a read-only baseline for unprojected historical requests. Initialized plugin state cannot resurrect superseded acceptance slots from that baseline. Optional `backend/scripts/backfill_plugin_states.py` defaults to preview and supports `--user-id`, `--apply`, `--batch-size`, `--pause-ms` and `--after-id`. It shares the foreground initializer, fills missing state only, supports concurrent and repeated runs with resume cursors, and does not disable lazy inheritance. Commands are in the [write coordination guide](../../wework/developer-guide/plugin-write-coordination.md#migration-deployment-and-evidence).
-
-Drain old backend plugin transactions before switching Python and Rust together; old binaries must not modify the frozen baseline. New backends serve old desktops through V2. Stop plugin writes before rollback, which merges maximum watermarks and latest receipts into retained legacy Kinds, creates missing Kinds only, and then drops the table. Tests cover upgrade, lazy inheritance, delayed backfill, downgrade and upgrade again on disposable databases. Production execution remains part of deployment.

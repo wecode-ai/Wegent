@@ -120,13 +120,10 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     )
   )
   for (const installation of parallelInstalls) {
-    const result = installation.sync.results.find(result => result.plugin_sync?.version === 3)
+    const result = installation.sync.results.find(result => result.plugin_sync?.version === 2)
     assert.ok(result?.success, 'A new runtime must acknowledge targeted plugin synchronization')
     assert.equal(result.scope, 'plugin_delta')
     assert.equal(result.plugin_sync.complete, false)
-    const installedId = String(installation.plugin.metadata.labels.id)
-    assert.deepEqual(Object.keys(result.plugin_sync.revisions), [installedId])
-    assert.ok(result.plugin_sync.revisions[installedId] > 0)
     assert.deepEqual(
       result.plugins.map(plugin => String(plugin.id)),
       [String(installation.plugin.metadata.labels.id)],
@@ -281,10 +278,6 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await cp(residueBackup, newRoot, { recursive: true })
   const stale = await readCapabilities()
   stale.plugins[managedKey] = removedEntry
-  // V3 removes explicit installed identities rather than inferring deletion from
-  // omission. Restore an actually uninstalled fixture under a shared-market alias.
-  const sharedInstalledId = Number(parallelInstalls[0].plugin.metadata.labels.id)
-  assert.ok(sharedInstalledId > 0 && sharedInstalledId !== Number(installedId))
   const sharedPluginKey = `${pluginKey}-shared`
   const sharedManagedKey = `${sharedPluginKey}@wework-personal`
   const sharedStorePath = `${removedEntry.store_path}-shared`
@@ -310,7 +303,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     name: sharedPluginKey,
     key: sharedManagedKey,
     marketplace: 'wework-personal',
-    installed_plugin_id: sharedInstalledId,
+    installed_plugin_id: Number(removedEntry.installed_plugin_id) + 100000,
     store_path: sharedStorePath,
     runtime: {
       ...(sharedClaudeRoot ? { claude_link: sharedClaudeRoot } : {}),

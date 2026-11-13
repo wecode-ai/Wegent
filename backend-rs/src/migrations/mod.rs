@@ -13,7 +13,6 @@ mod legacy;
 #[cfg(test)]
 pub(crate) mod mysql_tests;
 mod plugin_publication;
-mod plugin_states;
 mod rows;
 mod runtime_profiles;
 mod schema_changes;

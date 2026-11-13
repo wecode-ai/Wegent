@@ -18,14 +18,13 @@ from app.models.plugin_marketplace import (
     PluginDeviceInstallation,
     PluginRelease,
 )
-from app.models.plugin_state import PluginState
 from app.models.user import User
 from app.services import (
     plugin_device_sync,
     plugin_write_coordination,
     plugin_write_operations,
 )
-from app.services.device.plugin_sync_protocol import lock_installed_plugin_state
+from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_marketplace_identity import ENTERPRISE_CATALOG_NAMESPACE
 from app.services.plugin_marketplace_service import plugin_marketplace_service
@@ -71,7 +70,7 @@ def _seed_catalog(context, active: bool, warm_state: bool):
     if not warm_state:
         return plugin_id, slug, name, None
     with context.sessions() as db:
-        state = lock_installed_plugin_state(db, context.user_id, context.plugin_id)
+        state = lock_plugin_sync_state(db, context.user_id)
         document = deepcopy(state.json)
         document["spec"].update(
             generation=41,
@@ -156,10 +155,17 @@ def test_http_reinstall_uses_existing_identity_with_real_mysql_and_redis(
         with context.sessions() as db:
             parent = db.get(Kind, context.plugin_id)
             assert parent.name == name and parent.is_active
-            states = db.query(PluginState).filter_by(user_id=context.user_id).all()
-            assert [(s.plugin_key, s.installed_kind_id) for s in states] == [
-                (name, context.plugin_id)
-            ]
+            states = (
+                db.query(Kind)
+                .filter_by(
+                    user_id=context.user_id,
+                    kind="PluginSyncState",
+                    namespace="plugin-sync",
+                    name="account",
+                )
+                .all()
+            )
+            assert len(states) == 1
             if warm_state:
                 assert states[0].id == state_id
             spec = states[0].json["spec"]

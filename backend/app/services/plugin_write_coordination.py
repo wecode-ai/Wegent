@@ -9,7 +9,6 @@ import logging
 import threading
 import time
 from collections.abc import Iterable
-from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,7 +26,6 @@ from app.core.distributed_lock import (
     distributed_lock,
 )
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
 from app.services.plugin_policy_revision import (
     PolicyRevision,
     advance_policy_revision,
@@ -40,7 +38,6 @@ from app.services.plugin_write_revision import (
     PluginWriteRevision,
     advance_creation_revision,
     advance_plugin_revision,
-    mark_plugin_desired_changed,
     read_creation_revision,
     read_plugin_revisions,
     write_revision,
@@ -48,7 +45,7 @@ from app.services.plugin_write_revision import (
 
 logger = logging.getLogger(__name__)
 
-LEASE_SECONDS = 30
+LEASE_SECONDS = 180
 WAIT_SECONDS = 3
 RENEW_SECONDS = 10
 OPERATION_SECONDS = 20
@@ -345,6 +342,8 @@ def _recapture_revisions(db: Session) -> None:
 def _remember_savepoint(db: Session, transaction: SessionTransaction) -> None:
     if not transaction.nested:
         return
+    from copy import deepcopy
+
     keys = (
         _REVISIONS,
         _CREATIONS,
@@ -355,8 +354,6 @@ def _remember_savepoint(db: Session, transaction: SessionTransaction) -> None:
         "plugin_sync_merge_rows",
         "plugin_sync_strict_rows",
         "plugin_sync_ack_fences",
-        "plugin_sync_written_scopes",
-        "plugin_state_rebindings",
     )
     frame = {key: deepcopy(db.info.get(key)) for key in keys}
     frame[_NEW_INSTALLS] = list(db.info.get(_NEW_INSTALLS, []))
@@ -370,40 +367,31 @@ def _guard_flush(db: Session, _context: Any, _instances: Any) -> None:
     _recapture_revisions(db)
     for lease in db.info.get(_LEASES, {}).values():
         lease.check()
-    for row in sorted(
-        list(db.dirty),
-        key=lambda row: (
-            (row.user_id, row.plugin_key) if isinstance(row, PluginState) else (0, "")
-        ),
-    ):
+    for row in list(db.dirty):
         if (
-            isinstance(row, PluginState)
+            isinstance(row, Kind)
             and db.info.get(_CONFIGURED)
             and (
                 row.id in db.info.get("plugin_sync_expected_revisions", {})
                 or db.info.get(_LEASES)
             )
+            and row.kind == "PluginSyncState"
+            and row.namespace == "plugin-sync"
+            and row.name == "account"
         ):
             flush_sync_revision(db, row)
     if not db.info.get(_LEASES):
         return
     for row in list(db.new):
         if isinstance(row, Kind) and row.kind == "InstalledPlugin":
-            document = deepcopy(row.json)
-            document.setdefault("spec", {})["writeRevision"] = (
-                write_revision(document) + 1
-            )
-            row.json = document
             db.info.setdefault(_NEW_INSTALLS, []).append(row)
-            mark_plugin_desired_changed(db, row.user_id, row.name, row.id)
+            db.info[_DESIRED_CHANGED] = True
     for row in list(db.dirty):
         if not isinstance(row, Kind) or row.kind != "InstalledPlugin":
             continue
         expected = db.info.get(_REVISIONS, {}).get(row.id)
         if expected is None or write_revision(row.json) != expected.revision:
             raise PluginWriteError("plugin_write_conflict")
-        document = deepcopy(row.json)
-        document.setdefault("spec", {})["writeRevision"] = expected.revision + 1
         updated = (
             db.query(Kind)
             .filter(
@@ -417,7 +405,7 @@ def _guard_flush(db: Session, _context: Any, _instances: Any) -> None:
             )
             .update(
                 {
-                    Kind.json: document,
+                    Kind.json: row.json,
                     Kind.name: row.name,
                     Kind.is_active: row.is_active,
                 },
@@ -426,13 +414,10 @@ def _guard_flush(db: Session, _context: Any, _instances: Any) -> None:
         )
         if updated != 1:
             raise PluginWriteError("plugin_write_conflict")
-        expected.revision += 1
-        expected.advanced = True
         expected.name = row.name
-        set_committed_value(row, "json", document)
-        for attribute in ("name", "is_active"):
+        for attribute in ("json", "name", "is_active"):
             set_committed_value(row, attribute, getattr(row, attribute))
-        mark_plugin_desired_changed(db, row.user_id, row.name, row.id)
+        db.info[_DESIRED_CHANGED] = True
 
 
 @event.listens_for(Session, "after_flush_postexec")
@@ -442,11 +427,7 @@ def _remember_created_installations(db: Session, _context: Any) -> None:
             db.info.setdefault(_REVISIONS, {}).setdefault(
                 row.id,
                 PluginWriteRevision(
-                    row.id,
-                    row.user_id,
-                    row.name,
-                    write_revision(row.json),
-                    advanced=True,
+                    row.id, row.user_id, row.name, write_revision(row.json)
                 ),
             )
 
@@ -458,42 +439,31 @@ def _guard_commit(db: Session) -> None:
         return
     _recapture_revisions(db)
     db.flush()
-    creations = {}
+    creations = set()
     for row in db.info.pop(_NEW_INSTALLS, []):
         if (row.user_id, row.name) not in leases:
             raise PluginWriteError("plugin_write_conflict")
-        if row.id not in db.info.get(_REVISIONS, {}):
-            raise PluginWriteError("plugin_write_conflict")
-        identity = (row.user_id, row.name)
-        if creations.setdefault(identity, row.id) != row.id:
-            raise PluginWriteError("plugin_write_conflict")
+        db.info.setdefault(_REVISIONS, {}).update(
+            read_plugin_revisions(db, row.user_id, row.name)
+        )
+        creations.add((row.user_id, row.name))
     for _, lease in sorted(leases.items()):
         lease.check()
     for identity in sorted(creations):
         expected = db.info.get(_CREATIONS, {}).get(identity)
         if expected is None:
             raise PluginWriteError("plugin_write_conflict")
-        advance_creation_revision(db, expected, creations[identity])
+        advance_creation_revision(db, expected)
     for expected in db.info.get(_REVISIONS, {}).values():
-        if not expected.advanced:
-            advance_plugin_revision(db, expected)
-    changed = db.info.pop(_DESIRED_CHANGED, set())
-    if changed:
-        from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
-        from app.services.plugin_sync_revision import sync_revision_written
+        advance_plugin_revision(db, expected)
+    if db.info.pop(_DESIRED_CHANGED, False):
+        from copy import deepcopy
 
-        for user_id, name, installed_id in sorted(
-            changed, key=lambda item: (item[0], item[1], item[2] or 0)
-        ):
-            if installed_id is None:
-                installed_id = creations.get((user_id, name))
-            if installed_id is None:
-                raise PluginWriteError("plugin_write_conflict")
-            state = lock_plugin_sync_state(
-                db, user_id, merge=True, plugin_key=name, installed_kind_id=installed_id
-            )
-            if sync_revision_written(db, user_id, state.plugin_key):
-                continue
+        from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
+
+        users = {expected.user_id for expected in db.info.get(_REVISIONS, {}).values()}
+        for user_id in sorted(users):
+            state = lock_plugin_sync_state(db, user_id, merge=True)
             state.json = deepcopy(state.json)
         db.flush()
     for policy in db.info.get("plugin_auth_policy_fences", {}).values():

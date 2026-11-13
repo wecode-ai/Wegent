@@ -63,7 +63,7 @@ pub(crate) fn runtime_features() -> serde_json::Value {
     let gateway_enabled = env_enabled("DEVICE_SESSION_GATEWAY_ENABLED", true);
     serde_json::json!({
         "schemaVersion": 4,
-        "pluginSync": { "protocolVersion": 2, "supportedVersions": [2,3] },
+        "pluginSync": { "protocolVersion": 2 },
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {

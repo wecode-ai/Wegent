@@ -13,7 +13,6 @@ from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import DeviceCapabilitySyncResult
 from app.services.device.plugin_sync_protocol import (
     advance_plugin_snapshot_watermark,
-    lock_installed_plugin_state,
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
 )
@@ -67,8 +66,8 @@ def record_versioned_result(
 
     payload = result.desired_plugin_snapshot or {}
     metadata = payload["plugin_sync"]
-    scoped = metadata["version"] == 3
-    legacy_state = None if scoped else lock_plugin_sync_state(db, user_id, merge=True)
+    generation = metadata["generation"]
+    sync_state = lock_plugin_sync_state(db, user_id, merge=True)
     expected = {
         item["installed_plugin_id"]: item for item in payload.get("plugins") or []
     }
@@ -117,23 +116,6 @@ def record_versioned_result(
     }
     acknowledgements = {str(item.id): item for item in result.plugins}
     for installed in installs:
-        if scoped:
-            from app.services.plugin_kind_revision import kind_revision
-
-            if metadata.get("intentRevisions", {}).get(
-                str(installed.id)
-            ) != kind_revision(installed):
-                continue
-        sync_state = (
-            lock_installed_plugin_state(db, user_id, installed.id, merge=True)
-            if scoped
-            else legacy_state
-        )
-        generation = (
-            metadata["revisions"][str(installed.id)]
-            if scoped
-            else metadata["generation"]
-        )
         if generation < plugin_snapshot_watermark(
             sync_state, result.device_id, installed.id
         ):
@@ -177,19 +159,10 @@ def record_versioned_result(
                 )
                 row.attempt_count = (row.attempt_count or 0) + 1
                 row.last_sync_at = datetime.now()
-        if scoped:
-            advance_plugin_snapshot_watermark(
-                sync_state,
-                result.device_id,
-                generation=generation,
-                complete=False,
-                installed_plugin_ids=[installed.id],
-            )
-    if legacy_state is not None:
-        advance_plugin_snapshot_watermark(
-            legacy_state,
-            result.device_id,
-            generation=metadata["generation"],
-            complete=metadata["complete"],
-            installed_plugin_ids=ids,
-        )
+    advance_plugin_snapshot_watermark(
+        sync_state,
+        result.device_id,
+        generation=generation,
+        complete=metadata["complete"],
+        installed_plugin_ids=ids,
+    )

@@ -1,7 +1,0 @@
-{
-  "revision": "c7d8e9f0a1b2",
-  "parents": ["a5b6c7d8e9f0", "b1c2d3e4f5a6"],
-  "source": "20261113_c7d8e9f0a1b2_merge_plugin_states_and_share_tokens.py",
-  "upgrade": [],
-  "downgrade": []
-}

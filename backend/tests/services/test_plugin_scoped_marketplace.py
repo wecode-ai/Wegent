@@ -6,8 +6,7 @@ import pytest
 from sqlalchemy import event
 
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
-from app.services.device.plugin_sync_protocol import lock_installed_plugin_state
+from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_local_sync import mutate_local_plugin
 from app.services.plugin_marketplace_service import PluginMarketplaceService
@@ -18,7 +17,7 @@ from tests.services.test_plugin_marketplace_v2 import _create_marketplace_update
 
 @pytest.mark.parametrize("entry", ["marketplace", "local_install", "local_builtin"])
 @pytest.mark.parametrize("active", [True, False])
-def test_existing_legacy_name_reuses_one_bound_state(
+def test_existing_legacy_name_preserves_sync_state_and_installation_identity(
     test_db, test_user, plugin_write_backend, monkeypatch, entry, active
 ):
     service = PluginMarketplaceService()
@@ -29,7 +28,7 @@ def test_existing_legacy_name_reuses_one_bound_state(
     installed.is_active = active
     test_db.commit()
     original_id, original_name = installed.id, installed.name
-    state = lock_installed_plugin_state(test_db, test_user.id, installed.id)
+    state = lock_plugin_sync_state(test_db, test_user.id)
     state.json = {
         **state.json,
         "spec": {
@@ -59,10 +58,17 @@ def test_existing_legacy_name_reuses_one_bound_state(
     assert result_id == original_id
     test_db.refresh(installed)
     assert installed.name == original_name and installed.is_active
-    states = test_db.query(PluginState).filter_by(user_id=test_user.id).all()
-    assert [(row.id, row.plugin_key, row.installed_kind_id) for row in states] == [
-        (original_state_id, original_name, original_id)
-    ]
+    states = (
+        test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            kind="PluginSyncState",
+            namespace="plugin-sync",
+            name="account",
+        )
+        .all()
+    )
+    assert [row.id for row in states] == [original_state_id]
     assert states[0].json["spec"]["generation"] == 41
     assert states[0].json["spec"]["devices"] == {
         "peer": {"plugins": {str(original_id): 40}}
@@ -85,15 +91,6 @@ def test_existing_install_ignores_an_unrelated_busy_derived_name(
     )
     installed.name = installed_plugin_service._safe_kind_name(plugin.slug)
     test_db.commit()
-    derived_name = service._kind_name(plugin.catalog_namespace, plugin.slug)
-    placeholder = PluginState(
-        user_id=test_user.id,
-        plugin_key=derived_name,
-        installed_kind_id=0,
-        json={"spec": {"revision": 3, "generation": 17}},
-    )
-    test_db.add(placeholder)
-    test_db.commit()
     key = f"wegent:plugin-write:{test_user.id}:{service._kind_name(plugin.catalog_namespace, plugin.slug)}"
     held = plugin_write_backend.lock(
         key, timeout=30, blocking_timeout=0, thread_local=False
@@ -105,9 +102,6 @@ def test_existing_install_ignores_an_unrelated_busy_derived_name(
         assert int(result.metadata["labels"]["id"]) == installed.id
         assert held.owned()
         assert set(plugin_write_backend.values) == {key}
-        test_db.refresh(placeholder)
-        assert placeholder.installed_kind_id == 0
-        assert placeholder.json == {"spec": {"revision": 3, "generation": 17}}
     finally:
         held.release()
 

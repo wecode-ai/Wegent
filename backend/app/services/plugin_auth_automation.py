@@ -56,6 +56,7 @@ class PluginAuthAutomationService:
 
     @trace_sync("plugin_auth.automation.configure", "backend.plugin_auth")
     def configure(self, db: Session, user_id: int, enabled: bool) -> dict:
+        self.connections._coordinate_owner(db, user_id)
         configure_auth_policy(db, user_id, enabled)
         return {"enabled": enabled}
 

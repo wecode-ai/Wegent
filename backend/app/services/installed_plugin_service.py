@@ -507,7 +507,7 @@ class InstalledPluginService:
         db.add(row)
         db.flush()
         package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
-        payload = self._build_payload(
+        row.json = self._build_payload(
             name=parsed.name,
             parsed=parsed,
             package_ref=package_ref,
@@ -518,7 +518,6 @@ class InstalledPluginService:
             marketplace_id=marketplace_id,
             marketplace_name=marketplace_name,
         )
-        replace_installed_kind(db, row, payload)
         self._upsert_package(
             db,
             kind_id=row.id,

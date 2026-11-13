@@ -7,8 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.plugin_state import PluginState
-from app.services.plugin_sync_revision import remember_sync_write
 from app.services.plugin_write_errors import PluginWriteError
 
 
@@ -18,8 +16,6 @@ class PluginWriteRevision:
     user_id: int
     name: str
     revision: int
-    # Only a successful write in this SQL transaction may satisfy its fence.
-    advanced: bool = False
 
 
 @dataclass
@@ -28,7 +24,6 @@ class PluginCreationRevision:
     user_id: int
     name: str
     revision: int
-    installed_kind_id: int = 0
 
 
 def read_creation_revision(
@@ -37,70 +32,47 @@ def read_creation_revision(
     """Fence first insertion in existing sync metadata, before a parent exists."""
     from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 
-    state = lock_plugin_sync_state(db, user_id, merge=True, plugin_key=name)
-    if state.installed_kind_id:
-        with db.no_autoflush:
-            previous = (
-                db.query(Kind.id)
-                .filter_by(
-                    id=state.installed_kind_id,
-                    user_id=user_id,
-                    kind="InstalledPlugin",
-                    namespace="default",
-                )
-                .one_or_none()
-            )
-        if previous is not None:
-            raise PluginWriteError("plugin_write_conflict")
+    state = lock_plugin_sync_state(db, user_id, merge=True)
     revisions = state.json.get("spec", {}).get("creationRevisions", {})
     if not isinstance(revisions, dict):
         raise PluginWriteError("plugin_write_conflict")
     revision = revisions.get(name, 0)
     if type(revision) is not int or not 0 <= revision < 2**63 - 1:
         raise PluginWriteError("plugin_write_conflict")
-    return PluginCreationRevision(
-        state.id, user_id, name, revision, state.installed_kind_id
-    )
+    return PluginCreationRevision(state.id, user_id, name, revision)
 
 
-def advance_creation_revision(
-    db: Session, expected: PluginCreationRevision, installed_kind_id: int
-) -> None:
+def advance_creation_revision(db: Session, expected: PluginCreationRevision) -> None:
     """Compare only this plugin's slot; unrelated creations never conflict."""
     path = f"$.spec.creationRevisions.{json.dumps(expected.name)}"
     slots = func.coalesce(
-        func.json_extract(PluginState.json, "$.spec.creationRevisions"),
-        func.json_object(),
+        func.json_extract(Kind.json, "$.spec.creationRevisions"), func.json_object()
     )
-    document = func.json_set(PluginState.json, "$.spec.creationRevisions", slots)
-    revision = func.coalesce(PluginState.json["spec"]["revision"].as_integer(), 0)
+    document = func.json_set(Kind.json, "$.spec.creationRevisions", slots)
+    revision = func.coalesce(Kind.json["spec"]["revision"].as_integer(), 0)
     updated = (
-        db.query(PluginState)
+        db.query(Kind)
         .filter(
-            PluginState.id == expected.state_id,
-            PluginState.user_id == expected.user_id,
-            PluginState.plugin_key == expected.name,
-            PluginState.installed_kind_id.in_(
-                {expected.installed_kind_id, installed_kind_id}
-            ),
+            Kind.id == expected.state_id,
+            Kind.user_id == expected.user_id,
+            Kind.kind == "PluginSyncState",
+            Kind.namespace == "plugin-sync",
+            Kind.name == "account",
+            Kind.is_active.is_(True),
             func.coalesce(
-                PluginState.json["spec"]["creationRevisions"][
-                    expected.name
-                ].as_integer(),
-                0,
+                Kind.json["spec"]["creationRevisions"][expected.name].as_integer(), 0
             )
             == expected.revision,
         )
         .update(
             {
-                PluginState.installed_kind_id: installed_kind_id,
-                PluginState.json: func.json_set(
+                Kind.json: func.json_set(
                     document,
                     path,
                     expected.revision + 1,
                     "$.spec.revision",
                     revision + 1,
-                ),
+                )
             },
             synchronize_session=False,
         )
@@ -108,16 +80,6 @@ def advance_creation_revision(
     if updated != 1:
         raise PluginWriteError("plugin_write_conflict")
     expected.revision += 1
-
-    remember_sync_write(db, expected.user_id, expected.name)
-
-
-def mark_plugin_desired_changed(
-    db: Session, user_id: int, name: str, installed_id: int | None = None
-) -> None:
-    db.info.setdefault("plugin_desired_changed", set()).add(
-        (user_id, name, installed_id)
-    )
 
 
 def write_revision(document: dict) -> int:
@@ -186,4 +148,3 @@ def advance_plugin_revision(db: Session, expected: PluginWriteRevision) -> None:
     if updated != 1:
         raise PluginWriteError("plugin_write_conflict")
     expected.revision += 1
-    expected.advanced = True

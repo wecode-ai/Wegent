@@ -9,7 +9,6 @@ import pytest
 
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
-from app.models.plugin_state import PluginState
 from app.schemas.device import DeviceCapabilitySyncResult
 from app.services import plugin_device_sync, plugin_write_operations
 from app.services.device import plugin_change_sync
@@ -329,9 +328,12 @@ async def test_background_dispatch_preserves_unrelated_inventory_and_generation(
         )
     )
     test_db.add(
-        PluginState(
+        Kind(
             user_id=user_id,
-            plugin_key="@legacy-v2",
+            kind="PluginSyncState",
+            namespace="plugin-sync",
+            name="account",
+            is_active=True,
             json={"spec": {"generation": 16}},
         )
     )
@@ -349,7 +351,6 @@ async def test_background_dispatch_preserves_unrelated_inventory_and_generation(
         session_factory=plugin_write_operations.get_db_session
     )
     service.supports_plugin_delta = AsyncMock(return_value=True)
-    service.plugin_sync_version = AsyncMock(return_value=2)
 
     async def rpc(*, user_id, device_id, payload, **_kwargs):
         assert device_id == "other"
