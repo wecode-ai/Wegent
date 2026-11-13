@@ -39,7 +39,8 @@ export async function verifyCollaborationExpNotificationTab({
     const [selected] = JSON.parse(
       await control.command(
         'getElementMetrics',
-        '[role="tab"][aria-selected="true"][data-testid^="workspace-tab-select-"]'
+        '[role="tab"][aria-selected="true"][data-testid^="workspace-tab-select-"]:not([data-testid="workspace-tab-select-fixed-collaboration-exp"])',
+        { value: JSON.stringify({ includeText: true, waitForMatch: true }) }
       )
     )
     assert.ok(
@@ -47,9 +48,15 @@ export async function verifyCollaborationExpNotificationTab({
     )
     if (pendingTab) assert.equal(selected.testId, pendingTab)
     pendingTab = selected.testId
-    const tabs = JSON.parse(await control.command('snapshot', 'body')).testIds.filter(id =>
-      id.startsWith('workspace-tab-select-')
-    )
+    const tabs = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[role="tab"][data-testid^="workspace-tab-select-"]',
+        {
+          value: JSON.stringify({ includeText: true }),
+        }
+      )
+    ).map(tab => tab.testId)
     assert.equal(tabs.filter(id => id === 'workspace-tab-select-fixed-collaboration-exp').length, 1)
     if (tabCount) assert.equal(tabs.length, tabCount, 'Repeated notifications must reuse one tab')
     tabCount = tabs.length

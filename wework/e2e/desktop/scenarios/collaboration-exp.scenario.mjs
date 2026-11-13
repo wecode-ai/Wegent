@@ -814,11 +814,11 @@ export function createDesktopScenario({
       } catch (error) {
         const diagnostics = await Promise.allSettled([
           control
-            .command('snapshot', APP)
+            .command('snapshot', 'body')
             .then(value =>
               writeFile(join(resultDir, 'collaboration-exp-failure-before-cleanup.json'), value)
             ),
-          captureScreenshot(control, 'collaboration-exp-failure-before-cleanup.png', APP),
+          captureScreenshot(control, 'collaboration-exp-failure-before-cleanup.png', 'body'),
         ])
         for (const result of diagnostics)
           if (result.status === 'rejected')
