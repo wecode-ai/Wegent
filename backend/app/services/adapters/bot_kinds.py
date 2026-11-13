@@ -1186,14 +1186,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             new_shell_name = update_data["shell_name"]
             bot_crd = Bot.model_validate(bot.json)
             shell_ref = bot_crd.spec.shellRef
-            replacement_shell_info = None
-            if bot.user_id != user_id and shell_ref.name != new_shell_name:
-                replacement_shell_info = resolve_replacement_shell_info(
-                    db,
-                    name=new_shell_name,
-                    owner_id=bot.user_id,
-                    editor_id=user_id,
-                )
             shell = None
             if shell_ref.name == new_shell_name:
                 existing_namespace = shell_ref.namespace or "default"
@@ -1212,8 +1204,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
             if shell is None:
                 try:
-                    shell_info = replacement_shell_info or get_shell_info_by_name(
-                        db, new_shell_name, bot.user_id
+                    shell_info = (
+                        resolve_replacement_shell_info(
+                            db,
+                            name=new_shell_name,
+                            owner_id=bot.user_id,
+                            editor_id=user_id,
+                        )
+                        if bot.user_id != user_id
+                        else get_shell_info_by_name(db, new_shell_name, bot.user_id)
                     )
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))

@@ -133,6 +133,12 @@ GitHub/GitLab personal and repository sources use a stricter native boundary: lo
 
 ## Resources and execution
 
+An unresolved Shell reference is not retained merely because its name is unchanged.
+Re-resolution requires the editor and definition owner to access the same Shell;
+an expired group reference cannot install an owner-private namesake.
+`test_bot_team_shell_selection.py` and CI Chromium cover denial and unchanged references.
+CP invariants remain unchanged.
+
 Issue creation and automation event dispatch neither scan nor prepare the global execution queue. After dispatch commits, they read only the executions associated with those runs and asynchronously notify their target Executors, using the actual owner's device address for shared runners. Notifications carry no work or execution authority; consumers and independent maintenance jobs retain queue preparation and claiming.
 
 Execution and discovery use separate resource resolution scopes. Resolvers can declare whether they participate in execution checks, preserving existing behavior by default. Request-local group caches isolate the scopes so discovery results do not become execution authority. Extensions retain project, Issue, resource-binding, whitelist, and revocation checks.

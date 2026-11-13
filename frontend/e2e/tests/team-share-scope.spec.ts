@@ -8,7 +8,11 @@ import JSZip from 'jszip'
 import { ADMIN_USER, REGULAR_USER } from '../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 import { ApiClient, createApiClient } from '../utils/api-client'
+import { deleteDedicatedBotModel } from '../utils/cleanup-dedicated-bot-model'
+import { assertShellRecoveryPermission } from '../utils/shell-recovery-permission'
 import { DataBuilders } from '../fixtures/data-builders'
+import type { Bot, Team, User } from '../../src/types/api'
+import type { Group } from '../../src/types/group'
 
 const APP_BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:3000'
 
@@ -53,12 +57,13 @@ async function createGroupTeam(
   prefix: string,
   namespace: string,
   suffix: string,
-  botNamespace = namespace
+  botNamespace = namespace,
+  agentConfig: Record<string, unknown> = {}
 ): Promise<{ teamId: number; teamName: string; botId: number }> {
   const botResponse = await api.createBot({
     name: `${prefix}-${suffix}-bot`,
     shell_name: 'Chat',
-    agent_config: {},
+    agent_config: agentConfig,
     system_prompt: 'Share scope E2E leader bot.',
     namespace: botNamespace,
     is_active: true,
@@ -110,29 +115,30 @@ async function createShareScopeFixture(
   const reporterLogin = await reporterApi.login(reporterData.user_name, reporterpassword, 1)
   expect(reporterLogin.status, JSON.stringify(reporterLogin.data)).toBe(200)
 
-  const createdBotIds: number[] = []
-  const createdTeamIds: Array<{ id: number; namespace: string; name: string }> = []
+  const createdBots: Array<{ id: number; name: string; api: ApiClient }> = []
+  const createdTeams: Array<{ id: number; name: string; api: ApiClient }> = []
 
   const cleanup = async () => {
-    for (const team of createdTeamIds) {
-      const response = await adminApi
-        .delete(
-          `/api/teams/${team.id}?${new URLSearchParams({
-            force: 'true',
-            confirm_name: team.name,
-          })}`
-        )
-        .catch(() => undefined)
-      console.log(`E2E cleanup team ${team.id}: ${response?.status ?? 'request failed'}`)
+    for (const team of createdTeams) {
+      const response = await team.api.delete(
+        `/api/teams/${team.id}?${new URLSearchParams({
+          force: 'true',
+          confirm_name: team.name,
+        })}`
+      )
+      expect(response.status, JSON.stringify(response.data)).toBe(200)
     }
-    for (const botId of createdBotIds) {
-      const response = await adminApi.delete(`/api/bots/${botId}?force=true`).catch(() => undefined)
-      console.log(`E2E cleanup bot ${botId}: ${response?.status ?? 'request failed'}`)
+    for (const bot of createdBots) {
+      const response = await bot.api.delete(`/api/bots/${bot.id}?force=true`)
+      expect(response.status, JSON.stringify(response.data)).toBe(200)
+      await deleteDedicatedBotModel(bot.api, bot.name)
     }
-    const groupResponse = await adminApi.deleteGroup(groupName).catch(() => undefined)
-    console.log(`E2E cleanup group ${groupName}: ${groupResponse?.status ?? 'request failed'}`)
-    const userResponse = await adminApi.adminDeleteUser(reporterUserId).catch(() => undefined)
-    console.log(`E2E cleanup user ${reporterUserId}: ${userResponse?.status ?? 'request failed'}`)
+    const groupResponse = await adminApi.deleteGroup(groupName)
+    expect(groupResponse.status, JSON.stringify(groupResponse.data)).toBe(204)
+    console.log(`E2E cleanup group ${groupName}: ${groupResponse.status}`)
+    const userResponse = await adminApi.adminDeleteUser(reporterUserId)
+    expect(userResponse.status, JSON.stringify(userResponse.data)).toBe(204)
+    console.log(`E2E cleanup user ${reporterUserId}: ${userResponse.status}`)
   }
 
   try {
@@ -152,11 +158,15 @@ async function createShareScopeFixture(
     // The admin owns this private leader Bot while the Team itself is a group
     // resource, keeping the regression on the Team-context authorization path.
     const groupTeam = await createGroupTeam(adminApi, prefix, groupName, 'group', 'default')
-    createdBotIds.push(groupTeam.botId)
-    createdTeamIds.push({
+    createdBots.push({
+      id: groupTeam.botId,
+      name: `${prefix}-group-bot`,
+      api: adminApi,
+    })
+    createdTeams.push({
       id: groupTeam.teamId,
-      namespace: groupName,
       name: groupTeam.teamName,
+      api: adminApi,
     })
     const visibleTeams = await developerApi.get<{ items: TeamRecord[] }>(
       `/api/teams?${new URLSearchParams({
@@ -175,11 +185,15 @@ async function createShareScopeFixture(
     // The reporter owns this personal agent, so only the group list decides
     // which team targets they may pick.
     const reporterTeam = await createGroupTeam(reporterApi, prefix, 'default', 'reporter')
-    createdBotIds.push(reporterTeam.botId)
-    createdTeamIds.push({
+    createdBots.push({
+      id: reporterTeam.botId,
+      name: `${prefix}-reporter-bot`,
+      api: reporterApi,
+    })
+    createdTeams.push({
       id: reporterTeam.teamId,
-      namespace: 'default',
       name: reporterTeam.teamName,
+      api: reporterApi,
     })
 
     return {
@@ -320,6 +334,181 @@ async function openPersonalAgentEditor(page: Page, teamId: number): Promise<Loca
 }
 
 test.describe('Agent share scope', () => {
+  for (const suffix of ['member', 'self'] as const) {
+    test(`group owner can edit a ${suffix}-created agent without replacing dependencies`, async ({
+      browser,
+      request,
+    }) => {
+      const prefix = `e2e-group-owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const fixture = await createShareScopeFixture(request, prefix)
+      const ownerApi = fixture.developerApi
+      const groupData = DataBuilders.group()
+      const teams: Array<Awaited<ReturnType<typeof createGroupTeam>> & { api: ApiClient }> = []
+      const models: Array<{ api: ApiClient; path: string }> = []
+      let groupCreated = false
+      let page: Page | undefined
+      type TeamDetail = Omit<Team, 'bots'> & {
+        bots: Array<{ bot_id: number; role?: string; bot: Bot & { user_id: number } }>
+      }
+      const readTeam = async (api: ApiClient, teamId: number) => {
+        const response = await api.get<TeamDetail>(`/api/teams/${teamId}`)
+        expect(response.status, JSON.stringify(response.data)).toBe(200)
+        return response.data!
+      }
+
+      try {
+        const owner = await ownerApi.get<User>('/api/users/me')
+        expect(owner.status, JSON.stringify(owner.data)).toBe(200)
+        expect(owner.data?.role).toBe('user')
+        const createdGroup = await ownerApi.createGroup(groupData)
+        expect(createdGroup.status, JSON.stringify(createdGroup.data)).toBe(201)
+        groupCreated = true
+        const group = await ownerApi.get<Group>(`/api/groups/${groupData.name}`)
+        expect(group.status, JSON.stringify(group.data)).toBe(200)
+        expect(group.data).toMatchObject({ owner_user_id: owner.data!.id, my_role: 'Owner' })
+        const member = await ownerApi.addGroupMember(groupData.name, {
+          user_id: fixture.reporterUserId,
+          role: 'Developer',
+        })
+        expect([200, 201], JSON.stringify(member.data)).toContain(member.status)
+        page = await openUserPage(browser, fixture.developerToken)
+
+        const creatorApi = suffix === 'member' ? fixture.reporterApi : ownerApi
+        const creatorId = suffix === 'member' ? fixture.reporterUserId : owner.data!.id
+        await test.step(`Owner edits the ${suffix}-created agent and reloads it`, async () => {
+          const modelName = `${prefix}-${suffix}-private-model`
+          const modelPath = `/api/v1/namespaces/default/models/${modelName}`
+          const createdModel = await creatorApi.post('/api/v1/namespaces/default/models', {
+            apiVersion: 'agent.wecode.io/v1',
+            kind: 'Model',
+            metadata: { name: modelName, namespace: 'default' },
+            spec: { modelConfig: { model_id: `${modelName}-provider` } },
+          })
+          expect(createdModel.status, JSON.stringify(createdModel.data)).toBe(201)
+          models.push({ api: creatorApi, path: modelPath })
+          const team = await createGroupTeam(
+            creatorApi,
+            prefix,
+            groupData.name,
+            suffix,
+            'default',
+            { bind_model: modelName, bind_model_type: 'user' }
+          )
+          teams.push({ api: creatorApi, ...team })
+          const configured = await creatorApi.put(`/api/bots/${team.botId}`, {
+            secondary_model_name: modelName,
+          })
+          expect(configured.status, JSON.stringify(configured.data)).toBe(200)
+          const original = await readTeam(creatorApi, team.teamId)
+          const definitionPath = `/api/v1/namespaces/default/bots/${prefix}-${suffix}-bot`
+          const definition = await creatorApi.get<{ spec: Record<string, unknown> }>(definitionPath)
+          expect(definition.status, JSON.stringify(definition.data)).toBe(200)
+          expect(original.user_id).toBe(creatorId)
+          expect(original.bots).toHaveLength(1)
+          const originalBot = original.bots[0].bot
+          expect(originalBot).toMatchObject({
+            id: team.botId,
+            user_id: creatorId,
+            namespace: 'default',
+            agent_config: { bind_model: modelName, bind_model_type: 'user' },
+            secondary_model_name: modelName,
+          })
+          if (suffix === 'member') {
+            const denied = await ownerApi.put(`/api/bots/${team.botId}`, {
+              system_prompt: 'A group Owner cannot edit a private Bot without Team context.',
+            })
+            expect(denied.status, JSON.stringify(denied.data)).toBe(403)
+            await assertShellRecoveryPermission(
+              creatorApi,
+              ownerApi,
+              team,
+              definitionPath,
+              groupData.name
+            )
+          }
+          await page!.goto('/resource-library?tab=mine&type=agent&source=group')
+          const card = page!.getByTestId(`team-card-${team.teamId}`)
+          await expect(card).toBeVisible()
+          await card.getByTestId(`edit-team-button-${team.teamId}`).click()
+          const dialog = page!.getByTestId('team-edit-dialog')
+          await expect(dialog.getByTestId('simple-model-select')).toHaveText(modelName)
+          await expect(dialog.getByTestId('simple-prompt-textarea')).toHaveValue(
+            originalBot.system_prompt
+          )
+          const displayName = `${prefix} ${suffix} edited by Owner`
+          const prompt = `Owner updated the ${suffix}-created agent.`
+          await dialog.getByTestId('team-display-name-input').fill(displayName)
+          await dialog.getByTestId('simple-prompt-textarea').fill(prompt)
+          await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click()
+          await expect(dialog).toBeHidden()
+          const saved = await readTeam(creatorApi, team.teamId)
+          expect(saved).toMatchObject({
+            id: original.id,
+            name: original.name,
+            namespace: original.namespace,
+            user_id: creatorId,
+            displayName,
+          })
+          expect(saved.bots).toHaveLength(1)
+          expect(saved.bots[0]).toMatchObject({
+            bot_id: team.botId,
+            role: original.bots[0].role,
+            bot: {
+              id: originalBot.id,
+              name: originalBot.name,
+              user_id: creatorId,
+              namespace: originalBot.namespace,
+              shell_name: originalBot.shell_name,
+              shell_type: originalBot.shell_type,
+              agent_config: originalBot.agent_config,
+              secondary_model_name: originalBot.secondary_model_name,
+              secondary_model_namespace: originalBot.secondary_model_namespace,
+              system_prompt: prompt,
+            },
+          })
+          expect(saved.bots[0].bot.agent_config).toEqual(originalBot.agent_config)
+          const savedDefinition = await creatorApi.get<{ spec: Record<string, unknown> }>(
+            definitionPath
+          )
+          expect(savedDefinition.status, JSON.stringify(savedDefinition.data)).toBe(200)
+          for (const ref of ['ghostRef', 'shellRef', 'modelRef', 'secondaryModelRef']) {
+            expect(savedDefinition.data!.spec[ref]).toEqual(definition.data!.spec[ref])
+          }
+
+          await page!.reload()
+          await expect(card).toBeVisible()
+          await card.getByTestId(`edit-team-button-${team.teamId}`).click()
+          await expect(dialog.getByTestId('team-display-name-input')).toHaveValue(displayName)
+          await expect(dialog.getByTestId('simple-prompt-textarea')).toHaveValue(prompt)
+          await expect(dialog.getByTestId('simple-model-select')).toHaveText(modelName)
+          console.log(`Owner edited and reloaded ${suffix}-created agent ${team.teamId}`)
+        })
+      } finally {
+        await page?.context().close()
+        for (const team of teams) {
+          const removed = await team.api.delete(
+            `/api/teams/${team.teamId}?${new URLSearchParams({
+              force: 'true',
+              confirm_name: team.teamName,
+            })}`
+          )
+          expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+          const botRemoved = await team.api.delete(`/api/bots/${team.botId}?force=true`)
+          expect(botRemoved.status, JSON.stringify(botRemoved.data)).toBe(200)
+        }
+        for (const model of models) {
+          const removed = await model.api.delete(model.path)
+          expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+        }
+        if (groupCreated) {
+          const removed = await ownerApi.deleteGroup(groupData.name)
+          expect(removed.status, JSON.stringify(removed.data)).toBe(204)
+        }
+        await fixture.cleanup()
+      }
+    })
+  }
+
   test('developer can pick a group from the chat create dialog and the binding is kept', async ({
     browser,
     request,
