@@ -9,6 +9,7 @@ import {
 import { optionalText, ReleaseStore, sameReleasePath } from './runtime/release-store.js'
 import { restoreReleaseData } from './runtime/release-snapshot.js'
 import { currentCoreProfile, selectReleaseProfile } from './runtime/release-profile.js'
+import { applyInstalledPreparation } from './runtime/installed-preparation-state.js'
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
@@ -45,6 +46,25 @@ export async function routeRelease(
   const physicalRollback =
     process.platform === 'darwin' ? await optionalText(join(root, 'macos-rollback')) : null
   const versionedPayload = await store.isSlotExecutable(process.execPath)
+  if (!supervisedId && !recoveryToken && !versionedPayload && !physicalRollback) {
+    try {
+      const prepared = await applyInstalledPreparation({
+        dataDirectory,
+        version: metadata.version ?? '',
+        releaseTransactionInProgress: Boolean(await optionalText(join(root, 'activation.json'))),
+      })
+      if (prepared.applied)
+        console.info('[release-bootstrap] applied isolated installation preparation')
+    } catch (error) {
+      // Preparation is an optimization. Its failure must leave the installed
+      // profile and recovery paths available for an ordinary startup.
+      recordReleaseDiagnostic(
+        'installed-preparation-apply-failed',
+        { message: error instanceof Error ? error.message : 'Preparation apply failed' },
+        true
+      )
+    }
+  }
   if (
     process.platform === 'darwin' &&
     !supervisedId &&

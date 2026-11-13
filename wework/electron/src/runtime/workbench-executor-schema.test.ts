@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -111,6 +111,26 @@ test('retries a failed compatibility check', async () => {
 
   await expect(gate.assert(environment)).rejects.toThrow('temporary probe failure')
   await expect(gate.assert(environment)).resolves.toBeUndefined()
+  expect(verify).toHaveBeenCalledTimes(2)
+})
+
+test('rechecks a symlink target when the binary behind the unchanged link changes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'workbench schema symlink '))
+  directories.push(directory)
+  const binary = join(directory, 'executor-target')
+  const command = join(directory, 'executor-link')
+  await writeFile(binary, 'first')
+  await symlink(binary, command, process.platform === 'win32' ? 'file' : undefined)
+  const verify = vi.fn(async () => undefined)
+  const gate = new ExecutorCompatibilityGate(verify)
+  const environment = { WEWORK_EXECUTOR_PATH: command }
+
+  await gate.assert(environment)
+  await gate.assert(environment)
+  expect(verify).toHaveBeenCalledOnce()
+
+  await writeFile(binary, 'replacement-with-different-size')
+  await gate.assert(environment)
   expect(verify).toHaveBeenCalledTimes(2)
 })
 

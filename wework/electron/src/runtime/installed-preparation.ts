@@ -1,10 +1,21 @@
-import { mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { materializeBundledRuntimes } from './bundled-runtime-materializer.js'
 import { ComponentUpdateManager, type ComponentPaths } from './component-update-manager.js'
 import { prepareCoreDshRuntime } from './core-dsh-runtime.js'
-import { atomicReleaseWrite } from './release-store.js'
+import {
+  inspectInstalledProfileSource,
+  installedPreparationDirectory,
+  installedPreparationMarkerFile,
+  installedPreparationProfileRoot,
+  writeInstalledPreparationMarker,
+  type InstalledPreparationMarker,
+  type InstalledPreparationProfileSource,
+} from './installed-preparation-state.js'
+import { cloneReleaseProfile, currentCoreProfile, profileRevision } from './release-profile.js'
+import { atomicReleaseWrite, sameReleasePath } from './release-store.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 
 export interface InstalledPreparationOptions {
@@ -26,6 +37,9 @@ export interface InstalledPreparationProgress {
 
 export interface InstalledPreparationResult {
   version: string
+  preparationDirectory: string
+  profileRoot: string
+  source: InstalledPreparationProfileSource
   componentDataDirectory: string
   runtimeRoot: string
   dshHome: string
@@ -37,6 +51,10 @@ export async function prepareInstalledEnvironment(
   options: InstalledPreparationOptions
 ): Promise<InstalledPreparationResult> {
   const environment = options.environment ?? process.env
+  const preparationDirectory = installedPreparationDirectory(options.dataDirectory, options.version)
+  const profileRoot = installedPreparationProfileRoot(options.dataDirectory, options.version)
+  const profilePointer = currentCoreProfile(options.dataDirectory)
+  await rm(installedPreparationMarkerFile(options.dataDirectory, options.version), { force: true })
   const componentDataDirectory = options.componentDataDirectory ?? options.dataDirectory
   const runtimeRoot =
     environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim() ||
@@ -63,20 +81,39 @@ export async function prepareInstalledEnvironment(
       fetch: bundledAssetsOnly,
     })
   )
-  const preparedProfile = await preparationStep(options, 'profile-prepare', () =>
-    prepareCoreDshRuntime({
+  const source = await inspectInstalledProfileSource(profilePointer)
+  const reusedPreparedProfile =
+    source.kind === 'profile' && (await sameReleasePath(source.resolvedPath!, profileRoot))
+  if (source.kind === 'missing') await rm(profileRoot, { recursive: true, force: true })
+  const preparedProfile = await preparationStep(options, 'profile-prepare', async () => {
+    if (source.kind === 'profile' && !reusedPreparedProfile)
+      await cloneReleaseProfile(profilePointer, profileRoot)
+    return prepareCoreDshRuntime({
       runtimeRoot,
-      dataDirectory: options.dataDirectory,
+      dataDirectory: preparationDirectory,
       environment: {
         ...environment,
         WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
         WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
       },
     })
-  )
-  await manager.confirmStartup()
+  })
+  await assertProfileSourceUnchanged(profilePointer, source, reusedPreparedProfile)
+  const marker: InstalledPreparationMarker = {
+    schemaVersion: 1,
+    token: randomUUID(),
+    version: options.version,
+    preparationDirectory,
+    profileRoot,
+    preparedRevision: await profileRevision(profileRoot),
+    source,
+    reusedPreparedProfile,
+  }
   const result = {
     version: options.version,
+    preparationDirectory,
+    profileRoot,
+    source,
     componentDataDirectory,
     runtimeRoot,
     dshHome: preparedProfile.dshHome,
@@ -87,7 +124,23 @@ export async function prepareInstalledEnvironment(
     await mkdir(dirname(options.statusFile), { recursive: true })
     await atomicReleaseWrite(options.statusFile, `${JSON.stringify(result, null, 2)}\n`)
   }
+  await writeInstalledPreparationMarker(options.dataDirectory, marker)
   return result
+}
+
+async function assertProfileSourceUnchanged(
+  pointer: string,
+  before: InstalledPreparationProfileSource,
+  reusedPreparedProfile: boolean
+): Promise<void> {
+  if (reusedPreparedProfile) return
+  const after = await inspectInstalledProfileSource(pointer)
+  if (
+    after.kind !== before.kind ||
+    (before.kind === 'profile' &&
+      (after.resolvedPath !== before.resolvedPath || after.revision !== before.revision))
+  )
+    throw new Error('Plugins changed while preparing the installation; prepare again')
 }
 
 async function preparationStep<T>(

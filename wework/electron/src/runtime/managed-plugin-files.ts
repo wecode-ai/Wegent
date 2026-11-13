@@ -39,9 +39,12 @@ async function copyWindowsEntry(
   }
   await limited(() => mkdir(destination, { recursive: true, mode: 0o700 }))
   const entries = await limited(() => readdir(source))
-  await Promise.all(
-    entries.map(entry => copyWindowsEntry(join(source, entry), join(destination, entry), limited))
+  const children = entries.map(entry =>
+    copyWindowsEntry(join(source, entry), join(destination, entry), limited)
   )
+  const results = await Promise.allSettled(children)
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure?.status === 'rejected') throw failure.reason
 }
 
 function createOperationLimiter(limit: number): LimitedOperation {

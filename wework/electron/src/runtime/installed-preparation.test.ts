@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
@@ -40,13 +40,22 @@ vi.mock('./bundled-runtime-materializer.js', () => ({
 vi.mock('./core-dsh-runtime.js', () => ({
   prepareCoreDshRuntime: preparation.prepareProfile,
 }))
-vi.mock('./release-store.js', () => ({ atomicReleaseWrite: preparation.atomicWrite }))
+vi.mock('./release-store.js', async importOriginal => {
+  const original = await importOriginal<typeof import('./release-store.js')>()
+  return { ...original, atomicReleaseWrite: preparation.atomicWrite }
+})
 vi.mock('./workbench-executor-schema.js', () => ({
   assertExecutorWorkbenchCompatibility: vi.fn(),
 }))
 
 const { isInstalledPreparationRequest } = await import('./installed-preparation-contract.mjs')
 const { prepareInstalledEnvironment } = await import('./installed-preparation.js')
+const { currentCoreProfile } = await import('./release-profile.js')
+const {
+  installedPreparationDirectory,
+  installedPreparationMarkerFile,
+  installedPreparationProfileRoot,
+} = await import('./installed-preparation-state.js')
 const roots: string[] = []
 
 afterEach(async () => {
@@ -59,14 +68,26 @@ test('identifies the installer-only preparation command', () => {
   expect(isInstalledPreparationRequest(['WeWork.exe'])).toBe(false)
 })
 
-test('prepares components, Core runtime and the Core profile in the installed data directory', async () => {
+test('prepares the Core profile in an isolated version directory without confirming startup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-installed-preparation-'))
   roots.push(root)
   const statusFile = join(root, 'logs', 'install-preparation.json')
+  const activeProfile = join(root, 'releases', 'active', 'profile')
+  const pointer = currentCoreProfile(root)
+  await mkdir(activeProfile, { recursive: true })
+  await writeFile(join(activeProfile, 'package.json'), '{"version":"active"}\n')
+  await writeFile(join(activeProfile, 'plugin.js'), 'active plugin bytes\n')
+  await mkdir(join(pointer, '..'), { recursive: true })
+  await symlink(activeProfile, pointer, process.platform === 'win32' ? 'junction' : 'dir')
+  const preparationDirectory = installedPreparationDirectory(root, '1.2.3')
+  const profileRoot = installedPreparationProfileRoot(root, '1.2.3')
   preparation.prepareStartup.mockResolvedValue(preparation.components)
   preparation.materialize.mockResolvedValue(join(root, 'managed-runtimes', 'dsh'))
-  preparation.prepareProfile.mockResolvedValue({
-    dshHome: join(root, 'dsh-core'),
+  preparation.prepareProfile.mockImplementation(async options => {
+    const preparedProfile = join(options.dataDirectory, 'dsh-core', 'profiles', 'wework-core')
+    await writeFile(join(preparedProfile, 'package.json'), '{"version":"prepared"}\n')
+    await writeFile(join(preparedProfile, 'plugin.js'), 'prepared plugin bytes\n')
+    return { dshHome: join(options.dataDirectory, 'dsh-core') }
   })
   preparation.atomicWrite.mockImplementation(async (path: string, value: string) => {
     await mkdir(dirname(path), { recursive: true })
@@ -94,14 +115,18 @@ test('prepares components, Core runtime and the Core profile in the installed da
   expect(preparation.prepareProfile).toHaveBeenCalledWith(
     expect.objectContaining({
       runtimeRoot: join(root, 'managed-runtimes', 'dsh'),
-      dataDirectory: root,
+      dataDirectory: preparationDirectory,
       environment: expect.objectContaining({
         WEWORK_CORE_PLUGIN_ROOT: preparation.components.weworkCorePlugins,
         WEWORK_CORE_PLUGINS_SHA256: preparation.components.contentSha256.weworkCorePlugins,
       }),
     })
   )
-  expect(preparation.confirmStartup).toHaveBeenCalledOnce()
+  expect(preparation.confirmStartup).not.toHaveBeenCalled()
+  expect(await realpath(pointer)).toBe(await realpath(activeProfile))
+  expect(await readFile(join(activeProfile, 'package.json'), 'utf8')).toBe('{"version":"active"}\n')
+  expect(await readFile(join(activeProfile, 'plugin.js'), 'utf8')).toBe('active plugin bytes\n')
+  expect(await readFile(join(profileRoot, 'plugin.js'), 'utf8')).toBe('prepared plugin bytes\n')
   expect(progress.mock.calls.map(([event]) => `${event.stage}:${event.phase}`)).toEqual([
     'components:started',
     'components:completed',
@@ -112,9 +137,19 @@ test('prepares components, Core runtime and the Core profile in the installed da
   ])
   expect(JSON.parse(await readFile(statusFile, 'utf8'))).toMatchObject({
     version: '1.2.3',
+    preparationDirectory,
+    profileRoot,
     runtimeRoot: join(root, 'managed-runtimes', 'dsh'),
-    dshHome: join(root, 'dsh-core'),
+    dshHome: join(preparationDirectory, 'dsh-core'),
     components: preparation.components,
+  })
+  expect(
+    JSON.parse(await readFile(installedPreparationMarkerFile(root, '1.2.3'), 'utf8'))
+  ).toMatchObject({
+    version: '1.2.3',
+    preparationDirectory,
+    profileRoot,
+    source: { kind: 'profile', resolvedPath: await realpath(activeProfile) },
   })
   expect(result.durationMs).toBeGreaterThanOrEqual(0)
 })

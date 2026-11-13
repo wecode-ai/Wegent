@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
@@ -64,11 +64,18 @@ export async function verifyDefaultLayoutInstalledPreparation({
     `Default-layout installation preparation failed:\n${preparation.stderr}`
   )
   assert.equal((await lstat(source)).isSymbolicLink(), true)
-  assert.equal((await lstat(join(userData, 'dsh-core'))).isDirectory(), true)
   const status = JSON.parse(
     await readFile(join(userData, 'logs', 'install-preparation.json'), 'utf8')
   )
   assert.equal(status.runtimeRoot, join(userData, 'managed-runtimes', 'dsh'))
+  assert.equal(status.preparationDirectory, join(userData, 'install-preparations', status.version))
+  assert.equal(
+    status.profileRoot,
+    join(status.preparationDirectory, 'dsh-core', 'profiles', 'wework-core')
+  )
+  assert.equal((await lstat(status.profileRoot)).isDirectory(), true)
+  await assert.rejects(lstat(join(userData, 'dsh-core')), { code: 'ENOENT' })
+  assert.equal((await lstat(join(status.preparationDirectory, 'prepared.json'))).isFile(), true)
 
   const child = spawn(appBinary, resolveElectronLaunchArguments(), {
     env: { ...environment, ELECTRON_ENABLE_LOGGING: '1' },
@@ -119,9 +126,18 @@ export async function verifyDefaultLayoutInstalledPreparation({
   } finally {
     await stopProcess(child)
   }
+  assert.equal(
+    await realpath(join(userData, 'dsh-core', 'profiles', 'wework-core')),
+    await realpath(status.profileRoot)
+  )
+  await assert.rejects(lstat(join(status.preparationDirectory, 'prepared.json')), {
+    code: 'ENOENT',
+  })
   const evidence = {
     defaultUserData: true,
     migratedBeforePreparation: true,
+    isolatedPreparation: true,
+    preparedProfileApplied: true,
     firstLaunchReady: true,
   }
   await writeFile(
