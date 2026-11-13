@@ -79,6 +79,17 @@ it('keeps failures local and retries without displaying a stale summary', async 
   fireEvent.click(screen.getByTestId('personal-home-detail-retry'))
   await screen.findByText('Actual board editor')
 })
+
+it('publishes confirmed read state to the list as well as the open detail', async () => {
+  const { props, renderDetail } = await setup()
+  await screen.findByText('Actual board editor')
+  const context = renderDetail.mock.lastCall![0]
+  act(() => context.onRead({ ...context.issue, is_unread: false, activity_read_sequence: 12 }))
+  expect(props.onUpdated).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: 'one', is_unread: false, activity_read_sequence: 12 })
+  )
+  expect(renderDetail.mock.lastCall![0].issue.activity_read_sequence).toBe(12)
+})
 it('rejects late responses from a previous API scope', async () => {
   let resolveOld!: (item: CollaborationIssue) => void
   const { props, rerender, renderDetail } = await setup(

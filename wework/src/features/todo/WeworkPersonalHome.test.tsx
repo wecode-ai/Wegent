@@ -275,6 +275,25 @@ it('replaces the Issue detail, restores its draft on reopening and closes back t
   expect(screen.getByTestId('personal-home-tab-stand-in')).toHaveAttribute('aria-selected', 'true')
 })
 
+it('keeps closed Issue drafts when a localized API wrapper changes in the same source scope', async () => {
+  const items = [issue('first'), issue('second')]
+  const { props, rerender } = await setup([source(vi.fn().mockResolvedValue(items))])
+  const draftScope = {}
+  rerender(<WeworkPersonalHome {...props} draftScope={draftScope} />)
+  fireEvent.click(await screen.findByTestId('personal-home-issue-first'))
+  fireEvent.change(screen.getByLabelText('Draft first'), { target: { value: 'Retained edit' } })
+  fireEvent.click(screen.getByTestId('personal-home-issue-second'))
+  rerender(
+    <WeworkPersonalHome
+      {...props}
+      sources={[source(vi.fn().mockResolvedValue(items))]}
+      draftScope={draftScope}
+    />
+  )
+  fireEvent.click(await screen.findByTestId('personal-home-issue-first'))
+  expect(screen.getByLabelText('Draft first')).toHaveValue('Retained edit')
+})
+
 it('updates the original list row when an issue is saved in the right workspace', async () => {
   await setup([source(vi.fn().mockResolvedValue([issue('editable')]))])
   await screen.findByText('Issue editable')

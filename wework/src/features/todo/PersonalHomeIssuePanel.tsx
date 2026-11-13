@@ -125,18 +125,15 @@ export function PersonalHomeIssuePanel({
         project,
         onClose: () => onClose?.(),
         onChange: saveIssue,
-        onRead: updated =>
+        onRead: updated => {
+          const merged = mergeIssueReadConfirmation(detail.issue, updated)
           setSnapshot(previous =>
-            previous?.detail
-              ? {
-                  ...previous,
-                  detail: {
-                    ...previous.detail,
-                    issue: mergeIssueReadConfirmation(previous.detail.issue, updated),
-                  },
-                }
+            previous?.api === api && previous.id === issue.id && previous.detail
+              ? { ...previous, detail: { ...previous.detail, issue: merged } }
               : previous
-          ),
+          )
+          onUpdated({ ...issue, ...merged })
+        },
         onOpenRelatedIssue: onOpenIssue,
         onCreateTask: onCreateTask ? () => void onCreateTask(detail.issue) : undefined,
       })}

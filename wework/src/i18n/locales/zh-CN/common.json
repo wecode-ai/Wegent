@@ -47,6 +47,8 @@
     "taskStatusUnknown": "暂无运行状态",
     "taskStatusWaiting": "等待回复",
     "expandActivity": "展开中间 {{count}} 条动态",
+    "savedTaskDraft": "继续处理事项：{{title}}",
+    "newTaskDraft": "另起事项",
     "localTaskCount": "等 {{count}} 个本地任务",
     "linkedTaskCount": "等 {{count}} 个关联任务",
     "localTaskCountSingle": "{{count}} 个本地任务",

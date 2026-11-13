@@ -4,6 +4,29 @@
 use super::*;
 
 #[test]
+fn generated_title_does_not_overwrite_a_concurrent_manual_rename_or_publish_an_event() {
+    let (mut handler, root) = isolated_runtime_work_handler("title-manual-race");
+    let (events_tx, mut events) = tokio::sync::broadcast::channel(8);
+    handler.event_tx = Some(events_tx);
+    let before = RuntimeTaskLink {
+        local_task_id: "task-title-race".into(),
+        title: "Original".into(),
+        ..Default::default()
+    };
+    handler.upsert_local_task(before.clone());
+    handler.store.update_task(&before.local_task_id, |task| {
+        task.title = "My manual title".into();
+    });
+    let actual = handler
+        .commit_runtime_task_title(before, "Generated title".into(), Some("Original"))
+        .unwrap();
+    assert_eq!(actual.title, "My manual title");
+    assert_eq!(handler.local_task_link("task-title-race").unwrap().title, "My manual title");
+    assert!(events.try_recv().is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn title_updates_preserve_runtime_changes_since_the_title_request_started() {
     let (handler, root) = isolated_runtime_work_handler("title-runtime-race");
     let before = RuntimeTaskLink {
@@ -19,7 +42,7 @@ fn title_updates_preserve_runtime_changes_since_the_title_request_started() {
         task.runtime_handle["latestAssistantMessage"] = json!("Completed work");
     });
     handler
-        .commit_runtime_task_title(before, "Generated title".into())
+        .commit_runtime_task_title(before, "Generated title".into(), Some("Original"))
         .unwrap();
     let actual = handler.local_task_link("task-title-race").unwrap();
     assert_eq!(actual.status, "done");

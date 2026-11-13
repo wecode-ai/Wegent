@@ -291,6 +291,7 @@ export function WeworkPersonalHome({
   localUserIds,
   projects,
   sources,
+  draftScope = sources,
   createIssue,
   renderIssueDetail,
   conversation,
@@ -303,6 +304,7 @@ export function WeworkPersonalHome({
   localUserIds?: readonly (string | number)[]
   projects: CollaborationProject[]
   sources: SharedWorkspaceApi[]
+  draftScope?: unknown
   createIssue: ReactNode
   createdIssue?: {
     key: string
@@ -432,7 +434,7 @@ export function WeworkPersonalHome({
     if (activeTab === id) setActiveTab(remaining[Math.max(0, index - 1)]?.id ?? 'stand-in')
   }
   return (
-    <IssueDetailDraftProvider key={userId} scope={sources}>
+    <IssueDetailDraftProvider key={userId} scope={draftScope}>
       <div
         className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
         data-testid="personal-home"

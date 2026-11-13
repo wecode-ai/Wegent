@@ -227,7 +227,11 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
         }
-        let latest_link = self.commit_runtime_task_title(latest_link, title.clone())?;
+        let latest_link =
+            self.commit_runtime_task_title(latest_link, title.clone(), Some(&source_title))?;
+        if latest_link.title != title {
+            return Ok(json!({"success": true, "skipped": true}));
+        }
         if let Some(thread_id) = latest_link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -260,16 +264,25 @@ impl RuntimeWorkRpcHandler {
         &self,
         link: RuntimeTaskLink,
         title: String,
+        expected_title: Option<&str>,
     ) -> Result<RuntimeTaskLink, AppIpcError> {
+        let mut applied = false;
         let link = self
             .store
             .update_task(&link.local_task_id, |current| {
+                if expected_title.is_some_and(|expected| current.title != expected) {
+                    return;
+                }
                 current.title = title.clone();
                 current.updated_at = now_ms();
+                applied = true;
             })
             .ok_or_else(|| {
                 AppIpcError::new("task_not_found", "Task was removed before its title update")
             })?;
+        if !applied {
+            return Ok(link);
+        }
         self.project_runtime_link_status(&link);
         let request = runtime_event_request_from_link(&link);
         emit_response_event(

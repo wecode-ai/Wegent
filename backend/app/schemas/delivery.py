@@ -220,7 +220,10 @@ class LoopItemResponse(BaseModel):
             value = {
                 **value,
                 "personal_task_assignment_at": (
-                    metadata.get("personal_task_assignment_at")
+                    metadata.get(
+                        "personal_task_assignment_at",
+                        value.get("personal_task_assignment_at"),
+                    )
                     if isinstance(metadata, dict)
                     else value.get("personal_task_assignment_at")
                 ),
@@ -298,7 +301,8 @@ class LoopItemResponse(BaseModel):
                 "processing_actor": value.get("processing_actor"),
                 "human_waiting_since": value.get("human_waiting_since"),
                 "personal_task_assignment_at": metadata.get(
-                    "personal_task_assignment_at"
+                    "personal_task_assignment_at",
+                    value.get("personal_task_assignment_at"),
                 ),
                 "human_requests": value.get(
                     "human_requests", metadata.get("human_requests", [])

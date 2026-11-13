@@ -100,6 +100,7 @@ function setup(local = false, realAttachments = false) {
     onPendingChange: vi.fn(),
   }
   const props = {
+    drafts: new Map(),
     draft,
     api,
     services: local ? { projectSpaceApis: { local: port } } : { workspaceRuntimePort: port },
@@ -233,6 +234,128 @@ it('keeps the draft and retries the same Issue after a rejected runtime start', 
   fireEvent.click(screen.getByTestId('submit'))
   await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
   expect(api.issues.create).toHaveBeenCalledOnce()
+})
+
+it('reuses the unfinished Issue after the composer unmounts and is opened again', async () => {
+  const { props, unmount, createProjectRuntimeTask, api, draft, address } = setup()
+  createProjectRuntimeTask.mockResolvedValueOnce(false as never)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
+  expect(api.issues.create).toHaveBeenCalledOnce()
+  unmount()
+  render(<PersonalHomeTaskComposer {...props} />)
+  createProjectRuntimeTask.mockResolvedValueOnce(address)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(api.issues.create).toHaveBeenCalledOnce()
+})
+
+it('restores ready attachments and goal mode after reopening without uploading or creating another Issue', async () => {
+  mocks.attachments.mockImplementation(options => useComposerAttachments(options))
+  const { props, unmount, rerender, createProjectRuntimeTask, api, draft } = setup(false, true)
+  const file = new File(['draft'], 'draft.bin', { type: 'application/octet-stream' })
+  const uploadAttachment = vi.fn(async () => ({
+    id: 41,
+    filename: file.name,
+    mime_type: file.type,
+    file_size: file.size,
+    file_extension: '.bin',
+    status: 'ready',
+    created_at: '',
+  }))
+  const services = {
+    ...props.services,
+    attachmentApi: { uploadAttachment, deleteAttachment: vi.fn() },
+  }
+  createProjectRuntimeTask.mockResolvedValueOnce(false as never)
+  rerender(
+    <PersonalHomeTaskComposer
+      {...props}
+      services={services as never}
+      draft={{ ...props.draft, pendingFiles: [file] }}
+    />
+  )
+  await waitFor(() => expect(mocks.input.mock.lastCall![0].projectChat.attachments).toHaveLength(1))
+  act(() => mocks.input.mock.lastCall![0].onSetGoal())
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
+  unmount()
+  const reopened = render(
+    <PersonalHomeTaskComposer
+      {...props}
+      services={services as never}
+      draft={{ ...props.draft, value: '' }}
+    />
+  )
+  expect(draft.onChange).toHaveBeenCalledWith(props.draft.value)
+  reopened.rerender(<PersonalHomeTaskComposer {...props} services={services as never} />)
+  await waitFor(() => expect(mocks.input.mock.lastCall![0].projectChat.attachments).toHaveLength(1))
+  expect(mocks.input.mock.lastCall![0].goalDraftActive).toBe(true)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(api.issues.create).toHaveBeenCalledOnce()
+  expect(uploadAttachment).toHaveBeenCalledOnce()
+  expect(createProjectRuntimeTask.mock.lastCall![1].attachments[0].id).toBe(41)
+  expect(createProjectRuntimeTask.mock.lastCall![1].initialGoal.objective).toBe(props.draft.value)
+})
+
+it('retains the created Issue when saving its description fails before Runtime creation', async () => {
+  const { props, api, rerender, unmount, draft, issue } = setup()
+  const changed = 'Updated description'
+  api.issues.update.mockRejectedValueOnce(new Error('offline'))
+  rerender(<PersonalHomeTaskComposer {...props} draft={{ ...props.draft, value: changed }} />)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
+  expect(api.issues.create).toHaveBeenCalledOnce()
+  unmount()
+  api.issues.update.mockResolvedValueOnce({
+    ...issue,
+    title: changed,
+    description: changed,
+    version: 2,
+  })
+  render(<PersonalHomeTaskComposer {...props} draft={{ ...props.draft, value: changed }} />)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(api.issues.create).toHaveBeenCalledOnce()
+  expect(api.issues.update).toHaveBeenCalledWith(
+    'issue',
+    expect.objectContaining({ title: changed, description: changed })
+  )
+})
+
+it('lets the user explicitly start another Issue while retaining the original saved Issue', async () => {
+  const { createProjectRuntimeTask, api, draft, issue } = setup()
+  createProjectRuntimeTask.mockResolvedValueOnce(false as never)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
+  expect(screen.getByTestId('personal-home-task-draft')).toHaveTextContent(issue.title)
+  fireEvent.click(screen.getByTestId('personal-home-new-task-draft'))
+  expect(screen.queryByTestId('personal-home-task-draft')).not.toBeInTheDocument()
+  api.issues.create.mockResolvedValueOnce({ ...issue, id: 'another' })
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(api.issues.create).toHaveBeenCalledTimes(2)
+  expect(draft.onTaskCreated).toHaveBeenCalledWith(
+    expect.objectContaining({ id: 'another' }),
+    expect.any(Object)
+  )
+})
+
+it('preserves a manual title change when retrying an unchanged saved request', async () => {
+  const { createProjectRuntimeTask, api, draft, issue } = setup()
+  createProjectRuntimeTask.mockResolvedValueOnce(false as never)
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
+  api.issues.get.mockResolvedValue({
+    ...issue,
+    title: 'Manually revised',
+    version: 3,
+    status: 'in_progress',
+  })
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(api.issues.update).not.toHaveBeenCalled()
 })
 
 it('does not mark the Issue started when its bound Runtime request is rejected', async () => {

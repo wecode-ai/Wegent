@@ -1,5 +1,6 @@
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
+import { usePersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
 import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
@@ -453,6 +454,7 @@ export function WeworkSharedProject({
   const latestProjectRef = useRef(project)
   const previousProjectPropRef = useRef(project)
   const taskComposerSequenceRef = useRef(0)
+  const issueLookupSequenceRef = useRef(0)
   const closeTaskConversation = useCallback(() => {
     taskComposerSequenceRef.current += 1
     setTaskComposer(null)
@@ -460,6 +462,7 @@ export function WeworkSharedProject({
   useEffect(
     () => () => {
       taskComposerSequenceRef.current += 1
+      issueLookupSequenceRef.current += 1
     },
     []
   )
@@ -664,12 +667,19 @@ export function WeworkSharedProject({
         projectSettingsSection: location.projectSettingsSection,
       },
       navigate: next => {
+        const issueLookupSequence = ++issueLookupSequenceRef.current
         if (personalIssue) {
           if (next.issueId && next.issueId !== personalIssue.issue.id)
             void scopedApi.issues
               .get(next.issueId)
-              .then(issue => personalIssue.onOpenIssue(issue))
-              .catch(cause => notify(String(cause), 'error'))
+              .then(issue => {
+                if (issueLookupSequence === issueLookupSequenceRef.current)
+                  personalIssue.onOpenIssue(issue)
+              })
+              .catch(cause => {
+                if (issueLookupSequence === issueLookupSequenceRef.current)
+                  notify(String(cause), 'error')
+              })
           return
         }
         setTaskComposer(current => (current?.issue.id === next.issueId ? current : null))
@@ -1612,6 +1622,10 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
+  const personalHomeTaskDrafts = usePersonalHomeTaskDrafts(templateScope, [
+    api,
+    props.services.projectSpaceApis?.local,
+  ])
   const platformApi = useMemo(() => {
     const platform = createWeworkPlatformApi(api, localProjectApi)
     if (!platform || !props.services.standInApi || !props.services.getLocalRuntimeSidebarIdentity)
@@ -1822,6 +1836,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               active={props.workspaceActive ?? true}
               {...home}
               sources={navigationApis}
+              draftScope={personalHomeTaskDrafts}
               renderIssueDetail={context => {
                 const projectApi = context.project.project_store === 'local' ? localProjectApi : api
                 if (!projectApi) return null
@@ -1930,7 +1945,12 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 const project = draft.projects.find(item => item.id === draft.projectId)
                 const taskApi = project?.project_store === 'local' ? localProjectApi : api
                 return taskApi ? (
-                  <PersonalHomeTaskComposer draft={draft} api={taskApi} services={props.services} />
+                  <PersonalHomeTaskComposer
+                    draft={draft}
+                    api={taskApi}
+                    services={props.services}
+                    drafts={personalHomeTaskDrafts}
+                  />
                 ) : null
               }}
             />

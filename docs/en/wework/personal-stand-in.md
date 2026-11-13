@@ -25,7 +25,7 @@ Stand-in replies on an Issue show the owning user followed by the role in parent
 
 ## Stand-in chat and desktop notifications
 
-From **Collaboration → My work**, the right-hand **Stand-in** tab lists work by role. Select work to continue its original task conversation inline. The home only lists Issue-related work and exposes **Assistant settings**; general chat remains in **My assistant**. Board connection guidance remains until an enabled identity connects an accessible board. Issue detail tabs preserve drafts and private chat is not automatically published to Issues.
+From **Collaboration → My work**, the right-hand **Stand-in** tab lists work by role. Select work to continue its original task conversation inline. The home only lists Issue-related work and exposes **Assistant settings**; general chat remains in **My assistant**. Board connection guidance remains until an enabled identity connects an accessible board. The home keeps the assistant tab and one Issue detail tab; opening another Issue replaces the current detail, while reopening preserves drafts and private chat is not automatically published to Issues.
 
 Keep sending requests when the previous reply ends or a background result starts another reply. Messages are delivered into the original conversation according to the current turn state.
 

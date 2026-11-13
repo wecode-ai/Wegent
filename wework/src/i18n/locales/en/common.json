@@ -47,6 +47,8 @@
     "taskStatusUnknown": "Status unavailable",
     "taskStatusWaiting": "Waiting for reply",
     "expandActivity": "Show {{count}} hidden activities",
+    "savedTaskDraft": "Continue issue: {{title}}",
+    "newTaskDraft": "Start another issue",
     "localTaskCount": "· {{count}} local tasks",
     "linkedTaskCount": "· {{count}} linked tasks",
     "localTaskCountSingle": "· {{count}} local task",

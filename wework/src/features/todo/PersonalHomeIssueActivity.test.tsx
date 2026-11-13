@@ -31,6 +31,9 @@ const binding: WorkspaceTaskBinding = {
   issueId: 'issue',
   taskId: 'task',
   deviceId: 'device',
+  taskUserId: 1,
+  backendTaskId: null,
+  linkedAt: '2026-11-12T00:00:00Z',
   taskTitle: 'Implementation',
 }
 function mount(
