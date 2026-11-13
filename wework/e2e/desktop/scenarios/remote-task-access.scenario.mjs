@@ -9,6 +9,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   createSingleRootLocalProject,
   selectE2EModel,
   resultDir,
@@ -246,7 +247,12 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
           message: CREATE_PROMPT,
           modelId: CLOUD_PUBLIC_MODEL_NAME,
           modelType: 'public',
-          modelSelection: { modelName: CLOUD_PUBLIC_MODEL_NAME, modelType: 'public' },
+          modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
+          modelSelection: {
+            modelName: CLOUD_PUBLIC_MODEL_NAME,
+            modelType: 'public',
+            options: CLOUD_PUBLIC_MODEL_OPTIONS,
+          },
         }),
       })
       assert.equal(createdResponse.ok, true, `Remote creation failed: ${createdResponse.status}`)
