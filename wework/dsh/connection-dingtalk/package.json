@@ -51,14 +51,14 @@
           ],
           "versionedEventTypes": [],
           "resourceLabels": {
-            "group": "群聊中 @我",
+            "group": "群聊消息",
             "direct": "私聊消息"
           },
           "locales": {
             "en": {
               "displayName": "DingTalk",
               "resourceLabels": {
-                "group": "Group mentions",
+                "group": "Group messages",
                 "direct": "Direct messages"
               },
               "allResourceLabels": {
@@ -126,6 +126,7 @@
                     "search-advanced"
                   ],
                   "parameters": {
+                    "conversationIds": "--conversation-ids",
                     "senderIds": "--sender-ids",
                     "start": "--start",
                     "end": "--end",
@@ -174,6 +175,24 @@
                     "limit": "--limit",
                     "profile": "--profile"
                   }
+                },
+                "downloadImage": {
+                  "command": [
+                    "chat",
+                    "message",
+                    "download-media",
+                    "--type",
+                    "mediaId"
+                  ],
+                  "parameters": {
+                    "resourceId": "--resource-id",
+                    "messageId": "--message-id",
+                    "conversationId": "--open-conversation-id",
+                    "profile": "--profile"
+                  },
+                  "outputFile": {
+                    "flag": "--output"
+                  }
                 }
               },
               "toolId": "dws"
@@ -190,14 +209,15 @@
           "allResourceLabel": "全部消息",
           "assistance": {
             "observe": [
-              "New mentions of the user or direct messages within the selected chats; use the actual sender, quoted message and topic to understand the request."
+              "Receive mentions by default, all messages from explicitly configured groups, or direct messages within the selected chats. All-message intake does not make every message an instruction or require a reply: apply the role's responsibilities and handling policy, and check actual replies and resolution evidence."
             ],
             "prepare": [
               "For an identity conversation or verified connection work, prefer read_source on its exact connected DingTalk source. It reads recent conversation messages directly through the native SDK, newest first, including the user’s own replies. Start with the relevant recent window rather than automatically scanning seven days. Follow nextCursor without changing the window until you have read the follow-up evidence needed for the actual request; read the whole requested window for a comprehensive inventory. Check replies and resolution evidence before deciding a request still needs an answer. Do not present unfinished retrieval or a hasMore disclaimer as the deliverable. Prepare a grounded useful answer for unresolved work or explain what has already been handled. Independent delegated workers have no new source-read permission. Never borrow another role’s connection, substitute a chat, or send without the required native approval.",
               "In managed Wework executions, invoke the documented DingTalk business operation through the plugin wrapper or a declared native business tool first. Do not run ensure-dws-ready.sh, plugin-health, local-dws-ready.sh, installers or auth status as a business-work preflight, even if the standalone Skill setup recipe recommends them: these helpers can start interactive login. Wework already owns installation and native connector authorization.",
               "If the actual DingTalk business operation reports missing or expired authentication, preserve its exact declared connector identity and use Wework’s native user-initiated authorization card. Never run auth login or OAuth inside the worker. A .dws file-lock failure or operation-not-permitted error is a permission failure, not proof that login expired; do not relabel it as auth-required, copy or relocate credentials, or broaden sandbox access. Preserve the existing native approval path for the actual operation.",
               "Apply the role’s current reply and routing rules only to the request types they actually cover. Do not expand a review-specific route into a reason to defer merging, shipping, troubleshooting or other requests. Inspect existing links and follow-up records before asking anyone to repeat information you can already read. Draft a useful answer rather than an empty acknowledgement. The current user’s draft-only or do-not-send request overrides any ongoing automatic-reply grant for this run.",
-              "For an exact source-message reply use wework_stand_in.reply; each operation is tied to the verified source message and current native approval or continuous grant. Do not send a second reply through arbitrary CLI commands."
+              "For an exact source-message reply use wework_stand_in.reply; each operation is tied to the verified source message and current native approval or continuous grant. Do not send a second reply through arbitrary CLI commands. To @ a colleague, first obtain the real openDingTalkId from source messages or contact lookup, then pass mentionOpenDingTalkIds to reply. Writing @Name in text alone is not a DingTalk mention. The reply CLI uses --at-open-dingtalk-ids and corresponding <@openDingTalkId> placeholders; never guess IDs. Message acceptance alone does not prove a successful mention.",
+              "When screenshots are relevant, use read_source with query.includeImages=true and view_image on the returned items[].images[].path. This reads only images of native messages in the selected source; do not invoke Shell downloads or request another authorization for this read."
             ],
             "notifyWhen": [
               "An urgent request, unresolved blocker or decision needs the user, or a useful reply draft is ready for the user to approve. Avoid separate notifications for repeated messages about an unchanged issue.",
@@ -221,6 +241,11 @@
                   "minimum": 1,
                   "maximum": 20,
                   "default": 20
+                },
+                "includeImages": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Download images in the returned native messages to host-generated temporary paths. Open items[].images[].path with view_image; no Shell download or additional read approval is needed."
                 }
               },
               "additionalProperties": false
@@ -238,6 +263,25 @@
                 "text": {
                   "type": "string",
                   "maxLength": 20000
+                },
+                "images": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "resourceId": {
+                        "type": "string"
+                      },
+                      "path": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "resourceId",
+                      "path"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [

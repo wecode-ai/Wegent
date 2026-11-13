@@ -38,7 +38,7 @@ import {
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
-import { readMcpToolOutput } from './mcp-tool-results.mjs'
+import { createMcpElicitationModel } from './mcp-elicitation-model.mjs'
 
 import {
   assistantMessage,
@@ -209,13 +209,6 @@ import {
   MODEL_PROXY_RESTART_INITIAL_PROMPT,
   MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
-  MCP_ELICITATION_ACCEPTED_MARKER,
-  MCP_ELICITATION_CALL_ID,
-  MCP_ELICITATION_COMPLETION_TEXT,
-  MCP_ELICITATION_NAMESPACE,
-  MCP_ELICITATION_PROMPT,
-  MCP_ELICITATION_SEARCH_ID,
-  MCP_ELICITATION_TOOL_NAME,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
@@ -566,6 +559,7 @@ class DesktopE2EServer {
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.mcpElicitationModel = createMcpElicitationModel()
     this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
@@ -4236,71 +4230,7 @@ class DesktopE2EServer {
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
-      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
-      assert.ok(requestNumber <= 13, `Unexpected MCP elicitation request ${requestNumber}`)
-      const toolRequestNumber = Math.min(requestNumber, 12)
-      const round = Math.ceil(toolRequestNumber / 3)
-      const stage = ((toolRequestNumber - 1) % 3) + 1
-      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
-      const requestText = JSON.stringify(body)
-      const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
-
-      if (stage === 1) {
-        assert.ok(
-          requestText.includes(MCP_ELICITATION_PROMPT),
-          'The real Codex request did not contain the MCP elicitation prompt'
-        )
-        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (stage === 2) {
-        const tool = selectMcpTool(
-          body,
-          MCP_ELICITATION_NAMESPACE,
-          MCP_ELICITATION_TOOL_NAME,
-          timeoutScenario ? { scenario: timeoutScenario } : {},
-          `${MCP_ELICITATION_SEARCH_ID}-${round}`
-        )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(callId, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      const outputId = requestNumber === 13 ? `${callId}-wait` : callId
-      const output = readMcpToolOutput(body, outputId)
-      const cell = output.match(/Script running with cell ID (\S+)/)?.[1]
-      if (requestNumber === 12 && cell) {
-        // The native execution can yield before the form's real deadline.
-        const wait = selectTool(body, 'wait', { cell_id: cell, yield_time_ms: 30_000 })
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(`${callId}-wait`, wait),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-      assert.ok(
-        output.includes(
-          timeoutScenario
-            ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
-            : MCP_ELICITATION_ACCEPTED_MARKER
-        ),
-        `The MCP tool returned an unexpected result for ${timeoutScenario ?? 'acceptance'}: ${output}`
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
-        responseCompleted(responseId),
-      ])
+      this.writeSse(response, this.mcpElicitationModel(body, responseId))
       return
     }
 

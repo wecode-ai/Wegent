@@ -431,6 +431,13 @@ jobs:
           path: backend/reports/mcp-oauth-mysql.xml
           if-no-files-found: error
 
+      - name: Verify share-token upgrade and old-writer storage compatibility
+        working-directory: backend
+        env:
+          SHARE_TOKEN_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
+          PYTHONPATH: .:..
+        run: uv run --no-sync python tests/integration/secure_share_tokens_mysql.py
+
       - name: Verify namespace grants with MySQL connection collations
         working-directory: backend
         env:

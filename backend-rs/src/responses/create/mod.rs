@@ -51,6 +51,7 @@ mod preflight;
 mod project_workspace;
 pub mod reasoning;
 mod recover_executor;
+pub(crate) use recover_executor::discard_recovered_executor;
 pub mod request;
 pub mod resolution;
 pub mod response_object;

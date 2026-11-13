@@ -31,8 +31,10 @@ impl Replica {
         );
         let primary_address = std::env::var("WEGENT_TEST_REDIS_REPLICA_PRIMARY")?;
         Ok(Self {
-            reader: RedisService::single(reader.clone()).await?,
-            routed: RedisService::noshard(writer, [reader]).await?,
+            reader: RedisService::single_with_options(reader.clone(), fixture_redis_options())
+                .await?,
+            routed: RedisService::noshard_with_options(writer, [reader], fixture_redis_options())
+                .await?,
             primary_address,
         })
     }
