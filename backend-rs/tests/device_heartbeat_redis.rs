@@ -292,16 +292,16 @@ async fn assert_offline_timeout(
             break;
         }
     }
-    let (subtask_status, task_status): (String, String) = mysql
+    let (subtask_status, task): (String, brz_mysql::Json<Value>) = mysql
         .fetch_one(
-            "SELECT subtasks.status, JSON_UNQUOTE(JSON_EXTRACT(tasks.json, '$.status.status'))
-         FROM subtasks JOIN tasks ON subtasks.task_id = tasks.id WHERE subtasks.id = ?",
+            "SELECT subtasks.status, tasks.json
+             FROM subtasks JOIN tasks ON subtasks.task_id = tasks.id WHERE subtasks.id = ?",
             (subtask_id,),
         )
         .await
         .unwrap();
     assert_eq!(subtask_status, "FAILED");
-    assert_eq!(task_status, "FAILED");
+    assert_eq!(task.0["status"]["status"], "FAILED");
     events.close().await.unwrap();
 }
 
