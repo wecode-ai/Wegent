@@ -111,6 +111,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
             timeout(Duration::from_secs(20), async {
                 let client = assert_heartbeats(&address, &token, &redis, &device_id, &key).await;
                 assert_terminal_delivery(&client, &redis, &mysql, &device_id).await;
+                assert_offline_timeout(&state, &redis, &mysql).await;
             })
             .await
             .expect("device heartbeat scenario timed out");

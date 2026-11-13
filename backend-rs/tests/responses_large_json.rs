@@ -14,8 +14,8 @@ mod llm_proxy_timeouts;
 use brz_mysql::{Json, MysqlResult, MysqlRow};
 use std::{path::Path, sync::Arc};
 use wegent_backend_rs::task_store::{
-    DefaultTaskStore, TaskStore, assistant_subtasks_by_task_statement, order_assistant_subtasks,
-    subtask_column_index,
+    DefaultTaskStore, TaskStore, TaskStoreCreate, assistant_subtasks_by_task_statement,
+    order_assistant_subtasks, subtask_column_index,
 };
 
 #[tokio::test]
