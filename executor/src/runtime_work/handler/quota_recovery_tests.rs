@@ -134,6 +134,62 @@ fn quota_wait_releases_capacity_and_preserves_the_original_request_on_disk() {
 }
 
 #[test]
+fn quota_wait_reserves_queue_capacity_only_when_ready_and_obeys_the_limit_on_resume() {
+    for (kind, origin) in [
+        (RuntimeTaskKind::Personal, Value::Null),
+        (
+            RuntimeTaskKind::StandIn,
+            json!({"type":"stand_in_identity"}),
+        ),
+        (
+            RuntimeTaskKind::Agent,
+            json!({"type":"board_task","executionId":"issue-wait"}),
+        ),
+    ] {
+        let mut waiting = queued_wait("waiting", now_ms() + 3_600_000);
+        waiting
+            .request
+            .extra
+            .insert("origin".into(), origin.clone());
+        let mut scheduler =
+            RuntimeTurnScheduler::new(RuntimeSettings::uniform(1), VecDeque::from([waiting]));
+        assert_eq!(scheduler.queued(kind), 1);
+        assert_eq!(scheduler.available(kind), 1);
+        assert!(!scheduler.has_ready_queued_kind(kind));
+
+        let ready = |id: &str| {
+            let mut turn = queued_wait(id, 0);
+            turn.request.extra.remove(MARKER);
+            turn.request.extra.insert("origin".into(), origin.clone());
+            turn
+        };
+        assert!(scheduler.enqueue(ready("other-issue")).is_some());
+        assert_eq!(scheduler.active(kind), 1);
+        assert_eq!(scheduler.available(kind), 0);
+        assert!(scheduler.enqueue(ready("queued-issue")).is_none());
+        let started = scheduler.finish("other-issue");
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].local_task_id, "queued-issue");
+        assert!(scheduler.finish("queued-issue").is_empty());
+        assert_eq!(scheduler.available(kind), 1);
+
+        let waiting = &mut scheduler.queued_turns[0];
+        let mut state = wait(waiting).unwrap();
+        state.next_check_at = 0;
+        set_wait(waiting, &state);
+        assert_eq!(scheduler.available(kind), 0);
+        assert!(scheduler.has_ready_queued_kind(kind));
+        assert!(scheduler.enqueue(ready("later-issue")).is_none());
+        let started = scheduler.take_available();
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].local_task_id, "waiting");
+        assert_eq!(scheduler.active(kind), 1);
+        assert!(scheduler.take_available().is_empty());
+        assert_eq!(scheduler.finish("waiting")[0].local_task_id, "later-issue");
+    }
+}
+
+#[test]
 fn quota_wait_restores_unconfirmed_dispatch_without_replaying_started_turns() {
     use super::super::command_journal::{CommandState, RuntimeCommand};
     let mut turn = queued_wait("waiting", 0);

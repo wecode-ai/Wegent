@@ -505,7 +505,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned");
             if queue_only
                 || !scheduler.has_capacity(&turn)
-                || scheduler.has_queued_kind(turn.task_kind())
+                || scheduler.has_ready_queued_kind(turn.task_kind())
             {
                 return Err(AppIpcError::new("runtime_schedule_capacity", "Scheduled work cannot enter a delayed queue; retry when execution capacity is available"));
             }

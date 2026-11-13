@@ -11,6 +11,8 @@ import {
   readRequestBody,
   responseCompleted,
   responseCreated,
+  selectedToolCall,
+  selectTool,
 } from './response-protocol.mjs'
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
@@ -231,7 +233,12 @@ export function createCloudConfigModelService({ readUsage } = {}) {
       await round.beforeComplete?.()
       response.end(
         createSse([
-          assistantMessage(round.text ?? `${plan.marker}_COMPLETE`),
+          ...(round.tool
+            ? selectedToolCall(
+                `${id}-tool`,
+                selectTool(body, round.tool.name, round.tool.arguments)
+              )
+            : [assistantMessage(round.text ?? `${plan.marker}_COMPLETE`)]),
           responseCompleted(id),
         ])
       )

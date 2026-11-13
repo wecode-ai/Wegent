@@ -46,7 +46,12 @@ export function createDesktopScenario({ workspacePath }) {
       const rpc = (method, params) =>
         requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
       const task = async taskId => (await rpc('runtime.tasks.get', { taskId })).task
-      const create = async (taskId, delaySeconds, holdUntilRestored = false) => {
+      const create = async (
+        taskId,
+        delaySeconds,
+        holdUntilRestored = false,
+        { goal = false, responses } = {}
+      ) => {
         const marker = `WEWORK_QUOTA_${taskId}`
         const plan = model.plan(marker, [
           {
@@ -56,7 +61,7 @@ export function createDesktopScenario({ workspacePath }) {
               return resetAt
             },
           },
-          { text: `${marker}_RESUMED` },
+          ...(responses ?? [{ text: `${marker}_RESUMED` }]),
         ])
         const created = await rpc('runtime.tasks.create', {
           taskId,
@@ -66,6 +71,7 @@ export function createDesktopScenario({ workspacePath }) {
           workspacePath,
           message: marker,
           clientUserMessageId: `${taskId}-user`,
+          ...(goal ? { initialGoal: { objective: marker, status: 'active' } } : {}),
           modelSelection: {
             modelName: MODEL,
             modelType: 'runtime',
@@ -95,7 +101,14 @@ export function createDesktopScenario({ workspacePath }) {
         )
         assert.equal(waiting.resumeAt, resetAt * 1000)
         assert.equal(plan.count, 1, 'The limited request was retried before reset')
-        return { created, plan }
+        return {
+          created,
+          plan,
+          taskId,
+          marker,
+          resumeAt: waiting.resumeAt,
+          address: { deviceId: created.deviceId, taskId },
+        }
       }
 
       const taskId = 'quota-restart'
@@ -103,6 +116,38 @@ export function createDesktopScenario({ workspacePath }) {
       const beforeRestart = await task(taskId)
       assert.equal(beforeRestart.status, 'queued')
       assert.equal(beforeRestart.running, false, 'Quota waiting occupied a native runner')
+      const continuingGoal = await create('quota-goal-continue', 30, true, {
+        goal: true,
+        responses: [
+          { hold: true, text: 'WEWORK_QUOTA_GOAL_RESUMED' },
+          { hold: true, tool: { name: 'update_goal', arguments: { status: 'complete' } } },
+          { text: 'WEWORK_QUOTA_GOAL_COMPLETE' },
+        ],
+      })
+      const originalGoal = (
+        await rpc('runtime.tasks.goal.get', { address: continuingGoal.address })
+      ).goal
+      assert.equal(originalGoal.objective, continuingGoal.marker)
+      assert.ok(['blocked', 'usageLimited'].includes(originalGoal.status))
+      const goalThreadId = (await task(continuingGoal.taskId)).threadId
+      const stoppedGoals = []
+      for (const action of ['paused', 'clear']) {
+        const fixture = await create(`quota-goal-${action}`, 30, true, { goal: true })
+        const result = await rpc(
+          action === 'clear' ? 'runtime.tasks.goal.clear' : 'runtime.tasks.goal.set',
+          { address: fixture.address, ...(action === 'paused' ? { status: 'paused' } : {}) }
+        )
+        assert.equal(result.accepted, true, result.error)
+        if (action === 'clear') assert.equal(result.cleared, true)
+        else assert.equal(result.goal.status, 'paused')
+        await waitForValue(
+          () => task(fixture.taskId),
+          value => !value?.runtimeHandle?.quotaWait,
+          `The ${action} Goal retained its durable quota wait`,
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+        stoppedGoals.push({ ...fixture, action })
+      }
       await control.command('waitFor', `[data-testid="runtime-local-task-row-${taskId}"]`)
       await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
       await control.command('waitFor', '[data-testid="runtime-quota-wait-status"]')
@@ -117,6 +162,15 @@ export function createDesktopScenario({ workspacePath }) {
       assert.equal(restored.running, false)
       assert.equal(restored.threadId, beforeRestart.threadId)
       assert.equal(plan.count, 1, 'Recovery ran before the restored wait was observed')
+      const restoredGoal = await waitForValue(
+        () => task(continuingGoal.taskId),
+        value => value?.runtimeHandle?.quotaWait && value,
+        'The ongoing Goal quota wait was not restored after desktop restart',
+        RECOVERY_TIMEOUT_MS
+      )
+      assert.equal(restoredGoal.threadId, goalThreadId)
+      assert.equal(restoredGoal.running, false)
+      assert.equal(continuingGoal.plan.count, 1)
       holdQuota = false
       await waitForValue(
         () => task(taskId),
@@ -144,6 +198,64 @@ export function createDesktopScenario({ workspacePath }) {
         'The resumed model reply was not saved in the original conversation'
       )
 
+      await waitForValue(
+        () => task(continuingGoal.taskId),
+        value => value?.running && continuingGoal.plan.count === 2,
+        'The ongoing Goal did not resume after its quota reset',
+        RECOVERY_TIMEOUT_MS
+      )
+      const resumedGoal = (await rpc('runtime.tasks.goal.get', { address: continuingGoal.address }))
+        .goal
+      assert.equal(resumedGoal.status, 'active')
+      assert.ok(
+        continuingGoal.plan.calls[1].at >= continuingGoal.resumeAt,
+        'Goal recovery ran before the usage window reset'
+      )
+      for (const key of ['objective', 'createdAt', 'tokenBudget'])
+        assert.equal(resumedGoal[key], originalGoal[key], `Quota recovery replaced Goal ${key}`)
+      assert.ok(resumedGoal.tokensUsed >= originalGoal.tokensUsed)
+      assert.ok(resumedGoal.timeUsedSeconds >= originalGoal.timeUsedSeconds)
+      continuingGoal.plan.rounds[1].release()
+      await waitForValue(
+        () => task(continuingGoal.taskId),
+        value => value?.running && continuingGoal.plan.count === 3,
+        'The restored Goal stopped after one turn instead of continuing automatically',
+        RECOVERY_TIMEOUT_MS
+      )
+      assert.equal(
+        (await rpc('runtime.tasks.goal.get', { address: continuingGoal.address })).goal.status,
+        'active'
+      )
+      continuingGoal.plan.rounds[2].release()
+      await waitForValue(
+        () => task(continuingGoal.taskId),
+        value => value?.status === 'done' && continuingGoal.plan.count === 4,
+        'The native Goal did not finish through its real update_goal tool',
+        RECOVERY_TIMEOUT_MS
+      )
+      const completedGoal = (
+        await rpc('runtime.tasks.goal.get', { address: continuingGoal.address })
+      ).goal
+      assert.equal(completedGoal.status, 'complete')
+      assert.equal(completedGoal.createdAt, originalGoal.createdAt)
+      assert.equal((await task(continuingGoal.taskId)).threadId, goalThreadId)
+      for (const call of continuingGoal.plan.calls)
+        assert.equal(call.body.model, continuingGoal.plan.calls[0].body.model)
+      const goalTranscript = await rpc('runtime.tasks.transcript', {
+        address: continuingGoal.address,
+        refresh: true,
+      })
+      const goalUserMessages = goalTranscript.messages.filter(message => message.role === 'user')
+      assert.equal(goalUserMessages.length, 1, 'Goal recovery replayed the original user message')
+      assert.equal(goalUserMessages[0].content, continuingGoal.marker)
+      assert.ok(
+        goalTranscript.messages.some(
+          message =>
+            message.role === 'assistant' && message.content === 'WEWORK_QUOTA_GOAL_COMPLETE'
+        ),
+        'The completed Goal lost its final reply'
+      )
+
       const cancelled = await create('quota-cancel', 10, true)
       await control.command('waitFor', '[data-testid="runtime-local-task-row-quota-cancel"]')
       await control.command('click', '[data-testid="runtime-local-task-row-quota-cancel"]')
@@ -164,6 +276,9 @@ export function createDesktopScenario({ workspacePath }) {
             1,
             'A cancelled quota wait started another model request'
           )
+          for (const fixture of stoppedGoals)
+            assert.equal(fixture.plan.count, 1, `The ${fixture.action} Goal resumed after reset`)
+          assert.equal(continuingGoal.plan.count, 4, 'The completed Goal continued again')
           return Date.now()
         },
         now => now >= observationDeadline,
@@ -171,6 +286,11 @@ export function createDesktopScenario({ workspacePath }) {
         15_000
       )
       assert.equal((await task('quota-cancel')).runtimeHandle?.quotaWait, undefined)
+      for (const fixture of stoppedGoals) {
+        assert.equal((await task(fixture.taskId)).runtimeHandle?.quotaWait, undefined)
+        const goal = (await rpc('runtime.tasks.goal.get', { address: fixture.address })).goal
+        assert.equal(goal?.status ?? null, fixture.action === 'clear' ? null : 'paused')
+      }
     },
   }
 }
