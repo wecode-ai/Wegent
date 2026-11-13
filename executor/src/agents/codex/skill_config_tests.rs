@@ -7,12 +7,18 @@ use std::os::unix::fs::symlink;
 struct Fixture {
     binary: String,
     directory: tempfile::TempDir,
+    _catalog_environment: EnvRestore,
     _environment: LaunchEnvironment,
 }
 
 impl Fixture {
     fn new() -> Self {
         let environment = LaunchEnvironment::new();
+        let catalog_environment = EnvRestore::capture("WEGENT_TEST_CODEX_BUNDLED_CATALOG");
+        env::set_var(
+            "WEGENT_TEST_CODEX_BUNDLED_CATALOG",
+            crate::test_env::CODEX_BUNDLED_CATALOG,
+        );
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
         // A parallel fork can retain a freshly written script's writer and cause ETXTBSY.
@@ -22,6 +28,7 @@ impl Fixture {
         Self {
             binary: resolve_codex_binary(&binary.to_string_lossy()),
             directory,
+            _catalog_environment: catalog_environment,
             _environment: environment,
         }
     }

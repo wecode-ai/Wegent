@@ -45,7 +45,7 @@ beforeEach(() => {
   state.disconnected = false
 })
 
-async function fixture(summary, { assistantCount = 1, completedCopies = 1 } = {}) {
+async function fixture(summary, { assistantCount = 1, completedCopies = 1, userMessageCount = 1 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cloud-recovery-scenario-'))
   onTestFinished(() => rm(root, { recursive: true, force: true }))
   const scenario = createDesktopScenario({ modelResponseTimeoutMs: 1000, uiTimeoutMs: 1000 })
@@ -99,8 +99,12 @@ async function fixture(summary, { assistantCount = 1, completedCopies = 1 } = {}
           : `${completed}\n${completed}`
       }
       if (command === 'getElementCount') {
-        assert.ok(selector.includes('message-assistant'))
-        return String(assistantCount)
+        if (selector.includes('message-assistant')) return String(assistantCount)
+        assert.equal(
+          selector,
+          '[data-testid="desktop-workbench-main"] [data-testid="message-user"]'
+        )
+        return String(userMessageCount)
       }
       if (command === 'getWorkbenchDebugSnapshot') {
         return JSON.stringify({
@@ -146,5 +150,11 @@ test.each([
 ])('rejects a cloud task that did not complete successfully: %j', async summary => {
   const { scenario, control } = await fixture(summary)
   await assert.rejects(scenario.verify(control), assert.AssertionError)
+  assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
+})
+
+test.each([0, 2])('rejects recovery with %i original user messages', async count => {
+  const { scenario, control } = await fixture({ status: 'done', running: false }, { userMessageCount: count })
+  await assert.rejects(scenario.verify(control), /Recovery duplicated the original user message/)
   assert.equal(state.disconnected, false, 'Failure cleanup must restore the proxy')
 })

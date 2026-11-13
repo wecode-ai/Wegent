@@ -16,6 +16,7 @@ import {
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
+import { requestExecutor } from './executor-rpc.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -168,6 +169,18 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     1,
     'The failed Luna turn was unexpectedly sent more than once'
   )
+  const sourceAddress = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+    ?.currentRuntimeTask
+  assert.ok(sourceAddress?.taskId, 'The failed turn did not expose its owning task')
+  const source = await requestExecutor(
+    control,
+    'runtime.tasks.get',
+    { taskId: sourceAddress.taskId },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(source.success, true)
+  assert.ok(source.task.threadId, 'The failed turn did not retain its native thread')
+  assert.equal(source.task.runtimeHandle.modelProviderRouting, 'thread')
 
   await openBrowserForModelSwitchWarning(control)
   await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
@@ -273,6 +286,17 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     2,
     'The cross-provider retry did not make one Luna request and one official GPT request'
   )
+  const officialIdentity = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .pane?.currentRuntimeTask
+  assert.equal(officialIdentity?.taskId, source.task.taskId)
+  const officialTask = await requestExecutor(
+    control,
+    'runtime.tasks.get',
+    { taskId: source.task.taskId },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(officialTask.success, true)
+  assert.equal(officialTask.task.threadId, source.task.threadId)
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -289,6 +313,17 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     3,
     'Resuming the loaded official thread with Luna did not make exactly one additional request'
   )
+  const resumedIdentity = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .pane?.currentRuntimeTask
+  assert.equal(resumedIdentity?.taskId, source.task.taskId)
+  const resumedTask = await requestExecutor(
+    control,
+    'runtime.tasks.get',
+    { taskId: source.task.taskId },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(resumedTask.success, true)
+  assert.equal(resumedTask.task.threadId, source.task.threadId)
 }
 
 async function verifyRuntimeTaskNotificationNavigation({

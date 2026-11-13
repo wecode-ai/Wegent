@@ -337,3 +337,27 @@ test('prefers the closest preceding rendered block for a line inside a block', (
   expect(target).toHaveTextContent('First paragraph.')
   expect(target).toHaveAttribute('data-source-line', '3')
 })
+
+test('warns when a truncated HTML preview hides content', () => {
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/index.html',
+        name: 'index.html',
+        content: '<!doctype html><h1>Truncated</h1>',
+        editable: true,
+        revision: 'revision-1',
+        truncated: true,
+        size: 262_144,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  expect(screen.getByTestId('workspace-html-file-preview')).toBeInTheDocument()
+  expect(screen.getByTestId('workspace-html-file-preview-truncated')).toHaveTextContent(
+    '文件过大，仅显示前 256 KiB'
+  )
+})

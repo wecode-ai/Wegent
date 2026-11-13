@@ -73,6 +73,15 @@ pub(super) fn stand_in_mcp_approval_overrides(
         .map(|entry| {
             let (key, value) = config_override_entry(&entry)
                 .ok_or_else(|| "Invalid Codex MCP configuration override".to_owned())?;
+            // Native CLI paths permit literal segments (for example the router's
+            // `model_providers.~`) that are not bare TOML keys. Only MCP paths
+            // contribute approval policies; validate their complete path below.
+            let root = key.split('.').next().unwrap_or_default();
+            let root_value: Value = toml_edit::de::from_str(&format!("{root}=true"))
+                .map_err(|_| "Invalid Codex MCP configuration override key".to_owned())?;
+            if root_value.get("mcp_servers").is_none() {
+                return Ok(Value::Null);
+            }
             toml_edit::de::from_str::<Value>(&format!("{key}={}", toml_json_value(&value)))
                 .map_err(|_| "Invalid Codex MCP configuration override key".to_owned())
         })
@@ -173,6 +182,23 @@ pub(super) fn stand_in_mcp_approval_overrides(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn native_provider_paths_do_not_change_mcp_approval_enforcement() {
+        let root = tempfile::tempdir().unwrap();
+        let result = stand_in_mcp_approval_overrides(
+            &ExecutionRequest::default(),
+            root.path(),
+            &[
+                "model_providers.~={name=\"OpenAI\"}".into(),
+                "mcp_servers.business.tools.send.approval_mode=approve".into(),
+            ],
+            &Map::new(),
+        )
+        .unwrap();
+        assert!(result.contains(&"mcp_servers.business.tools.send.approval_mode=\"writes\"".into()));
+        assert!(result.iter().all(|entry| entry.starts_with("mcp_servers.")));
+    }
 
     #[test]
     fn coordinator_keeps_external_review_and_only_exempts_batch_commands() {

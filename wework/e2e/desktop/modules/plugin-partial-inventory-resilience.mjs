@@ -332,6 +332,8 @@ export async function verifyPluginPartialInventoryResilience({
       cpuLoadRatio: 0.1,
       freeMemoryRatio: 0.5,
       userIdleSeconds: 60,
+      enforceSystemLoadLimits:
+        process.env.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD?.trim().toLowerCase() !== 'false',
     })
     fixture = await installFixture(cloud, control, slug, deviceId, timeoutMs)
     report.preconditions.expected = {

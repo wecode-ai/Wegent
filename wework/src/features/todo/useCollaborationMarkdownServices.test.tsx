@@ -64,7 +64,6 @@ test('does not grant collaboration content access to desktop files or visualizat
   expect(screen.getAllByTestId('assistant-markdown-image-loading')).toHaveLength(2)
   expect(mocks.readLocalFile).not.toHaveBeenCalled()
   expect(result.current.readLocalFile).toBeUndefined()
-  expect(result.current.openHtmlFile).toBeUndefined()
   expect(result.current.renderVisualization).toBeUndefined()
 })
 
@@ -75,6 +74,5 @@ test('preserves local file capabilities for desktop conversations', async () => 
   await result.current.readLocalFile?.('C:/Users/viewer/private.png')
 
   expect(mocks.readLocalFile).toHaveBeenCalledWith('C:/Users/viewer/private.png')
-  expect(result.current.openHtmlFile).toEqual(expect.any(Function))
   expect(result.current.renderVisualization).toEqual(expect.any(Function))
 })

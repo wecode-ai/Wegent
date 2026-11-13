@@ -2,6 +2,7 @@ import type {
   ComposerEditorServices,
   ComposerTransferServices,
 } from '@wegent/collaboration/composer'
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 import { openNativeWorkspacePathPicker } from '@/lib/native-workspace-path-picker'
@@ -34,5 +35,12 @@ export function getDesktopComposerEditorServices(): ComposerEditorServices {
 export const desktopComposerTransferServices: ComposerTransferServices = {
   hasPathTransfer: data =>
     hasWorkspacePathDragData(data) || readClipboardFileUriPaths(data).length > 0,
-  resolveTransfer: resolveDataTransferWorkspacePaths,
+  async resolveTransfer(data, source) {
+    const transfer = await resolveDataTransferWorkspacePaths(data, source)
+    if (source !== 'clipboard') return transfer
+    return {
+      ...transfer,
+      attachmentFiles: await normalizeClipboardImageFiles(transfer.attachmentFiles),
+    }
+  },
 }

@@ -652,7 +652,6 @@ describe('ChatInput', () => {
       isActive: true,
     }
     const setSelectedModel = vi.fn()
-    const continueInNewConversation = vi.fn()
 
     render(
       <ChatInput
@@ -667,7 +666,6 @@ describe('ChatInput', () => {
           selectedModel: null,
           isModelSelectionReady: false,
           setSelectedModel,
-          continueInNewConversation,
         })}
       />
     )
@@ -680,70 +678,68 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(targetModel)
-    expect(continueInNewConversation).not.toHaveBeenCalled()
   })
 
-  test('continues in a new referenced conversation when switching Codex providers', async () => {
-    const activeModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      type: 'runtime',
-      provider: 'local',
-      displayName: 'GPT 5.6 Sol',
-      isActive: true,
-      config: { weworkModelKind: 'codex-official' },
-    }
-    const targetModel: UnifiedModel = {
-      name: 'router-model',
-      type: 'runtime',
-      provider: 'local',
-      displayName: 'Router Model',
-      isActive: true,
-      config: {
-        weworkModelKind: 'codex-provider',
-        codexProviderId: 'wecode-openai',
-      },
-    }
-    const setSelectedModel = vi.fn()
-    const continueInNewConversation = vi.fn()
-
-    render(
-      <ChatInput
-        value="继续排查"
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({
-          models: [activeModel, targetModel],
-          activeModel,
-          selectedModel: activeModel,
-          setSelectedModel,
-          continueInNewConversation,
-        })}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.click(screen.getByTestId('model-option-router-model'))
-
-    expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
-      'Router Model uses a different model provider'
-    )
-    expect(screen.getByTestId('model-switch-warning-confirm-button')).toHaveTextContent(
-      'Continue in new conversation'
-    )
-
-    await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
-
-    expect(continueInNewConversation).toHaveBeenCalledWith(
-      targetModel,
-      { modelSelection: 'model' },
-      {
-        draft: '继续排查',
+  test.each(['account-to-router', 'router-to-account'])(
+    'switches %s in the existing conversation without rewriting the draft',
+    async direction => {
+      const accountModel: UnifiedModel = {
+        name: 'gpt-5.6-sol',
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'GPT 5.6 Sol',
+        isActive: true,
+        config: { weworkModelKind: 'codex-official' },
       }
-    )
-    expect(setSelectedModel).not.toHaveBeenCalled()
-  })
+      const routerModel: UnifiedModel = {
+        name: 'router-model',
+        type: 'runtime',
+        provider: 'local',
+        displayName: 'Router Model',
+        isActive: true,
+        config: {
+          weworkModelKind: 'codex-provider',
+          codexProviderId: 'wecode-openai',
+        },
+      }
+      const activeModel = direction === 'account-to-router' ? accountModel : routerModel
+      const targetModel = direction === 'account-to-router' ? routerModel : accountModel
+      const setSelectedModel = vi.fn()
+      const onChange = vi.fn()
+
+      render(
+        <ChatInput
+          value="继续排查"
+          onChange={onChange}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [activeModel, targetModel],
+            supportsModelProviderSwitch: true,
+            activeModel,
+            selectedModel: activeModel,
+            setSelectedModel,
+          })}
+        />
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.click(screen.getByTestId(`model-option-${targetModel.name}`))
+
+      expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
+        `Switching to ${targetModel.displayName} may change how the existing context is understood`
+      )
+      expect(screen.getByTestId('model-switch-warning-confirm-button')).toHaveTextContent(
+        'Switch model'
+      )
+
+      await userEvent.click(screen.getByTestId('model-switch-warning-confirm-button'))
+
+      expect(setSelectedModel).toHaveBeenCalledExactlyOnceWith(targetModel)
+      expect(onChange).not.toHaveBeenCalled()
+    }
+  )
 
   test.each([true, false])(
     'confirms same-name provider replacement only in stand-in session mode (%s)',
@@ -1249,6 +1245,45 @@ describe('ChatInput', () => {
     })
 
     await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
+  })
+
+  test('normalizes a TIFF from clipboard history before attaching it', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const screenshot = new File(['tiff'], '2026-11-12_14-07-58.tiff', {
+      type: 'image/tiff',
+    })
+    vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
+    vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(
+      'data:image/png;base64,iVBORw0KGgo='
+    )
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: { files: [screenshot] },
+    })
+
+    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledOnce())
+    const [files] = handleFileSelect.mock.calls[0] as unknown as [File[]]
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatchObject({
+      name: '2026-11-12_14-07-58.png',
+      type: 'image/png',
+    })
+    expect(desktopHost.invokeDesktopHost).toHaveBeenCalledWith('clipboard.convertImageToPng', {
+      dataBase64: 'dGlmZg==',
+      fileName: '2026-11-12_14-07-58.tiff',
+      mimeType: 'image/tiff',
+    })
   })
 
   test.each(['drop'] as const)(

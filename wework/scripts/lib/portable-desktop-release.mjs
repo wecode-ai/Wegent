@@ -29,6 +29,8 @@ export async function portableDesktopRelease({
     if (packaged.appVersion !== version)
       throw new Error('Portable package version does not match its component manifest')
     const { dataSchema, readableDataSchemas } = packaged
+    if (packaged.afterStopPreparation !== undefined && packaged.afterStopPreparation !== 1)
+      throw new Error('Portable package stopped preparation protocol is invalid')
     if (
       !Number.isSafeInteger(dataSchema) ||
       dataSchema < 1 ||
@@ -47,6 +49,7 @@ export async function portableDesktopRelease({
         fixture,
         dataSchema,
         sourceSha: packaged.sourceSha,
+        afterStopPreparation: packaged.afterStopPreparation,
       })
     )
     await mkdir(output, { recursive: true })
@@ -64,6 +67,7 @@ export async function portableDesktopRelease({
       sha256: await hashReleaseAsset(path),
       bytes: (await stat(path)).size,
       sourceSha: packaged.sourceSha,
+      afterStopPreparation: packaged.afterStopPreparation,
       dataSchema,
       readableDataSchemas,
       fixture,
