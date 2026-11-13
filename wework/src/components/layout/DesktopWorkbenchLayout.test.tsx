@@ -548,8 +548,14 @@ vi.mock('@/config/runtime', () => ({
   stripAppBasePath: (path: string) => path,
 }))
 
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
+vi.mock('@/api/http', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/http')>()),
+  createHttpClient: vi.fn(() => ({
+    get: vi.fn(async (path: string) => {
+      if (path.startsWith('/v1/personal-issues?')) return { items: [], next_cursor: null }
+      throw new Error(`Unexpected HTTP client request: ${path}`)
+    }),
+  })),
 }))
 
 vi.mock('@/api/devices', () => ({
