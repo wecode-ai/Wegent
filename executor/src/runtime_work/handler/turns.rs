@@ -1668,6 +1668,8 @@ impl RuntimeWorkRpcHandler {
             });
             let mut result = async {
                 execution_context?;
+                let mut request = request.clone();
+                handler.recall_stand_in_context(&mut request).await;
                 handler
                     .validate_project_coordinator_request(&request)
                     .await?;

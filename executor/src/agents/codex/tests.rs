@@ -6982,6 +6982,7 @@ async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools
             vec![
                 "list_tasks",
                 "read_task",
+                "search_context",
                 "list_connection_providers",
                 "read_source"
             ]
