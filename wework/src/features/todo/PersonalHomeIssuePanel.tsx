@@ -52,6 +52,22 @@ export function PersonalHomeIssuePanel({
     )
     onUpdated({ ...issue, ...updated })
   })
+  const confirmRead = useStableEvent((updated: CollaborationIssue) => {
+    if (snapshot?.api !== api || snapshot.id !== issue.id || !snapshot.detail) return
+    const merged = mergeIssueReadConfirmation(snapshot.detail.issue, updated)
+    setSnapshot(previous =>
+      previous?.api === api && previous.id === issue.id && previous.detail
+        ? {
+            ...previous,
+            detail: {
+              ...previous.detail,
+              issue: mergeIssueReadConfirmation(previous.detail.issue, merged),
+            },
+          }
+        : previous
+    )
+    onUpdated({ ...issue, ...merged })
+  })
   useEffect(() => {
     if (!active) return
     let current = true
@@ -125,15 +141,7 @@ export function PersonalHomeIssuePanel({
         project,
         onClose: () => onClose?.(),
         onChange: saveIssue,
-        onRead: updated => {
-          const merged = mergeIssueReadConfirmation(detail.issue, updated)
-          setSnapshot(previous =>
-            previous?.api === api && previous.id === issue.id && previous.detail
-              ? { ...previous, detail: { ...previous.detail, issue: merged } }
-              : previous
-          )
-          onUpdated({ ...issue, ...merged })
-        },
+        onRead: confirmRead,
         onOpenRelatedIssue: onOpenIssue,
         onCreateTask: onCreateTask ? () => void onCreateTask(detail.issue) : undefined,
       })}

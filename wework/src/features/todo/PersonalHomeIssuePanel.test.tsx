@@ -90,6 +90,20 @@ it('publishes confirmed read state to the list as well as the open detail', asyn
   )
   expect(renderDetail.mock.lastCall![0].issue.activity_read_sequence).toBe(12)
 })
+
+it('preserves a newer saved Issue when an earlier read confirmation arrives', async () => {
+  const { props, renderDetail } = await setup()
+  await screen.findByText('Actual board editor')
+  const earlier = renderDetail.mock.lastCall![0]
+  act(() => earlier.onChange({ ...earlier.issue, title: 'New edit', version: 4 }))
+  act(() => earlier.onRead({ ...earlier.issue, is_unread: false, activity_read_sequence: 12 }))
+  expect(renderDetail.mock.lastCall![0].issue).toEqual(
+    expect.objectContaining({ title: 'New edit', version: 4, activity_read_sequence: 12 })
+  )
+  expect(props.onUpdated).toHaveBeenLastCalledWith(
+    expect.objectContaining({ title: 'New edit', version: 4 })
+  )
+})
 it('rejects late responses from a previous API scope', async () => {
   let resolveOld!: (item: CollaborationIssue) => void
   const { props, rerender, renderDetail } = await setup(
