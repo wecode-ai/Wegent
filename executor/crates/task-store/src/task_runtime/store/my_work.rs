@@ -81,7 +81,9 @@ impl LocalTaskStore {
                  OR EXISTS(SELECT 1 FROM loop_item_comments c WHERE c.task_id=t.id
                    AND c.project_id=t.cloud_project_id AND c.sender_type='user'
                    AND c.sender_id IN (SELECT CAST(value AS TEXT) FROM json_each(?7))
-                   AND c.deleted_at IS NULL))
+                   AND c.deleted_at IS NULL)
+                 OR EXISTS(SELECT 1 FROM loop_items h WHERE h.resource_type='human_request_index'
+                   AND h.parent_id=t.id AND h.assignee_user_id IN (SELECT value FROM json_each(?7))))
                AND (?3=1 OR t.status NOT IN ('completed','cancelled'))
              ) SELECT * FROM work
              WHERE ?4 IS NULL OR attention_rank>?9
@@ -299,6 +301,51 @@ mod tests {
                 .unwrap()
                 .is_empty());
         }
+    }
+
+    #[test]
+    fn pending_request_recipient_participates_before_pagination() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("recipient.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Requests"})).unwrap())
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Needs an answer"})).unwrap(),
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET created_by_user_id=99,assignee_user_id=NULL WHERE id=?1",
+                [&issue.id],
+            )
+            .unwrap();
+        store.connection().unwrap().execute(
+            "INSERT INTO loop_items (id,resource_type,parent_id,assignee_user_id,name,created_at,updated_at) VALUES ('request-recipient','human_request_index',?1,7,'question',?2,?2)",
+            params![issue.id, now()],
+        ).unwrap();
+        let page = store
+            .my_work_page(1, None, false, false, &[7], "attention")
+            .unwrap();
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        assert_eq!(page["items"][0]["issue"]["id"], issue.id);
+        assert_eq!(page["items"][0]["attention_order"][0], 0);
+        assert!(store
+            .my_work_page(1, None, false, false, &[8], "attention")
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .my_work_page(1, None, true, false, &[7], "attention")
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

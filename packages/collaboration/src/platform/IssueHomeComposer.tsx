@@ -39,6 +39,7 @@ const emptyGroups: CollaborationGroup[] = [];
 
 type PendingFile = Attachment & ComposerAttachment & { id: number; file: File };
 export interface IssueHomeTaskComposerProps {
+  active?: boolean;
   projects: CollaborationProject[];
   workspaces?: CollaborationWorkspace[];
   projectId: string;

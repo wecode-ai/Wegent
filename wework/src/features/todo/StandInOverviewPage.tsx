@@ -660,7 +660,14 @@ export function StandInOverviewPage({
             userId={props.userId}
             deviceId={deviceId}
             onRefresh={inbox.refresh}
-            onOpenTask={onOpenTask}
+            onOpenTask={
+              onOpenTask
+                ? async address => {
+                    await onOpenTask(address)
+                    setReview(null)
+                  }
+                : undefined
+            }
             onRestoreTask={
               props.services.runtimeWorkApi
                 ? async address => {

@@ -1,9 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import { persistIssueDetailFields, type SharedWorkspaceApi } from '@wegent/collaboration'
 import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
 import { truncateRuntimeTaskTitle } from '@wegent/chat-core/runtime-task-title'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
-import type { ProjectWorkControls } from '@/components/chat/ChatInput'
+import type { ChatInputHandle, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
@@ -16,34 +16,82 @@ import { issueRuntimePort } from './issueRuntimePort'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 import { LOCAL_USER } from '@/api/local/localSession'
-import type { PersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
+import type { PersonalHomeTaskDraft, PersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
 
-/** Use the Tasks composer and its real controls; only the Issue linkage belongs here. */
-export function PersonalHomeTaskComposer({
-  draft,
-  api,
-  services,
-  drafts,
-}: {
+interface PersonalHomeTaskComposerProps {
   draft: IssueHomeTaskComposerProps
   api: SharedWorkspaceApi
   services: WorkbenchServices
   drafts: PersonalHomeTaskDrafts
-}) {
+}
+
+export function PersonalHomeTaskComposer(props: PersonalHomeTaskComposerProps) {
+  const project = props.draft.projects.find(item => item.id === props.draft.projectId)
+  const key = project ? `${project.project_store}:${project.id}` : ''
+  const [selection, setSelection] = useState(() => ({ key, initial: props.drafts.get(key) }))
+  if (selection.key !== key) {
+    const previous = props.drafts.get(selection.key)
+    const initial =
+      props.drafts.get(key) ??
+      (previous
+        ? {
+            ...previous,
+            issue: undefined,
+            requestedTitle: '',
+            pendingContentUpdate: false,
+          }
+        : undefined)
+    setSelection({ key, initial })
+    return <ProjectTaskComposer key={key} {...props} initial={initial} />
+  }
+  return <ProjectTaskComposer key={key} {...props} initial={selection.initial} />
+}
+
+/** Use the Tasks composer and its real controls; only the Issue linkage belongs here. */
+function ProjectTaskComposer({
+  draft,
+  api,
+  services,
+  drafts,
+  initial,
+}: PersonalHomeTaskComposerProps & { initial?: PersonalHomeTaskDraft }) {
   const { t } = useTranslation('common')
   const workbench = useWorkbench()
   const { state, projectChat } = workbench
   const scopeKey = useId()
+  const input = useRef<ChatInputHandle>(null)
+  useImperativeHandle(
+    draft.ref,
+    () => ({
+      get element() {
+        return input.current?.element ?? null
+      },
+      focus: () => input.current?.focus(),
+      getValue: () => input.current?.getValue() ?? draft.value,
+      setValue: (value, offset) => input.current?.setValue(value, offset),
+      insertReference: reference => input.current?.insertReference(reference),
+    }),
+    [draft.value]
+  )
   const attachments = useWorkbenchAttachments({
     scopeKey,
     uploadAttachment: services.attachmentApi?.uploadAttachment,
     deleteAttachment: services.attachmentApi?.deleteAttachment,
   })
-  const uploaded = useRef(new Set<File>())
+  const uploaded = useRef(new Set(initial?.attachmentFiles?.values()))
+  const restoringFiles = useRef(initial ? (initial.pendingFiles ?? []) : undefined)
   const [error, setError] = useState<string | null>(null)
   const { handleTrackedFileSelect, removeSourceFile } = attachments
   useEffect(() => {
-    const selected = new Set(draft.pendingFiles ?? [])
+    if (draft.active === false) return
+    const restoring = restoringFiles.current
+    if (
+      restoring &&
+      restoring.length === (draft.pendingFiles?.length ?? 0) &&
+      restoring.every(file => draft.pendingFiles?.includes(file))
+    )
+      restoringFiles.current = undefined
+    const selected = new Set(restoring ?? draft.pendingFiles ?? [])
     for (const file of uploaded.current) {
       if (!selected.has(file)) {
         uploaded.current.delete(file)
@@ -53,32 +101,118 @@ export function PersonalHomeTaskComposer({
     const files = [...selected].filter(file => !uploaded.current.has(file))
     files.forEach(file => uploaded.current.add(file))
     if (files.length) void handleTrackedFileSelect(files)
-  }, [draft.pendingFiles, handleTrackedFileSelect, removeSourceFile])
+  }, [draft.active, draft.pendingFiles, handleTrackedFileSelect, removeSourceFile])
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const project = draft.projects.find(item => item.id === draft.projectId)
   const projectKey = project ? `${project.project_store}:${project.id}` : null
   const savedDraft = projectKey ? drafts.get(projectKey) : undefined
-  const [goalDraftActive, setGoalDraftActive] = useState(() => savedDraft?.goalDraftActive ?? false)
+  const savedIssue = savedDraft?.issue
+  const [goalDraftActive, setGoalDraftActive] = useState(() => initial?.goalDraftActive ?? false)
   const [, refreshDraft] = useState(0)
   const restored = useRef(false)
-  const { addExistingAttachment } = attachments
-  const { value: draftValue, onChange: onDraftChange } = draft
+  const firstCapture = useRef(true)
+  const { addExistingAttachment, addExistingSourceAttachment } = attachments
+  const { onChange: onDraftChange } = draft
+  const [source, setSource] = useState(() => ({
+    value: draft.value,
+    restored: initial?.value ?? draft.value,
+  }))
+  if (source.value !== draft.value) setSource({ value: draft.value, restored: draft.value })
   useLayoutEffect(() => {
-    if (restored.current || !projectKey) return
+    if (draft.active === false || restored.current || !projectKey) return
     restored.current = true
-    const saved = drafts.get(projectKey)
+    const saved = initial
     if (!saved) return
-    if (!draftValue) onDraftChange(saved.value)
-    if (!attachments.attachments.length) saved.attachments.forEach(addExistingAttachment)
+    firstCapture.current = true
+    onDraftChange(saved.value)
+    input.current?.setValue(saved.value)
+    for (const file of draft.pendingFiles ?? []) draft.onRemovePendingFile(file)
+    if (saved.pendingFiles?.length) draft.onFileSelect(saved.pendingFiles)
+    if (!attachments.attachments.length)
+      saved.attachments.forEach(attachment => {
+        const file = saved.attachmentFiles?.get(attachment.id)
+        if (file) addExistingSourceAttachment(attachment, file)
+        else addExistingAttachment(attachment)
+      })
   }, [
     projectKey,
     drafts,
-    draftValue,
+    initial,
+    draft,
     onDraftChange,
     attachments.attachments.length,
     addExistingAttachment,
+    addExistingSourceAttachment,
   ])
+  const completed = useRef<string | null>(null)
+  const resetOnUnmount = useRef(attachments.resetAttachments)
+  const mountGeneration = useRef(0)
+  useLayoutEffect(() => {
+    resetOnUnmount.current = attachments.resetAttachments
+  })
+  useEffect(() => {
+    const lifecycle = mountGeneration
+    const generation = ++lifecycle.current
+    return () =>
+      queueMicrotask(() => {
+        if (lifecycle.current === generation) resetOnUnmount.current()
+      })
+  }, [])
+  const cacheDraft = (value: string) => {
+    if (!projectKey || draft.active === false) return
+    if (completed.current !== null) {
+      if (!value.trim() || value === completed.current) return
+      completed.current = null
+    }
+    const previous = drafts.get(projectKey)
+    const pendingFiles = [
+      ...new Set([
+        ...(restoringFiles.current ?? draft.pendingFiles ?? []),
+        ...[...attachments.uploadingFiles.values()].map(upload => upload.file),
+      ]),
+    ]
+    const selected = attachments.getSelectedAttachments(pendingFiles)
+    const attachmentFiles = new Map<number, File>()
+    selected.forEach(attachment => {
+      const file = attachments.getSourceFile(attachment.id)
+      if (file) attachmentFiles.set(attachment.id, file)
+    })
+    if (
+      !previous?.issue &&
+      !value.trim() &&
+      !selected.length &&
+      !pendingFiles.length &&
+      !goalDraftActive
+    ) {
+      drafts.delete(projectKey)
+      return
+    }
+    drafts.set(projectKey, {
+      ...previous,
+      value,
+      requestedTitle: previous?.requestedTitle ?? '',
+      pendingContentUpdate: Boolean(
+        previous?.pendingContentUpdate || (previous?.issue && previous.value !== value)
+      ),
+      attachments: selected.map(attachment => {
+        const copy = { ...attachment }
+        delete copy.local_preview_url
+        return copy
+      }),
+      pendingFiles: [...pendingFiles],
+      attachmentFiles,
+      goalDraftActive,
+    })
+  }
+  useLayoutEffect(() => {
+    if (draft.active === false) return
+    if (firstCapture.current) {
+      firstCapture.current = false
+      return
+    }
+    cacheDraft(input.current?.getValue() ?? source.restored)
+  })
   const projectWork: ProjectWorkControls = {
     projects: state.projects,
     devices: state.devices,
@@ -119,11 +253,14 @@ export function PersonalHomeTaskComposer({
   }
   const submit = async (value = draft.value) => {
     const content = value.trim()
-    const selectedAttachments = attachments.getSelectedAttachments(draft.pendingFiles ?? [])
+    const selectedAttachments = attachments.getSelectedAttachments(
+      restoringFiles.current ?? draft.pendingFiles ?? []
+    )
     const port = project && issueRuntimePort(project.project_store, services)
     if (
       (!content && selectedAttachments.length === 0) ||
       !project ||
+      draft.active === false ||
       !port ||
       submittingRef.current ||
       !projectChat.isModelSelectionReady ||
@@ -138,7 +275,7 @@ export function PersonalHomeTaskComposer({
     try {
       const projectKey = `${project.project_store}:${project.id}`
       const previous = drafts.get(projectKey)
-      let issue = previous ? await api.issues.get(previous.issue.id) : undefined
+      let issue = previous?.issue ? await api.issues.get(previous.issue.id) : undefined
       const title =
         truncateRuntimeTaskTitle(
           content.replace(/\s+/g, ' ') || selectedAttachments.map(file => file.filename).join('、')
@@ -161,6 +298,7 @@ export function PersonalHomeTaskComposer({
           previous.requestedTitle !== title) &&
         (issue.description !== content || issue.title !== title)
       const saved = {
+        ...drafts.get(projectKey),
         issue,
         value,
         requestedTitle: title,
@@ -207,6 +345,7 @@ export function PersonalHomeTaskComposer({
       const statusError = await updateIssueWhenPersonalTaskStarts(api.issues, issue.id)
       if (statusError !== null) setError(statusError || t('task_board_status_update_failed'))
       draft.onTaskCreated?.(issue, toWorkspaceRuntimeTaskAddress(address))
+      completed.current = value
       draft.onChange('')
       draft.onResetDraft?.()
       attachments.resetAttachments()
@@ -224,20 +363,20 @@ export function PersonalHomeTaskComposer({
   }
   return (
     <>
-      {savedDraft && (
+      {savedIssue && (
         <div
           className="mb-2 flex min-w-0 items-center justify-between gap-3 text-sm text-text-secondary"
           data-testid="personal-home-task-draft"
-          data-issue-id={savedDraft.issue.id}
+          data-issue-id={savedIssue.id}
         >
           <span className="truncate">
-            {t('personalHome.savedTaskDraft', { title: savedDraft.issue.title })}
+            {t('personalHome.savedTaskDraft', { title: savedIssue.title })}
           </span>
           <button
             type="button"
             disabled={submitting}
             data-testid="personal-home-new-task-draft"
-            className="min-h-8 shrink-0 rounded-md px-2 hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+            className="min-h-11 shrink-0 rounded-md px-2 hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
             onClick={() => {
               if (projectKey) drafts.delete(projectKey)
               refreshDraft(value => value + 1)
@@ -249,15 +388,17 @@ export function PersonalHomeTaskComposer({
         </div>
       )}
       <BufferedChatInput
-        inputRef={draft.ref}
+        inputRef={input}
         autoFocus
-        value={draft.value}
+        value={source.restored}
+        onDraftEdit={value => cacheDraft(value)}
         onChange={value => {
           setError(null)
+          cacheDraft(value)
           draft.onChange(value)
         }}
         onSubmit={submit}
-        disabled={submitting}
+        disabled={submitting || draft.active === false}
         submitDisabled={
           !projectChat.isModelSelectionReady ||
           !attachments.isAttachmentReadyToSend ||

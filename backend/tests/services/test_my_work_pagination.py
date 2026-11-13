@@ -301,6 +301,51 @@ def test_assigned_scope_and_completion_filter_are_applied_before_pagination(
     assert cursor is None
 
 
+def test_pending_issue_with_an_active_binding_is_not_ranked_as_unstarted(
+    test_db, test_user
+):
+    from uuid import uuid4
+
+    from app.models.delivery import LoopItemTaskBinding
+
+    project = _make_project(test_db, test_user)
+    items = add_items(test_db, project, test_user.id, 2, prefix="BOUND")
+    for item in items:
+        item.assignee_user_id = test_user.id
+    test_db.add(
+        LoopItemTaskBinding(
+            id=str(uuid4()),
+            cloud_project_id=project.id,
+            loop_item_id=items[1].id,
+            task_user_id=test_user.id,
+            device_id="device",
+            task_id="accepted-task",
+            linked_at=datetime(2026, 1, 1),
+            metadata_json={},
+        )
+    )
+    test_db.commit()
+    page, cursor = loop_item_service.list_my_work_page(
+        test_db,
+        test_user.id,
+        limit=1,
+        assigned_only=True,
+        attention=True,
+    )
+    assert page[0]["id"] == items[0].id
+    assert page[0]["attention_order"][0] == 1
+    second, _ = loop_item_service.list_my_work_page(
+        test_db,
+        test_user.id,
+        limit=1,
+        assigned_only=True,
+        attention=True,
+        cursor=cursor,
+    )
+    assert second[0]["id"] == items[1].id
+    assert second[0]["attention_order"][0] == 3
+
+
 def test_attention_order_is_applied_before_pages_and_keeps_completed_last(
     test_db, test_user
 ):

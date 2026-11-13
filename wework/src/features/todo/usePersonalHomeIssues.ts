@@ -30,6 +30,7 @@ export function usePersonalHomeIssues(
   const [revision, setRevision] = useState(0)
   const generation = useRef(0)
   const pendingPages = useRef(new Set<SharedWorkspaceApi>())
+  const pendingFirstPages = useRef(new Map<SharedWorkspaceApi, number>())
   const viewers = JSON.stringify(viewerIds)
   const scopeKey = JSON.stringify([assignedOnly, includeCompleted, viewers, order])
   const queryKey = JSON.stringify([revision, scopeKey])
@@ -37,6 +38,7 @@ export function usePersonalHomeIssues(
   useEffect(() => {
     const requestGeneration = ++generation.current
     pendingPages.current.clear()
+    pendingFirstPages.current.clear()
     if (!active) return
     const input = {
       limit: 30,
@@ -46,8 +48,26 @@ export function usePersonalHomeIssues(
       viewerIds: JSON.parse(viewers) as (string | number)[],
     }
     for (const api of sources) {
+      pendingFirstPages.current.set(api, requestGeneration)
       void Promise.resolve()
         .then(() => {
+          if (generation.current !== requestGeneration)
+            throw new Error('Superseded My work request')
+          setSnapshots(previous => {
+            const snapshot = previous.find(row => row.api === api && row.scopeKey === scopeKey)
+            return [
+              ...previous.filter(row => sources.includes(row.api) && row.api !== api),
+              {
+                api,
+                queryKey,
+                scopeKey,
+                items: snapshot?.items ?? [],
+                nextCursor: snapshot?.nextCursor ?? null,
+                loading: true,
+                error: false,
+              },
+            ]
+          })
           if (!api.myWork?.page) throw new Error('Paged My work is unavailable')
           return api.myWork.page(input)
         })
@@ -90,6 +110,10 @@ export function usePersonalHomeIssues(
               ])
           }
         )
+        .finally(() => {
+          if (pendingFirstPages.current.get(api) === requestGeneration)
+            pendingFirstPages.current.delete(api)
+        })
     }
     const unsubscribeBinding = subscribeProjectSpaceTaskBindingChanged(reload)
     const unsubscribeContext = subscribeProjectSpaceTaskContextChanged(reload)
@@ -120,7 +144,10 @@ export function usePersonalHomeIssues(
       current
         .filter(
           snapshot =>
-            snapshot.nextCursor && !snapshot.loading && !pendingPages.current.has(snapshot.api)
+            snapshot.nextCursor &&
+            !snapshot.loading &&
+            !pendingPages.current.has(snapshot.api) &&
+            !pendingFirstPages.current.has(snapshot.api)
         )
         .map(async snapshot => {
           pendingPages.current.add(snapshot.api)

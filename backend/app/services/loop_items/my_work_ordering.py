@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from sqlalchemy import Integer, String, and_, case, cast, func, literal, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.delivery import LoopItem, LoopItemTaskBinding, loop_datetime_is_unset
@@ -31,13 +32,15 @@ def attention_order(
         .correlate(LoopItem)
         .scalar_subquery()
     )
+    binding = aliased(LoopItemTaskBinding)
     bound = (
-        select(LoopItemTaskBinding.id)
+        select(binding.id)
         .where(
-            LoopItemTaskBinding.loop_item_id == LoopItem.id,
-            LoopItemTaskBinding.task_user_id == user_id,
-            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+            binding.loop_item_id == LoopItem.id,
+            binding.task_user_id == user_id,
+            loop_datetime_is_unset(binding.unlinked_at),
         )
+        .correlate(LoopItem)
         .exists()
     )
     needs_me = or_(

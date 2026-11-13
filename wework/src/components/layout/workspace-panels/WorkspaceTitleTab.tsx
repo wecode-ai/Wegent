@@ -54,6 +54,7 @@ export function WorkspaceTitleTab({
         tabIndex={-1}
         onClick={event => {
           event.stopPropagation()
+          event.currentTarget.parentElement?.focus()
           onSelect()
         }}
         className={cn(

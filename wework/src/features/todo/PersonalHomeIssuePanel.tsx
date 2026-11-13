@@ -43,6 +43,14 @@ export function PersonalHomeIssuePanel({
   }>()
   const [revision, setRevision] = useState(0)
   const editRevision = useRef(0)
+  const readConfirmation = useRef<
+    | {
+        api: SharedWorkspaceApi
+        id: string
+        issue: CollaborationIssue
+      }
+    | undefined
+  >(undefined)
   const saveIssue = useStableEvent((updated: CollaborationIssue) => {
     editRevision.current += 1
     setSnapshot(previous =>
@@ -55,6 +63,7 @@ export function PersonalHomeIssuePanel({
   const confirmRead = useStableEvent((updated: CollaborationIssue) => {
     if (snapshot?.api !== api || snapshot.id !== issue.id || !snapshot.detail) return
     const merged = mergeIssueReadConfirmation(snapshot.detail.issue, updated)
+    readConfirmation.current = { api, id: issue.id, issue: merged }
     setSnapshot(previous =>
       previous?.api === api && previous.id === issue.id && previous.detail
         ? {
@@ -82,17 +91,22 @@ export function PersonalHomeIssuePanel({
         api.taskBindings?.list(issue.id, String(project.id)) ?? Promise.resolve([]),
       ])
       if (current && editRevision.current === requestedEditRevision) {
+        const confirmed = readConfirmation.current
+        const refreshed =
+          confirmed?.api === api && confirmed.id === issue.id
+            ? mergeIssueReadConfirmation(item, confirmed.issue)
+            : item
         setSnapshot({
           api,
           id: issue.id,
           detail: {
-            issue: item,
+            issue: refreshed,
             allIssues: items,
             assignments,
             taskBindings,
           },
         })
-        publishUpdated(item)
+        publishUpdated(refreshed)
       }
     })().catch(() => {
       if (current && editRevision.current === requestedEditRevision)

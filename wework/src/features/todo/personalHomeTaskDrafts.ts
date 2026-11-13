@@ -3,17 +3,18 @@ import type { Attachment } from '@wegent/chat-core/runtime'
 import { useState } from 'react'
 
 /** The collaboration host owns unfinished starts across page navigation. */
-export type PersonalHomeTaskDrafts = Map<
-  string,
-  {
-    issue: CollaborationIssue
-    value: string
-    requestedTitle: string
-    pendingContentUpdate: boolean
-    attachments: Attachment[]
-    goalDraftActive: boolean
-  }
->
+export interface PersonalHomeTaskDraft {
+  issue?: CollaborationIssue
+  value: string
+  requestedTitle: string
+  pendingContentUpdate: boolean
+  attachments: Attachment[]
+  goalDraftActive: boolean
+  pendingFiles?: File[]
+  attachmentFiles?: Map<number, File>
+}
+
+export type PersonalHomeTaskDrafts = Map<string, PersonalHomeTaskDraft>
 
 export function usePersonalHomeTaskDrafts(
   scope: string,

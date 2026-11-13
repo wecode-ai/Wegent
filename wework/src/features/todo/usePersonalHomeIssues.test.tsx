@@ -45,3 +45,32 @@ it('retains valid same-scope results on a refresh failure', async () => {
   await waitFor(() => expect(result.current.error).toBe(true))
   expect(result.current.items).toEqual([item])
 })
+
+it('blocks pagination while reactivation is replacing the first page', async () => {
+  let finish!: (page: unknown) => void
+  const page = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [{ id: 'old' }], nextCursor: 'old-cursor' })
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    .mockResolvedValueOnce({ items: [{ id: 'next' }], nextCursor: null })
+  const sources = [{ myWork: { page } } as unknown as SharedWorkspaceApi]
+  const { result, rerender } = renderHook(
+    ({ active }) => usePersonalHomeIssues(sources, active, true, false, [7]),
+    { initialProps: { active: true } }
+  )
+  await waitFor(() => expect(result.current.items[0]?.id).toBe('old'))
+  rerender({ active: false })
+  rerender({ active: true })
+  await act(async () => result.current.loadMore())
+  expect(page).toHaveBeenCalledTimes(2)
+  expect(result.current.loading).toBe(true)
+  await act(async () => finish({ items: [{ id: 'fresh' }], nextCursor: 'fresh-cursor' }))
+  await act(async () => result.current.loadMore())
+  expect(page).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'fresh-cursor' }))
+  expect(result.current.items.map(item => item.id)).toEqual(['fresh', 'next'])
+})

@@ -58,6 +58,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   const scopeKey = options.scopeKey ?? DEFAULT_ATTACHMENT_SCOPE_KEY
   const [stateByScope, setStateByScope] = useState<Record<string, MultiAttachmentUploadState>>({})
   const uploadSequence = useRef(0)
+  const scopeEpochs = useRef(new Map<string, number>())
   const latestAttemptsByScope = useRef(new Map<string, Map<string, string>>())
   const sourcesByScope = useRef(new Map<string, Map<string, AttachmentSource>>())
   const attachmentSourcesByScope = useRef(new Map<string, Map<number, AttachmentSource>>())
@@ -89,7 +90,17 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   )
 
   const addExistingAttachmentForScope = useCallback(
-    (targetScopeKey: string, attachment: Attachment) => {
+    (targetScopeKey: string, attachment: Attachment, file?: File) => {
+      if (file) {
+        const id = `${file.name}:${++uploadSequence.current}`
+        const source: AttachmentSource = { file, filename: file.name, cancelled: false, attachment }
+        const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
+        sources.set(id, source)
+        sourcesByScope.current.set(targetScopeKey, sources)
+        const attachments = attachmentSourcesByScope.current.get(targetScopeKey) ?? new Map()
+        attachments.set(attachment.id, source)
+        attachmentSourcesByScope.current.set(targetScopeKey, attachments)
+      }
       updateScopeState(targetScopeKey, current => {
         if (current.attachments.some(item => item.id === attachment.id)) return current
         return {
@@ -120,6 +131,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const handleFileSelectForScope = useCallback(
     async (targetScopeKey: string, files: File | File[], trackSource = false) => {
+      const epoch = scopeEpochs.current.get(targetScopeKey) ?? 0
       const fileList = Array.isArray(files) ? files : [files]
       const selections = fileList.map(file => {
         if (!trackSource) return { file, fileId: undefined, source: undefined }
@@ -130,8 +142,17 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
         sourcesByScope.current.set(targetScopeKey, sources)
         return { file, fileId, source }
       })
+      if (trackSource) {
+        updateScopeState(targetScopeKey, current => {
+          const uploadingFiles = new Map(current.uploadingFiles)
+          for (const { file, fileId } of selections) {
+            if (fileId) uploadingFiles.set(fileId, { file, progress: 0 })
+          }
+          return { ...current, uploadingFiles }
+        })
+      }
       for (const { file, fileId: queuedFileId, source } of selections) {
-        if (source?.cancelled) continue
+        if (source?.cancelled || (scopeEpochs.current.get(targetScopeKey) ?? 0) !== epoch) continue
         const fileId = queuedFileId ?? `${file.name}:${++uploadSequence.current}`
         const latestAttempts =
           latestAttemptsByScope.current.get(targetScopeKey) ?? new Map<string, string>()
@@ -168,6 +189,11 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             attachmentSourcesByScope.current.set(targetScopeKey, sources)
           }
           const textMetadata = await textMetadataPromise
+          if (!source && (scopeEpochs.current.get(targetScopeKey) ?? 0) !== epoch) {
+            releaseAttachmentPreview(attachment)
+            if (attachment.id > 0) await deleteAttachment(attachment.id)
+            continue
+          }
           if (source?.cancelled) {
             await discardSourceAttachment(source)
             continue
@@ -235,7 +261,13 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
         }
       }
     },
-    [updateScopeState, uploadAttachment, options.onAction, discardSourceAttachment]
+    [
+      updateScopeState,
+      uploadAttachment,
+      deleteAttachment,
+      options.onAction,
+      discardSourceAttachment,
+    ]
   )
 
   const removeSourceFileForScope = useCallback(
@@ -315,6 +347,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const resetAttachmentsForScope = useCallback(
     (targetScopeKey: string) => {
+      scopeEpochs.current.set(targetScopeKey, (scopeEpochs.current.get(targetScopeKey) ?? 0) + 1)
       latestAttemptsByScope.current.delete(targetScopeKey)
       for (const source of sourcesByScope.current.get(targetScopeKey)?.values() ?? []) {
         source.cancelled = true
@@ -336,6 +369,11 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const addExistingAttachment = useCallback(
     (attachment: Attachment) => addExistingAttachmentForScope(scopeKey, attachment),
+    [addExistingAttachmentForScope, scopeKey]
+  )
+  const addExistingSourceAttachment = useCallback(
+    (attachment: Attachment, file: File) =>
+      addExistingAttachmentForScope(scopeKey, attachment, file),
     [addExistingAttachmentForScope, scopeKey]
   )
   const handleFileSelect = useCallback(
@@ -398,6 +436,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     getSourceFile,
     handleFileSelectForScope,
     addExistingAttachment,
+    addExistingSourceAttachment,
     addExistingAttachmentForScope,
     removeAttachment,
     removeAttachmentForScope,

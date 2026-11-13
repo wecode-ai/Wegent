@@ -748,6 +748,9 @@ function IssueHomeLauncher({
     import("../types").CollaborationGroup[]
   >([]);
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [issueReferenceError, setIssueReferenceError] = useState<string | null>(
+    null,
+  );
   const composerRef = useRef<ComposerInputHandle>(null);
   const selectedProject = projects.find(
     (project) => project.id === selectedProjectId,
@@ -765,6 +768,7 @@ function IssueHomeLauncher({
     setMembers([]);
     setAgents([]);
     setMentionIssues([]);
+    setIssueReferenceError(null);
     setMentionGroups([]);
     setMemberError(null);
     void Promise.all([
@@ -793,10 +797,13 @@ function IssueHomeLauncher({
     void api.issues
       .list(selectedProjectId)
       .then((issues) => {
-        if (active) setMentionIssues(issues);
+        if (active) {
+          setMentionIssues(issues);
+          setIssueReferenceError(null);
+        }
       })
       .catch(() => {
-        if (active) setMemberError(messages.issueHomeMembersFailed);
+        if (active) setIssueReferenceError(messages.issueHomeMembersFailed);
       });
     return () => {
       active = false;
@@ -836,7 +843,10 @@ function IssueHomeLauncher({
       currentUserId={currentUserId}
       ref={composerRef}
       value={content}
-      onChange={setContent}
+      onChange={(value) => {
+        setContent(value);
+        if (!value.includes("#")) setIssueReferenceError(null);
+      }}
       onSubmit={onCreateIssue}
       pending={pending}
       members={members}
@@ -851,7 +861,7 @@ function IssueHomeLauncher({
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
       memberLabel={messages.members}
-      error={memberError}
+      error={memberError ?? issueReferenceError}
       environmentNotice={
         selectedProject ? (
           <IssueExecutionEnvironmentNotice

@@ -329,6 +329,56 @@ export function useCollaborationPlatformController({
           loading: false,
           error: null,
         }));
+        const publishStandaloneNavigation = (
+          collections: NavigationCollections,
+        ) => {
+          if (revision !== loadRevisionRef.current) return;
+          const projects = mergeByKey(
+            [collections.projects, [project]],
+            (item) => item.id,
+          );
+          navigationCacheRef.current = {
+            workspaces: collections.workspaces,
+            projects,
+          };
+          setState((current) => ({
+            ...current,
+            workspaces: collections.workspaces,
+            navigationProjects: projects,
+          }));
+        };
+        if (!force && navigationCacheStatusRef.current === "complete") {
+          publishStandaloneNavigation({
+            ...navigationCacheRef.current,
+            complete: true,
+            successfulLoads: 1,
+          });
+        } else {
+          void collectNavigation(
+            loadNavigationCollections(
+              navigationApis?.length ? navigationApis : [api],
+              publishStandaloneNavigation,
+            ),
+          )
+            .then((collections) => {
+              if (revision !== loadRevisionRef.current) return;
+              publishStandaloneNavigation(collections);
+              navigationCacheStatusRef.current = collections.complete
+                ? "complete"
+                : "partial";
+              setState((current) => ({
+                ...current,
+                navigationIncomplete: !collections.complete,
+              }));
+            })
+            .catch(() => {
+              if (revision === loadRevisionRef.current)
+                setState((current) => ({
+                  ...current,
+                  navigationIncomplete: true,
+                }));
+            });
+        }
         return;
       }
       if (!api.workspaces) {

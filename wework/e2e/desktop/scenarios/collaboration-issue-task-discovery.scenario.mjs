@@ -243,7 +243,7 @@ export function createDesktopScenario({
       )
     )
   }
-  async function verifyDraftRecovery(control, project) {
+  async function verifyDraftRecovery(control, project, otherProject) {
     await openCollaborationIssueCreation(control, scoped)
     await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
     await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
@@ -288,6 +288,30 @@ export function createDesktopScenario({
     } finally {
       proxy.rule = previousRule
     }
+    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
+    await control.command('click', `[data-testid="collaboration-issue-project-${otherProject.id}"]`)
+    await control.command('waitFor', scoped('[data-testid="personal-home-task-content"]'), {
+      text: prompt,
+    })
+    assert.equal(
+      Number(
+        await control.command('getElementCount', scoped('[data-testid="personal-home-task-draft"]'))
+      ),
+      0,
+      "A new project must not reuse another project's prepared Issue"
+    )
+    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
+    await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    await control.command('waitFor', scoped('[data-testid="personal-home-task-draft"]'), {
+      text: prompt,
+    })
+    assert.equal(
+      await control.command('getAttribute', scoped('[data-testid="personal-home-task-draft"]'), {
+        value: 'data-issue-id',
+      }),
+      issueId,
+      'Returning to a project must restore its own prepared Issue'
+    )
     const creates = proxy.requests.filter(
       entry => entry.method === 'POST' && entry.path === createPath
     ).length
@@ -426,7 +450,7 @@ export function createDesktopScenario({
         project: local.project,
         viewerId: owner.id,
       })
-      await verifyDraftRecovery(control, local.project)
+      await verifyDraftRecovery(control, local.project, other.project)
       const standalone = await request('/api/v1/cloud-projects', {
         name: `${TITLE} default workspace`,
       })

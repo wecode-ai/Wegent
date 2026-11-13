@@ -275,6 +275,24 @@ it('replaces the Issue detail, restores its draft on reopening and closes back t
   expect(screen.getByTestId('personal-home-tab-stand-in')).toHaveAttribute('aria-selected', 'true')
 })
 
+it('keeps arrow navigation working after clicking an inner title button', async () => {
+  await setup([source(vi.fn().mockResolvedValue([issue('first')]))])
+  await screen.findByText('Issue first')
+  fireEvent.click(screen.getByTestId('personal-home-issue-first'))
+  const tab = screen.getByTestId('personal-home-tab-first')
+  const button = tab.querySelector('button')!
+  button.focus()
+  fireEvent.click(button)
+  expect(document.activeElement).toBe(tab)
+  fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' })
+  const assistant = screen.getByTestId('personal-home-tab-stand-in')
+  expect(document.activeElement).toBe(assistant)
+  expect(assistant).toHaveAttribute('aria-selected', 'true')
+  fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' })
+  expect(document.activeElement).toBe(tab)
+  expect(tab).toHaveAttribute('aria-selected', 'true')
+})
+
 it('keeps closed Issue drafts when a localized API wrapper changes in the same source scope', async () => {
   const items = [issue('first'), issue('second')]
   const { props, rerender } = await setup([source(vi.fn().mockResolvedValue(items))])

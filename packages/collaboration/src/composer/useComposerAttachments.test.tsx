@@ -39,6 +39,82 @@ const attachment: Attachment = {
 }
 
 describe('useComposerAttachments', () => {
+  it('discards an untracked upload that completes after its scope was reset', async () => {
+    let finish!: (value: Attachment) => void
+    const driver = mountAttachments(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    let pending!: Promise<void>
+    try {
+      act(() => {
+        pending = driver.current.handleFileSelect(binaryFile())
+      })
+      act(() => driver.current.resetAttachments())
+      await act(async () => {
+        finish(attachment)
+        await pending
+      })
+      expect(driver.current.attachments).toEqual([])
+      expect(driver.current.isUploading).toBe(false)
+      expect(driver.deleteAttachment).toHaveBeenCalledExactlyOnceWith(attachment.id)
+    } finally {
+      driver.dispose()
+    }
+  })
+
+  it('restores the exact source File of a ready attachment without uploading it again', async () => {
+    const upload = vi.fn(async () => attachment)
+    const driver = mountAttachments(upload)
+    const file = binaryFile()
+    try {
+      act(() => driver.current.addExistingSourceAttachment(attachment, file))
+      expect(driver.current.getSourceFile(attachment.id)).toBe(file)
+      expect(driver.current.getSelectedAttachments([file])).toEqual([attachment])
+      await act(async () => driver.current.removeSourceFile(file))
+      expect(driver.current.attachments).toEqual([])
+      expect(driver.deleteAttachment).toHaveBeenCalledExactlyOnceWith(attachment.id)
+      expect(upload).not.toHaveBeenCalled()
+    } finally {
+      driver.dispose()
+    }
+  })
+
+  it('blocks submission while a selected import remains queued after its sibling is cancelled', async () => {
+    let finishFirst!: (value: Attachment) => void
+    let finishSecond!: (value: Attachment) => void
+    const first = binaryFile()
+    const second = binaryFile()
+    const driver = mountAttachments(
+      file =>
+        new Promise(resolve => {
+          if (file === first) finishFirst = resolve
+          else finishSecond = resolve
+        })
+    )
+    let pending!: Promise<void>
+    try {
+      act(() => {
+        pending = driver.current.handleTrackedFileSelect([first, second])
+      })
+      await act(async () => driver.current.removeSourceFile(first))
+      expect(driver.current.isAttachmentReadyToSend).toBe(false)
+      await act(async () => {
+        finishFirst(attachment)
+      })
+      expect(driver.current.isAttachmentReadyToSend).toBe(false)
+      await act(async () => {
+        finishSecond({ ...attachment, id: 2 })
+        await pending
+      })
+      expect(driver.current.isAttachmentReadyToSend).toBe(true)
+      expect(driver.current.getSelectedAttachments([second]).map(item => item.id)).toEqual([2])
+    } finally {
+      driver.dispose()
+    }
+  })
   it('removes one imported File while retaining an independently selected same-name file', async () => {
     const first = binaryFile()
     const second = binaryFile()

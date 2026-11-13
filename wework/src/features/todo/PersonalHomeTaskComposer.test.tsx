@@ -68,6 +68,7 @@ function setup(local = false, realAttachments = false) {
   if (!realAttachments)
     mocks.attachments.mockReturnValue({
       attachments: [attachment],
+      uploadingFiles: new Map(),
       isAttachmentReadyToSend: true,
       errors: new Map(),
       handleFileSelect: vi.fn(),
@@ -95,6 +96,8 @@ function setup(local = false, realAttachments = false) {
     projectId: 'project',
     value: issue.description,
     onChange: vi.fn(),
+    onFileSelect: vi.fn(),
+    onRemovePendingFile: vi.fn(),
     onTaskCreated: vi.fn(),
     onResetDraft: vi.fn(),
     onPendingChange: vi.fn(),
@@ -322,6 +325,86 @@ it('retains the created Issue when saving its description fails before Runtime c
     'issue',
     expect.objectContaining({ title: changed, description: changed })
   )
+})
+
+it('restores the selected project Issue, attachments and goal instead of reusing the previous project', async () => {
+  mocks.attachments.mockImplementation(options => useComposerAttachments(options))
+  const { props, rerender, api, issue, createProjectRuntimeTask, draft } = setup(false, true)
+  const other = {
+    ...issue,
+    id: 'issue-b',
+    cloud_project_id: 'b',
+    description: 'Work for B',
+    title: 'Work for B',
+  }
+  const file = new File(['b'], 'b.bin', { type: 'application/octet-stream' })
+  const attachment = { id: 52, filename: file.name, status: 'ready' } as never
+  props.drafts.set('backend:b', {
+    issue: other as never,
+    value: other.description,
+    requestedTitle: other.title,
+    pendingContentUpdate: false,
+    attachments: [attachment],
+    pendingFiles: [file],
+    attachmentFiles: new Map([[52, file]]),
+    goalDraftActive: false,
+  })
+  act(() => mocks.input.mock.lastCall![0].onSetGoal())
+  api.issues.get.mockResolvedValue(other)
+  const uploadAttachment = vi.fn()
+  const nextProps = {
+    ...props,
+    services: {
+      ...props.services,
+      attachmentApi: { uploadAttachment, deleteAttachment: vi.fn() },
+    } as never,
+    draft: {
+      ...props.draft,
+      projects: [...props.draft.projects, { id: 'b', project_store: 'backend' } as never],
+      projectId: 'b',
+    },
+  }
+  rerender(<PersonalHomeTaskComposer {...nextProps} />)
+  await waitFor(() => expect(mocks.input.mock.lastCall![0].projectChat.attachments).toHaveLength(1))
+  expect(mocks.input.mock.lastCall![0].goalDraftActive).toBe(false)
+  expect(draft.onChange).toHaveBeenLastCalledWith('Work for B')
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(createProjectRuntimeTask).toHaveBeenCalledOnce())
+  expect(api.issues.create).not.toHaveBeenCalled()
+  expect(uploadAttachment).not.toHaveBeenCalled()
+  expect(createProjectRuntimeTask).toHaveBeenCalledWith(
+    'Work for B',
+    expect.objectContaining({
+      attachments: [attachment],
+      origin: expect.objectContaining({ loopItemId: 'issue-b' }),
+    })
+  )
+  expect(createProjectRuntimeTask.mock.lastCall![1].initialGoal).toBeUndefined()
+})
+
+it('does not restore a hidden Task draft into the active Record input', async () => {
+  mocks.attachments.mockImplementation(options => useComposerAttachments(options))
+  const { props, rerender, draft } = setup(false, true)
+  props.drafts.set('backend:b', {
+    value: 'Task B',
+    requestedTitle: '',
+    pendingContentUpdate: false,
+    attachments: [],
+    goalDraftActive: true,
+  })
+  const nextDraft = {
+    ...props.draft,
+    active: false,
+    projectId: 'b',
+    projects: [...props.draft.projects, { id: 'b', project_store: 'backend' } as never],
+  }
+  draft.onChange.mockClear()
+  rerender(<PersonalHomeTaskComposer {...props} draft={nextDraft} />)
+  expect(draft.onChange).not.toHaveBeenCalled()
+  expect(draft.onRemovePendingFile).not.toHaveBeenCalled()
+  rerender(<PersonalHomeTaskComposer {...props} draft={{ ...nextDraft, active: true }} />)
+  expect(draft.onChange).toHaveBeenLastCalledWith('Task B')
+  expect(mocks.input.mock.lastCall![0].goalDraftActive).toBe(true)
 })
 
 it('lets the user explicitly start another Issue while retaining the original saved Issue', async () => {

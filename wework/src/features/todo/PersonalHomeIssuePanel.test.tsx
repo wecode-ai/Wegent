@@ -91,6 +91,29 @@ it('publishes confirmed read state to the list as well as the open detail', asyn
   expect(renderDetail.mock.lastCall![0].issue.activity_read_sequence).toBe(12)
 })
 
+it('retains a read confirmation while an earlier refresh finishes loading task bindings', async () => {
+  const { props, rerender, renderDetail } = await setup()
+  await screen.findByText('Actual board editor')
+  let finish!: (value: never[]) => void
+  vi.mocked(props.api.taskBindings!.list).mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  rerender(<PersonalHomeIssuePanel {...props} refreshKey={1} />)
+  await act(async () => {})
+  const context = renderDetail.mock.lastCall![0]
+  act(() => context.onRead({ ...context.issue, is_unread: false, activity_read_sequence: 12 }))
+  const bindings = [{ id: 'new-binding' }] as never[]
+  await act(async () => finish(bindings))
+  expect(renderDetail.mock.lastCall![0].issue.activity_read_sequence).toBe(12)
+  expect(renderDetail.mock.lastCall![0].taskBindings).toEqual(bindings)
+  expect(props.onUpdated).toHaveBeenLastCalledWith(
+    expect.objectContaining({ activity_read_sequence: 12 })
+  )
+})
+
 it('preserves a newer saved Issue when an earlier read confirmation arrives', async () => {
   const { props, renderDetail } = await setup()
   await screen.findByText('Actual board editor')

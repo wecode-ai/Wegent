@@ -3195,6 +3195,48 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it.each([false, true])(
+    "clears a recovered Issue reference error while preserving member failure=%s",
+    async (memberFailure) => {
+      const { api } = createApi();
+      if (memberFailure)
+        vi.mocked(api.members.list).mockRejectedValueOnce(
+          new Error("member load failed"),
+        );
+      await render(
+        <PlatformHarness
+          api={api}
+          renderPersonalHome={({ createIssue }) => <>{createIssue}</>}
+          renderIssueComposer={(props) => (
+            <div>
+              <output data-testid="reference-error">{props.error}</output>
+              <button
+                data-testid="reference-on"
+                onClick={() => props.onChange("#")}
+              >
+                Reference
+              </button>
+              <button
+                data-testid="reference-off"
+                onClick={() => props.onChange("")}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        />,
+      );
+      const previous = byTestId("reference-error").textContent;
+      expect(Boolean(previous)).toBe(memberFailure);
+      vi.mocked(api.issues.list).mockRejectedValueOnce(new Error("offline"));
+      await click(byTestId("reference-on"));
+      expect(byTestId("reference-error").textContent).not.toBe("");
+      await click(byTestId("reference-off"));
+      await click(byTestId("reference-on"));
+      expect(byTestId("reference-error").textContent).toBe(previous);
+    },
+  );
+
   it("creates a personal Issue and retries Stand-in without creating it again", async () => {
     const { api } = createApi();
     const run = vi

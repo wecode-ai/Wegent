@@ -205,6 +205,7 @@ export function WeworkIssueHomeComposer({
         >
           {renderTaskComposer?.({
             ...props,
+            active: taskMode,
             ref: setTaskInput,
             projectControl,
             onPendingChange: setTaskPending,
@@ -232,6 +233,7 @@ export function WeworkIssueHomeComposer({
                 aria-pressed={project.id === props.projectId}
                 className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-base text-text-primary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
                 onClick={() => {
+                  props.onChange(getActiveInput()?.getValue() ?? props.value)
                   props.onSelectProject(project.id)
                   closePicker()
                 }}

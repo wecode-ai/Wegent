@@ -715,6 +715,7 @@ it('groups actual stand-in executions by project, excludes ordinary tasks, and o
   expect(screen.getByTestId('stand-in-work-preview')).toHaveTextContent('Review')
   await user.click(screen.getByTestId('stand-in-preview-open'))
   expect(onOpenTask).toHaveBeenCalledWith(runtimeItem.address)
+  expect(screen.queryByTestId('stand-in-work-dialog')).not.toBeInTheDocument()
 })
 
 it('preserves the mounted conversation when settings refresh fails', async () => {
