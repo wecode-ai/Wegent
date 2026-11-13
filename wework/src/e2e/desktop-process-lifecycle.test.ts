@@ -331,7 +331,18 @@ describe('desktop process lifecycle', () => {
     'requires a native exit after a macOS teardown signal is denied: exits=%s',
     async exits => {
       const { stopProcessGroup } = await loadProcessLifecycle()
-      const processId = process.pid
+      let processId = process.pid
+      // macOS inspects the real group after EPERM. Keep an owned live group
+      // so this fixture represents a rejected signal rather than an absent group.
+      if (process.platform === 'darwin') {
+        const owned = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          detached: true,
+          stdio: 'ignore',
+        })
+        expect(owned.pid).toBeTypeOf('number')
+        processId = owned.pid!
+        ownedProcessGroups.add(processId)
+      }
       const child = Object.assign(new EventEmitter(), {
         pid: processId,
         exitCode: null as number | null,

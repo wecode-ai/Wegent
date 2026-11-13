@@ -121,7 +121,15 @@
     "edited_file": "Edited {{filename}}",
     "created_file": "Created {{filename}}",
     "deleted_file": "Deleted {{filename}}",
-    "renamed_file": "Renamed {{filename}}"
+    "renamed_file": "Renamed {{filename}}",
+    "overload_retry_in": "Model at capacity. Retrying the same model in {{remaining}}…",
+    "overload_retrying": "Model at capacity. Retrying the same model…",
+    "overload_waiting": "Model at capacity. Waiting to retry the same model automatically.",
+    "quota_waiting": "Usage limit reached. Waiting to continue with the same model automatically.",
+    "quota_wait_unknown": "Usage limit reached. Checking the reset time to continue with the same model.",
+    "cancel_automatic_recovery": "Cancel automatic recovery",
+    "quota_wait_until": "Usage limit reached. Continuing with the same model in {{remaining}}.",
+    "quota_checking": "Checking usage availability to continue with the same model…"
   },
   "assistant_status": {
     "working": "Working",
