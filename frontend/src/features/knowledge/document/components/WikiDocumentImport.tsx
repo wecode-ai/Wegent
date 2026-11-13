@@ -565,10 +565,14 @@ export function WikiDocumentImport({
     return (
       <>
         <div
-          className="flex min-h-48 flex-1 items-center justify-center overflow-y-auto p-6 text-center text-sm text-text-muted"
+          className="min-h-0 flex-1 overflow-y-auto p-6 text-center text-sm text-text-muted"
           data-testid="wiki-import-content"
         >
-          <p role="status" data-testid="wiki-import-need-connection">
+          <p
+            role="status"
+            className="flex min-h-48 items-center justify-center"
+            data-testid="wiki-import-need-connection"
+          >
             {t('wikiSection.need_connection')}
           </p>
         </div>
