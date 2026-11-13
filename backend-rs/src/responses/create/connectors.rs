@@ -216,6 +216,11 @@ fn server(
         "timeout": 180
     });
     entry[if chat { "auth" } else { "headers" }] = headers;
+    if lazy && request.bot[0]["shell_type"] == "ClaudeCode" {
+        // Compact entry points must be ready before Claude's first model turn.
+        // Upstream tool schemas still load only when discovery is called.
+        entry["alwaysLoad"] = json!(true);
+    }
     entry
 }
 

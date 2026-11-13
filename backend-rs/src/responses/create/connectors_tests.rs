@@ -90,6 +90,14 @@ fn cloud_coding_mounts_static_and_compact_lazy_with_preserved_headers() {
         assert_eq!(servers[1]["headers"]["X-Connector-Loading"], "lazy");
         assert_eq!(servers[1]["headers"]["X-Connector-App"], "lazy-app");
         assert_eq!(
+            servers[1].get("alwaysLoad"),
+            if shell == "ClaudeCode" {
+                Some(&json!(true))
+            } else {
+                None
+            }
+        );
+        assert_eq!(
             servers[1]["headers"]["Authorization"],
             "Bearer ${{task_token}}"
         );
