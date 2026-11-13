@@ -4,6 +4,9 @@
 
 use super::*;
 
+#[path = "goal_recovery_tests.rs"]
+mod goal_recovery_tests;
+
 #[tokio::test]
 async fn native_continuation_retains_capacity_after_local_control_finishes() {
     for clear_during_turn in [false, true] {
@@ -241,6 +244,7 @@ fn rpc_results_do_not_repeat_native_terminal_events() {
                 turn_id: "turn-1".into(),
             }),
             Ok(crate::agents::CodexAppServerTurn {
+                quota_recovery: None,
                 thread_id: "thread-1".into(),
                 outcome,
                 response_item_id: None,

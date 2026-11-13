@@ -38,6 +38,7 @@ import {
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
 
 import {
   assistantMessage,
@@ -117,6 +118,9 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
+  CLOUD_HTML_LINK_PROMPT,
   CLOUD_MODEL_CASES,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -574,6 +578,7 @@ class DesktopE2EServer {
     this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
+    this.cloudHtmlLinkToolLessPrewarmHandled = false
     this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -968,6 +973,7 @@ class DesktopE2EServer {
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
+        'cloud_html_link',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
@@ -2666,6 +2672,17 @@ class DesktopE2EServer {
     }
 
     if (
+      this.scenario === 'cloud_html_link' &&
+      !this.cloudHtmlLinkToolLessPrewarmHandled &&
+      !JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT) &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.cloudHtmlLinkToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -3319,6 +3336,30 @@ class DesktopE2EServer {
       this.memoryStage = 'streaming'
       await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
       this.memoryStage = 'complete'
+      return
+    }
+
+    if (this.scenario === 'cloud_html_link') {
+      this.recordScenarioRequest('cloud_html_link', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT),
+        'The real cloud Codex request did not contain the HTML link prompt'
+      )
+      const previewPath = join(this.cloudWorkspacePath, CLOUD_HTML_LINK_FILENAME).replaceAll(
+        '\\',
+        '/'
+      )
+      const missingPath = join(
+        this.cloudWorkspacePath,
+        CLOUD_HTML_LINK_MISSING_FILENAME
+      ).replaceAll('\\', '/')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          '[Cloud HTML preview](<' + previewPath + '>)\n[Missing Cloud HTML](<' + missingPath + '>)'
+        ),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -4177,9 +4218,10 @@ class DesktopE2EServer {
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
-      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
-      const round = Math.ceil(requestNumber / 3)
-      const stage = ((requestNumber - 1) % 3) + 1
+      assert.ok(requestNumber <= 13, `Unexpected MCP elicitation request ${requestNumber}`)
+      const toolRequestNumber = Math.min(requestNumber, 12)
+      const round = Math.ceil(toolRequestNumber / 3)
+      const stage = ((toolRequestNumber - 1) % 3) + 1
       const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
       const requestText = JSON.stringify(body)
       const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
@@ -4214,17 +4256,26 @@ class DesktopE2EServer {
         return
       }
 
+      const outputId = requestNumber === 13 ? `${callId}-wait` : callId
+      const output = readMcpToolOutput(body, outputId)
+      const cell = output.match(/Script running with cell ID (\S+)/)?.[1]
+      if (requestNumber === 12 && cell) {
+        // The native execution can yield before the form's real deadline.
+        const wait = selectTool(body, 'wait', { cell_id: cell, yield_time_ms: 30_000 })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(`${callId}-wait`, wait),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       assert.ok(
-        requestContainsToolOutput(body, callId),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(
+        output.includes(
           timeoutScenario
             ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
             : MCP_ELICITATION_ACCEPTED_MARKER
         ),
-        'The MCP server did not return the expected answer or timeout cancellation to the model'
+        `The MCP tool returned an unexpected result for ${timeoutScenario ?? 'acceptance'}: ${output}`
       )
       this.writeSse(response, [
         responseCreated(responseId),

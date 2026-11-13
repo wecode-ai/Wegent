@@ -15,7 +15,6 @@ export interface MarkdownServices {
   openExternalUrl: (url: string) => void | Promise<unknown>
   openAuthorizationUrl?: (url: string) => void | boolean | Promise<unknown>
   navigateTo?: (path: string) => void
-  openHtmlFile?: (path: string) => boolean
   fetchAttachmentBlob?: (id: number) => Promise<Blob>
   readLocalFile?: (path: string) => Promise<Blob>
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode

@@ -1,7 +1,35 @@
 //! Live UI documents retain their source MCP connection without holding a model turn.
 use super::*;
 
+#[derive(Debug)]
+pub(crate) enum CodexAppToolError {
+    NotDispatched(String),
+    OutcomeUnknown(String),
+}
+
 impl CodexAppServerClient {
+    pub(crate) async fn call_mcp_app_tool(
+        &self,
+        params: Value,
+    ) -> Result<Value, CodexAppToolError> {
+        let method = "mcpServer/tool/call";
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(true, None, method, &params)
+            .await
+            .map_err(CodexAppToolError::NotDispatched)?;
+        // A failed write may already have reached the server. Never replay a tool call.
+        Self::send_request_and_wait(
+            method,
+            params,
+            codex_rpc_timeout_seconds(),
+            request_id,
+            handle,
+            response_rx,
+        )
+        .await
+        .map_err(CodexAppToolError::OutcomeUnknown)
+    }
+
     pub(crate) async fn set_mcp_app_session(
         &self,
         thread_id: &str,

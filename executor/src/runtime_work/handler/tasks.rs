@@ -428,7 +428,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn create_task_after_local_checks(
         &self,
-        payload: Value,
+        mut payload: Value,
         activity: bool,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
@@ -727,6 +727,9 @@ impl RuntimeWorkRpcHandler {
         }
         self.apply_project_workspace_roots(&mut request);
 
+        let initial_user_message =
+            prepare_initial_user_message(&local_task_id, &mut request, &mut payload);
+
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             local_task_id.clone(),
             workspace_path.clone(),
@@ -792,7 +795,7 @@ impl RuntimeWorkRpcHandler {
         ) {
             runtime_handle.insert("origin".to_owned(), origin.clone());
         }
-        if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
+        if let Some(message) = initial_user_message {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         if let Some(presentation) = user_message_presentation(&payload) {
@@ -1161,7 +1164,17 @@ impl RuntimeWorkRpcHandler {
             })
         }) && self.is_active_local_task(&local_task_id)
             && !self.is_queued_local_task(&local_task_id);
-        if was_busy && !queue_if_busy && !completed_native_turn {
+        let replacing_quota_wait = self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .iter()
+            .any(|turn| {
+                turn.local_task_id == local_task_id
+                    && turn.request.extra.contains_key(quota_recovery::MARKER)
+            });
+        if was_busy && !queue_if_busy && !completed_native_turn && !replacing_quota_wait {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1620,6 +1633,7 @@ impl RuntimeWorkRpcHandler {
             .then(|| existing_link.workspace_path.clone())
             .or_else(|| workspace_path(&payload))
             .unwrap_or_default();
+        restore_request_home_identity(&mut request, &existing_link);
         apply_runtime_payload_metadata(&mut request, &payload);
         set_runtime_task_title(&mut request, &existing_link.title);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
@@ -1720,12 +1734,12 @@ impl RuntimeWorkRpcHandler {
             self.record_superseded_runtime_transcript_turn(&local_task_id, &source_turn_id);
         }
 
-        let (direct_thread_id, resume_thread_id) =
-            if paginated_history || uses_ephemeral_codex_thread {
-                (Some(thread_id), None)
-            } else {
-                (None, Some(thread_id))
-            };
+        // Persisted edits restore the inference profile after the control-only revert.
+        let (direct_thread_id, resume_thread_id) = if uses_ephemeral_codex_thread {
+            (Some(thread_id), None)
+        } else {
+            (None, Some(thread_id))
+        };
         self.spawn_turn(SpawnTurnRequest {
             task_kind: None,
             local_task_id: local_task_id.clone(),
@@ -2036,7 +2050,8 @@ impl RuntimeWorkRpcHandler {
             ));
         };
 
-        let request = runtime_model_request(&link, &payload)?;
+        let mut request = runtime_model_request(&link, &payload)?;
+        self.apply_backend_connection(&mut request);
         let client = match self.codex_app_server.for_request(&request) {
             Ok(client) => client,
             Err(error) => return Ok(task_action_failure(&link, error)),
@@ -2061,19 +2076,20 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
         request: ExecutionRequest,
     ) -> Result<Value, AppIpcError> {
-        let thread_id = match self
-            .resume_codex_thread_with_client(client, link, thread_id)
+        self.register_thread_event_route(
+            thread_id,
+            link.local_task_id.clone(),
+            request.clone(),
+            true,
+        );
+        self.ensure_notification_router().await;
+        let thread_path = runtime_thread_path_from_link(link);
+        // Retain the registered inference route until native compaction settles.
+        let (thread_id, _model_route) = match client
+            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
             .await
         {
-            Ok(resumed_thread_id) => resumed_thread_id,
-            Err(error) => return Ok(task_action_failure(link, error)),
-        };
-        // The compaction turn answers through the local model route, which only
-        // exists while a turn that registered it is alive. Register it for the
-        // duration of this action so compacting an idle thread still reaches a
-        // model instead of failing inside the Codex app-server.
-        let _model_route = match bind_codex_thread_model_route(&request, &thread_id) {
-            Ok(route) => route,
+            Ok(context) => context,
             Err(error) => return Ok(task_action_failure(link, error)),
         };
         self.register_thread_event_route(&thread_id, link.local_task_id.clone(), request, true);
@@ -2157,6 +2173,13 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
     ) -> Result<String, String> {
         let mut request = runtime_event_request_from_link(link);
+        // Execution identities are intentionally omitted from the persisted profile.
+        // Rebind the authoritative owner before rebuilding managed MCP services.
+        crate::runtime_work::api_context::bind_task_identity(
+            &mut request,
+            &self.device_id,
+            &link.local_task_id,
+        );
         self.apply_backend_connection(&mut request);
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
@@ -2317,7 +2340,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_worktree_turn(&local_task_id) {
+        if self.cancel_preparing_turn(&local_task_id) {
+            self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -2328,9 +2352,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if had_active_local_execution {
-            self.request_active_turn_stop(&local_task_id);
-        }
+        let had_active_local_execution =
+            self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
         if is_codex && !had_active_local_execution {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
@@ -2438,7 +2461,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
-        self.reserve_worktree_preparation(&queued_turn);
+        self.reserve_turn_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
@@ -2448,6 +2471,10 @@ impl RuntimeWorkRpcHandler {
             .request
             .extra
             .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+            || queued_turn
+                .request
+                .extra
+                .contains_key(quota_recovery::MARKER)
         {
             self.start_queued_turn(queued_turn);
         } else if queued_turn

@@ -201,6 +201,7 @@ export interface RuntimeTaskModelSelectionControls {
   taskSelection: ModelSelectionConfig | null
   selectedModel: UnifiedModel | null
   activeModel: UnifiedModel | null
+  supportsModelProviderSwitch?: boolean
   selectedModelOptions: ModelOptions
 }
 
@@ -221,6 +222,7 @@ export interface WorkbenchContextValue {
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
     activeModel?: UnifiedModel | null
+    supportsModelProviderSwitch?: boolean
     selectedModelOptions: ModelOptions
     modelSelectionDiagnostics?: ModelSelectionDiagnostics
     isModelCatalogReady: boolean
@@ -245,14 +247,6 @@ export interface WorkbenchContextValue {
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
     setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
-    continueInNewConversation?: (
-      model: UnifiedModel,
-      options?: ModelOptions,
-      source?: {
-        address?: RuntimeTaskAddress
-        draft?: string
-      }
-    ) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions

@@ -41,7 +41,7 @@ impl Fixture {
             environment.push(EnvGuard::set(key, path.to_str().unwrap()));
         }
         let binary = directory.path().join("codex-fake");
-        fs::write(&binary, r#"#!/bin/sh
+        fs::write(&binary, wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 printf '%s\n' "$$" > "$CODEX_HOME/child.pid"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$CODEX_HOME/requests.jsonl"
@@ -58,7 +58,7 @@ while IFS= read -r line; do
       esac ;;
   esac
 done
-"#).unwrap();
+"#)).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         let client = CodexAppServerClient::new(binary.to_string_lossy().to_string());
         Self {

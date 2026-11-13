@@ -48,7 +48,7 @@ on:
           - app-update-retry
         default: all
       verification_source_run_id:
-        description: "Immutable source producer for a non-publishing refresh or retry diagnostic"
+        description: "Immutable source producer for a non-publishing full bridge round trip, refresh, or retry diagnostic"
         type: string
         required: false
         default: ""
@@ -57,6 +57,11 @@ on:
         type: string
         required: false
         default: ""
+      verification_writer_wait_seconds:
+        description: "Native writer observation before activation, integer 0..600 seconds; nonzero requires a target with stopped preparation"
+        type: number
+        required: false
+        default: 0
 
 concurrency:
   group: ${{ ((inputs.build_only && !inputs.publish_release) || inputs.verification_run_id != '' || (inputs.verification_source_run_id != '' && !inputs.publish_release)) && format('{0}-verification-{1}-{2}', github.workflow, github.ref, inputs.verification_run_id || inputs.verification_source_run_id || github.run_id) || github.workflow }}
@@ -136,6 +141,11 @@ jobs:
         if: inputs.build_only && inputs.publish_release
         run: |
           echo 'Build-only diagnostics cannot publish a release' >&2
+          exit 1
+      - name: Reject publishing an unpublished source pair
+        if: inputs.verification_source_run_id != '' && inputs.publish_release
+        run: |
+          echo 'Immutable source-pair diagnostics cannot publish a release' >&2
           exit 1
       - name: Create release app token
         id: release-app-token
@@ -337,7 +347,7 @@ jobs:
       - name: Verify native launcher before packaging
         shell: bash
         run: |
-          node --test wework/scripts/build-launcher.test.mjs
+          node --test wework/scripts/build-launcher.test.mjs wework/scripts/windows-native-runtime.test.mjs
           rustc --edition 2021 --test wework/launcher/src/main.rs -o "$RUNNER_TEMP/wework-launcher-tests.exe"
           "$RUNNER_TEMP/wework-launcher-tests.exe"
 
@@ -688,6 +698,7 @@ jobs:
           WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
           WEWORK_UPGRADE_PUBLISHED_TARGET_TAG: ${{ needs.prepare-upgrade-inputs.outputs.published_release_tag }}
           WEWORK_UPGRADE_VERIFY_CHANNEL: ${{ matrix.channel }}
+          WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS: ${{ inputs.verification_writer_wait_seconds || 0 }}
           WEWORK_UPGRADE_SOURCE_ASSETS: ${{ needs.prepare-upgrade-inputs.outputs.source_run_id != '' && format('{0}/upgrade-source/wework-release-assets', runner.temp) || '' }}
           WEWORK_UPGRADE_SOURCE_VERSION: ${{ needs.prepare-upgrade-inputs.outputs.source_version }}
           WEWORK_UPGRADE_PLAN_DIRECTORY: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && format('{0}/upgrade-plan', runner.temp) || '' }}

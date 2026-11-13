@@ -77,6 +77,7 @@ interface IssueDetailProps {
   defaultAssistant?: CollaborationDefaultAssistant;
   messages: Messages;
   translate?: CollaborationTranslate;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
   onClose(): void;
   /** Present only when the host enables this Issue lifecycle action. */
   onDelete?(): void;
@@ -98,6 +99,7 @@ interface IssueCreateProps {
   translate?: CollaborationTranslate;
   environmentNotice?: ReactNode;
   environmentReadiness?: ProjectExecutionEnvironmentReadinessKind;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
   onClose(): void;
   onCreated(issue: CollaborationIssue): void | Promise<void>;
   onError(): void;
@@ -130,6 +132,7 @@ export function IssueCreate({
   translate,
   environmentNotice,
   environmentReadiness,
+  normalizePastedFiles,
   onClose,
   onCreated,
   onError,
@@ -169,6 +172,7 @@ export function IssueCreate({
         translate={editorTranslate}
         extensions={{
           ...browserDueDateExtensions,
+          ...(normalizePastedFiles ? { normalizePastedFiles } : {}),
           ...(environmentNotice
             ? { renderCreateOptions: () => environmentNotice }
             : {}),
@@ -206,6 +210,7 @@ function BrowserIssueDetail({
   defaultAssistant,
   messages,
   translate,
+  normalizePastedFiles,
   onClose,
   onDelete,
   onChange,
@@ -308,6 +313,7 @@ function BrowserIssueDetail({
             translate={editorTranslate}
             extensions={{
               ...browserDueDateExtensions,
+              ...(normalizePastedFiles ? { normalizePastedFiles } : {}),
               onSaveError: (error) => {
                 if (isIssueVersionConflict(error)) void onConflict();
                 else onError();

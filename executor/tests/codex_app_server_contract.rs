@@ -46,6 +46,10 @@ macro_rules! shared_runtime_tests {
 #[path = "codex_app_server_contract/skill_membership.rs"]
 mod skill_membership;
 
+#[cfg(unix)]
+#[path = "codex_app_server_contract/quota_recovery.rs"]
+mod quota_recovery;
+
 shared_runtime_tests! {
 async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let _lock = env_lock().await;
@@ -326,7 +330,7 @@ async fn codex_app_server_engine_rejects_a_stale_thread_provider_before_turn_sta
         outcome,
         ExecutionOutcome::Failed {
             message: "codex app-server thread/start applied unexpected model provider: \
-                      expected=openai, actual=stale-provider"
+                      expected=~, actual=stale-provider"
                 .to_owned()
         }
     );
@@ -378,7 +382,7 @@ async fn codex_shared_app_server_rejects_a_cross_provider_resume() {
     assert_eq!(
         error,
         "codex app-server thread/resume applied unexpected model provider: \
-         expected=wework-router, actual=openai"
+         expected=~, actual=openai"
     );
     let messages = read_json_lines(&log_path);
     assert_eq!(
@@ -717,24 +721,22 @@ async fn codex_app_server_engine_routes_provider_overrides_through_local_proxy()
     let args = messages[0]["args"].as_array().unwrap();
     assert_config_arg(args, "forced_login_method=api");
     assert_config_arg(args, "model=gpt-5.5");
-    assert_config_arg(args, "model_provider=wework-router");
-    assert_config_arg(
-        args,
-        "model_providers.wework-router.name=\"Wework model router\"",
-    );
-    assert_config_arg(args, "model_providers.wework-router.wire_api=\"responses\"");
-    assert!(args.iter().any(|value| {
-        value.as_str().is_some_and(|value| {
-            value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-                && value.ends_with("/v1/codex-router\"")
-        })
-    }));
+    assert_config_arg(args, "model_provider=~");
+    let provider = messages[3]["params"]["config"]["model_providers.~"]
+        .as_object()
+        .expect("thread must replace the complete provider profile");
+    assert_eq!(provider["name"], "Wework model router");
+    assert_eq!(provider["wire_api"], "responses");
+    assert_eq!(provider["requires_openai_auth"], false);
+    let base_url = provider["base_url"].as_str().unwrap();
+    assert!(base_url.starts_with("http://127.0.0.1:"));
+    assert!(base_url.ends_with("/v1/codex-router"));
     assert!(!args.iter().any(|value| {
         value
             .as_str()
             .is_some_and(|value| value.contains("sk-from-executor-env"))
     }));
-    assert_eq!(messages[3]["params"]["modelProvider"], "wework-router");
+    assert_eq!(messages[3]["params"]["modelProvider"], "~");
     assert_eq!(
         messages[3]["params"]["config"]["model_reasoning_effort"],
         "ultra"
@@ -807,7 +809,7 @@ async fn codex_app_server_engine_uses_user_runtime_proxy_without_provider_overri
         messages[0]["env"]["no_proxy"],
         "localhost,.internal,127.0.0.1,::1,host.docker.internal"
     );
-    assert_eq!(messages[3]["params"]["modelProvider"], "openai");
+    assert_eq!(messages[3]["params"]["modelProvider"], "~");
 }
 
 async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
@@ -1568,7 +1570,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1610,7 +1616,11 @@ done
         provider,
         provider
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1657,7 +1667,7 @@ while IFS= read -r line; do
       if [ "$process_count" -eq 1 ]; then
         provider='openai'
       else
-        provider='wework-router'
+        provider='~'
       fi
       printf '{{"id":%s,"result":{{"modelProvider":"%s","thread":{{"id":"thread-1","modelProvider":"%s"}}}}}}\n' "$request_id" "$provider" "$provider"
       ;;
@@ -1675,7 +1685,11 @@ done
         log_path.display(),
         process_count_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1747,14 +1761,14 @@ while IFS= read -r line; do
           printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-1","goal":{{"status":"complete"}}}}}}'
           printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"goal-turn","status":"completed"}}}}}}'
         fi
-        printf '{{"id":%s,"result":{{"modelProvider":"wework-router","thread":{{"id":"thread-1","modelProvider":"wework-router"}}}}}}\n' "$request_id"
+        printf '{{"id":%s,"result":{{"modelProvider":"~","thread":{{"id":"thread-1","modelProvider":"~"}}}}}}\n' "$request_id"
       fi
       ;;
     *'"method":"thread/start"'*)
       if [ "$process_count" -eq 1 ] && [ "$FAILING_METHOD" = "thread/start" ]; then
         printf '{{"id":%s,"error":{{"code":-32603,"message":"failed to load configuration: timed out refreshing cloud config bundle"}}}}\n' "$request_id"
       else
-        printf '{{"id":%s,"result":{{"modelProvider":"wework-router","thread":{{"id":"thread-1","modelProvider":"wework-router"}}}}}}\n' "$request_id"
+        printf '{{"id":%s,"result":{{"modelProvider":"~","thread":{{"id":"thread-1","modelProvider":"~"}}}}}}\n' "$request_id"
       fi
       ;;
     *'"method":"config/read"'*)
@@ -1800,7 +1814,11 @@ done
         process_count_path.display(),
         failing_method
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1848,7 +1866,11 @@ done
 "#,
         log_path.display()
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1881,7 +1903,11 @@ while IFS= read -r line; do
 done
 "#
     .replace("__REQUEST_MARKER__", &shell_quote(request_marker));
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1958,7 +1984,11 @@ done
         log_path.display(),
         env_log_commands
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1976,11 +2006,13 @@ fn write_fake_codex_hang() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(
+            r#"#!/bin/sh
 while IFS= read -r _line; do
   sleep 30
 done
 "#,
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2000,7 +2032,7 @@ fn write_fake_codex_slow_turn() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
@@ -2021,7 +2053,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2074,7 +2106,11 @@ done
 "#
     .replace("__MARKER_PATH__", &marker_path.display().to_string())
     .replace("__LOG_PATH__", &log_path.display().to_string());
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -2092,7 +2128,7 @@ fn write_fake_codex_cross_thread_burst() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 thread_count=0
 turn_count=0
 while IFS= read -r line; do
@@ -2126,7 +2162,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2173,7 +2209,7 @@ fn write_fake_codex_compaction_turn_correction() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   method=${line#*'"method":"'}
   method=${method%%'"'*}
@@ -2205,7 +2241,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2225,7 +2261,7 @@ fn write_fake_codex_nested_turn_error() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
@@ -2243,7 +2279,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2263,7 +2299,7 @@ fn write_fake_codex_retryable_turn_error() -> PathBuf {
     ));
     fs::write(
         &path,
-        r#"#!/bin/sh
+        wegent_executor_test_support::with_codex_bundled_catalog(r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*)
@@ -2283,7 +2319,7 @@ while IFS= read -r line; do
       ;;
   esac
 done
-"#,
+"#),
     )
     .unwrap();
     #[cfg(unix)]

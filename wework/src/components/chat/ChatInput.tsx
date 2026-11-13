@@ -2,6 +2,8 @@ import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { QuotaWaitStatus } from './QuotaWaitStatus'
 import {
   forwardRef,
   useContext,
@@ -73,6 +75,7 @@ export interface ProjectChatControls {
   activeModel?: UnifiedModel | null
   activeModelSelection?: ModelSelectionConfig | null
   activeModelProvider?: string | null
+  supportsModelProviderSwitch?: boolean
   modelSwitchMode?: 'session'
   requiresNewSession?: boolean
   onSessionStartConfirmed?(model: UnifiedModel): void
@@ -505,7 +508,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         controls.activeModel,
         model,
         controls.activeModelSelection,
-        controls.activeModelProvider
+        controls.activeModelProvider,
+        controls.supportsModelProviderSwitch
       )
     if (
       (controls.modelSwitchMode === 'session' && continueInNewConversation) ||
@@ -618,6 +622,15 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     isStreaming,
   }
   const errorBanner = <ComposerErrorBanner error={error} />
+  const quotaWaitStatus = (
+    <QuotaWaitStatus
+      onCancel={onPause}
+      wait={
+        findRuntimeTask(projectWork?.runtimeWork, projectWork?.currentRuntimeTask)?.runtimeHandle
+          ?.quotaWait
+      }
+    />
+  )
   const queuePanel = (
     <ConversationQueuePanel
       queuedMessages={queuedMessages}
@@ -666,6 +679,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         <div className="w-full">
           <TaskPlanProgress plan={taskPlan} />
           {queuePanel}
+          {quotaWaitStatus}
           {errorBanner}
           <PluginTrialTemplateStrip
             translate={(key, fallback, options) => t(key, fallback ?? key, options)}
@@ -807,6 +821,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
       <div className="w-full">
         <TaskPlanProgress plan={taskPlan} />
         {queuePanel}
+        {quotaWaitStatus}
         {errorBanner}
         <PluginTrialTemplateStrip
           translate={(key, fallback, options) => t(key, fallback ?? key, options)}

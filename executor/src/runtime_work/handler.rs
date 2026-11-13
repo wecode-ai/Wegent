@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        bind_codex_thread_model_route, codex_notification_requires_user_input,
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
+        codex_notification_requires_user_input, codex_runtime_approval_policy,
+        select_wework_codex_user_instructions, AgentCommandPlanner, AgentProcessEngine,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexIdleMutationError, CodexNotification,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
         CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
         CODEX_WORKSPACE_PERMISSION_PROFILE,
@@ -164,6 +164,7 @@ mod project_preparation;
 mod project_router;
 mod queries;
 mod queries_projection;
+mod quota_recovery;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
@@ -259,12 +260,12 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
-        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
-        normalize_workspace_path, now_ms, prompt_text, raw_string_field, replace_runtime_task_id,
-        restore_cloud_project_id, restore_origin, runtime_task_id, runtime_task_title,
-        set_runtime_task_title, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        infer_workspace_kind, integer_field, is_codex_context_compaction_item_type,
+        is_codex_runtime, item_id, item_type, model_provider_routing, normalize_device_id,
+        normalize_runtime_goal_timestamps, normalize_workspace_path, now_ms, prompt_text,
+        raw_string_field, replace_runtime_task_id, restore_cloud_project_id, restore_origin,
+        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -443,6 +444,7 @@ fn current_codex_model_provider(
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
+                && provider != crate::server::codex_model_catalog::LEGACY_PROVIDER_ID
                 && provider != "wework-catalog"
         });
     let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
@@ -555,7 +557,9 @@ pub struct RuntimeWorkRpcHandler {
     command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
-    preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
+    quota_wake: Arc<tokio::sync::Notify>,
+    quota_waker_started: Arc<AtomicBool>,
+    preparing_turns: Arc<Mutex<HashMap<String, PreparingTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
@@ -622,7 +626,7 @@ struct ActiveLocalExecution {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct PreparingWorktreeTurn {
+struct PreparingTurn {
     cancellation_requested: bool,
 }
 
@@ -803,6 +807,7 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 turns::RuntimeTurnQueueState::default()
             });
+        quota_recovery::restore_dispatches(&mut persisted_turns);
         for command in persisted_turns.commands.values_mut() {
             if command.is_owner_abandoned()
                 || matches!(
@@ -934,7 +939,9 @@ impl RuntimeWorkRpcHandler {
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
-            preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
+            quota_wake: Arc::new(tokio::sync::Notify::new()),
+            quota_waker_started: Arc::new(AtomicBool::new(false)),
+            preparing_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_text_generations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
@@ -991,6 +998,13 @@ impl RuntimeWorkRpcHandler {
                 },
             );
         }
+        let queued = handler
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .clone();
+        handler.project_quota_waits(&queued);
         handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
         crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));

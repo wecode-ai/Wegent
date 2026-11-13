@@ -17,6 +17,7 @@ import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
+import { windowsStaticCrtEnvironment } from '../../../scripts/lib/windows-native-runtime.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -436,7 +437,10 @@ async function buildExecutor() {
     : join(repoDir, 'executor', 'target', 'desktop-e2e')
   await runChecked('cargo', ['build', '--locked', '--bin', 'wegent-executor'], {
     cwd: join(repoDir, 'executor'),
-    env: { ...process.env, CARGO_TARGET_DIR: targetDir },
+    env: windowsStaticCrtEnvironment(
+      { ...process.env, CARGO_TARGET_DIR: targetDir },
+      process.platform === 'win32' ? hostCodexTarget() : undefined
+    ),
   })
   const binaryName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
   const binaryPath = join(targetDir, 'debug', binaryName)
@@ -564,6 +568,19 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
       join(appBundlePath, 'Contents', 'Info.plist'),
     ])
     await runChecked('codesign', ['--force', '--deep', '--sign', '-', appBundlePath])
+  } else {
+    // Complete native first-launch assessment before the inspector startup budget.
+    const startedAt = Date.now()
+    await runChecked('/usr/sbin/spctl', [
+      '--assess',
+      '--type',
+      'execute',
+      '--verbose=4',
+      appBundlePath,
+    ])
+    console.log(
+      `[desktop-e2e] Signed application security assessment completed: elapsedMs=${Date.now() - startedAt}`
+    )
   }
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {

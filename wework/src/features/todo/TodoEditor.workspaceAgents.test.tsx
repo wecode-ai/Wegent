@@ -1,6 +1,8 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import * as desktopHost from '@/api/dsh/desktopHost'
 import '@/i18n'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import * as runtimeEnvironment from '@/lib/runtime-environment'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { act, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -352,10 +354,57 @@ describe('workspace Agent selection from the Issue assignee picker', () => {
     await user.upload(screen.getByTestId('cloud-todo-attachment-input'), image)
 
     expect(await screen.findByText('image.png')).toBeInTheDocument()
-    expect(
-      await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
-    ).toHaveAttribute('src', 'blob:staged-issue-image-preview')
+    const thumbnail = await screen.findByTestId('issue-detail-attachment-thumbnail-pending-0')
+    expect(thumbnail).toHaveAttribute('src', 'blob:staged-issue-image-preview')
     expect(createObjectUrl).toHaveBeenCalledWith(image)
+    fireEvent.error(thumbnail)
+    expect(thumbnail).not.toBeInTheDocument()
+    const row = screen.getByText('image.png').closest('.shared-issue-detail-attachment-row')
+    expect(row?.querySelector('.issue-detail-attachment-fallback')).not.toBeNull()
+  })
+
+  it('converts a TIFF from clipboard history before previewing a staged image', async () => {
+    const screenshot = new File(['tiff'], '2026-11-12_14-07-58.tiff', {
+      type: 'image/tiff',
+    })
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:normalized-issue-image-preview')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const electronRuntime = vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
+    const convertClipboardImage = vi
+      .spyOn(desktopHost, 'invokeDesktopHost')
+      .mockResolvedValue('data:image/png;base64,iVBORw0KGgo=')
+
+    try {
+      setup('backend', 'create')
+      fireEvent.paste(screen.getByTestId('cloud-todo-detail-description'), {
+        clipboardData: { files: [screenshot] },
+      })
+
+      expect(await screen.findByText('2026-11-12_14-07-58.png')).toBeInTheDocument()
+      const normalized = await waitFor(() => {
+        const file = createObjectUrl.mock.calls
+          .map(([candidate]) => candidate as File)
+          .find(candidate => candidate.name === '2026-11-12_14-07-58.png')
+        expect(file).toBeDefined()
+        return file!
+      })
+      expect(normalized).toMatchObject({
+        name: '2026-11-12_14-07-58.png',
+        type: 'image/png',
+      })
+      expect(convertClipboardImage).toHaveBeenCalledWith('clipboard.convertImageToPng', {
+        dataBase64: 'dGlmZg==',
+        fileName: '2026-11-12_14-07-58.tiff',
+        mimeType: 'image/tiff',
+      })
+    } finally {
+      createObjectUrl.mockRestore()
+      revokeObjectUrl.mockRestore()
+      electronRuntime.mockRestore()
+      convertClipboardImage.mockRestore()
+    }
   })
 
   it('keeps a staged document identity after removing an earlier image', async () => {

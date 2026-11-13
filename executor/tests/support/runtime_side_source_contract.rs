@@ -276,7 +276,10 @@ done
         json!(source_path),
         source_path_json = json!(source_path)
     );
-    write_executable(&path, &content);
+    write_executable(
+        &path,
+        &wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    );
     path
 }
 

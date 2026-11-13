@@ -26,6 +26,9 @@ permissions:
   contents: read
   packages: read
 
+env:
+  WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: ${{ vars.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD || 'false' }}
+
 defaults:
   run:
     shell: bash
@@ -1290,12 +1293,29 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design
+          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design,clipboard-history-image
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$segments"
+
+      - name: Upload macOS Inspector failure evidence before cleanup
+        if: always() && failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-macos-inspector-failure-evidence
+          path: |
+            wework/test-results/desktop-e2e/*/failure.txt
+            wework/test-results/desktop-e2e/*/scenario-state.json
+            wework/test-results/desktop-e2e/*/model-requests.json
+            wework/test-results/desktop-e2e/*/*.log
+            wework/test-results/desktop-e2e/*/*.png
+            wework/test-results/desktop-e2e/*/*.png.conversation-diagnostics.json
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 6
 
       - name: Describe verified native macOS runtimes
         env:
@@ -1367,6 +1387,7 @@ jobs:
 
       - name: Prune transient Wework desktop E2E caches
         if: always()
+        timeout-minutes: 2
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop macOS diagnostics

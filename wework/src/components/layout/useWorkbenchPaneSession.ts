@@ -530,6 +530,7 @@ export function useWorkbenchPaneSession({
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
   const goalExecutionStatus = taskLifecycle?.task?.goalExecutionStatus ?? null
+  const quotaWaitPending = Boolean(taskLifecycle?.task?.runtimeHandle?.quotaWait)
   const currentRuntime =
     currentRuntimeTask?.runtime ??
     findRuntimeTask(workbenchState.runtimeWork, currentRuntimeTask)?.runtime ??
@@ -2763,16 +2764,23 @@ export function useWorkbenchPaneSession({
 
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return
+    const goalPauseRequired =
+      goal?.status === 'active' ||
+      taskGoalStatus === 'active' ||
+      (quotaWaitPending &&
+        [goal?.status, taskGoalStatus].some(
+          status => status === 'usageLimited' || status === 'blocked'
+        ))
     logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-requested', {
       source: 'composer',
-      goalPauseRequired: goal?.status === 'active' || taskGoalStatus === 'active',
+      goalPauseRequired,
     })
     let accepted: boolean | null = null
     let queuePauseRequested = false
     let restoreQueue: (() => void) | undefined
     let abortReason: 'goal-pause-rejected' | null = null
     try {
-      if (goal?.status === 'active' || taskGoalStatus === 'active') {
+      if (goalPauseRequired) {
         const paused = await updateCurrentGoalStatus('paused')
         if (!paused) {
           abortReason = 'goal-pause-rejected'
@@ -2801,6 +2809,7 @@ export function useWorkbenchPaneSession({
     currentRuntimeTask,
     goal?.status,
     queueController,
+    quotaWaitPending,
     taskGoalStatus,
     updateCurrentGoalStatus,
   ])

@@ -46,9 +46,9 @@ Environment overrides:
   CLOUD_DEVICE_HOME       Data/log dir (default: $HOME/.wegent-executor-cloud-device)
   CLOUD_DEVICE_EXECUTOR_BIN
                           Executor launcher override (default: dev-reload binary)
-  CARGO_TARGET_DIR        Explicit Cargo target directory
+  CARGO_TARGET_DIR        Cargo cache location; component/worktree subdirectories are added
   WEGENT_DISABLE_SHARED_CARGO_TARGET
-                          Set to 1 to use executor/target
+                          Set to 1 to use the current worktree's target/executor-dev
   WEGENT_DISABLE_SCCACHE  Set to 1 to disable automatic sccache detection
 EOF
 }

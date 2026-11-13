@@ -16,6 +16,11 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 .collect();
             let mut handler = RuntimeWorkRpcHandler::new("device", "/bin/false");
             install_native_history(&mut handler, root.path(), vec![], None);
+            handler
+                .codex_app_server
+                .ensure_started()
+                .await
+                .expect("The native fixture must finish its protocol handshake before the metadata-read deadline");
             let path = root.path().join("source.jsonl");
             fs::write(&path, metadata("source")).unwrap();
             fs::write(
@@ -30,14 +35,18 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 workspace_path: root.path().to_string_lossy().into_owned(),
             };
             let ready = tokio::time::timeout(
-                Duration::from_secs(5),
+                // Match the production side-source wait; Windows app-server startup can
+                // exceed five seconds on a loaded runner.
+                Duration::from_secs(30),
                 handler.wait_for_side_source_rollout(&mut source),
             )
             .await;
             handler.codex_app_server.restart().await;
-            ready
-                .expect("a persisted source must not depend on catalog visibility")
-                .unwrap();
+            let calls = fs::read_to_string(root.path().join("requests.jsonl"))
+                .unwrap_or_else(|error| format!("Cannot read native fixture requests: {error}"));
+            ready.unwrap_or_else(|error| {
+                panic!("A persisted source must not depend on catalog visibility: {error}; native fixture requests: {calls}")
+            }).unwrap();
             assert_eq!(source.thread_path.as_deref(), path.to_str());
             let calls = fs::read_to_string(root.path().join("requests.jsonl")).unwrap();
             let calls: Vec<Value> = calls

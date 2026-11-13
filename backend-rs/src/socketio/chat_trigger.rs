@@ -60,6 +60,9 @@ pub(crate) struct ChatTurn {
     /// selects the device WebSocket dispatch whenever it is present.
     pub device_id: Option<String>,
     pub task_json: Value,
+    /// Repository written with a newly created Git task. The trigger runs only
+    /// after that transaction commits, when the replica can still lag.
+    pub created_git_repository: Option<Value>,
     pub executor_name: String,
     pub executor_namespace: String,
     /// The inserted assistant subtask's `created_at` captured inside the
@@ -447,6 +450,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
         &turn.additional_skills,
         turn.options.generation.as_ref(),
         model_options,
+        turn.created_git_repository.as_ref(),
     )
     .await?;
     request.enable_clarification = turn.options.enable_clarification;
@@ -662,6 +666,7 @@ mod tests {
             client_origin: "frontend".into(),
             device_id: None,
             task_json: json!({}),
+            created_git_repository: None,
             executor_name: String::new(),
             executor_namespace: String::new(),
             assistant_created_at: None,

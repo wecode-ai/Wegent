@@ -17,7 +17,7 @@ use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
     io::AsyncWriteExt,
-    process::{Child, ChildStdin, Command},
+    process::{ChildStdin, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::{timeout, timeout_at, Instant},
 };
@@ -132,17 +132,25 @@ mod diagnostics;
 #[path = "codex/home.rs"]
 mod home;
 mod memory_review;
+mod native_provider;
+mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
+#[path = "codex/writer_diagnostics.rs"]
+mod writer_diagnostics;
 use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/child.rs"]
 mod child;
-#[path = "codex/overload_recovery.rs"]
-mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "codex/process_exit.rs"]
+mod process_exit;
 mod startup;
+#[path = "codex/turn_recovery.rs"]
+mod turn_recovery;
 use child::CodexAppServerChild;
+pub(crate) use turn_recovery::same_goal_configuration;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 mod thread_resume;
@@ -157,7 +165,8 @@ use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
-    executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
+    executor_home, prepare_provider_migration, replace_config,
+    select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
@@ -187,6 +196,8 @@ pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
+    pub recover_usage_limits: bool,
+    pub quota_resume: Option<CodexQuotaRecovery>,
     pub direct_thread_id: Option<String>,
     pub fork_thread_id: Option<String>,
     pub fork_thread_path: Option<String>,
@@ -282,8 +293,17 @@ impl CodexResponseValueOrigin {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexQuotaRecovery {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub goal: Option<Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexAppServerTurn {
+    pub quota_recovery: Option<CodexQuotaRecovery>,
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
     pub response_item_id: Option<String>,
@@ -300,6 +320,7 @@ mod interaction;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
+pub(crate) use mcp_apps::CodexAppToolError;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
@@ -307,10 +328,14 @@ mod connection_mcp;
 #[path = "codex/mcp_config.rs"]
 mod mcp_config;
 
+mod mcp_recovery;
 #[path = "codex/mcp_reload.rs"]
 mod mcp_reload;
 #[cfg(test)]
 use mcp_reload::config_reload_resume_thread_id;
+
+#[path = "codex/provider_routing.rs"]
+mod provider_routing;
 
 pub use interaction::CodexRequestUserInputReceiver;
 use interaction::{interaction_value_key, InteractionAnswerRouter};
@@ -1630,6 +1655,7 @@ struct CodexNotificationHub {
     runtime: RuntimeNotificationSubscribers,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
+    mcp_recovery: Arc<mcp_recovery::McpRecovery>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
@@ -1654,6 +1680,7 @@ impl CodexNotificationHub {
             runtime,
             threads: Arc::new(StdMutex::new(HashMap::new())),
             native_activity: Arc::new(StdMutex::new(CodexNativeActivity::default())),
+            mcp_recovery: Arc::new(mcp_recovery::McpRecovery::default()),
             thread_activity_changed,
         }
     }
@@ -1688,6 +1715,7 @@ impl CodexNotificationHub {
     }
 
     async fn send(&self, message: Value) {
+        self.mcp_recovery.observe(&message);
         self.update_native_activity(|activity| activity.observe(&message));
         let message =
             CodexNotification::from(message).with_process_generation(self.process_generation);
@@ -1831,8 +1859,18 @@ async fn start_persistent_codex_app_server(
     auth_mode: CodexAuthMode,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 ) -> Result<(CodexAppServerProcess, u64), String> {
-    let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
-    let mut child = spawn_codex_app_server(binary, &launch_config, Some(auth_mode))?;
+    let mut launch_config = persistent_codex_app_server_launch_config(request_launch_config);
+    let (home, auth_lease) = acquire_codex_app_server_home(&launch_config, Some(auth_mode))?;
+    let catalog =
+        codex_model_catalog::prepare_process_catalog(&resolve_codex_binary(binary), &home).await?;
+    if let Some(catalog) = &catalog {
+        launch_config.config_overrides.push(format!(
+            "model_catalog_json={}",
+            toml_json_value(&json!(catalog.path()))
+        ));
+    }
+    let mut child = spawn_codex_app_server_with_home(binary, &launch_config, &home, auth_lease)?;
+    child.hold_catalog(catalog);
     let process_id = child.id().map(|id| id.to_string()).unwrap_or_default();
     log_executor_event(
         "codex shared app-server process starting",
@@ -1913,9 +1951,11 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
+    // Account RPCs retain native auth while model discovery uses the local
+    // merged catalog. Threads replace this whole table with their own profile.
     launch_config
         .config_overrides
-        .extend(codex_router_provider_overrides());
+        .extend(native_provider::process_overrides());
     launch_config
         .config_overrides
         .push("features.goals=true".to_owned());
@@ -1937,24 +1977,14 @@ fn codex_tool_orchestration_overrides() -> Vec<String> {
 }
 
 fn codex_router_provider_overrides() -> Vec<String> {
+    let (auth_command, auth_args) = codex_router_auth_command();
+    native_provider::api_overrides(codex_router_base_url(), auth_command, auth_args)
+}
+
+fn codex_router_base_url() -> String {
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    let provider = codex_model_catalog::PROVIDER_ID;
-    let (auth_command, auth_args) = codex_router_auth_command();
-    vec![
-        format!("model_provider={provider}"),
-        format!("model_providers.{provider}.name=\"Wework model router\""),
-        format!("model_providers.{provider}.base_url=\"{local_base_url}/v1/codex-router\""),
-        format!("model_providers.{provider}.wire_api=\"responses\""),
-        format!(
-            "model_providers.{provider}.auth.command={}",
-            toml_value(auth_command)
-        ),
-        format!(
-            "model_providers.{provider}.auth.args={}",
-            serde_json::to_string(&auth_args).expect("router auth args must serialize")
-        ),
-    ]
+    format!("{local_base_url}/v1/codex-router")
 }
 
 #[cfg(unix)]
@@ -2050,7 +2080,7 @@ async fn read_persistent_codex_app_server_stdout(
             }
         }
 
-        log_codex_mcp_startup_status(&message);
+        log_codex_mcp_startup_status(&message, notifications.process_generation);
 
         notifications
             .send(external_work::project_review_notification(message))
@@ -2058,7 +2088,7 @@ async fn read_persistent_codex_app_server_stdout(
     }
 }
 
-fn log_codex_mcp_startup_status(message: &Value) {
+fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
     if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
         return;
     }
@@ -2066,6 +2096,7 @@ fn log_codex_mcp_startup_status(message: &Value) {
     log_executor_event(
         "codex MCP startup status",
         &[
+            ("process_generation", process_generation.to_string()),
             (
                 "thread_id",
                 params
@@ -2103,6 +2134,17 @@ fn log_codex_mcp_startup_status(message: &Value) {
                     .get("failureReason")
                     .is_some_and(|value| !value.is_null())
                     .to_string(),
+            ),
+            (
+                "failure_reason",
+                params["failureReason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error",
+                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
             ),
         ],
     );
@@ -2307,6 +2349,8 @@ async fn run_codex_app_server_turn_on_shared_client(
     // can be represented in active_threads by its native thread ID.
     let turn_preparation = client.state.lock().await.preparing_turns.begin();
     let CodexAppServerTurnOptions {
+        recover_usage_limits,
+        quota_resume,
         direct_thread_id,
         fork_thread_id,
         fork_thread_path,
@@ -2352,6 +2396,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             .prepare_thread_admission(&thread_plan, request, &launch_config)
             .await?;
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            // Native resume may start an active Goal before returning its RPC
+            // response. Both its route and notification listener must exist first.
+            bind_local_proxy_thread(&launch_config, thread_id)?;
             subscribed_thread_id = Some(thread_id.to_owned());
             early_request_context = Some(CodexTurnRequestContext::new(
                 client
@@ -2362,6 +2409,10 @@ async fn run_codex_app_server_turn_on_shared_client(
                     .await?,
                 thread_resume_params(thread_id, request, &launch_config),
             ));
+            // Background reads and prediction also resume threads. Reconcile
+            // only admitted work, after applying configuration changes and
+            // establishing its notification route and activity cleanup.
+            client.reconcile_mcp_connections(thread_id, Some(&launch_config)).await?;
         }
         let requested_thread_configuration = match &thread_plan.start {
             CodexThreadStart::Request { params, .. } => {
@@ -2507,14 +2558,35 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
+        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
+        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let mut restored_quota_goal = false;
+        if let Some(goal) = quota_resume.as_ref().and_then(|recovery| recovery.goal.as_ref()) {
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
+            let (response, restored) = startup::wait_for_shared_startup(
+                client,
+                &thread_id,
+                &mut startup_deadline,
+                startup_timeout_seconds,
+                &mut cancellation,
+                turn_recovery::resume_goal(client, &thread_id, goal),
+            ).await?;
+            let runtime = client.existing_process().await?.notifications;
+            turn_recovery::sync_goal_snapshot(
+                &mut state, Some(&runtime), notifications.as_ref(),
+                &thread_id, &response,
+            ).await;
+            if !restored {
+                return Err("Quota recovery cancelled because the goal changed".to_owned());
+            }
+            restored_quota_goal = true;
+        }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let active_turn_id = if awaits_initial_goal_turn || resume_goal_only {
+        let active_turn_id = if awaits_initial_goal_turn || resume_goal_only || restored_quota_goal {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
         } else {
@@ -2531,7 +2603,13 @@ async fn run_codex_app_server_turn_on_shared_client(
                 turn_request_context.request(
                     client,
                     "turn/start",
-                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                    if quota_resume.is_some() {
+                        turn_recovery::continuation_params(turn_start_params(
+                            &thread_id, request, &launch_config, Vec::new(),
+                        ))
+                    } else {
+                        turn_start_params(&thread_id, request, &launch_config, turn_input)
+                    },
                     &launch_config,
                 ),
             )
@@ -2559,8 +2637,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
+                recover_usage_limits: recover_usage_limits && !request.uses_ephemeral_codex_thread(),
                 runtime_notifications: Some(client.existing_process().await?.notifications),
-                overload_continuation_params: overload_recovery::continuation_params(
+                overload_continuation_params: turn_recovery::continuation_params(
                     turn_start_params(&thread_id, request, &launch_config, Vec::new()),
                 ),
                 active_turn_id,
@@ -2607,6 +2686,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
+            quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
             response_item_id,
@@ -2712,6 +2792,8 @@ async fn run_codex_app_server_turn_with_runtime(
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
+        recover_usage_limits,
+        quota_resume,
         direct_thread_id,
         fork_thread_id,
         fork_thread_path,
@@ -2793,6 +2875,10 @@ async fn run_codex_app_server_turn_with_runtime(
             request,
             &launch_config,
         );
+        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            bind_local_proxy_thread(&launch_config, thread_id)?;
+            state.set_root_thread_id(thread_id.to_owned());
+        }
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -2867,33 +2953,71 @@ async fn run_codex_app_server_turn_with_runtime(
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
-        let turn_request_id = with_rpc_timeout(
-            "turn/start",
-            timeout_seconds,
-            rpc.send_request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
-            ),
-        )
-        .await?;
-        let read_turn = rpc.read_turn(
-            turn_request_id,
-            &mut state,
-            json_rpc::TurnReadOptions {
-                active_turn_started,
-                overload_turn_recovering,
-                overload_continuation_params: overload_recovery::continuation_params(
-                    turn_start_params(&thread_id, request, &launch_config, Vec::new()),
-                ),
-                notifications,
-                request_user_input_answers,
-                auto_approve_mcp_tool_calls,
-                defer_interactive_forms,
-                stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
-                    request,
-                ),
-            },
-        );
+        // Cancellation owns the complete admission/read sequence, including
+        // the Goal snapshot and restoration requests before a turn exists.
+        let read_turn = async {
+            let (turn_method, turn_params) = if let Some(goal) = quota_resume
+                .as_ref()
+                .and_then(|recovery| recovery.goal.as_ref())
+            {
+                let current = with_rpc_timeout(
+                    "thread/goal/get",
+                    timeout_seconds,
+                    rpc.request(
+                        "thread/goal/get",
+                        json!({"threadId": thread_id}),
+                        &mut state,
+                    ),
+                )
+                .await?;
+                let params = turn_recovery::goal_resume_params(goal, &current)?
+                    .ok_or("Quota recovery cancelled because the goal changed")?;
+                ("thread/goal/set", params)
+            } else if quota_resume.is_some() {
+                (
+                    "turn/start",
+                    turn_recovery::continuation_params(turn_start_params(
+                        &thread_id,
+                        request,
+                        &launch_config,
+                        Vec::new(),
+                    )),
+                )
+            } else {
+                (
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                )
+            };
+            let turn_request_id = with_rpc_timeout(
+                turn_method,
+                timeout_seconds,
+                rpc.send_request(turn_method, turn_params),
+            )
+            .await?;
+            rpc.read_turn(
+                turn_request_id,
+                &mut state,
+                json_rpc::TurnReadOptions {
+                    recover_usage_limits: recover_usage_limits
+                        && !request.uses_ephemeral_codex_thread(),
+                    wait_for_goal_continuation: turn_method == "thread/goal/set",
+                    active_turn_started,
+                    overload_turn_recovering,
+                    overload_continuation_params: turn_recovery::continuation_params(
+                        turn_start_params(&thread_id, request, &launch_config, Vec::new()),
+                    ),
+                    notifications,
+                    request_user_input_answers,
+                    auto_approve_mcp_tool_calls,
+                    defer_interactive_forms,
+                    stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
+                        request,
+                    ),
+                },
+            )
+            .await
+        };
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
             tokio::select! {
                 biased;
@@ -2915,6 +3039,7 @@ async fn run_codex_app_server_turn_with_runtime(
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
+            quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
             response_item_id,
@@ -2957,6 +3082,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 }
 
 struct SharedTurnNotificationOptions {
+    recover_usage_limits: bool,
     runtime_notifications: Option<CodexNotificationHub>,
     overload_turn_recovering: Option<CodexActiveTurnCallback>,
     overload_continuation_params: Value,
@@ -2991,10 +3117,11 @@ async fn read_shared_turn_notifications(
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
-    let mut overload_recovery = overload_recovery::OverloadRecovery::new(
+    let mut overload_recovery = turn_recovery::TurnRecovery::new(
         options.runtime_notifications.clone(),
         options.notifications.clone(),
     );
+    overload_recovery.recover_usage_limits = options.recover_usage_limits;
     let mut deferred_goal_snapshot: Option<Value> = None;
     loop {
         // A user can resume and finish a Goal while overload backoff is sleeping.
@@ -3007,7 +3134,7 @@ async fn read_shared_turn_notifications(
                 }
                 Err(_) => {
                     let response = deferred_goal_snapshot.take().unwrap();
-                    overload_recovery::sync_goal_snapshot(
+                    turn_recovery::sync_goal_snapshot(
                         state,
                         options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
@@ -3254,14 +3381,22 @@ async fn read_shared_turn_notifications(
         }
         if !cancellation_requested {
             match overload_recovery.observe(&message, state) {
-                overload_recovery::RecoveryAction::Forward => {}
-                overload_recovery::RecoveryAction::AwaitCompletion => {
+                turn_recovery::RecoveryAction::WaitForQuota(recovery) => {
+                    let _ = state.handle_message(&message);
+                    if let Some(callback) = options.active_turn_finished.as_ref() {
+                        callback();
+                    }
+                    state.quota_recovery = Some(recovery);
+                    return Ok(ExecutionOutcome::Running);
+                }
+                turn_recovery::RecoveryAction::Forward => {}
+                turn_recovery::RecoveryAction::AwaitCompletion => {
                     waiting_for_initial_progress = true;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
                     continue;
                 }
-                overload_recovery::RecoveryAction::Retry {
+                turn_recovery::RecoveryAction::Retry {
                     delay,
                     notification,
                     goal,
@@ -3282,14 +3417,14 @@ async fn read_shared_turn_notifications(
                         notification,
                     )
                     .await;
-                    overload_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
+                    turn_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
                     let restoring_goal = goal.is_some();
                     let continuation = async {
                         if let Some(goal) = goal {
-                            overload_recovery::resume_goal(client, thread_id, &goal).await
+                            turn_recovery::resume_goal(client, thread_id, &goal).await
                         } else {
                             client
                                 .request("turn/start", options.overload_continuation_params.clone())
@@ -3314,7 +3449,7 @@ async fn read_shared_turn_notifications(
                             deferred_goal_snapshot = Some(response);
                             options.wait_for_goal_continuation = true;
                         } else {
-                            overload_recovery::sync_goal_snapshot(
+                            turn_recovery::sync_goal_snapshot(
                                 state,
                                 options.runtime_notifications.as_ref(),
                                 options.notifications.as_ref(),
@@ -3420,7 +3555,7 @@ async fn read_shared_turn_notifications(
                 options.wait_for_goal_continuation,
             ) {
                 if let Some(response) = deferred_goal_snapshot.take() {
-                    overload_recovery::sync_goal_snapshot(
+                    turn_recovery::sync_goal_snapshot(
                         state,
                         options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
@@ -4072,6 +4207,33 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
     auth_mode: Option<CodexAuthMode>,
 ) -> Result<CodexAppServerChild, String> {
+    let (home, auth_lease) = acquire_codex_app_server_home(launch_config, auth_mode)?;
+    spawn_codex_app_server_with_home(binary, launch_config, &home, auth_lease)
+}
+
+fn acquire_codex_app_server_home(
+    launch_config: &CodexLaunchConfig,
+    auth_mode: Option<CodexAuthMode>,
+) -> Result<(PathBuf, Option<crate::file_lease::FileLease>), String> {
+    let codex_home = launch_config
+        .env
+        .get(CODEX_HOME_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(wework_codex_home);
+    let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
+        Some(home::acquire_named_home(&codex_home)?)
+    } else {
+        Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
+    };
+    Ok((codex_home, auth_lease))
+}
+
+fn spawn_codex_app_server_with_home(
+    binary: &str,
+    launch_config: &CodexLaunchConfig,
+    codex_home: &Path,
+    auth_lease: Option<crate::file_lease::FileLease>,
+) -> Result<CodexAppServerChild, String> {
     let resolved_binary = resolve_codex_binary(binary);
     // Preserve the extended-length Windows path for binaries in component caches.
     #[cfg(windows)]
@@ -4081,19 +4243,7 @@ fn spawn_codex_app_server(
         })?
         .to_string_lossy()
         .into_owned();
-    let codex_home = launch_config
-        .env
-        .get(CODEX_HOME_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(wework_codex_home);
-    let auth_lease = if launch_config.env.contains_key(CODEX_HOME_ENV) {
-        fs::create_dir_all(&codex_home)
-            .map_err(|error| format!("create agent Codex Home: {error}"))?;
-        None
-    } else {
-        Some(home::acquire_shared_auth(&codex_home, auth_mode)?)
-    };
-    codex_app_server_command(&resolved_binary, &codex_home, launch_config)
+    codex_app_server_command(&resolved_binary, codex_home, launch_config)
         .spawn()
         .map(|child| CodexAppServerChild::new(child, auth_lease))
         .map_err(|error| {
@@ -4245,12 +4395,11 @@ fn configure_codex_windows_no_window(command: &mut Command) {
 #[cfg(not(windows))]
 fn configure_codex_windows_no_window(_command: &mut Command) {}
 
-async fn terminate_codex_app_server_child(child: &mut Child) {
-    signal_codex_app_server_child(child);
-    let _ = child.wait().await;
+async fn terminate_codex_app_server_child(child: &mut CodexAppServerChild) {
+    let _ = child.kill().await;
 }
 
-fn signal_codex_app_server_child(child: &mut Child) {
+fn signal_codex_app_server_child(child: &mut CodexAppServerChild) {
     #[cfg(unix)]
     if let Some(process_group_id) = child.id() {
         // Signal the group before reaping its leader. The app-server can
@@ -4397,55 +4546,6 @@ fn bind_local_proxy_thread(
     Ok(())
 }
 
-/// Registers the local model route that serves a Codex thread and binds it to
-/// that thread.
-///
-/// A Codex thread reaches its model through the local `codex-router` route, and
-/// that route only exists while a turn that registered it is alive. Actions that
-/// drive an existing thread without spawning a turn must establish the route
-/// themselves, otherwise the thread cannot reach any model at all.
-///
-/// Returns `None` when the task talks to its provider directly instead of going
-/// through the local route, and a registration that must stay alive for as long
-/// as the thread needs the model otherwise.
-pub(crate) fn bind_codex_thread_model_route(
-    request: &ExecutionRequest,
-    thread_id: &str,
-) -> Result<Option<LocalProxyRegistration>, String> {
-    // Mirrors the launch-config decision so an existing thread resolves the same
-    // upstream it was started with.
-    let upstream = if use_user_runtime_config(&request.model_config) {
-        configured_codex_provider(
-            &inference_model_provider(&request.model_config),
-            runtime_proxy_url(&request.model_config),
-        )
-    } else {
-        local_model_proxy::upstream_from_model_config(&request.model_config)?
-    };
-    let Some(upstream) = upstream else {
-        return Ok(None);
-    };
-    let mut upstream = upstream;
-    upstream.routing_model_id = codex_request_model(request);
-    inject_session_headers(&mut upstream.default_headers, &request.task_id);
-    let vision_sidecar =
-        vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?;
-    let registration = LocalProxyRegistration(local_model_proxy::register_with_vision_sidecar(
-        &request.task_id,
-        upstream,
-        vision_sidecar,
-    ));
-    registration.bind_thread(thread_id)?;
-    log_executor_event(
-        "codex thread model route bound",
-        &[
-            ("task_id", request.task_id.clone()),
-            ("thread_id", thread_id.to_owned()),
-        ],
-    );
-    Ok(Some(registration))
-}
-
 struct PreparedCodexExecutionRequest {
     request: ExecutionRequest,
     generated_files: Vec<PathBuf>,
@@ -4483,9 +4583,6 @@ fn build_codex_launch_config_with_route_scope(
     route_scope: &str,
 ) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
-    let configured_base_url = non_empty_config(&request.model_config, "base_url")
-        .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
-    let configured_auth_present = api_key(&request.model_config).is_some();
     let reasoning = normalize_reasoning(codex_reasoning_config(&request.model_config));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -4557,112 +4654,7 @@ fn build_codex_launch_config_with_route_scope(
             .push(format!("model={model}"));
     }
 
-    let use_user_config = use_user_runtime_config(&request.model_config);
-    let project_id = project_id(request);
-    if use_user_config {
-        let inference_provider = inference_model_provider(&request.model_config);
-        if let Some(upstream) = configured_codex_provider(
-            &inference_provider,
-            runtime_proxy_url(&request.model_config),
-        ) {
-            let mut upstream = upstream;
-            inject_session_headers(&mut upstream.default_headers, &request.task_id);
-            log_executor_event(
-                "codex model route selected",
-                &[
-                    ("task_id", request.task_id.clone()),
-                    ("route", "local_proxy_user_provider".to_owned()),
-                    ("provider", inference_provider.clone()),
-                    ("model", model.clone().unwrap_or_default()),
-                    (
-                        "payload_base_url_present",
-                        configured_base_url.is_some().to_string(),
-                    ),
-                    ("payload_auth_present", configured_auth_present.to_string()),
-                ],
-            );
-            configure_codex_router(
-                &mut launch_config,
-                route_scope,
-                upstream,
-                model.clone(),
-                request_model_switched(request),
-                vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
-            );
-        } else {
-            log_executor_event(
-                "codex model route selected",
-                &[
-                    ("task_id", request.task_id.clone()),
-                    ("route", "direct_user_provider".to_owned()),
-                    ("provider", inference_provider.clone()),
-                    ("model", model.clone().unwrap_or_default()),
-                    (
-                        "payload_base_url_present",
-                        configured_base_url.is_some().to_string(),
-                    ),
-                    ("payload_auth_present", configured_auth_present.to_string()),
-                ],
-            );
-            launch_config.model_provider = Some(inference_provider.clone());
-            launch_config.config_overrides.extend(header_overrides(
-                &inference_provider,
-                request.model_config.get("default_headers"),
-                project_id.as_deref(),
-                &request.task_id,
-            ));
-        }
-    } else if let Some(upstream) =
-        local_model_proxy::upstream_from_model_config(&request.model_config)?
-    {
-        let mut upstream = upstream;
-        inject_session_headers(&mut upstream.default_headers, &request.task_id);
-        log_executor_event(
-            "codex model route selected",
-            &[
-                ("task_id", request.task_id.clone()),
-                ("route", "local_proxy_payload".to_owned()),
-                ("provider", inference_model_provider(&request.model_config)),
-                ("model", model.clone().unwrap_or_default()),
-                (
-                    "payload_base_url_present",
-                    configured_base_url.is_some().to_string(),
-                ),
-                ("payload_auth_present", configured_auth_present.to_string()),
-            ],
-        );
-        configure_codex_router(
-            &mut launch_config,
-            route_scope,
-            upstream,
-            model.clone(),
-            request_model_switched(request),
-            vision_sidecar_with_session_headers(&request.model_config, &request.task_id)?,
-        );
-    } else {
-        let inference_provider = inference_model_provider(&request.model_config);
-        log_executor_event(
-            "codex model route selected",
-            &[
-                ("task_id", request.task_id.clone()),
-                ("route", "direct_payload_provider".to_owned()),
-                ("provider", inference_provider.clone()),
-                ("model", model.clone().unwrap_or_default()),
-                (
-                    "payload_base_url_present",
-                    configured_base_url.is_some().to_string(),
-                ),
-                ("payload_auth_present", configured_auth_present.to_string()),
-            ],
-        );
-        launch_config.model_provider = Some(inference_provider.clone());
-        launch_config.config_overrides.extend(header_overrides(
-            &inference_provider,
-            request.model_config.get("default_headers"),
-            project_id.as_deref(),
-            &request.task_id,
-        ));
-    }
+    provider_routing::configure_request_provider(&mut launch_config, request, route_scope)?;
 
     mcp_config::configure_task_mcp(request, &mut launch_config)?;
 
@@ -5112,10 +5104,11 @@ fn codex_auto_compact_token_limit(model_config: &Value, context_window: i64) -> 
 fn configured_codex_provider(
     provider: &str,
     proxy_url: Option<&str>,
+    codex_home: &Path,
 ) -> Option<LocalModelProxyUpstream> {
     use toml_edit::DocumentMut;
 
-    let document = fs::read_to_string(wework_codex_home().join("config.toml"))
+    let document = fs::read_to_string(codex_home.join("config.toml"))
         .ok()?
         .parse::<DocumentMut>()
         .ok()?;
@@ -5432,10 +5425,6 @@ fn bool_value(value: Option<&Value>) -> Option<bool> {
     }
 }
 
-fn inference_model_provider(model_config: &Value) -> String {
-    explicit_model_provider(model_config).unwrap_or_else(configured_inference_model_provider)
-}
-
 pub(crate) fn configured_inference_model_provider() -> String {
     configured_inference_model_provider_from_path(&wework_codex_home().join("config.toml"))
 }
@@ -5450,6 +5439,7 @@ fn configured_inference_model_provider_from_path(config_path: &Path) -> String {
             document
                 .get("model_provider")
                 .and_then(|item| item.as_str())
+                .filter(|provider| !is_internal_codex_provider(provider))
                 .map(sanitize_provider_id)
         })
         .filter(|provider| !is_internal_codex_provider(provider))
@@ -5460,18 +5450,21 @@ fn explicit_model_provider(model_config: &Value) -> Option<String> {
     non_empty_config(model_config, "codex_model_provider")
         .or_else(|| non_empty_config(model_config, "model_provider"))
         .or_else(|| non_empty_config(model_config, "provider"))
+        .filter(|value| !is_internal_codex_provider(value))
         .map(|value| sanitize_provider_id(&value))
         .filter(|provider| !is_internal_codex_provider(provider))
 }
 
 fn is_internal_codex_provider(provider: &str) -> bool {
-    provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
+    provider == codex_model_catalog::PROVIDER_ID
+        || provider == codex_model_catalog::LEGACY_PROVIDER_ID
+        || provider == "wework-catalog"
 }
 
 fn is_builtin_codex_provider(provider: &str) -> bool {
     matches!(
         provider,
-        "openai" | "amazon-bedrock" | "ollama" | "lmstudio"
+        "openai" | "amazon-bedrock" | "amazon-bedrock-runtime" | "gcp" | "ollama" | "lmstudio"
     )
 }
 
@@ -5520,54 +5513,22 @@ fn non_empty_config(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn header_overrides(
-    model_provider: &str,
+fn task_provider_headers(
     default_headers: Option<&Value>,
     project_id: Option<&str>,
     task_id: &str,
-) -> Vec<String> {
-    // Codex owns its built-in providers and rejects any
-    // `model_providers.<builtin>.*` override as a reserved provider conflict.
-    if is_builtin_codex_provider(model_provider) {
-        return Vec::new();
-    }
-
-    let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        let mut headers = parse_header_map(default_headers);
-        inject_session_headers(&mut headers, task_id);
-        return if headers.is_empty() {
-            Vec::new()
-        } else {
-            headers
-                .into_iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                        toml_value(&value)
-                    )
-                })
-                .collect()
-        };
-    };
-
+) -> Vec<(String, String)> {
     let mut headers = parse_header_map(default_headers);
-    insert_missing_header(&mut headers, "wecode-action", "wegent");
-    insert_missing_header(&mut headers, "wecode-source", "wegent-local");
-    insert_missing_header(&mut headers, "wecode-executor", "codex");
-    inject_session_headers(&mut headers, task_id);
-    insert_header(&mut headers, "wecode-project", project_id);
-
+    if let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) {
+        insert_missing_header(&mut headers, "wecode-action", "wegent");
+        insert_missing_header(&mut headers, "wecode-source", "wegent-local");
+        insert_missing_header(&mut headers, "wecode-executor", "codex");
+        inject_session_headers(&mut headers, task_id);
+        insert_header(&mut headers, "wecode-project", project_id);
+    } else {
+        inject_session_headers(&mut headers, task_id);
+    }
     headers
-        .into_iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
-                toml_value(&value)
-            )
-        })
-        .collect()
 }
 
 fn parse_header_map(value: Option<&Value>) -> Vec<(String, String)> {

@@ -454,6 +454,7 @@ fn local_creation_binds_project_or_issue_and_preserves_personal_scope() {
                 .control_operation(&context("caller"), "create_conversation", args)
                 .await
                 .unwrap();
+            workbench_control::assert_output_contract("create_conversation", &result);
             assert_eq!(result["accepted"], true);
             let task = result["taskId"].as_str().unwrap();
             let binding = store

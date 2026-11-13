@@ -10,7 +10,213 @@ struct Fixture {
     _environment: LaunchEnvironment,
 }
 
+#[tokio::test]
+async fn mcp_app_tool_failure_before_dispatch_remains_a_denial() {
+    let fixture = Fixture::with_script("#!/bin/sh\nexit 0\n");
+    let error = fixture
+        .client
+        .call_mcp_app_tool(json!({"threadId":"source","server":"test","tool":"write"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CodexAppToolError::NotDispatched(_)));
+    fixture.client.restart().await;
+}
+
+#[tokio::test]
+async fn mcp_app_tool_response_loss_preserves_unknown_outcome_without_replaying() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"mcpServer/tool/call"'*)
+      printf '%s\n' "$line" >> "$(dirname "$0")/operations.jsonl"
+      exit 0 ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let error = fixture
+        .client
+        .call_mcp_app_tool(json!({"threadId":"source","server":"test","tool":"write"}))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CodexAppToolError::OutcomeUnknown(_)));
+    fixture.client.restart().await;
+    let operations =
+        fs::read_to_string(fixture._directory.path().join("operations.jsonl")).unwrap();
+    assert_eq!(operations.lines().count(), 1);
+}
+
+#[tokio::test]
+async fn process_catalog_survives_unrelated_runtime_profile_cleanup() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$(dirname "$0")/launch-args"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  printf '{"id":%s,"result":{}}\n' "$id"
+done
+"#,
+    );
+    let profile = wegent_runtime_config::paths::default_manifest_path()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let executor_home = PathBuf::from(env::var("WEGENT_EXECUTOR_HOME").unwrap());
+    assert!(profile.starts_with(executor_home.parent().unwrap()));
+    assert!(!profile.starts_with(fixture._directory.path()));
+    fs::create_dir_all(&profile).unwrap();
+    fixture.client.ensure_started().await.unwrap();
+    let args = fs::read_to_string(fixture._directory.path().join("launch-args")).unwrap();
+    let path: String = serde_json::from_str(
+        args.lines()
+            .find_map(|line| line.strip_prefix("model_catalog_json="))
+            .unwrap(),
+    )
+    .unwrap();
+    fs::remove_dir_all(profile).unwrap();
+    let retained = fs::read(&path);
+    fixture.client.restart().await;
+    assert!(
+        retained.is_ok(),
+        "Unrelated profile cleanup removed a live Home's catalog: {retained:?}"
+    );
+    assert!(!Path::new(&path).exists());
+}
+
+#[tokio::test]
+async fn cold_goal_activation_can_admit_its_native_resume() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/goal/set"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"active"}}}\n' "$id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"status":"active"}}}' ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"cold-goal","modelProvider":"~"}}}\n' "$id"
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"cold-goal","turn":{"id":"resumed"}}}'
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"cold-goal","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"cold-goal","turn":{"id":"resumed","status":"completed"}}}' ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"complete"}}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    fixture
+        .client
+        .mutate_thread_goal(
+            "thread/goal/set",
+            json!({
+                "threadId":"cold-goal", "status":"active"
+            }),
+        )
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), fixture.client.run_turn_with_cancel(
+        ExecutionRequest {
+            task_id: "cold-goal-owner".into(),
+            bot: json!([{"shell_type":"Codex"}]),
+            model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+            ..ExecutionRequest::default()
+        },
+        CodexAppServerTurnOptions {
+            resume_thread_id: Some("cold-goal".into()),
+            resume_goal_only: true,
+            ..CodexAppServerTurnOptions::default()
+        }
+    )).await;
+    fixture.client.restart().await;
+    assert!(
+        result.as_ref().is_ok_and(|result| result.is_ok()),
+        "Cold Goal recovery failed: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn recovered_goal_route_is_bound_before_native_resume_can_start_model_work() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      touch "$(dirname "$0")/resume-entered"
+      while [ ! -f "$(dirname "$0")/resume-release" ]; do sleep 0.01; done
+      printf '{"id":%s,"result":{"thread":{"id":"recovered-goal-route","modelProvider":"~","turns":[]}}}\n' "$id"
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"recovered-goal-route","goal":{"status":"active"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"recovered-goal-route","turn":{"id":"recovered-turn"}}}'
+      printf '%s\n' '{"method":"thread/goal/updated","params":{"threadId":"recovered-goal-route","goal":{"status":"complete"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"recovered-goal-route","turn":{"id":"recovered-turn","status":"completed"}}}' ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"complete"}}}\n' "$id" ;;
+    *) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#,
+    );
+    let request = ExecutionRequest {
+        task_id: "recovering-goal-owner".into(),
+        bot: json!([{"shell_type":"Codex"}]),
+        model_config: json!({"model_id":"gpt-test","base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"}),
+        ..ExecutionRequest::default()
+    };
+    let client = fixture.client.clone();
+    let running = tokio::spawn(async move {
+        client
+            .run_turn_with_cancel(
+                request,
+                CodexAppServerTurnOptions {
+                    resume_thread_id: Some("recovered-goal-route".into()),
+                    resume_goal_only: true,
+                    ..CodexAppServerTurnOptions::default()
+                },
+            )
+            .await
+    });
+    let entered = fixture._directory.path().join("resume-entered");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !entered.try_exists().unwrap() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("native resume must reach the observed pre-response checkpoint");
+    let bound_before_response = local_model_proxy::thread_has_bound_route("recovered-goal-route");
+    fs::write(fixture._directory.path().join("resume-release"), "").unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.client.restart().await;
+    assert!(result.is_ok(), "Goal recovery failed: {result:?}");
+    assert!(
+        bound_before_response,
+        "native resume can start Goal inference before returning its RPC response"
+    );
+}
+
 impl Fixture {
+    async fn resume_work(&self, thread: &str) -> Result<Value, String> {
+        self.client.reconcile_mcp_connections(thread, None).await?;
+        self.client
+            .request("thread/resume", json!({"threadId":thread}))
+            .await
+    }
+
     fn new() -> Self {
         Self::with_script(
             r#"#!/bin/sh
@@ -33,6 +239,7 @@ done
         let environment = LaunchEnvironment::new();
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
+        let script = crate::test_env::with_codex_bundled_catalog(script);
         fs::write(&binary, script).unwrap();
         fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
         let client = CodexAppServerClient::isolated_for_test(
@@ -121,6 +328,207 @@ impl Drop for Fixture {
             .remove(&(self.client.binary.clone(), self.client.home.clone()));
         self.client.state.try_lock().unwrap().process.take();
     }
+}
+
+#[tokio::test]
+async fn concurrent_work_coalesces_mcp_reload_and_later_work_can_retry() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"test/fail-mcp"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"ready"}}'
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"two","name":"mail","status":"failed"}}'
+      result='{}' ;;
+    *'"method":"mcpServerStatus/list"'*)
+      case "$line" in
+        *'"serverName":"calendar"'*) result='{"data":[{"name":"calendar","runtimeStatus":"failed"}]}' ;;
+        *) result='{"data":[{"name":"mail","runtimeStatus":"failed"}]}' ;;
+      esac ;;
+    *'"method":"config/mcpServer/reload"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"starting"}}'
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"failed"}}'
+      result='{}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#,
+    );
+    fixture
+        .client
+        .request("test/fail-mcp", json!({}))
+        .await
+        .unwrap();
+    // Reply prediction may resume the source thread before the next work turn.
+    fixture
+        .client
+        .request("thread/resume", json!({"threadId":"one"}))
+        .await
+        .unwrap();
+    let passive = fs::read_to_string(fixture._directory.path().join("requests.jsonl")).unwrap();
+    assert!(!passive.contains("mcpServerStatus/list"));
+    assert!(!passive.contains("config/mcpServer/reload"));
+    let (one, two) = tokio::join!(fixture.resume_work("one"), fixture.resume_work("two"),);
+    one.unwrap();
+    two.unwrap();
+    fixture.resume_work("one").await.unwrap();
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "config/mcpServer/reload")
+            .count(),
+        2
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "initialize")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "thread/resume")
+            .count(),
+        4
+    );
+    assert!(!requests
+        .iter()
+        .any(|r| r["method"] == "turn/start" || r["method"] == "mcpServer/tool/call"));
+    let reload = requests
+        .iter()
+        .position(|r| r["method"] == "config/mcpServer/reload")
+        .unwrap();
+    let resume = requests
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r["method"] == "thread/resume" && r["params"]["threadId"] == "one")
+        .nth(1)
+        .map(|(index, _)| index)
+        .unwrap();
+    assert!(reload < resume);
+    fixture.client.restart().await;
+}
+
+#[tokio::test]
+async fn authentication_required_mcp_does_not_trigger_native_reload() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"test/fail-mcp"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"mail","status":"failed"}}'
+      result='{}' ;;
+    *'"method":"mcpServerStatus/list"'*) result='{"data":[{"name":"mail","runtimeStatus":"authenticationRequired"}]}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#,
+    );
+    fixture
+        .client
+        .request("test/fail-mcp", json!({}))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        fixture.resume_work("one").await.unwrap();
+    }
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "mcpServerStatus/list")
+            .count(),
+        1
+    );
+    assert!(!requests
+        .iter()
+        .any(|r| r["method"] == "config/mcpServer/reload"));
+    fixture.client.restart().await;
+}
+
+#[tokio::test]
+async fn failed_mcp_status_query_preserves_the_next_work_admission() {
+    let fixture = Fixture::with_script(
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$(dirname "$0")/requests.jsonl"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"test/fail-mcp"'*)
+      printf '%s\n' '{"method":"mcpServer/startupStatus/updated","params":{"threadId":"one","name":"calendar","status":"failed"}}'
+      result='{}' ;;
+    *'"method":"mcpServerStatus/list"'*)
+      marker="$(dirname "$0")/status-attempted"
+      if [ ! -f "$marker" ]; then
+        touch "$marker"
+        printf '{"id":%s,"error":{"code":-32000,"message":"status unavailable"}}\n' "$id"
+        continue
+      fi
+      result='{"data":[{"name":"calendar","runtimeStatus":"failed"}]}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#,
+    );
+    fixture
+        .client
+        .request("test/fail-mcp", json!({}))
+        .await
+        .unwrap();
+    assert!(fixture
+        .resume_work("one")
+        .await
+        .unwrap_err()
+        .contains("status unavailable"));
+    fixture.resume_work("one").await.unwrap();
+    let requests: Vec<Value> = fs::read_to_string(fixture._directory.path().join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "config/mcpServer/reload")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "thread/resume")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "initialize")
+            .count(),
+        1
+    );
+    fixture.client.restart().await;
 }
 
 async fn pid(client: &CodexAppServerClient) -> u32 {
@@ -337,6 +745,9 @@ async fn an_active_goal_without_a_live_turn_does_not_block_resume_admission() {
         .unwrap()
         .notifications
         .clone();
+    // A loaded native Goal protects restarts; cold Goal metadata alone does not.
+    hub.send(json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}))
+        .await;
     hub.send(json!({"method":"thread/goal/updated","params":{
         "threadId":"thread-1","turnId":null,"goal":{"status":"active"}
     }}))
@@ -386,6 +797,9 @@ async fn goal_resume_waits_for_local_and_native_turns_but_not_continuation_eligi
         .unwrap()
         .notifications
         .clone();
+    // A loaded native Goal protects restarts; cold Goal metadata alone does not.
+    hub.send(json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}))
+        .await;
     let plan = CodexThreadPlan {
         start: CodexThreadStart::Request {
             operation: "thread/resume",
@@ -454,6 +868,9 @@ async fn active_goal_resume_still_waits_for_configuration_teardown() {
         .unwrap()
         .notifications
         .clone();
+    // A loaded native Goal protects restarts; cold Goal metadata alone does not.
+    hub.send(json!({"method":"thread/started","params":{"thread":{"id":"thread-1"}}}))
+        .await;
     hub.send(json!({"method":"thread/goal/updated","params":{
         "threadId":"thread-1","goal":{"status":"active"}
     }}))

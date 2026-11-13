@@ -1,3 +1,24 @@
+export function runtimeCompletionReceiptPatterns(taskId) {
+  const task = JSON.stringify(taskId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const receipt = fields =>
+    new RegExp(
+      `^.*Runtime task create diagnostic (?=[^\\n]*"taskId":${task}(?:,|}))${fields.map(field => `(?=[^\\n]*${field})`).join('')}[^\\n]*$`,
+      'm'
+    )
+  return [
+    receipt([
+      '"stage":"runtime-terminal-received"',
+      '"event":"response.completed"',
+      '"matchedSubscriptionCount":[1-9][0-9]*(?:,|})',
+    ]),
+    receipt([
+      '"stage":"runtime-stream-owner"',
+      '"action":"assistant-settled"',
+      '"activeRegistrations":[1-9][0-9]*(?:,|})',
+    ]),
+  ]
+}
+
 export function findRuntimeWorkTask(runtimeWork, taskId) {
   const workspaces = Array.isArray(runtimeWork.workspaces)
     ? runtimeWork.workspaces
