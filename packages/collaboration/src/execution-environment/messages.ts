@@ -9,6 +9,27 @@ export const executionEnvironmentMessages: Record<
   Readonly<Record<string, string>>
 > = {
   'zh-CN': {
+    'todo.runner_issue_conflict':
+      'Issue 的执行设备与本次分配不兼容。请在项目设置中检查智能体的运行设置和执行环境授权。',
+    'todo.runner_diagnostic_group': '协作小组：{{name}}。',
+    'todo.runner_diagnostic_agent': '智能体：{{name}}。',
+    'todo.runner_diagnostic_bound': 'Issue 已绑定设备：{{environment}}。',
+    'todo.runner_diagnostic_fixed': '本次策略指定设备：{{environment}}。',
+    'todo.runner_diagnostic_authorized': '已获授权的设备：{{environments}}。',
+    'todo.runner_reason_policy_mismatch':
+      '已绑定设备不符合智能体的执行策略；请调整智能体运行设置以使用该设备。',
+    'todo.runner_reason_workspace_authorization_missing':
+      '所需设备缺少有效的空间使用授权，请先在空间设置 → 执行环境中授权，再检查项目授权。',
+    'todo.runner_reason_project_authorization_missing':
+      '所需设备已获空间授权，但缺少有效的项目使用授权，请在项目设置 → 执行环境中添加。',
+    'todo.runner_reason_environment_unavailable':
+      '所需设备记录已停用或不存在，请联系设备所有者恢复设备。',
+    'todo.runner_reason_no_authorized_environment':
+      '当前策略下没有可用设备，请检查空间和项目的设备授权。',
+    'todo.runner_reason_history_requires_configuration':
+      '历史执行设备冲突或无法解析，需要核对历史执行记录和设备绑定。',
+    'todo.runner_reason_group_no_common_environment':
+      '小组成员没有共同可用的设备，请调整以下成员的运行设置。',
     'gitAccount.configure': '配置 Git 账户',
     'gitAccount.openFailed': '无法打开配置页面，请重试。',
     'common:workbench.git_access_credentials_required':
@@ -135,6 +156,28 @@ export const executionEnvironmentMessages: Record<
     'todo.execution_environment_permission_denied': '没有操作权限，请联系空间或项目管理员。',
   },
   en: {
+    'todo.runner_issue_conflict':
+      'The Issue runner is incompatible with this assignment. Check the Agent runtime settings and execution environment authorization in Project settings.',
+    'todo.runner_diagnostic_group': 'Group: {{name}}.',
+    'todo.runner_diagnostic_agent': 'Agent: {{name}}.',
+    'todo.runner_diagnostic_bound': 'Issue bound environment: {{environment}}.',
+    'todo.runner_diagnostic_fixed': 'Policy environment: {{environment}}.',
+    'todo.runner_diagnostic_authorized':
+      'Authorized environments: {{environments}}.',
+    'todo.runner_reason_policy_mismatch':
+      'The bound environment does not satisfy the Agent policy. Adjust the Agent runtime settings to use that environment.',
+    'todo.runner_reason_workspace_authorization_missing':
+      'The required device has no valid workspace use grant. Authorize it in Workspace settings → Execution environments, then check project authorization.',
+    'todo.runner_reason_project_authorization_missing':
+      'The required device is authorized for the workspace but has no valid project use grant. Add it in Project settings → Execution environments.',
+    'todo.runner_reason_environment_unavailable':
+      'The required device record is inactive or missing. Ask its owner to restore it.',
+    'todo.runner_reason_no_authorized_environment':
+      'No device is available under this policy. Check workspace and project device authorization.',
+    'todo.runner_reason_history_requires_configuration':
+      'Historical runners conflict or cannot be resolved. Review execution history and the Issue device binding.',
+    'todo.runner_reason_group_no_common_environment':
+      'Group members have no common eligible environment. Adjust the following members’ runtime settings.',
     'gitAccount.configure': 'Configure Git accounts',
     'gitAccount.openFailed': 'Could not open Git settings. Try again.',
     'common:workbench.git_access_credentials_required':
