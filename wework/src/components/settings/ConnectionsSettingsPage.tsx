@@ -64,6 +64,7 @@ import {
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { DeviceVersionBadge } from './DeviceVersionBadge'
 import { DeviceGitSyncSection } from './DeviceGitSyncSection'
+import { RemoteTaskAccessSetting } from './RemoteTaskAccessSetting'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
@@ -1337,6 +1338,7 @@ export function ConnectionsDeviceSettingsPage({
             </div>
           </section>
 
+          {isElectronRuntime() ? <RemoteTaskAccessSetting /> : null}
           <DshSettingsSectionSurface page="connections" />
         </SettingsPage>
 
@@ -1410,6 +1412,7 @@ export function ConnectionsDeviceSettingsPage({
           </div>
         </section>
 
+        {isElectronRuntime() ? <RemoteTaskAccessSetting /> : null}
         <section className="mt-6 space-y-5">
           <DshSettingsSectionSurface page="connections" />
 

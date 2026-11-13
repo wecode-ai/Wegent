@@ -5,9 +5,17 @@ import type {
   ChatProcessingBlock,
   ChatTextItem,
   RuntimeTranscriptMessage,
+  RequestUserInputResponse,
 } from '@/types/runtime'
+import {
+  applyMobileUserInputResponse,
+  preserveMobileUserInput,
+  resolveMobileUserInput,
+  settleMobileUserInput,
+} from './requestUserInput'
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
+import { runtimeAssistantViewId } from '../../../packages/chat-core/src/runtime-turn-projection'
 
 export interface RuntimeStreamEvent {
   name: string
@@ -21,10 +29,14 @@ export type ChatAction =
   | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
+  | { type: 'user-delivered'; id: string }
+  | { type: 'user-input-response'; response: RequestUserInputResponse }
+  | { type: 'user-input-cancelled'; key: string }
 
 interface StreamIdentity {
   taskId?: string
   subtaskId: string
+  itemId?: string
 }
 
 interface BlockUpdates {
@@ -41,19 +53,35 @@ interface BlockUpdates {
 }
 
 export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
+  return resolveMobileUserInput(preserveMobileUserInput(state, reduceChat(state, action)))
+}
+
+function reduceChat(state: ChatMessage[], action: ChatAction): ChatMessage[] {
   switch (action.type) {
     case 'replace':
       return uniqueMessages(transcriptMessages(action.messages))
     case 'prepend':
       return uniqueMessages([...transcriptMessages(action.messages), ...state])
     case 'merge-latest':
-      return uniqueMessages([...state, ...transcriptMessages(action.messages)])
+      return preserveMobileUserInput(
+        state,
+        uniqueMessages([...state, ...transcriptMessages(action.messages)])
+      )
+    case 'user-delivered':
+      return state.map(message =>
+        message.id === action.id ? { ...message, pendingDelivery: false } : message
+      )
+    case 'user-input-response':
+      return applyMobileUserInputResponse(state, action.response)
+    case 'user-input-cancelled':
+      return settleMobileUserInput(state, action.key)
     case 'optimistic-user':
       return upsertMessage(state, {
         id: action.id,
         role: 'user',
         content: visibleRuntimeUserMessage(action.content),
         status: 'completed',
+        pendingDelivery: true,
         createdAt: action.createdAt,
       })
     case 'fail':
@@ -94,6 +122,11 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
     ...(turnId && { turnId }),
     content:
       role === 'user' ? visibleRuntimeUserMessage(message.content ?? '') : (message.content ?? ''),
+    ...(message.runtimeItems && {
+      textItems: message.runtimeItems.flatMap(item =>
+        item.type === 'assistant_text' ? [{ id: item.id, content: item.content }] : []
+      ),
+    }),
     ...(blocks?.length && { blocks }),
     ...(fileChanges && { fileChanges }),
     status: terminalStatus(message.status),
@@ -579,14 +612,22 @@ function updateAssistant(
   identity: StreamIdentity,
   update: (message: ChatMessage) => ChatMessage
 ): ChatMessage[] {
-  const index = state.findIndex(
-    message => message.role === 'assistant' && message.subtaskId === identity.subtaskId
-  )
+  const ownsTurn = (message: ChatMessage) =>
+    message.role === 'assistant' && message.subtaskId === identity.subtaskId
+  const owner = identity.itemId
+    ? state.findIndex(
+        message =>
+          ownsTurn(message) &&
+          (message.textItems?.some(item => item.id === identity.itemId) ||
+            message.blocks?.some(block => block.id === identity.itemId))
+      )
+    : -1
+  const index = owner >= 0 ? owner : state.findLastIndex(ownsTurn)
   if (index < 0) {
     return [
       ...state,
       update({
-        id: `assistant-${identity.subtaskId}`,
+        id: runtimeAssistantViewId(identity.subtaskId),
         taskId: identity.taskId,
         subtaskId: identity.subtaskId,
         role: 'assistant',
@@ -631,6 +672,14 @@ function streamIdentity(payload: Record<string, unknown>): StreamIdentity | null
   return {
     subtaskId,
     taskId: idValue(payload.taskId) ?? idValue(data.taskId),
+    itemId:
+      idValue(data.itemId) ??
+      idValue(data.item_id) ??
+      idValue(data.blockId) ??
+      idValue(data.block_id) ??
+      idValue(record(data.block).id) ??
+      idValue(record(data.item).id) ??
+      idValue(data.call_id),
   }
 }
 
@@ -833,7 +882,7 @@ function upsertMessage(state: ChatMessage[], message: ChatMessage): ChatMessage[
 }
 
 function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.reduce<ChatMessage[]>(upsertMessage, [])
+  return [...new Map(messages.map(message => [message.id, message])).values()]
 }
 
 export function appendDelta(current: string, delta: string, offset?: number): string {

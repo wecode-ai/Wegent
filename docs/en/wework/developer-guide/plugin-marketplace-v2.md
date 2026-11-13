@@ -355,6 +355,10 @@ Installation, update, and device synchronization contracts remain unchanged. `ki
 
 Normal uninstall removes the confirmed runtime entry and installation record but does not directly purge Codex or Claude `plugins/cache`. Offline devices reconcile after reconnect. A current-device failure returns an explicit error and cannot be hidden by success on another device.
 
+When installation detects invalid contents in `shared/plugins/<digest>`, it downloads the requested version again and verifies the expected SHA-256 and plugin identity before recovering the cache. Recovery does not select the latest release or change update preferences. Only ordinary directories with matching publication receipts qualify for automatic recovery. The original package and metadata remain under `shared/recovery/plugins/<digest>/recovered-<id>/` in Workbench Home, with the outcome and backup path logged. The next read resumes an interrupted transaction; conflicting contents are preserved. Directory links and physical copies share the ownership checks, which must still authorize the target before Runtime publication. Unknown directories, symbolic links, and unverified downloads cannot authorize overwriting an installation.
+
+If another recovery transaction temporarily holds the cache lease, the operation returns retryable `PLUGIN_PACKAGE_BUSY` rather than recording persistent Runtime corruption. Recovery failures retain the initial publication error as context so cache damage can be distinguished from disk I/O problems.
+
 ## 7. API contract
 
 ### 7.1 Retained and narrowed

@@ -17,8 +17,8 @@ describe('drawer edge alignment', () => {
     expect(buttonTop).toBe(safeAreaTop)
   })
 
-  it('moves the bottom dock eight points closer to the screen edge', () => {
-    expect(drawerBottomOffset(34, false)).toBe(26)
+  it('keeps the floating composer above the home-indicator safe area', () => {
+    expect(drawerBottomOffset(34, false)).toBe(34)
   })
 
   it('keeps an eight-point minimum when a device has no safe-area inset', () => {

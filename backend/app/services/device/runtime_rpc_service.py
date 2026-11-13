@@ -22,7 +22,9 @@ from app.core.socketio import get_sio
 from app.db.session import get_db_session
 from app.schemas.device import DeviceType
 from app.services.device.remote_control_policy import (
+    APP_REMOTE_TASK_METHODS,
     REMOTE_CONTROL_DISABLED_MESSAGE,
+    app_remote_task_access_enabled,
     remote_control_is_enabled,
 )
 from app.services.device.runtime_route import (
@@ -251,12 +253,18 @@ class RuntimeRpcService:
             and method == "runtime.stand_in.conversation"
             and payload.get("userId") == user_id
         )
+        personal_task_access_allowed = (
+            route.device_type == DeviceType.APP
+            and method in APP_REMOTE_TASK_METHODS
+            and app_remote_task_access_enabled(route.online_info)
+        )
         if (
             not remote_control_is_enabled(route.device_type)
             and not app_task_messaging_allowed
             and not app_task_reading_allowed
             and not app_catalog_reading_allowed
             and not app_stand_in_allowed
+            and not personal_task_access_allowed
         ):
             raise RuntimeRpcError(
                 REMOTE_CONTROL_DISABLED_MESSAGE,
@@ -352,6 +360,10 @@ class RuntimeRpcService:
                         "modelConfig": copy.deepcopy(config),
                     },
                 }
+        if app_task_messaging_allowed or app_task_reading_allowed:
+            request["appTaskAccessScope"] = "project-session"
+        elif app_stand_in_allowed:
+            request["appTaskAccessScope"] = "stand-in-conversation"
         started_at = time.perf_counter()
         logger.info(
             "[RuntimeRpcService] Sending runtime RPC: user_id=%s "
