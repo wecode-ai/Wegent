@@ -141,6 +141,53 @@ test('keeps a user-selected model through a task summary refresh', async () => {
   expect(hook.result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
 })
 
+test('keeps each conversation selection when switching scopes without sending', async () => {
+  const modelA: UnifiedModel = { name: 'model-a', type: 'runtime' }
+  const modelB: UnifiedModel = { name: 'model-b', type: 'runtime' }
+  const modelC: UnifiedModel = { name: 'model-c', type: 'runtime' }
+  const modelD: UnifiedModel = { name: 'model-d', type: 'runtime' }
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ data: [modelA, modelB, modelC, modelD] }),
+  }
+  const hook = renderHook(
+    ({ scopeKey, selectionConfig }: { scopeKey: string; selectionConfig: ModelSelectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        persistSelection: false,
+        scopeKey,
+        selectionConfig,
+      }),
+    {
+      initialProps: {
+        scopeKey: 'task-a',
+        selectionConfig: { modelName: modelA.name, modelType: modelA.type },
+      },
+    }
+  )
+
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  act(() => hook.result.current.setSelectedModelForScope('task-a', modelB))
+  expect(hook.result.current.getSelectedModelForScope('task-a')).toEqual(modelB)
+
+  hook.rerender({
+    scopeKey: 'task-b',
+    selectionConfig: { modelName: modelC.name, modelType: modelC.type },
+  })
+  await waitFor(() =>
+    expect(hook.result.current.getSelectedModelForScope('task-b')).toEqual(modelC)
+  )
+  act(() => hook.result.current.setSelectedModelForScope('task-b', modelD))
+
+  hook.rerender({
+    scopeKey: 'task-a',
+    selectionConfig: { modelName: modelA.name, modelType: modelA.type },
+  })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(modelB))
+  expect(hook.result.current.getSelectedModelForScope('task-a')).toEqual(modelB)
+  expect(hook.result.current.getSelectedModelForScope('task-b')).toEqual(modelD)
+})
+
 test('bumps selectionRevision for a scoped model option change', async () => {
   const model: UnifiedModel = { name: 'scoped-model', type: 'runtime' }
   const api = { listModels: vi.fn().mockResolvedValue({ data: [model] }) }
