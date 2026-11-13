@@ -1,6 +1,7 @@
 import { useIndependentIssuePage } from './useIndependentIssuePage'
 import { IndependentIssueList } from './IndependentIssueList'
 import { PersonalIssueList } from './PersonalIssueList'
+import { PersonalIssueErrors } from './PersonalIssueErrors'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Circle, UserRound } from 'lucide-react'
 import type {
@@ -270,6 +271,7 @@ export function WeworkPersonalHome({
                 </select>
               </div>
             </div>
+            <PersonalIssueErrors projects={state} independent={independent} />
             <IndependentIssueList state={independent} hideWhenEmpty />
             <PersonalIssueList
               hideEmpty={independent.loading || independent.items.length > 0}

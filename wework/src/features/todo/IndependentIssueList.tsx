@@ -28,19 +28,6 @@ export function IndependentIssueList({
           {t('independentIssues.loading')}
         </p>
       ) : null}
-      {state.error ? (
-        <div role="alert" className="flex flex-wrap items-center gap-2 py-3 text-sm text-error">
-          <span>{state.error}</span>
-          <button
-            type="button"
-            data-testid="independent-issues-retry"
-            onClick={state.reload}
-            className="min-h-11 rounded-md px-3 underline md:min-h-8"
-          >
-            {t('independentIssues.retry')}
-          </button>
-        </div>
-      ) : null}
       {!state.loading && !state.error && !state.items.length ? (
         <p className="py-3 text-sm text-text-secondary">{t('independentIssues.empty')}</p>
       ) : null}

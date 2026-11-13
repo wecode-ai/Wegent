@@ -39,3 +39,5 @@ sidebar_position: 42
 ## 并行测试性能证据
 
 渲染层和 Electron 测试保持并行。Electron 命令复用 `run-with-resource-logging.mjs` 采集 runner 的 CPU、内存及 I/O 压力，并通过 Node 文件调用跟踪和 `node-async-resource-diagnostics.mjs` 记录各测试 worker 的待完成文件请求、慢请求、事件循环延迟与 CPU 时间。即时 JSONL 写入可在 Vitest 终止 worker 前保留证据；不记录文件路径、参数或内容。证据进入现有 `wework-test-evidence` CI artifact，不提交测试输出，也不通过扩大超时或重试替代根因分析。
+
+同页的数据源故障集中在一个页面告警中，项目事项与独立事项分别保留重试入口；云端不可用不得阻塞本地事项或排序。复用原有 `collaboration-first-use` 真实桌面场景验证这一边界，不修改其单一告警断言。Linux CI 会按实测耗时重新分配 checkpoint，确认用例执行应读取 checkpoint 名称对应的运行日志，而非仅根据目录中的默认分片编号判断。

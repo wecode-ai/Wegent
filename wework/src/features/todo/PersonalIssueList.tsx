@@ -132,19 +132,6 @@ export function PersonalIssueList({
           {t('personalHome.loading')}
         </p>
       )}
-      {state.error && (
-        <div role="alert" className="flex items-center gap-2 py-4 text-sm text-error">
-          {t('personalHome.loadFailed')}
-          <button
-            type="button"
-            data-testid="personal-home-retry"
-            className="min-h-11 underline md:min-h-8"
-            onClick={state.reload}
-          >
-            {t('standIn.reload')}
-          </button>
-        </div>
-      )}
       {!hideEmpty && !state.loading && !state.error && !groups.length && (
         <p className="py-8 text-sm text-text-muted">{t('personalHome.empty')}</p>
       )}

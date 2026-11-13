@@ -9,6 +9,7 @@ import type {
 } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import { PersonalIssueList } from './PersonalIssueList'
+import { PersonalIssueErrors } from './PersonalIssueErrors'
 import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
 
 export function PersonalIssuesView({
@@ -97,6 +98,10 @@ export function PersonalIssuesView({
           />
           {t('independentIssues.showArchived')}
         </label>
+        <PersonalIssueErrors
+          projects={archived ? undefined : state}
+          independent={independentPage}
+        />
         <IndependentIssueList state={independentPage} hideWhenEmpty={!archived} />
         {!archived ? (
           <PersonalIssueList
