@@ -586,7 +586,7 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         }
-        let matching = super::personal_stand_in::automatic_assignment_roles(configs, issue);
+        let matching = super::personal_stand_in::matching_personal_roles(configs, issue);
         if matching.is_empty() {
             self.log_stand_in_decision(config, issue, "no_matching_role_tags", json!({}));
             return Ok(());
@@ -625,10 +625,13 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(());
         };
-        let eligible: Vec<&Value> = matching
+        let eligible_configs: Vec<Value> = matching
             .into_iter()
             .filter(|config| assignment_after_enable(assignment, config))
+            .cloned()
             .collect();
+        let eligible =
+            super::personal_stand_in::automatic_assignment_roles(&eligible_configs, issue);
         if eligible.is_empty() {
             self.log_stand_in_decision(config, issue, "assignment_before_role_enabled", json!({
                 "assignedAt":assignment["created_at"],

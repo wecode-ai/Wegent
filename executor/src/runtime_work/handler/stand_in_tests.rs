@@ -115,6 +115,53 @@ async fn round_work_validates_the_issue_event_without_replacing_member_identity(
 }
 
 #[tokio::test]
+async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagged_role() {
+    let bindings = Arc::new(AtomicUsize::new(0));
+    let calls = bindings.clone();
+    let router = Router::new()
+        .route("/api/v1/loop-items/issue/assignments", get(|| async {
+            Json(json!({"items":[{"id":"event","status":"active","created_at":"2026-11-12T10:01:00Z"}]}))
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!([{"human_assignment_id":"human","task_id":"stand-in-human"}])) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let configs = [
+        json!({"id":"general","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2026-11-12T10:00:00Z"}),
+        json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"tags":["review"],"enabledAfter":"2026-11-12T10:02:00Z"}),
+    ];
+    let issue = json!({"id":"issue","assignee_user_id":7,"tags":["review"],"human_task_binding":{
+        "humanAssignmentId":"human","assignmentId":"member","dispatchRoundId":"round","issueAssignmentId":"event"
+    }});
+    handler
+        .start_cloud_stand_in_with_roles(&configs, &issue)
+        .await
+        .unwrap();
+    assert_eq!(
+        bindings.load(Ordering::SeqCst),
+        1,
+        "The eligible general role must reach the existing-binding check"
+    );
+    assert!(
+        handler.local_task_links(true).is_empty(),
+        "The existing binding must prevent a second execution"
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
     let handler = RuntimeWorkRpcHandler::new("measurement", "unused");
     fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
