@@ -293,6 +293,11 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
                     f"status_code={response.status_code}, "
                     f"body_preview={_to_log_preview(response.text)}"
                 )
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    media_type=response.headers.get("content-type"),
+                )
 
         # Handle terminal events - remove from RunningTaskTracker
         from shared.models.responses_api import ResponsesAPIStreamEvents
@@ -1491,7 +1496,11 @@ async def openai_responses(http_request: Request):
         queue_type = metadata.get("type") or "online"
         service_pool = os.getenv("SERVICE_POOL", "default")
         queue_service = TaskQueueService(service_pool, queue_type)
-        success = queue_service.enqueue_task(request_data)
+        request_id = metadata.get("request_id")
+        if task_id and subtask_id and request_id == f"pipeline-{task_id}-{subtask_id}":
+            success = queue_service.enqueue_pipeline_task(request_data)
+        else:
+            success = queue_service.enqueue_task(request_data)
 
         if not success:
             logger.error(f"[v1/responses] Failed to enqueue task {task_id}")
