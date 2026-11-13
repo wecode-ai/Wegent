@@ -22,6 +22,7 @@ const createProps = (): IssueHomeTaskComposerProps => ({
   attachments: [],
   onFileSelect: vi.fn(),
   onRemoveAttachment: vi.fn(),
+  onRemovePendingFile: vi.fn(),
   projectLabel: '目标项目',
   projectId: 'p1',
   projects: [
@@ -134,7 +135,12 @@ describe('Wework Issue home task composer', () => {
   })
   test('keeps recording and task creation as peer modes without submitting the draft', async () => {
     const props = createProps()
-    render(<WeworkIssueHomeComposer {...props} renderTaskComposer={() => <span>Full task composer</span>} />)
+    render(
+      <WeworkIssueHomeComposer
+        {...props}
+        renderTaskComposer={() => <span>Full task composer</span>}
+      />
+    )
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     expect(screen.queryByText('标题会根据内容自动生成')).not.toBeInTheDocument()
     expect(screen.queryByTestId('collaboration-issue-guidance-toggle')).not.toBeInTheDocument()

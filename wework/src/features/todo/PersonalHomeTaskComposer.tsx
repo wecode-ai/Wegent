@@ -41,15 +41,22 @@ export function PersonalHomeTaskComposer({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
   })
   const uploaded = useRef(new Set<File>())
-  const { handleFileSelect } = attachments
+  const [error, setError] = useState<string | null>(null)
+  const { handleTrackedFileSelect, removeSourceFile } = attachments
   useEffect(() => {
-    const files = (draft.pendingFiles ?? []).filter(file => !uploaded.current.has(file))
+    const selected = new Set(draft.pendingFiles ?? [])
+    for (const file of uploaded.current) {
+      if (!selected.has(file)) {
+        uploaded.current.delete(file)
+        void removeSourceFile(file).catch(cause => setError(String(cause)))
+      }
+    }
+    const files = [...selected].filter(file => !uploaded.current.has(file))
     files.forEach(file => uploaded.current.add(file))
-    if (files.length) void handleFileSelect(files)
-  }, [draft.pendingFiles, handleFileSelect])
+    if (files.length) void handleTrackedFileSelect(files)
+  }, [draft.pendingFiles, handleTrackedFileSelect, removeSourceFile])
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
-  const [error, setError] = useState<string | null>(null)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   // A rejected runtime start retries the same Issue instead of creating a duplicate.
   const preparedIssues = useRef(new Map<string, CollaborationIssue>())
@@ -86,11 +93,18 @@ export function PersonalHomeTaskComposer({
           source: 'runtime' as const,
         }
       : null)
+  const removeTaskAttachment = async (id: number) => {
+    const source = attachments.getSourceFile(id)
+    if (!source) return attachments.removeAttachment(id)
+    draft.onRemovePendingFile(source)
+    await removeSourceFile(source)
+  }
   const submit = async (value = draft.value) => {
     const content = value.trim()
+    const selectedAttachments = attachments.getSelectedAttachments(draft.pendingFiles ?? [])
     const port = project && issueRuntimePort(project.project_store, services)
     if (
-      (!content && attachments.attachments.length === 0) ||
+      (!content && selectedAttachments.length === 0) ||
       !project ||
       !port ||
       submittingRef.current ||
@@ -108,8 +122,7 @@ export function PersonalHomeTaskComposer({
       let issue = preparedIssues.current.get(projectKey)
       const title =
         truncateRuntimeTaskTitle(
-          content.replace(/\s+/g, ' ') ||
-            attachments.attachments.map(file => file.filename).join('、')
+          content.replace(/\s+/g, ' ') || selectedAttachments.map(file => file.filename).join('、')
         ) ?? t('todo.new_task')
       if (!issue)
         issue = await api.issues.create(project.id, {
@@ -134,7 +147,7 @@ export function PersonalHomeTaskComposer({
       const address = await workbench.createProjectRuntimeTask(content, {
         project: state.currentProject,
         deviceWorkspaceId: state.selectedDeviceWorkspaceId,
-        attachments: attachments.attachments,
+        attachments: selectedAttachments,
         ...(goalDraftActive
           ? { initialGoal: { objective: content, status: 'active' as const } }
           : {}),
@@ -190,7 +203,13 @@ export function PersonalHomeTaskComposer({
       variant="desktop"
       inputTestId="personal-home-task-content"
       submitButtonTestId="personal-home-start-task"
-      projectChat={{ ...projectChat, ...attachments, scopeKey, isOptionsLocked: false }}
+      projectChat={{
+        ...projectChat,
+        ...attachments,
+        removeAttachment: removeTaskAttachment,
+        scopeKey,
+        isOptionsLocked: false,
+      }}
       projectWork={projectWork}
       projectWorkBarMiddleContext={draft.projectControl}
       workspaceTarget={workspaceTarget}

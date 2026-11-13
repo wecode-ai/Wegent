@@ -1,9 +1,10 @@
 import '@/i18n'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
 import type { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import { useComposerAttachments } from '@wegent/collaboration/composer'
 
 const mocks = vi.hoisted(() => ({ workbench: vi.fn(), input: vi.fn(), attachments: vi.fn() }))
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: mocks.workbench }))
@@ -27,7 +28,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
 afterEach(cleanup)
 beforeEach(() => vi.clearAllMocks())
 
-function setup(local = false) {
+function setup(local = false, realAttachments = false) {
   const issue = {
     id: 'issue',
     cloud_project_id: 'project',
@@ -64,13 +65,18 @@ function setup(local = false) {
     createProjectRuntimeTask,
   })
   const attachment = { id: 11, filename: 'release-notes.md', status: 'ready' }
-  mocks.attachments.mockReturnValue({
-    attachments: [attachment],
-    isAttachmentReadyToSend: true,
-    errors: new Map(),
-    handleFileSelect: vi.fn(),
-    resetAttachments: vi.fn(),
-  })
+  if (!realAttachments)
+    mocks.attachments.mockReturnValue({
+      attachments: [attachment],
+      isAttachmentReadyToSend: true,
+      errors: new Map(),
+      handleFileSelect: vi.fn(),
+      handleTrackedFileSelect: vi.fn(),
+      removeSourceFile: vi.fn(),
+      getSelectedAttachments: vi.fn(() => [attachment]),
+      getSourceFile: vi.fn(),
+      resetAttachments: vi.fn(),
+    })
   const api = {
     issues: {
       create: vi.fn(async () => issue),
@@ -169,6 +175,52 @@ it('preserves attachment-only work and generates its Issue title without requiri
     expect.objectContaining({ attachments: [attachment] })
   )
 })
+
+it.each(['record', 'task'])(
+  'removes an imported attachment from %s mode without sending or removing a same-name Task attachment',
+  async mode => {
+    mocks.attachments.mockImplementation(options => useComposerAttachments(options))
+    const { props, rerender, createProjectRuntimeTask } = setup(false, true)
+    const recorded = new File(['recorded'], 'report.bin', { type: 'application/octet-stream' })
+    const native = new File(['native'], 'report.bin', { type: 'application/octet-stream' })
+    const uploadAttachment = vi.fn(async (file: File) => ({
+      id: file === recorded ? 21 : 22,
+      filename: file.name,
+      status: 'ready',
+      mime_type: file.type,
+      file_size: file.size,
+      file_extension: '.bin',
+      created_at: '',
+    }))
+    const deleteAttachment = vi.fn().mockResolvedValue(undefined)
+    const services = { ...props.services, attachmentApi: { uploadAttachment, deleteAttachment } }
+    const onRemovePendingFile = vi.fn()
+    const draft = { ...props.draft, onRemovePendingFile, pendingFiles: [recorded] }
+    rerender(<PersonalHomeTaskComposer {...props} services={services as never} draft={draft} />)
+    await waitFor(() =>
+      expect(mocks.input.mock.lastCall![0].projectChat.attachments).toHaveLength(1)
+    )
+    await act(async () => mocks.input.mock.lastCall![0].projectChat.handleFileSelect(native))
+    expect(mocks.input.mock.lastCall![0].projectChat.attachments).toHaveLength(2)
+    if (mode === 'task') {
+      await act(async () => mocks.input.mock.lastCall![0].projectChat.removeAttachment(21))
+      expect(onRemovePendingFile).toHaveBeenCalledExactlyOnceWith(recorded)
+    }
+    rerender(
+      <PersonalHomeTaskComposer
+        {...props}
+        services={services as never}
+        draft={{ ...draft, pendingFiles: [] }}
+      />
+    )
+    fireEvent.click(screen.getByTestId('submit'))
+    await waitFor(() => expect(createProjectRuntimeTask).toHaveBeenCalledOnce())
+    expect(
+      createProjectRuntimeTask.mock.lastCall![1].attachments.map((item: { id: number }) => item.id)
+    ).toEqual([22])
+    expect(deleteAttachment).toHaveBeenCalledExactlyOnceWith(21)
+  }
+)
 
 it('keeps the draft and retries the same Issue after a rejected runtime start', async () => {
   const { createProjectRuntimeTask, api, draft, address } = setup()

@@ -63,6 +63,7 @@ export interface IssueHomeTaskComposerProps {
   onFileSelect(files: File | File[]): void;
   onRemoveAttachment(id: number): void;
   pendingFiles?: File[];
+  onRemovePendingFile(file: File): void;
   onResetDraft?(): void;
   onPendingChange?(pending: boolean): void;
   projectControl?: ReactNode;
@@ -187,8 +188,18 @@ export function IssueHomeComposer({
     });
     setFiles((current) => [...current, ...batch]);
   };
+  const removeFiles = (matches: (item: PendingFile) => boolean) => {
+    for (const item of files.filter(matches)) {
+      if (
+        item.local_preview_url &&
+        previews.current.delete(item.local_preview_url)
+      )
+        URL.revokeObjectURL(item.local_preview_url);
+    }
+    setFiles((current) => current.filter((item) => !matches(item)));
+  };
   const removeFile = (id: number | string) =>
-    setFiles((current) => current.filter((file) => file.id !== id));
+    removeFiles((item) => item.id === id);
   const issueCandidates = issues.map((issue) => ({
     id: `issue-${issue.id}`,
     type: "issue" as const,
@@ -282,7 +293,7 @@ export function IssueHomeComposer({
     return accepted;
   };
   const resetDraft = () => {
-    setFiles([]);
+    removeFiles(() => true);
     setOwnerOverride(null);
     setAutomaticOwner(null);
     for (const url of previews.current) URL.revokeObjectURL(url);
@@ -343,6 +354,8 @@ export function IssueHomeComposer({
           members: [...candidates, ...issueCandidates],
           attachments: files,
           pendingFiles: files.map((item) => item.file),
+          onRemovePendingFile: (file) =>
+            removeFiles((item) => item.file === file),
           onResetDraft: resetDraft,
           onFileSelect: addFiles,
           onRemoveAttachment: removeFile,
