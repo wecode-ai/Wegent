@@ -408,7 +408,9 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
 async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried() {
     let redis = RecordingRedis::default();
     redis.mark_cancelled();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {

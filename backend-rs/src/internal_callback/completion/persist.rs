@@ -180,7 +180,7 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> MysqlResult<Option<bool>> {
-    Ok(persist_terminal_transition(
+    Ok(Box::pin(persist_terminal_transition(
         ctx,
         task_id,
         subtask_id,
@@ -191,7 +191,7 @@ pub(crate) async fn persist_completed_result<M: Mysql, R: Redis>(
         executor_namespace,
         None,
         None,
-    )
+    ))
     .await?
     .map(|transition| match transition {
         Transition::Committed(auto_advance) => auto_advance,

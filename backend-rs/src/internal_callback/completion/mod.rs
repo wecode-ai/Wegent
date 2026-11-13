@@ -263,7 +263,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
     )
     .await;
 
-    let committed = persist::persist_terminal_transition(
+    let committed = Box::pin(persist::persist_terminal_transition(
         ctx,
         task_id,
         subtask_id,
@@ -274,7 +274,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
         executor_namespace,
         device_attempt,
         delivery,
-    )
+    ))
     .await;
     let Some(transition) = committed.inspect_err(|failure| {
         tracing::error!(%failure, task_id, subtask_id, status, "terminal persistence failed");
