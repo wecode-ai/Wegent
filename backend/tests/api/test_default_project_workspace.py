@@ -1,13 +1,18 @@
 """Unspecified project ownership uses an independent, reusable default space."""
 
 from copy import deepcopy
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.security import create_access_token
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
+from app.models.user import User
+from app.services.cloud_projects import cloud_project_service
 
 
 @pytest.mark.parametrize("default_source", ["legacy", "create", "update"])
@@ -101,3 +106,54 @@ def test_default_space_does_not_adopt_an_existing_business_space(
     )
     assert response.status_code == 201, response.text
     assert response.json()["workspace_id"] == default_id
+
+
+def test_transferred_default_is_not_adopted_by_either_owners_future_projects(
+    test_client: TestClient, test_db: Session, test_token: str
+) -> None:
+    owner = {"Authorization": f"Bearer {test_token}"}
+    target = User(
+        user_name=f"default-transfer-{uuid4().hex[:8]}",
+        password_hash="unused",
+        is_active=True,
+    )
+    test_db.add(target)
+    test_db.commit()
+    recipient = {
+        "Authorization": f"Bearer {create_access_token(data={'sub': target.user_name})}"
+    }
+    response = test_client.post(
+        "/api/v1/cloud-projects", headers=owner, json={"name": "Before transfer"}
+    )
+    assert response.status_code == 201, response.text
+    original_id = response.json()["workspace_id"]
+    response = test_client.get(f"/api/v1/workspaces/{original_id}", headers=owner)
+    assert response.status_code == 200, response.text
+    original_owner_id = response.json()["owner_user_id"]
+    response = test_client.post(
+        f"/api/v1/workspaces/{original_id}/transfer-ownership",
+        headers=owner,
+        json={"user_id": target.id, "version": response.json()["version"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["is_system_default"] is False
+    default_ids = []
+    for headers, other, other_id in [
+        (owner, recipient, target.id),
+        (recipient, owner, original_owner_id),
+    ]:
+        response = test_client.post(
+            "/api/v1/cloud-projects", headers=headers, json={"name": "After transfer"}
+        )
+        assert response.status_code == 201, response.text
+        project = response.json()
+        assert project["workspace_id"] != original_id
+        default_ids.append(project["workspace_id"])
+        denied = test_client.get(
+            f"/api/v1/workspaces/{project['workspace_id']}", headers=other
+        )
+        assert denied.status_code == 404, denied.text
+        with pytest.raises(HTTPException) as denied_project:
+            cloud_project_service.get(test_db, int(project["id"]), other_id)
+        assert denied_project.value.status_code == 404
+    assert len(set(default_ids)) == 2

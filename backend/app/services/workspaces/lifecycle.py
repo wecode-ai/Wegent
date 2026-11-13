@@ -140,8 +140,6 @@ class WorkspaceLifecycleService:
         return require_workspace_role(db, workspace_id, user_id)
 
     def transfer_ownership(self, db: Session, workspace_id: int, user_id: int, values):
-        from app.models.user import User
-
         require_workspace_role(db, workspace_id, user_id, BaseRole.Owner)
         kind = db.query(Kind).filter_by(id=workspace_id).with_for_update().one()
         if workspace_from_kind(kind).version != values.version:
@@ -170,7 +168,7 @@ class WorkspaceLifecycleService:
         metadata = dict(payload.get("metadata") or {})
         metadata.setdefault("createdByUserId", kind.user_id)
         kind.json = {**payload, "metadata": metadata}
-        self._set_kind_values(kind, is_default=False)
+        self._set_kind_values(kind, is_default=False, clear_system_default=True)
         for member_user_id in (kind.user_id, target.id):
             member = ensure_human_member(
                 db,
@@ -339,6 +337,7 @@ class WorkspaceLifecycleService:
         name: str | None = None,
         description: str | None = None,
         is_default: bool | None = None,
+        clear_system_default: bool = False,
         execution_environment: dict | None = None,
         state: str = "active",
     ) -> None:
@@ -353,7 +352,7 @@ class WorkspaceLifecycleService:
             namespace=current.namespace,
             public_id=current.public_id,
             is_default=(is_default if is_default is not None else current.is_default),
-            is_system_default=current.is_system_default,
+            is_system_default=current.is_system_default and not clear_system_default,
             execution_environment=(
                 execution_environment
                 if execution_environment is not None
