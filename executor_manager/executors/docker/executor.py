@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import httpx
 import requests
 
-from executor_manager.config.config import EXECUTOR_ENV
+from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
     CONTAINER_OWNER,
@@ -29,6 +29,7 @@ from executor_manager.executors.docker.constants import (
     DEFAULT_LOCALE,
     DEFAULT_PROGRESS_COMPLETE,
     DEFAULT_PROGRESS_RUNNING,
+    DEFAULT_RUNTIME_PORT,
     DEFAULT_TASK_ID,
     DEFAULT_TIMEZONE,
     DOCKER_SOCKET_PATH,
@@ -38,7 +39,6 @@ from executor_manager.executors.docker.utils import (
     build_callback_url,
     check_container_ownership,
     delete_container,
-    find_available_port,
     get_container_ports,
     get_container_status,
     get_running_task_details,
@@ -1032,10 +1032,15 @@ class DockerExecutor(Executor):
         # Add network configuration
         self._add_network_config(cmd)
 
-        # Add port mapping
-        port = find_available_port()
-        logger.info(f"Assigned port {port} for container {executor_name}")
-        cmd.extend(["-p", f"{port}:{port}", "-e", f"PORT={port}"])
+        # Docker allocates the host port when it starts the container.
+        cmd.extend(
+            [
+                "-p",
+                f"{PORT_RANGE_MIN}-{PORT_RANGE_MAX}:{DEFAULT_RUNTIME_PORT}",
+                "-e",
+                f"PORT={DEFAULT_RUNTIME_PORT}",
+            ]
+        )
 
         # Add callback URL
         self._add_callback_url(cmd, task)

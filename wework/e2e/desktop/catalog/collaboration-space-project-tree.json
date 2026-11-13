@@ -1,0 +1,22 @@
+{
+  "order": 23020,
+  "scenario": "./scenarios/collaboration-space-project-tree.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 23020,
+      "shard": 8,
+      "position": 14020
+    }
+  },
+  "paths": [
+    "backend/app/services/workspaces/lifecycle.py",
+    "backend/app/services/workspaces/storage.py",
+    "backend/app/schemas/workspace.py",
+    "backend-rs/src/workspaces.rs",
+    "packages/collaboration/src/platform/CollaborationPlatformApp.tsx",
+    "packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx",
+    "packages/collaboration/src/platform/platform.css",
+    "packages/collaboration/src/project-create/ProjectCreateDialog.tsx"
+  ]
+}

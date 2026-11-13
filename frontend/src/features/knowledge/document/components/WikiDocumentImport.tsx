@@ -562,15 +562,31 @@ export function WikiDocumentImport({
   }
 
   if (connected === false) {
-    return renderFooter(
-      <Button
-        variant="primary"
-        className="min-h-11"
-        disabled
-        data-testid="wiki-import-need-connection"
-      >
-        {t('wikiSection.need_connection')}
-      </Button>
+    return (
+      <>
+        <div
+          className="min-h-0 flex-1 overflow-y-auto p-6 text-center text-sm text-text-muted"
+          data-testid="wiki-import-content"
+        >
+          <p
+            role="status"
+            className="flex min-h-48 items-center justify-center"
+            data-testid="wiki-import-need-connection"
+          >
+            {t('wikiSection.need_connection')}
+          </p>
+        </div>
+        {renderFooter(
+          <Button
+            variant="primary"
+            className="min-h-11"
+            disabled
+            data-testid="wiki-import-submit-button"
+          >
+            {t('wikiSection.bind_selected', { count: 0 })}
+          </Button>
+        )}
+      </>
     )
   }
 

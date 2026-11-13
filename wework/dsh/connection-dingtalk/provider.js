@@ -257,10 +257,11 @@ export function normalizeMessages(source, response, ownId, selfConversationId) {
     if (!direct && source.scope !== 'all' && conversationId !== source.id) continue
     if (!Array.isArray(conversation.messages)) throw invalid('Missing messages')
     for (const message of conversation.messages) {
+      // Bot notifications can come from another account and feed our own task output back in.
+      if (message.sendType === 'robot' || message.messageAiSendFlag !== undefined) continue
       const sender = required(message, 'senderOpenDingTalkId')
       const manualSelfMessage =
         message.sendType === 'user' &&
-        message.messageAiSendFlag === undefined &&
         (!direct ||
           (source.scope !== 'all' && source.id === ownId && conversationId === selfConversationId))
       if (

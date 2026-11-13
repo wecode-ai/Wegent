@@ -407,8 +407,11 @@ def test_create_and_rebuild_entries_drive_the_remote_index_request(
     )
     post = _patch_remote_request(mocker)
 
+    assert rebuild_task["trigger"] == "manual_reindex"
     task_kwargs = {
-        key: value for key, value in rebuild_task.items() if key != "index_generation"
+        key: value
+        for key, value in rebuild_task.items()
+        if key not in {"index_generation", "trigger"}
     }
     result = run_document_indexing(**task_kwargs, db=test_db)
 
