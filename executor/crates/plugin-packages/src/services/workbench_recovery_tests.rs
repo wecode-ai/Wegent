@@ -110,12 +110,35 @@ fn invalid_staged_identity_never_moves_existing_package() {
         Err("Wrong plugin identity".into())
     });
     assert!(
-        matches!(error, Err(PackageRecoveryError::Invalid(message)) if message == "Wrong plugin identity")
+        matches!(error, Err(PackageRecoveryError::Invalid(message)) if message ==
+            "Published package integrity check failed; refusing to rewrite it; package recovery failed: Wrong plugin identity")
     );
     assert_eq!(
         fs::read_to_string(paths.package.join("payload.txt")).unwrap(),
         "corrupt source"
     );
+    assert!(!paths.history.exists());
+}
+
+#[test]
+fn failed_recovery_keeps_the_initial_publication_io_error() {
+    let root = tempfile::tempdir().unwrap();
+    let bytes = archive();
+    let paths = RecoveryPaths::new(root.path(), &archive_hash(&bytes));
+    ensure_package_directories(root.path(), PackageKind::Plugin).unwrap();
+    fs::create_dir_all(paths.package.parent().unwrap()).unwrap();
+    fs::create_dir(&paths.metadata).unwrap();
+    let initial = publish_plugin_archive(root.path(), &bytes, Some(&paths.hash)).unwrap_err();
+    let error =
+        prepare_plugin_archive(root.path(), &bytes, Some(&paths.hash), |_| Ok(())).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with(&format!("{initial}; package recovery failed: ")),
+        "{error}"
+    );
+    assert!(!paths.package.exists());
+    assert!(paths.metadata.is_dir());
     assert!(!paths.history.exists());
 }
 

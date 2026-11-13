@@ -77,15 +77,17 @@ impl GlobalCapabilityStore {
     fn marketplace_copy_package(
         &self,
         spec: &PluginSyncSpec,
-    ) -> Option<crate::services::workbench::LeasedPluginPackage> {
-        let package = self
-            .verified_plugin_package(spec.checksum.as_deref()?)
-            .and_then(|package| {
-                validate_package_identity(&package.path, spec)?;
-                Ok(package)
-            });
+    ) -> Result<Option<crate::services::workbench::LeasedPluginPackage>, CapabilitySyncError> {
+        let Some(checksum) = spec.checksum.as_deref() else {
+            return Ok(None);
+        };
+        let package = self.verified_plugin_package(checksum).and_then(|package| {
+            validate_package_identity(&package.path, spec)?;
+            Ok(package)
+        });
         match package {
-            Ok(package) => Some(package),
+            Ok(package) => Ok(Some(package)),
+            Err(error @ CapabilitySyncError::PluginPackageBusy(_)) => Err(error),
             Err(error) => {
                 crate::logging::log_executor_event(
                     "marketplace copy package evidence unavailable",
@@ -95,7 +97,7 @@ impl GlobalCapabilityStore {
                         ("error", error.to_string()),
                     ],
                 );
-                None
+                Ok(None)
             }
         }
     }
@@ -152,7 +154,7 @@ impl GlobalCapabilityStore {
                 }
                 self.ensure_runtime_path(&runtime, false)?;
                 // The old verified archive, not the mutable native cache, proves content.
-                let Some(package) = self.marketplace_copy_package(&spec) else {
+                let Some(package) = self.marketplace_copy_package(&spec)? else {
                     continue;
                 };
                 if self.matches_managed_package_copy(target, &spec, &package.path)? {

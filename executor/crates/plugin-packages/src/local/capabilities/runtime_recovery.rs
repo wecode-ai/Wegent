@@ -63,7 +63,9 @@ impl GlobalCapabilityStore {
                 Ok(false) => (),
                 Err(error) => {
                     let message = error.to_string();
-                    manifest["plugins"][&key]["runtime_recovery_error"] = json!(message);
+                    if !matches!(&error, CapabilitySyncError::PluginPackageBusy(_)) {
+                        manifest["plugins"][&key]["runtime_recovery_error"] = json!(message);
+                    }
                     report.failed.insert(key, message);
                 }
             }
@@ -290,8 +292,7 @@ impl GlobalCapabilityStore {
         ] {
             safe_managed_path(&root, &path, false)?;
         }
-        read_plugin_package(&root, hash)
-            .map_err(|error| CapabilitySyncError::invalid_payload(error.to_string()))
+        read_plugin_package(&root, hash).map_err(CapabilitySyncError::from)
     }
 
     fn current_shared_plugin_path(&self, hash: &str) -> Result<PathBuf, CapabilitySyncError> {

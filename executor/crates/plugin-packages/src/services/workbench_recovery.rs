@@ -129,7 +129,7 @@ pub(crate) fn prepare_plugin_archive(
 ) -> Result<LeasedPluginPackage, PackageRecoveryError> {
     let hash = validate_archive_hash(bytes, expected_hash)?;
     let reader = prepared_read_lease(root, &hash)?;
-    match publish_plugin_archive(root, bytes, expected_hash) {
+    let publish_error = match publish_plugin_archive(root, bytes, expected_hash) {
         Ok(package) => {
             return Ok(LeasedPluginPackage {
                 package,
@@ -138,21 +138,36 @@ pub(crate) fn prepare_plugin_archive(
         }
         // An unchecksummed download cannot authorize replacement of existing data.
         Err(error) if expected_hash.is_none() => return Err(error.into()),
-        Err(_) => drop(reader),
-    }
+        Err(error) => error,
+    };
+    drop(reader);
+    recover_plugin_archive(root, bytes, &hash, validate).map_err(|error| match error {
+        PackageRecoveryError::Busy => PackageRecoveryError::Busy,
+        PackageRecoveryError::Invalid(recovery) => PackageRecoveryError::Invalid(format!(
+            "{publish_error}; package recovery failed: {recovery}"
+        )),
+    })
+}
+
+fn recover_plugin_archive(
+    root: &Path,
+    bytes: &[u8],
+    hash: &str,
+    validate: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<LeasedPluginPackage, PackageRecoveryError> {
     let staging = tempfile::tempdir_in(root.join("shared/staging"))?;
     extract_archive(bytes, staging.path(), PackageKind::Plugin)?;
     validate(staging.path())?;
-    let writer = use_lease(root, &hash, true)?;
-    let publication = lock_package(root, PackageKind::Plugin, &hash)?;
-    let paths = RecoveryPaths::new(root, &hash);
+    let writer = use_lease(root, hash, true)?;
+    let publication = lock_package(root, PackageKind::Plugin, hash)?;
+    let paths = RecoveryPaths::new(root, hash);
     resume_pending(&paths)?;
-    if verify_published_package_locked(root, PackageKind::Plugin, &hash).is_err() {
+    if verify_published_package_locked(root, PackageKind::Plugin, hash).is_err() {
         replace_corrupt_package(&paths, staging.path())?;
     }
     drop(publication);
     drop(writer);
-    read_plugin_package(root, &hash)
+    read_plugin_package(root, hash)
 }
 
 struct RecoveryPaths {

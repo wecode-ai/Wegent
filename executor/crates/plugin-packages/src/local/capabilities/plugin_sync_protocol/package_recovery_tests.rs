@@ -61,6 +61,109 @@ fn copy_marketplace_sources(store: &GlobalCapabilityStore, spec: &PluginSyncSpec
     sources
 }
 
+struct ArchiveProvider(Vec<u8>);
+
+impl CapabilityPackageProvider for ArchiveProvider {
+    fn stage_skill<'a>(
+        &'a self,
+        _: &'a SkillSyncSpec,
+        _: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async { Err(invalid("Unexpected standalone skill")) })
+    }
+
+    fn download_plugin<'a>(
+        &'a self,
+        _: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, CapabilitySyncError>> + Send + 'a>> {
+        Box::pin(async { Ok(self.0.clone()) })
+    }
+}
+
+fn package_writer(store: &GlobalCapabilityStore, hash: &str) -> crate::file_lease::FileLease {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            store
+                .shared_root()
+                .unwrap()
+                .join("shared/locks")
+                .join(format!("plugins-{}.use.lock", &hash[7..])),
+        )
+        .unwrap();
+    fs2::FileExt::try_lock_exclusive(&file).unwrap();
+    crate::file_lease::FileLease(file)
+}
+
+#[tokio::test]
+async fn a_busy_previous_package_is_retryable_for_updates_and_reinstalls() {
+    for ordered in [false, true] {
+        for installed_id in [1, 2] {
+            assert_busy_previous_package(ordered, installed_id).await;
+        }
+    }
+}
+
+async fn assert_busy_previous_package(ordered: bool, installed_id: i64) {
+    let (_root, handler) = shared_fixture();
+    let request = recovery_request(1, ordered, "wework");
+    let spec = PluginSyncSpec::from_value(&request["plugins"][0]).unwrap();
+    assert_eq!(handler.apply_sync(request).await.unwrap()["success"], true);
+    copy_marketplace_sources(&handler.store, &spec);
+    let before = handler.store.manifest.load().unwrap();
+    let writer = package_writer(&handler.store, spec.checksum.as_deref().unwrap());
+    // Keep the requested archive readable while its previous ownership witness is busy.
+    let mut bytes = package("alpha");
+    bytes.push(0);
+    let mut update = recovery_request(2, ordered, "wework");
+    update["plugins"][0]["checksum"] = json!(sha256_digest(&bytes));
+    update["plugins"][0]["installed_plugin_id"] = json!(installed_id);
+    let next = CapabilitySyncHandler::with_package_provider(
+        "test",
+        handler.store.clone(),
+        ArchiveProvider(bytes),
+        std::sync::Arc::new(crate::NoRunningSessions),
+    );
+    let result = next.apply_sync(update.clone()).await.unwrap();
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(
+        result["plugins"][0]["error_code"], "PLUGIN_PACKAGE_BUSY",
+        "{result}"
+    );
+    assert_eq!(result["plugins"][0]["retryable"], true);
+    assert_eq!(
+        handler.store.manifest.load().unwrap()["plugins"],
+        before["plugins"]
+    );
+    drop(writer);
+    assert_eq!(next.apply_sync(update).await.unwrap()["success"], true);
+}
+
+#[tokio::test]
+async fn startup_does_not_persist_a_transient_package_lease_as_runtime_damage() {
+    let (_root, handler) = shared_fixture();
+    let request = recovery_request(1, true, "wework");
+    let spec = PluginSyncSpec::from_value(&request["plugins"][0]).unwrap();
+    assert_eq!(handler.apply_sync(request).await.unwrap()["success"], true);
+    let before = handler.store.manifest.load().unwrap();
+    remove_existing_path(&handler.store.plugin_codex_link(&spec)).unwrap();
+    let writer = package_writer(&handler.store, spec.checksum.as_deref().unwrap());
+    let report = handler.store.reconcile_managed_plugin_runtimes().unwrap();
+    assert!(report.failed.contains_key(&spec.key));
+    assert_eq!(
+        handler.store.manifest.load().unwrap()["plugins"],
+        before["plugins"]
+    );
+    drop(writer);
+    let report = handler.store.reconcile_managed_plugin_runtimes().unwrap();
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(
+        fs::read(handler.store.plugin_codex_link(&spec).join("payload.txt")).unwrap(),
+        b"valid plugin contents"
+    );
+}
+
 #[tokio::test]
 async fn recovery_covers_both_protocols_runtime_modes_and_marketplace_entry_forms() {
     for ordered in [false, true] {

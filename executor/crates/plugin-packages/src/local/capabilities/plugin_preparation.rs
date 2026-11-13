@@ -456,7 +456,7 @@ fn package_failure(error: PackageRecoveryError) -> PluginSyncFailure {
             "PLUGIN_PACKAGE_INTEGRITY_FAILED"
         },
         busy,
-        CapabilitySyncError::invalid_payload(error.to_string()),
+        CapabilitySyncError::from(error),
     )
 }
 
