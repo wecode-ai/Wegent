@@ -379,16 +379,16 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
         Value::String("/tmp/source".to_owned()),
     );
 
-    handler.reserve_worktree_preparation(&turn);
+    handler.reserve_turn_preparation(&turn);
 
-    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+    assert!(handler.cancel_preparing_turn("task-1"));
     assert_eq!(
         handler
-            .preparing_worktree_turns
+            .preparing_turns
             .lock()
-            .expect("preparing worktree turn map lock should not be poisoned")
+            .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
-        Some(&PreparingWorktreeTurn {
+        Some(&PreparingTurn {
             cancellation_requested: true
         })
     );
@@ -413,7 +413,7 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
         "deferred_worktree_source_path".to_owned(),
         Value::String("/tmp/source".to_owned()),
     );
-    handler.reserve_worktree_preparation(&turn);
+    handler.reserve_turn_preparation(&turn);
 
     let waiter = {
         let handler = handler.clone();
@@ -427,9 +427,9 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
     assert!(!waiter.is_finished());
 
     handler
-        .preparing_worktree_turns
+        .preparing_turns
         .lock()
-        .expect("preparing worktree turn map lock should not be poisoned")
+        .expect("preparing turn map lock should not be poisoned")
         .remove("task-1");
 
     assert!(waiter.await.expect("preparation waiter should finish"));
@@ -482,8 +482,8 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         plan.path.display().to_string(),
         "Task".to_owned(),
     ));
-    handler.reserve_worktree_preparation(&turn);
-    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+    handler.reserve_turn_preparation(&turn);
+    assert!(handler.cancel_preparing_turn("task-1"));
 
     handler
         .prepare_and_start_reserved_turn(turn)
@@ -2589,6 +2589,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
             turn_id: "turn-1".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
@@ -2700,6 +2701,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
             turn_id: "turn-stale".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-stale".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "stale".to_owned(),
@@ -3463,6 +3465,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 turn_id: "turn-1".to_owned(),
             }),
             Ok(crate::agents::CodexAppServerTurn {
+                quota_recovery: None,
                 thread_id: format!("thread-{case}"),
                 outcome,
                 response_item_id: response_item_id.clone(),
@@ -3532,6 +3535,7 @@ fn failed_responses_emit_runtime_turn_duration() {
             turn_id: "turn-failed-duration".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-failed-duration".to_owned(),
             outcome: ExecutionOutcome::Failed {
                 message: "upstream failed".to_owned(),
