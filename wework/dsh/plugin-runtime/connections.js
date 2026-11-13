@@ -247,6 +247,15 @@ export function parseConnections(manifest) {
               new Set(Object.values(spec.parameters)).size === Object.keys(spec.parameters).length,
             'Invalid CLI parameters'
           )
+          if (spec.outputFile !== undefined)
+            requireValue(
+              record(spec.outputFile) &&
+                /^--[a-z][a-z0-9-]*$/.test(spec.outputFile.flag) &&
+                !Object.values(spec.parameters).includes(spec.outputFile.flag) &&
+                !spec.command.some(part => part.split('=')[0] === spec.outputFile.flag) &&
+                !declaration.outputArgs.some(part => part.split('=')[0] === spec.outputFile.flag),
+              'Invalid host-owned CLI output file'
+            )
         }
       }
     }
