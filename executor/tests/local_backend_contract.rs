@@ -1074,7 +1074,9 @@ impl RecordingTransport {
         .await
         .unwrap_or_else(|error| {
             let observed = self
-                .event_deliveries.lock().unwrap()
+                .event_deliveries
+                .lock()
+                .unwrap()
                 .iter()
                 .map(|emit| emit.event.clone())
                 .collect::<Vec<_>>();
@@ -1100,7 +1102,9 @@ impl RecordingTransport {
     }
 
     fn emits_for_event(&self, event: &str) -> Vec<RecordedCall> {
-        self.event_deliveries.lock().unwrap()
+        self.event_deliveries
+            .lock()
+            .unwrap()
             .iter()
             .filter(|emit| emit.event == event)
             .cloned()
@@ -1133,8 +1137,14 @@ impl LocalBackendTransport for RecordingTransport {
         _timeout: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'a>> {
         Box::pin(async move {
-            let call = RecordedCall { event: event.to_owned(), payload };
-            if matches!(event, "response.completed" | "response.incomplete" | "error") {
+            let call = RecordedCall {
+                event: event.to_owned(),
+                payload,
+            };
+            if matches!(
+                event,
+                "response.completed" | "response.incomplete" | "error"
+            ) {
                 self.event_deliveries.lock().unwrap().push(call.clone());
                 self.notify.notify_waiters();
             }
@@ -1154,7 +1164,10 @@ impl LocalBackendTransport for RecordingTransport {
         payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            let call = RecordedCall { event: event.to_owned(), payload };
+            let call = RecordedCall {
+                event: event.to_owned(),
+                payload,
+            };
             self.event_deliveries.lock().unwrap().push(call.clone());
             self.emits.lock().unwrap().push(call);
             self.notify.notify_waiters();
