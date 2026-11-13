@@ -173,6 +173,8 @@
   .collaboration-workspace-section-actions
   > button:focus-visible,
 :where(html:not([data-input-modality="pointer"]))
+  .collaboration-workspace-section-toggle:focus-visible,
+:where(html:not([data-input-modality="pointer"]))
   .collaboration-workspace-identity:focus-visible,
 :where(html:not([data-input-modality="pointer"]))
   .collaboration-workspace-toggle:focus-visible,
@@ -205,6 +207,58 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.75;
+}
+
+.collaboration-workspace-section-toggle {
+  display: flex;
+  min-width: 0;
+  height: 30px;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 64px 0 0;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.collaboration-workspace-section-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-workspace-section-toggle > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  stroke-width: 1.75;
+  opacity: 0;
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out;
+}
+
+.collaboration-workspace-section-toggle[aria-expanded="true"] > svg {
+  transform: rotate(90deg);
+}
+
+.collaboration-workspace-section-heading:hover
+  .collaboration-workspace-section-toggle
+  > svg,
+.collaboration-workspace-section-heading:focus-within
+  .collaboration-workspace-section-toggle
+  > svg,
+.collaboration-workspace-section-toggle[aria-expanded="false"] > svg {
+  opacity: 1;
 }
 
 .collaboration-workspace-section-actions {

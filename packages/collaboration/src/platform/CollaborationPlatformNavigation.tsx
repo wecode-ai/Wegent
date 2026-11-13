@@ -91,6 +91,7 @@ export function CollaborationPlatformNavigation({
   const [autoExpandedWorkspaceSelection, setAutoExpandedWorkspaceSelection] =
     useState<string | null>(autoExpandedWorkspaceId);
   const projectFirst = host.capabilities.projectNavigation === "projects";
+  const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
   const [retryingNavigation, setRetryingNavigation] = useState(false);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
   // Expansion follows the selected workspace during render so it cannot land
@@ -531,12 +532,25 @@ export function CollaborationPlatformNavigation({
       ) : null}
       {!projectFirst ? (
         <div className="collaboration-workspace-section-heading">
-          <span
-            className="collaboration-workspace-section-title"
-            data-testid="collaboration-workspaces-section-title"
-          >
-            {messages.collaborationSpaces}
-          </span>
+          {fullSidebar ? (
+            <span
+              className="collaboration-workspace-section-title"
+              data-testid="collaboration-workspaces-section-title"
+            >
+              {messages.collaborationSpaces}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="collaboration-workspace-section-toggle"
+              aria-expanded={workspacesExpanded}
+              data-testid="collaboration-workspaces-section-toggle"
+              onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
+            >
+              <span>{messages.collaborationSpaces}</span>
+              <ChevronRight aria-hidden="true" />
+            </button>
+          )}
           <div className="collaboration-workspace-section-actions">
             {createWorkspaceButton}
           </div>
@@ -691,7 +705,7 @@ export function CollaborationPlatformNavigation({
             </section>
           ))
         : null}
-      {!projectFirst ? (
+      {!projectFirst && (fullSidebar || workspacesExpanded) ? (
         <div className="collaboration-workspace-tree">
           {navigationWorkspaces.map(renderWorkspaceGroup)}
         </div>

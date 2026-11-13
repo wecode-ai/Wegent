@@ -963,6 +963,38 @@ afterEach(async () => {
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
+  it.each(["workspaces", "projects"] as const)(
+    "keeps the contextual section toggle only in %s navigation",
+    async (projectNavigation) => {
+      const { api } = createApi();
+      await render(
+        <PlatformHarness
+          api={api}
+          capabilities={{
+            automation: false,
+            dingtalkAitable: false,
+            sidebarPresentation: "context",
+            projectNavigation,
+          }}
+        />,
+      );
+      const selector =
+        '[data-testid="collaboration-workspaces-section-toggle"]';
+      const tree = `[data-testid="collaboration-workspace-tree-${workspace.id}"]`;
+      expect(container.querySelector(tree)).not.toBeNull();
+      if (projectNavigation === "workspaces") {
+        const toggle = byTestId("collaboration-workspaces-section-toggle");
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        await click(toggle);
+        expect(container.querySelector(tree)).toBeNull();
+        await click(toggle);
+        expect(container.querySelector(tree)).not.toBeNull();
+      } else {
+        expect(container.querySelector(selector)).toBeNull();
+        expect(byTestId("collaboration-project-group-cloud")).toBeTruthy();
+      }
+    },
+  );
   it("lists accessible projects by storage without requiring access to their parent space", async () => {
     const restrictedProject = {
       ...project,
