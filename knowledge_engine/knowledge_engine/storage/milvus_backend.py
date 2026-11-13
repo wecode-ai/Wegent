@@ -1375,6 +1375,7 @@ class MilvusBackend(BaseStorageBackend):
                 collection_name=collection_name,
                 filter=filter_expr,
                 output_fields=[
+                    "knowledge_id",
                     "doc_ref",
                     "source_file",
                     "created_at",

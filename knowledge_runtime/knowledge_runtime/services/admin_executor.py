@@ -188,6 +188,19 @@ class AdminExecutor:
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,
         )
+        document_refs = {
+            reference
+            for document_id in config.document_ids
+            for reference in (str(document_id), f"doc_{document_id}")
+        }
+        chunks = [
+            chunk
+            for chunk in result["chunks"]
+            if chunk.get("doc_ref") in document_refs
+            and (chunk.get("metadata") or {}).get("doc_ref") == chunk["doc_ref"]
+            and (chunk.get("metadata") or {}).get("knowledge_id") == knowledge_id
+        ]
+        result = {"chunks": chunks, "total": len(chunks)}
         return RemoteListChunksResponse.model_validate(result)
 
     @trace_async(

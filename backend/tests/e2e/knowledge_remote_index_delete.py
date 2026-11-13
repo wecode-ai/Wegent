@@ -15,6 +15,10 @@ from __future__ import annotations
 import uuid
 
 import httpx
+from knowledge_deleted_content_visibility import (
+    assert_residual_points_are_hidden,
+    snapshot_document_points,
+)
 from knowledge_remote_index_support import (
     ADMIN_USER_NAME,
     EMBEDDING_MODEL_URL,
@@ -121,6 +125,7 @@ def run_document_delete_scenario(
         )
         document_a_row = _load_document_row(document_a_id)
         generation = int(indexed_a["index_generation"])
+        points = snapshot_document_points(knowledge_base_id, document_a_id)
 
         before = _internal_retrieve_knowledge_base(
             client, knowledge_base_id, marker_a, user_id=owner_user_id
@@ -171,6 +176,17 @@ def run_document_delete_scenario(
         )
         _assert_no_record_for_document(
             after_duplicate.json().get("records", []), document_a_id
+        )
+
+        assert_residual_points_are_hidden(
+            client,
+            token,
+            knowledge_base_id=knowledge_base_id,
+            deleted_document_id=document_a_id,
+            sibling_document_id=document_b_id,
+            owner_user_id=owner_user_id,
+            sibling_marker=marker_b,
+            points=points,
         )
 
         # An index task that was queued before the delete must not restore it.
