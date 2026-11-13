@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { lstat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -143,7 +143,8 @@ async function executorIdentity(environment: NodeJS.ProcessEnv): Promise<string 
   if (!command) return null
   const args = environment.WEWORK_EXECUTOR_ARGS_JSON || '[]'
   try {
-    const metadata = await lstat(command, { bigint: true })
+    // Follow symbolic links so replacing the target binary invalidates the probe.
+    const metadata = await stat(command, { bigint: true })
     return JSON.stringify([
       resolve(command),
       metadata.dev.toString(),
