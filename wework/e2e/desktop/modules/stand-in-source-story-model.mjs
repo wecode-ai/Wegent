@@ -198,7 +198,28 @@ export function createSourceStoryModel({ marker, roleId, providerId, mode, expec
         messageId: message.id,
       })
     if (mode === 'project') return [assistantMessage(value.fact)]
-    return call(body, reply, 'reply', { messageId: message.recordId, text: value.reply })
+    if (value.imageResourceId) {
+      const images = `${read}-images`
+      if (!has(body, images))
+        return call(body, images, 'read_source', { query: { includeImages: true } })
+      const history = storyToolOutput(body, images)
+      assert.equal(history.readOnly, true)
+      assert.ok(
+        history.items.some(item =>
+          item.images?.some(
+            image => image.resourceId === value.imageResourceId && image.path.endsWith('.png')
+          )
+        ),
+        'Read the actual image through the source-bound tool before asking to send'
+      )
+    }
+    return call(body, reply, 'reply', {
+      messageId: message.recordId,
+      text: value.reply,
+      ...(value.mentionOpenDingTalkIds
+        ? { mentionOpenDingTalkIds: value.mentionOpenDingTalkIds }
+        : {}),
+    })
   }
 
   function proposal(body) {

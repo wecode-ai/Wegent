@@ -178,6 +178,8 @@ DingTalk source intake ignores messages explicitly identified as robot-sent or c
 
 Choose manual delegation, approval before operations, or automatic handling independently for each source. New DingTalk sources default to approval before operations. The selected execution device uses its installed DingTalk plugin and account. Complete any requested authentication through the existing connector flow.
 
+Screenshots in a connected conversation are downloaded through its read-only source query into host-generated temporary files, without another operation approval for viewing images. Missing account authentication or revoked source access still requires restoring that connection. To mention a colleague in a group, the stand-in must obtain their real person ID and pass the reply tool's mention parameter; typing “@Name” in the body produces text only. Reply sending still follows the source's confirmation settings, and message acceptance does not prove that the recipient received a mention notification.
+
 Open **My stand-in → Stand-in details → Manage stand-in → Connections → source details → Processing**. Processing is collapsed by default. Expand it to access three matching switches, then save the stand-in settings to apply changes:
 
 - **Handle new items immediately**: when enabled, handling starts when an event arrives; when disabled, new events are collected before the stand-in decides how to handle them. New role connections default to enabled; new primary connections default to disabled. Timing neither determines conversation ownership nor bypasses approvals.
