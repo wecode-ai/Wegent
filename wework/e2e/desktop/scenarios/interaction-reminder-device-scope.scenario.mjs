@@ -102,6 +102,37 @@ function questionForPrompt(prompt) {
   }[prompt]
 }
 
+function selectQuestionTool(body, question) {
+  const tools = Array.isArray(body.tools) ? body.tools : []
+  const names = tools.map(tool => tool.name ?? tool.function?.name).filter(Boolean)
+  const name =
+    names.find(candidate => candidate.endsWith('request_user_input_async')) ??
+    names.find(candidate => candidate.endsWith('request_user_input'))
+  assert.ok(name, 'The model did not advertise a request-user-input tool')
+  const argumentsValue = name.endsWith('_async')
+    ? { questions: [{ title: question }] }
+    : {
+        questions: [
+          {
+            id: 'interaction_reminder_scope',
+            header: 'Policy',
+            question,
+            options: [
+              {
+                label: 'Keep current',
+                description: 'Keep the current policy for this review.',
+              },
+              {
+                label: 'Use legacy',
+                description: 'Use the legacy policy for this review.',
+              },
+            ],
+          },
+        ],
+      }
+  return selectTool(body, name, argumentsValue)
+}
+
 function interactionUrlPrefix(address) {
   return `wework://interactions/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}/`
 }
@@ -317,9 +348,7 @@ export function createDesktopScenario({
         callId,
         response,
         responseId: `interaction-reminder-${prompt}`,
-        selection: selectTool(body, 'request_user_input_async', {
-          questions: [{ title: questionForPrompt(prompt) }],
-        }),
+        selection: selectQuestionTool(body, questionForPrompt(prompt)),
       })
       return true
     },
