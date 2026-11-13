@@ -237,6 +237,7 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379/0
           WEGENT_BACKEND_RS_ENV_FILE: /dev/null
           SECRET_KEY: heartbeat-e2e-signing-key
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
         run: |
           set -o pipefail
           cargo test --locked --test device_heartbeat_redis -- --ignored --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-heartbeat-redis.log
