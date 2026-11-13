@@ -241,6 +241,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       }
 
       await reloadMainWindow(control, 'Parent board preference did not reload')
+      await showAllCollaborationIssues(control, CONTENT)
       await wait('cloud-board-parent-rows', fixture.front.title)
       assert.equal(
         await control.command('getAttribute', test('cloud-board-parent-layout'), {
@@ -300,6 +301,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/local/${project.id}`,
       })
+      await showAllCollaborationIssues(control, CONTENT)
       await wait('cloud-board-parent-rows', fixture.front.title)
       await capture('12-dark-theme')
       await click('cloud-board-parent-layout')

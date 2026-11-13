@@ -644,6 +644,10 @@ class LoopItemService:
             )
             if existing is not None:
                 self._require_item_access(db, existing, user_id)
+                if not loop_datetime_value_is_unset(existing.deleted_at):
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "Created TODO has been archived"
+                    )
                 return existing
         sequence = project.next_item_number
         project.next_item_number += 1

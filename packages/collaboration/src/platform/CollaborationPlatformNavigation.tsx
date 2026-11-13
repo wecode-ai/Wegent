@@ -267,7 +267,7 @@ export function CollaborationPlatformNavigation({
       <section
         className="collaboration-workspace-group"
         data-testid={`collaboration-workspace-tree-${candidate.id}`}
-        key={candidate.id}
+        key={isDefault ? "personal-group" : candidate.id}
       >
         <div
           className={`collaboration-workspace-row${

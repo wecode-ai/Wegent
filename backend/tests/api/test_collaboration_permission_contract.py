@@ -596,3 +596,21 @@ def test_comment_child_creation_request_is_idempotent_and_checks_current_access(
     assert restricted.status_code == 200, restricted.text
     denied = test_client.post(url, headers=scope["member"], json=payload)
     assert denied.status_code == 404, denied.text
+
+
+def test_comment_child_replay_rejects_archived_result(test_client, scope):
+    url = f"/api/v1/cloud-projects/{scope['project']['id']}/loop-items"
+    payload = {"title": "Child", "request_id": "archived-comment-child"}
+    first = test_client.post(url, headers=scope["owner"], json=payload)
+    assert first.status_code == 201, first.text
+    item_id = first.json()["id"]
+    archived = test_client.delete(
+        f"/api/v1/loop-items/{item_id}", headers=scope["owner"]
+    )
+    assert archived.status_code == 204, archived.text
+    repeated = test_client.post(url, headers=scope["owner"], json=payload)
+    assert repeated.status_code == 409, repeated.text
+    missing = test_client.get(f"/api/v1/loop-items/{item_id}", headers=scope["owner"])
+    assert missing.status_code == 404
+    next_item = test_client.post(url, headers=scope["owner"], json={"title": "Next"})
+    assert next_item.json()["sequence_number"] == first.json()["sequence_number"] + 1

@@ -4023,6 +4023,60 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
+  it("keeps project import disabled while creation is pending and restores it on failure", async () => {
+    const { api } = createApi({
+      initialWorkspaces: [localWorkspace],
+      initialProjects: [],
+    });
+    const pending = deferred<CollaborationProject>();
+    api.projects.create = vi.fn(() => pending.promise);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{
+          ...initialLocation,
+          collaborationDomain: "local",
+          workspaceId: localWorkspace.id,
+        }}
+        capabilities={{
+          automation: false,
+          dingtalkAitable: false,
+          workspaceLocations: ["local", "cloud"],
+          projectNavigation: "projects",
+          projectLocation: "local",
+        }}
+        renderProjectImporter={() => (
+          <div data-testid="test-pending-importer" />
+        )}
+      />,
+    );
+    await createPersonalProject();
+    await change(
+      portalByTestId("collaboration-project-name-input") as HTMLInputElement,
+      "Pending project",
+    );
+    await click(portalByTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    for (const id of [
+      "collaboration-workspace-nav-add-folder",
+      "collaboration-workspace-nav-import-existing-project",
+    ]) {
+      const button = portalByTestId(id) as HTMLButtonElement;
+      expect(button.matches(":disabled")).toBe(true);
+      await act(async () => button.click());
+    }
+    expect(
+      document.querySelector('[data-testid="test-pending-importer"]'),
+    ).toBeNull();
+    await act(async () => pending.reject(new Error("creation failed")));
+    await flush();
+    expect(
+      portalByTestId("collaboration-workspace-nav-add-folder").matches(
+        ":disabled",
+      ),
+    ).toBe(false);
+  });
+
   it("uses the host importer for local projects and opens existing projects from the add menu", async () => {
     const localProject: CollaborationProject = {
       ...project,
@@ -6106,9 +6160,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       ).disabled,
     ).toBe(true);
     await act(async () => ready.resolve([localWorkspace]));
-    await click(
-      byTestId("collaboration-workspace-actions-wework-local-workspace"),
-    );
     expect(
       (
         portalByTestId(

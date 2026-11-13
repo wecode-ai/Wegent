@@ -145,6 +145,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
   async function openBoard(control) {
     await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
     await selectBoard(control, workbenchReadyTimeoutMs)
+    await showAllCollaborationIssues(control, CONTENT)
     await control.command('waitFor', scoped('[data-testid="board-view-picker"]'), {
       timeoutMs: uiTimeoutMs,
     })

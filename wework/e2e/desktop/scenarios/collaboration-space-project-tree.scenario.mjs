@@ -109,7 +109,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       assert.notEqual(first.workspace_id, business.id)
       assert.equal(second.workspace_id, first.workspace_id)
       const defaultSpace = await request(`/api/v1/workspaces/${first.workspace_id}`)
-      assert.equal(defaultSpace.name, '个人分组')
+      assert.equal(defaultSpace.name, '默认空间')
+      await control.command(
+        'waitFor',
+        sidebar(`collaboration-workspace-tree-${first.workspace_id}`),
+        {
+          text: '个人分组',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       const explicit = await createProject(control, `指定空间项目-${process.pid}`, business.id)
       assert.equal(explicit.workspace_id, business.id)
       assert.equal((await request(`/api/v1/workspaces/${business.id}`)).name, business.name)
