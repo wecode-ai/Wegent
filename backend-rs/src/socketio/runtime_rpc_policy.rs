@@ -4,11 +4,11 @@
 
 //! Installation consent for personal task RPCs, independent of project grants.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::runtime_work::remote_control_is_enabled;
 
-use super::runtime_rpc::{CallFailure, REMOTE_CONTROL_DISABLED_MESSAGE, Route, RuntimeRpcError};
+use super::runtime_rpc::Route;
 
 const PERSONAL_TASK_METHODS: [&str; 9] = [
     "runtime.tasks.create",
@@ -26,16 +26,18 @@ const PROJECT_READ_METHODS: [&str; 2] = [
     "runtime.tasks.transcript.search",
 ];
 
-pub(super) fn authorize(
-    route: &Route,
-    method: &str,
-    project_read: bool,
-) -> Result<Option<&'static str>, CallFailure> {
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TaskGrant {
+    Unscoped,
+    ProjectRead,
+}
+
+pub(super) fn authorize(route: &Route, method: &str, project_read: bool) -> Option<TaskGrant> {
     if remote_control_is_enabled(route.device_type) {
-        return Ok(None);
+        return Some(TaskGrant::Unscoped);
     }
     if project_read && PROJECT_READ_METHODS.contains(&method) {
-        return Ok(Some("project-session"));
+        return Some(TaskGrant::ProjectRead);
     }
     let access = route
         .online
@@ -46,14 +48,9 @@ pub(super) fn authorize(
         && access["version"].as_i64() == Some(1)
         && access["enabled"] == Value::Bool(true)
     {
-        return Ok(None);
+        return Some(TaskGrant::Unscoped);
     }
-    Err(CallFailure::Rpc(RuntimeRpcError {
-        code: "remote_control_disabled".into(),
-        message: REMOTE_CONTROL_DISABLED_MESSAGE.into(),
-        retryable: Some(false),
-        details: Some(json!({"deviceId": route.logical_device_id})),
-    }))
+    None
 }
 
 pub(super) fn personal_events_allowed(is_app: bool, marker: Option<&Value>) -> bool {
@@ -64,6 +61,7 @@ pub(super) fn personal_events_allowed(is_app: bool, marker: Option<&Value>) -> b
 mod tests {
     use super::*;
     use crate::device_identity::DeviceType;
+    use serde_json::json;
 
     fn route(access: Value) -> Route {
         Route {
@@ -90,17 +88,17 @@ mod tests {
         ] {
             for method in PERSONAL_TASK_METHODS {
                 assert!(
-                    authorize(&route(access.clone()), method, false).is_err(),
+                    authorize(&route(access.clone()), method, false).is_none(),
                     "{method}: {access}"
                 );
             }
         }
         let mut target = route(json!({"version":1,"enabled":true}));
         for method in PERSONAL_TASK_METHODS {
-            assert_eq!(authorize(&target, method, false).unwrap(), None);
+            assert_eq!(authorize(&target, method, false), Some(TaskGrant::Unscoped));
         }
         target.online["runtime_features"]["remoteTaskAccess"]["enabled"] = json!(false);
-        assert!(authorize(&target, "runtime.tasks.send", false).is_err());
+        assert!(authorize(&target, "runtime.tasks.send", false).is_none());
     }
 
     #[test]
@@ -113,7 +111,7 @@ mod tests {
             "runtime.tasks.rollback",
             "runtime.automations.create",
         ] {
-            assert!(authorize(&target, method, false).is_err());
+            assert!(authorize(&target, method, false).is_none());
         }
     }
 
@@ -122,12 +120,12 @@ mod tests {
         let target = route(Value::Null);
         for method in PROJECT_READ_METHODS {
             assert_eq!(
-                authorize(&target, method, true).unwrap(),
-                Some("project-session")
+                authorize(&target, method, true),
+                Some(TaskGrant::ProjectRead)
             );
-            assert!(authorize(&target, method, false).is_err());
+            assert!(authorize(&target, method, false).is_none());
         }
-        assert!(authorize(&target, "runtime.tasks.send", true).is_err());
+        assert!(authorize(&target, "runtime.tasks.send", true).is_none());
     }
 
     #[test]

@@ -223,8 +223,15 @@ pub(crate) async fn call(
     let normalized_timeout = normalize_timeout(timeout_seconds);
     let route = resolve_route(app, user_id, submitted_device_id).await?;
 
-    let access_scope =
-        super::runtime_rpc_policy::authorize(&route, method, allow_app_device_task_reading)?;
+    let grant = super::runtime_rpc_policy::authorize(&route, method, allow_app_device_task_reading)
+        .ok_or_else(|| {
+            CallFailure::Rpc(rpc_route_error(
+                "remote_control_disabled",
+                REMOTE_CONTROL_DISABLED_MESSAGE,
+                false,
+                &route.logical_device_id,
+            ))
+        })?;
 
     let payload = if method == RUNTIME_TASK_CREATE_METHOD {
         negotiate_runtime_task_create_payload(payload, route.online.get("runtime_features"))
@@ -260,8 +267,8 @@ pub(crate) async fn call(
 
     let mut request = runtime_request_envelope(method, payload, user_id, &route.runtime_device_id)
         .map_err(|message| CallFailure::Rpc(rpc_error("bad_request", message)))?;
-    if let Some(scope) = access_scope {
-        request["appTaskAccessScope"] = json!(scope);
+    if grant == super::runtime_rpc_policy::TaskGrant::ProjectRead {
+        request["appTaskAccessScope"] = json!("project-session");
     }
     let ack = call_runtime_method_envelope(
         app,
