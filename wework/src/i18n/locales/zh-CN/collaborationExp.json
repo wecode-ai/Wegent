@@ -119,6 +119,18 @@
     "details": "任务详情",
     "openProject": "打开项目：{{name}}"
   },
+  "detailsSummary": {
+    "close": "关闭任务详情",
+    "configure": "关联项目与更多配置",
+    "visibilityLabel": "可见范围：{{value}}",
+    "status": "状态：{{value}}",
+    "acceptance": "验收依据",
+    "visibility": {
+      "open": "项目成员",
+      "related": "相关参与者",
+      "unknown": "未确认"
+    }
+  },
   "private": {
     "title": "私人讨论",
     "visibility": "仅你和你的助理可见。",

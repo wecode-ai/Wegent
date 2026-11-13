@@ -761,7 +761,9 @@
   [data-testid='collaboration-exp-app'] .assistant-live-snapshot::after,
   [data-testid='collaboration-exp-app'] .assistant-live-signal::after,
   [data-testid='collaboration-exp-app'] .assistant-recent-progress > button::before {
-    animation: auto ease 0s 1 normal none running none;
+    animation-name: none;
+    animation-duration: 0s;
+    animation-delay: 0s;
   }
   [data-testid='collaboration-exp-app'] .assistant-live-work,
   [data-testid='collaboration-exp-app'] .assistant-decision-card,

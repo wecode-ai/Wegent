@@ -796,7 +796,7 @@ describe('CollaborationExpApp integration', () => {
     expect(screen.getByTestId('collaboration-exp-timeline-node-message-1')).toBeInTheDocument()
   })
 
-  test('opens the native details leaf and reloads authoritative task data after its save callback', async () => {
+  test('opens the summary before native configuration and reloads authoritative task data after save', async () => {
     open({
       projectStore: 'backend',
       projectId: project.id,
@@ -806,8 +806,14 @@ describe('CollaborationExpApp integration', () => {
     })
     await screen.findByTestId('private-leaf')
     fireEvent.click(screen.getByTestId('collaboration-exp-header-details'))
-    expect(await screen.findByTestId('issue-details-leaf')).toHaveTextContent(issue.title)
+    const summary = await screen.findByTestId('collaboration-exp-issue-summary')
+    expect(summary).toHaveTextContent(issue.title)
+    expect(screen.queryByTestId('issue-details-leaf')).not.toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('inspector')).toBe('summary')
     expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-exp-issue-summary-configure'))
+    expect(await screen.findByTestId('issue-details-leaf')).toHaveTextContent(issue.title)
+    expect(screen.queryByTestId('collaboration-exp-issue-summary')).not.toBeInTheDocument()
     expect(new URLSearchParams(window.location.search).get('inspector')).toBe('details')
     expect(new URLSearchParams(window.location.search).has('discussion')).toBe(false)
     const initialReads = vi.mocked(api.issues.get).mock.calls.length
@@ -833,6 +839,29 @@ describe('CollaborationExpApp integration', () => {
     expect(selected.has('inspector')).toBe(false)
     expect(selected.get('issueId')).toBe(issue.id)
     expect(selected.get('search')).toBe('Release')
+  })
+
+  test('closes the summary with Escape and opens its actual associated project without a stale inspector', async () => {
+    open({ projectStore: 'backend', projectId: project.id, issueId: issue.id, search: 'Release' })
+    const trigger = await screen.findByTestId('collaboration-exp-header-details')
+    trigger.focus()
+    fireEvent.click(trigger)
+    const summary = await screen.findByTestId('collaboration-exp-issue-summary')
+    fireEvent.keyDown(summary, { key: 'Escape' })
+    expect(screen.queryByTestId('collaboration-exp-issue-summary')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(new URLSearchParams(window.location.search).has('inspector')).toBe(false)
+    fireEvent.click(trigger)
+    fireEvent.click(await screen.findByTestId('collaboration-exp-issue-summary-project'))
+    expect(await screen.findByTestId('project-leaf')).toHaveTextContent(project.name)
+    expect(screen.queryByTestId('collaboration-exp-issue-summary')).not.toBeInTheDocument()
+    const selected = new URLSearchParams(window.location.search)
+    expect(selected.get('projectId')).toBe(project.id)
+    expect(selected.get('projectStore')).toBe('backend')
+    expect(selected.get('projectView')).toBe('overview')
+    expect(selected.get('search')).toBe('Release')
+    expect(selected.has('inspector')).toBe(false)
+    expect(selected.has('issueId')).toBe(false)
   })
 
   test('returns both navigation entries to their home while retaining project scope and list filters', async () => {

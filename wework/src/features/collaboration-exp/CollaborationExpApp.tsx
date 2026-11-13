@@ -46,6 +46,7 @@ import type { ProjectDrilldownView } from './tasks/ProjectDrilldown'
 import { TaskTimeline, type TimelineAttachmentSelection } from './timeline/TaskTimeline'
 import type { TimelineFilter } from './timeline/TimelineFilters'
 import { ExperienceIssueDetails } from './timeline/ExperienceIssueDetails'
+import { ExperienceIssueSummary } from './timeline/ExperienceIssueSummary'
 import { PrivateDiscussionPane } from './private'
 import { CreateExperienceIssue } from './CreateExperienceIssue'
 import './shell/ExperienceTheme.css'
@@ -297,6 +298,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
       nodeId: null,
       commentId: null,
       focusRequest: null,
+      inspector: null,
     })
   const account = <ExperienceAccount name={state.user?.user_name} />
   const navigation = (
@@ -482,7 +484,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             title={t('timeline.details')}
             aria-label={t('timeline.details')}
             data-testid="collaboration-exp-header-details"
-            onClick={() => navigate({ inspector: 'details', discussion: null, nodeId: null })}
+            onClick={() => navigate({ inspector: 'summary', discussion: null, nodeId: null })}
           >
             <Ellipsis size={16} aria-hidden="true" />
           </button>
@@ -637,6 +639,15 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
           />
         }
       />
+      {active && view === 'tasks' && detail.data && params.get('inspector') === 'summary' ? (
+        <ExperienceIssueSummary
+          key={identity}
+          data={detail.data}
+          onClose={() => navigate({ inspector: null })}
+          onConfigure={() => navigate({ inspector: 'details' })}
+          onProject={openProject}
+        />
+      ) : null}
       {createIssueOpen ? (
         <CreateExperienceIssue
           active={active}

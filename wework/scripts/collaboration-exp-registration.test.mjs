@@ -86,6 +86,7 @@ test('collaboration experiment acceptance uses the existing core runner and owns
     'demo-create-cancels-without-writes-and-persists-native-standalone-and-cloud-project-issues',
     'native-issue-details-edit-the-same-canonical-issue-and-refresh-the-timeline',
     'source-discussion-shows-only-the-proven-owned-native-turn',
+    'ordinary-private-message-preserves-canonical-issue-status-and-shared-comments',
     'edited-conclusion-publishes-exactly-once-and-rechecks-current-permission',
     'private-unsent-draft-and-query-survive-reload-and-native-restart',
     'disable-and-reenable-retain-experiment-data-and-old-collaboration',
@@ -108,8 +109,10 @@ test('frame evidence rejects detached geometry, count changes and actual layout 
   assert.throws(() => assertUnchangedGeometry(before, [{ ...before[0], width: 280 }], 'resize'))
 })
 
-test('team evidence requires the same visible status, accessible name and icon', async () => {
+test('team evidence requires the same visible status, accessible name and state indicator', async () => {
   const node = {
+    width: 100,
+    height: 80,
     text: 'Integration assistant 推进中',
     attributes: {
       'data-assistant-id': 'integration',
@@ -117,17 +120,26 @@ test('team evidence requires the same visible status, accessible name and icon',
       'aria-label': 'Integration assistant · 推进中 · 配置',
     },
   }
-  let icons = 1
+  const indicator = { width: 6, height: 6, attributes: { 'data-state': 'running' } }
+  let indicators = [indicator]
   const control = {
-    command: async action =>
-      action === 'getElementMetrics' ? JSON.stringify([node]) : String(icons),
+    command: async (action, selector) => {
+      assert.equal(action, 'getElementMetrics')
+      return JSON.stringify(selector.includes('.assistant-presence-mark') ? indicators : [node])
+    },
   }
   assert.equal((await readTeam(control, 'team'))[0].state, 'running')
   node.attributes['aria-label'] = 'Integration assistant'
   await assert.rejects(() => readTeam(control, 'team'), /accessible name/)
   node.attributes['aria-label'] = 'Integration assistant · 推进中 · 配置'
-  icons = 0
-  await assert.rejects(() => readTeam(control, 'team'), /semantic icon/)
+  indicators = []
+  await assert.rejects(() => readTeam(control, 'team'), /semantic indicator/)
+  indicators = [indicator]
+  indicator.attributes['data-state'] = 'idle'
+  await assert.rejects(() => readTeam(control, 'team'), /idle.*running/s)
+  indicator.attributes['data-state'] = 'running'
+  indicator.width = 0
+  await assert.rejects(() => readTeam(control, 'team'), /visible state indicator/)
 })
 
 test('rhythm waits for the bound native task without requiring a robot execution projection', async () => {

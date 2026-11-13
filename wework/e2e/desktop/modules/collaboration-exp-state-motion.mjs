@@ -30,15 +30,18 @@ export async function readTeam(control, relay) {
     }[state]
     assert.match(node.text, status)
     assert.match(label, status, 'The accessible name must retain the visible status')
-    assert.ok(
-      Number(
-        await control.command(
-          'getElementCount',
-          `${relay} [data-assistant-id=${JSON.stringify(id)}] svg`
-        )
-      ) > 0,
-      'Each state must retain its semantic icon'
+    const indicators = await metrics(
+      control,
+      `${relay} [data-assistant-id=${JSON.stringify(id)}] .assistant-presence-mark`,
+      ['data-state']
     )
+    assert.equal(indicators.length, 1, 'Each state must retain its semantic indicator')
+    assert.equal(indicators[0].attributes['data-state'], state)
+    if (node.width > 0)
+      assert.ok(
+        indicators[0].width > 0 && indicators[0].height > 0,
+        'Visible team members must retain a visible state indicator'
+      )
     team.push({ id, state, text: node.text, label })
   }
   return team.sort((a, b) => a.id.localeCompare(b.id))
@@ -51,24 +54,21 @@ export async function assertReducedStateMotion(control, scope) {
   assert.ok(nodes.length > 0, 'Motion assertions require the real ready team nodes')
   for (const node of nodes) {
     const member = `${scope} [data-assistant-id=${JSON.stringify(node.attributes['data-assistant-id'])}]`
-    for (const [selector, target] of [
-      [member, undefined],
-      [`${member} .experience-team-relay-status`, undefined],
-      [`${member} .experience-team-relay-status svg`, undefined],
-      [`${member} .experience-team-relay-trail`, '::after'],
-    ]) {
-      const read = value =>
-        control.command('getComputedStyleValue', selector, {
-          value,
-          ...(target ? { target } : {}),
-        })
+    for (const selector of [member, `${member} .assistant-presence-mark`]) {
+      const read = value => control.command('getComputedStyleValue', selector, { value })
       assertNoStateAnimation(
         await read('animation-name'),
         await read('animation-duration'),
-        `${selector}${target ?? ''}`
+        selector
       )
     }
   }
+  const signal = `${scope} .assistant-team-rail-signal`
+  assertNoStateAnimation(
+    await control.command('getComputedStyleValue', signal, { value: 'animation-name' }),
+    await control.command('getComputedStyleValue', signal, { value: 'animation-duration' }),
+    signal
+  )
 }
 
 /** Sample real frames after state readiness; no delay substitutes for layout evidence. */
@@ -76,7 +76,7 @@ export async function assertStableStateGeometry(control, selector) {
   await control.command('startElementMetricsSampling', selector, {
     value: '180',
     target:
-      '[data-assistant-id], .experience-team-relay-status, .experience-team-relay-trail, dl, button',
+      '[data-assistant-id], .assistant-presence-mark, .assistant-team-rail-signal, dl, button',
   })
   const sample = await waitForValue(
     async () => JSON.parse(await control.command('getElementMetricsSample', 'body')),

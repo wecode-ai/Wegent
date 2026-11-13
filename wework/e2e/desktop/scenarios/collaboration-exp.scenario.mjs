@@ -13,6 +13,11 @@ import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
+import {
+  verifyCollaborationExpIssueCreateAndEdit,
+  verifyCollaborationExpPrivateMessage,
+} from '../modules/collaboration-exp-issue-flows.mjs'
+import { assertDesktopPanes } from '../modules/collaboration-exp-pane-verification.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
 import {
@@ -36,6 +41,7 @@ const PROMPT = 'COLLABORATION_EXP_NATIVE_PRIVATE_CONVERSATION'
 const DRAFT = 'COLLABORATION_EXP_UNSENT_PRIVATE_DRAFT'
 const UNRELATED = 'COLLABORATION_EXP_OTHER_NATIVE_TURN_MUST_STAY_PRIVATE'
 const ORDINARY = 'COLLABORATION_EXP_ORDINARY_ASSISTANT_QUESTION'
+const PRIVATE_MESSAGE = 'COLLABORATION_EXP_PRIVATE_ORDINARY_NO_SHARED_WRITE'
 const PUBLIC = 'COLLABORATION_EXP_EXPLICIT_EDITED_SHARED_CONCLUSION'
 const PRIVATE_INPUT = `${APP} [data-testid="collaboration-exp-private-conversation"] [data-testid="chat-message-input"]`
 const testId = id => `${APP} [data-testid=${JSON.stringify(id)}]`
@@ -51,6 +57,7 @@ export const COLLABORATION_EXP_USER_STORIES = [
   'demo-create-cancels-without-writes-and-persists-native-standalone-and-cloud-project-issues',
   'native-issue-details-edit-the-same-canonical-issue-and-refresh-the-timeline',
   'source-discussion-shows-only-the-proven-owned-native-turn',
+  'ordinary-private-message-preserves-canonical-issue-status-and-shared-comments',
   'edited-conclusion-publishes-exactly-once-and-rechecks-current-permission',
   'private-unsent-draft-and-query-survive-reload-and-native-restart',
   'disable-and-reenable-retain-experiment-data-and-old-collaboration',
@@ -78,6 +85,7 @@ export function createDesktopScenario({
   let workspace
   let ownerToken
   let sourceMessage
+  let heldPrivateResponse
   let heldRhythmResponse
   let rhythmModelCalls = 0
   function finishRhythmResponse() {
@@ -85,6 +93,12 @@ export function createDesktopScenario({
     const { response, finish } = heldRhythmResponse
     if (!response.writableEnded) response.end(createSse(finish))
     heldRhythmResponse = undefined
+  }
+  function finishPrivateResponse() {
+    if (!heldPrivateResponse) return
+    const { response, finish } = heldPrivateResponse
+    if (!response.writableEnded) response.end(createSse(finish))
+    heldPrivateResponse = undefined
   }
   async function request(path, body, options = {}) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
@@ -137,44 +151,6 @@ export function createDesktopScenario({
     await click(control, testId(`collaboration-exp-task-discussion-${conversation.taskId}`))
     await control.command('waitFor', PRIVATE_INPUT, { visible: true })
   }
-  async function assertDesktopPanes(control) {
-    const metrics = async selector =>
-      JSON.parse(await control.command('getElementMetrics', selector))
-    const visible = rows => rows.filter(row => row.width > 0 && row.height > 0)
-    const headers = visible(await metrics(`${APP} .experience-header`))
-    assert.ok(headers.length >= 3, 'Desktop must retain the task, timeline and discussion panes')
-    for (const header of headers) assert.equal(header.height, 60)
-    const separators = visible(await metrics(`${APP} [role="separator"][data-separator]`))
-    assert.ok(separators.length >= 2, 'Desktop pane boundaries must remain resizable')
-    for (const separator of separators) assert.equal(separator.width, 8)
-    const separator = `${APP} #collaboration-exp-resize-timeline-discussion`
-    const timeline = testId('collaboration-exp-pane-timeline')
-    const discussion = testId('collaboration-exp-pane-discussion')
-    const sizes = async () => [
-      (await metrics(timeline))[0].width,
-      (await metrics(discussion))[0].width,
-    ]
-    const original = await sizes()
-    await control.command('focus', separator)
-    await control.command('press', separator, { key: 'ArrowRight' })
-    const resized = await sizes()
-    assert.ok(resized[0] > original[0] && resized[1] < original[1])
-    assert.ok(Math.abs(resized[0] + resized[1] - original[0] - original[1]) < 2)
-    await control.command('doubleClick', separator)
-    const reset = await sizes()
-    assert.ok(reset.every((width, index) => Math.abs(width - original[index]) < 2))
-    await control.command('dragStart', separator, { target: timeline })
-    try {
-      const dragging = await sizes()
-      assert.ok(Math.abs(dragging[0] - original[0]) > 1, 'The real drag must move before Escape')
-      await control.command('press', separator, { key: 'Escape' })
-      const cancelled = await sizes()
-      assert.ok(cancelled.every((width, index) => Math.abs(width - original[index]) < 2))
-      assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
-    } finally {
-      await control.command('dragEnd', separator, { target: timeline })
-    }
-  }
   return {
     requiresCloudEnvironment: true,
     requiresRemoteExecutor: false,
@@ -223,9 +199,13 @@ export function createDesktopScenario({
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
-      const marker = [COLLABORATION_EXP_RHYTHM_MARKER, ORDINARY, UNRELATED, PROMPT].find(value =>
-        JSON.stringify(body).includes(value)
-      )
+      const marker = [
+        COLLABORATION_EXP_RHYTHM_MARKER,
+        PRIVATE_MESSAGE,
+        ORDINARY,
+        UNRELATED,
+        PROMPT,
+      ].find(value => JSON.stringify(body).includes(value))
       if (!marker) return false
       const events = streamingTextEvents(
         `collaboration-exp-${Date.now()}`,
@@ -233,6 +213,12 @@ export function createDesktopScenario({
         'final_answer'
       )
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      if (marker === PRIVATE_MESSAGE) {
+        assert.equal(heldPrivateResponse, undefined)
+        response.write(createSse(events.start))
+        heldPrivateResponse = { response, finish: events.finish }
+        return true
+      }
       if (marker === COLLABORATION_EXP_RHYTHM_MARKER) {
         assert.equal(
           ++rhythmModelCalls,
@@ -596,105 +582,20 @@ export function createDesktopScenario({
           localIssue.title
         )
 
-        const createLogPath = join(resultDir, 'app.log')
-        const createLogOffset = (await readFile(createLogPath, 'utf8')).length
-        for (const [store, project] of [
-          ['local', localProject],
-          ['backend', cloudProject],
-        ]) {
-          await control.command('navigate', 'body', {
-            value: `/collaboration-exp?view=tasks&relevance=all&projectStore=${store}&projectId=${project.id}&future=keep`,
-          })
-          const targetProjectId = store === 'local' ? 'default-work-items' : project.id
-          const listIssues = () =>
-            store === 'local'
-              ? rpc('todos.list', { project_id: targetProjectId })
-              : request(`/api/v1/cloud-projects/${targetProjectId}/loop-items`)
-          const beforeCreate = await listIssues()
-          await click(control, testId('collaboration-exp-task-create'))
-          await control.command('waitFor', testId('collaboration-exp-create-dialog'), {
-            visible: true,
-          })
-          await control.command('fill', testId('collaboration-exp-create-goal'), {
-            value: `COLLABORATION_EXP_CANCELLED_${store}`,
-          })
-          await click(control, testId('collaboration-exp-create-cancel'))
-          await control.command('waitFor', testId('collaboration-exp-create-dialog'), {
-            visible: false,
-          })
-          assert.deepEqual(await listIssues(), beforeCreate, 'Cancel must perform no Issue write')
-
-          const title = `COLLABORATION_EXP_CREATED_${store}_${process.pid}`
-          await click(control, testId('collaboration-exp-task-create'))
-          if (store === 'backend') {
-            await click(control, testId('collaboration-exp-create-project'))
-            await click(
-              control,
-              `[data-testid=${JSON.stringify(`collaboration-exp-create-project-option-${JSON.stringify([store, project.id])}`)}]`
-            )
-          }
-          await control.command('fill', testId('collaboration-exp-create-goal'), { value: title })
-          await control.command('fill', testId('collaboration-exp-create-summary'), {
-            value: `Persisted through the real ${store} source`,
-          })
-          await click(control, testId('collaboration-exp-create-submit'))
-          await control.command('waitFor', testId('collaboration-exp-create-dialog'), {
-            visible: false,
-          })
-          const created = await waitForValue(
-            listIssues,
-            issues => issues.find(issue => issue.title === title),
-            'The Demo create action must persist through its exact real source',
-            uiTimeoutMs
-          )
-          assert.equal(created.cloud_project_id, targetProjectId)
-          assert.equal(created.assignee_user_id, store === 'local' ? 0 : cloudUser.id)
-          assert.equal(created.description, `Persisted through the real ${store} source`)
-          assert.equal((await listIssues()).filter(issue => issue.title === title).length, 1)
-          await control.command('waitFor', testId('collaboration-exp-pane-header-timeline'), {
-            text: title,
-          })
-          const params = new URL(JSON.parse(await control.command('snapshot', APP)).location)
-            .searchParams
-          assert.equal(params.get('projectStore'), store)
-          assert.equal(params.get('projectId'), created.cloud_project_id)
-          assert.equal(params.get('issueId'), created.id)
-          await click(control, testId('collaboration-exp-header-details'))
-          const detailTitle = testId('cloud-todo-detail-title')
-          await control.command('waitFor', detailTitle, { visible: true })
-          assert.equal(await control.command('getValue', detailTitle), title)
-          await control.command('fill', detailTitle, { value: `${title}_EDITED` })
-          await control.command('press', detailTitle, { key: 'Enter' })
-          const edited = await waitForValue(
-            listIssues,
-            issues =>
-              issues.find(issue => issue.id === created.id && issue.title === `${title}_EDITED`),
-            'The existing native editor must save the same canonical Issue',
-            uiTimeoutMs
-          )
-          assert.equal(edited.id, created.id)
-          assert.ok(edited.version > created.version)
-          await control.command('waitFor', testId('collaboration-exp-pane-header-timeline'), {
-            text: edited.title,
-          })
-          await click(control, testId('collaboration-exp-pane-header-issue-details-back'))
-          await control.command('waitFor', testId('collaboration-exp-issue-details'), {
-            visible: false,
-          })
-          assert.equal((await listIssues()).filter(issue => issue.id === created.id).length, 1)
-          if (store === 'backend') {
-            await request(`/api/v1/loop-items/${created.id}`, undefined, { method: 'DELETE' })
-            assert.equal(
-              (await listIssues()).some(issue => issue.id === created.id),
-              false
-            )
-          }
-        }
-        assert.doesNotMatch(
-          (await readFile(createLogPath, 'utf8')).slice(createLogOffset),
-          /\[renderer-(?:warning|error)\]/,
-          'Real create, cancel and native Issue detail operations must emit no renderer warnings or errors'
-        )
+        await verifyCollaborationExpIssueCreateAndEdit({
+          control,
+          localProject,
+          cloudProject,
+          cloudUser,
+          rpc,
+          request,
+          captureScreenshot,
+          resultDir,
+          uiTimeoutMs,
+          appSelector: APP,
+          testId,
+          click,
+        })
 
         await control.command('navigate', 'body', { value: '/collaboration-exp?view=assistant' })
         const assistantInput = testId('collaboration-exp-assistant-input')
@@ -909,7 +810,12 @@ export function createDesktopScenario({
               assert.deepEqual(structure, lightStructure)
               assert.notDeepEqual(colors, lightColors)
             }
-            await assertDesktopPanes(control)
+            await assertDesktopPanes(control, {
+              appSelector: APP,
+              testId,
+              privateInput: PRIVATE_INPUT,
+              draft: DRAFT,
+            })
           } else {
             const headers = JSON.parse(
               await control.command('getElementMetrics', `${APP} .experience-header`)
@@ -925,6 +831,26 @@ export function createDesktopScenario({
         }
         finishRhythmResponse()
         await rhythm.assertCompleted(control)
+        await verifyCollaborationExpPrivateMessage({
+          control,
+          conversation,
+          localIssue,
+          cloudIssue,
+          cloudProject,
+          rpc,
+          request,
+          comments,
+          nativeTaskIdentities,
+          uiTimeoutMs,
+          modelResponseTimeoutMs,
+          privateInput: PRIVATE_INPUT,
+          privateMessage: PRIVATE_MESSAGE,
+          testId,
+          click,
+          hasHeldPrivateResponse: () => Boolean(heldPrivateResponse),
+          finishPrivateResponse,
+        })
+        await control.command('fill', PRIVATE_INPUT, { value: DRAFT })
         assert.doesNotMatch(
           (await readFile(logPath, 'utf8')).slice(logOffset),
           /\[renderer-(?:warning|error)\]/,
@@ -957,7 +883,7 @@ export function createDesktopScenario({
         )
         assert.equal(published.length, beforePublish.length + 1)
         const shared = JSON.stringify(published)
-        for (const secret of [DRAFT, UNRELATED, `${PROMPT}_COMPLETE`, ORDINARY])
+        for (const secret of [DRAFT, UNRELATED, `${PROMPT}_COMPLETE`, ORDINARY, PRIVATE_MESSAGE])
           assert.ok(!shared.includes(secret), 'Publication must contain only the edited conclusion')
         assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
         await gates.reset()
@@ -1031,6 +957,7 @@ export function createDesktopScenario({
         await control.command('waitFor', PRIVATE_INPUT, { visible: true })
         assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
       } finally {
+        finishPrivateResponse()
         finishRhythmResponse()
         try {
           await rhythm.cleanup()

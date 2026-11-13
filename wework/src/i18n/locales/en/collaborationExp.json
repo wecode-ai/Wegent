@@ -121,6 +121,18 @@
     "details": "Task details",
     "openProject": "Open project: {{name}}"
   },
+  "detailsSummary": {
+    "close": "Close task details",
+    "configure": "Associated project and more settings",
+    "visibilityLabel": "Visibility: {{value}}",
+    "status": "Status: {{value}}",
+    "acceptance": "Acceptance criteria",
+    "visibility": {
+      "open": "Project members",
+      "related": "Related participants",
+      "unknown": "Unconfirmed"
+    }
+  },
   "private": {
     "title": "Private discussion",
     "visibility": "Only you and your assistant can see this discussion.",
