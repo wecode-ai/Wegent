@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { verifyWeworkAppDeviceRegistrationFlow } from '../modules/desktop-build-flows.mjs'
+import { stopProcessGroup, waitForLogPattern } from '../modules/shared.mjs'
 
 /** Exercise the real hardware collector, host, executor and renderer across restarts. */
 export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
@@ -59,8 +60,50 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
     return identity
   }
 
+  async function verifyRegistrationConflictDiagnostics(original) {
+    const cases = [
+      {
+        label: 'app-identity-changed',
+        appDeviceId: 'electron-conflicting-app',
+        runtimeInstanceId: original.runtimeInstanceId,
+        error:
+          /local backend connection failed [^\r\n]*Registration failed: App device identity changed; reconnect using the original installation identity/,
+      },
+      {
+        label: 'app-name-occupied',
+        appDeviceId: original.deviceId,
+        runtimeInstanceId: 'runtime-conflicting-installation',
+        error:
+          /local backend connection failed [^\r\n]*Registration failed: Device name is already registered; configure a unique persistent device ID for this installation/,
+      },
+    ]
+    for (const { label, error, ...identity } of cases) {
+      const { executor, logPath } = await cloud.startAppDeviceContender(
+        original.registrationDeviceId,
+        label,
+        identity
+      )
+      try {
+        await waitForLogPattern(logPath, error, { timeoutMs: workbenchReadyTimeoutMs })
+      } finally {
+        await stopProcessGroup(executor)
+      }
+    }
+    const matching = (await cloud.devices()).filter(
+      device => device.device_id === original.registrationDeviceId
+    )
+    assert.equal(matching.length, 1)
+    const [registered] = matching
+    assert.equal(registered.id, original.cloudRecordId)
+    assert.equal(registered.execution_target_id, original.cloudRouteId)
+    assert.equal(registered.app_device_id, original.deviceId)
+    assert.equal(registered.runtime_instance_id, original.runtimeInstanceId)
+    assert.equal(registered.status, 'online')
+  }
+
   return {
     requiresCloudEnvironment: true,
+    backendEnv: { WEGENT_RS_UNIQUE_APP_DEVICE_NAMES: '1' },
     setCloudEnvironment(value) {
       cloud = value
     },
@@ -74,6 +117,7 @@ export function createDesktopScenario({ resultDir, workbenchReadyTimeoutMs }) {
     async verify(control) {
       await verifyWeworkAppDeviceRegistrationFlow(control, cloud)
       const original = await observe(control, dataDirectory, 'initial')
+      await verifyRegistrationConflictDiagnostics(original)
       await restartDesktopApp({ afterStop: () => rm(identityPath) })
       assert.deepEqual(await observe(control, dataDirectory, 'deleted-identity-file'), original)
 

@@ -1,0 +1,12 @@
+{
+  "order": 21100,
+  "scenario": "./scenarios/collaboration-personal-device-self-use.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 14100,
+      "shard": 7,
+      "position": 15100
+    }
+  }
+}

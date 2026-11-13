@@ -39,6 +39,14 @@ const IDENTITY_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 /// SHA1 of redis-py's `Lock.LUA_RELEASE_SCRIPT`, the script `Lock.release`
 /// runs with `EVALSHA` so only the acquirer deletes the key.
 const IDENTITY_LOCK_RELEASE_SHA1: &str = "c3f8721cbb97f72bc19e972846bd7aaf91901658";
+const IDENTITY_LOCK_RELEASE_SCRIPT: &str = r#"
+        local token = redis.call('get', KEYS[1])
+        if not token or token ~= ARGV[1] then
+            return 0
+        end
+        redis.call('del', KEYS[1])
+        return 1
+    "#;
 
 /// The Redis lock `app_identity_lock` holds.
 ///
@@ -78,14 +86,26 @@ impl<'a, R: Redis> IdentityLock<'a, R> {
     /// `Lock.release`: `EVALSHA` of the redis-py release script, which returns
     /// `1` only when this token still owns the key.
     pub(crate) async fn release(&self) -> Result<(), RedisError> {
-        let released: i64 = self
+        let released: i64 = match self
             .redis
-            .evalsha(
+            .evalsha::<_, _, _, i64>(
                 IDENTITY_LOCK_RELEASE_SHA1,
                 [self.key.as_str()],
                 [self.token.as_str()],
             )
-            .await?;
+            .await
+        {
+            Err(error) if error.kind() == ErrorKind::NoScript => {
+                self.redis
+                    .eval(
+                        IDENTITY_LOCK_RELEASE_SCRIPT,
+                        [self.key.as_str()],
+                        [self.token.as_str()],
+                    )
+                    .await?
+            }
+            result => result?,
+        };
         release_outcome(released)
     }
 }

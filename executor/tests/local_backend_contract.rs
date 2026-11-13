@@ -255,13 +255,27 @@ async fn local_backend_event_sink_emits_responses_api_event_names() {
 
 #[tokio::test]
 async fn local_backend_disconnects_when_registration_is_rejected() {
-    let transport = RecordingTransport::with_responses(vec![json!({"success": false})]);
-    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    const GENERIC: &str = "device registration was rejected by backend";
+    const CHANGED_IDENTITY: &str = "Registration failed: App device identity changed; reconnect using the original installation identity";
+    const OCCUPIED_NAME: &str = "Registration failed: Device name is already registered; configure a unique persistent device ID for this installation";
+    for (response, expected) in [
+        (json!({"success": false}), GENERIC),
+        (json!([{"error": CHANGED_IDENTITY}]), CHANGED_IDENTITY),
+        (json!({"error": OCCUPIED_NAME}), OCCUPIED_NAME),
+        (
+            json!({"error": "Registration failed: raw database diagnostics"}),
+            GENERIC,
+        ),
+    ] {
+        let transport = RecordingTransport::with_responses(vec![response]);
+        let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
 
-    let error = runner.connect_and_register().await.unwrap_err();
+        let error = runner.connect_and_register().await.unwrap_err();
 
-    assert_eq!(error, "device registration was rejected by backend");
-    assert_eq!(transport.disconnects(), 1);
+        assert_eq!(error, expected);
+        assert_eq!(transport.disconnects(), 1);
+        assert!(transport.emits().is_empty());
+    }
 }
 
 #[cfg(unix)]
