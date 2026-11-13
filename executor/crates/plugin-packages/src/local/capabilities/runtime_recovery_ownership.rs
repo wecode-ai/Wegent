@@ -4,6 +4,42 @@
 use super::*;
 
 impl GlobalCapabilityStore {
+    pub(in crate::local::capabilities) fn validate_marketplace_preparation(
+        &self,
+        spec: &PluginSyncSpec,
+        entry: &Value,
+    ) -> Result<(), CapabilitySyncError> {
+        let (files, directories) = self.runtime_state_paths(spec);
+        for path in files.iter().chain(directories.iter()) {
+            self.ensure_state_path(path, directories.contains(path))?;
+        }
+        if spec.marketplace != PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+            return Ok(());
+        }
+        let target = self
+            .personal_marketplace_dir()
+            .join("plugins")
+            .join(&spec.name);
+        if !exists(&target) || target.is_symlink() {
+            return Ok(());
+        }
+        // Personal author sources must be rejected before any package download.
+        // Content ownership of managed copies is checked after cache recovery.
+        let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
+            && entry.get("installed_plugin_id").and_then(Value::as_i64) == spec.installed_plugin_id;
+        let published_source = crate::local::plugin_import::personal_plugin_has_cloud_link(
+            &self.personal_marketplace_dir(),
+            &spec.name,
+        )
+        .map_err(CapabilitySyncError::invalid_payload)?;
+        if published_source || !same_install {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Plugin marketplace entry is occupied by an unrelated source",
+            ));
+        }
+        Ok(())
+    }
+
     pub(in crate::local::capabilities) fn prepare_relocated_runtime_ownership(
         &self,
         spec: &PluginSyncSpec,

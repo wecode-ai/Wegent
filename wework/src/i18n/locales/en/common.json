@@ -4390,7 +4390,11 @@
     "plugins_local_sync_unconfirmed": "The submission result is not confirmed. Refresh to check the installation state first.",
     "plugins_local_sync_journal_error": "Local operation records could not be read or saved. Check disk space and permissions, then retry.",
     "plugins_local_sync_superseded": "Another operation changed the plugin target. Refresh and use the latest state.",
-    "plugins_local_sync_disabled": "New local plugin operations are temporarily disabled. Try again later."
+    "plugins_local_sync_disabled": "New local plugin operations are temporarily disabled. Try again later.",
+    "remote_task_access_title": "Allow remote access to tasks on this computer",
+    "remote_task_access_description": "Allow phones and other computers signed in to this account to create, view and continue tasks. Tasks run operations on this computer. Only this computer can change this switch. Turning it off blocks further access. Requires a cloud connection.",
+    "remote_task_access_load_failed": "Could not read the local remote task access setting.",
+    "remote_task_access_save_failed": "Could not save the setting. Remote task access has not changed."
   },
   "delivery": {
     "action": "Deliver",

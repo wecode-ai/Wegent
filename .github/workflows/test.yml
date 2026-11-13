@@ -583,6 +583,9 @@ jobs:
         run: |
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
+          cargo test -p wegent-plugin-packages --all-features --lib services::workbench::recovery::tests
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::plugin_sync_protocol::tests::package_recovery_tests
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::journal::tests
           cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
           cargo test --all-features --lib effective_instructions_tests

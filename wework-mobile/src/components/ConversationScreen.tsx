@@ -1,8 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
+import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   AccessibilityInfo,
   Animated,
+  BackHandler,
   Easing,
   Keyboard,
   Modal,
@@ -17,8 +19,10 @@ import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { reduceModelControlLayer } from '@/domain/modelControlPresentation'
+import { mobileCreatableDevices, selectedOnlineDeviceId } from '@/domain/deviceOrdering'
 import {
   modelLabel,
+  modelSupportsSpeed,
   reasoningEfforts,
   reasoningLabel,
   resolvedReasoningEffort,
@@ -40,6 +44,8 @@ import type {
   RuntimeTaskAddress,
   RuntimeUploadAsset,
   UnifiedModel,
+  RequestUserInputPayload,
+  RequestUserInputResponse,
 } from '@/types/runtime'
 import { ChatComposer, type ComposerSendOptions } from './ChatComposer'
 import { ConversationEdgeMask } from './ConversationEdgeMask'
@@ -47,6 +53,7 @@ import { ConversationHeader, CONVERSATION_HEADER_HEIGHT } from './ConversationHe
 import { KeyboardSafeView, useKeyboardVisible } from './KeyboardSafeInput'
 import { MessageList } from './MessageList'
 import { QuickModelDismissLayer, QuickModelSelector } from './QuickModelSelector'
+import { groupModelsByFamily } from '../../../packages/collaboration/src/controls/model-ui'
 
 export interface ConversationWorkspaceChoice {
   projectName: string
@@ -54,6 +61,7 @@ export interface ConversationWorkspaceChoice {
 }
 
 interface ConversationScreenProps {
+  composerFocusRequest?: number
   currentAddress: RuntimeTaskAddress | null
   currentTitle: string
   devices: DeviceInfo[]
@@ -86,6 +94,8 @@ interface ConversationScreenProps {
   onSelectWorkspace: (workspace: RuntimeDeviceWorkspace | null) => void
   onSend: (message: string, options?: NewConversationOptions) => Promise<boolean>
   onStop: () => Promise<boolean>
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => Promise<boolean>
+  onRequestUserInputSkip?: (payload: RequestUserInputPayload) => Promise<boolean>
   onUploadAttachment: (asset: RuntimeUploadAsset) => Promise<RuntimeAttachment>
 }
 
@@ -99,17 +109,21 @@ export function ConversationScreen(props: ConversationScreenProps) {
   const [bottomControlHeight, setBottomControlHeight] = useState(0)
   const [headerHeight, setHeaderHeight] = useState(CONVERSATION_HEADER_HEIGHT)
 
-  const onlineDevices = props.devices.filter(device => device.status !== 'offline')
+  const onlineDevices = mobileCreatableDevices(props.devices)
   const configurationDevice =
-    onlineDevices.find(device => device.device_id === props.selectedDeviceId) ??
-    onlineDevices[0] ??
-    null
+    onlineDevices.find(
+      device =>
+        device.device_id ===
+        (props.selectedWorkspace?.deviceId ??
+          selectedOnlineDeviceId(onlineDevices, props.selectedDeviceId))
+    ) ?? null
   const availableWorkspaces = props.workspaces.filter(
     item => item.workspace.available && item.workspace.deviceId === configurationDevice?.device_id
   )
   const selectedDeviceName =
     props.devices.find(
-      device => device.device_id === (props.currentAddress?.deviceId ?? props.selectedDeviceId)
+      device =>
+        device.device_id === (props.currentAddress?.deviceId ?? configurationDevice?.device_id)
     )?.name ?? null
   const conversationProjectName =
     props.selectedProjectName ?? props.selectedWorkspace?.label ?? null
@@ -121,7 +135,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
     : '选择模型'
   const quickModelVisible = modelControlLayer === 'quick'
   const composerBottom = composerBottomSpacing(insets.bottom, keyboardVisible)
-  const headerTop = insets.top + 8
+  const headerTop = Math.max(insets.top, 8)
   const messageBottomInset = bottomControlHeight + 20
   const messageTopInset = headerTop + headerHeight + 16
   const topMaskHeight = messageTopInset + 24
@@ -220,6 +234,17 @@ export function ConversationScreen(props: ConversationScreenProps) {
     closeModelControls()
   }, [closeModelControls, conversationKey])
 
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android' || !quickModelVisible) return
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        closeModelControls()
+        return true
+      })
+      return () => subscription.remove()
+    }, [closeModelControls, quickModelVisible])
+  )
+
   useEffect(() => {
     if (!props.isNew) setSelector(null)
   }, [props.isNew])
@@ -251,6 +276,9 @@ export function ConversationScreen(props: ConversationScreenProps) {
           loading={props.loading}
           loadingMoreBefore={props.loadingMoreMessagesBefore}
           messages={props.messages}
+          onRequestUserInputSubmit={props.onRequestUserInputSubmit}
+          onRequestUserInputSkip={props.onRequestUserInputSkip}
+          running={props.sending || props.running}
           onLoadMoreBefore={props.onLoadMoreMessagesBefore}
           topInset={messageTopInset}
         />
@@ -273,7 +301,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
           <ConfigurationRow
             disabled={!configurationDevice}
             icon={props.selectedWorkspace ? 'folder-outline' : 'chatbubbles-outline'}
-            label={props.selectedProjectName ?? '聊天'}
+            label={props.selectedProjectName ?? '选择项目'}
             onPress={() => setSelector('project')}
             testID="new-chat-project"
           />
@@ -312,6 +340,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
         onLayout={handleHeaderLayout}
         onMore={props.onMore}
         onNewConversation={props.onNewConversation}
+        canCreateConversation={onlineDevices.length > 0}
         projectName={conversationProjectName}
         style={[styles.headerOverlay, { top: headerTop }]}
         title={props.currentTitle}
@@ -334,10 +363,20 @@ export function ConversationScreen(props: ConversationScreenProps) {
           ]}
         >
           <ChatComposer
-            contextLabel={props.isNew ? configurationDevice?.name : selectedDeviceName}
+            focusRequest={props.composerFocusRequest}
             disabled={props.sending}
-            emptyContextPlaceholder={props.isNew ? '选择在线 Executor' : undefined}
+            emptyContextPlaceholder={props.isNew ? '向 Wework 提问' : '跟进'}
             modelLabel={selectedModelLabel}
+            speed={props.modelOptions.speed}
+            onToggleSpeed={
+              modelSupportsSpeed(props.model)
+                ? () =>
+                    selectModelOptions({
+                      ...props.modelOptions,
+                      speed: props.modelOptions.speed === 'fast' ? 'standard' : 'fast',
+                    })
+                : undefined
+            }
             onClearPlanMode={() =>
               selectModelOptions({ ...props.modelOptions, collaborationMode: 'default' })
             }
@@ -388,7 +427,12 @@ export function ConversationScreen(props: ConversationScreenProps) {
             bottomInset={composerBottom}
             effort={selectedEffort}
             efforts={efforts}
-            label={selectedModelLabel}
+            label={props.model ? modelLabel(props.model) : '选择模型'}
+            sourceLabel={
+              props.model?.provider === 'local'
+                ? (groupModelsByFamily([props.model])[0]?.config.label ?? '设备模型')
+                : '云端模型'
+            }
             onOpenAdvanced={openAdvancedModel}
             onSelectEffort={reasoning => selectModelOptions({ ...props.modelOptions, reasoning })}
           />
@@ -688,7 +732,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    paddingHorizontal: 12,
+    paddingHorizontal: 24,
     gap: 2,
   },
   configRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 },

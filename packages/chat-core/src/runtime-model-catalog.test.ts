@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { CodexOfficialModel } from './codex-official-models'
-import { codexRuntimeModels } from './runtime-model-catalog'
+import { codexRuntimeModels, localCodexModelSource } from './runtime-model-catalog'
 
 function officialModel(
   modelId: string,
@@ -30,6 +30,15 @@ function officialModel(
 }
 
 describe('codexRuntimeModels', () => {
+  test('declares native speed controls once for both runner and desktop catalogs', () => {
+    const model = officialModel('future-native-model')
+    const [desktopModel] = codexRuntimeModels([model], null, true)
+    const source = localCodexModelSource(model)
+
+    expect(source.config.ui.controls).toEqual(['speed'])
+    expect(desktopModel.config?.ui).toMatchObject(source.config.ui)
+  })
+
   test('uses the current ChatGPT production slider preset', () => {
     const models = codexRuntimeModels(
       [

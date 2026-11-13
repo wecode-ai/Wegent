@@ -18,6 +18,12 @@ use sha2::{Digest, Sha256};
 
 use crate::file_lease::FileLease;
 
+#[path = "workbench_recovery.rs"]
+mod recovery;
+pub(crate) use recovery::{
+    prepare_plugin_archive, read_plugin_package, LeasedPluginPackage, PackageRecoveryError,
+};
+
 const MAX_FILES: usize = 10_000;
 const MAX_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
 
@@ -209,6 +215,7 @@ pub(crate) fn published_plugin_bytecode_paths(
     root: &Path,
     hash: &str,
 ) -> Result<Option<BTreeSet<PathBuf>>, String> {
+    let _reader = recovery::read_lease(root, hash).map_err(|error| error.to_string())?;
     Ok(read_package_record(root, PackageKind::Plugin, hash)?
         .published_bytecode_paths
         .map(|paths| paths.into_iter().collect()))

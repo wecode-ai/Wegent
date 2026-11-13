@@ -6,7 +6,7 @@
 use super::runtime_recovery::validate_package_identity;
 use super::*;
 use crate::services::workbench::{
-    publish_plugin_archive, verify_published_package, PackageKind, PublishedPackage,
+    prepare_plugin_archive, read_plugin_package, LeasedPluginPackage, PackageRecoveryError,
 };
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Instant;
@@ -154,6 +154,7 @@ pub(super) struct PreparedPlugin {
     path: Option<PathBuf>,
     private_package: Option<tempfile::TempDir>,
     runtime: Option<PreparedRuntime>,
+    _shared_package: Option<LeasedPluginPackage>,
 }
 
 impl PreparedPlugin {
@@ -161,7 +162,7 @@ impl PreparedPlugin {
         store: &GlobalCapabilityStore,
         mut spec: PluginSyncSpec,
         manifest: &Value,
-        package: Option<PublishedPackage>,
+        package: Option<LeasedPluginPackage>,
         private_package: Option<tempfile::TempDir>,
         path: Option<PathBuf>,
     ) -> Result<Self, PluginSyncFailure> {
@@ -175,8 +176,8 @@ impl PreparedPlugin {
                     .map(|stage| stage.path().join("package"))
             })
             .or_else(|| path.clone());
-        if let Some(package) = package {
-            spec.checksum = Some(package.archive_hash);
+        if let Some(package) = &package {
+            spec.checksum = Some(package.archive_hash.clone());
         }
         let mut result = Self {
             spec,
@@ -184,10 +185,22 @@ impl PreparedPlugin {
             path,
             private_package,
             runtime: None,
+            _shared_package: package,
         };
         if let Some(source) = source {
             validate_package_identity(&source, &result.spec)
                 .map_err(PluginSyncFailure::runtime_metadata)?;
+            if store.shared_packages {
+                // Directory-copy ownership needs the verified package as evidence.
+                // Recover that package before checking the active destination.
+                store
+                    .validate_marketplace_occupancy(
+                        &result.spec,
+                        &manifest["plugins"][&result.spec.key],
+                        manifest,
+                    )
+                    .map_err(PluginSyncFailure::runtime_metadata)?;
+            }
             let reused = store
                 .unchanged_plugin_runtime_paths(&result.spec, &source)
                 .map_err(PluginSyncFailure::runtime_metadata)?;
@@ -302,20 +315,38 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             let _lease = verifying_lease;
             if verifying_store.shared_packages {
                 verifying_store
-                    .validate_marketplace_occupancy(
+                    .validate_marketplace_preparation(
                         &verifying_spec,
                         &verifying_manifest["plugins"][&verifying_spec.key],
-                        &verifying_manifest,
                     )
                     .map_err(PluginSyncFailure::runtime_metadata)?;
             }
-            let cached =
-                verify_root
-                    .as_ref()
-                    .zip(expected.as_deref())
-                    .and_then(|(root, checksum)| {
-                        verify_published_package(root, PackageKind::Plugin, checksum).ok()
-                    });
+            let cached = match verify_root.as_ref().zip(expected.as_deref()) {
+                Some((root, checksum)) => match read_plugin_package(root, checksum) {
+                    Ok(package) => Some(package),
+                    Err(PackageRecoveryError::Busy) => {
+                        return Err(package_failure(PackageRecoveryError::Busy));
+                    }
+                    Err(error) => {
+                        let digest = checksum.strip_prefix("sha256:").unwrap_or(checksum);
+                        if digest.len() == 64
+                            && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                            && root.join("shared/plugins").join(digest).exists()
+                        {
+                            crate::logging::log_executor_event(
+                                "plugin_package_cache_rejected",
+                                &[
+                                    ("plugin", verifying_spec.key.clone()),
+                                    ("checksum", checksum.to_owned()),
+                                    ("reason", error.to_string()),
+                                ],
+                            );
+                        }
+                        None
+                    }
+                },
+                None => None,
+            };
             Ok::<_, PluginSyncFailure>(cached)
         })
         .await
@@ -395,9 +426,9 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
 fn prepare_shared_package(
     root: &Path,
     spec: &PluginSyncSpec,
-    cached: Option<PublishedPackage>,
+    cached: Option<LeasedPluginPackage>,
     bytes: Option<Vec<u8>>,
-) -> Result<PublishedPackage, PluginSyncFailure> {
+) -> Result<LeasedPluginPackage, PluginSyncFailure> {
     if let Some(package) = cached {
         return Ok(package);
     }
@@ -409,14 +440,24 @@ fn prepare_shared_package(
             CapabilitySyncError::invalid_payload("Plugin has no verified package or download URL"),
         )
     })?;
-    publish_plugin_archive(root, &bytes, spec.checksum.as_deref()).map_err(|error| {
-        PluginSyncFailure::new(
-            "package",
-            "PLUGIN_PACKAGE_INTEGRITY_FAILED",
-            false,
-            CapabilitySyncError::invalid_payload(error),
-        )
+    prepare_plugin_archive(root, &bytes, spec.checksum.as_deref(), |staged| {
+        validate_package_identity(staged, spec).map_err(|error| error.to_string())
     })
+    .map_err(package_failure)
+}
+
+fn package_failure(error: PackageRecoveryError) -> PluginSyncFailure {
+    let busy = matches!(error, PackageRecoveryError::Busy);
+    PluginSyncFailure::new(
+        "package",
+        if busy {
+            "PLUGIN_PACKAGE_BUSY"
+        } else {
+            "PLUGIN_PACKAGE_INTEGRITY_FAILED"
+        },
+        busy,
+        CapabilitySyncError::from(error),
+    )
 }
 
 fn prepare_private_package(
