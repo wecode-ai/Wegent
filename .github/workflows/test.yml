@@ -559,6 +559,14 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
 
+      - name: Run Windows batch shim regressions
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test -p wegent-subprocess --all-features
+
       - name: Run native file platform regressions
         if: ${{ !cancelled() }}
         shell: bash

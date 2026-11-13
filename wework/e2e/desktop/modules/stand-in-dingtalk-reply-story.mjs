@@ -180,6 +180,7 @@ export function createDingTalkReplyStory(options) {
         process.platform === 'win32' ? 'source-story-dws.exe' : 'source-story-dws'
       )
       if (preparedBinary) {
+        // The fixture resolves its protocol data next to its own executable.
         await copyFile(preparedBinary, binary)
       } else {
         await promisify(execFile)('rustc', [

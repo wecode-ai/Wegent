@@ -1,6 +1,16 @@
 classify_wework_path() {
   local path="$1"
 
+  # Installer packaging changes retain the formal release startup checkpoint.
+  case "$path" in
+    wework/electron/electron-builder.config.cjs | \
+      wework/e2e/desktop/modules/windows-installer-ui.ps1 | \
+      wework/e2e/desktop/windows-installer*)
+      select_target "core:release-package-startup"
+      return
+      ;;
+  esac
+
   case "$path" in
     wework/src/components/plugins/PluginDetailView* | \
       wework/src/components/plugins/PluginsWorkspace* | \

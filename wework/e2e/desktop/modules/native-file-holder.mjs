@@ -1,4 +1,7 @@
-// Wait for the real Windows handle, preserving the desktop step's 10-second budget.
+// PowerShell compiles its native handle helper on first use, which can exceed
+// the desktop step budget on a loaded Windows runner.
+const HOLDER_READY_TIMEOUT_MS = 30_000
+
 export function waitForNativeFileHolder(child) {
   return new Promise((resolve, reject) => {
     let output = ''
@@ -34,7 +37,11 @@ export function waitForNativeFileHolder(child) {
           : diagnostic('Invalid native holder acknowledgement')
       )
     }
-    const timer = setTimeout(() => finish(diagnostic('Native file holder did not start')), 10_000)
+    const timer = setTimeout(
+      () =>
+        finish(diagnostic(`Native file holder did not start within ${HOLDER_READY_TIMEOUT_MS}ms`)),
+      HOLDER_READY_TIMEOUT_MS
+    )
     child.once('error', onError)
     child.once('close', onClose)
     child.stdout.on('data', onOutput)

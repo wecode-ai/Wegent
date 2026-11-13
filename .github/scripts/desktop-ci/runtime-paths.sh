@@ -11,6 +11,18 @@ classify_path() {
     return
   fi
 
+  # Reserve the Windows packaging and standard-user verification cost for
+  # changes that can alter installer behavior. Shared packaging, build identity
+  # and helper-script changes stay covered by the existing release-startup
+  # checkpoint instead of triggering a full Windows build.
+  case "$path" in
+    wework/electron/electron-builder.config.cjs | \
+      wework/e2e/desktop/modules/windows-installer-ui.ps1 | \
+      wework/e2e/desktop/windows-installer*)
+      windows_installer_e2e=true
+      ;;
+  esac
+
   case "$path" in
     wework/src/features/todo/ProjectCoordinatorConversation*|wework/src/features/todo/ProjectCoordinatorPublication*|wework/src/features/todo/ProjectCoordinationPanel*|executor/src/runtime_work/handler/project_coordinator.rs|executor/src/runtime_work/handler/project_router*|executor/src/task_runtime/project_router_store.rs|executor/src/task_runtime/store/project_coordinator.rs|wework/e2e/desktop/scenarios/project-coordinator-publication.scenario.mjs|wework/e2e/desktop/scenarios/project-coordination.scenario.mjs)
       select_target "core:stand-in-profile"

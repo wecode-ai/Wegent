@@ -19,7 +19,9 @@ import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 
 const RECONCILE_ENV = {
-  LOCAL_PLUGIN_RECONCILE_INTERVAL: '90',
+  // Leave the fixture enough setup headroom on loaded cloud runners while
+  // still exercising the production periodic scheduler.
+  LOCAL_PLUGIN_RECONCILE_INTERVAL: '120',
   LOCAL_PLUGIN_RECONCILE_JITTER: '18',
   LOCAL_HEARTBEAT_INTERVAL: '1',
 }

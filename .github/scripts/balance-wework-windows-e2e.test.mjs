@@ -340,6 +340,16 @@ test('timing evidence contains positive successful samples with source run links
   assert.match(evidence.runnerOverheadSource, /\/actions\/runs\/\d+\/job\/\d+$/)
 })
 
+test('appearance coverage participates in measured balancing instead of pinning Core 6', () => {
+  assert.equal(checkpointSeconds('appearance-themes'), 210)
+  const balanced = balanceWindowsMatrix(completeMatrix)
+  assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
+  assert.equal(balanced.include.length, completeMatrix.include.length)
+  const previous = completeMatrix.include.find(shard => shard.id === 'core-6')
+  const current = balanced.include.find(shard => shard.id === 'core-6')
+  assert.notEqual(current.segments, previous.segments)
+})
+
 function replayedShardSeconds(shard, seconds, overheadSeconds) {
   return shard.segments.split(',').reduce((total, segment) => {
     const duration = checkpointSeconds(segment, seconds)

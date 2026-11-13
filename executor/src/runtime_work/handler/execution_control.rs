@@ -575,6 +575,14 @@ impl RuntimeWorkRpcHandler {
             }
         });
         if let Some(link) = self.local_task_link(local_task_id) {
+            // The native turn may settle before this local execution unwinds, in
+            // which case `publish_native_execution` skips the scheduler release
+            // because the local execution was still registered. Whichever side
+            // settles last must hand the slot back, otherwise queued turns stay
+            // stranded behind a task that no longer runs anything.
+            if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
+                self.release_settled_native_capacity(local_task_id, &state);
+            }
             self.project_runtime_link_status_now(&link);
         }
         if status != "running" {

@@ -490,6 +490,9 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(completed, true, 'The memory E2E response did not complete')
   await captureVerificationScreenshot(control, 'memory-03-completed.png')
 
+  const baselineDomNodeCount = Math.max(
+    ...baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE).map(sample => sample.domNodeCount)
+  )
   for (let index = 0; index < MEMORY_MAX_SETTLED_SAMPLES; index += 1) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
     samples.push(await captureMemorySample(control, 'settled'))
@@ -498,10 +501,13 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     const settledWindow = settledSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
     const settled = medianMemorySample(settledWindow)
     assert.ok(settled, 'The memory E2E did not capture a settled sample window')
+    const settledDomNodeGrowth =
+      Math.max(...settledWindow.map(sample => sample.domNodeCount)) - baselineDomNodeCount
     if (
       settled.physicalFootprintKiB - baseline.physicalFootprintKiB <=
         MEMORY_MAX_SETTLED_GROWTH_KIB &&
-      memorySampleRangeKiB(settledWindow) <= MEMORY_MAX_SAMPLE_RANGE_KIB
+      memorySampleRangeKiB(settledWindow) <= MEMORY_MAX_SAMPLE_RANGE_KIB &&
+      settledDomNodeGrowth <= MEMORY_MAX_SETTLED_DOM_NODE_GROWTH
     ) {
       break
     }
@@ -520,9 +526,6 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledRangeKiB = memorySampleRangeKiB(settledWindow)
-  const baselineDomNodeCount = Math.max(
-    ...baselineSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE).map(sample => sample.domNodeCount)
-  )
   const settledDomNodeCount = Math.max(...settledWindow.map(sample => sample.domNodeCount))
   const settledDomNodeGrowth = settledDomNodeCount - baselineDomNodeCount
   const peakJSHeapBytes = Math.max(

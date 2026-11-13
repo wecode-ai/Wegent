@@ -165,13 +165,13 @@ export function createInterruptedCompactionScenario({ uiTimeoutMs, modelResponse
         await Promise.race([
           control.awaitReadyAfter(readyCount),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Reload did not reconnect')), uiTimeoutMs)
+            setTimeout(() => reject(new Error('Reload did not reconnect')), modelResponseTimeoutMs)
           ),
         ])
-        await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+        await control.command('waitFor', COMPOSER, { timeoutMs: modelResponseTimeoutMs })
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: SEED,
-          timeoutMs: uiTimeoutMs,
+          timeoutMs: modelResponseTimeoutMs,
         })
         await waitIdle(control)
         // A cancelled attempt may be absent from Codex history, but must never become a success.

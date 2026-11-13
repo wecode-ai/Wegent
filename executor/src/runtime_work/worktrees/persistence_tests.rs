@@ -77,6 +77,32 @@ fn cleanup_removes_orphaned_worktree_residue_after_git_removal() {
 }
 
 #[test]
+fn orphaned_residue_removal_retries_while_the_previous_owner_releases_the_path() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("residue");
+    fs::create_dir_all(&path).unwrap();
+    fs::write(path.join("unsaved.txt"), "remove me\n").unwrap();
+    let attempts = std::sync::atomic::AtomicU32::new(0);
+
+    let result = retry_transient_removal(
+        || {
+            if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "path is busy",
+                ));
+            }
+            fs::remove_dir_all(&path)
+        },
+        || !path.exists(),
+    )
+    .unwrap();
+
+    assert_eq!(result, 2);
+    assert!(!path.exists());
+}
+
+#[test]
 fn snapshot_cleanup_preserves_recreated_residue_without_git_metadata() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");

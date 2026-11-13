@@ -222,7 +222,7 @@ export function createDesktopScenario({
       await control.command('press', COMPOSER, { key: 'Enter' })
       await waitUntil(
         () => requests.length >= 2,
-        uiTimeoutMs,
+        modelResponseTimeoutMs,
         'The real tool did not finish before the model overload'
       )
       const gates = runtimeTransportGates(control)
@@ -298,14 +298,14 @@ export function createDesktopScenario({
       releaseCompletion()
       await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
         text: COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       await waitUntil(
         async () => {
           const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
           return state.pane?.status?.isBusy === false
         },
-        uiTimeoutMs,
+        modelResponseTimeoutMs,
         'The recovered task did not finish'
       )
       assert.equal(
@@ -320,7 +320,7 @@ export function createDesktopScenario({
       await control.awaitReadyAfter(readyCount)
       await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
         text: COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(
         Number(
@@ -346,7 +346,7 @@ export function createDesktopScenario({
       )
       await control.command('waitFor', `${WORKBENCH} [data-testid="shell-tool-output"]`, {
         text: TOOL_MARKER,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
 
       await gates.reset()
@@ -365,7 +365,7 @@ export function createDesktopScenario({
         async () =>
           JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane?.status
             ?.isBusy === false,
-        uiTimeoutMs,
+        modelResponseTimeoutMs,
         'A real terminal error remained in recovery'
       )
       assert.equal(terminalRequests, 1, 'A real terminal error was retried as recoverable overload')

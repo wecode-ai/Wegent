@@ -80,3 +80,9 @@ export async function openConnectionTypePicker(control) {
     await control.command('click', button)
   await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 }
+
+/** Calendar navigation mounts the list before its arrangements finish loading. */
+export async function openStandInArrangement(control, automationId) {
+  await control.command('clickWhenEnabled', `[data-testid="automation-open-${automationId}"]`)
+  await control.command('waitFor', '[data-testid="automation-detail-panel"]')
+}

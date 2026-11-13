@@ -49,6 +49,7 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   10_000,
   'WEWORK_E2E_STEP_TIMEOUT_MS'
 )
+const LOCAL_PROJECT_READY_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 60_000)
 const MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
 const DESKTOP_MODEL_SERVER_PORT = readOptionalPort(
   process.env.WEWORK_E2E_MODEL_SERVER_PORT,
@@ -1505,20 +1506,21 @@ async function ensureModelOptionVisible(
   )
 }
 
-async function confirmLocalProjectName(control, name) {
+async function confirmLocalProjectName(control, name, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
   await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
   })
   await control.command('fill', '[data-testid="local-project-create-name-input"]', {
     value: name,
   })
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
   })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
-    'The local project create dialog did not close after confirmation'
+    'The local project create dialog did not close after confirmation',
+    timeoutMs
   )
 }
 
@@ -1551,7 +1553,7 @@ async function createSingleRootLocalProject(
   }
   await control.command('click', '[data-testid="project-create-local-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
   })
   await waitForFolderPickerInitialized(control)
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
@@ -1561,9 +1563,9 @@ async function createSingleRootLocalProject(
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs,
   })
-  await confirmLocalProjectName(control, name)
+  await confirmLocalProjectName(control, name, timeoutMs)
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot'))
@@ -1728,6 +1730,7 @@ export {
   DESKTOP_READY_TIMEOUT_MS,
   WORKBENCH_READY_TIMEOUT_MS,
   DEFAULT_STEP_TIMEOUT_MS,
+  LOCAL_PROJECT_READY_TIMEOUT_MS,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_CONTROL_SERVER_PORT,
   MODEL_REQUEST_TIMEOUT_MS,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { access, open, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -13,6 +13,35 @@ import {
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const INPUT = `${ACTIVE} [data-testid="chat-message-input"]`
 const ANSWER = 'ARCHIVED_WORKTREE_CLEANUP_READY'
+
+export async function cleanupFailureDiagnostics(control, workspacePath) {
+  const capture = async read => {
+    try {
+      return await read()
+    } catch (error) {
+      return { error: error.message }
+    }
+  }
+  return {
+    workspacePath,
+    remainingEntries: await capture(() => readdir(workspacePath)),
+    ownedProcesses: await capture(async () => {
+      const snapshot = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
+      return {
+        capturedAt: snapshot.capturedAt,
+        collectingSystemProcesses: snapshot.collectingSystemProcesses,
+        degraded: snapshot.degraded.map(({ code }) => ({ code })),
+        processes: snapshot.processes.map(({ pid, parentPid, name, kind, owner }) => ({
+          pid,
+          parentPid,
+          name,
+          kind,
+          ownerId: owner.id,
+        })),
+      }
+    }),
+  }
+}
 
 export async function rewriteGitMarker(path, content) {
   // Git hides .git on Windows, where opening an existing hidden file with 'w' fails.
@@ -190,7 +219,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
         '[data-testid="archived-delete-confirm-dialog-confirm-button"]'
       )
 
-      const residualDeadline = Date.now() + uiTimeoutMs
+      // Windows can keep the archived workspace locked while the previous
+      // runtime releases it; the executor retries removal for a bounded time.
+      const residualDeadline = Date.now() + Math.max(uiTimeoutMs, 30_000)
       let residualRemoved = false
       while (Date.now() < residualDeadline) {
         try {
@@ -201,6 +232,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
           break
         }
         await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      if (!residualRemoved) {
+        // Preserve evidence before the runner tears down the isolated process tree.
+        console.error(
+          '[archived-worktree-cleanup] residue removal failed',
+          JSON.stringify(await cleanupFailureDiagnostics(control, residualTask.workspacePath))
+        )
       }
       assert.equal(
         residualRemoved,

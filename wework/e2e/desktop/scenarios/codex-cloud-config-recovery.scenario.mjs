@@ -192,18 +192,23 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
           bundleFailures: model.diagnostics().bundleFailures,
         })
       }
-      const restoreOfficial = async name => {
-        model.recoverBundle()
+      const waitForNativeIdle = async message => {
         // A completed task can still have a native composer prediction or read
         // in flight. Reuse the idle-only restart gate before changing auth modes.
-        const idleRestart = await waitForValue(
-          async () =>
-            JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+        const idle = await waitForValue(
+          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
           value => value.restarted === true,
-          'The native Codex process did not become idle before restoring official auth',
+          message,
           RECOVERY_TIMEOUT_MS
         )
-        assert.equal(idleRestart.activeTaskCount, 0)
+        assert.equal(idle.activeTaskCount, 0)
+        return idle
+      }
+      const restoreOfficial = async name => {
+        model.recoverBundle()
+        const idleRestart = await waitForNativeIdle(
+          'The native Codex process did not become idle before restoring official auth'
+        )
         evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
@@ -246,6 +251,9 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
 
       // A real bundled-plugin change must restart the idle process without
       // restoring the subscription auth whose cloud configuration is still down.
+      await waitForNativeIdle(
+        'The native Codex process did not become idle before syncing bundled plugins'
+      )
       const pluginSync = await rpc(
         'runtime.codex.plugin.sync_bundled',
         await preparePluginSyncFixture(resultDir)

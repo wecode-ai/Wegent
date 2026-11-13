@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict'
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { publishImmutableDirectory } from './immutable-directory.ts'
 import { copyManagedPlugin } from './managed-plugin-files.ts'
 
 test('Windows package cleanup preserves composed and packaged assets beyond MAX_PATH', async () => {
@@ -38,6 +50,96 @@ test('Windows package cleanup preserves composed and packaged assets beyond MAX_
     assert.equal(await readFile(join(composedAssets, 'index.js'), 'utf8'), contents)
     await rm(composedAssets, { recursive: true })
     assert.equal(await readFile(join(assets, 'index.js'), 'utf8'), contents)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Windows copies nested plugin trees without dropping entries', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-managed-copy-'))
+  try {
+    const source = join(root, 'source')
+    const destination = join(root, 'destination')
+    for (let directory = 0; directory < 8; directory += 1) {
+      await mkdir(join(source, `dir-${directory}`), { recursive: true })
+      for (let file = 0; file < 16; file += 1) {
+        await writeFile(join(source, `dir-${directory}`, `file-${file}.js`), `${directory}-${file}`)
+      }
+    }
+
+    await copyManagedPlugin(source, destination, { platform: 'win32' })
+
+    for (let directory = 0; directory < 8; directory += 1) {
+      for (let file = 0; file < 16; file += 1) {
+        assert.equal(
+          await readFile(join(destination, `dir-${directory}`, `file-${file}.js`), 'utf8'),
+          `${directory}-${file}`
+        )
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('Windows copy failure waits for active writes before content cleanup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-managed-copy-failure-'))
+  try {
+    const source = join(root, 'source')
+    const target = join(root, 'managed-package')
+    await mkdir(source)
+    await writeFile(join(source, 'slow.js'), 'slow copy')
+    await writeFile(join(source, 'failure.js'), 'failed copy')
+
+    let startSlow
+    let releaseSlow
+    const slowStarted = new Promise(resolve => {
+      startSlow = resolve
+    })
+    const slowRelease = new Promise(resolve => {
+      releaseSlow = resolve
+    })
+    const failure = new Error('failed copy')
+    let settled = false
+    const publication = publishImmutableDirectory(target, content =>
+      copyManagedPlugin(source, content, {
+        platform: 'win32',
+        copyEntry: async (entrySource, entryTarget) => {
+          if (entrySource.endsWith('slow.js')) {
+            startSlow()
+            await slowRelease
+            await cp(entrySource, entryTarget)
+            return
+          }
+          if (entrySource.endsWith('failure.js')) {
+            await slowStarted
+            throw failure
+          }
+          await cp(entrySource, entryTarget)
+        },
+      })
+    )
+    const observed = publication.then(
+      () => {
+        settled = true
+      },
+      error => {
+        settled = true
+        return error
+      }
+    )
+
+    await slowStarted
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(settled, false, 'Failure returned while another copy was still writing')
+    assert.ok(
+      (await readdir(root)).some(entry => entry.startsWith('.content-')),
+      'Failed copy content was removed before all writers stopped'
+    )
+
+    releaseSlow()
+    assert.equal(await observed, failure)
+    assert.deepEqual(await readdir(root), ['source'])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

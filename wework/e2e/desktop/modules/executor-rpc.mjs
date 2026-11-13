@@ -10,14 +10,21 @@ export async function requestExecutor(control, method, params, timeoutMs) {
   let response
   let payload
   try {
-    response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
-      method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body: JSON.stringify({ id: requestId, method, params }),
-      timeoutMs,
-    })
-    stage = 'response-body'
-    payload = await response.json()
+    for (let attempt = 0; ; attempt += 1) {
+      response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ id: requestId, method, params }),
+        timeoutMs,
+      })
+      stage = 'response-body'
+      payload = await response.json()
+      // Transcript reads can race with another read and answer busy for a moment.
+      if (response.ok || attempt >= 4 || !isTranscriptBusy(payload)) break
+      await new Promise(resolvePromise =>
+        setTimeout(resolvePromise, Math.min(2_000, 250 * 2 ** attempt))
+      )
+    }
   } catch (cause) {
     console.error('[desktop-e2e] Executor RPC HTTP failure', {
       requestId,
@@ -37,6 +44,11 @@ export async function requestExecutor(control, method, params, timeoutMs) {
   )
   assert.equal(payload.ok, true, `${method} failed: ${payload.error?.message}`)
   return payload.result
+}
+
+function isTranscriptBusy(payload) {
+  const message = JSON.stringify(payload ?? {})
+  return message.includes('Transcript processing is busy')
 }
 
 export async function writeCodexModelConfig(control, { provider, model }, timeoutMs) {

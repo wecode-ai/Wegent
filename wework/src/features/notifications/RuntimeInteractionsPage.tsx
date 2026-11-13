@@ -73,6 +73,7 @@ export function RuntimeInteractionsPage({
   const discussion = useQuestionDiscussion()
   const { t } = useTranslation('common')
   const [history, setHistory] = useState(false)
+  const [refreshRevision, setRefreshRevision] = useState(0)
   const [dismissing, setDismissing] = useState(false)
   const dismissingRef = useRef(false)
   const [dismissFailed, setDismissFailed] = useState(false)
@@ -172,6 +173,16 @@ export function RuntimeInteractionsPage({
     reportProjectPendingCount?.(projectCount)
   }, [projectCount, reportProjectPendingCount])
   useEffect(() => () => reportProjectPendingCount?.(null), [reportProjectPendingCount])
+  const refreshAll = useCallback(async () => {
+    if (!refreshInteractions) return
+    try {
+      await Promise.all([refreshInteractions(), refreshProjectIssues()])
+      setRefreshRevision(value => value + 1)
+    } catch {
+      // The providers expose their own error state; leave the revision
+      // unchanged so observers never mistake a failed refresh for fresh data.
+    }
+  }, [refreshInteractions, refreshProjectIssues])
   if (!interactions) return null
   const { pending, errors } = interactions
   const loading = interactions.loading || projectIssues.loading
@@ -267,6 +278,7 @@ export function RuntimeInteractionsPage({
   return (
     <main
       data-testid="runtime-interactions-page"
+      data-refresh-revision={refreshRevision}
       className="flex h-full min-h-0 bg-background text-text-primary"
     >
       <section
@@ -317,7 +329,7 @@ export function RuntimeInteractionsPage({
             data-testid="interactions-refresh"
             disabled={loading}
             aria-label={t('notifications.refresh')}
-            onClick={() => void Promise.all([interactions.refresh(), projectIssues.refresh()])}
+            onClick={() => void refreshAll()}
             className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
           >
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />

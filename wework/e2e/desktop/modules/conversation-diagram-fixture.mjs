@@ -1,8 +1,10 @@
 export const DIAGRAM_REGRESSION_MARKER = 'WEWORK_DIAGRAM_REGRESSION'
-// The entire diagram chunk must leave the preparation window after scrolling.
-export const DIAGRAM_REGRESSION_LAST_SECTION = 17
+const DIAGRAM_SECTION_COUNT = 25
+export const DIAGRAM_REGRESSION_LAST_HEADING = `Diagram regression section ${DIAGRAM_SECTION_COUNT - 1}`
+// Leave enough content after the diagram that scrolling to the end moves its
+// Markdown chunk beyond the 1,600px preparation window at every desktop size.
 export const DIAGRAM_REGRESSION_RESPONSE = Array.from(
-  { length: DIAGRAM_REGRESSION_LAST_SECTION + 1 },
+  { length: DIAGRAM_SECTION_COUNT },
   (_, index) =>
     [
       `## Diagram regression section ${index}`,

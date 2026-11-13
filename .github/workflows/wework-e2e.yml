@@ -50,6 +50,7 @@ jobs:
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
       windows_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:all') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+      windows_installer_e2e: ${{ steps.classify.outputs.wework_windows_installer_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
       wework_desktop_core_e2e_matrix: ${{ steps.linux-matrix.outputs.matrix }}
       windows_desktop_core_e2e_matrix: ${{ steps.windows-matrix.outputs.matrix }}
       wework_desktop_cloud_e2e: ${{ steps.classify.outputs.wework_desktop_cloud_e2e }}
@@ -275,9 +276,9 @@ jobs:
         run: node --test wework/e2e/desktop/xvfb-lifecycle.test.mjs
 
       - name: Set up ORAS
-        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        uses: ./.github/actions/setup-oras
         with:
-          version: 1.3.1
+          version: "1.3.1"
 
       - name: Log in to GHCR with ORAS
         run: echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
@@ -525,7 +526,7 @@ jobs:
     name: Build Windows Wework Desktop Core E2E Artifact
     needs:
       - changes
-    if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
+    if: needs.changes.outputs.windows_desktop_core_e2e == 'true' || needs.changes.outputs.windows_installer_e2e == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -544,7 +545,48 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Install Windows installer packaging dependencies
+        # Core E2E runs host installer verification in the underloaded core-10
+        # shard; this build-job path remains the installer-only fallback.
+        if: needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
+        shell: pwsh
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
+      - name: Build Windows NSIS installer for alternate-drive E2E
+        if: needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          # This installer only feeds the E2E run, so trade package size for
+          # packaging time instead of using the release compression mode.
+          # electron-builder downloads packaging toolchains; the CDN can answer
+          # a transient 504, so retry before failing the whole verification.
+          for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+            pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never --config.compression=store
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) {
+              throw "Failed to build the Windows installer"
+            }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+          $installers = @(Get-ChildItem "wework/electron/release-installer" -Filter "*-setup.exe" -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Windows installer, found $($installers.Count)"
+          }
+
+      - name: Verify alternate-drive installation as a standard user
+        if: needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
+        shell: pwsh
+        env:
+          WEWORK_E2E_WINDOWS_INSTALLER: ${{ github.workspace }}/wework/electron/release-installer
+        run: |
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath (Get-Command node).Source `
+            -ArgumentList "wework/e2e/desktop/windows-installer.e2e.mjs"
+
       - name: Prepare Windows Redis E2E tools
+        if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
         shell: pwsh
         env:
           REDIS_WINDOWS_VERSION: 8.10.1
@@ -575,6 +617,7 @@ jobs:
           }
 
       - name: Upload Windows Wework desktop Core E2E build
+        if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-windows-core-e2e-build
@@ -585,6 +628,7 @@ jobs:
           include-hidden-files: true
 
       - name: Upload Windows Redis E2E tools
+        if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-windows-redis-e2e-tools
@@ -593,6 +637,19 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+      - name: Upload Windows installer verification evidence
+        if: always() && needs.changes.outputs.windows_installer_e2e == 'true' && needs.changes.outputs.windows_desktop_core_e2e != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-windows-installer-evidence
+          path: |
+            wework/test-results/desktop-e2e/windows-installer/evidence.json
+            wework/test-results/desktop-e2e/windows-installer/app.log
+            wework/test-results/desktop-e2e/windows-installer/ui-helper.log
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+
       - name: Upload Windows Wework desktop Core E2E build diagnostics
         if: failure()
         continue-on-error: true
@@ -600,7 +657,10 @@ jobs:
         with:
           name: wework-desktop-windows-core-e2e-build-diagnostics
           path: |
+            .ci-artifacts/windows-standard-user/stdout.log
+            .ci-artifacts/windows-standard-user/stderr.log
             wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/windows-installer/**
             !wework/test-results/desktop-e2e/**/managed-components/**
             !wework/test-results/desktop-e2e/**/*.zip
           if-no-files-found: ignore
@@ -866,6 +926,61 @@ jobs:
           path: .ci-artifacts/windows-standard-user/*.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Set up pnpm for Windows installer verification
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Install Windows installer packaging dependencies
+        # Packaging and the real alternate-drive installation run beside the
+        # other core shards instead of delaying every shard from the build job.
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        shell: pwsh
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
+      - name: Build Windows NSIS installer for alternate-drive E2E
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          # This installer only feeds the E2E run, so trade package size for
+          # packaging time instead of using the release compression mode.
+          for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+            pnpm --dir wework/electron exec electron-builder --config electron-builder.config.cjs --win --x64 --prepackaged release/WeWork-win32-x64 --publish never --config.compression=store
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) {
+              throw "Failed to build the Windows installer"
+            }
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+          $installers = @(Get-ChildItem "wework/electron/release-installer" -Filter "*-setup.exe" -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Windows installer, found $($installers.Count)"
+          }
+
+      - name: Verify alternate-drive installation as a standard user
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        shell: pwsh
+        env:
+          WEWORK_E2E_WINDOWS_INSTALLER: ${{ github.workspace }}/wework/electron/release-installer
+        run: |
+          & ./.github/scripts/run-windows-standard-user-process.ps1 `
+            -FilePath (Get-Command node).Source `
+            -ArgumentList "wework/e2e/desktop/windows-installer.e2e.mjs"
+
+      - name: Upload Windows installer verification evidence
+        if: always() && matrix.id == 'core-10' && needs.changes.outputs.windows_installer_e2e == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-windows-installer-evidence
+          path: |
+            wework/test-results/desktop-e2e/windows-installer/evidence.json
+            wework/test-results/desktop-e2e/windows-installer/app.log
+            wework/test-results/desktop-e2e/windows-installer/ui-helper.log
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
 
       - name: Fail Windows Wework desktop Core shard E2E
         if: always() && steps.windows-core-e2e.outcome == 'failure'
@@ -1164,6 +1279,7 @@ jobs:
           RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' }}
+          RUN_WINDOWS_DESKTOP_BUILD: ${{ needs.changes.outputs.windows_desktop_core_e2e == 'true' || needs.changes.outputs.windows_installer_e2e == 'true' }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all') && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')))) }}
@@ -1185,6 +1301,7 @@ jobs:
           if [[ "$RUN_E2E" != "true" && \
             "$RUN_DESKTOP_CORE_E2E" != "true" && \
             "$RUN_WINDOWS_DESKTOP_CORE_E2E" != "true" && \
+            "$RUN_WINDOWS_DESKTOP_BUILD" != "true" && \
             "$RUN_DESKTOP_CLOUD_E2E" != "true" && \
             "$RUN_DESKTOP_OTHER_E2E" != "true" && \
             "$RUN_MACOS_INSPECTOR_E2E" != "true" ]]; then
@@ -1217,7 +1334,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "$RUN_WINDOWS_DESKTOP_CORE_E2E" == "true" && \
+          if [[ "$RUN_WINDOWS_DESKTOP_BUILD" == "true" && \
             "$WINDOWS_DESKTOP_CORE_BUILD_RESULT" != "success" ]]; then
             echo "Windows Wework desktop Core E2E build completed with: $WINDOWS_DESKTOP_CORE_BUILD_RESULT"
             exit 1

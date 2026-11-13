@@ -385,7 +385,8 @@ export async function createDesktopScenario({
       state =>
         state.executions[0]?.status === 'completed' &&
         state.activities.length === 1 &&
-        state.activities[0].status === 'completed',
+        state.activities[0].status === 'completed' &&
+        state.issue.metadata.ai_state.status === 'completed',
       'Device registration did not recover the terminal execution and missing activity',
       modelResponseTimeoutMs
     )

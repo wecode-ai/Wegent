@@ -399,12 +399,35 @@ export async function crashOwnedProcessTree(child, snapshot) {
     }
   }
   const startedAt = Date.now()
+  let retriedWindowsKill = false
   while (targets.some(processIsAlive)) {
-    if (Date.now() - startedAt >= PROCESS_STOP_TIMEOUT_MS) {
+    const elapsed = Date.now() - startedAt
+    if (
+      process.platform === 'win32' &&
+      !retriedWindowsKill &&
+      elapsed >= PROCESS_STOP_TIMEOUT_MS / 2
+    ) {
+      // Detached native helpers can survive the first tree kill. Retry the
+      // survivors once before treating the crash injection as failed.
+      retriedWindowsKill = true
+      await Promise.all(targets.filter(processIsAlive).map(killWindowsProcess))
+    }
+    if (elapsed >= PROCESS_STOP_TIMEOUT_MS) {
       throw new Error('The isolated application process tree survived its injected crash')
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
+}
+
+function killWindowsProcess(pid) {
+  return new Promise(resolvePromise => {
+    const killer = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    killer.once('error', () => resolvePromise())
+    killer.once('close', () => resolvePromise())
+  })
 }
 
 async function stopWindowsProcessTree(child) {

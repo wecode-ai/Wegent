@@ -189,6 +189,9 @@ wework_desktop_other_e2e='
   if [[ "$expected" != *"wework_desktop_macos_inspector_e2e="* ]]; then
     expected="${expected}"$'\n''wework_desktop_macos_inspector_e2e=false'
   fi
+  if [[ "$expected" != *"wework_windows_installer_e2e="* ]]; then
+    expected="${expected}"$'\n''wework_windows_installer_e2e=false'
+  fi
   local output
   output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
   # Every checkpoint owns its prerequisites; order within one shard is not coverage.

@@ -14,7 +14,8 @@
     "https://github.com/wecode-ai/Wegent/actions/runs/42400229326",
     "https://github.com/wecode-ai/Wegent/actions/runs/42405065052",
     "https://github.com/wecode-ai/Wegent/actions/runs/42411289396",
-    "https://github.com/wecode-ai/Wegent/actions/runs/42442121034"
+    "https://github.com/wecode-ai/Wegent/actions/runs/42442121034",
+    "https://github.com/wecode-ai/Wegent/actions/runs/42583955358"
   ],
   "preparationSource": "https://github.com/wecode-ai/Wegent/actions/runs/40747839908/job/123040595116",
   "preparationDescription": "Successful conditional setup on a cold Windows runner; cache hits can reduce these costs.",
@@ -24,6 +25,7 @@
     "dingtalk-protocol-fixture": 15
   },
   "seconds": {
+    "appearance-themes": 210,
     "application-menu": 46,
     "archived-fork-cleanup": 48,
     "archived-worktree-cleanup": 39,
@@ -225,6 +227,13 @@
   },
   "preparationSources": {
     "dingtalk-protocol-fixture": "https://github.com/wecode-ai/Wegent/actions/runs/42048650293/job/127328527189"
+  },
+  "appearanceMeasurement": {
+    "head": "f10b35f295723010615a6d55ce52775cb476762d",
+    "source": "https://github.com/wecode-ai/Wegent/actions/runs/42583955358/job/129056989960",
+    "startedAt": "2026-11-09T08:35:49.645Z",
+    "completedAt": "2026-11-09T08:39:18.769Z",
+    "note": "Successful appearance-themes checkpoint, ceil-rounded from scheduler start/end timestamps. The containing shard later reached its step deadline; unfinished checkpoints are not samples. Existing medians remain unchanged."
   },
   "runnerOverheadSeconds": 125,
   "runnerOverheadSource": "https://github.com/wecode-ai/Wegent/actions/runs/42405065052/job/128503038855",

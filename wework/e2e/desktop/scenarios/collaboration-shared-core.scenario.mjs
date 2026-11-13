@@ -33,6 +33,14 @@ import {
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import {
+  assistantMessage,
+  createSse,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
 import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
@@ -52,6 +60,42 @@ const AGENT_NAME = '协作核心 Codex'
 const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 const FIXED_TASK_TAB_CONTENT = '[data-testid="workspace-tab-content-fixed-task"]'
 const FIXED_TASK_TAB_SELECT = '[data-testid="workspace-tab-select-fixed-task"]'
+const PICKER_TASK_PROMPT = 'COLLABORATION_PICKER_TASK'
+
+async function handlePickerTaskModel(request, response, url) {
+  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+    return false
+  const body = await readRequestBody(request)
+  if (!JSON.stringify(body.input ?? []).includes(PICKER_TASK_PROMPT)) return false
+  const id = `picker-task-${Date.now()}`
+  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+  response.end(
+    createSse([
+      responseCreated(id),
+      assistantMessage(`${PICKER_TASK_PROMPT}_COMPLETE`),
+      responseCompleted(id),
+    ])
+  )
+  return true
+}
+
+async function createPickerTask(control, uiTimeoutMs) {
+  await control.command('click', FIXED_TASK_TAB_SELECT)
+  await control.command('click', '[data-testid="new-chat-button"]')
+  const composer = '[data-testid="chat-message-input"]'
+  await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
+  await control.command('fill', composer, { value: PICKER_TASK_PROMPT })
+  await control.command('press', composer, { key: 'Enter' })
+  return waitForValue(
+    async () => {
+      const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      return state.workbench?.currentRuntimeTask
+    },
+    task => Boolean(task?.taskId) && task.running === false,
+    'The standalone picker task did not settle',
+    uiTimeoutMs
+  )
+}
 
 async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeName, timeoutMs) {
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
@@ -263,6 +307,7 @@ export function createDesktopScenario({
     requiresCloudEnvironment: true,
     async handleHttp(request, response, url) {
       return (
+        (await handlePickerTaskModel(request, response, url)) ||
         (await handlePersonalHomeModel(request, response, url)) ||
         boardReplyModel.handleHttp(request, response, url)
       )
@@ -1029,9 +1074,10 @@ export function createDesktopScenario({
           scoped,
           workbenchReadyTimeoutMs,
         })
+        const pickerTask = await createPickerTask(control, uiTimeoutMs)
         await projectSpacePicker.verify(control, {
-          deviceId: binding.deviceId ?? binding.device_id,
-          taskId: binding.taskId ?? binding.task_id,
+          deviceId: pickerTask.deviceId,
+          taskId: pickerTask.taskId,
         })
       } finally {
         linkedIssueTaskModel?.release()

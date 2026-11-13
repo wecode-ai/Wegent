@@ -435,8 +435,18 @@ export function createDesktopScenario({
         )
         const ordinaryBefore = await rpc(control, 'runtime.tasks.get', { taskId: ordinaryTaskId })
         const input = '[data-testid="stand-in-conversation"] [data-testid="chat-message-input"]'
-        await control.command('fill', input, { value: 'PRIMARY_ORCHESTRATE_TASK_CREATE' })
-        await control.command('press', input, { key: 'Enter' })
+        const send = '[data-testid="stand-in-conversation"] [data-testid="send-message-button"]'
+        const sendStandInMessage = async value => {
+          await control.command('fill', input, { value })
+          await control.command('waitFor', `${send}:not(:disabled)`, { timeoutMs: uiTimeoutMs })
+          await control.command('click', send)
+          await control.command(
+            'waitFor',
+            '[data-testid="stand-in-conversation"] [data-testid="message-user"]',
+            { text: value, timeoutMs: uiTimeoutMs }
+          )
+        }
+        await sendStandInMessage('PRIMARY_ORCHESTRATE_TASK_CREATE')
         await control.command(
           'waitFor',
           '[data-testid="stand-in-conversation"] [data-testid="message-assistant"]',
@@ -444,8 +454,7 @@ export function createDesktopScenario({
         )
         assert.ok(createdTaskId)
         await captureScreenshot(control, 'silent-06-primary-creates-task.png')
-        await control.command('fill', input, { value: 'PRIMARY_ORCHESTRATE_TASK_CONTINUE' })
-        await control.command('press', input, { key: 'Enter' })
+        await sendStandInMessage('PRIMARY_ORCHESTRATE_TASK_CONTINUE')
         await control.command(
           'waitFor',
           '[data-testid="stand-in-conversation"] [data-testid="message-assistant"]',

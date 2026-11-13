@@ -504,7 +504,8 @@ export class EmbeddedBrowserBridge {
           )
         )
       } catch (error) {
-        if (!isUnavailableBrowserError(error, label)) throw error
+        if (!isUnavailableBrowserError(error, label) && !isTransientEvaluationError(error))
+          throw error
         await new Promise(resolve => setTimeout(resolve, pollMs))
         continue
       }
@@ -632,6 +633,12 @@ export class EmbeddedBrowserBridge {
 
 function isUnavailableBrowserError(error: unknown, label: string): boolean {
   return errorMessage(error) === `Embedded browser is unavailable: ${label}`
+}
+
+function isTransientEvaluationError(error: unknown): boolean {
+  // A click can start a document navigation while the next condition poll is
+  // still attached to the previous execution context.
+  return errorMessage(error) === 'Inspected target navigated or closed'
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {

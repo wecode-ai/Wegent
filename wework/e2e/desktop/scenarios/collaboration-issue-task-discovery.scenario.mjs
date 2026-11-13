@@ -18,7 +18,11 @@ import {
   selectCollaborationDomain,
   waitForWorkbenchDebugState,
 } from '../modules/workspace-flows.mjs'
-import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
+import {
+  LOCAL_PROJECT_READY_TIMEOUT_MS,
+  createSingleRootLocalProject,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -159,7 +163,14 @@ export function createDesktopScenario({
   async function runLocalTask(control) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     if (!localProjectCreated) {
-      await createSingleRootLocalProject(control, workspacePath, 'duplicate-app-local-task')
+      // The Windows Core shard observed project creation waiting on executor
+      // registration longer than the ordinary UI budget.
+      await createSingleRootLocalProject(
+        control,
+        workspacePath,
+        'duplicate-app-local-task',
+        LOCAL_PROJECT_READY_TIMEOUT_MS
+      )
       localProjectCreated = true
     } else {
       await control.command('markElementWithText', '[data-testid^="project-row-"]', {

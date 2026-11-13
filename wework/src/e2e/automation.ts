@@ -413,18 +413,20 @@ function reloadMainWindowLocalStorageInput(
 
 async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string>(
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
     `(localStorage.setItem(${JSON.stringify(input.key)}, ${JSON.stringify(input.value)}), ` +
-      `localStorage.getItem(${JSON.stringify(input.key)}))`,
-    input.label
+      `localStorage.getItem(${JSON.stringify(input.key)}))`
   )
 }
 
 async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string | null>(
-    `localStorage.getItem(${JSON.stringify(input.key)})`,
-    input.label
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `localStorage.getItem(${JSON.stringify(input.key)})`
   )
 }
 

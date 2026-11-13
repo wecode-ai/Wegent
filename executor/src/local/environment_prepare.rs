@@ -307,7 +307,10 @@ Execution environment must have exactly one primary repository"
                 "fingerprint": "blank-v1"
             })
             .to_string()],
-            5.0,
+            // Bound a hang, not machine speed: the whole cargo test binary runs
+            // thousands of tests in parallel and can delay a shell spawn well
+            // past five seconds. Production callers use the same 60s default.
+            60.0,
         ));
 
         let expected = workspace
