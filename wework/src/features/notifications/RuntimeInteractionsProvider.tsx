@@ -600,6 +600,17 @@ function RuntimeInteractionsState({
     saveInteractionState(cacheKey, pendingInteractionCache(pending))
   }, [cacheKey, pending])
 
+  useEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+    ;(
+      globalThis as typeof globalThis & {
+        __WEWORK_E2E_INTERACTION_DEVICE_SCOPE__?: { localDeviceIds: string[] }
+      }
+    ).__WEWORK_E2E_INTERACTION_DEVICE_SCOPE__ = {
+      localDeviceIds: [...localDeviceIds].sort(),
+    }
+  }, [localDeviceIds])
+
   const clearReplyDraft = useCallback(
     (id: string) => {
       setDraft(id, '')

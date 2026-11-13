@@ -136,6 +136,7 @@ function checkpointScenarioEnv(env, checkpoint) {
   if (
     [
       'human-interactions',
+      'human-interactions-device-scope',
       'human-interactions-hidden',
       'human-interactions-issue',
       'stand-in-notifications',
