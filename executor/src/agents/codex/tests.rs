@@ -700,6 +700,60 @@ async fn plugin_mutation_waits_for_idle_and_unchanged_sync_preserves_thread_gene
 }
 
 #[tokio::test]
+async fn plugin_mutation_waits_for_transient_pending_requests() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let client = CodexAppServerClient::new("codex-plugin-mutation-pending-test");
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let notifications = CodexNotificationHub::new();
+    let pending_changed = notifications.pending_changed.clone();
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications,
+        reader_task: tokio::spawn(async {}),
+    });
+    let (sender, _receiver) = oneshot::channel();
+    pending.lock().await.insert(
+        42,
+        PendingCodexResponse {
+            sender,
+            native_request: None,
+        },
+    );
+    let mutation_called = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&mutation_called);
+    let mutation = client.mutate_configuration_if_idle(move || {
+        observed.store(true, Ordering::SeqCst);
+        async { Ok((true, false)) }
+    });
+    tokio::pin!(mutation);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut mutation)
+            .await
+            .is_err()
+    );
+    assert!(!mutation_called.load(Ordering::SeqCst));
+
+    pending.lock().await.clear();
+    pending_changed.send_modify(|version| {
+        *version = version.wrapping_add(1);
+    });
+
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(5), mutation)
+            .await
+            .unwrap()
+            .unwrap(),
+        true
+    );
+    assert!(mutation_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
 async fn idle_thread_tracking_evicts_the_oldest_subscription_over_capacity() {
     let client = CodexAppServerClient::new("codex-idle-capacity-test");
 
