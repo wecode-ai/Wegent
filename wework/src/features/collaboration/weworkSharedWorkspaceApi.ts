@@ -537,6 +537,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
             projectId,
             withoutUndefined({
               title: input.title,
+              request_id: input.requestId,
               description: input.description,
               status: input.status,
               priority: input.priority,

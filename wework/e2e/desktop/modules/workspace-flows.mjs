@@ -1,3 +1,4 @@
+import { requestExecutor } from './executor-rpc.mjs'
 import {
   COLLABORATION_SIDEBAR_SELECTOR,
   inCollaborationSidebar,
@@ -486,43 +487,54 @@ async function waitForNativeCollaborationPlatform(
 export async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
   await expandCollaborationSpaces(control, contentSelector)
-  const localWorkspaceTree = inCollaborationSidebar(
-    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+  const localIdentity = inCollaborationSidebar(
+    '[data-testid="collaboration-workspace-tree-wework-local-workspace"] .collaboration-workspace-identity',
     contentSelector
   )
-  const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
-  await revealCollaborationSidebarElement(control, localWorkspaceIdentity)
-  await control.command('click', localWorkspaceIdentity)
-  const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
-  await revealCollaborationSidebarElement(control, `${activeWorkspaceHome}[aria-current="page"]`)
-  await control.command(
-    'waitFor',
-    `${contentSelector} [data-testid="collaboration-workspace-project-create"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  if (Number(await control.command('getElementCount', localIdentity)) > 0)
+    await control.command('click', localIdentity)
+  const group = inCollaborationSidebar(
+    '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child',
+    contentSelector
   )
+  const toggle = `${group} .collaboration-workspace-toggle`
+  if (
+    Number(await control.command('getElementCount', toggle)) > 0 &&
+    (await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false'
+  )
+    await control.command('click', toggle)
 }
 
+/** Seed an existing offline project through production Native APIs; project-first-navigation covers creation UI. */
 export async function createLocalCollaborationProject(control, contentSelector, projectName) {
-  await enterLocalCollaborationWorkspace(control, contentSelector)
-  await control.command(
-    'click',
-    `${contentSelector} [data-testid="collaboration-workspace-project-create"]`
+  const workspacePath = join(
+    resultDir,
+    'local-collaboration-projects',
+    projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
   )
-  await control.command('click', '[data-testid="collaboration-workspace-project-import-folder"]')
-  await completeLocalCollaborationFolderImport(control, projectName)
-  const projectTestId = await waitForTestIdByText(
+  await mkdir(workspacePath, { recursive: true })
+  await runChecked('git', ['init', workspacePath])
+  const projectKey = randomUUID()
+  await requestExecutor(
     control,
-    `${contentSelector} ${COLLABORATION_SIDEBAR_SELECTOR}`,
-    'collaboration-workspace-project-',
-    projectName
+    'runtime.projects.upsert_local',
+    { projectKey, name: projectName, roots: [workspacePath], runtime: 'codex' },
+    DEFAULT_STEP_TIMEOUT_MS
   )
-  await revealCollaborationSidebarElement(
+  const project = await requestExecutor(
     control,
-    inCollaborationSidebar(`[data-testid="${projectTestId}"]`, contentSelector)
+    'projects.import_code_project',
+    { project_key: projectKey, name: projectName, roots: [workspacePath] },
+    DEFAULT_STEP_TIMEOUT_MS
   )
+  await reloadMainWindow(control, 'The existing offline project did not appear after native import')
+  await waitForNativeCollaborationPlatform(control, contentSelector)
+  const selector = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-project-${project.id}"]`,
+    contentSelector
+  )
+  await revealCollaborationSidebarElement(control, selector)
+  await control.command('click', selector)
   await waitForLocalProjectNavigation(control, contentSelector, projectName)
 }
 

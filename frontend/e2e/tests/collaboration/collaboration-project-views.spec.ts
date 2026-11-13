@@ -6,7 +6,11 @@ import { expect, test, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
-import { dragCollaborationIssueToColumn, webApi } from '../../utils/collaboration-test-support'
+import {
+  dragCollaborationIssueToColumn,
+  showAllProjectIssues,
+  webApi,
+} from '../../utils/collaboration-test-support'
 
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
@@ -197,12 +201,14 @@ projectTest(
     })
 
     await page.goto(path)
+    await showAllProjectIssues(page)
     const sort = page.getByTestId('cloud-board-sort-by-pending')
     const completedSort = page.getByTestId('cloud-board-sort-by-completed')
     const assertOrder = async (lane: string, ids: string[]) => {
       const cards = page
         .getByTestId(`cloud-todo-column-${lane}`)
         .locator('article[data-testid^="collaboration-issue-"]')
+      await showAllProjectIssues(page)
       await expect(cards).toHaveCount(ids.length)
       for (const [index, id] of ids.entries()) {
         await expect(cards.nth(index)).toHaveAttribute('data-testid', `collaboration-issue-${id}`)
@@ -328,6 +334,7 @@ for (const hiddenSiblings of [false, true])
           ).toBe('Developer')
         }
         await page.goto(path)
+        await showAllProjectIssues(page)
         const sort = page.getByTestId('cloud-board-sort-by-pending')
         await sort.click()
         await page.getByTestId('cloud-board-sort-by-pending-manual').click()
@@ -336,6 +343,7 @@ for (const hiddenSiblings of [false, true])
           .getByTestId('cloud-todo-column-pending')
           .locator('article[data-testid^="collaboration-issue-"]')
         const expectOrder = async (ids = [second.id, issueId, third.id]) => {
+          await showAllProjectIssues(page)
           await expect(cards).toHaveCount(3)
           for (const [index, id] of ids.entries())
             await expect(cards.nth(index)).toHaveAttribute(
@@ -519,6 +527,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
         },
       })
       await page.goto(path)
+      await showAllProjectIssues(page)
       await page.getByTestId('cloud-board-group-by').click()
       await page.getByTestId(`cloud-board-group-option-${groupBy}`).click()
       const lane =
@@ -535,6 +544,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
             : 'tag-other'
       const sort = page.getByTestId(`cloud-board-sort-by-${lane}`)
       const assertOrder = async (ids: string[]) => {
+        await showAllProjectIssues(page)
         const cards = page
           .getByTestId(`cloud-todo-column-${lane}`)
           .locator('article[data-testid^="collaboration-issue-"]')

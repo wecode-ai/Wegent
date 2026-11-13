@@ -70,6 +70,7 @@ export function IssueMainCommentComposer({
   onSubmit(
     body: string,
     mentions: IssueMentionOption[],
+    options?: import("./useCommentAssignment").CommentSubmissionOptions,
   ): void | boolean | Promise<void | boolean>;
   assignment?: CommentAssignment;
   disabled: boolean;
@@ -104,10 +105,17 @@ export function IssueMainCommentComposer({
     if (inlineError) errorRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [inlineError]);
   const canSend =
-    !blocked && !uploading && Boolean(value.trim() || transfer.target);
-  const sendLabel = transfer.target
-    ? translate(value.trim() ? "todo.send_and_assign" : "todo.assign_only")
-    : labels.send;
+    !blocked &&
+    !uploading &&
+    (transfer.mode === "child"
+      ? Boolean(value.trim() || transfer.pendingChild)
+      : Boolean(value.trim() || transfer.target));
+  const sendLabel =
+    transfer.mode === "child"
+      ? translate("todo.send_and_create_child")
+      : transfer.target
+        ? translate(value.trim() ? "todo.send_and_assign" : "todo.assign_only")
+        : labels.send;
   const submit = (draft: string) => {
     if (canSend) void transfer.submit(draft);
   };
@@ -229,12 +237,34 @@ export function IssueMainCommentComposer({
           <span className="flex-1" />
           {assignment ? (
             <>
+              {assignment.createChild && (
+                <select
+                  data-testid={`${testIds.form}-assignment-mode`}
+                  aria-label={translate("todo.comment_assignment_mode")}
+                  value={transfer.mode}
+                  onChange={(event) =>
+                    transfer.setMode(event.target.value as "current" | "child")
+                  }
+                  disabled={blocked || Boolean(transfer.pendingChild)}
+                  className="max-w-36 rounded-md border-0 bg-transparent px-2 py-1 text-sm text-text-secondary"
+                >
+                  <option
+                    value="current"
+                    disabled={assignment.canAssignCurrent === false}
+                  >
+                    {translate("todo.assign_current_issue")}
+                  </option>
+                  <option value="child">
+                    {translate("todo.create_child_issue")}
+                  </option>
+                </select>
+              )}
               <IssueDetailSearchableSelect
                 testId={`${testIds.form}-assignee`}
                 accessibleLabel={translate("todo.comment_assign_to")}
                 value={transfer.target}
                 onChange={transfer.setTarget}
-                disabled={blocked}
+                disabled={blocked || Boolean(transfer.pendingChild)}
                 searchPlaceholder={translate("todo.search_assignee")}
                 emptyLabel={translate("todo.no_matching_assignee")}
                 className="task-detail-comment-assignee"
@@ -249,7 +279,13 @@ export function IssueMainCommentComposer({
                         }
                       </span>
                     ) : (
-                      <span>{translate("todo.keep_assignee")}</span>
+                      <span>
+                        {translate(
+                          transfer.mode === "child"
+                            ? "todo.unassigned"
+                            : "todo.keep_assignee",
+                        )}
+                      </span>
                     )}
                     <ChevronDown className="h-4 w-4 shrink-0" />
                   </>

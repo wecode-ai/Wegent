@@ -23,6 +23,7 @@ import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/Workspac
 import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
 
 export interface PersonalHomeIssueDetailContext {
+  presentation?: 'drawer'
   issue: WorkspaceMyWorkItem
   project: CollaborationProject
   active: boolean
@@ -30,6 +31,8 @@ export interface PersonalHomeIssueDetailContext {
   onOpenIssue(issue: CollaborationIssue): void
   onClose?(): void
   onExpandedChange?(expanded: boolean): void
+  detailExpanded?: boolean
+  onDetailExpandedChange?(expanded: boolean): void
   onOpenInProject?(): void
   taskRequest?: {
     key: string
@@ -99,6 +102,7 @@ export function WeworkPersonalHome({
     }>
   >([])
   const [activeTab, setActiveTab] = useState('stand-in')
+  const [detailExpanded, setDetailExpanded] = useState(false)
   const [expandedTabs, setExpandedTabs] = useState<ReadonlySet<string>>(new Set())
   const tabsViewport = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
@@ -294,6 +298,7 @@ export function WeworkPersonalHome({
               showCompleted={showCompleted}
               assignedOnly={assignedOnly}
               onOpenIssue={openIssue}
+              selectedIssue={issueTabs.find(tab => tab.id === activeTab)?.issue}
               active={active}
               onOpenTask={(issue, binding) =>
                 openIssue(issue, { key: crypto.randomUUID(), binding })
@@ -314,7 +319,7 @@ export function WeworkPersonalHome({
         </main>
         <aside
           aria-label={t('personalHome.standIn')}
-          className={`flex min-h-96 min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : 'lg:w-96 xl:w-[28rem]'}`}
+          className={`flex min-h-96 min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${detailExpanded || expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : 'lg:w-96 xl:w-[28rem]'}`}
           data-testid="personal-home-stand-in"
         >
           <header
@@ -411,6 +416,8 @@ export function WeworkPersonalHome({
                 project: tab.project,
                 active: active && activeTab === tab.id,
                 taskRequest: tab.taskRequest,
+                detailExpanded,
+                onDetailExpandedChange: setDetailExpanded,
                 onClose: () => closeIssue(tab.id),
                 onExpandedChange: expanded =>
                   setExpandedTabs(current => {

@@ -524,7 +524,7 @@ export function ProjectAgentConfiguration({
     scope === "workspace"
       ? translate(
           "todo.agent_picker_workspace_description",
-          "选择一个智能体，供空间内项目复用。",
+          "选择一个智能体，供分组内项目复用。",
         )
       : translate(
           "todo.agent_picker_description",
@@ -624,7 +624,7 @@ export function ProjectAgentConfiguration({
           <div className={styles.titleRow}>
             <h2 className={styles.title}>
               {scope === "workspace"
-                ? translate("todo.workspace_agents", "空间智能体")
+                ? translate("todo.workspace_agents", "分组智能体")
                 : translate("todo.project_agents", "项目智能体")}
             </h2>
             {!loading && !loadError ? (
@@ -635,11 +635,11 @@ export function ProjectAgentConfiguration({
             {scope === "workspace"
               ? translate(
                   "todo.workspace_agents_description",
-                  "管理空间共享智能体，空间内项目可以直接复用。",
+                  "管理分组共享智能体，分组内项目可以直接复用。",
                 )
               : translate(
                   "todo.project_agents_description",
-                  "直接管理这个项目的智能体；既可使用我的智能体，也可复用空间共享的智能体。",
+                  "直接管理这个项目的智能体；既可使用我的智能体，也可复用分组共享的智能体。",
                 )}
           </p>
         </div>
@@ -747,7 +747,7 @@ export function ProjectAgentConfiguration({
                       {agent.unavailableReason === "resource_sharing_required"
                         ? translate(
                             "todo.agent_resource_sharing_required",
-                            "需要资源所有者共享到空间",
+                            "需要资源所有者共享到分组",
                           )
                         : agent.unavailableReason ===
                             "private_binding_requires_explicit_share"
@@ -826,7 +826,7 @@ export function ProjectAgentConfiguration({
                             : scope === "workspace"
                               ? translate(
                                   "todo.remove_workspace_agent",
-                                  "移出空间",
+                                  "移出分组",
                                 )
                               : translate("todo.archive_project_agent", "停用")}
                         </button>
@@ -843,7 +843,7 @@ export function ProjectAgentConfiguration({
                   ? "todo.no_workspace_agents"
                   : "todo.no_project_agents",
                 scope === "workspace"
-                  ? "当前空间还没有智能体。"
+                  ? "当前分组还没有智能体。"
                   : "当前项目还没有智能体。",
               )}
             </p>

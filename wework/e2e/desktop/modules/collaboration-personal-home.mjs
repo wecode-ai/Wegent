@@ -247,7 +247,7 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
     text: HOME_TASK_RESULT,
   })
   await waitForValue(
-    () => control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+    () => control.command('getValueWhenReady', scoped('[data-testid="cloud-todo-detail-title"]')),
     value => value === HOME_ISSUE_TITLE,
     'The generated task title must be persisted back to its new Issue',
     10_000
@@ -321,11 +321,9 @@ async function verifyPersonalHomeStartWorkWithAssistants(control, { scoped, proj
   )
   assert.ok(selectedTab.startsWith('personal-home-tab-'))
   const issueId = selectedTab.slice('personal-home-tab-'.length)
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="cloud-todo-card-header-${issueId}"]`),
-    { text: HOME_ISSUE_TITLE }
-  )
+  await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-header-${issueId}"]`), {
+    text: HOME_ISSUE_TITLE,
+  })
   await control.command(
     'waitFor',
     scoped(`[data-testid^="personal-home-task-${issueId}-"][data-execution-state="succeeded"]`)

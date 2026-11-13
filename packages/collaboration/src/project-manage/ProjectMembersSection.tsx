@@ -36,7 +36,7 @@ function inheritedSource(
     ? host.translate('todo.project_member_inherited_named', '继承自 {{space}}', {
         space: workspace.name,
       })
-    : host.translate('todo.project_member_inherited_parent', '继承自父空间')
+    : host.translate('todo.project_member_inherited_parent', '继承自父分组')
 }
 
 export function ProjectMembersSection<
@@ -86,11 +86,11 @@ export function ProjectMembersSection<
     project.membership_mode === 'restricted'
       ? host.translate(
           'todo.project_membership_restricted_hint',
-          '仅空间管理员自动加入，其他成员需直接邀请。'
+          '仅分组管理员自动加入，其他成员需直接邀请。'
         )
       : host.translate(
           'todo.project_membership_inherit_hint',
-          '空间成员自动获得项目访问权限，空间管理员始终可管理项目。'
+          '分组成员自动获得项目访问权限，分组管理员始终可管理项目。'
         )
 
   return (
@@ -230,7 +230,7 @@ export function ProjectMembersSection<
               className={`min-h-11 w-full shrink-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary disabled:opacity-60 md:min-h-8 md:w-auto ${focus}`}
             >
               <option value="inherit">
-                {host.translate('todo.project_membership_inherit', '继承空间成员')}
+                {host.translate('todo.project_membership_inherit', '继承分组成员')}
               </option>
               <option value="restricted">
                 {host.translate('todo.project_membership_restricted_short', '仅邀请成员')}
@@ -266,7 +266,7 @@ export function ProjectMembersSection<
               const inheritedAdminOnly = inheritedOnly && member.inherited_role === 'Maintainer'
               const roleReadOnly = member.role === 'Owner' || inheritedAdminOnly || !canManage
               const removeLabel = member.inherited_role
-                ? host.translate('todo.reset_member_role', '恢复 {{name}} 的空间角色', {
+                ? host.translate('todo.reset_member_role', '恢复 {{name}} 的分组角色', {
                     name: member.user_name,
                   })
                 : host.translate('todo.remove_member', '移除 {{name}}', {
@@ -453,7 +453,7 @@ export function ProjectMembersSection<
               <p data-testid="cloud-project-members-inheritance-note">
                 {host.translate(
                   'todo.project_member_inherited_hint',
-                  '项目角色可覆盖空间成员或只读成员的继承角色，移除项目角色后恢复继承。空间管理员始终可管理项目。'
+                  '项目角色可覆盖分组成员或只读成员的继承角色，移除项目角色后恢复继承。分组管理员始终可管理项目。'
                 )}
               </p>
             )}

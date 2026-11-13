@@ -1,3 +1,4 @@
+import { IssueCommentChildAction } from './IssueCommentChildAction'
 import { BrowserIssueExecution } from './BrowserIssueExecution'
 import { BrowserIssueActivityTools } from './BrowserIssueActivityTools'
 import { useIssueActivityScroll } from './useIssueActivityScroll'
@@ -27,7 +28,7 @@ import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 // SPDX-License-Identifier: Apache-2.0
 
 import { IssueActivityCard, IssueActivityMessage } from './IssueActivityPresentation'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 
 import { executionStatusLabel } from './executionStatusLabel'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
@@ -88,6 +89,8 @@ export function IssueActivityPanel({
   onOpenAttachment?(id: string, filename: string): void
   onOpenExecution?(target: RuntimeExecutionTarget): void
 }) {
+  const latestComments = useRef(comments)
+  latestComments.current = comments
   const chat = useIssueProjectChat(api.activity, issue.cloud_project_id, issue.id, issue.version)
   const cancel = useCallback(
     (address: RuntimeTaskAddress) => {
@@ -256,6 +259,23 @@ export function IssueActivityPanel({
                     key={`thread:${entry.thread.root.messageId}`}
                     thread={entry.thread}
                     canComment={canComment}
+                    childAssignment={commentAssignment}
+                    onChildComment={
+                      api.activity
+                        ? async (text, requestId, sourceMessageId) => {
+                            const message = await api.activity!.send({
+                              projectId: issue.cloud_project_id,
+                              taskId: issue.id,
+                              clientMessageId: requestId,
+                              text,
+                              replyToMessageId: sourceMessageId,
+                              model: null,
+                              mentions: [],
+                            })
+                            chat.merge([message])
+                          }
+                        : undefined
+                    }
                     send={chat.send}
                     members={members}
                     agents={agents}
@@ -386,6 +406,20 @@ export function IssueActivityPanel({
                       </IssueActivityContent>
                     )}
                   </IssueActivityMessage>
+                  {entry.kind === 'comment' && canComment && commentAssignment?.createChild ? (
+                    <IssueCommentChildAction
+                      body={entry.comment.body}
+                      messageId={entry.comment.id}
+                      assignment={commentAssignment}
+                      translate={translate}
+                      onComment={async text => {
+                        const saved = await api.comments.create(issue.id, text)
+                        const next = [...latestComments.current.filter(comment => comment.id !== saved.id), saved]
+                        latestComments.current = next
+                        onCommentsChange(next)
+                      }}
+                    />
+                  ) : null}
                 </IssueActivityCard>
               )
             })}

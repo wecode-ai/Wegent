@@ -67,7 +67,7 @@ function advertisedToolNames(body) {
 async function addLocalAgent(control, timeoutMs) {
   const projectNavId = await waitForTestIdByText(
     control,
-    inCollaborationSidebar('[data-testid="collaboration-project-group-local"]', CONTENT),
+    inCollaborationSidebar('[data-testid="collaboration-project-tree"]', CONTENT),
     'collaboration-workspace-project-',
     PROJECT,
     timeoutMs
