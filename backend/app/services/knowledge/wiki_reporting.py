@@ -35,7 +35,9 @@ def wiki_request(action: str) -> Callable:
 
         @wraps(function)
         async def wrapped(*args, **kwargs):
-            if not is_event_reporting_enabled(event):
+            if not is_event_reporting_enabled(event) and not (
+                action != "test" and is_event_reporting_enabled(_BINDING)
+            ):
                 return await function(*args, **kwargs)
             arguments = call_signature.bind(*args, **kwargs).arguments
             body = arguments.get("body")

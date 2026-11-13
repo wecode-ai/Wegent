@@ -137,7 +137,7 @@ async def report_index_execution(
             lambda: {
                 "kb_id": spec.knowledge_base_id,
                 "document_id": spec.document_id,
-                "status": "failure" if error is not None else "success",
+                "status": _outcome_status(error),
                 "error_code": error_code_for(error) if error is not None else None,
                 "data": {
                     "execution_mode": execution_mode,
@@ -170,7 +170,7 @@ async def report_query_execution(
         observe(
             "knowledge.retrieval.execution.finished",
             lambda: {
-                "status": "failure" if error is not None else "success",
+                "status": _outcome_status(error),
                 "error_code": error_code_for(error) if error is not None else None,
                 "data": {
                     "request_id": get_request_id(),
@@ -245,6 +245,8 @@ async def report_retrieval_request(
     try:
         result = await execute()
         records = loaded_scalar(result, "records")
+        if loaded_scalar(result, "mode") == "mixed_restricted_retrieval":
+            records = loaded_scalar(result, "external_records")
         if isinstance(records, (list, tuple)):
             report_document_usage_for_result(records)
         return result
@@ -268,6 +270,12 @@ async def report_retrieval_request(
             _usage_context.reset(token)
 
 
+def _outcome_status(error: BaseException | None) -> str:
+    if isinstance(error, asyncio.CancelledError):
+        return "cancelled"
+    return "failure" if error is not None else "success"
+
+
 def _report_retrieval_finished(
     usage: UsageContext,
     requested_kb_ids: list[int],
@@ -280,7 +288,7 @@ def _report_retrieval_finished(
     observe(
         "knowledge.retrieval.request.finished",
         lambda: {
-            "status": "failure" if error is not None else "success",
+            "status": _outcome_status(error),
             "error_code": error_code_for(error) if error is not None else None,
             "data": {
                 "request_id": get_request_id(),

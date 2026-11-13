@@ -15,6 +15,7 @@ from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.services.knowledge.external_document_import import (
+    ExternalDocumentRefreshResult,
     external_document_import_service,
 )
 from app.services.knowledge.external_document_providers import (
@@ -170,7 +171,7 @@ def _is_unchanged(
 
 def _queue_refresh(
     db: Session, document: KnowledgeDocument, expected_generation: int
-) -> bool:
+) -> ExternalDocumentRefreshResult:
     """Queue the refresh a manual reimport performs and report the outcome."""
     result = external_document_import_service.refresh_existing_document(
         db, document, expected_generation=expected_generation
@@ -182,7 +183,7 @@ def _queue_refresh(
         result.started,
         result.reason or "queued",
     )
-    return result.started and result.reason != "dispatch_failed"
+    return result
 
 
 def _document_sync_config(document: KnowledgeDocument) -> dict:
@@ -355,13 +356,15 @@ def refresh_dingtalk_copy(
             status="success",
         )
         return False
-    queued = _queue_refresh(db, document, expected_generation)
+    refresh = _queue_refresh(db, document, expected_generation)
+    queued = refresh.started and refresh.reason != "dispatch_failed"
+    failed = refresh.reason == "dispatch_failed"
     _emit_copy_check(
         kb_id=kb_id,
         document_id=document_id,
         generation=expected_generation,
-        decision="refresh_queued" if queued else "dispatch_failed",
-        status="success" if queued else "failure",
-        error_code=None if queued else "external_import_dispatch_failed",
+        decision="refresh_queued" if queued else refresh.reason,
+        status="success" if queued else "failure" if failed else "skipped",
+        error_code="external_import_dispatch_failed" if failed else None,
     )
     return queued

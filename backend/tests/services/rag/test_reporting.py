@@ -17,6 +17,57 @@ async def _result(value):
 
 
 @pytest.mark.asyncio
+async def test_mixed_restricted_response_reports_only_delivered_external_documents():
+    from app.api.endpoints.internal.rag import (
+        MixedRestrictedRetrieveResponse,
+        RetrieveRecord,
+    )
+    from shared.event_reporting import register_event_receiver
+
+    events = []
+
+    class Receiver:
+        def accepts(self, event_type):
+            return event_type == "knowledge.usage.document.recorded"
+
+        def receive(self, event):
+            events.append(event)
+
+    response = MixedRestrictedRetrieveResponse(
+        retrieval_mode="rag_retrieval",
+        restricted_safe_summary={
+            "decision": "answer",
+            "reason": "ok",
+            "summary": "summary",
+            "answer_guidance": "ok",
+        },
+        answer_contract="contract",
+        message="ok",
+        total=1,
+        external_records=[
+            RetrieveRecord(
+                content="external", title="doc", knowledge_base_id=1, document_id=2
+            )
+        ],
+    )
+    register_event_receiver(Receiver())
+    try:
+        assert (
+            await report_retrieval_request(
+                entrypoint="chat",
+                requested_kb_ids=[1],
+                effective_kb_ids=[1],
+                route_mode="rag_retrieval",
+                execute=lambda: _result(response),
+            )
+            is response
+        )
+        assert [(event["kb_id"], event["document_id"]) for event in events] == [(1, 2)]
+    finally:
+        register_event_receiver(None)
+
+
+@pytest.mark.asyncio
 async def test_registered_actor_provider_is_called_once_for_nested_queries(
     mocker, facts
 ):
@@ -259,7 +310,9 @@ async def test_request_preserves_original_exception(facts, error):
             execute=fail,
         )
     assert caught.value is error
-    assert facts[0][1]["status"] == "failure"
+    assert facts[0][1]["status"] == (
+        "cancelled" if isinstance(error, asyncio.CancelledError) else "failure"
+    )
     assert facts[0][1]["error_code"] == type(error).__name__
 
 

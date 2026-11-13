@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import wraps
 from inspect import iscoroutinefunction, signature
-from typing import Callable
+from typing import Any, Callable, TypeVar, cast
 from uuid import uuid4
 
 from .catalogs.knowledge._common import loaded_scalar, observe
@@ -14,17 +14,20 @@ from .reporter import is_event_reporting_enabled
 
 _active = ContextVar("knowledge_observed_operations", default=frozenset())
 _identity = ContextVar("knowledge_operation_identity", default=(None, None))
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def operation_fact(
     event_type: str,
     *,
     operation: str,
-    data_factory: Callable = lambda args, kwargs: {},
-):
+    data_factory: Callable[[tuple[Any, ...], dict[str, Any]], dict[str, Any]] = (
+        lambda args, kwargs: {}
+    ),
+) -> Callable[[F], F]:
     """One fact per logical call, including retries; nested same-kind calls coalesce."""
 
-    def decorate(function):
+    def decorate(function: F) -> F:
         parameters = tuple(signature(function).parameters)
 
         def argument(args, kwargs, name):
@@ -142,12 +145,12 @@ def operation_fact(
                     args, kwargs, result, error, identity, parent, started, started_at
                 )
 
-        return asynchronous if iscoroutinefunction(function) else sync
+        return cast(F, asynchronous if iscoroutinefunction(function) else sync)
 
     return decorate
 
 
-def embedding_fact(operation):
+def embedding_fact(operation: str) -> Callable[[F], F]:
     return operation_fact(
         "knowledge.embedding.call.finished",
         operation=operation,
@@ -158,7 +161,7 @@ def embedding_fact(operation):
     )
 
 
-def storage_fact(storage_type, operation):
+def storage_fact(storage_type: str, operation: str) -> Callable[[F], F]:
     return operation_fact(
         "knowledge.storage.operation.finished",
         operation=operation,

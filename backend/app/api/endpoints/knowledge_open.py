@@ -430,6 +430,7 @@ async def create_document_open(
                 knowledge_base_id=data.knowledge_base_id,
                 name=data.name,
                 folder_id=data.folder_id,
+                trigger="openapi",
             )
         except ValueError as exc:
             _raise_open_knowledge_http_error(exc)

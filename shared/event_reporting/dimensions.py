@@ -38,8 +38,11 @@ _registration_lock = Lock()
 
 
 def _reset_registration_lock() -> None:
-    global _registration_lock
+    global _registration_lock, _actor_provider, _knowledge_base_provider
+    global _actor_owner, _knowledge_base_owner
     _registration_lock = Lock()
+    _actor_provider = _knowledge_base_provider = None
+    _actor_owner = _knowledge_base_owner = None
 
 
 if hasattr(os, "register_at_fork"):

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from uuid import UUID
 
@@ -191,7 +192,7 @@ def scalar(value: object) -> object:
 def payload(event_type: str, data: object) -> dict[str, object]:
     if (
         event_type not in EVENT_TYPES
-        or type(data) is not dict
+        or not isinstance(data, Mapping)
         or len(data) > MAX_DATA_FIELDS
     ):
         raise ValueError("invalid_event_contract")

@@ -1,6 +1,29 @@
 from shared.event_reporting import emit_event, register_event_receiver
 
 
+def test_receiver_accepts_immutable_mapping_payload():
+    from types import MappingProxyType
+
+    events = []
+
+    class Receiver:
+        def accepts(self, event_type):
+            return True
+
+        def receive(self, event):
+            events.append(event)
+
+    register_event_receiver(Receiver())
+    try:
+        emit_event(
+            event_type="knowledge.kb.created",
+            payload_factory=lambda: MappingProxyType({"kb_type": "native"}),
+        )
+        assert events[0]["data"] == {"kb_type": "native"}
+    finally:
+        register_event_receiver(None)
+
+
 def test_absent_receiver_does_not_evaluate_fields():
     register_event_receiver(None)
 

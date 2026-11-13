@@ -22,9 +22,16 @@ ALLOWED_STATUSES = {
 
 
 def build_fact_key(namespace: str, parts: Sequence[object]) -> str:
-    encoded_parts = [quote(str(part), safe="") for part in parts if part is not None]
+    encoded_parts = [
+        (
+            "~"
+            if part is None
+            else "%7E" if str(part) == "~" else quote(str(part), safe="")
+        )
+        for part in parts
+    ]
     suffix = "|".join(encoded_parts)
-    return f"v1|{namespace}|{suffix}" if suffix else f"v1|{namespace}"
+    return f"v1|{namespace}|{suffix}" if encoded_parts else f"v1|{namespace}"
 
 
 def build_envelope(

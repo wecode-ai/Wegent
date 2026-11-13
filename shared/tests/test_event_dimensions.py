@@ -59,3 +59,33 @@ def test_old_release_cannot_remove_same_callbacks_registered_again():
         assert knowledge_base_fields(1) == {"asset_org_id": "asset"}
     finally:
         new_release()
+
+
+def test_forked_child_does_not_inherit_dimension_providers():
+    import os
+
+    import pytest
+
+    if not hasattr(os, "fork"):
+        pytest.skip("fork is unavailable")
+    set_actor_provider(lambda _: ActorDimensions("parent"))
+    set_knowledge_base_provider(lambda _: KnowledgeBaseDimensions("parent"))
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        clean = resolve_actor_dimensions(1) is None and knowledge_base_fields(1) == {}
+        os.write(write_fd, b"clean" if clean else b"inherited")
+        os.close(write_fd)
+        os._exit(0)
+    os.close(write_fd)
+    try:
+        result = os.read(read_fd, 32)
+        _, status = os.waitpid(pid, 0)
+        assert status == 0
+        assert result == b"clean"
+        assert resolve_actor_dimensions(1) == ActorDimensions("parent")
+    finally:
+        os.close(read_fd)
+        set_actor_provider(None)
+        set_knowledge_base_provider(None)

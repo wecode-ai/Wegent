@@ -2953,6 +2953,7 @@ class KnowledgeOrchestrator:
         folder_id: int = 0,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
+        trigger: str = "web_create",
     ) -> Dict[str, Any]:
         """
         Create a document from a web page by scraping the URL.
@@ -3067,7 +3068,7 @@ class KnowledgeOrchestrator:
                 knowledge_base_id=knowledge_base_id,
                 user_id=user.id,
                 data=doc_data,
-                trigger="web_refresh",
+                trigger=trigger,
             )
 
             logger.info(
@@ -3085,7 +3086,7 @@ class KnowledgeOrchestrator:
                     trigger_summary=trigger_summary,
                     allow_if_success=True,
                     replace_active=True,
-                    trigger="web_refresh",
+                    trigger=trigger,
                 )
 
             return {
