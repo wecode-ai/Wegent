@@ -42,6 +42,7 @@ export function StandInSourceConnections({
 }) {
   const { t, i18n } = useTranslation('common')
   const [adding, setAdding] = useState(false)
+  const [excluding, setExcluding] = useState<Connection | null>(null)
   const [newPolicy, setNewPolicy] = useState({
     automatic: true,
     askBeforeAct: true,
@@ -97,11 +98,14 @@ export function StandInSourceConnections({
         cursor
       )
       if (sequence !== searchSequence.current) return
+      const items = result.items.filter(
+        row => !excluding || (row.profile === excluding.profile && row.kind === excluding.kind)
+      )
       setResults(previous =>
         cursor
           ? [
               ...previous,
-              ...result.items.filter(
+              ...items.filter(
                 row =>
                   !previous.some(
                     value =>
@@ -111,7 +115,7 @@ export function StandInSourceConnections({
                   )
               ),
             ]
-          : result.items
+          : items
       )
       setNextCursor(result.hasMore ? result.nextCursor : undefined)
       setSearched(true)
@@ -123,11 +127,39 @@ export function StandInSourceConnections({
   }
   const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
   const isConnected = (row: Connection) =>
-    rows.some(
-      value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
-    )
+    excluding
+      ? rows
+          .find(value => identity(value) === identity(excluding))
+          ?.excludedResources?.some(value => value.id === row.id) === true
+      : rows.some(
+          value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
+        )
   const add = (items: Connection[]) => {
     const current = latest.current
+    if (excluding) {
+      current.onChange({
+        ...current.role,
+        connections: current.role.connections?.map(row => {
+          if (row.providerId !== provider.id || identity(row) !== identity(excluding)) return row
+          const excludedResources = [...(row.excludedResources ?? [])]
+          for (const item of items) {
+            if (
+              item.profile === row.profile &&
+              item.kind === row.kind &&
+              !excludedResources.some(value => value.id === item.id)
+            )
+              excludedResources.push({ id: item.id, name: item.name })
+          }
+          return { ...row, excludedResources }
+        }),
+      })
+      setExcluding(null)
+      setSelection([])
+      setResults([])
+      setNextCursor(undefined)
+      setSearched(false)
+      return
+    }
     let connections = [...(current.role.connections ?? [])]
     if (items.length && items.every(item => item.scope !== 'all')) {
       const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
@@ -268,6 +300,60 @@ export function StandInSourceConnections({
           >
             <X className="h-4 w-4" />
           </button>
+          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' && row.scope === 'all' && (
+            <div className="w-full space-y-2">
+              <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
+              {row.excludedResources?.map(resource => (
+                <div key={resource.id} className="flex items-center gap-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                  <button
+                    type="button"
+                    data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
+                    aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
+                    disabled={disabled}
+                    onClick={() =>
+                      updateRows(
+                        rows.map(value =>
+                          value === row
+                            ? {
+                                ...value,
+                                excludedResources: value.excludedResources?.filter(
+                                  item => item.id !== resource.id
+                                ),
+                              }
+                            : value
+                        )
+                      )
+                    }
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
+                disabled={disabled || busy}
+                onClick={() => {
+                  searchSequence.current += 1
+                  setAdding(false)
+                  setExcluding(row)
+                  setKind(row.kind)
+                  setScope('selected')
+                  setSelection([])
+                  setQuery('')
+                  setResults([])
+                  setNextCursor(undefined)
+                  setSearched(false)
+                  setError(null)
+                }}
+                className="min-h-11 text-sm underline md:min-h-8"
+              >
+                {t('standIn.workspace.blacklist_add')}
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -300,7 +386,7 @@ export function StandInSourceConnections({
         {authorization}
       </section>
     )
-  const showAdding = adding || rows.length === 0
+  const showAdding = excluding || adding || rows.length === 0
   return (
     <section className="space-y-4" data-testid={`${prefix}-connections`}>
       <StandInConnectionHeader
@@ -333,8 +419,30 @@ export function StandInSourceConnections({
           }}
           className="space-y-3"
         >
+          {excluding && (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm">
+                {t('standIn.workspace.blacklist_help', { name: excluding.name })}
+              </p>
+              <button
+                type="button"
+                data-testid={`${prefix}-blacklist-cancel`}
+                onClick={() => {
+                  searchSequence.current += 1
+                  setExcluding(null)
+                  setSelection([])
+                  setResults([])
+                  setNextCursor(undefined)
+                  setSearched(false)
+                }}
+                className="min-h-11 text-sm underline md:min-h-8"
+              >
+                {t('standIn.workspace.blacklist_cancel')}
+              </button>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
-            {scope === 'selected' && (
+            {scope === 'selected' && !excluding && (
               <select
                 aria-label={t('standIn.workspace.message_kind')}
                 data-testid={`${prefix}-kind`}
@@ -385,7 +493,7 @@ export function StandInSourceConnections({
               </>
             )}
           </div>
-          {Boolean(provider.allResourceKinds?.length) && (
+          {!excluding && Boolean(provider.allResourceKinds?.length) && (
             <fieldset className="flex flex-wrap gap-4" disabled={disabled || busy}>
               <legend className="mb-2 w-full text-sm font-medium">
                 {t('standIn.workspace.connection_scope')}
@@ -495,7 +603,9 @@ export function StandInSourceConnections({
                       <span>
                         {t(
                           connected
-                            ? 'standIn.workspace.connected'
+                            ? excluding
+                              ? 'standIn.workspace.blacklisted'
+                              : 'standIn.workspace.connected'
                             : selected
                               ? 'standIn.workspace.resource_selected'
                               : 'standIn.workspace.select_resource'

@@ -168,6 +168,10 @@ Open a source to install its plugin or sign in, then choose the receive scope an
 
 Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
 
+<a id="dingtalk-blacklist"></a>
+
+In these DingTalk source settings, both all-group mentions and all-contact direct messages offer **Blacklist → Add to blacklist**. Search for groups or contacts, select them, click **Add selected**, then **Save** in settings to apply; cancelling settings discards changes. Remove an entry and save to resume receiving future messages without importing messages from the excluded period. Each blacklist applies only to the current identity, account and source kind, including dispatch of messages that have not been handled. It does not delete existing work or change conversation read or operation permissions.
+
 <a id="dingtalk-group-message-scope"></a>
 
 Open **Sidebar → My stand-in → select primary or role → Stand-in details → Manage stand-in → Connections → DingTalk**. After adding an individual group under filtered sources, use **Receive** beside that group to choose **Mentions only** (the default) or **All messages**. Existing individual groups can also be edited. The all-groups subscription still receives mentions only; direct messages do not have this option. Click **Save** in settings to apply the change; cancel discards it. A scope change starts intake at its save boundary without importing earlier history. Receiving all messages does not mean replying to every message: responsibilities, handling settings and sending approvals still determine the response.
