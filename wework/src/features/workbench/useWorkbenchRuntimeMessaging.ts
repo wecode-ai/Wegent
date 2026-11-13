@@ -393,7 +393,10 @@ export function useWorkbenchRuntimeMessaging({
       if (!selection.selectionReady || !selection.selectedModel) return request
       return {
         ...request,
-        ...selectedModelExecutionFields(selection.selectedModel, selection.selectedModelOptions),
+        ...selectedModelExecutionFields(selection.selectedModel, {
+          ...selection.selectedModelOptions,
+          ...request.modelOptions,
+        }),
       }
     },
     [resolveRuntimeTaskModelSelection]

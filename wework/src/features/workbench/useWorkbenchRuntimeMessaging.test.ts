@@ -391,6 +391,39 @@ test('prepares a model-less send with the ready pane selection', async () => {
   }
 })
 
+test('keeps explicit request options over the ready pane selection options', async () => {
+  const replacement = {
+    name: 'replacement-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { isSelectionReady: false, isConfiguredModelUnavailable: true },
+    {
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: replacement,
+      activeModel: replacement,
+      selectedModelOptions: { collaborationMode: 'default' },
+    }
+  )
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelOptions: { collaborationMode: 'plan' } },
+        { onError: vi.fn() }
+      )
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0]).toMatchObject({
+      modelId: 'replacement-model',
+      modelOptions: expect.objectContaining({ collaborationMode: 'plan' }),
+    })
+  } finally {
+    store.remove(address)
+  }
+})
+
 test('blocks a current-task send whose resolved model is compatibility-disabled', async () => {
   const disabled = {
     name: 'disabled-model',
