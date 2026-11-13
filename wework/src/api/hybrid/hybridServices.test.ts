@@ -1064,6 +1064,51 @@ describe('qualified local sidebar routing', () => {
 })
 
 describe('local project execution ownership', () => {
+  it('uses the registered cloud device in the Issue execution grant without changing the local route', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+    ])
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue({
+      backendDeviceId: 'app-record-42',
+    })
+    mocks.localCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'issue-task' })
+    const services = createServices()
+    const request = {
+      deviceId: 'local-device',
+      taskId: 'issue-task',
+      cloudProjectId: 'project',
+      runtime: 'codex' as const,
+      message: 'create a delivery',
+      origin: { type: 'issue_dispatch' as const, cloudProjectId: 'project', loopItemId: 'issue' },
+    }
+    await services.runtimeWorkApi!.createRuntimeTask(request)
+    expect(mocks.localCreateRuntimeTask).toHaveBeenCalledWith({
+      ...request,
+      executionDeviceId: 'app-record-42',
+    })
+    expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(request.deviceId).toBe('local-device')
+    mocks.localCreateRuntimeTask.mockClear()
+    mocks.localServices.standInApi.deviceIdentity.mockRejectedValueOnce(
+      new Error('Wait for this Runtime to register with the backend')
+    )
+    await expect(services.runtimeWorkApi!.createRuntimeTask(request)).rejects.toThrow(
+      'Wait for this Runtime to register'
+    )
+    expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
+    await services.runtimeWorkApi!.createRuntimeTask({
+      deviceId: 'local-device',
+      runtime: 'codex',
+      message: 'continue working offline',
+    })
+    expect(mocks.localCreateRuntimeTask).toHaveBeenCalledExactlyOnceWith({
+      deviceId: 'local-device',
+      executionDeviceId: 'local-device',
+      runtime: 'codex',
+      message: 'continue working offline',
+    })
+  })
+
   it('uses a backend-free service for creation and continuation after reopening', async () => {
     const services = createServices()
     mocks.cloudCreateRuntimeTask.mockClear()

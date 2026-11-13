@@ -18,6 +18,7 @@ mod image_budget;
 mod long_context;
 mod passthrough_stream;
 mod progressive_tools;
+mod request_body;
 mod request_policy;
 pub mod retry_notifications;
 mod sse;

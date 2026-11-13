@@ -57,6 +57,24 @@
   transform: translateX(100%);
 }
 
+.issue-conversation-drawers-embedded {
+  background: transparent;
+}
+
+.issue-conversation-drawers-embedded .issue-drawer-viewport {
+  --issue-drawer-width: 100cqw;
+}
+
+.issue-conversation-drawers-embedded:has([data-has-conversation="true"])
+  .issue-drawer-viewport {
+  --issue-drawer-width: calc((100cqw - var(--issue-drawer-gap)) / 2);
+}
+
+.issue-conversation-drawers-embedded .issue-drawer-surface {
+  border-radius: 0;
+  box-shadow: none;
+}
+
 @starting-style {
   .issue-conversation-drawers,
   .issue-conversation-drawers[data-has-conversation="true"] {

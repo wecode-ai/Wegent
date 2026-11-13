@@ -458,25 +458,16 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
       fileSize: 100 * 1024 * 1024 + 1,
       value: 'YQ==',
     })
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="attachment-badge"]`,
-      {
-        text: 'test-large-generated.bin',
-        visible: true,
-        // Staging this file requires over 260 sequential renderer-to-host chunks.
-        timeoutMs: 75_000,
-      }
-    )
-    assert.equal(
-      Number(
-        await control.command(
-          'getElementCount',
-          `${ACTIVE_WORKBENCH_SELECTOR} :is([data-testid="uploading-attachment-badge"], [data-testid="attachment-error-badge"])`
-        )
-      ),
-      0,
-      'The generated attachment must finish staging without an error'
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes('test-large-generated.bin') &&
+        snapshot.testIds.includes('attachment-badge') &&
+        !snapshot.testIds.includes('uploading-attachment-badge') &&
+        !snapshot.testIds.includes('attachment-error-badge'),
+      'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
+      120_000,
+      ACTIVE_WORKBENCH_SELECTOR
     )
     const droppedFinish = await transportGates.wait(finishGateId)
     assert.equal(droppedFinish.dropped, true, 'The real attachment finish response was not dropped')

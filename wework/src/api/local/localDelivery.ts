@@ -1123,43 +1123,49 @@ export function createLocalDeliveryApi(
       })
       invalidateProjectRecords()
     },
-    async listMyWork() {
-      const projects = (await loadProjectRecords(true))
-        .map(localProject)
-        .filter(
-          project =>
-            project.task_provider === 'local' &&
-            project.id !== DEFAULT_WORK_ITEM_PROJECT_ID &&
-            project.status === 'active'
-        )
-      const results = await Promise.all(
-        projects.map(async project => {
-          try {
-            const records = await request<LocalLoopItemRecord[]>('todos.list', {
-              project_id: project.id,
-            })
-            return {
-              items: records.map(record => ({
-                ...localTask(record, project),
-                project_key: project.project_key,
-                project_name: project.name,
-                has_active_task: false,
-              })),
-              errors: [] as string[],
-            }
-          } catch (error) {
-            return {
-              items: [],
-              errors: [
-                `${project.name}: ${error instanceof Error ? error.message : String(error)}`,
-              ],
-            }
-          }
-        })
-      )
+    async listMyWork(options?: {
+      cursor?: string
+      limit?: number
+      scope?: 'assigned' | 'participating'
+      includeCompleted?: boolean
+      order?: 'recent' | 'attention' | 'activity' | 'assignment' | 'priority'
+      viewerIds?: readonly (string | number)[]
+    }) {
+      const page = await request<{
+        items: Array<{
+          issue: LocalLoopItemRecord
+          project_key: string
+          project_name: string
+          task_bindings: LocalTaskBindingRecord[]
+          assignment_context: null
+          attention_order?: [number, number, string] | null
+        }>
+        next_cursor: string | null
+      }>('todos.my_work', {
+        limit: options?.limit ?? 100,
+        ...(options?.cursor ? { cursor: options.cursor } : {}),
+        scope: options?.scope ?? 'participating',
+        ...(options?.order ? { order: options.order } : {}),
+        include_completed: options?.includeCompleted ?? true,
+        assignee_user_ids: (options?.viewerIds ?? [LOCAL_USER.id]).map(Number),
+      })
       return {
-        items: results.flatMap(result => result.items),
-        errors: results.flatMap(result => result.errors),
+        items: page.items.map(row => {
+          rememberTasks(row.issue.cloud_project_id ?? '', [row.issue])
+          return {
+            ...localTask(row.issue),
+            project_key: row.project_key,
+            project_name: row.project_name,
+            has_active_task: row.task_bindings.length > 0,
+            task_bindings: row.task_bindings.map(binding => ({
+              ...binding,
+              id: Number(binding.id),
+            })),
+            assignment_context: row.assignment_context,
+            attention_order: row.attention_order,
+          }
+        }),
+        next_cursor: page.next_cursor,
       }
     },
     async listLoopItems(
@@ -1292,6 +1298,7 @@ export function createLocalDeliveryApi(
         assignee_group_id?: string | null
         assignee_agent_id?: string | null
         notify_assignee?: boolean
+        personal_task?: boolean
       }
     ) {
       const localProjectLabel =
@@ -1308,6 +1315,7 @@ export function createLocalDeliveryApi(
         todo: {
           milestone_id: data.milestone_id,
           title: data.title,
+          ...(data.personal_task !== undefined ? { personal_task: data.personal_task } : {}),
           description: data.description ?? '',
           status: data.status ?? 'inbox',
           priority: data.priority ?? 'none',
