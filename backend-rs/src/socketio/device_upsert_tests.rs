@@ -99,9 +99,16 @@ fn payload() -> RegisterPayload {
 #[tokio::test]
 async fn registration_reads_and_writes_on_the_same_transaction() {
     let mut transaction = RecordingTransaction::default();
-    let outcome = upsert_registration(&mut transaction, 329, &payload(), None, Some("127.0.0.1"))
-        .await
-        .expect("transaction");
+    let outcome = upsert_registration(
+        &mut transaction,
+        329,
+        &payload(),
+        None,
+        Some("127.0.0.1"),
+        true,
+    )
+    .await
+    .expect("transaction");
     // The committed row id comes from the real `last_insert_id`.
     assert!(outcome >= 0);
     let statements = transaction.statements();
@@ -183,6 +190,7 @@ fn selection_prefers_the_exact_runtime_and_app_installation() {
         Some("runtime-a"),
         Some("app-a"),
         DeviceType::App,
+        false,
     )
     .expect("no conflict")
     .expect("an exact match");
@@ -202,6 +210,7 @@ fn selection_keeps_another_app_installation_on_its_own_route() {
         Some("runtime-b"),
         Some("app-b"),
         DeviceType::App,
+        false,
     )
     .expect("no conflict");
     assert!(
@@ -211,13 +220,99 @@ fn selection_keeps_another_app_installation_on_its_own_route() {
 }
 
 #[test]
+fn unique_app_names_recover_matching_legacy_remote_records() {
+    for is_active in [0, 1] {
+        let rows = [device_row(
+            2,
+            device_json(Some("remote"), Some("runtime-a"), Some("app-a")),
+            is_active,
+        )];
+        let selected = select_registration_device(
+            &rows,
+            "local-device",
+            Some("runtime-a"),
+            Some("app-a"),
+            DeviceType::App,
+            true,
+        )
+        .expect("a legacy Remote record can be restored as App")
+        .expect("existing record");
+        assert_eq!(selected.id, 2);
+    }
+}
+
+#[test]
+fn unique_app_names_reject_changed_ipc_on_active_and_inactive_records() {
+    for is_active in [0, 1] {
+        let rows = [device_row(
+            2,
+            device_json(Some("app"), Some("runtime-a"), Some("local-device")),
+            is_active,
+        )];
+        let error = select_registration_device(
+            &rows,
+            "local-device",
+            Some("runtime-a"),
+            Some("electron-a"),
+            DeviceType::App,
+            true,
+        )
+        .expect_err("a changed App identity cannot replace the existing installation");
+        assert!(error.contains("original installation identity"));
+        let selected = select_registration_device(
+            &rows,
+            "local-device",
+            Some("runtime-a"),
+            Some("local-device"),
+            DeviceType::App,
+            true,
+        )
+        .expect("an exact identity may reconnect")
+        .expect("existing record");
+        assert_eq!(selected.id, 2);
+    }
+}
+
+#[test]
+fn unique_app_names_reject_a_distinct_runtime_on_an_occupied_name() {
+    let rows = [device_row(
+        2,
+        device_json(Some("app"), Some("runtime-a"), Some("app-a")),
+        0,
+    )];
+    let error = select_registration_device(
+        &rows,
+        "local-device",
+        Some("runtime-b"),
+        Some("app-a"),
+        DeviceType::App,
+        true,
+    )
+    .expect_err("another runtime owns the name");
+    assert!(error.contains("unique persistent device ID"));
+    assert!(
+        select_registration_device(
+            &[],
+            "new-unique-device",
+            Some("runtime-b"),
+            Some("app-a"),
+            DeviceType::App,
+            true,
+        )
+        .expect("unoccupied name may register")
+        .is_none()
+    );
+}
+
+#[test]
 fn selection_rejects_two_active_rows_as_ambiguous() {
     let rows = vec![
         device_row(2, device_json(Some("local"), None, None), 1),
         device_row(3, device_json(Some("local"), None, None), 1),
     ];
-    let error = select_registration_device(&rows, "local-device", None, None, DeviceType::Local)
-        .expect_err("two active rows are ambiguous");
+    let error =
+        select_registration_device(&rows, "local-device", None, None, DeviceType::Local, false)
+            .expect_err("two active rows are ambiguous");
     assert!(
         error.starts_with("Ambiguous device identity local-device"),
         "{error}"
@@ -236,6 +331,7 @@ fn selection_disambiguates_inactive_duplicates_by_runtime() {
         Some("runtime-b"),
         None,
         DeviceType::Local,
+        false,
     )
     .expect("no conflict")
     .expect("the single matching runtime");
@@ -246,6 +342,7 @@ fn selection_disambiguates_inactive_duplicates_by_runtime() {
         Some("runtime-c"),
         None,
         DeviceType::Local,
+        false,
     )
     .expect_err("no single runtime matches");
     assert!(
