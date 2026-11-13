@@ -736,12 +736,13 @@ pub(crate) async fn recover_before_dispatch(
     request: &mut ExecutionRequest,
     device_id: Option<&str>,
 ) -> Result<bool, FastApiError> {
-    let error = match super::recover_executor::recover_executor_if_needed(state, request, device_id)
-        .await
-    {
-        Ok(recovered) => return Ok(recovered),
-        Err(error) => error,
-    };
+    let error =
+        match super::recover_executor::recover_executor_if_needed(state, request, device_id, false)
+            .await
+        {
+            Ok(recovered) => return Ok(recovered),
+            Err(error) => error,
+        };
     let message = error.to_string();
     tracing::warn!(
         task_id = request.task_id,

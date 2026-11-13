@@ -37,8 +37,8 @@ use crate::executor_manager::ExecutorManager;
 
 pub(crate) use collect::collect_completed_result;
 pub(crate) use delivery::{
-    Delivery, acknowledge_delivery, notification_key, publish_once, with_delivery_lock,
-    with_owned_lease,
+    Delivery, acknowledge_delivery, delivery_lock_key, notification_key, publish_once,
+    with_delivery_lock, with_owned_lease,
 };
 pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{

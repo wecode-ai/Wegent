@@ -85,7 +85,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             and capture["url"] in {"/v1/chat/completions", "/v1/responses"}
         ]
 
-    def _create_team(self, *, pipeline: bool) -> tuple[int, list[int]]:
+    def _create_team(self, *, pipeline: bool, stages: int = 2) -> tuple[int, list[int]]:
         self._json(
             self.api.post(
                 "/api/v1/namespaces/default/models",
@@ -123,7 +123,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                 ),
                 201,
             )
-            for stage in range(2 if pipeline else 1)
+            for stage in range(stages if pipeline else 1)
         ]
         config = {
             "name": self.marker,
@@ -146,17 +146,19 @@ class TerminalHandoffGateway(unittest.TestCase):
         team = self._json(self.api.post("/api/teams", json=config), 201)
         return team["id"], [bot["id"] for bot in bots]
 
-    def _seed_running_stage(self, team_id: int, bot_id: int) -> tuple[int, int]:
+    def _seed_running_stage(
+        self, team_id: int, bot_id: int, *, suffix: str = ""
+    ) -> tuple[int, int]:
         with SessionLocal() as db:
             task = TaskResource(
                 user_id=self.user_id,
                 kind="Task",
-                name=self.marker,
+                name=self.marker + suffix,
                 namespace="default",
                 is_active=TaskResource.STATE_ACTIVE,
                 json={
                     "kind": "Task",
-                    "metadata": {"name": self.marker, "namespace": "default"},
+                    "metadata": {"name": self.marker + suffix, "namespace": "default"},
                     "spec": {
                         "title": self.marker,
                         "prompt": self.marker,
@@ -409,13 +411,11 @@ class TerminalHandoffGateway(unittest.TestCase):
             )
             self.assertEqual(release["released"], 1)
             # The original worker saw the terminal frame but its write failed.
-            # A new callback must be able to take ownership after it exits.
+            # Recovery must take ownership after the acknowledged worker exits.
             self._wait_for(lambda: not self.redis.exists(lease_key))
             interrupted, rows = self._snapshot(task_id)
             self.assertIn(intent, interrupted["metadata"]["labels"])
             self.assertEqual(rows[-1]["status"], "RUNNING")
-
-        self._callback(task_id, subtask_id, "replayed callback payload", rust=rust)
 
         def completed() -> tuple[dict, list[dict]] | None:
             snapshot = self._snapshot(task_id)
@@ -447,7 +447,141 @@ class TerminalHandoffGateway(unittest.TestCase):
         for capture in captures:
             self.assertIn(answer, json.dumps(capture))
             self.assertNotIn("late callback payload", json.dumps(capture))
-            self.assertNotIn("replayed callback payload", json.dumps(capture))
+
+    def test_rust_advances_when_all_eight_dispatch_slots_are_busy(self) -> None:
+        team_id, bots = self._create_team(pipeline=True, stages=3)
+        runs = [
+            self._seed_running_stage(team_id, bots[0], suffix=f"-{index}")
+            for index in range(8)
+        ]
+        second = f"{self.marker}-second-stage-answer"
+        third = f"{self.marker}-third"
+        for index in range(len(runs)):
+            self._json(
+                self.model.post(
+                    "/stream-rules",
+                    json={
+                        "matchText": f"{self.marker}-first-{index}",
+                        "responseContent": second,
+                        "holdDone": True,
+                    },
+                )
+            )
+        self._json(
+            self.model.post(
+                "/stream-rules", json={"matchText": second, "responseContent": third}
+            )
+        )
+        for index, (task_id, subtask_id) in enumerate(runs):
+            self._callback(
+                task_id, subtask_id, f"{self.marker}-first-{index}", rust=True
+            )
+
+        def all_slots_occupied() -> bool:
+            rules = self._json(self.model.get("/stream-rules"))
+            return sum(rule["pendingResponses"] for rule in rules) == len(runs)
+
+        try:
+            self._wait_for(all_slots_occupied)
+        finally:
+            for index in range(len(runs)):
+                self._json(
+                    self.model.post(
+                        "/stream-rules/release",
+                        json={"matchText": f"{self.marker}-first-{index}"},
+                    )
+                )
+
+        def all_tasks_completed() -> bool:
+            return all(
+                self._snapshot(task_id)[0]["status"]["status"] == "COMPLETED"
+                for task_id, _ in runs
+            )
+
+        self._wait_for(all_tasks_completed)
+        for task_id, _ in runs:
+            task, rows = self._snapshot(task_id)
+            self.assertEqual(task["spec"]["currentStage"], 2)
+            self.assertEqual(len(rows), 6)
+            self.assertEqual(rows[-1]["result"]["value"], third)
+        self.assertEqual(len(self._model_requests()), 2 * len(runs))
+
+    def test_rust_retries_post_commit_redis_publish(self) -> None:
+        team_id, bots = self._create_team(pipeline=True)
+        task_id, parent_id = self._seed_running_stage(team_id, bots[0])
+        first, second = f"{self.marker}-first", f"{self.marker}-second"
+        self._json(
+            self.model.post(
+                "/stream-rules",
+                json={"matchText": first, "responseContent": second, "holdDone": True},
+            )
+        )
+        self._callback(task_id, parent_id, first, rust=True)
+        assistant_id = self._snapshot(task_id)[1][-1]["id"]
+        marker = f"terminal-delivery-callback-{assistant_id}"
+        subscription = self.redis.pubsub()
+        self.addCleanup(subscription.close)
+        subscription.subscribe(f"callback:channel:{assistant_id}", "socketio")
+        for _ in range(2):
+            self._wait_for(lambda: subscription.get_message(timeout=0.1))
+        self._wait_for(
+            lambda: any(
+                rule["pendingResponses"]
+                for rule in self._json(self.model.get("/stream-rules"))
+            )
+        )
+        # Exercise the real Redis Lua publication failure after the MySQL commit.
+        self.redis.execute_command("ACL", "SETUSER", "default", "-publish")
+        try:
+            self._json(
+                self.model.post("/stream-rules/release", json={"matchText": first})
+            )
+            self._wait_for(
+                lambda: self._snapshot(task_id)[1][-1]["status"] == "COMPLETED"
+                and not self.redis.exists(f"wegent:lock:{marker}")
+            )
+            task, rows = self._snapshot(task_id)
+            self.assertIn(marker, task["metadata"]["labels"])
+            self.assertEqual(rows[-1]["result"]["value"], second)
+            self.assertFalse(
+                self.redis.exists(
+                    f"wegent:terminal-delivery:{task_id}:{assistant_id}:result"
+                )
+            )
+        finally:
+            self.redis.execute_command("ACL", "SETUSER", "default", "+publish")
+
+        frames: dict[str, list[dict]] = {"done": [], "chat:done": [], "task:status": []}
+
+        def recovered() -> bool:
+            message = subscription.get_message(timeout=0.1)
+            if message and message["type"] == "message":
+                data = json.loads(message["data"])
+                if data.get("type") == "done":
+                    frames["done"].append(data)
+                elif data.get("event") in {"chat:done", "task:status"}:
+                    frame = data["data"][0]
+                    if frame.get("subtask_id") == assistant_id or (
+                        frame.get("task_id") == task_id
+                        and frame.get("status") == "COMPLETED"
+                    ):
+                        frames[data["event"]].append(frame)
+            return (
+                all(frames.values())
+                and marker not in self._snapshot(task_id)[0]["metadata"]["labels"]
+            )
+
+        self._wait_for(recovered)
+        self.assertEqual(
+            {name: len(events) for name, events in frames.items()},
+            {
+                "done": 1,
+                "chat:done": 1,
+                "task:status": 1,
+            },
+        )
+        self.assertEqual(frames["done"][0]["result"]["value"], second)
+        self.assertEqual(len(self._model_requests()), 1)
 
     @contextmanager
     def _reject_terminal_write(self, task_id: int, subtask_id: int) -> Iterator[None]:

@@ -25,7 +25,7 @@ impl Delivery {
         }
     }
 
-    pub(super) fn label(self, subtask_id: i64) -> String {
+    pub(crate) fn label(self, subtask_id: i64) -> String {
         format!("terminal-delivery-{}-{subtask_id}", self.name())
     }
 }
@@ -41,7 +41,11 @@ pub(crate) async fn publish_once<R: Redis>(
         .eval(
             "if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
          redis.call('SET', KEYS[1], '1', 'EX', ARGV[3])
-         redis.call('PUBLISH', ARGV[1], ARGV[2])
+         local published = redis.pcall('PUBLISH', ARGV[1], ARGV[2])
+         if type(published) == 'table' and published.err then
+             redis.call('DEL', KEYS[1])
+             return published
+         end
          return 1",
             [key],
             [channel, message, "604800"],
@@ -79,8 +83,17 @@ pub(crate) async fn with_delivery_lock<T, E, F>(
 where
     F: Future<Output = Result<T, E>>,
 {
-    let key = format!("wegent:lock:{}", delivery.label(subtask_id));
-    with_owned_lease(redis, &key, dependency, work).await
+    with_owned_lease(
+        redis,
+        &delivery_lock_key(subtask_id, delivery),
+        dependency,
+        work,
+    )
+    .await
+}
+
+pub(crate) fn delivery_lock_key(subtask_id: i64, delivery: Delivery) -> String {
+    format!("wegent:lock:{}", delivery.label(subtask_id))
 }
 
 pub(crate) async fn with_owned_lease<R, T, E, F>(

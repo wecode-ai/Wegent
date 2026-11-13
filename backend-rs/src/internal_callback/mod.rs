@@ -22,7 +22,8 @@ pub(crate) mod dingtalk_stream;
 pub(crate) mod emitter;
 pub(crate) mod event;
 pub(crate) mod parser;
-mod pipeline;
+pub(crate) mod pipeline;
+pub(crate) mod recovery;
 pub(crate) use wegent_python_compat::py_json;
 pub(crate) mod session;
 mod socketio;
@@ -117,9 +118,31 @@ async fn handle_callback(
 /// Apply one executor event through the shared persistence and notification path.
 pub(crate) async fn process_execution_event(
     state: &AppState,
-    mut event: event::ExecutionEvent,
+    event: event::ExecutionEvent,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
+) -> Result<(), FastApiError> {
+    process_event(state, event, (executor_name, executor_namespace), false).await
+}
+
+pub(crate) async fn process_pipeline_event(
+    state: &AppState,
+    event: event::ExecutionEvent,
+) -> Result<(), FastApiError> {
+    process_event(
+        state,
+        event,
+        (Some("inprocess-chat"), Some("standalone")),
+        true,
+    )
+    .await
+}
+
+async fn process_event(
+    state: &AppState,
+    mut event: event::ExecutionEvent,
+    executor: (Option<&str>, Option<&str>),
+    defer_advance: bool,
 ) -> Result<(), FastApiError> {
     let terminal_status = completion::terminal_status(&event.event_type);
     let Some(redis) = state.redis.as_ref() else {
@@ -149,14 +172,7 @@ pub(crate) async fn process_execution_event(
             event.subtask_id,
             completion::Delivery::Callback,
             FastApiError::internal,
-            deliver_terminal_callback(
-                state,
-                redis,
-                &mut event,
-                status,
-                executor_name,
-                executor_namespace,
-            ),
+            deliver_terminal_callback(state, redis, &mut event, status, executor, defer_advance),
         )
         .await;
     }
@@ -173,9 +189,19 @@ async fn deliver_terminal_callback(
     redis: &brz_redis::RedisService,
     event: &mut event::ExecutionEvent,
     status: &str,
-    executor_name: Option<&str>,
-    executor_namespace: Option<&str>,
+    executor: (Option<&str>, Option<&str>),
+    defer_advance: bool,
 ) -> Result<(), FastApiError> {
+    recovery::track(redis, event.task_id, event.subtask_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "could not index pending terminal delivery");
+            FastApiError::internal()
+        })?;
+    let mut source = event.to_value();
+    // The committed result is replayed from the subtask row.
+    source["result"] = Value::Null;
+    source["content"] = Value::String(String::new());
     let ctx = completion::Completion {
         app: Some(state),
         mysql: &state.mysql,
@@ -187,10 +213,10 @@ async fn deliver_terminal_callback(
         &ctx,
         event,
         status,
-        executor_name,
-        executor_namespace,
+        executor.0,
+        executor.1,
         completion::Delivery::Callback,
-        None,
+        Some(&source),
     )
     .await
     .map_err(|_| FastApiError::internal())?;
@@ -199,11 +225,14 @@ async fn deliver_terminal_callback(
         user_id,
         task,
         replay_error,
-        ..
+        replay_source,
     }) = completion
     else {
         return Ok(());
     };
+    if let Some(source) = replay_source {
+        *event = event::ExecutionEvent::from_value(&source);
+    }
     // `_update_task_status_sync` only schedules the next turn when
     // `get_auto_advance_info` produced an intent; every other completion,
     // including a non-pipeline team, stops after persisting its status.
@@ -249,6 +278,10 @@ async fn deliver_terminal_callback(
             FastApiError::internal()
         })?;
     if let Some(advance) = advance {
+        if defer_advance {
+            // The recovery worker waits for admission outside the SSE consumer pool.
+            return Ok(());
+        }
         pipeline::dispatch_next(state, advance).await?;
     }
 
@@ -270,6 +303,11 @@ async fn deliver_terminal_callback(
         FastApiError::internal()
     })?;
 
+    if !task.auto_advance
+        && let Err(error) = recovery::retire(redis, event.task_id, event.subtask_id).await
+    {
+        tracing::warn!(%error, "could not retire terminal delivery from recovery index");
+    }
     Ok(())
 }
 

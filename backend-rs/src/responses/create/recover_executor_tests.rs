@@ -172,7 +172,7 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
 
 #[tokio::test]
 async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_payload() {
-    let (result, _, queries) = recover_missing_executor(false).await;
+    let (result, _, queries) = run_executor_recovery(false, false).await;
     result.unwrap();
     let writes: Vec<&str> = queries
         .iter()
@@ -190,8 +190,24 @@ async fn missing_executor_prepares_a_replacement_before_building_the_dispatch_pa
 }
 
 #[tokio::test]
+async fn pipeline_executor_reaches_manager_when_replica_is_missing_the_stage() {
+    let (result, _, writer_queries) = run_executor_recovery(false, true).await;
+    result.unwrap();
+    assert!(
+        writer_queries
+            .iter()
+            .any(|sql| sql.contains("s.status IN ('PENDING', 'RUNNING')"))
+    );
+    assert!(
+        !writer_queries
+            .iter()
+            .any(|sql| sql.contains("FROM subtask_contexts"))
+    );
+}
+
+#[tokio::test]
 async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_error() {
-    let (result, request, queries) = recover_missing_executor(true).await;
+    let (result, request, queries) = run_executor_recovery(true, false).await;
     assert_eq!(result.unwrap_err().to_string(), "Pod preparation timed out");
     assert_eq!(request.executor_name.as_deref(), Some("old-executor"));
     assert!(
@@ -206,15 +222,34 @@ async fn a_failed_prepare_keeps_the_deleted_binding_and_reports_the_manager_erro
     );
 }
 
-async fn recover_missing_executor(
+async fn run_executor_recovery(
     prepare_fails: bool,
+    pipeline: bool,
 ) -> (anyhow::Result<()>, ExecutionRequest, Vec<String>) {
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
     let fixture = recovery_fixture(json!({})).await;
-    let mut app = crate::app_test_support::app(fixture.mysql.clone());
+    let replica = MysqlRows::start_results(|sql| {
+        assert!(
+            sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`"),
+            "{sql}"
+        );
+        (vec![("id", SqlValue::I64(0))], vec![])
+    })
+    .await;
+    let mysql = if pipeline {
+        brz_mysql::MysqlService::connect_lazy_read_write_with_options(
+            &fixture.url,
+            &replica.url,
+            Default::default(),
+        )
+        .unwrap()
+    } else {
+        fixture.mysql.clone()
+    };
+    let mut app = crate::app_test_support::app(mysql);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     Arc::get_mut(&mut app).unwrap().executor_manager =
@@ -303,8 +338,38 @@ async fn recover_missing_executor(
         ..ExecutionRequest::default()
     };
     tokio::time::timeout(Duration::from_secs(10), async {
-        let result = if prepare_fails {
-            recover_executor_if_needed(&app, &mut request, None)
+        let result = if pipeline {
+            assert!(
+                read_subtask_with_contexts(
+                    &app.mysql,
+                    app.task_store.table_templates(),
+                    request.subtask_id
+                )
+                .await
+                .unwrap()
+                .is_none()
+            );
+            use crate::responses::dispatch::{ConsumerState, DispatchJob, ExecutorDispatchBody};
+            let (accepted, dispatched) = tokio::sync::oneshot::channel();
+            let job = DispatchJob::Executor {
+                consumer: Box::new(ConsumerState::from_app(&app)),
+                task_id: request.task_id,
+                subtask_id: request.subtask_id,
+                user_id: request.user_id,
+                message_id: request.message_id,
+                url: format!("{url}/executor-manager/v1/responses"),
+                body: ExecutorDispatchBody::Recover(Box::new(request.clone())),
+                start: None,
+            };
+            app.responses_dispatch
+                .reserve()
+                .unwrap()
+                .send(DispatchJob::Pipeline(Box::new(job), accepted));
+            dispatched.await.unwrap().unwrap();
+            assert_eq!(replica.queries().len(), 1, "only the explicit replica read");
+            Ok(())
+        } else if prepare_fails {
+            recover_executor_if_needed(&app, &mut request, None, false)
                 .await
                 .map(|_| ())
         } else {

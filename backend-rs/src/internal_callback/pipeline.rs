@@ -14,6 +14,22 @@ use crate::task_store::PipelineStageAdvance;
 
 const PIPELINE_HANDOFF_PATH: &str = "/metadata/labels/pipelinePendingHandoff";
 
+pub(super) fn pending_child(task: &Value, parent: i64) -> Option<i64> {
+    if wegent_task_store::pending_pipeline_parent(task)? != parent {
+        return None;
+    }
+    task.pointer(PIPELINE_HANDOFF_PATH)?
+        .as_str()?
+        .rsplit_once(':')?
+        .1
+        .parse()
+        .ok()
+}
+
+pub(crate) fn execution_lease_key(task_id: i64, subtask_id: i64) -> String {
+    format!("wegent:lock:pipeline-execution:{task_id}:{subtask_id}")
+}
+
 /// Source stage creation/notification failures still propagate, while the
 /// asynchronous next-stage request-preparation/dispatch failure is contained.
 pub(super) async fn dispatch_next(

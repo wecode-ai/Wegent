@@ -417,8 +417,13 @@ where
                         return;
                     };
                     let recovered = if accepted.is_some() {
-                        match super::create::recover_executor_if_needed(&app, &mut request, None)
-                            .await
+                        match super::create::recover_executor_if_needed(
+                            &app,
+                            &mut request,
+                            None,
+                            true,
+                        )
+                        .await
                         {
                             Ok(recovered) => recovered,
                             Err(error) => {
@@ -437,7 +442,17 @@ where
                         };
                         recovered
                     };
-                    if !super::create::seam::claim_executor_dispatch(&app, subtask_id).await {
+                    let claimed = if accepted.is_some() {
+                        crate::internal_callback::completion::claim_running_subtask(
+                            &app.mysql, crate::internal_callback::tables(&app), subtask_id,
+                        )
+                        .await
+                        .inspect_err(|error| tracing::warn!(%error, subtask_id, "pipeline dispatch claim failed"))
+                        .unwrap_or(false)
+                    } else {
+                        super::create::seam::claim_executor_dispatch(&app, subtask_id).await
+                    };
+                    if !claimed {
                         if recovered {
                             super::create::discard_recovered_executor(&app, &request).await;
                         }
@@ -611,10 +626,8 @@ where
         job.request.message_id,
     ));
     let result = if consumer.acceptance.is_some() {
-        let key = format!(
-            "wegent:lock:pipeline-execution:{}:{}",
-            job.task_id, job.subtask_id
-        );
+        let key =
+            crate::internal_callback::pipeline::execution_lease_key(job.task_id, job.subtask_id);
         let Some(redis) = consumer.redis else {
             return Err("Redis is required for pipeline dispatch".to_owned());
         };

@@ -721,14 +721,18 @@ async fn emit_package_event<M: Mysql, R: Redis>(
     let app = ctx.app.ok_or_else(|| {
         Failure::persisted("Chat Shell dispatch lost application state".to_owned())
     })?;
-    crate::internal_callback::process_execution_event(
-        app,
-        event.clone(),
-        Some("inprocess-chat"),
-        Some("standalone"),
-    )
-    .await
-    .map_err(|error| {
+    let result = if ctx.acceptance.is_some() {
+        crate::internal_callback::process_pipeline_event(app, event.clone()).await
+    } else {
+        crate::internal_callback::process_execution_event(
+            app,
+            event.clone(),
+            Some("inprocess-chat"),
+            Some("standalone"),
+        )
+        .await
+    };
+    result.map_err(|error| {
         tracing::error!(task_id = event.task_id, error = ?error, "package event processing failed");
         if completion::terminal_status(&event.event_type).is_some() {
             Failure::terminal_persistence("Could not save the execution result")

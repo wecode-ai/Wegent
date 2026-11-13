@@ -6,9 +6,11 @@
 
 import asyncio
 import logging
+import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 from sqlalchemy.orm import Session, make_transient
 
@@ -51,6 +53,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_RECOVERY_QUEUE = "wegent:terminal-delivery:pending:python"
+_RECOVERY_DELAY_SECONDS = 5
+_MAX_RECOVERIES = 4
+
 
 @dataclass
 class PipelineHandoff:
@@ -64,15 +70,109 @@ async def advance_pipeline_stage_from_auto_completion(
     """Resume the committed handoff and acknowledge only after dispatch is queued."""
     try:
         async with distributed_lock.acquire_watchdog_context_async(
-            f"pipeline-auto-advance:{intent.completed_subtask_id}"
+            _advance_lock(intent.completed_subtask_id)
         ) as acquired:
             if not acquired:
                 raise RuntimeError("Pipeline handoff is already in progress")
+            member = f"{intent.task_id}:{intent.completed_subtask_id}"
+            async with cache_manager._client_context() as redis:
+                await redis.zadd(
+                    _RECOVERY_QUEUE, {member: time.time() + _RECOVERY_DELAY_SECONDS}
+                )
             return await _resume_auto_advance(intent)
     except Exception as exc:
         raise TerminalPersistenceError(
             f"Could not advance pipeline after subtask {intent.completed_subtask_id}"
         ) from exc
+
+
+def _advance_lock(subtask_id: int) -> str:
+    return f"pipeline-auto-advance:{subtask_id}"
+
+
+def _execution_lease(task_id: int, subtask_id: int) -> str:
+    return f"wegent:lock:pipeline-execution:{task_id}:{subtask_id}"
+
+
+@asynccontextmanager
+async def pipeline_recovery_lifespan() -> AsyncIterator[None]:
+    worker = asyncio.create_task(_recover_pipeline_handoffs())
+    try:
+        yield
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+async def _recover_pipeline_handoffs() -> None:
+    jobs: set[asyncio.Task] = set()
+    try:
+        while True:
+            await asyncio.sleep(1)
+            available = _MAX_RECOVERIES - len(jobs)
+            if available <= 0:
+                continue
+            try:
+                now = time.time()
+                async with cache_manager._client_context() as redis:
+                    due = await redis.eval(
+                        "local due = redis.call('ZRANGEBYSCORE', KEYS[1], "
+                        "'-inf', ARGV[1], 'LIMIT', 0, ARGV[3]); "
+                        "for _, member in ipairs(due) do "
+                        "redis.call('ZADD', KEYS[1], ARGV[2], member) end; "
+                        "return due",
+                        1,
+                        _RECOVERY_QUEUE,
+                        now,
+                        now + _RECOVERY_DELAY_SECONDS,
+                        available,
+                    )
+                for member in due:
+                    job = asyncio.create_task(_recover_pipeline_handoff(member))
+                    jobs.add(job)
+                    job.add_done_callback(jobs.discard)
+            except Exception:
+                logger.exception("Pipeline recovery index unavailable")
+    finally:
+        for job in jobs:
+            job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+
+
+async def _recover_pipeline_handoff(member: str | bytes) -> None:
+    try:
+        task_id, subtask_id = map(
+            int, member.split(b":" if isinstance(member, bytes) else ":")
+        )
+        async with distributed_lock.acquire_watchdog_context_async(
+            _advance_lock(subtask_id)
+        ) as acquired:
+            if not acquired:
+                return
+            pending = await run_in_threadpool_with_cleanup(
+                _read_pending_handoff, task_id, subtask_id
+            )
+            async with cache_manager._client_context() as redis:
+                if pending is None:
+                    await redis.zrem(_RECOVERY_QUEUE, member)
+                    return
+                if pending.next_pair and await redis.exists(
+                    _execution_lease(task_id, pending.next_pair[1])
+                ):
+                    return
+            await _resume_auto_advance(pending)
+    except Exception:
+        logger.exception("Pipeline recovery will retry %s", member)
+
+
+def _read_pending_handoff(
+    task_id: int, subtask_id: int
+) -> PipelineAutoAdvanceIntent | None:
+    with SessionLocal() as db:
+        task = task_store.get_by_id_for_update(db, task_id=task_id)
+        if task and task.is_active == TaskResource.STATE_ACTIVE:
+            return PipelineAutoAdvanceIntent.read(task, subtask_id)
+        return None
 
 
 async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
@@ -302,7 +402,7 @@ async def _dispatch_until_accepted(request: "ExecutionRequest") -> bool:
     request.request_id = f"pipeline-{request.task_id}-{request.subtask_id}"
 
     async def dispatch() -> None:
-        key = f"wegent:lock:pipeline-execution:{request.task_id}:{request.subtask_id}"
+        key = _execution_lease(request.task_id, request.subtask_id)
         async with cache_manager._client_context() as redis:
             lock = redis.lock(key, timeout=30, blocking_timeout=5, thread_local=False)
             async with lock:
