@@ -5,7 +5,7 @@
 //! Historical absolute paths are evidence, never filesystem mutation targets.
 
 use super::*;
-use crate::services::workbench::{verify_published_package, PackageKind};
+use crate::services::workbench::{read_plugin_package, LeasedPluginPackage};
 
 #[path = "runtime_recovery_journal.rs"]
 mod journal;
@@ -277,7 +277,7 @@ impl GlobalCapabilityStore {
     fn verified_plugin_package(
         &self,
         hash: &str,
-    ) -> Result<crate::services::workbench::PublishedPackage, CapabilitySyncError> {
+    ) -> Result<LeasedPluginPackage, CapabilitySyncError> {
         let root = self.shared_root()?;
         let path = self.current_shared_plugin_path(hash)?;
         let digest = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -290,8 +290,8 @@ impl GlobalCapabilityStore {
         ] {
             safe_managed_path(&root, &path, false)?;
         }
-        verify_published_package(&root, PackageKind::Plugin, hash)
-            .map_err(CapabilitySyncError::invalid_payload)
+        read_plugin_package(&root, hash)
+            .map_err(|error| CapabilitySyncError::invalid_payload(error.to_string()))
     }
 
     fn current_shared_plugin_path(&self, hash: &str) -> Result<PathBuf, CapabilitySyncError> {
@@ -511,10 +511,7 @@ impl GlobalCapabilityStore {
         entry: &Value,
         manifest: &Value,
     ) -> Result<(), CapabilitySyncError> {
-        let (files, directories) = self.runtime_state_paths(spec);
-        for path in files.iter().chain(directories.iter()) {
-            self.ensure_state_path(path, directories.contains(path))?;
-        }
+        self.validate_marketplace_preparation(spec, entry)?;
         for (market, claude) in [
             (self.codex_marketplace_dir(&spec.marketplace), false),
             (self.claude_marketplace_dir(&spec.marketplace), true),
@@ -584,17 +581,7 @@ impl GlobalCapabilityStore {
             let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
                 && entry.get("installed_plugin_id").and_then(Value::as_i64)
                     == spec.installed_plugin_id;
-            let published_source = spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
-                && !target.is_symlink()
-                && crate::local::plugin_import::personal_plugin_has_cloud_link(
-                    &self.personal_marketplace_dir(),
-                    &spec.name,
-                )
-                .map_err(CapabilitySyncError::invalid_payload)?;
-            if published_source
-                || !same_install
-                || !self.matches_old_managed_copy(&target, entry, &spec.key)?
-            {
+            if !same_install || !self.matches_old_managed_copy(&target, entry, &spec.key)? {
                 return Err(CapabilitySyncError::invalid_payload(
                     "Plugin marketplace entry is occupied by an unrelated source",
                 ));

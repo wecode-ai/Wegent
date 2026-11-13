@@ -77,7 +77,7 @@ impl GlobalCapabilityStore {
     fn marketplace_copy_package(
         &self,
         spec: &PluginSyncSpec,
-    ) -> Option<crate::services::workbench::PublishedPackage> {
+    ) -> Option<crate::services::workbench::LeasedPluginPackage> {
         let package = self
             .verified_plugin_package(spec.checksum.as_deref()?)
             .and_then(|package| {
