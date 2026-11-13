@@ -21,7 +21,10 @@ fn generated_title_does_not_overwrite_a_concurrent_manual_rename_or_publish_an_e
         .commit_runtime_task_title(before, "Generated title".into(), Some("Original"))
         .unwrap();
     assert_eq!(actual.title, "My manual title");
-    assert_eq!(handler.local_task_link("task-title-race").unwrap().title, "My manual title");
+    assert_eq!(
+        handler.local_task_link("task-title-race").unwrap().title,
+        "My manual title"
+    );
     assert!(events.try_recv().is_err());
     fs::remove_dir_all(root).unwrap();
 }
