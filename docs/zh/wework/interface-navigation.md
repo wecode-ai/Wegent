@@ -59,6 +59,7 @@ sidebar_position: 2
 | 停止助理 / 更换绑定             | 左侧栏 → 我的助理 → 主助理 → 助理详情 → 管理助理 → 设置面板左下角“停止助理”            | 停止当前绑定设备上的助理任务后才显示主助理换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)                                                                                                                                    |
 | 连接 IM / 改绑助理              | 左侧栏 → 我的助理 → 选择主助理或角色 → 助理详情浮层 → 钉钉 / Telegram / Discord / 微博 | 需登录云端账号，点击连接立即保存；见[连接 IM 对话](./personal-stand-in.md#im-conversations)                                                                                                                                                                     |
 | 指定钉钉群接收全部消息          | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 具体群的“接收消息”                      | 仅具体群可选择；保存生效，见[群消息接收范围](./personal-stand-in.md#dingtalk-group-message-scope)                                                                                                                                                               |
+| 钉钉全部接收黑名单              | 我的助理 → 助理详情 → 管理助理 → 连接 → 钉钉 → 全部范围的黑名单                        | 按群聊或联系人添加、移除，保存生效；见[连接钉钉和协作项目](./personal-stand-in.md#dingtalk-blacklist)                                                                                                                                                           |
 | 换模型 / 调推理等级             | 任务输入区 → 模型选择器                                                                | 没有可用模型时去设置添加，见[模型设置](./user-guide/model-settings.md)                                                                                                                                                                                          |
 | 添加附件、选择 Skill / 插件     | 任务输入区 → + 或能力选择入口                                                          | 见[与 AI 协作](./tasks.md)和[插件与 Skills](./plugins-and-skills.md)                                                                                                                                                                                            |
 | 切换只读、工作区、完整访问权限  | 输入框左侧工具区 → 快捷短语右边的权限图标                                              | 悬停查看当前模式；切换权限不等于授权外部应用                                                                                                                                                                                                                    |
@@ -78,7 +79,7 @@ sidebar_position: 2
 
 从侧栏的 **项目 → 新建项目 → 云端项目** 可在选择远程主机时添加设备，见[项目与工作区](./projects.md#add-device-from-project)。
 
-从 **项目设置 → AI 团队** 编辑智能体定义；导入和手动创建使用相同入口与权限规则，见[智能体配置](./projects.md#agent-capabilities)。
+从 **项目设置 → AI 团队** 编辑智能体定义；项目 Maintainer 可以编辑项目内的非私有定义，共享源定义仍按原权限控制。导入和手动创建使用相同入口，分配设备冲突的排查步骤见[智能体配置](./projects.md#agent-capabilities)。
 
 ## 侧栏的功能入口
 

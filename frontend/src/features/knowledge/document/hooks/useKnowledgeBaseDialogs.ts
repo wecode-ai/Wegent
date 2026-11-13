@@ -221,7 +221,7 @@ export function useKnowledgeBaseDialogs({
         let namespace = 'default'
 
         if (data.selectedGroupId) {
-          const selectedGroup = latest.current.sidebar.groups.find(
+          const selectedGroup = latest.current.availableGroups?.find(
             g => g.id === data.selectedGroupId
           )
           if (!selectedGroup) {

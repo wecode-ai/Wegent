@@ -227,6 +227,10 @@ Connector Broker 凭据及 Backend Task 身份仍不提供给外部工作 Shell�
 
 ## 界面入口
 
+项目 Maintainer 的管理权限允许编辑本项目内可见的直配智能体定义，包括其他成员创建的条目；列表的 `can_edit` 与更新接口使用同一权限判定。显式私有定义仍受 CP09 保护，共享 Team 或个人智能体的原定义仍按 CP10 校验源编辑权，创建者身份不变。非创建者收到的 MCP 配置继续脱敏，保存未改动的脱敏条目会保留原配置。CP01–CP20 不变。`test_project_agent_edit_permissions.py` 覆盖角色与停用矩阵，既有私有及共享资源契约继续执行；桌面 CI 的 `collaboration-template-app-device-routing` checkpoint 覆盖跨成员编辑、真实执行建立的设备绑定、冲突拒绝及修复后的同 Issue 再分配。
+
+路由拒绝保留设备绑定和资源授权校验，返回不含凭据的 `routing_context`：失败成员、绑定设备、策略设备，以及空间授权、项目授权或策略不匹配原因。设备名称仅在当前账号可见的目录范围内返回。分配失败时界面恢复已保存的负责人；修复智能体策略或设备授权后才能重新分配，不自动迁移历史任务或放宽授权。
+
 子树归档与恢复在任何任务写入、外部提供方关闭或执行取消之前，逐项校验所有后代的编辑权限，保持 CP13/CP14。可编辑父任务不授予私有后代权限；拒绝时统一返回 404，不泄露后代信息，并保留原版本和排队执行。管理员保留全部子任务权限。`test_loop_item_archive_permissions.py` 覆盖原生项目及 GitHub/GitLab 协议，网页 `collaboration-project-views.spec.ts` 使用真实成员验证拒绝、无副作用及管理员归档恢复；既有 CP 契约不变。
 
 云端 Runtime 历史读取的每个设备分块都在独立短事务中检查当前项目权限、Issue
