@@ -135,12 +135,14 @@ async fn generated_cloud_issue_title_rechecks_the_title_after_a_version_conflict
             ),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (mut handler, root) = isolated_runtime_work_handler("cloud-generated-issue-title");
-        handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
-            backend_url: format!("http://{}", listener.local_addr().unwrap()),
-            auth_token: "test".into(),
-            ..Default::default()
-        })));
+        let handler = RuntimeWorkRpcHandler {
+            backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+                backend_url: format!("http://{}", listener.local_addr().unwrap()),
+                auth_token: "test".into(),
+                ..Default::default()
+            }))),
+            ..RuntimeWorkRpcHandler::new("device-1", "/bin/false")
+        };
         let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
         let link = RuntimeTaskLink {
             runtime_handle: json!({"origin":{
@@ -161,7 +163,6 @@ async fn generated_cloud_issue_title_rechecks_the_title_after_a_version_conflict
             assert_eq!(issue.lock().unwrap()["title"], "Manual edit");
         }
         server.abort();
-        fs::remove_dir_all(root).unwrap();
     }
 }
 
