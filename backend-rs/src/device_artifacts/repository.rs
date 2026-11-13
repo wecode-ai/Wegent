@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use brz_http_server::StatusCode;
-use brz_mysql::{FromMysqlCol, FromMysqlRow, Json, Mysql, MysqlError, MysqlRow, MysqlTransaction};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlError, MysqlRow, MysqlTransaction};
 
 use super::models::{ArtifactResponse, CONTEXT_TYPE, DeclareRequest, Metadata, Source, response};
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
+#[derive(FromMysqlRow)]
 pub(super) struct Subtask {
     pub role: String,
     executor_name: Option<String>,
@@ -20,18 +21,12 @@ impl Subtask {
             executor_name: self
                 .executor_name
                 .filter(|name| !name.is_empty())
-                .ok_or_else(source_unavailable)?,
+                .ok_or_else(executor_binding_missing)?,
             executor_namespace: self.executor_namespace.unwrap_or_default(),
             workspace_root: String::new(),
             workspace_binding_id,
         })
     }
-}
-
-fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, name: &str) -> Result<T, FastApiError> {
-    let index = crate::task_store::subtask_column_index(name)
-        .ok_or_else(|| super::internal(format!("Unknown subtask column: {name}")))?;
-    row.get_at(index).map_err(super::internal)
 }
 
 pub(super) async fn owned_subtask(
@@ -40,26 +35,25 @@ pub(super) async fn owned_subtask(
     task_id: i64,
     user_id: i64,
 ) -> Result<Option<Subtask>, FastApiError> {
-    let Some(row) = state
-        .task_store
-        .get_subtask(subtask_id)
+    // A declaration can immediately follow dispatch. Read the committed
+    // executor binding on the writer even when the replica is behind.
+    let table = state.task_store.table_templates().subtasks;
+    let mysql = state
+        .mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64));
+    mysql
+        .with_transaction(async |tx| {
+            tx.fetch_optional(
+                format!(
+                    "SELECT role, executor_name, executor_namespace FROM {table} \
+                     WHERE id = ? AND task_id = ? AND user_id = ?"
+                ),
+                (subtask_id, task_id, user_id),
+            )
+            .await
+        })
         .await
-        .map_err(super::internal)?
-    else {
-        return Ok(None);
-    };
-    // The ORM projection uses deployment-specific physical table aliases.
-    // Decode using TaskStore's mapper order, not guessed column labels.
-    if subtask_column::<i64>(&row, "user_id")? != user_id
-        || subtask_column::<i64>(&row, "task_id")? != task_id
-    {
-        return Ok(None);
-    }
-    Ok(Some(Subtask {
-        role: subtask_column(&row, "role")?,
-        executor_name: subtask_column(&row, "executor_name")?,
-        executor_namespace: subtask_column(&row, "executor_namespace")?,
-    }))
+        .map_err(super::internal)
 }
 
 #[derive(Debug, FromMysqlRow)]
@@ -183,6 +177,16 @@ pub(super) async fn declare<M: Mysql>(
         })
         .await
         .map_err(super::internal)?
+}
+
+fn executor_binding_missing() -> FastApiError {
+    FastApiError::json_body(
+        StatusCode::CONFLICT,
+        serde_json::json!({
+            "detail": "Artifact execution source is unavailable",
+            "code": "executor_binding_missing",
+        }),
+    )
 }
 
 pub(super) fn source_unavailable() -> FastApiError {

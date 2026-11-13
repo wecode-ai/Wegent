@@ -32,16 +32,15 @@ Workspace、Project、Member、Agent、Issue 和 Run 模型，同时继续复用
 产品主链固定为：
 
 ```text
-Workspace
-└── Project
-    └── Issue
-        ├── Assignments: Human | Agent
-        └── Runs
-            ├── Agent
-            ├── Initiator
-            ├── Runtime
-            ├── Execution Workspace
-            └── Deliverables
+Issue
+├── Project (optional) ── Workspace
+├── Assignments: Human | Agent
+└── Runs
+    ├── Agent
+    ├── Initiator
+    ├── Runtime
+    ├── Execution Workspace
+    └── Deliverables
 ```
 
 Workflow 和 Automation 只能创建、指派、组织或触发 Issue/Run，不能再形成独立的
@@ -334,7 +333,7 @@ Run 正常完成只表示本次执行结束，不自动表示 Issue 已验收完
 
 1. Workspace 是成员、权限和共享能力的唯一租户边界。
 2. Project 必须属于一个 Workspace。
-3. Issue 必须属于一个 Project，并通过 Project 的 Workspace 授权关系继承空间。
+3. Issue 可以独立存在；关联 Project 时，通过 Project 的 Workspace 授权关系继承空间。独立 Issue 没有项目或空间归属，按创建者和显式参与者授权。
 4. Member 只能是 Human 或 Agent，Device/Executor 不得成为 Assignment 对象。
 5. Agent 的唯一云端定义是 Team；单 Bot 也通过单 Bot Team 暴露。
 6. Project 专属 Agent 仍是 Team，只通过 Workspace 授权和 Project Binding 限制使用。

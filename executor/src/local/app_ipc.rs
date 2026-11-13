@@ -2321,7 +2321,7 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             .my_work_page(
                 params["limit"].as_u64().unwrap_or(30) as usize,
                 params["cursor"].as_str(),
-                params["scope"].as_str() == Some("assigned"),
+                params["scope"].as_str().unwrap_or("participating"),
                 params["include_completed"].as_bool().unwrap_or(true),
                 &params["assignee_user_ids"]
                     .as_array()

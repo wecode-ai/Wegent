@@ -19,6 +19,8 @@ export interface StandInSourceConnection {
   name: string
   kind: string
   scope?: 'all'
+  /** Resources excluded from this account and kind's continuous intake. */
+  excludedResources?: { id: string; name: string }[]
   /** Plugin-owned collection configuration, separate from resource access identity. */
   collectionKey?: string
   configurationSummary?: string

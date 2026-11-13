@@ -120,7 +120,9 @@ fn subscription_task_payload() -> serde_json::Map<String, Value> {
 #[tokio::test]
 async fn a_non_regular_active_task_reads_no_team() {
     let mut transaction = StatementLog::default();
-    let team = strategy_team(&mut transaction, false, &subscription_task_payload()).await;
+    let team = strategy_team(&mut transaction, false, &subscription_task_payload())
+        .await
+        .unwrap();
 
     assert!(team.is_none(), "no Team resolves without the task read");
     assert!(
@@ -140,7 +142,9 @@ async fn a_non_regular_active_task_reads_no_team() {
 #[tokio::test]
 async fn a_regular_active_task_reads_the_team_by_owner() {
     let mut transaction = StatementLog::default();
-    let team = strategy_team(&mut transaction, true, &subscription_task_payload()).await;
+    let team = strategy_team(&mut transaction, true, &subscription_task_payload())
+        .await
+        .unwrap();
 
     assert!(team.is_none(), "the fake read returns no row");
     assert_eq!(transaction.statements.len(), 1);
@@ -180,7 +184,9 @@ async fn a_team_ref_without_an_owner_reads_no_team() {
         unreachable!("the payload is an object")
     };
 
-    let team = strategy_team(&mut transaction, true, &payload).await;
+    let team = strategy_team(&mut transaction, true, &payload)
+        .await
+        .unwrap();
 
     assert!(team.is_none());
     assert!(transaction.statements.is_empty());

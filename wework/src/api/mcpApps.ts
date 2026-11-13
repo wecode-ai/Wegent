@@ -18,6 +18,7 @@ export interface McpAppDescriptor extends McpAppDiscovery {
 }
 export interface McpAppRequest {
   address: RuntimeTaskAddress
+  turnId?: string
   callId: string
   sessionId?: string
   method?: string

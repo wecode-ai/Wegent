@@ -5,7 +5,7 @@ import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 export interface ToolInteractionServices {
   renderRequestUserInput?: (props: RequestUserInputCardProps) => ReactNode;
   requestUserInputSource?: RuntimeTaskAddress;
-  renderMcpApp?: (block: ToolBlock) => ReactNode;
+  renderMcpApp?: (block: ToolBlock, turnId?: string) => ReactNode;
   openProxySettings?: () => void;
   onOutputAction?: (action: "copy" | "open_file") => void;
   readImageFile?: (path: string) => Promise<Blob>;

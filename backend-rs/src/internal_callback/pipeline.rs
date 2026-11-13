@@ -7,7 +7,7 @@ use brz_mysql::{Json, MysqlRow, MysqlTransaction};
 use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
-use crate::responses::create::{dispatch, executor_client, request, routing, seam};
+use crate::responses::create::{executor_client, request, routing, seam};
 use crate::responses::dispatch::DefaultDispatchJob;
 use crate::state::AppState;
 use crate::task_store::PipelineStageAdvance;
@@ -68,7 +68,7 @@ pub(super) async fn dispatch_next(
 
 async fn dispatch_execution(
     state: &AppState,
-    mut advance: PipelineStageAdvance,
+    advance: PipelineStageAdvance,
 ) -> Result<(), FastApiError> {
     let bot_ids = [advance.bot.id];
     let request_id = format!(
@@ -168,10 +168,11 @@ async fn dispatch_execution(
     let running = mysql.with_transaction(async |transaction| {
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
-        let current = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
-        let Some(current) = current else { return Ok(false); };
-        if current.0.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
-            || current.0.pointer("/status/status").and_then(Value::as_str) != Some("PENDING") {
+        let current = task.as_ref().filter(|row| super::completion::is_active_task(row))
+            .and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"));
+        let Some(Json(mut current)) = current else { return Ok(false) };
+        if current.pointer("/status/status").and_then(Value::as_str) != Some("PENDING")
+            || current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage") {
             return Ok(false);
         }
         let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
@@ -179,9 +180,9 @@ async fn dispatch_execution(
             format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
             (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
         if changed.rows_affected == 0 { return Ok(false); }
-        advance.task_json["status"]["status"] = json!("RUNNING");
+        current["status"]["status"] = json!("RUNNING");
         transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
-            (crate::json_compat::python_json_value(&advance.task_json), now, advance.task_id)).await?;
+            (crate::json_compat::python_json_value(&current), now, advance.task_id)).await?;
         Ok(true)
     }).await;
     if recovered && !matches!(running, Ok(true)) {
@@ -219,8 +220,7 @@ async fn dispatch_execution(
                 message_id: execution.message_id,
                 url: executor_client::executor_responses_url(url),
                 body: crate::responses::dispatch::ExecutorDispatchBody::Prepared(
-                    serde_json::to_value(dispatch::assemble(&execution, false, true))
-                        .map_err(|_| FastApiError::internal())?,
+                    crate::executor_binding::dispatch_request(state, &execution),
                 ),
                 start: state
                     .redis

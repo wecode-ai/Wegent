@@ -1100,6 +1100,7 @@
     "title": "应用预览"
   },
   "userSearch": {
+    "searchFailed": "搜索失败，请重试。",
     "placeholder": "搜索用户名或邮箱...",
     "selectedUsers": "已选择 {{count}} 个用户",
     "noResults": "未找到用户"
