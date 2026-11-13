@@ -35,3 +35,7 @@ Arrange creator, invited participant and unrelated accounts. Only the creator ha
 - Focused frontend coverage protects navigation, Home, created-scope pagination, request isolation, late responses and refresh-failure retention.
 
 Actual command results and CI in the PR are the execution record. This plan does not itself prove desktop verification. Preserve original failure logs, establish the cause, and fix it without reruns for a pass, general timeout increases or weaker assertions.
+
+## Parallel test performance evidence
+
+Renderer and Electron tests remain parallel. Electron reuses `run-with-resource-logging.mjs` for runner CPU, memory and I/O pressure, with Node filesystem tracing and `node-async-resource-diagnostics.mjs` recording pending filesystem requests, slow requests, event-loop delay and CPU time inside each test worker. Immediate JSONL writes retain evidence before Vitest terminates workers; file paths, arguments and contents are omitted. Evidence uses the existing `wework-test-evidence` CI artifact. Test outputs are not committed, and larger timeouts or retries do not replace root-cause analysis.

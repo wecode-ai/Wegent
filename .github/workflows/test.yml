@@ -827,7 +827,7 @@ jobs:
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
-        run: node --test wework/scripts/ci-test-sequencer.test.mjs
+        run: node --test wework/scripts/ci-test-sequencer.test.mjs .github/scripts/node-async-resource-diagnostics.test.mjs
 
       - name: Verify delegated work command and history contracts
         if: matrix.shard == 1
@@ -841,6 +841,7 @@ jobs:
           WEWORK_ELECTRON_TRACE_OPTIONS: >-
             --trace-event-categories=node.fs.async,node.fs.sync,node.perf
             --trace-event-file-pattern=${{ github.workspace }}/.ci-artifacts/wework-tests/electron-trace-${pid}-${rotation}.json
+            --import=${{ github.workspace }}/.github/scripts/node-async-resource-diagnostics.mjs
         run: |
           mkdir -p .ci-artifacts/wework-tests
           WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
@@ -853,6 +854,7 @@ jobs:
           if [[ "${{ matrix.shard }}" == "1" ]]; then
             WEWORK_TEST_REPORT_FILE=../../.ci-artifacts/wework-tests/electron.xml \
             NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$WEWORK_ELECTRON_TRACE_OPTIONS" \
+            WEWORK_NODE_DIAGNOSTIC_DIR="${{ github.workspace }}/.ci-artifacts/wework-tests/async-resources" \
             RUNNER_RESOURCE_SAMPLE_INTERVAL_MS=1000 \
             RUNNER_RESOURCE_LOG_PATH=.ci-artifacts/wework-tests/electron-resources.jsonl \
             node .github/scripts/run-with-resource-logging.mjs pnpm --dir wework/electron test &

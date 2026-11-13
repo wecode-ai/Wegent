@@ -35,3 +35,7 @@ sidebar_position: 42
 - 前端定向覆盖：导航、首页、创建者分页、请求隔离、晚到响应与刷新失败保留结果。
 
 执行记录以对应 PR 的实际命令结果和 CI 为准；测试计划本身不代表已完成真实桌面验证。失败必须保留原始日志并定位根因，不通过重试、延长通用超时或放宽断言取得通过。
+
+## 并行测试性能证据
+
+渲染层和 Electron 测试保持并行。Electron 命令复用 `run-with-resource-logging.mjs` 采集 runner 的 CPU、内存及 I/O 压力，并通过 Node 文件调用跟踪和 `node-async-resource-diagnostics.mjs` 记录各测试 worker 的待完成文件请求、慢请求、事件循环延迟与 CPU 时间。即时 JSONL 写入可在 Vitest 终止 worker 前保留证据；不记录文件路径、参数或内容。证据进入现有 `wework-test-evidence` CI artifact，不提交测试输出，也不通过扩大超时或重试替代根因分析。
