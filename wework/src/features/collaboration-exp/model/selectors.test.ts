@@ -41,6 +41,66 @@ function timelineInput(overrides: Partial<ExperienceTimelineInput> = {}): Experi
 }
 
 describe('experience task read model', () => {
+  it('uses local native readers for pending human requests and manual sharing without widening cloud', () => {
+    const pending = issue({
+      id: 'native-pending',
+      assignee_user_id: 8,
+      human_requests: [request({ issue_id: 'native-pending', recipient_user_id: 0 })],
+    })
+    const shared = issue({ id: 'native-shared', assignee_user_id: 8 })
+    const collaborators: WorkspaceIssueCollaborator[] = [
+      {
+        id: 'native-share',
+        issueId: shared.id,
+        userId: 0,
+        userName: 'Local',
+        email: null,
+        source: 'manual',
+        addedByUserId: 7,
+        createdAt: '',
+      },
+    ]
+    const rows = selectTaskRows(
+      modelInput({
+        projects: (['local', 'backend'] as const).map(store => ({
+          project: project({ project_store: store }),
+          participationViewer: [0, 7],
+          issues: [pending, shared],
+          collaborators,
+        })),
+      })
+    )
+    expect(rows.map(row => [row.project.store, row.id, row.needsUser])).toEqual([
+      ['local', 'native-pending', true],
+      ['local', 'native-shared', false],
+    ])
+  })
+
+  it('keeps local native and profile participation separate from the cloud reader', () => {
+    const candidates = [0, 7, 8].map(id => issue({ id: `owner-${id}`, assignee_user_id: id }))
+    const input = modelInput({
+      projects: [
+        {
+          project: project({ project_store: 'local' }),
+          participationViewer: [0, 7],
+          issues: candidates,
+        },
+        { project: project(), participationViewer: [0, 7], issues: candidates },
+      ],
+    })
+    expect(selectTaskRows(input).map(row => [row.project.store, row.id])).toEqual([
+      ['local', 'owner-0'],
+      ['local', 'owner-7'],
+      ['backend', 'owner-7'],
+    ])
+    expect(
+      selectTaskRows({
+        ...input,
+        projects: [{ ...input.projects[0], participationViewer: [] }],
+      })
+    ).toEqual([])
+  })
+
   it('keeps local and backend shapes identical apart from the explicit source identity', () => {
     const backend = selectTaskRows(modelInput())[0]
     const local = selectTaskRows(
@@ -300,6 +360,80 @@ describe('experience private conversation references', () => {
 })
 
 describe('experience canonical timeline', () => {
+  it('keeps a missing local reader unknown while proven foreign ownership stays hidden', () => {
+    const input = timelineInput({
+      project: project({ project_store: 'local' }),
+      participationViewer: [],
+      taskBindings: [binding({ taskUserId: 0 })],
+      messages: [
+        message({
+          sender: { type: 'user', id: '0', name: 'Local' },
+          runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+        }),
+      ],
+    })
+    expect(selectPrivateConversations(input)).toEqual({ state: 'unknown', items: [] })
+    expect(selectTaskTimeline(input).nodes[0].conversation).toEqual({ state: 'unknown', items: [] })
+    const foreign = {
+      ...input,
+      participationViewer: [7],
+    }
+    expect(selectPrivateConversations(foreign)).toEqual({ state: 'hidden', items: [] })
+    expect(selectTaskTimeline(foreign).nodes[0].conversation).toEqual({
+      state: 'hidden',
+      items: [],
+    })
+  })
+
+  it('binds a current-profile source message to its existing native-zero owned task', () => {
+    const input = timelineInput({
+      project: project({ project_store: 'local' }),
+      participationViewer: [0, 7],
+      taskBindings: [binding({ taskUserId: 0 })],
+      messages: [
+        message({
+          sender: { type: 'user', id: '7', name: 'Current profile' },
+          runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+          metadata: { runtime_turn_id: 'native-source-turn' },
+        }),
+      ],
+    })
+    expect(selectTaskTimeline(input).nodes[0].conversation.items[0]).toMatchObject({
+      ownerUserId: 0,
+      historySource: { turnId: 'native-source-turn' },
+    })
+  })
+
+  it.each([
+    ['local', 0, true],
+    ['local', 7, true],
+    ['local', 8, false],
+    ['backend', 0, false],
+    ['backend', 7, true],
+    ['backend', 8, false],
+  ] as const)('proves %s source ownership for native author %s', (store, owner, allowed) => {
+    const input = timelineInput({
+      project: project({ project_store: store }),
+      participationViewer: [0, 7],
+      taskBindings: [binding({ taskUserId: owner })],
+      messages: [
+        message({
+          sender: { type: 'user', id: String(owner), name: 'Source author' },
+          runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+          metadata: { runtime_turn_id: 'native-source-turn' },
+        }),
+      ],
+    })
+    const conversation = selectTaskTimeline(input).nodes[0].conversation
+    expect(conversation.items).toHaveLength(allowed ? 1 : 0)
+    expect(selectPrivateConversations(input).items).toHaveLength(allowed ? 1 : 0)
+    if (allowed)
+      expect(conversation.items[0]).toMatchObject({
+        ownerUserId: owner,
+        historySource: { turnId: 'native-source-turn' },
+      })
+  })
+
   it('includes persisted handoffs and status changes once, retaining user attribution and immutable order', () => {
     const assignment = {
       by_user_id: 7,

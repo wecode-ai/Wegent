@@ -28,6 +28,7 @@ export type ExperienceIssueSource = CollaborationIssue &
 
 export interface ExperienceProjectData {
   project: CollaborationProject
+  participationViewer?: IssueParticipationViewer
   issues: readonly ExperienceIssueSource[]
   taskBindings?: readonly WorkspaceTaskBinding[]
   collaborators?: readonly WorkspaceIssueCollaborator[]
@@ -95,6 +96,7 @@ export interface ExperienceProjectSummary extends ExperienceProjectScope {
 
 export interface ExperienceTimelineInput {
   project: CollaborationProject
+  participationViewer?: IssueParticipationViewer
   issue: CollaborationIssue | null | undefined
   viewer: IssueParticipationViewer
   messages: readonly ProjectChatMessage[] | null | undefined

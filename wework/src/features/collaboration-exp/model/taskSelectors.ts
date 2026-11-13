@@ -24,6 +24,7 @@ import type {
 
 interface TaskSource {
   project: ExperienceProjectData['project']
+  participationViewer?: IssueParticipationViewer
   issue: ExperienceIssueSource
   taskBindings: WorkspaceTaskBinding[] | undefined
   collaborators: readonly WorkspaceIssueCollaborator[]
@@ -68,7 +69,7 @@ function issueSources(input: ExperienceReadModelInput): Map<string, TaskSource> 
           (issue.can_view_detail === false ||
             (previous.issue.can_view_detail !== false &&
               issue.updated_at >= previous.issue.updated_at)))
-          ? { project: source.project, issue }
+          ? { project: source.project, participationViewer: source.participationViewer, issue }
           : previous
       sources.set(key, {
         ...selected,
@@ -85,7 +86,7 @@ function taskRow(
   input: ExperienceReadModelInput
 ): ExperienceTaskRow {
   const { project, issue } = source
-  const viewer = projectViewer(project, input.viewer)
+  const viewer = projectViewer(project, input.viewer, source.participationViewer)
   return {
     key,
     id: issue.id,
@@ -131,7 +132,7 @@ export function selectTaskRows(
     const row = taskRow(key, source, input)
     const relatedToViewer = isExperienceIssueRelatedToViewer(
       source.issue,
-      projectViewer(source.project, input.viewer),
+      projectViewer(source.project, input.viewer, source.participationViewer),
       source.collaborators
     )
     if ((filter.relevance ?? 'related') === 'related' && !relatedToViewer) continue

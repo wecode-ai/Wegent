@@ -85,7 +85,8 @@ function nodeConversations(
 ): ExperienceConversationSelection {
   const owner = humanSource(message, index)
   if (!owner) return { state: 'unknown', items: [] }
-  const viewer = projectViewer(input.project, input.viewer)
+  const viewer = projectViewer(input.project, input.viewer, input.participationViewer)
+  if (typeof viewer === 'object' && viewer.length === 0) return { state: 'unknown', items: [] }
   if (!matchesExperienceViewer(owner.sender.id, viewer)) return { state: 'hidden', items: [] }
   const keys = new Set(sourceAddresses(message, index).map(runtimeAddressKey))
   const turnId =

@@ -96,6 +96,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
         ...tasks.projects,
         {
           project: detail.data.project,
+          participationViewer: detail.data.participationViewer,
           issues: [detail.data.issue],
           taskBindings: detail.data.taskBindings,
         },
@@ -432,6 +433,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
           project={detail.data.project}
           issue={detail.data.issue}
           conversation={discussion}
+          participationViewer={detail.data.participationViewer}
           sourceNodeId={params.get('nodeId') ?? undefined}
           historyScope={params.get('nodeId') ? 'source' : 'task'}
           active={active}

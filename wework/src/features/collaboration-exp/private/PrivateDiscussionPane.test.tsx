@@ -90,6 +90,77 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('private discussion pane', () => {
+  it('does not reuse local reader identities after the current profile changes', () => {
+    const { props } = fixture({
+      project: project({ project_store: 'local', current_user_id: 7 }),
+      participationViewer: [0, 7],
+    })
+    props.conversation.ownerUserId = 0
+    mocks.userId = 8
+    render(<PrivateDiscussionPane {...props} />)
+    expect(screen.getByTestId('collaboration-exp-private-unavailable')).toBeInTheDocument()
+    expect(mocks.panel).not.toHaveBeenCalled()
+  })
+
+  it.each([0, 7])(
+    'reads local owner %s and publishes as the current profile actor',
+    async owner => {
+      const localProject = project({ project_store: 'local', current_user_id: 7 })
+      const { props, create } = fixture({ project: localProject, participationViewer: [0, 7] })
+      props.conversation.ownerUserId = owner
+      vi.mocked(props.api.projects.get).mockResolvedValue(localProject)
+      render(<PrivateDiscussionPane {...props} />)
+      expect(screen.getByTestId('native-private-panel')).toBeInTheDocument()
+      fireEvent.change(await screen.findByTestId('collaboration-exp-conclusion-text'), {
+        target: { value: 'Confirmed local conclusion' },
+      })
+      fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(props.onPublished).toHaveBeenCalledTimes(1))
+    }
+  )
+
+  it.each([
+    ['local', 8, [0, 7]],
+    ['backend', 0, [0, 7]],
+    ['backend', 8, [0, 7]],
+    ['local', 0, []],
+  ] as const)('rejects private %s owner %s outside the source reader', (store, owner, readers) => {
+    const { props } = fixture({
+      project: project({ project_store: store }),
+      participationViewer: readers,
+    })
+    props.conversation.ownerUserId = owner
+    render(<PrivateDiscussionPane {...props} />)
+    expect(screen.getByTestId('collaboration-exp-private-unavailable')).toBeInTheDocument()
+    expect(mocks.panel).not.toHaveBeenCalled()
+  })
+
+  it.each([0, 8])(
+    'retains a local native-owner draft when fresh actor changes to %s',
+    async actor => {
+      const localProject = project({ project_store: 'local', current_user_id: 7 })
+      const { props, create } = fixture({ project: localProject, participationViewer: [0, 7] })
+      props.conversation.ownerUserId = 0
+      vi.mocked(props.api.projects.get).mockResolvedValue({
+        ...localProject,
+        current_user_id: actor,
+      })
+      render(<PrivateDiscussionPane {...props} />)
+      fireEvent.change(await screen.findByTestId('collaboration-exp-conclusion-text'), {
+        target: { value: 'Keep my local conclusion' },
+      })
+      fireEvent.click(screen.getByTestId('collaboration-exp-conclusion-publish'))
+      await waitFor(() =>
+        expect(screen.getByRole('alert')).toHaveTextContent('private.errors.stale')
+      )
+      expect(create).not.toHaveBeenCalled()
+      expect(screen.getByTestId('collaboration-exp-conclusion-text')).toHaveValue(
+        'Keep my local conclusion'
+      )
+    }
+  )
+
   it('opens the exact existing task and source turn; ordinary messages never create a shared comment', async () => {
     const { props, create } = fixture()
     render(<PrivateDiscussionPane {...props} />)

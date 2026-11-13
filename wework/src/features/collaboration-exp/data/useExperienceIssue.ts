@@ -3,12 +3,14 @@ import { canStartWorkOnCollaborationIssue } from '@wegent/collaboration'
 import type {
   CollaborationIssue,
   CollaborationProject,
+  IssueParticipationViewer,
   WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import type { ExperienceSource } from './useExperienceSources'
 
 export interface ExperienceIssueData {
   project: CollaborationProject
+  participationViewer?: IssueParticipationViewer
   issue: CollaborationIssue
   taskBindings: WorkspaceTaskBinding[]
 }
@@ -45,7 +47,7 @@ export function useExperienceIssue(
         if (!cancelled)
           setSnapshot({
             owner,
-            data: { project, issue, taskBindings },
+            data: { project, participationViewer: source.participationViewer, issue, taskBindings },
             error: null,
             revision,
           })

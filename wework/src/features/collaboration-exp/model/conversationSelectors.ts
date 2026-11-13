@@ -18,6 +18,7 @@ import type { ExperienceConversationSelection, ExperiencePrivateConversation } f
 
 export interface ExperienceConversationInput {
   project: CollaborationProject
+  participationViewer?: IssueParticipationViewer
   issue: CollaborationIssue | null | undefined
   viewer: IssueParticipationViewer
   taskBindings?: readonly WorkspaceTaskBinding[] | null
@@ -30,7 +31,8 @@ export function selectPrivateConversations(
   if (!input.issue || !input.taskBindings) return { state: 'unknown', items: [] }
   if (!canStartWorkOnCollaborationIssue(input.issue)) return { state: 'hidden', items: [] }
   if (input.issue.cloud_project_id !== input.project.id) return { state: 'unknown', items: [] }
-  const viewer = projectViewer(input.project, input.viewer)
+  const viewer = projectViewer(input.project, input.viewer, input.participationViewer)
+  if (typeof viewer === 'object' && viewer.length === 0) return { state: 'unknown', items: [] }
   const items = new Map<string, ExperiencePrivateConversation>()
   let hidden = false
   let unknown = false

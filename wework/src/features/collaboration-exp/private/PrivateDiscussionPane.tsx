@@ -4,6 +4,7 @@ import {
   canStartWorkOnCollaborationIssue,
   type CollaborationIssue,
   type CollaborationProject,
+  type IssueParticipationViewer,
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -12,6 +13,7 @@ import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ExperiencePrivateConversation } from '../model'
+import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useConclusionPublication } from './useConclusionPublication'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
 
@@ -20,6 +22,7 @@ export interface PrivateDiscussionPaneProps {
   project: CollaborationProject
   issue: CollaborationIssue
   conversation: ExperiencePrivateConversation
+  participationViewer?: IssueParticipationViewer
   active?: boolean
   embedded?: boolean
   sourceNodeId?: string
@@ -48,7 +51,8 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const { project, issue, conversation, active = true, sourceNodeId, onClose } = props
   const { t } = useTranslation('collaborationExp')
   const { state, openRuntimeTask } = useWorkbench()
-  const viewerId = project.current_user_id ?? state.user?.id
+  const actorId = project.current_user_id ?? state.user?.id
+  const reader = projectViewer(project, Number(state.user?.id), props.participationViewer)
   const sourceScope =
     props.historyScope ?? (sourceNodeId || conversation.historySource ? 'source' : 'task')
   const scopeKey = JSON.stringify([
@@ -74,13 +78,11 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   })
   const source = sourceScope === 'source' ? conversation.historySource : undefined
   const accountMatches =
-    project.project_store === 'local' ||
-    project.current_user_id === undefined ||
-    state.user?.id === project.current_user_id
+    project.current_user_id === undefined || state.user?.id === project.current_user_id
   const owned =
     accountMatches &&
-    viewerId !== undefined &&
-    viewerId === conversation.ownerUserId &&
+    actorId !== undefined &&
+    matchesExperienceViewer(conversation.ownerUserId, reader) &&
     issue.cloud_project_id === project.id &&
     canStartWorkOnCollaborationIssue(issue) &&
     conversation.bindingIds.length > 0 &&
@@ -108,7 +110,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const publication = useConclusionPublication({
     ...props,
     scopeKey: conclusionKey,
-    expectedUserId: conversation.ownerUserId,
+    expectedUserId: Number(actorId),
     active: active && owned && sourceKnown && historyAvailable,
     draft,
   })

@@ -196,6 +196,7 @@ export function useExperienceTasks(
   const projects: ExperienceProjectData[] = completeCatalog.flatMap(({ source, projects }) =>
     projects.map(project => ({
       project,
+      participationViewer: source.participationViewer,
       collaborators: sharing
         .filter(row => row.source === source && (JSON.parse(row.key) as string[])[0] === project.id)
         .flatMap(row => row.value ?? []),

@@ -18,8 +18,11 @@ export function matchesExperienceViewer(
 
 export function projectViewer(
   project: CollaborationProject,
-  viewer: IssueParticipationViewer
+  viewer: IssueParticipationViewer,
+  participationViewer?: IssueParticipationViewer
 ): IssueParticipationViewer {
+  if (project.project_store === 'local' && participationViewer !== undefined)
+    return participationViewer
   return project.current_user_id ?? viewer
 }
 

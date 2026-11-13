@@ -38,11 +38,38 @@ function sourceFixture(store: ExperienceSource['store'] = 'backend') {
     myWork: { page: vi.fn().mockResolvedValue({ items: [myWork], nextCursor: null }) },
     taskBindings: { list: vi.fn().mockResolvedValue([experienceBindingFixture()]) },
   }
-  const source: ExperienceSource = { store, api: api as unknown as SharedWorkspaceApi }
+  const source: ExperienceSource = {
+    store,
+    api: api as unknown as SharedWorkspaceApi,
+    participationViewer: store === 'local' ? [0, 7] : 7,
+  }
   return { source, api, project, issue, myWork }
 }
 
 describe('source-owned experience requests', () => {
+  it('carries authoritative local readers through related rows and direct Issue detail', async () => {
+    const { source, api, myWork } = sourceFixture('local')
+    const nativeBinding = experienceBindingFixture({ taskUserId: 0 })
+    api.myWork.page.mockResolvedValue({
+      items: [{ ...myWork, assignee_user_id: 0, task_bindings: [nativeBinding] }],
+      nextCursor: null,
+    })
+    api.taskBindings.list.mockResolvedValue([nativeBinding])
+    const sources = [source]
+    const { result } = renderHook(() => ({
+      tasks: useExperienceTasks(sources, [7], true, 'related'),
+      detail: useExperienceIssue(source, 'project-1', 'EXP-1', true, 0),
+    }))
+    await waitFor(() => expect(result.current.tasks.loading).toBe(false))
+    await waitFor(() => expect(result.current.detail.data).not.toBeNull())
+    expect(result.current.tasks.projects[0].participationViewer).toEqual([0, 7])
+    expect(result.current.detail.data?.participationViewer).toEqual([0, 7])
+    const rows = selectTaskRows({ projects: result.current.tasks.projects, viewer: 7 })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].conversations.items[0].ownerUserId).toBe(0)
+    expect(result.current.tasks.errors).toEqual([])
+  })
+
   it('hydrates default personal projects omitted from navigation once per project and preserves completed or unassigned human work', async () => {
     const { source, api, project, myWork } = sourceFixture()
     const personal = { ...project, id: DEFAULT_WORK_ITEM_PROJECT_ID }

@@ -76,7 +76,7 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
   }, [key])
   useLayoutEffect(() => {
     generation.current += 1
-  }, [key, body, input.api, input.active, input.draft.revision])
+  }, [key, body, input.api, input.active, input.draft.revision, input.expectedUserId])
 
   async function publish() {
     const request = latest.current
@@ -93,6 +93,7 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
       latest.current.accountKey === request.accountKey &&
       latest.current.scopeKey === request.scopeKey &&
       latest.current.api === request.api &&
+      latest.current.expectedUserId === request.expectedUserId &&
       latest.current.active &&
       latest.current.draft.value.trim() === body
     setOperation({ scopeKey: request.scopeKey, publishing: true, error: null })

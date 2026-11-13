@@ -33,7 +33,10 @@ export function useExperienceSharing(
             const project = projects.find(candidate => candidate.id === issue.cloud_project_id)
             return project &&
               issue.can_view_detail !== false &&
-              !isExperienceIssueRelatedToViewer(issue, projectViewer(project, viewerIds))
+              !isExperienceIssueRelatedToViewer(
+                issue,
+                projectViewer(project, viewerIds, source.participationViewer)
+              )
               ? [JSON.stringify([project.id, issue.id])]
               : []
           })
