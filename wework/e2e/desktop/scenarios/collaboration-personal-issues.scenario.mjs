@@ -85,14 +85,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         cloud.authToken,
         201
       )
-      const bot = await request('/api/bots', 'POST', {
-        name: `personal-issue-bot-${process.pid}`, shell_name:'Codex', namespace:'default',
-        agent_config:{bind_model:'desktop-e2e-cloud-responses',bind_model_type:'public'},
-        system_prompt:'Handle the invited Issue when explicitly requested.',
-      }, cloud.authToken, 201)
-      agent = await request('/api/teams','POST',{
-        name: `personal-issue-agent-${process.pid}`, bots:[{bot_id:bot.id,role:'worker',bot_prompt:''}], namespace:'default',bind_mode:['task'],requires_workspace:false,is_active:true,
-      }, cloud.authToken, 201)
+      const bot = await request(
+        '/api/bots',
+        'POST',
+        {
+          name: `personal-issue-bot-${process.pid}`,
+          shell_name: 'Codex',
+          namespace: 'default',
+          agent_config: { bind_model: 'desktop-e2e-cloud-responses', bind_model_type: 'public' },
+          system_prompt: 'Handle the invited Issue when explicitly requested.',
+        },
+        cloud.authToken,
+        201
+      )
+      agent = await request(
+        '/api/teams',
+        'POST',
+        {
+          name: `personal-issue-agent-${process.pid}`,
+          bots: [{ bot_id: bot.id, role: 'worker', bot_prompt: '' }],
+          namespace: 'default',
+          bind_mode: ['task'],
+          requires_workspace: false,
+          is_active: true,
+        },
+        cloud.authToken,
+        201
+      )
       const owner = await request('/api/users/me')
       group = await request(
         `/api/v1/workspaces/${project.workspace_id}/collaboration-groups`,

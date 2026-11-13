@@ -23,6 +23,7 @@ export function IssueCommentChildAction({
   const [open, setOpen] = useState(false)
   const [target, setTarget] = useState('')
   const [busy, setBusy] = useState(false)
+  const [created, setCreated] = useState(false)
   const [error, setError] = useState('')
   const progress = useRef<{
     requestId: string
@@ -41,13 +42,15 @@ export function IssueCommentChildAction({
         sourceMessageId: messageId,
         requestId: operation.requestId,
       })
+      setCreated(true)
       const child = operation.child
-      const reference = `[$#${child.sequence_number} ${child.title.replace(/[\[\]]/g, '')}](wework-issue://${encodeURIComponent(child.cloud_project_id)}/${encodeURIComponent(child.id)})`
+      const reference = `[$#${child.sequence_number} ${child.title.replaceAll('[', '').replaceAll(']', '')}](wework-issue://${encodeURIComponent(child.cloud_project_id)}/${encodeURIComponent(child.id)})`
       await onComment(
         t('todo.child_created_from_comment', undefined, { title: reference }),
         operation.requestId
       )
       progress.current = null
+      setCreated(false)
       setOpen(false)
       setTarget('')
     } catch (cause) {
@@ -91,7 +94,7 @@ export function IssueCommentChildAction({
             accessibleLabel={t('todo.comment_assign_to')}
             value={target}
             onChange={setTarget}
-            disabled={busy || Boolean(progress.current?.child)}
+            disabled={busy || created}
             searchPlaceholder={t('todo.search_assignee')}
             emptyLabel={t('todo.no_matching_assignee')}
             triggerContent={

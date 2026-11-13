@@ -21,6 +21,11 @@ struct Count {
     count: i64,
 }
 
+fn storage(error: brz_mysql::MysqlError) -> FastApiError {
+    tracing::error!(%error, "local project import storage failed");
+    FastApiError::internal()
+}
+
 fn invalid(message: &str) -> FastApiError {
     FastApiError::detail(StatusCode::UNPROCESSABLE_ENTITY, message)
 }
@@ -38,7 +43,7 @@ async fn import_local_project(
         .map_err(|_| invalid("Invalid project"))?;
     let access = crate::cloud_projects::authorized_project(&state.mysql, number, user.0.id)
         .await
-        .map_err(|_| FastApiError::internal())?
+        .map_err(storage)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     if !matches!(access.1, "Owner" | "Maintainer") {
         return Err(FastApiError::detail(
@@ -86,7 +91,7 @@ async fn import_local_project(
         let next_number = body.issues.iter().map(|issue| issue.sequence_number).max().unwrap_or(0) + 1;
         tx.execute("UPDATE loop_items SET name=?,description=?,metadata=?,next_item_number=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", (body.name.as_str(), body.description.as_str(), Json(metadata), next_number, project_id)).await?;
         Ok(true)
-    }).await.map_err(|_| FastApiError::internal())?;
+    }).await.map_err(storage)?;
     if !imported {
         return Err(FastApiError::detail(
             StatusCode::CONFLICT,
@@ -288,7 +293,7 @@ async fn import_status(
         .map_err(|_| invalid("Invalid project"))?;
     let access = crate::cloud_projects::authorized_project(&state.mysql, number, user.0.id)
         .await
-        .map_err(|_| FastApiError::internal())?
+        .map_err(storage)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     if !matches!(access.1, "Owner" | "Maintainer") {
         return Err(FastApiError::detail(
