@@ -1168,6 +1168,55 @@ describe('runtimeConversationTurns', () => {
     ).toEqual(['已恢复的 AI 输出', '继续'])
   })
 
+  test('drops an unbound optimistic prompt after cancellation', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: null,
+        clientUserMessageId: 'cancelled-before-start',
+        items: [
+          {
+            id: 'cancelled-before-start',
+            type: 'user_message',
+            message: {
+              ...userMessage('cancelled-before-start', 'Old prompt'),
+              createdAt: '2026-07-30T00:00:01.000Z',
+            },
+          },
+        ],
+        status: 'cancelled',
+        stoppedNotice: true,
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'new-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'new-user',
+            type: 'user_message',
+            message: {
+              ...userMessage('new-user', 'New prompt'),
+              createdAt: '2026-07-30T00:00:02.000Z',
+            },
+          },
+          {
+            id: 'new-answer',
+            type: 'assistant_text',
+            content: 'New answer',
+            createdAt: '2026-07-30T00:00:03.000Z',
+          },
+        ],
+      },
+    ]
+
+    expect(
+      projectRuntimeConversationTurns(mergeRuntimeConversationTurns(local, snapshot)).map(
+        message => message.content
+      )
+    ).toEqual(['New prompt', 'New answer'])
+  })
+
   test('converges a local item in place when the snapshot contains the same item id', () => {
     const localBlock = requestBlock('request-1', 'turn-1')
     const snapshotBlock = { ...localBlock, status: 'done' as const }

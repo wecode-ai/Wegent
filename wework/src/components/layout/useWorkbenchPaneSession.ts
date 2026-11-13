@@ -2778,6 +2778,7 @@ export function useWorkbenchPaneSession({
     let accepted: boolean | null = null
     let queuePauseRequested = false
     let restoreQueue: (() => void) | undefined
+    let interruptedTurn: ReturnType<typeof optimisticallyInterruptRuntimeConversation> = null
     let abortReason: 'goal-pause-rejected' | null = null
     try {
       if (goalPauseRequired) {
@@ -2792,11 +2793,17 @@ export function useWorkbenchPaneSession({
       queuePauseRequested = getRuntimeConversationQueuePausedByKey(
         runtimeConversationKey(currentRuntimeTask)
       )
+      interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
       const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
       if (!cancelled) return
     } finally {
-      if (accepted !== true) restoreQueue?.()
+      if (accepted !== true) {
+        restoreQueue?.()
+        if (interruptedTurn) {
+          restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+        }
+      }
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
         source: 'composer',
         accepted,
