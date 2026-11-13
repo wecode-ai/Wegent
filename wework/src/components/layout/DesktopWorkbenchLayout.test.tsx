@@ -2135,6 +2135,16 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('board-view-editor')).toBeInTheDocument()
   })
 
+  test('keeps sibling dialog identities distinct when dialogs are closed', () => {
+    const errors = vi.spyOn(console, 'error')
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      expect(errors.mock.calls.filter(args => String(args[0]).includes('same key'))).toEqual([])
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
   test('returns to the previous page after opening settings through direct navigation', async () => {
     deliveryApiMock.available = true
     window.history.pushState({}, '', '/todo')
