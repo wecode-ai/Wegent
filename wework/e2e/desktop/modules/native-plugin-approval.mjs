@@ -106,37 +106,51 @@ throw 'The isolated app did not display its native Core plugin decision'
     return
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.
-  const { stdout } = await execute(
-    'xdotool',
-    [
-      'search',
-      '--all',
-      '--sync',
-      '--onlyvisible',
-      '--pid',
-      String(pid),
-      '--name',
-      `^(${TITLES.join('|')})$`,
-    ],
-    options
-  ).catch(async error => {
+  const window = await findLinuxModal(pid, options).catch(async error => {
     if (!signal.aborted) await recordNativeWindowDiagnostics(pid)
     throw error
   })
-  const windows = stdout.trim().split(/\s+/)
-  assert.equal(windows.length, 1, 'Native plugin confirmation must be unambiguous')
   await execute(
     'xdotool',
     [
       'windowfocus',
       '--sync',
-      windows[0],
+      window,
       'key',
       '--clearmodifiers',
       ...(allow ? ['Tab', 'Return'] : ['Escape']),
     ],
     options
   )
+}
+
+async function findLinuxModal(pid, options) {
+  const deadline = Date.now() + options.timeout
+  const remaining = () => {
+    options.signal.throwIfAborted()
+    const timeout = deadline - Date.now()
+    assert.ok(timeout > 0, 'The isolated app did not display its native Core plugin decision')
+    return { ...options, timeout }
+  }
+  while (Date.now() < deadline) {
+    const { stdout } = await execute(
+      'xdotool',
+      ['search', '--all', '--sync', '--onlyvisible', '--pid', String(pid)],
+      remaining()
+    )
+    const windows = stdout.trim().split(/\s+/).filter(Boolean)
+    // search --name reads only WM_NAME in Ubuntu's xdotool; GTK uses _NET_WM_NAME.
+    // getwindowname resolves that EWMH UTF-8 property while preserving PID ownership.
+    const titles = await Promise.all(
+      windows.map(window => execute('xdotool', ['getwindowname', window], remaining()))
+    )
+    const matches = windows.filter((_, index) => TITLES.includes(titles[index].stdout.trim()))
+    assert.ok(matches.length < 2, 'Native plugin confirmation must be unambiguous')
+    if (matches.length === 1 && Date.now() < deadline) return matches[0]
+    const wait = deadline - Date.now()
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, Math.min(100, wait)))
+  }
+  throw new Error('The isolated app did not display its native Core plugin decision')
 }
 
 async function recordNativeWindowDiagnostics(pid) {

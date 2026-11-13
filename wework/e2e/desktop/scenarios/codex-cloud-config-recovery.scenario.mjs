@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { restartCodexWhenIdle } from '../modules/executor-restart-readiness.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
@@ -156,7 +157,21 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         evidence.push({ taskId, status: persisted.status, threadId: persisted.threadId })
         return history
       }
+      const restartWhenIdle = async () => {
+        const result = await restartCodexWhenIdle(
+          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          RECOVERY_TIMEOUT_MS
+        )
+        assert.equal(result.requiresConfirmation, false)
+        assert.equal(result.activeTaskCount, 0)
+        assert.equal(result.pendingRequestCount, 0)
+        return result
+      }
       const startFault = async () => {
+        // A persisted reply can still own a native background prediction. Admit
+        // the cold-process fixture only after that work has actually finished.
+        const idleRestart = await restartWhenIdle()
+        evidence.push({ beforeFault: true, idleRestart })
         const failureCount = await model.failBundle()
         const offset = (await readFile(logPath, 'utf8')).length
         const result = await rpc(
@@ -185,6 +200,10 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       const restoreOfficial = async name => {
         model.recoverBundle()
+        // A completed task can still have a native composer prediction or read
+        // in flight. Reuse the idle-only restart gate before changing auth modes.
+        const idleRestart = await restartWhenIdle()
+        evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
         const taskId = await create(name, { official: true })

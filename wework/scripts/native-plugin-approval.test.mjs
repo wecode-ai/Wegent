@@ -10,6 +10,7 @@ vi.mock('node:child_process', () => ({
 }))
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')
 afterEach(() => {
+  vi.useRealTimers()
   Object.defineProperty(process, 'platform', platform)
   native.execute.mockReset()
 })
@@ -24,9 +25,12 @@ test.each([true, false])(
     })
     native.execute.mockImplementation(async (_command, args) => {
       if (args[0] === 'search') {
-        // xdotool defaults to OR: PID alone matches the already visible main window.
-        return { stdout: args.includes('--all') ? '99\n' : '1\n' }
+        // GTK exposes only _NET_WM_NAME; this xdotool search reads the absent WM_NAME.
+        if (args.includes('--name')) throw new Error('Legacy title search cannot see the modal')
+        return { stdout: '1\n99\n' }
       }
+      if (args[0] === 'getwindowname')
+        return { stdout: args[1] === '99' ? 'Core 插件安装确认\n' : 'WeWork\n' }
       expect(args.slice(0, 3)).toEqual(['windowfocus', '--sync', '99'])
       expect(args.slice(5)).toEqual(allow ? ['Tab', 'Return'] : ['Escape'])
       decide()
@@ -50,20 +54,73 @@ test.each([true, false])(
       '--onlyvisible',
       '--pid',
       '123',
-      '--name',
-      '^(Confirm Core plugin installation|Confirm Core plugin update|Core 插件安装确认|Core 插件更新确认)$',
     ])
+    expect(native.execute).toHaveBeenCalledWith(
+      'xdotool',
+      ['getwindowname', '99'],
+      expect.anything()
+    )
     expect(control.command).toHaveBeenCalledWith('focusMainWindow', 'body')
   }
 )
 
 test('rejects an ambiguous native confirmation before sending any key', async () => {
   Object.defineProperty(process, 'platform', { value: 'linux' })
-  native.execute.mockResolvedValue({ stdout: '99\n100\n' })
+  native.execute.mockImplementation(async (_command, args) => ({
+    stdout: args[0] === 'search' ? '99\n100\n' : 'Confirm Core plugin installation\n',
+  }))
   await expect(
     withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
   ).rejects.toThrow('unambiguous')
-  expect(native.execute).toHaveBeenCalledOnce()
+  expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
+})
+
+test('waits for the actual modal instead of using the already visible owned main window', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  let searches = 0
+  native.execute.mockImplementation(async (_command, args) => {
+    if (args[0] === 'search') return { stdout: ++searches === 1 ? '1\n' : '1\n99\n' }
+    if (args[0] === 'getwindowname')
+      return { stdout: args[1] === '99' ? 'Confirm Core plugin update\n' : 'WeWork\n' }
+    return { stdout: '' }
+  })
+  const decision = withNativePluginDecision(
+    { applicationProcessId: 123, command: vi.fn() },
+    async () => null
+  )
+  await vi.advanceTimersByTimeAsync(0)
+  expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
+  await vi.advanceTimersByTimeAsync(100)
+  await decision
+  expect(native.execute).toHaveBeenCalledWith(
+    'xdotool',
+    ['windowfocus', '--sync', '99', 'key', '--clearmodifiers', 'Tab', 'Return'],
+    expect.anything()
+  )
+})
+
+test('rejects at the unchanged deadline when only the owned main window exists', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  native.execute.mockImplementation(async (command, args) => ({
+    stdout: command === 'xprop' ? '' : args[0] === 'search' ? '1\n' : 'WeWork\n',
+  }))
+  try {
+    const decision = withNativePluginDecision(
+      { applicationProcessId: 123, command: vi.fn() },
+      async () => null
+    )
+    const rejected = expect(decision).rejects.toThrow(
+      'did not display its native Core plugin decision'
+    )
+    await vi.advanceTimersByTimeAsync(12_000)
+    await rejected
+    expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
+  } finally {
+    log.mockRestore()
+  }
 })
 
 test('retains a failed native search and records real X11 properties before cleanup', async () => {

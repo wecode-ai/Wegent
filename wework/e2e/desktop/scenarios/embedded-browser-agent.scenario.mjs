@@ -537,6 +537,7 @@ async function withBrowserMcp(identity, label, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
+      WEGENT_EXECUTOR_LOG_DIR: dirname(identity.runtimePath),
       WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,

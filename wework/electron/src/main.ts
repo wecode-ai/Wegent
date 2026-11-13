@@ -199,6 +199,7 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { desktopE2EApplicationName } from './host/e2e-application-name.js'
 import {
   applyWorkbenchBackgroundPolicy,
   workbenchBackgroundThrottling,
@@ -252,7 +253,14 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkDataSchema?: number
   weworkReadableDataSchemas?: number[]
 } & BrandRuntimeMetadata
-if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
+if (packageMetadata.weworkProductName?.trim())
+  app.setName(
+    desktopE2EApplicationName(
+      packageMetadata.weworkProductName.trim(),
+      process.env,
+      process.platform
+    )
+  )
 const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 isolateDevelopmentEnvironment(process.env, {
   packaged: packagedApplication,

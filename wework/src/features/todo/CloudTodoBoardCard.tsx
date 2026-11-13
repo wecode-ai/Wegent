@@ -514,7 +514,22 @@ function useRuntimeTaskProjection(
       deviceId: address.deviceId,
       taskId: address.taskId,
       active,
-      turns: turns.map(turn => ({ id: turn.id, status: turn.status, items: turn.items.length })),
+      turns: turns.map(turn => ({
+        id: turn.id,
+        status: turn.status,
+        items: turn.items.length,
+        itemOrder: turn.items.map(item => ({
+          id: item.id,
+          type: item.type,
+          ...(item.type === 'block'
+            ? {
+                blockType: item.block.type,
+                blockStatus: item.block.status,
+                contentLength: 'content' in item.block ? item.block.content?.length : undefined,
+              }
+            : {}),
+        })),
+      })),
       activityActive: projection.activity.active,
       processTextLength: projection.activity.processText.length,
     })

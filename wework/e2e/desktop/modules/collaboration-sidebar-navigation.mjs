@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 export const COLLABORATION_SIDEBAR_SELECTOR = '[data-testid="collaboration-platform-sidebar"]'
@@ -19,33 +18,20 @@ export async function revealCollaborationSidebarElement(
   await control.command('waitFor', selector, { visible: true, timeoutMs })
 }
 
-/** Open optional space management before interacting with workspace controls. */
+/** Wait for the project groups that now display their spaces directly. */
 export async function expandCollaborationSpaces(
   control,
   contentSelector = '[data-workspace-tab-content][aria-hidden="false"]',
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS
 ) {
-  const toggle = inCollaborationSidebar(
-    '[data-testid="collaboration-workspaces-section-toggle"]',
-    contentSelector
-  )
-  await expandCollaborationToggle(control, toggle, timeoutMs)
-}
-
-async function expandCollaborationToggle(control, toggleSelector, timeoutMs) {
-  await revealCollaborationSidebarElement(control, toggleSelector, timeoutMs)
-  const expandedSelector = `${toggleSelector}[aria-expanded="true"]`
-  const expanded = await control.command('getAttribute', toggleSelector, {
-    value: 'aria-expanded',
-  })
-  assert.ok(
-    expanded === 'true' || expanded === 'false',
-    'A workspace toggle must expose its expanded state'
-  )
-  if (expanded === 'true') return
-  await control.command('click', toggleSelector)
-  await control.command('waitFor', expandedSelector, {
-    visible: true,
-    timeoutMs,
-  })
+  for (const location of ['local', 'cloud']) {
+    await control.command(
+      'waitFor',
+      inCollaborationSidebar(
+        `[data-testid="collaboration-project-group-${location}"]`,
+        contentSelector
+      ),
+      { timeoutMs }
+    )
+  }
 }
