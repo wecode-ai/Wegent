@@ -409,6 +409,37 @@ async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailab
 }
 
 #[tokio::test]
+async fn remote_task_changes_do_not_trigger_heartbeats_for_non_app_devices() {
+    let root = tempfile::tempdir().unwrap();
+    let access = crate::runtime_work::remote_task_access::RemoteTaskAccess::new(
+        root.path().join("remote-task-access.json"),
+    );
+    let transport = RuntimeWorkPollTransport::default();
+    let connection_status = Arc::new(AtomicBool::new(true));
+    let (event_tx, _) = broadcast::channel(8);
+    let mut runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
+        backend_config("remote-device"),
+        transport.clone(),
+        Arc::new(PersonalTaskTestHandler(AtomicUsize::new(0))),
+        ExecutorEventHub::new(event_tx),
+    )
+    .with_connection_status(Arc::clone(&connection_status));
+    runner.client.remote_task_access = access.clone();
+    access.update(json!({"enabled": true})).unwrap();
+
+    let (stable_connection, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(runner.heartbeat_until_reconnect(), async {
+            connection_status.store(false, Ordering::Release);
+        })
+    })
+    .await
+    .expect("connection loss must trigger reconnect without waiting for a heartbeat");
+
+    assert!(!stable_connection);
+    assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
 async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat() {
     let transport = RuntimeWorkPollTransport::default();
     let connection_status = Arc::new(AtomicBool::new(true));

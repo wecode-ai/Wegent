@@ -176,7 +176,8 @@ where
             let tick = tokio::select! {
                 _ = sleep_until(next_connection_status_poll_at) => RunnerTick::ConnectionStatus,
                 _ = sleep_until(next_heartbeat_at) => RunnerTick::Heartbeat,
-                _ = crate::runtime_work::remote_task_access::changed() => RunnerTick::Heartbeat,
+                _ = self.client.remote_task_access.changed(),
+                    if self.client.config.device_type == "app" => RunnerTick::Heartbeat,
                 _ = sleep_until(next_runtime_work_poll_at) => RunnerTick::RuntimeWork,
                 _ = sleep_until(next_plugin_reconcile_at) => RunnerTick::PluginReconcile,
                 result = &mut terminal_relay => {

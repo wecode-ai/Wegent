@@ -1,6 +1,11 @@
 //! Installation-local consent for personal task access through the Backend.
 
-use std::{fs, path::PathBuf, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -10,7 +15,7 @@ use crate::local::app_ipc::AppIpcError;
 
 use super::store::atomic_write_file;
 
-static CHANGED: OnceLock<Notify> = OnceLock::new();
+static CHANGED: OnceLock<Mutex<HashMap<PathBuf, Weak<Notify>>>> = OnceLock::new();
 
 pub(crate) const TASK_METHODS: &[&str] = &[
     "runtime.tasks.create",
@@ -27,6 +32,7 @@ pub(crate) const TASK_METHODS: &[&str] = &[
 #[derive(Clone)]
 pub(crate) struct RemoteTaskAccess {
     path: PathBuf,
+    changed: Arc<Notify>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -41,7 +47,20 @@ impl RemoteTaskAccess {
     }
 
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path }
+        let mut notifications = CHANGED
+            .get_or_init(Default::default)
+            .lock()
+            .expect("remote task access notifications poisoned");
+        notifications.retain(|_, notification| notification.strong_count() > 0);
+        let changed = notifications
+            .get(&path)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| {
+                let notification = Arc::new(Notify::new());
+                notifications.insert(path.clone(), Arc::downgrade(&notification));
+                notification
+            });
+        Self { path, changed }
     }
 
     pub(crate) fn read(&self) -> Result<Value, AppIpcError> {
@@ -67,8 +86,12 @@ impl RemoteTaskAccess {
         let bytes =
             serde_json::to_vec(&settings).map_err(|error| access_error(error.to_string()))?;
         atomic_write_file(&self.path, &bytes).map_err(|error| access_error(error.to_string()))?;
-        CHANGED.get_or_init(Notify::new).notify_one();
+        self.changed.notify_one();
         Ok(json!({"enabled": settings.enabled}))
+    }
+
+    pub(crate) async fn changed(&self) {
+        self.changed.notified().await;
     }
 
     pub(crate) fn authorize(
@@ -95,17 +118,36 @@ impl RemoteTaskAccess {
     }
 }
 
-pub(crate) async fn changed() {
-    CHANGED.get_or_init(Notify::new).notified().await;
-}
-
 fn access_error(message: String) -> AppIpcError {
     AppIpcError::new("remote_task_access_failed", message)
 }
 
 #[cfg(test)]
 mod tests {
+    use futures_util::FutureExt;
+
     use super::*;
+
+    #[tokio::test]
+    async fn change_notifications_follow_the_installation_settings_path() {
+        let root = tempfile::tempdir().unwrap();
+        let a = RemoteTaskAccess::new(root.path().join("a/settings.json"));
+        let reader = RemoteTaskAccess::new(a.path.clone());
+        let b = RemoteTaskAccess::new(root.path().join("b/settings.json"));
+
+        a.update(json!({"enabled": true})).unwrap();
+        assert!(b.changed().now_or_never().is_none());
+        assert!(reader.changed().now_or_never().is_some());
+
+        b.update(json!({"enabled": true})).unwrap();
+        assert!(reader.changed().now_or_never().is_none());
+        assert!(b.changed().now_or_never().is_some());
+
+        assert!(a.update(json!({"enabled": "true"})).is_err());
+        assert!(reader.changed().now_or_never().is_none());
+        a.update(json!({"enabled": false})).unwrap();
+        assert!(reader.changed().now_or_never().is_some());
+    }
 
     #[test]
     fn consent_is_local_persistent_and_revoked_for_existing_readers() {
