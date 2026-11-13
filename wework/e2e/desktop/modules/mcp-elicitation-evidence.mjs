@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks'
 import { assert, readFile, DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 
 export const MCP_URL_TIMEOUT_MS = 5_000
-// The ordinary-first case must reload twice and answer before the real timer expires.
+// The ordinary-first case reloads Electron twice while the form is pending.
 export const MCP_FORM_TIMEOUT_MS = 45_000
 
 export async function readElicitationEvidence(evidencePath) {

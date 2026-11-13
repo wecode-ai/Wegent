@@ -238,9 +238,9 @@ Run this scenario after `permission-modes` confirms Full access and before switc
 URL authorization uses a real five-second timer. Concurrent and ordinary forms
 each use 45 seconds, totaling about 95 seconds of fixed waits. Forms must survive
 the ordinary answer, two pending-card reloads, and state assertions before expiry.
-Fixture evidence from CI Job `131075371152` shows that the previous 30-second
-configuration cancelled the form at 30088ms in `ordinary_first` while the test
-was submitting its answer.
+In CI job `131059186468`, the fixture received a cancellation after 30060ms while
+`ordinary_first` was restoring the waiting state after the second reload.
+The 45-second test deadline gives that interaction time to complete.
 Other checkpoints do not automatically set this
 configuration. With no valid override, production defaults remain ten minutes
 for URLs and five minutes for forms. Ordinary execution approval timeouts are

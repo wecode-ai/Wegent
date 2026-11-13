@@ -240,7 +240,9 @@ class QueueBasedEmitter(BaseResultEmitter, StreamableEmitter):
                     ):
                         break
             except asyncio.TimeoutError:
-                if self._closed:
+                # The producer may enqueue the terminal event and close
+                # before this timed-out reader resumes.
+                if self._closed and self._queue.empty():
                     break
                 continue
 

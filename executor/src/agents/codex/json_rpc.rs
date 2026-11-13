@@ -30,6 +30,8 @@ pub(super) struct JsonRpcConnection {
 }
 
 pub(super) struct TurnReadOptions {
+    pub recover_usage_limits: bool,
+    pub wait_for_goal_continuation: bool,
     pub active_turn_started: Option<super::CodexActiveTurnCallback>,
     pub overload_turn_recovering: Option<super::CodexActiveTurnCallback>,
     pub overload_continuation_params: Value,
@@ -151,6 +153,8 @@ impl JsonRpcConnection {
         options: TurnReadOptions,
     ) -> Result<ExecutionOutcome, String> {
         let TurnReadOptions {
+            recover_usage_limits,
+            mut wait_for_goal_continuation,
             active_turn_started,
             overload_turn_recovering,
             overload_continuation_params,
@@ -169,11 +173,11 @@ impl JsonRpcConnection {
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let mut waiting_for_initial_progress = true;
-        let mut overload_recovery = super::overload_recovery::OverloadRecovery::new(
+        let mut overload_recovery = super::turn_recovery::TurnRecovery::new(
             self.runtime_notifications.clone(),
             notifications.clone(),
         );
-        let mut recovering_goal = false;
+        overload_recovery.recover_usage_limits = recover_usage_limits;
         loop {
             let mut message = if waiting_for_initial_progress {
                 match timeout_at(startup_deadline, self.read_message()).await {
@@ -195,7 +199,7 @@ impl JsonRpcConnection {
                     &thread_id,
                     super::turn_start_response_id(&response),
                 );
-                if recovering_goal {
+                if wait_for_goal_continuation {
                     super::sync_goal_status_from_response(state, &response);
                 }
                 saw_turn_response = true;
@@ -216,14 +220,19 @@ impl JsonRpcConnection {
                 waiting_for_initial_progress = false;
             }
             match overload_recovery.observe(&message, state) {
-                super::overload_recovery::RecoveryAction::Forward => {}
-                super::overload_recovery::RecoveryAction::AwaitCompletion => {
+                super::turn_recovery::RecoveryAction::WaitForQuota(recovery) => {
+                    let _ = state.handle_message(&message);
+                    state.quota_recovery = Some(recovery);
+                    return Ok(ExecutionOutcome::Running);
+                }
+                super::turn_recovery::RecoveryAction::Forward => {}
+                super::turn_recovery::RecoveryAction::AwaitCompletion => {
                     waiting_for_initial_progress = true;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
                     continue;
                 }
-                super::overload_recovery::RecoveryAction::Retry {
+                super::turn_recovery::RecoveryAction::Retry {
                     delay,
                     notification,
                     goal,
@@ -258,11 +267,11 @@ impl JsonRpcConnection {
                             ),
                         )
                         .await?;
-                        recovering_goal = true;
+                        wait_for_goal_continuation = true;
                         let Some(params) =
-                            super::overload_recovery::goal_resume_params(&goal, &current)?
+                            super::turn_recovery::goal_resume_params(&goal, &current)?
                         else {
-                            super::overload_recovery::sync_goal_snapshot(
+                            super::turn_recovery::sync_goal_snapshot(
                                 state,
                                 self.runtime_notifications.as_ref(),
                                 notifications.as_ref(),
@@ -283,7 +292,7 @@ impl JsonRpcConnection {
                         };
                         ("thread/goal/set", params)
                     } else {
-                        recovering_goal = false;
+                        wait_for_goal_continuation = false;
                         ("turn/start", overload_continuation_params.clone())
                     };
                     turn_request_id = super::with_rpc_timeout(
@@ -364,7 +373,11 @@ impl JsonRpcConnection {
                 continue;
             }
             if let Some(outcome) = state.handle_message(&message) {
-                if super::should_wait_for_goal_continuation(&outcome, state, recovering_goal) {
+                if super::should_wait_for_goal_continuation(
+                    &outcome,
+                    state,
+                    wait_for_goal_continuation,
+                ) {
                     waiting_for_initial_progress = true;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);

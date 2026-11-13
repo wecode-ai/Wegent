@@ -34,10 +34,12 @@ import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
 
 async function assertElicitationCountdown(control, durationMs) {
   const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
-  const match = /\b0:([0-5]\d)\b/.exec(countdown)
+  const time = countdown.match(/\b(\d+):([0-5]\d)\b/)
+  assert.ok(time, `Expected an MCP countdown in minutes and seconds, got "${countdown}"`)
+  const seconds = Number(time[1]) * 60 + Number(time[2])
   assert.ok(
-    match && Number(match[1]) <= durationMs / 1000,
-    `Expected a countdown within the configured ${durationMs}ms deadline, got ${countdown}`
+    seconds > 0 && seconds <= Math.ceil(durationMs / 1000),
+    `MCP countdown "${countdown}" must be within the configured ${durationMs}ms deadline`
   )
 }
 

@@ -9,10 +9,11 @@ use tokio::sync::oneshot;
 
 use super::{message_params, CodexRunState, CODEX_APP_SERVER_TURN_CANCELLED};
 
-const RETRY_DELAYS: [u64; 5] = [5, 10, 20, 40, 60];
+const RETRY_DELAYS: [u64; 4] = [10, 30, 120, 300];
 
 #[derive(Default)]
-pub(super) struct OverloadRecovery {
+pub(super) struct TurnRecovery {
+    pub(super) recover_usage_limits: bool,
     retries: usize,
     pending_error: Option<Value>,
     stopped_goal: Option<(String, Value)>,
@@ -29,14 +30,16 @@ pub(super) enum RecoveryAction {
         notification: Value,
         goal: Option<Value>,
     },
+    WaitForQuota(super::CodexQuotaRecovery),
 }
 
-impl OverloadRecovery {
+impl TurnRecovery {
     pub(super) fn new(
         runtime: Option<super::CodexNotificationHub>,
         observer: Option<super::CodexNotificationSender>,
     ) -> Self {
         Self {
+            recover_usage_limits: false,
             retries: 0,
             pending_error: None,
             stopped_goal: None,
@@ -64,14 +67,17 @@ impl OverloadRecovery {
                 // Only a turn-owned stop can belong to this error. User mutations
                 // have no turn ID and must invalidate any pending restoration.
                 self.stopped_goal = params.get("goal").and_then(|goal| {
-                    (goal.get("status").and_then(Value::as_str) == Some("blocked"))
-                        .then(|| {
-                            params
-                                .get("turnId")
-                                .and_then(Value::as_str)
-                                .map(|turn_id| (turn_id.to_owned(), goal.clone()))
-                        })
-                        .flatten()
+                    matches!(
+                        goal.get("status").and_then(Value::as_str),
+                        Some("blocked" | "usageLimited")
+                    )
+                    .then(|| {
+                        params
+                            .get("turnId")
+                            .and_then(Value::as_str)
+                            .map(|turn_id| (turn_id.to_owned(), goal.clone()))
+                    })
+                    .flatten()
                 });
             }
             Some("thread/goal/cleared") => {
@@ -80,11 +86,8 @@ impl OverloadRecovery {
             }
             _ => {}
         }
-        if self.retries == RETRY_DELAYS.len() {
-            return RecoveryAction::Forward;
-        }
         match message.get("method").and_then(Value::as_str) {
-            Some("error") if is_terminal_overload(params) => {
+            Some("error") if self.can_recover(params) => {
                 // A native error precedes turn/completed. Do not start another turn
                 // until Codex has settled the failed turn and saved its tool history.
                 self.pending_error = Some(message.clone());
@@ -92,6 +95,14 @@ impl OverloadRecovery {
             }
             Some("turn/completed") => {
                 let turn = params.get("turn").unwrap_or(params);
+                if self
+                    .pending_error
+                    .as_ref()
+                    .and_then(|error| error.pointer("/params/turnId"))
+                    .is_some_and(|id| !id.is_null() && turn.get("id") != Some(id))
+                {
+                    return RecoveryAction::Forward;
+                }
                 if self.goal_invalidated {
                     self.pending_error = None;
                     self.goal_invalidated = false;
@@ -100,10 +111,11 @@ impl OverloadRecovery {
                 }
                 if turn.get("status").and_then(Value::as_str) != Some("failed") {
                     self.pending_error = None;
+                    self.retries = 0;
                     return RecoveryAction::Forward;
                 }
                 let error = self.pending_error.take().or_else(|| {
-                    is_terminal_overload(turn).then(|| {
+                    self.can_recover(turn).then(|| {
                         json!({"method": "error", "params": {
                             "threadId": params.get("threadId"),
                             "turnId": turn.get("id"),
@@ -114,9 +126,25 @@ impl OverloadRecovery {
                 let Some(mut notification) = error else {
                     return RecoveryAction::Forward;
                 };
+                if notification
+                    .pointer("/params/error/codexErrorInfo")
+                    .and_then(Value::as_str)
+                    == Some("usageLimitExceeded")
+                {
+                    return RecoveryAction::WaitForQuota(super::CodexQuotaRecovery {
+                        thread_id: params["threadId"].as_str().unwrap_or_default().to_owned(),
+                        turn_id: turn["id"].as_str().unwrap_or_default().to_owned(),
+                        goal: self.stopped_goal.take().and_then(|(id, goal)| {
+                            (turn["id"].as_str() == Some(id.as_str())).then_some(goal)
+                        }),
+                    });
+                }
                 let delay = Duration::from_secs(RETRY_DELAYS[self.retries]);
                 self.retries += 1;
                 notification["params"]["willRetry"] = json!(true);
+                notification["params"]["retryAt"] =
+                    json!(super::current_epoch_millis().saturating_add(delay.as_millis() as i64));
+                notification["params"]["retryAttempt"] = json!(self.retries);
                 self.recovery_exit = Some(
                     json!({"method": "runtime/overloadRecoverySettled", "params": {
                         "threadId": notification["params"]["threadId"],
@@ -157,14 +185,48 @@ impl OverloadRecovery {
             _ => RecoveryAction::Forward,
         }
     }
+
+    fn can_recover(&self, params: &Value) -> bool {
+        if params
+            .get("willRetry")
+            .or_else(|| params.get("will_retry"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            return false;
+        }
+        match params
+            .pointer("/error/codexErrorInfo")
+            .and_then(Value::as_str)
+        {
+            Some("serverOverloaded") => self.retries < RETRY_DELAYS.len(),
+            Some("usageLimitExceeded") => self.recover_usage_limits,
+            _ => false,
+        }
+    }
 }
 
-impl Drop for OverloadRecovery {
+impl Drop for TurnRecovery {
     fn drop(&mut self) {
         if let (Some(source), Some(message)) = (&self.source, self.recovery_exit.take()) {
             let _ = source.sender.send(message.into());
         }
     }
+}
+
+pub(crate) fn same_goal_configuration(expected: Option<&Value>, current: Option<&Value>) -> bool {
+    fn configuration(goal: &Value) -> Value {
+        let mut goal = goal.clone();
+        if let Some(fields) = goal.as_object_mut() {
+            // Accounting advances independently of user edits. Preserve every
+            // other field, including budgets and the goal's creation identity.
+            for field in ["tokensUsed", "timeUsedSeconds", "updatedAt"] {
+                fields.remove(field);
+            }
+        }
+        goal
+    }
+    expected.map(configuration) == current.map(configuration)
 }
 
 pub(super) fn goal_resume_params(
@@ -173,7 +235,7 @@ pub(super) fn goal_resume_params(
 ) -> Result<Option<Value>, String> {
     // Re-read after backoff: never resurrect a deleted, paused, replaced, or
     // otherwise edited goal. Preserve its objective, budget, and accounting.
-    if response.get("goal") != Some(expected) {
+    if !same_goal_configuration(Some(expected), response.get("goal")) {
         return Ok(None);
     }
     Ok(Some(json!({
@@ -231,20 +293,12 @@ pub(super) async fn sync_goal_snapshot(
 }
 
 #[cfg(test)]
-#[path = "overload_recovery_tests.rs"]
+#[path = "turn_recovery_tests.rs"]
 mod tests;
 
-fn is_terminal_overload(params: &Value) -> bool {
-    params
-        .get("willRetry")
-        .or_else(|| params.get("will_retry"))
-        .and_then(Value::as_bool)
-        != Some(true)
-        && params
-            .pointer("/error/codexErrorInfo")
-            .and_then(Value::as_str)
-            == Some("serverOverloaded")
-}
+#[cfg(test)]
+#[path = "quota_recovery_tests.rs"]
+mod quota_tests;
 
 pub(super) fn continuation_params(mut params: Value) -> Value {
     // Empty native input resumes the saved history without replaying the task,
