@@ -249,6 +249,48 @@ fn saved_session_without_workspace_does_not_create_fresh_code() {
 }
 
 #[test]
+fn first_git_dispatch_binds_checkout_and_followup_reuses_it_with_saved_session() {
+    use crate::agents::git_workspace::prepare_git_workspace;
+    use wegent_protocol::{dispatch, OpenAIResponsesRequest};
+
+    with_environment(async {
+        let fixture = Fixture::new();
+        let source = fixture.request("source").git_url().unwrap();
+        git(Path::new(&source), &["branch", "develop"]);
+        let request = |subtask_id| {
+            let dispatch = dispatch::ExecutionRequest {
+                task_id: 42,
+                subtask_id,
+                bot: json!([{"id": 1, "shell_type": "ClaudeCode"}]),
+                git_url: Some(source.clone()),
+                branch_name: Some("develop".into()),
+                ..dispatch::ExecutionRequest::default()
+            };
+            let wire = serde_json::to_value(dispatch::assemble(&dispatch, false, true)).unwrap();
+            OpenAIResponsesRequest::from_value(wire)
+                .unwrap()
+                .to_execution_request()
+        };
+        let first = prepare_git_workspace(request(43)).await.unwrap();
+        let bound = task_repository::read("42").unwrap().unwrap().path();
+        assert_eq!(first.cwd(), bound.to_str());
+        assert!(bound.join("README.md").is_file());
+        fs::write(bound.join("uncommitted"), "retain").unwrap();
+        crate::agent_session::save_session_id(&first, "synthetic-session");
+
+        let followup = request(44);
+        assert!(crate::agent_session::saved_executor_session(&followup).is_some());
+        let resumed = prepare_git_workspace(followup).await.unwrap();
+        assert_eq!(resumed.cwd(), first.cwd());
+        assert_eq!(task_repository::read("42").unwrap().unwrap().path(), bound);
+        assert_eq!(
+            fs::read_to_string(bound.join("uncommitted")).unwrap(),
+            "retain"
+        );
+    });
+}
+
+#[test]
 fn historical_task_survives_metadata_migration_and_archives_once() {
     with_environment(async {
         use crate::envd::archive::{

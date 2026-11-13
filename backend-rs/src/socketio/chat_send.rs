@@ -170,6 +170,45 @@ impl ChatSendPayload {
         self.task_type.as_deref().unwrap_or(TASK_TYPE_CHAT)
     }
 
+    fn generation_options(&self) -> Option<Value> {
+        let options = self.generate_params.as_ref()?.as_object()?;
+        let mut generation = Map::new();
+        for key in [
+            "resolution",
+            "ratio",
+            "duration",
+            "model",
+            "model_display_name",
+            "generation_mode_id",
+            "size",
+        ] {
+            if let Some(value) = options.get(key).filter(|value| {
+                if key == "duration" {
+                    value.is_i64()
+                } else {
+                    value.is_string()
+                }
+            }) {
+                generation.insert(key.to_owned(), value.clone());
+            }
+        }
+        Some(Value::Object(generation))
+    }
+
+    /// Match the user subtask's image_config written by Python chat.
+    fn image_result(&self, generation: Option<&Value>) -> Option<Value> {
+        if self.effective_task_type() != "image" {
+            return None;
+        }
+        let generation = generation?;
+        let size = generation.get("size")?.as_str()?;
+        let model = self
+            .force_override_bot_model
+            .as_deref()
+            .or_else(|| generation.get("model").and_then(Value::as_str));
+        Some(json!({ "image_config": { "model": model, "size": size } }))
+    }
+
     /// `payload.interactive_form_answer` as the Source's mapping.
     #[must_use]
     pub fn interactive_form_answer_map(&self) -> Option<&Map<String, Value>> {
@@ -1225,11 +1264,18 @@ pub async fn handle(
                 git_domain: payload.git_domain.as_deref().unwrap_or(""),
                 branch_name: payload.branch_name.as_deref().unwrap_or(""),
             };
+            // A supplied whitespace-only URL still selects a Git workspace so
+            // the execution request can report the missing URL.
+            let git_workspace = !repository.git_url.is_empty()
+                || !repository.git_repo.trim().is_empty()
+                || repository.git_repo_id > 0;
             let task_id = payload.task_id.unwrap_or(0);
             let continuation = payload.task_id.map(|task_id| Continuation {
                 task_id,
                 task_json: scope.task_json.clone(),
             });
+            let generation = payload.generation_options();
+            let user_result = payload.image_result(generation.as_ref());
             let input = SetupChatSessionInput {
                 user_id,
                 // `owner_user_id` is the authenticated principal the Source
@@ -1242,6 +1288,7 @@ pub async fn handle(
                 model_override_type: payload.force_override_bot_model_type.as_deref(),
                 model_options: payload.model_options.as_ref(),
                 input_text: &payload.message,
+                user_result: user_result.as_ref(),
                 additional_skills: &additional_skills,
                 crd: TaskCrdInput {
                     task_id,
@@ -1261,7 +1308,7 @@ pub async fn handle(
                     auto_delete_executor: None,
                     omit_mcp_binary_output: false,
                     device_id: resolved_device_id.as_deref(),
-                    git_workspace: payload.git_url.is_some(),
+                    git_workspace,
                     created_at: &crd_ts,
                     updated_at: &crd_ts,
                 },
@@ -1406,6 +1453,8 @@ pub async fn handle(
 
             // The ACK is returned before `chat:start`; the broadcast and the
             // AI trigger run after the commit on the persisted turn.
+            let created_git_repository =
+                (setup.workspace_id != 0 && git_workspace).then(|| input.repository.to_json());
             let turn = ChatTurn {
                 task_id: setup.task_id,
                 user_subtask_id: setup.user_subtask_id,
@@ -1423,16 +1472,7 @@ pub async fn handle(
                     enable_web_search: payload.enable_web_search,
                     enable_clarification: payload.enable_clarification,
                     model_options: payload.model_options.clone(),
-                    generation: payload.generate_params.as_ref()
-                        .and_then(Value::as_object)
-                        .map(|options| Value::Object([
-                            "resolution", "ratio", "duration", "model", "model_display_name",
-                            "generation_mode_id", "size",
-                        ].into_iter().filter_map(|key| {
-                            options.get(key).filter(|value| {
-                                if key == "duration" { value.is_i64() } else { value.is_string() }
-                            }).cloned().map(|value| (key.to_owned(), value))
-                        }).collect())),
+                    generation,
                 },
                 is_group_chat: setup
                     .task_json
@@ -1443,6 +1483,7 @@ pub async fn handle(
                 client_origin: payload.client_origin.clone(),
                 device_id: resolved_device_id.clone(),
                 task_json: setup.task_json.clone(),
+                created_git_repository,
                 executor_name: setup.assistant_executor_name.clone(),
                 executor_namespace: setup.assistant_executor_namespace.clone(),
                 assistant_created_at: setup.assistant_created_at,
@@ -1729,6 +1770,24 @@ mod tests {
         assert!(!payload.is_group_chat);
         assert_eq!(payload.client_origin, CLIENT_ORIGIN_FRONTEND);
         assert_eq!(payload.effective_task_type(), TASK_TYPE_CHAT);
+    }
+
+    #[test]
+    fn image_turn_stores_the_selected_generation_size() {
+        let payload = ChatSendPayload::parse(&json!({
+            "team_id": 1,
+            "message": "Draw a circle",
+            "task_type": "image",
+            "force_override_bot_model": "gpt-image-e2e",
+            "generate_params": {"size": "1536x1024"}
+        }))
+        .unwrap();
+        assert_eq!(
+            payload.image_result(payload.generation_options().as_ref()),
+            Some(json!({
+                "image_config": {"model": "gpt-image-e2e", "size": "1536x1024"}
+            }))
+        );
     }
 
     #[test]

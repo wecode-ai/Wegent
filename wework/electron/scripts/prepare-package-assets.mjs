@@ -29,6 +29,10 @@ import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-co
 import { buildLauncher } from './build-launcher.mjs'
 import { withTemporaryBuildDirectory } from '../../scripts/lib/temporary-build-directory.mjs'
 import { packagedHarnessRuntimeCatalog } from '../../scripts/lib/packaged-harness-runtime.mjs'
+import {
+  assertWindowsNativeRuntimeIndependent,
+  windowsStaticCrtEnvironment,
+} from '../../scripts/lib/windows-native-runtime.mjs'
 import builderConfig from '../electron-builder.config.cjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -40,6 +44,7 @@ const sharedResourcesRoot = join(weworkRoot, 'resources')
 const executorProfile = resolveExecutorProfile()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const packageTargets = resolveDesktopPackageTargets(process.env)
+const windowsTarget = packageTargets.cargoTarget.includes('windows')
 const executorTargetDirectory = resolveExecutorPackageTargetDirectory(process.env, executorRoot)
 const packageEnvironment = {
   ...process.env,
@@ -76,7 +81,7 @@ await withTemporaryBuildDirectory({
   consume: async ([executorPath], appWebRoot) => {
     await rm(resourcesRoot, { recursive: true, force: true })
     await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
-    await buildLauncher(resourcesRoot, packageTargets.cargoTarget)
+    const launcherPath = await buildLauncher(resourcesRoot, packageTargets.cargoTarget)
     const runtimeCatalog = JSON.parse(
       await readFile(join(harnessRuntimeMaterializedRoot, 'runtimes.json'), 'utf8')
     )
@@ -131,7 +136,6 @@ await withTemporaryBuildDirectory({
     const packagedExecutor = join(resourcesRoot, 'bin', executorName)
     await cp(executorPath, packagedExecutor)
     if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
-    const executorSha256 = await hashComponentPath(packagedExecutor)
     const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
     const packagedDws = join(resourcesRoot, 'bin', dwsName)
     const dwsSourceName = targetExecutableName(
@@ -140,6 +144,8 @@ await withTemporaryBuildDirectory({
     )
     await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
     if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
+    if (windowsTarget) await assertWindowsNativeRuntimeIndependent(resourcesRoot)
+    const executorSha256 = await hashComponentPath(packagedExecutor)
     const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
     const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const sourceSha =
@@ -242,10 +248,18 @@ async function buildExecutor(profile, target, targetDirectory) {
     'wegent-executor',
   ]
   if (target) buildArgs.push('--target', target)
-  await run('cargo', buildArgs, repositoryRoot, {
-    ...process.env,
-    CARGO_TARGET_DIR: targetDirectory,
-  })
+  await run(
+    'cargo',
+    buildArgs,
+    repositoryRoot,
+    windowsStaticCrtEnvironment(
+      {
+        ...process.env,
+        CARGO_TARGET_DIR: targetDirectory,
+      },
+      target
+    )
+  )
   return executorPackageBinaryPath(targetDirectory, target, profile)
 }
 

@@ -1,0 +1,6 @@
+{
+  "order": 151100,
+  "scenario": "./scenarios/quota-recovery.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 105100, "shard": 5, "position": 16100 } }
+}
