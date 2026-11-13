@@ -108,6 +108,23 @@ export function createProjectSpacePickerRegression({
         'Descending name order'
       )
 
+      const grouping = '[data-testid="project-space-picker-toggle-workspaces"]'
+      assert.equal(
+        await control.command('getAttribute', grouping, { value: 'aria-pressed' }),
+        'false',
+        'The picker must default to storage groups'
+      )
+      await control.command('click', groupSelector('backend'))
+      await assertProjects(
+        control,
+        [sharedA, sharedB, project10, project2],
+        'Remote projects must include projects from both spaces'
+      )
+      await control.command('fill', SEARCH, { value: spaceB.name })
+      await assertProjects(control, [sharedB], 'Storage grouping must retain space-name search')
+      await control.command('fill', SEARCH, { value: marker })
+      await control.command('click', grouping)
+      await control.command('waitFor', `${grouping}[aria-pressed="true"]`)
       await control.command('click', groupSelector(`backend:${spaceA.id}`))
       await assertProjects(control, [sharedA, project10, project2], 'Descending within Space A')
       await control.command('select', SORT, { value: 'name-asc' })

@@ -11,6 +11,7 @@ import {
 } from '../e2e/desktop/modules/model-tool-catalog.mjs'
 import {
   selectMcpTool,
+  selectMcpToolRequest,
   requestToolSearchResults,
   toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
@@ -183,6 +184,42 @@ test('native discovery rejects empty and unbounded results', async () => {
     'between one and eight'
   )
 })
+
+test.each(['mcp__wework_space__get_current_context', 'wework_space__get_current_context'])(
+  'qualified discovery selects the real identity %s despite description and suffix collisions',
+  async name => {
+    const target = { ...metadata, name }
+    const catalog = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        name: `mcp__wework_space__unrelated_${index}`,
+        description: metadata.description,
+      })),
+      { ...metadata, name: 'mcp__another_server__get_current_context' },
+      target,
+    ]
+    const selected = selectMcpToolRequest(variants[0], 'get_current_context', {}, metadata.name)
+    expect(selected.mode).toBe('search')
+    expect(await run(selected.codeMode.input, catalog, {})).toEqual([{ tools: [target] }])
+  }
+)
+
+test.each([
+  ['missing', [{ ...metadata, name: 'mcp__another_server__get_current_context' }]],
+  ['ambiguous', [metadata, { ...metadata, name: 'wework_space__get_current_context' }]],
+])(
+  'qualified discovery rejects a %s identity with actual catalog diagnostics',
+  async (_, catalog) => {
+    const selected = discoverySelection(
+      variants[0],
+      'wework_space get_current_context',
+      metadata.name
+    )
+    await expect(run(selected.codeMode.input, catalog, {})).rejects.toThrow('one exact capability')
+    await expect(run(selected.codeMode.input, catalog, {})).rejects.toThrow(
+      JSON.stringify(catalog.map(tool => tool.name))
+    )
+  }
+)
 
 test('late permission options reach the real selected native command', async () => {
   const selection = programmaticSelection(variants[0], 'exec_command', { cmd: 'printf approved' })

@@ -14,7 +14,7 @@ import {
   writeFile,
 } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
-import { waitForValue } from './workspace-agent-setup.mjs'
+import { restartCodexWhenIdle } from './executor-restart-readiness.mjs'
 import {
   CONCURRENT_CASES,
   CONCURRENT_SCENARIO,
@@ -179,6 +179,11 @@ async function verifyConcurrentCases(control) {
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
       assert.ok(taskId)
+      // Read the restored state after reload so this step proves persistence
+      // without spending the MCP form deadline on duplicate pre-reload checks.
+      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
+      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
+      await assertWaiting(control, taskId, true)
       const interactions = await readMcpInteractions(control, taskId)
       await writeFile(
         join(resultDir, `permission-concurrent-${action}-transcript.json`),
@@ -199,10 +204,6 @@ async function verifyConcurrentCases(control) {
       assert.notEqual(String(ordinary.requestId), String(original.requestId))
       assert.equal(ordinary.interactionStatus, 'pending')
       assert.equal(ordinary.response, undefined)
-      await assertWaiting(control, taskId, true)
-      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
-      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
-      await assertWaiting(control, taskId, true)
       await captureVerificationScreenshot(
         control,
         `permission-concurrent-${action}-both-pending.png`
@@ -218,7 +219,6 @@ async function verifyConcurrentCases(control) {
           'Ordinary answer settled the real MCP request'
         )
       } else await settleMcp(control, action)
-      await assertRemaining(control, taskId, original, ordinaryFirst, status)
       await reloadMainWindow(control, 'Reload failed after settling only one concurrent request')
       await assertRemaining(control, taskId, original, ordinaryFirst, status)
       await captureVerificationScreenshot(
@@ -274,17 +274,12 @@ async function verifyConcurrentCases(control) {
   }
 }
 
-async function restartCodexWhenIdle(control) {
-  // Background reads can defer an idle-only restart without throwing.
-  await waitForValue(
-    async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
-    result => result.restarted === true,
-    'The native app server did not become idle before loading the model catalog',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
-}
-
 export async function verifyConcurrentMcpUserInput(control) {
+  const restartWhenIdle = () =>
+    restartCodexWhenIdle(
+      async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+      DEFAULT_STEP_TIMEOUT_MS
+    )
   const { models } = await requestExecutor(
     control,
     'runtime.codex.catalog.overrides.read',
@@ -304,34 +299,19 @@ export async function verifyConcurrentMcpUserInput(control) {
     },
     DEFAULT_STEP_TIMEOUT_MS
   )
-  let scenarioError
   try {
-    await restartCodexWhenIdle(control)
+    await restartWhenIdle()
     await verifyConcurrentCases(control)
-  } catch (error) {
-    scenarioError = error
-    throw error
   } finally {
-    try {
-      await requestExecutor(
-        control,
-        'runtime.codex.catalog.overrides.write',
-        {
-          slug: DEFAULT_MODEL_ID,
-          entry: model.effective,
-        },
-        DEFAULT_STEP_TIMEOUT_MS
-      )
-      await restartCodexWhenIdle(control)
-    } catch (cleanupError) {
-      if (scenarioError) {
-        throw new AggregateError(
-          [scenarioError, cleanupError],
-          'Concurrent MCP scenario and catalog restoration failed',
-          { cause: scenarioError }
-        )
-      }
-      throw cleanupError
-    }
+    await requestExecutor(
+      control,
+      'runtime.codex.catalog.overrides.write',
+      {
+        slug: DEFAULT_MODEL_ID,
+        entry: model.effective,
+      },
+      DEFAULT_STEP_TIMEOUT_MS
+    )
+    await restartWhenIdle()
   }
 }

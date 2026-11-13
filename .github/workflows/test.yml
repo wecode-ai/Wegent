@@ -468,6 +468,9 @@ jobs:
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
 
+      - name: Verify Cargo worktree build isolation
+        run: bash scripts/tests/cargo-cache.test.sh
+
       - name: Run executor Rust format check
         working-directory: ./executor
         run: cargo fmt --all --check
