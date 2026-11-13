@@ -190,9 +190,11 @@ async function verifyPinnedTaskRefresh({
   )
   await expandAllReadConversations(control)
   for (const row of taskRows) {
-    assert.ok(
-      Number(await control.command('getElementCount', `[data-testid="${row}"]`)) <= 1,
-      'Refreshing an unpinned task duplicated it across work projections'
+    await ensureTaskRowVisible(control, row)
+    assert.equal(
+      Number(await control.command('getElementCount', `[data-testid="${row}"]`)),
+      1,
+      'Refreshing an unpinned task duplicated or removed it across work projections'
     )
   }
 }
