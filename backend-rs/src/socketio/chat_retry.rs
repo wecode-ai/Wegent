@@ -243,6 +243,14 @@ async fn prepare_retry(
             failed.status
         ))));
     }
+    let user = crate::user_reader::user_entity_by_id(&state.mysql, user_id)
+        .await
+        .map_err(|_| RetryFailure::Internal)?;
+    if user.is_none() {
+        return Err(RetryFailure::Ack(error_ack("User not found")));
+    }
+    let bot_ids = team_bot_ids(state, &team).await?;
+    apply_model_override(payload, &mut task_json);
     reset_subtask_for_retry(
         state,
         &tables,
@@ -252,14 +260,6 @@ async fn prepare_retry(
         &mut task_json,
     )
     .await?;
-    let user = crate::user_reader::user_entity_by_id(&state.mysql, user_id)
-        .await
-        .map_err(|_| RetryFailure::Internal)?;
-    let Some(_user) = user else {
-        return Err(RetryFailure::Ack(error_ack("User not found")));
-    };
-    apply_model_override(state, &tables.tasks, payload, task_owner, &mut task_json).await?;
-    let bot_ids = team_bot_ids(state, &team).await?;
     let message = extract_display_prompt(user_subtask.prompt.as_deref()).unwrap_or_default();
     // Follow-ups reuse the device bound to the Task (`extract_task_device_id`).
     let device_id = task_json
@@ -469,13 +469,7 @@ async fn reset_subtask_for_retry(
 }
 
 /// `extract_model_override_info` + the label rewrite.
-async fn apply_model_override(
-    state: &AppState,
-    _task_table: &str,
-    payload: &RetryPayload,
-    task_owner: i64,
-    task_json: &mut Value,
-) -> Result<(), RetryFailure> {
+fn apply_model_override(payload: &RetryPayload, task_json: &mut Value) {
     let (model_id, model_type) = if payload.use_model_override {
         (
             payload.force_override_bot_model.clone(),
@@ -484,7 +478,7 @@ async fn apply_model_override(
     } else {
         extract_model_override_info(task_json)
     };
-    let changed = if let Some(model_id) = model_id {
+    if let Some(model_id) = model_id {
         let labels = labels_mut(task_json);
         labels.insert("modelId".into(), Value::String(model_id));
         labels.insert("forceOverrideBotModel".into(), Value::String("true".into()));
@@ -499,35 +493,16 @@ async fn apply_model_override(
                 labels.remove("forceOverrideBotModelType");
             }
         }
-        true
     } else if payload.use_model_override {
         let labels = labels_mut(task_json);
-        let mut changed = false;
         for key in [
             "modelId",
             "forceOverrideBotModel",
             "forceOverrideBotModelType",
         ] {
-            changed |= labels.remove(key).is_some();
+            labels.remove(key);
         }
-        changed
-    } else {
-        false
-    };
-    if !changed {
-        return Ok(());
     }
-    let json = python_json_value(task_json);
-    state
-        .task_store
-        .update_task_json(payload.task_id, task_owner, &json, &task_update_timestamp())
-        .await
-        .map_err(|_| RetryFailure::Internal)?;
-    let _ = state
-        .task_store
-        .refresh_task(payload.task_id, task_owner)
-        .await;
-    Ok(())
 }
 
 /// `Task.metadata.labels` (`setdefault` chains).

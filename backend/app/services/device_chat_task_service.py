@@ -379,4 +379,5 @@ async def _persist_failed_ai_trigger(
         status="FAILED",
         result=final_result,
         error=error_message,
+        expected_status=("PENDING", "RUNNING"),
     )

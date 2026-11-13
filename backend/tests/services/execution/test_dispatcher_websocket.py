@@ -397,10 +397,23 @@ async def test_dispatch_websocket_uses_git_credentials_configured_on_device() ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("online", [False, True])
-async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, online):
+@pytest.mark.parametrize(
+    ("online", "fail_first_write", "initial_status", "terminal_status"),
+    [
+        (False, False, "PENDING", "FAILED"),
+        (True, False, "PENDING", "FAILED"),
+        (False, True, "PENDING", "FAILED"),
+        (False, True, "CANCELLED", "CANCELLED"),
+    ],
+)
+async def test_device_dispatch_failure_persists_terminal_state(
+    test_db, online, fail_first_write, initial_status, terminal_status
+):
+    from sqlalchemy.exc import OperationalError
+
     from app.models.subtask import Subtask, SubtaskStatus
     from app.models.task import TaskResource
+    from app.stores.tasks import subtask_store
 
     task = TaskResource(
         user_id=9,
@@ -417,14 +430,19 @@ async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, onl
                 "teamRef": {"name": "device-test-team"},
                 "workspaceRef": {"name": "device-test-workspace"},
             },
-            "status": {"status": "PENDING"},
+            "status": {"status": initial_status},
         },
         is_active=TaskResource.STATE_ACTIVE,
     )
     test_db.add(task)
     test_db.flush()
     subtask = Subtask(
-        user_id=9, task_id=task.id, team_id=1, title="Device turn", bot_ids=[]
+        user_id=9,
+        task_id=task.id,
+        team_id=1,
+        title="Device turn",
+        bot_ids=[],
+        status=SubtaskStatus(initial_status),
     )
     test_db.add(subtask)
     test_db.commit()
@@ -454,7 +472,22 @@ async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, onl
             request, device_id=kwargs["device_id"], emitter=AsyncMock()
         )
 
+    update = subtask_store.update_fields_if_status
+    failed_once = False
+
+    def persist(db, **kwargs):
+        nonlocal failed_once
+        if fail_first_write and not failed_once:
+            failed_once = True
+            raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
+        return update(db, **kwargs)
+
     with (
+        patch.object(subtask_store, "update_fields_if_status", side_effect=persist),
+        patch(
+            "app.services.device_chat_task_service.collect_completed_result",
+            AsyncMock(return_value={}),
+        ),
         patch(
             "app.services.device_chat_task_service.trigger_ai_response_unified",
             side_effect=dispatch_turn,
@@ -494,9 +527,11 @@ async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, onl
 
     subtask = test_db.get(Subtask, subtask_id)
     assert subtask is not None
-    assert subtask.status == SubtaskStatus.FAILED
+    assert failed_once == fail_first_write
+    assert subtask.status == SubtaskStatus(terminal_status)
     assert (
-        test_db.get(TaskResource, subtask.task_id).json["status"]["status"] == "FAILED"
+        test_db.get(TaskResource, subtask.task_id).json["status"]["status"]
+        == terminal_status
     )
     if online:
         delivery.assert_awaited_once()

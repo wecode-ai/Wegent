@@ -97,7 +97,8 @@ class DatabaseHandler:
         """Update subtask status asynchronously.
 
         Returns False when ``expected_status`` was supplied and the subtask no
-        longer has that status, so the caller can drop a stale terminal event.
+        longer has a matching status, so the caller can drop a stale terminal event.
+        Storage failures raise for a conditional update.
         """
         update_result = await self._run_in_executor(
             self._update_subtask_sync,
@@ -236,6 +237,8 @@ class DatabaseHandler:
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
+            if expected_status is not None:
+                raise
             return None
 
     def _update_task_status_sync(
