@@ -124,6 +124,25 @@ async function waitForBackgroundTerminalCount(control, expected, timeoutMs) {
   )
 }
 
+function terminalTicks(text, marker) {
+  const pattern = new RegExp(`${marker}_TICK_(\\d+)`, 'g')
+  return [...text.matchAll(pattern)].map(match => Number(match[1]))
+}
+
+async function waitForTerminalProgress(control, marker, afterTick, timeoutMs) {
+  const tree = '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree'
+  return waitForValue(
+    () => control.command('getText', tree),
+    text => {
+      const ticks = terminalTicks(text, marker)
+      const latest = Math.max(...ticks)
+      return latest > afterTick ? latest : false
+    },
+    `Terminal output did not advance beyond tick ${afterTick}`,
+    timeoutMs
+  )
+}
+
 async function changeTheme(control, mode) {
   await control.command('click', '[data-testid="settings-button"]')
   await control.command('click', '[data-testid="settings-menu-button"]')
@@ -398,11 +417,12 @@ export function createDesktopScenario({
         installLogOffset,
         uiTimeoutMs
       )
-      await control.command(
-        'waitFor',
-        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-        { text: `${MARKERS[0]}_TICK_20`, timeoutMs: uiTimeoutMs }
-      )
+      await waitForBackgroundTerminalCount(control, 2, uiTimeoutMs)
+      const installTree =
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree'
+      const installTicks = terminalTicks(await control.command('getText', installTree), MARKERS[0])
+      assert.ok(installTicks.length > 0, 'The background terminal must remain readable')
+      await waitForTerminalProgress(control, MARKERS[0], Math.max(...installTicks), uiTimeoutMs)
       assert.equal(
         installFinished,
         false,
@@ -458,8 +478,15 @@ export function createDesktopScenario({
       await control.command(
         'waitFor',
         '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-        { text: `${PLUGIN_MARKER}_TICK_12`, timeoutMs: uiTimeoutMs }
+        { text: PLUGIN_MARKER, timeoutMs: uiTimeoutMs }
       )
+      const pluginTerminalTree =
+        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree'
+      const pluginTerminalTicks = terminalTicks(
+        await control.command('getText', pluginTerminalTree),
+        PLUGIN_MARKER
+      )
+      assert.ok(pluginTerminalTicks.length > 0, 'The plugin terminal must remain readable')
 
       const uninstallLogOffset = (await readFile(executorLogPath, 'utf8')).length
       let uninstallFinished = false
@@ -477,10 +504,12 @@ export function createDesktopScenario({
         uninstallLogOffset,
         uiTimeoutMs
       )
-      await control.command(
-        'waitFor',
-        '[data-testid="background-terminal-output-panel"] .xterm-accessibility-tree',
-        { text: `${PLUGIN_MARKER}_TICK_20`, timeoutMs: uiTimeoutMs }
+      await waitForBackgroundTerminalCount(control, 1, uiTimeoutMs)
+      await waitForTerminalProgress(
+        control,
+        PLUGIN_MARKER,
+        Math.max(...pluginTerminalTicks),
+        uiTimeoutMs
       )
       assert.equal(
         uninstallFinished,
