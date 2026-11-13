@@ -364,3 +364,56 @@ it('blocks stale group permission on refresh failure but keeps personal creation
     )
   )
 })
+
+it.each(['picker', 'pointer', 'keyboard'])(
+  'refreshes managed locations on %s interaction without a window focus event',
+  async interaction => {
+    let finish!: () => void
+    const refresh = jest.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    const groups = [
+      {
+        id: 'group-team',
+        name: 'team',
+        displayName: 'Team',
+        type: 'group' as const,
+        canCreate: true,
+      },
+    ]
+    render(
+      <CreateKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        onSubmit={jest.fn()}
+        showGroupSelector
+        availableGroups={groups}
+        defaultGroupId="group-team"
+        onRefreshGroups={refresh}
+      />
+    )
+    fireEvent.click(screen.getByTestId('group-selector'))
+    fireEvent.click(screen.getByTestId('create-manage-organizations'))
+    expect(screen.getByTestId('submit-create-kb')).toBeDisabled()
+    expect(refresh).not.toHaveBeenCalled()
+    if (interaction === 'picker') fireEvent.click(screen.getByTestId('group-selector'))
+    else if (interaction === 'pointer')
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'set name' }))
+    else fireEvent.keyDown(screen.getByRole('button', { name: 'set name' }), { key: 'Tab' })
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'set name', hidden: true }))
+    fireEvent.keyDown(screen.getByRole('button', { name: 'set name', hidden: true }), {
+      key: 'Tab',
+    })
+    fireEvent.focus(window)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('submit-create-kb')).toBeDisabled()
+    await act(async () => finish())
+    await waitFor(() => expect(screen.getByTestId('submit-create-kb')).toBeEnabled())
+    fireEvent.focus(window)
+    expect(refresh).toHaveBeenCalledTimes(1)
+  }
+)

@@ -464,6 +464,8 @@ export function CreateKnowledgeBaseDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
+        onPointerDownCapture={locations.onReturnInteraction}
+        onKeyDownCapture={locations.onReturnInteraction}
         className="w-[calc(100%_-_1rem)] max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col"
         closeButtonProps={{
           className: 'right-2 top-2 flex h-11 w-11 items-center justify-center',
@@ -792,6 +794,7 @@ export function CreateKnowledgeBaseDialog({
                         value={selectedGroupId}
                         onValueChange={setSelectedGroupId}
                         onManageOrganizations={locations.onManage}
+                        onOpenLocations={locations.onReturnInteraction}
                       />
                       {selectedGroup?.type === 'group' && selectedGroup.canCreate && (
                         <p role="status" className="text-xs text-text-muted">

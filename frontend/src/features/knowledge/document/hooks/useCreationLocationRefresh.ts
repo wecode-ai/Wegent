@@ -25,15 +25,19 @@ export function useCreationLocationRefresh(open: boolean, onRefresh?: () => Prom
     }
   }, [onRefresh])
 
+  const refreshPending = useCallback(() => {
+    if (!pendingReturn.current) return
+    pendingReturn.current = false
+    void refresh()
+  }, [refresh])
+
   useEffect(() => {
     pendingReturn.current = false
     setFailed(false)
     setRefreshing(false)
     if (!open) return
     const returned = () => {
-      if (!pendingReturn.current || document.visibilityState === 'hidden') return
-      pendingReturn.current = false
-      void refresh()
+      if (document.visibilityState !== 'hidden') refreshPending()
     }
     window.addEventListener('focus', returned)
     document.addEventListener('visibilitychange', returned)
@@ -42,12 +46,13 @@ export function useCreationLocationRefresh(open: boolean, onRefresh?: () => Prom
       window.removeEventListener('focus', returned)
       document.removeEventListener('visibilitychange', returned)
     }
-  }, [open, refresh, invalidate])
+  }, [open, refreshPending, invalidate])
 
   return {
     refreshing,
     failed,
     retry: refresh,
+    onReturnInteraction: refreshPending,
     onManage: () => {
       pendingReturn.current = true
       setRefreshing(true)

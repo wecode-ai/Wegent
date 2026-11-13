@@ -646,9 +646,11 @@ creationTest(
     )
     await management.close()
     await page.bringToFront()
+    // Headless popup closure does not guarantee a window focus event. Reopening
+    // locations is also a real return interaction that must refresh permissions.
+    await dialog.getByTestId('group-selector').click()
     await refreshed
     await expect(dialog.getByTestId('kb-name-input')).toHaveValue(draftName)
-    await dialog.getByTestId('group-selector').click()
     await page.getByTestId('create-space-search').fill(name)
     await page.getByTestId('create-space-option-group-' + name).click()
     await expect(dialog.getByTestId('submit-create-kb')).toBeEnabled()

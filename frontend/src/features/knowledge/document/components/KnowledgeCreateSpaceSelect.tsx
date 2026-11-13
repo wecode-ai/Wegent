@@ -24,11 +24,13 @@ export function KnowledgeCreateSpaceSelect({
   value,
   onValueChange,
   onManageOrganizations,
+  onOpenLocations,
 }: {
   spaces: AvailableGroup[]
   value: string
   onValueChange: (value: string) => void
   onManageOrganizations?: () => void
+  onOpenLocations?: () => void
 }) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
@@ -48,7 +50,10 @@ export function KnowledgeCreateSpaceSelect({
       modal
       open={open}
       onOpenChange={next => {
-        if (next) setSearch('')
+        if (next) {
+          setSearch('')
+          onOpenLocations?.()
+        }
         setOpen(next)
       }}
     >
