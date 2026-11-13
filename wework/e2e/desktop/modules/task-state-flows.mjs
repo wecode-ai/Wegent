@@ -13,6 +13,7 @@ import { assertConversationTextOrder } from './conversation-navigation.mjs'
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
 import { findRuntimeWorkTask, waitForForkTaskRow } from './runtime-task-evidence.mjs'
 import {
+  expandAllReadConversations,
   verifyActiveConversationSurvivesCollapse,
   verifyCollapseReadConversations,
 } from './read-conversation-flows.mjs'
@@ -178,6 +179,8 @@ async function verifyPinnedTaskRefresh({
   await waitForPinnedTaskOrder(control, [taskRows[1]])
   await unpinRuntimeTask(control, taskIds[1])
   await control.command('refreshRuntimeWork', 'body', { value: '{}' })
+  await waitForPinnedTaskOrder(control, [])
+  await expandAllReadConversations(control)
   for (const row of taskRows) {
     await control.command('waitFor', `[data-testid="${row}"]`, {
       stableMs: COMPOSER_READY_STABILITY_MS,

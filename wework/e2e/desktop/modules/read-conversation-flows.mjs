@@ -10,6 +10,10 @@ async function selectReadConversationAction(control, action) {
   await control.command('click', `[data-testid="runtime-task-view-${action}"]`)
 }
 
+export async function expandAllReadConversations(control) {
+  await selectReadConversationAction(control, 'expand-read')
+}
+
 export async function verifyActiveConversationSurvivesCollapse({ control, taskId, state }) {
   const rowTestId = `runtime-local-task-row-${taskId}`
   const indicatorTestId = `runtime-local-task-${state}-${taskId}`
