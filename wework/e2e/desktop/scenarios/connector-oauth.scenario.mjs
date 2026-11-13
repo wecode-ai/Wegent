@@ -26,6 +26,7 @@ import {
   startConnectorOAuthProvider,
 } from '../modules/connector-oauth-provider.mjs'
 import { verifyConnectorAccountSwitch } from '../modules/connector-account-switch.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   openPlugin,
   requestPluginExecutor,
@@ -544,16 +545,18 @@ export function createDesktopScenario({
       assert.deepEqual(provider.toolCalls, [{ name: 'echo', arguments: { value: TOOL_PROMPT } }])
 
       const synchronizeMode = async mode => {
+        const authorizationRequests = provider.authorizeRequests
         await api(`/api/admin/connector-apps/${connectorAppId}`, {
           method: 'PATCH',
           body: { tool_loading_mode: mode },
         })
+        // A connected grant has no refresh action. Reloading exercises the
+        // bridge's real catalog synchronization without changing authorization.
+        await reloadMainWindow(control, `The workbench did not reload for ${mode} mode`)
         await control.command('navigate', 'body', { value: '/settings/connections' })
-        await control.command('waitFor', testId(`connector-refresh-${CONNECTOR_OAUTH_SLUG}`))
-        await control.command(
-          'clickWhenEnabled',
-          testId(`connector-refresh-${CONNECTOR_OAUTH_SLUG}`)
-        )
+        await control.command('waitFor', testId(`connector-connection-${CONNECTOR_OAUTH_SLUG}`), {
+          text: '已连接',
+        })
         await until(
           async () => {
             const status = await requestPluginExecutor(control, 'runtime.connectors.status')
@@ -563,6 +566,11 @@ export function createDesktopScenario({
           },
           app => app?.toolLoadingMode === mode,
           `The local connector never applied ${mode} mode`
+        )
+        assert.equal(
+          provider.authorizeRequests,
+          authorizationRequests,
+          'Changing tool loading mode must not require new provider consent'
         )
       }
       await synchronizeMode('lazy')

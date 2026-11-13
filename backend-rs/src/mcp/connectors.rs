@@ -56,6 +56,8 @@ async fn connectors_sse_get(
 
 /// `POST /api/mcp/connectors/sse`: exchange one JSON-RPC message.
 #[brz_http_server::post("/api/mcp/connectors/sse", access = public)]
+// The route macro binds each optional protocol and connector header separately.
+#[allow(clippy::too_many_arguments)]
 async fn connectors_sse_post(
     #[inject(state)] state: &Arc<AppState>,
     #[header("accept")] accept: Option<&str>,

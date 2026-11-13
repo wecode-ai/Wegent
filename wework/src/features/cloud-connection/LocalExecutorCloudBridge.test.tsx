@@ -771,19 +771,22 @@ describe('LocalExecutorCloudBridge', () => {
         })
       )
     })
-    expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.apps.sync', {
-      syncRevision: expect.any(Number),
-      apps: [
-        {
-          slug: 'tickets',
-          name: 'Tickets',
-          description: '',
-          tools: [{ name: 'tickets__search', raw_tool_name: 'search' }],
-          authorizationRequired: false,
-        },
-      ],
+    await waitFor(() => {
+      expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.apps.sync', {
+        syncRevision: expect.any(Number),
+        apps: [
+          {
+            slug: 'tickets',
+            name: 'Tickets',
+            description: '',
+            toolLoadingMode: 'static',
+            tools: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+            authorizationRequired: false,
+          },
+        ],
+      })
+      expect(mocks.notifySkillsChanged).toHaveBeenCalled()
     })
-    expect(mocks.notifySkillsChanged).toHaveBeenCalled()
     expect(
       mocks.request.mock.calls.find(call => call[0] === 'runtime.connectors.configure')?.[1]
     ).not.toHaveProperty('authToken')
