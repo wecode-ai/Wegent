@@ -9,6 +9,7 @@ const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="cha
 const FIRST_PROMPT = 'SPLIT LEFT TASK: investigate online Connector authentication'
 const SECOND_PROMPT = 'SPLIT RIGHT TASK'
 const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
+const MODEL_ISOLATION_FOLLOW_UP = `${FIRST_PROMPT} model isolation follow-up`
 const TABLE_MARKDOWN = '| A | B |\n| --- | --- |\n| 中文 | **bold** |\n| Empty |  |'
 const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
 const SPLIT_ATTACHMENT_FILENAME = 'split-pane-only.png'
@@ -587,6 +588,7 @@ async function assertIndependentTitlebar(control, paneSelector, title) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   let nextAttachmentId = 1
+  const modelIsolationFollowUpModels = []
   return {
     appEnvironment: {
       // This scenario authenticates no cloud session; keep model fixtures local.
@@ -686,6 +688,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       ) {
         const body = await readJson(request)
         const input = JSON.stringify(body.input ?? body.messages ?? [])
+        const isModelIsolationFollowUp = input.includes(MODEL_ISOLATION_FOLLOW_UP)
         const prompt = input.includes(SECOND_PROMPT)
           ? SECOND_PROMPT
           : input.includes(FIRST_PROMPT)
@@ -694,14 +697,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
               ? THIRD_PROMPT
               : null
         if (!prompt) return false
+        if (isModelIsolationFollowUp) modelIsolationFollowUpModels.push(body.model)
         const responseId = `wework-split-${Date.now()}`
+        const completion = isModelIsolationFollowUp
+          ? `${FIRST_PROMPT}_MODEL_ISOLATION_COMPLETE`
+          : `${prompt}_COMPLETE${prompt === FIRST_PROMPT ? `\n\n${TABLE_MARKDOWN}` : ''}`
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([
             responseCreated(responseId),
-            assistantMessage(
-              `${prompt}_COMPLETE${prompt === FIRST_PROMPT ? `\n\n${TABLE_MARKDOWN}` : ''}`
-            ),
+            assistantMessage(completion),
             responseCompleted(responseId),
           ])
         )
@@ -1134,8 +1139,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await assertPaneConversation(control, restoredSecondPane, `${SECOND_PROMPT}_COMPLETE`)
 
       // Each pane must switch only its own conversation model and persist it.
-      // Keep the second pane as the focused model scope so the send below
-      // exercises the addressed pane instead of the focused conversation.
+      // Keep the second pane as the focused model scope; the driver clicks
+      // programmatically, so the send below does not move pane focus.
       await control.command('click', `${restoredSecondPane} [data-testid^="workbench-pane-title-"]`)
       await waitForWorkbenchDebugState(
         control,
@@ -1146,12 +1151,31 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, restoredFirstPane)
       await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
       await control.command('fill', `${restoredFirstPane} [data-testid="chat-message-input"]`, {
-        value: `${FIRST_PROMPT} model isolation follow-up`,
+        value: MODEL_ISOLATION_FOLLOW_UP,
       })
       await control.command(
         'clickWhenEnabled',
         `${restoredFirstPane} [data-testid="send-message-button"]`,
         { timeoutMs: taskTimeoutMs }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.activeTask?.taskId === secondTaskId,
+        'The send moved the focused model scope away from the second pane',
+        uiTimeoutMs
+      )
+      await assertPaneConversation(
+        control,
+        restoredFirstPane,
+        `${FIRST_PROMPT}_MODEL_ISOLATION_COMPLETE`
+      )
+      assert.ok(
+        modelIsolationFollowUpModels.length > 0,
+        'The addressed pane follow-up never reached the model endpoint'
+      )
+      assert.ok(
+        modelIsolationFollowUpModels.every(model => model === DEFAULT_MODEL_ID),
+        `The addressed pane send executed with ${modelIsolationFollowUpModels.join(', ')}`
       )
       await waitForWorkbenchDebugState(
         control,
