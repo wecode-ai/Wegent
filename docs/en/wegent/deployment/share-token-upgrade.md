@@ -10,6 +10,11 @@ current resource read permission are required. Unrecorded, revoked, or expired
 links are invalid. Recipients who only received a URL need resource access
 granted by the resource administrator.
 
+Version-2 unified Task links use `/shared/task/access` to preview metadata and
+request access through the existing `/api/share/join` endpoint. They do not read
+task content before approval. Version-1 links retain their original `/shared/task`
+URLs, as do new public read-only TaskShare links, with unchanged permission rules.
+
 ## Storage compatibility
 
 The migration preserves tokens, status, expiry, and ownership while backfilling

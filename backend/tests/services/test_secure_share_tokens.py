@@ -5,6 +5,7 @@ import logging
 import re
 import traceback
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -232,6 +233,10 @@ def test_persisted_legacy_task_link_remains_usable(test_db: Session):
     assert error.value.status_code == 401
     response = shared_task_service.get_public_shared_task(test_db, raw_token, owner.id)
     assert response.task_title == "legacy-task"
+    existing_link = task_share_service.get_share_link(test_db, task.id, owner.id)
+    assert existing_link.share_url == (
+        f"{task_share_service._get_share_url_base()}?token={link.share_token}"
+    )
 
 
 @pytest.mark.unit
@@ -313,6 +318,13 @@ def test_unified_task_tokens_cannot_use_direct_read_or_copy(
     link = task_share_service.create_share_link(
         test_db, task.id, owner.id, ShareLinkConfig(require_approval=require_approval)
     )
+    url = urlsplit(link.share_url)
+    assert url.path.endswith("/shared/task/access")
+    assert parse_qs(url.query)["token"] == [link.share_token]
+    preview = task_share_service.get_share_info(test_db, link.share_token)
+    assert preview.resource_type == "Task"
+    assert preview.resource_name == task.name
+    assert preview.require_approval is require_approval
 
     with pytest.raises(HTTPException) as read_error:
         shared_task_service.get_public_shared_task(test_db, link.share_token)

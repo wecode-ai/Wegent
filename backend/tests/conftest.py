@@ -231,6 +231,10 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds timeout
     cursor.close()
+
+
+def _register_sqlite_functions(dbapi_conn, connection_record):
+    """Register share lookup functions on every SQLite connection."""
     # SQLite unit fixtures use the same SHA-256 expression as MySQL share lookup.
     dbapi_conn.create_function(
         "sha2",
@@ -270,6 +274,7 @@ def test_engine(worker_id):
         pool_pre_ping=True,
     )
 
+    event.listen(engine, "connect", _register_sqlite_functions)
     # Enable WAL mode for better concurrent access (only for file-based databases)
     if worker_id != "master":
         event.listen(engine, "connect", _set_sqlite_pragma)

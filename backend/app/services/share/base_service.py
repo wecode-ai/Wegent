@@ -181,10 +181,10 @@ class UnifiedShareService(ABC):
         )
         return share_link
 
-    def _generate_share_url(self, share_token: str) -> str:
+    def _generate_share_url(self, share_link: ShareLink) -> str:
         """Generate full share URL."""
         base_url = self._get_share_url_base()
-        return f"{base_url}?token={share_token}"
+        return f"{base_url}?token={share_link.share_token}"
 
     # =========================================================================
     # Share Link Operations
@@ -421,7 +421,7 @@ class UnifiedShareService(ABC):
             id=share_link.id,
             resource_type=share_link.resource_type,
             resource_id=share_link.resource_id,
-            share_url=self._generate_share_url(share_link.share_token),
+            share_url=self._generate_share_url(share_link),
             share_token=share_link.share_token,
             require_approval=share_link.require_approval,
             default_role=default_role,
