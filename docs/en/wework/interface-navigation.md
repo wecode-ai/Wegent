@@ -86,7 +86,7 @@ Edit Agent definitions from **Project settings → AI team**. Imported and manua
 | Providers, custom endpoints, vision sidecar, connection testing, capabilities, Catalog                          | [Model controls](./user-guide/model-settings.md#model-controls)                         |
 | Attachments, drawing, plan mode, Goal, queues, task views, personal schedules                                   | [Composer and task controls](./tasks.md#task-controls)                                  |
 | Act inside a conversation, select results, complete forms or open a feature                                     | [Describe the operation to Codex](./tasks.md#conversation-interactions)                 |
-| Project menus, members, assignment, archive/restore, boards, execution environments                             | [Project operations](./projects.md#project-controls)                                    |
+| Project menus, members, assignment, archive all chats, archive/restore, boards, execution environments          | [Project operations](./projects.md#project-controls)                                    |
 | File path menus, IDE, terminal, message actions, Diff review, tabs                                              | [Workbench operations](./workbench.md#workspace-controls)                               |
 
 For installation, individual Skills and authorization, see [Plugins and Skills](./plugins-and-skills.md); for device management, [Devices and cloud work](./devices.md); for roles and sources, [My Stand-in](./personal-stand-in.md). Detailed workflows stay in their owning topics rather than being duplicated here.
