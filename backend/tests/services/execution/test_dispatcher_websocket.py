@@ -471,9 +471,7 @@ async def test_device_dispatch_failure_persists_terminal_state(
     from app.services.device_chat_task_service import _run_ai_response
 
     async def dispatch_turn(**kwargs):
-        await dispatcher.dispatch(
-            request, device_id=kwargs["device_id"], emitter=AsyncMock()
-        )
+        await dispatcher.dispatch(request, device_id=kwargs["device_id"])
 
     update = subtask_store.update_fields_if_status
     update_task = task_store.update_json
@@ -499,12 +497,13 @@ async def test_device_dispatch_failure_persists_terminal_state(
             raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
         return update_task(db, **kwargs)
 
+    notifications = AsyncMock()
     with (
         patch.object(subtask_store, "update_fields_if_status", side_effect=persist),
         patch.object(task_store, "update_json", side_effect=persist_task),
         patch(
-            "app.services.device_chat_task_service.collect_completed_result",
-            AsyncMock(return_value={}),
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+            return_value=notifications,
         ),
         patch(
             "app.services.device_chat_task_service.trigger_ai_response_unified",
@@ -551,6 +550,18 @@ async def test_device_dispatch_failure_persists_terminal_state(
     assert (
         test_db.get(TaskResource, task_id).json["status"]["status"] == terminal_status
     )
+    if terminal_status == "FAILED":
+        notifications.emit_chat_error.assert_awaited_once()
+        assert notifications.emit_chat_error.await_args.kwargs["task_id"] == task_id
+        assert (
+            notifications.emit_chat_error.await_args.kwargs["subtask_id"] == subtask_id
+        )
+        notifications.emit_task_status.assert_awaited_once_with(
+            user_id=9, task_id=task_id, status="FAILED"
+        )
+    else:
+        notifications.emit_chat_error.assert_not_awaited()
+        notifications.emit_task_status.assert_not_awaited()
     if online:
         delivery.assert_awaited_once()
     else:
