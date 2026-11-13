@@ -157,9 +157,20 @@ export function createRuntimeNotificationReconnect({
     const readyCount = control.readyCount
     await control.command('reloadMainWindow', 'body')
     await control.awaitReadyAfter(readyCount)
+    // The device can still appear online on its previous connection. Wait for
+    // the new native profile and its actual transport before reading presence.
+    const status = await until(
+      async () => {
+        assert.ifError(proxy.failure)
+        return requestExecutor(control, 'executor.backend.status', {}, uiTimeoutMs)
+      },
+      value =>
+        value.socket_url === proxy.url && value.connected === true && proxy.websockets.size > 0,
+      `Desktop did not connect through the new Runtime transport: ${proxy.url}`,
+      uiTimeoutMs
+    )
     const device = await cloud.waitForDeviceStatus(deviceId, 'online', cloud.backendLogPath)
     assert.ok(proxy.websockets.size, 'Executor bypassed the real transport fault')
-    const status = await requestExecutor(control, 'executor.backend.status', {}, uiTimeoutMs)
     assert.equal(status.device_type, 'app', 'The regression requires the shared desktop Runtime')
     assert.equal(
       status.socket_url,
@@ -251,8 +262,8 @@ export function createRuntimeNotificationReconnect({
         }
       })
       await new Promise(resolve => api.listen(0, '127.0.0.1', resolve))
-      assert.equal(await reconnect(), instance, 'Setup replaced the Runtime identity')
       try {
+        assert.equal(await reconnect(), instance, 'Setup replaced the Runtime identity')
         // No receipt exists for the old task. Enabling its subscription afterwards
         // makes an incorrect replay observable even if receipt deduplication works.
         await fixture({ operation: 'disable' })
