@@ -197,6 +197,12 @@ async function verifyPinnedTaskRefresh({
       'Refreshing an unpinned task duplicated or removed it across work projections'
     )
   }
+  await control.command('click', `[data-testid="${taskRows[0]}"]`)
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === taskIds[0],
+    'The pinned refresh regression did not restore the original current task'
+  )
 }
 
 async function verifyPriorityFilter({ composerSelector, control, projectRowSelector }) {
