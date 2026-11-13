@@ -87,24 +87,14 @@ async fn check_devices(state: &AppState, context: &JobContext) -> Result<Value> 
         if online.is_some() {
             continue;
         }
-        let marked = state
-            .task_store
-            .mark_device_subtask_failed(
-                candidate.task_id,
-                candidate.id,
-                candidate.owner_id,
-                chrono::Local::now().naive_local(),
-            )
-            .await?;
-        if marked {
-            emit_timeout(state, &candidate).await?;
+        if emit_timeout(state, &candidate).await? {
             failed += 1;
         }
     }
     Ok(json!({"failed":failed}))
 }
 
-async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
+async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<bool> {
     use crate::internal_callback::{
         completion, emitter,
         event::{EventType, ExecutionEvent},
@@ -128,30 +118,31 @@ async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
     event.message_id = Some(candidate.message_id);
     event.error = Some("Device connection lost".to_owned());
     event.status = "FAILED".to_owned();
-    let (result, owner) = completion::complete_terminal(
+    let attempt = completion::DeviceAttempt {
+        owner_id: candidate.owner_id,
+        name: &format!("device-{}", candidate.device_id),
+        namespace: &format!("user-{}", candidate.owner_id),
+    };
+    let Some(committed) = completion::complete_device_timeout(
         &completion,
         candidate.task_id,
         candidate.id,
-        "FAILED",
-        None,
-        event.error.as_deref(),
-        None,
-        None,
-        None,
+        &attempt,
+        "Device connection lost (heartbeat timeout)",
     )
-    .await;
-    emitter::emit_done_frames(
+    .await?
+    else {
+        return Ok(false);
+    };
+    emitter::emit_terminal_frames(
         redis,
         &event,
-        owner,
-        &result.unwrap_or_else(|| json!({})),
-        None,
-        // Error-carrying terminal frame: the Source's `emit_chat_error` has no
-        // `contexts` field.
+        committed.user_id,
+        &committed.result.unwrap_or_else(|| json!({})),
         None,
     )
     .await?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
