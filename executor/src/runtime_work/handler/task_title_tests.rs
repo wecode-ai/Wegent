@@ -2,6 +2,178 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use axum::{http::StatusCode, routing::get, Json, Router};
+
+#[derive(Clone, Copy)]
+enum ConcurrentIssueChange {
+    Description,
+    Title,
+    Project,
+    RepeatedConflict,
+    ReadConflict,
+    Denial(StatusCode, &'static str),
+}
+
+async fn generated_cloud_title_after_concurrent_change(
+    change: ConcurrentIssueChange,
+) -> (Result<(), AppIpcError>, Value, Vec<Value>) {
+    let issue = Arc::new(Mutex::new(json!({
+        "cloud_project_id":"project", "title":"Original", "version":1,
+        "description":"Original description"
+    })));
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let read_issue = issue.clone();
+    let write_issue = issue.clone();
+    let captured = writes.clone();
+    let router = Router::new().route(
+        "/api/v1/loop-items/issue",
+        get(move || {
+            let mut issue = read_issue.lock().unwrap();
+            let snapshot = issue.clone();
+            // Another real writer commits after our read, before our conditional PATCH.
+            if reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+                || matches!(change, ConcurrentIssueChange::RepeatedConflict)
+            {
+                issue["version"] = json!(issue["version"].as_u64().unwrap() + 1);
+                issue["description"] = json!("Concurrent description");
+                match change {
+                    ConcurrentIssueChange::Title => issue["title"] = json!("Human title"),
+                    ConcurrentIssueChange::Project => issue["cloud_project_id"] = json!("other"),
+                    _ => {}
+                }
+            }
+            async move {
+                if matches!(change, ConcurrentIssueChange::ReadConflict) {
+                    (
+                        StatusCode::CONFLICT,
+                        Json(json!({"detail":{"code":"version_conflict"}})),
+                    )
+                } else {
+                    (StatusCode::OK, Json(snapshot))
+                }
+            }
+        })
+        .patch(move |Json(body): Json<Value>| {
+            captured.lock().unwrap().push(body.clone());
+            let mut issue = write_issue.lock().unwrap();
+            let response = if let ConcurrentIssueChange::Denial(status, code) = change {
+                (
+                    status,
+                    json!({"detail":{"code":code,"message":"private response"}}),
+                )
+            } else if body["version"] != issue["version"] {
+                (
+                    StatusCode::CONFLICT,
+                    json!({"detail":{"code":"version_conflict","message":"TODO changed"}}),
+                )
+            } else {
+                issue["title"] = body["title"].clone();
+                issue["version"] = json!(issue["version"].as_u64().unwrap() + 1);
+                (StatusCode::OK, issue.clone())
+            };
+            async move { (response.0, Json(response.1)) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let handler = RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
+        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url,
+            auth_token: "synthetic-test-token".into(),
+            ..Default::default()
+        }))),
+        ..RuntimeWorkRpcHandler::new("isolated-device", "unused")
+    };
+    let result = handler
+        .sync_generated_issue_title(
+            &RuntimeTaskLink {
+                runtime_handle: json!({"origin":{
+                    "projectStore":"cloud", "cloudProjectId":"project", "loopItemId":"issue",
+                    "generatedIssueTitle":"Original"
+                }}),
+                ..Default::default()
+            },
+            "Generated title",
+        )
+        .await;
+    server.abort();
+    let issue = issue.lock().unwrap().clone();
+    let writes = writes.lock().unwrap().clone();
+    (result, issue, writes)
+}
+
+#[tokio::test]
+async fn generated_cloud_title_rebases_only_an_unchanged_title_after_version_conflict() {
+    let (result, issue, writes) =
+        generated_cloud_title_after_concurrent_change(ConcurrentIssueChange::Description).await;
+    result.unwrap();
+    assert_eq!(issue["title"], "Generated title");
+    assert_eq!(issue["description"], "Concurrent description");
+    assert_eq!(
+        writes,
+        vec![
+            json!({"version":1,"title":"Generated title"}),
+            json!({"version":2,"title":"Generated title"})
+        ]
+    );
+}
+
+#[tokio::test]
+async fn generated_cloud_title_preserves_a_manual_edit_during_the_conflict() {
+    let (result, issue, writes) =
+        generated_cloud_title_after_concurrent_change(ConcurrentIssueChange::Title).await;
+    result.unwrap();
+    assert_eq!(issue["title"], "Human title");
+    assert_eq!(writes.len(), 1);
+}
+
+#[tokio::test]
+async fn generated_cloud_title_revalidates_project_identity_before_rebasing() {
+    let (result, _, writes) =
+        generated_cloud_title_after_concurrent_change(ConcurrentIssueChange::Project).await;
+    assert_eq!(result.unwrap_err().code, "permission_denied");
+    assert_eq!(writes.len(), 1);
+}
+
+#[tokio::test]
+async fn generated_cloud_title_never_repeats_denied_or_unrelated_failed_writes() {
+    for (status, code) in [
+        (StatusCode::FORBIDDEN, "version_conflict"),
+        (StatusCode::CONFLICT, "unrelated_conflict"),
+        (StatusCode::INTERNAL_SERVER_ERROR, "version_conflict"),
+    ] {
+        let (result, _, writes) = generated_cloud_title_after_concurrent_change(
+            ConcurrentIssueChange::Denial(status, code),
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "cloud_request_failed");
+        assert!(!error.message.contains("private response"));
+        assert_eq!(writes.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn generated_cloud_title_reports_repeated_concurrent_conflicts() {
+    let (result, issue, writes) =
+        generated_cloud_title_after_concurrent_change(ConcurrentIssueChange::RepeatedConflict)
+            .await;
+    assert_eq!(result.unwrap_err().code, "version_conflict");
+    assert_eq!(issue["title"], "Original");
+    assert_eq!(writes.len(), 2);
+}
+
+#[tokio::test]
+async fn generated_cloud_title_preserves_read_failures_without_attempting_a_write() {
+    let (result, _, writes) =
+        generated_cloud_title_after_concurrent_change(ConcurrentIssueChange::ReadConflict).await;
+    assert_eq!(result.unwrap_err().code, "cloud_request_failed");
+    assert!(writes.is_empty());
+}
 
 #[test]
 fn generated_title_does_not_overwrite_a_concurrent_manual_rename_or_publish_an_event() {

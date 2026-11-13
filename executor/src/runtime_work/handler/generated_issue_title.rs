@@ -7,6 +7,20 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         title: &str,
     ) -> Result<(), AppIpcError> {
+        match self.write_generated_issue_title(link, title).await {
+            // Rebase only a rejected conditional write, never a transport or permission failure.
+            Err(error) if error.code == "version_conflict" => {
+                self.write_generated_issue_title(link, title).await
+            }
+            result => result,
+        }
+    }
+
+    async fn write_generated_issue_title(
+        &self,
+        link: &RuntimeTaskLink,
+        title: &str,
+    ) -> Result<(), AppIpcError> {
         let origin = &link.runtime_handle["origin"];
         let Some(source) = origin["generatedIssueTitle"].as_str() else {
             return Ok(());
@@ -40,7 +54,13 @@ impl RuntimeWorkRpcHandler {
                     .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?,
                 )
                 .map_err(|error| {
-                    AppIpcError::new("issue_title_update_failed", error.to_string())
+                    let code = match error {
+                        crate::task_runtime::TaskRuntimeError::VersionConflict => {
+                            "version_conflict"
+                        }
+                        _ => "issue_title_update_failed",
+                    };
+                    AppIpcError::new(code, error.to_string())
                 })?;
         } else {
             let path = format!(

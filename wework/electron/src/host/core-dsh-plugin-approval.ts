@@ -43,5 +43,10 @@ export async function confirmCoreDshPluginInstall(
     parent && !parent.isDestroyed()
       ? await dialog.showMessageBox(parent, options)
       : await dialog.showMessageBox(options)
+  // Record only the native decision, never plugin sources or authentication material.
+  console.info('[Wework] Core plugin native decision', {
+    action: request.action,
+    response: result.response,
+  })
   return result.response === 1
 }

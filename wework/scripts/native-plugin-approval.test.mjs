@@ -75,6 +75,62 @@ test('rejects an ambiguous native confirmation before sending any key', async ()
   expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
 })
 
+test('captures only the owned modal before input and preserves the native rejection', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  let finishDecision
+  const decisionSent = new Promise(resolve => {
+    finishDecision = resolve
+  })
+  native.execute.mockImplementation(async (command, args) => {
+    if (command === 'import') return { stdout: '' }
+    if (command === 'gdbus') return { stdout: "('unix:abstract=synthetic-private-bus',)" }
+    if (command === 'dpkg-query') return { stdout: 'installed' }
+    if (args[0] === 'search') return { stdout: '1\n99\n' }
+    if (args[0] === 'getwindowname')
+      return { stdout: args[1] === '99' ? 'Confirm Core plugin update\n' : 'WeWork\n' }
+    if (args[0] === 'getwindowfocus') return { stdout: '1\n' }
+    finishDecision()
+    return { stdout: '' }
+  })
+  const rejection = new Error('Core plugin installation was cancelled')
+  try {
+    await expect(
+      withNativePluginDecision(
+        {
+          applicationProcessId: 123,
+          command: vi.fn(),
+          matrixEvidenceDirectory: '/isolated-evidence',
+        },
+        async () => {
+          await decisionSent
+          throw rejection
+        }
+      )
+    ).rejects.toBe(rejection)
+    expect(native.execute).toHaveBeenCalledWith(
+      'import',
+      [
+        '-window',
+        '99',
+        expect.stringMatching(/^\/isolated-evidence\/native-plugin-decision-\d+\.png$/),
+      ],
+      expect.objectContaining({ timeout: 2_000 })
+    )
+    expect(log).toHaveBeenCalledWith(
+      '[native-plugin-decision]',
+      expect.stringContaining('"allow":true,"focus":"1"')
+    )
+    expect(log.mock.calls.flat().join(' ')).not.toContain('synthetic-private-bus')
+    const calls = native.execute.mock.calls
+    expect(calls.findIndex(([command]) => command === 'import')).toBeLessThan(
+      calls.findIndex(([, args]) => args[0] === 'windowfocus')
+    )
+  } finally {
+    log.mockRestore()
+  }
+})
+
 test('waits for the actual modal instead of using the already visible owned main window', async () => {
   vi.useFakeTimers()
   Object.defineProperty(process, 'platform', { value: 'linux' })

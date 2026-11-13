@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
@@ -9,6 +10,7 @@ const TITLES = [
   'Core 插件安装确认',
   'Core 插件更新确认',
 ]
+let decisionSequence = 0
 
 /** Act as the test user on the real OS dialog; never replace the native decision. */
 export async function withNativePluginDecision(control, operation, { allow = true } = {}) {
@@ -16,7 +18,7 @@ export async function withNativePluginDecision(control, operation, { allow = tru
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'An isolated Electron PID is required')
   await control.command('focusMainWindow', 'body')
   const abort = new AbortController()
-  const decision = clickNativeDecision(pid, allow, abort.signal)
+  const decision = clickNativeDecision(pid, allow, abort.signal, control.matrixEvidenceDirectory)
   try {
     const [result] = await Promise.all([operation(), decision])
     return result
@@ -26,7 +28,7 @@ export async function withNativePluginDecision(control, operation, { allow = tru
   }
 }
 
-async function clickNativeDecision(pid, allow, signal) {
+async function clickNativeDecision(pid, allow, signal, evidenceDirectory) {
   const options = { timeout: 12_000, signal, encoding: 'utf8' }
   if (process.platform === 'darwin') {
     await execute(
@@ -106,10 +108,17 @@ throw 'The isolated app did not display its native Core plugin decision'
     return
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.
+  const deadline = Date.now() + options.timeout
   const window = await findLinuxModal(pid, options).catch(async error => {
     if (!signal.aborted) await recordNativeWindowDiagnostics(pid)
     throw error
   })
+  await recordNativeDecisionDiagnostics(pid, window, allow, evidenceDirectory, {
+    ...options,
+    timeout: Math.max(1, deadline - Date.now()),
+  })
+  const timeout = deadline - Date.now()
+  assert.ok(timeout > 0, 'The isolated app did not display its native Core plugin decision')
   await execute(
     'xdotool',
     [
@@ -120,7 +129,46 @@ throw 'The isolated app did not display its native Core plugin decision'
       '--clearmodifiers',
       ...(allow ? ['Tab', 'Return'] : ['Escape']),
     ],
-    options
+    { ...options, timeout }
+  )
+}
+
+async function recordNativeDecisionDiagnostics(pid, window, allow, directory, options) {
+  if (!directory) return
+  const screenshot = join(directory, `native-plugin-decision-${++decisionSequence}.png`)
+  const diagnosticOptions = { ...options, timeout: Math.min(2_000, options.timeout) }
+  const [focus, image, accessibility, registryPackage] = await Promise.allSettled([
+    execute('xdotool', ['getwindowfocus'], diagnosticOptions),
+    execute('import', ['-window', window, screenshot], diagnosticOptions),
+    execute(
+      'gdbus',
+      [
+        'call',
+        '--session',
+        '--dest',
+        'org.a11y.Bus',
+        '--object-path',
+        '/org/a11y/bus',
+        '--method',
+        'org.a11y.Bus.GetAddress',
+      ],
+      diagnosticOptions
+    ),
+    execute('dpkg-query', ['-W', '-f=${db:Status-Status}', 'at-spi2-core'], diagnosticOptions),
+  ])
+  console.log(
+    '[native-plugin-decision]',
+    JSON.stringify({
+      pid,
+      window,
+      allow,
+      focus: focus.status === 'fulfilled' ? focus.value.stdout.trim() : null,
+      screenshot: image.status === 'fulfilled' ? screenshot : null,
+      accessibilityBusAvailable: accessibility.status === 'fulfilled',
+      accessibilityRegistryInstalled:
+        registryPackage.status === 'fulfilled' &&
+        registryPackage.value.stdout.trim() === 'installed',
+    })
   )
 }
 

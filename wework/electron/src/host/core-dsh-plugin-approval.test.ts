@@ -60,15 +60,24 @@ describe('native Core plugin approval', () => {
   )
 
   test.each([0, 1, -1, 2])('accepts only the explicit allow response (%s)', async response => {
-    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response, checkboxChecked: false })
-    const parent = { isDestroyed: () => false } as BrowserWindow
-    expect(
-      await confirmCoreDshPluginInstall({ action: 'install', spec: 'package@1' }, parent)
-    ).toBe(response === 1)
-    expect(dialog.showMessageBox).toHaveBeenLastCalledWith(
-      parent,
-      expect.objectContaining({ cancelId: 0 })
-    )
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response, checkboxChecked: false })
+      const parent = { isDestroyed: () => false } as BrowserWindow
+      expect(
+        await confirmCoreDshPluginInstall({ action: 'install', spec: 'package@1' }, parent)
+      ).toBe(response === 1)
+      expect(dialog.showMessageBox).toHaveBeenLastCalledWith(
+        parent,
+        expect.objectContaining({ cancelId: 0 })
+      )
+      expect(log).toHaveBeenCalledWith('[Wework] Core plugin native decision', {
+        action: 'install',
+        response,
+      })
+    } finally {
+      log.mockRestore()
+    }
   })
 
   test('uses an application modal when the parent closes and propagates native failures', async () => {
