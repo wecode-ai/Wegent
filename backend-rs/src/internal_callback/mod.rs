@@ -303,6 +303,7 @@ async fn deliver_terminal_callback(
             tracing::warn!(%error, "callback terminal frames failed");
             FastApiError::internal()
         })?;
+    let has_pending_execution = advance.is_some();
     if let Some(advance) = advance {
         if defer_advance {
             // The recovery worker waits for admission outside the SSE consumer pool.
@@ -329,7 +330,7 @@ async fn deliver_terminal_callback(
         FastApiError::internal()
     })?;
 
-    if !task.auto_advance
+    if !has_pending_execution
         && let Err(error) = recovery::retire(redis, event.task_id, event.subtask_id).await
     {
         tracing::warn!(%error, "could not retire terminal delivery from recovery index");

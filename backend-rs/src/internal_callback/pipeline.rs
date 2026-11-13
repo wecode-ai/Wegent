@@ -259,8 +259,15 @@ async fn claim_and_dispatch(
         let Some(Json(mut current)) = task.as_ref().filter(|row| super::completion::is_active_task(row)).and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
         if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
             || current.pointer(PIPELINE_HANDOFF_PATH) != advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
-            || super::completion::dispatchable_task_status(&current).is_none()
         {
+            return Ok(false);
+        }
+        if super::completion::dispatchable_task_status(&current).is_none() {
+            if let Some(parent) = wegent_task_store::pending_pipeline_parent(&current) {
+                wegent_task_store::retire_pipeline_handoff(
+                    transaction, &tables.tasks, advance.task_id, &mut current, parent,
+                ).await?;
+            }
             return Ok(false);
         }
         let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();

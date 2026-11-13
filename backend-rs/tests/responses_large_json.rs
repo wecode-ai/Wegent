@@ -224,7 +224,7 @@ async fn pipeline_retry_resumes_the_committed_pair_without_inserting_again() {
         .unwrap();
     mysql
         .execute(
-            "UPDATE tasks SET json = JSON_SET(json, '$.spec', JSON_OBJECT(
+            "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'PENDING', '$.spec', JSON_OBJECT(
             'teamRef',JSON_OBJECT('name','fixture-pipeline','namespace','default','user_id',?),
             'currentStage',0)) WHERE id = ?",
             (user_id, task_id),

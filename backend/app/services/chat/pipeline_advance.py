@@ -221,7 +221,7 @@ def _read_pending_handoff(
     with SessionLocal() as db:
         task = task_store.get_by_id_for_update(db, task_id=task_id)
         if task and task.is_active == TaskResource.STATE_ACTIVE:
-            return PipelineAutoAdvanceIntent.read(task, subtask_id)
+            return _dispatchable_handoff(db, task, subtask_id)
         return None
 
 
@@ -257,6 +257,8 @@ async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             user_subtask_id=result.user_subtask.id,
             previous_bot_id=_previous_bot_id(db, pending.completed_subtask_id),
         )
+        if not _claim_auto_advance(pending):
+            return False
         await _emit_user_message(
             db=db,
             user_subtask=result.user_subtask,
@@ -266,8 +268,6 @@ async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             task_room=f"task:{task.id}",
             skip_sid=None,
         )
-        if not _claim_auto_advance(pending):
-            return False
         await _emit_task_status(task.id, "RUNNING", 0, user_id=user.id)
         executor_owns_execution = await _dispatch_until_accepted(request)
         _acknowledge_auto_advance(pending, executor_owns_execution)
@@ -288,7 +288,7 @@ def _prepare_auto_advance(
     task = task_store.get_by_id_for_update(db, task_id=intent.task_id)
     if not task or task.is_active != TaskResource.STATE_ACTIVE:
         return None
-    pending = PipelineAutoAdvanceIntent.read(task, intent.completed_subtask_id)
+    pending = _dispatchable_handoff(db, task, intent.completed_subtask_id)
     if pending is None:
         return None
 
@@ -388,6 +388,21 @@ def _clear_auto_advance(
     task_store.update_json(db, task=task, payload=document)
 
 
+def _dispatchable_handoff(
+    db: Session, task: TaskResource, subtask_id: int
+) -> PipelineAutoAdvanceIntent | None:
+    """Check eligibility using the parent row already locked by the caller."""
+    pending = PipelineAutoAdvanceIntent.read(task, subtask_id)
+    if pending and (task.json.get("status") or {}).get("status") not in (
+        "PENDING",
+        "RUNNING",
+    ):
+        _clear_auto_advance(db, task, pending)
+        db.commit()
+        return None
+    return pending
+
+
 def _claim_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
     if intent.next_pair is None:
         raise ValueError("Pipeline handoff pair is required")
@@ -396,7 +411,7 @@ def _claim_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
         task = task_store.get_by_id_for_update(db, task_id=intent.task_id)
         if not task or task.is_active != TaskResource.STATE_ACTIVE:
             return False
-        pending = PipelineAutoAdvanceIntent.read(task, intent.completed_subtask_id)
+        pending = _dispatchable_handoff(db, task, intent.completed_subtask_id)
         if pending is None or pending.next_pair != intent.next_pair:
             return False
         claimed = subtask_store.transition_status(

@@ -150,7 +150,7 @@ class TerminalHandoffGateway(unittest.TestCase):
         return team["id"], [bot["id"] for bot in bots]
 
     def _seed_running_stage(
-        self, team_id: int, bot_id: int, *, suffix: str = ""
+        self, team_id: int, bot_id: int, *, suffix: str = "", chat_shell: bool = False
     ) -> tuple[int, int]:
         with SessionLocal() as db:
             task = TaskResource(
@@ -161,7 +161,11 @@ class TerminalHandoffGateway(unittest.TestCase):
                 is_active=TaskResource.STATE_ACTIVE,
                 json={
                     "kind": "Task",
-                    "metadata": {"name": self.marker + suffix, "namespace": "default"},
+                    "metadata": {
+                        "name": self.marker + suffix,
+                        "namespace": "default",
+                        "labels": {"source": "chat_shell"} if chat_shell else {},
+                    },
                     "spec": {
                         "title": self.marker,
                         "prompt": self.marker,
@@ -321,6 +325,86 @@ class TerminalHandoffGateway(unittest.TestCase):
 
     def test_rust_callback_retries_pipeline_handoff_once(self) -> None:
         self._retry_pipeline_handoff(rust=True)
+
+    def test_python_does_not_recover_cancelled_pipeline(self) -> None:
+        self._cancel_pipeline_recovery(rust=False)
+
+    def test_rust_does_not_recover_cancelled_pipeline(self) -> None:
+        self._cancel_pipeline_recovery(rust=True)
+
+    def _cancel_pipeline_recovery(self, *, rust: bool) -> None:
+        team_id, bots = self._create_team(pipeline=True)
+        runtime = "rust" if rust else "python"
+        queue = f"wegent:terminal-delivery:pending:{runtime}"
+        for after_pair in (False, True):
+            with self.subTest(after_pair=after_pair):
+                task_id, source_id = self._seed_running_stage(
+                    team_id,
+                    bots[0],
+                    suffix=f"-{int(after_pair)}",
+                    chat_shell=True,
+                )
+                self._assert_cancelled_handoff(
+                    task_id, source_id, queue, rust=rust, after_pair=after_pair
+                )
+
+    def _assert_cancelled_handoff(
+        self,
+        task_id: int,
+        source_id: int,
+        queue: str,
+        *,
+        rust: bool,
+        after_pair: bool,
+    ) -> None:
+        answer = f"{self.marker}-stage-one"
+        member = f"{task_id}:{source_id}"
+        marker = (
+            f"terminal-delivery-callback-{source_id}"
+            if rust
+            else f"pipelineAutoAdvance:{source_id}"
+        )
+        with self._reject_handoff_write(task_id, after_pair=after_pair):
+            self._callback(task_id, source_id, answer, rust=rust, fail=True)
+            self.assertIsNotNone(self.redis.zscore(queue, member))
+            self.assertTrue(
+                self.redis.zadd(queue, {member: time.time() + 120}, ch=True)
+            )
+            before, original = self._snapshot(task_id)
+            self.assertEqual(before["status"]["status"], "PENDING")
+            self.assertEqual(before["spec"]["currentStage"], int(after_pair))
+            self.assertIn(marker, before["metadata"]["labels"])
+            self.assertEqual(len(original), 4 if after_pair else 2)
+            self.assertEqual(original[1]["status"], "COMPLETED")
+            self.assertEqual(original[1]["result"]["value"], answer)
+            if after_pair:
+                self.assertEqual(original[-1]["status"], "PENDING")
+            cancelled = self._json(self.api.post(f"/api/v1/tasks/{task_id}/cancel"))
+            self.assertEqual(cancelled["status"], "CANCELLED")
+        _, expected_rows = self._snapshot(task_id)
+        if after_pair:
+            self.assertEqual(expected_rows[-1]["status"], "CANCELLED")
+
+        self.assertTrue(self.redis.zadd(queue, {member: 0}, ch=True))
+        self._wait_for(lambda: self.redis.zscore(queue, member) is None)
+        self._callback(task_id, source_id, "late completion", rust=rust)
+        after, rows = self._snapshot(task_id)
+        self.assertEqual(after["status"]["status"], "CANCELLED")
+        self.assertEqual(after["spec"]["currentStage"], int(after_pair))
+        self.assertEqual(rows[:2], original[:2])
+        self.assertEqual(rows, expected_rows)
+        self.assertNotIn(marker, after["metadata"]["labels"])
+        self.assertNotIn("pipelinePendingHandoff", after["metadata"]["labels"])
+        if not rust:
+            with SessionLocal() as db:
+                self.assertIsNone(
+                    db.query(Kind)
+                    .filter_by(
+                        kind="PipelineRecovery", namespace="internal", name=member
+                    )
+                    .one_or_none()
+                )
+        self.assertFalse(self._model_requests())
 
     def _retry_pipeline_handoff(self, *, rust: bool) -> None:
         team_id, bot_ids = self._create_team(pipeline=True)

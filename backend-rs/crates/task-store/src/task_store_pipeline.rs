@@ -97,6 +97,10 @@ async fn advance_on<T: MysqlTransaction>(
     let Some(Json(mut task_json)) = task_column::<Json<Value>>(&task, "json") else {
         return Ok(None);
     };
+    if dispatchable_task_status(&task_json).is_none() {
+        retire_pipeline_handoff(transaction, tasks, task_id, &mut task_json, completed_id).await?;
+        return Ok(None);
+    }
     let user_id = task_column::<i64>(&task, "user_id").unwrap_or_default();
     let user: Option<MysqlRow> = transaction
         .fetch_optional(USER_FOR_PIPELINE, (user_id,))
@@ -227,6 +231,32 @@ async fn advance_on<T: MysqlTransaction>(
 }
 
 const PIPELINE_HANDOFF: &str = "pipelinePendingHandoff";
+
+pub fn dispatchable_task_status(task: &Value) -> Option<&str> {
+    task.pointer("/status/status")
+        .and_then(Value::as_str)
+        .filter(|status| matches!(*status, "PENDING" | "RUNNING"))
+}
+
+/// Drop only the handoff owned by this completion while the task row is locked.
+pub async fn retire_pipeline_handoff(
+    transaction: &mut impl MysqlTransaction,
+    tasks: &str,
+    task_id: i64,
+    task: &mut Value,
+    completed_id: i64,
+) -> MysqlResult<()> {
+    if pending_pipeline_parent(task) == Some(completed_id) {
+        clear_pending_pipeline_handoff(task);
+        transaction
+            .execute(
+                format!("UPDATE {tasks} SET json=? WHERE id=?"),
+                (python_json_value(task), task_id),
+            )
+            .await?;
+    }
+    Ok(())
+}
 
 pub fn clear_pending_pipeline_handoff(task: &mut Value) {
     if let Some(labels) = task["metadata"]["labels"].as_object_mut() {
