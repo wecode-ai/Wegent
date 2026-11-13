@@ -46,6 +46,25 @@ const deviceCommands = [
 ] as const
 
 describe('createDeviceApi', () => {
+  test('addresses opted-in computers by unique installation route even when their names collide', async () => {
+    const items = [11, 22].map(id => ({
+      id,
+      device_id: 'same-legacy-name',
+      execution_target_id: `app-record-${id}`,
+      runtime_instance_id: `installation-${id}`,
+      device_type: 'app',
+      bind_shell: 'claudecode',
+      runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+    }))
+    const client = { get: vi.fn().mockResolvedValue({ items }) } as unknown as HttpClient
+    const devices = await createDeviceApi(client).listDevices()
+    expect(devices.map(device => device.device_id)).toEqual(['app-record-11', 'app-record-22'])
+    expect(devices.map(device => device.runtime_instance_id)).toEqual([
+      'installation-11',
+      'installation-22',
+    ])
+  })
+
   test.each(deviceCommands)(
     'maps an unavailable device consistently for %s',
     async (_name, run) => {

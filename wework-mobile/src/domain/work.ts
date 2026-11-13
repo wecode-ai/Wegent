@@ -141,11 +141,14 @@ function workspaceConversations(
     const address = taskAddress(workspace, task)
     return {
       address,
+      sourceWorkspacePath: workspace.workspacePath,
       title: task.title || '新会话',
       deviceName: workspace.deviceName,
       projectName,
       updatedAt: timestamp(task.updatedAt ?? task.createdAt),
       running: runningByTask.get(runtimeTaskKey(address)) ?? Boolean(task.running),
+      pinned: task.pinned,
+      pinnedOrder: task.pinnedOrder,
     }
   })
 }

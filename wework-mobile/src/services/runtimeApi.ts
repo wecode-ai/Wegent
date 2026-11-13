@@ -1,4 +1,6 @@
 import type { RuntimeSessionConfig } from './backendConfig'
+import { requestUserInputResponseText } from '../../../packages/chat-core/src/runtime-user-input'
+import type { RuntimeGuidanceResponse } from '../../../packages/chat-core/src/runtime-task-api-types'
 import type {
   DeviceListResponse,
   RuntimeCreateRequest,
@@ -13,6 +15,8 @@ import type {
   RuntimeWorkspaceOpenResponse,
   ModelSelectionConfig,
   UnifiedModelListResponse,
+  RunnerModel,
+  RequestUserInputResponse,
 } from '@/types/runtime'
 
 export class RuntimeApiError extends Error {
@@ -47,9 +51,18 @@ type RuntimeFileUploader = (input: {
 }) => Promise<RuntimeFileUploadResult>
 
 export class RuntimeApi {
+  private readonly pluginCatalogs = new Map<
+    string,
+    {
+      value?: RuntimeInstalledPlugin[]
+      expiresAt: number
+      pending?: Promise<RuntimeInstalledPlugin[]>
+    }
+  >()
   constructor(
     private readonly config: RuntimeSessionConfig,
-    private readonly uploadFile: RuntimeFileUploader = uploadRuntimeFile
+    private readonly uploadFile: RuntimeFileUploader = uploadRuntimeFile,
+    private readonly getAccessToken: () => string = () => config.accessToken
   ) {}
 
   async testConnection(): Promise<void> {
@@ -64,6 +77,20 @@ export class RuntimeApi {
     return this.request(
       '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
     )
+  }
+
+  async listNativeModels(deviceRecordId: number): Promise<{
+    models: RunnerModel[]
+    catalog_error?: string | null
+  }> {
+    // APP catalogs use the same server-authorized read as PC Wework.
+    const rows = await this.request<
+      { id: string; models: RunnerModel[]; catalog_error?: string | null }[]
+    >('/v1/resources/execution-environments')
+    const row = rows.find(candidate => candidate.id === String(deviceRecordId))
+    if (!row) throw new Error('设备已不可用，请刷新设备列表')
+    if (!Array.isArray(row.models)) throw new Error('设备返回了无效的模型目录')
+    return { models: row.models, catalog_error: row.catalog_error }
   }
 
   preflightWorkspace(input: {
@@ -136,6 +163,31 @@ export class RuntimeApi {
     })
   }
 
+  respondToUserInput(
+    address: RuntimeTaskAddress,
+    response: RequestUserInputResponse
+  ): Promise<RuntimeSendResponse> {
+    return this.request('/runtime-work/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: response,
+      }),
+    })
+  }
+
+  guideTask(
+    address: RuntimeTaskAddress,
+    message: string,
+    clientGuidanceId: string
+  ): Promise<RuntimeGuidanceResponse> {
+    return this.request('/runtime-work/guidance', {
+      method: 'POST',
+      body: JSON.stringify({ address, message, clientGuidanceId }),
+    })
+  }
+
   async uploadAttachment(asset: RuntimeUploadAsset): Promise<RuntimeAttachment> {
     if (asset.size && asset.size > 100 * 1024 * 1024) {
       throw new Error('附件不能超过 100 MB')
@@ -147,7 +199,7 @@ export class RuntimeApi {
       mimeType: asset.mimeType,
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${this.config.accessToken}`,
+        Authorization: `Bearer ${this.getAccessToken()}`,
       },
     })
     const body = parseTextBody(response.body)
@@ -172,12 +224,29 @@ export class RuntimeApi {
     }
   }
 
-  async listInstalledPlugins(deviceId?: string): Promise<RuntimeInstalledPlugin[]> {
+  listInstalledPlugins(deviceId?: string): Promise<RuntimeInstalledPlugin[]> {
+    const key = deviceId ?? ''
+    const cached = this.pluginCatalogs.get(key)
+    if (cached?.value && cached.expiresAt > Date.now()) return Promise.resolve(cached.value)
+    if (cached?.pending) return cached.pending
+    const entry: NonNullable<typeof cached> = { expiresAt: 0 }
+    this.pluginCatalogs.set(key, entry)
     const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''
-    const response = await this.request<{ items: RuntimeInstalledPlugin[] }>(
-      `/plugins/installed${query}`
-    )
-    return response.items
+    entry.pending = this.request<{ items: RuntimeInstalledPlugin[] }>(`/plugins/installed${query}`)
+      .then(response => {
+        entry.value = response.items
+        // PC Wework uses the same 30-second composer inventory freshness window.
+        entry.expiresAt = Date.now() + 30_000
+        return response.items
+      })
+      .finally(() => {
+        entry.pending = undefined
+      })
+    return entry.pending
+  }
+
+  clearPluginCatalogs(): void {
+    this.pluginCatalogs.clear()
   }
 
   setGoal(address: RuntimeTaskAddress, objective: string): Promise<{ accepted: boolean }> {
@@ -208,18 +277,31 @@ export class RuntimeApi {
     })
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    token = this.getAccessToken(),
+    useUpdatedToken = true
+  ): Promise<T> {
     const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
       ...init,
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.accessToken}`,
+        Authorization: `Bearer ${token}`,
         ...init.headers,
       },
     })
 
     const body = await parseBody(response)
+    const nextToken = this.getAccessToken()
+    if (
+      response.status === 401 &&
+      useUpdatedToken &&
+      token !== nextToken &&
+      (!init.method || init.method === 'GET')
+    )
+      return this.request<T>(path, init, nextToken, false)
     if (!response.ok) {
       const message = errorMessage(body) ?? `请求失败 (${response.status})`
       throw new RuntimeApiError(message, response.status, body)

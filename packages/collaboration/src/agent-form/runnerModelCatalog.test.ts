@@ -5,6 +5,7 @@ import { runnerModelKey, type RunnerModel } from './runnerRouting'
 import { runnerModelCatalog } from './runnerModelCatalog'
 import {
   getSelectedModelDisplayLabel,
+  getControlsForModel,
   getDefaultModelOptions,
   groupModelsByFamily,
   isSameModelSelection,
@@ -22,6 +23,19 @@ const native: RunnerModel = {
 }
 
 describe('runner model picker catalog', () => {
+  it.each(['openai', 'custom'])('preserves the shared Codex speed control for %s', provider => {
+    const [entry] = runnerModelCatalog([{ ...native, provider }], [], 'codex')
+
+    expect(getControlsForModel(entry.model).find(control => control.id === 'speed')).toMatchObject({
+      defaultValue: 'standard',
+      options: [
+        expect.objectContaining({ value: 'standard' }),
+        expect.objectContaining({ value: 'fast' }),
+      ],
+    })
+    expect(getDefaultModelOptions(entry.model).speed).toBe('standard')
+  })
+
   it('uses native reasoning metadata for default labels and explicit selections', () => {
     const [entry] = runnerModelCatalog(
       [
