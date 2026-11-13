@@ -309,14 +309,14 @@ export async function verifyTerminalWireCompatibility(
       assert.equal(forcedExit.reason_code, 'terminal_session_not_found')
       assert.equal(forcedExit.output_complete, false)
       assert.equal(forcedExit.exit_code, null)
+      // Keep the browser socket and gateway alive until the Executor has
+      // received the forwarded ACK and retired the PTY.
+      await cloudEnvironment.waitForRevokedTerminalRetirement(sessionId)
       assert.equal(
         outputLines(readText()).includes(forcedMarker),
         false,
         'Output emitted after revocation reached the frontend terminal'
       )
-      // Keep the browser socket and gateway alive until the Executor has
-      // received the forwarded ACK and retired the PTY.
-      await cloudEnvironment.waitForRevokedTerminalRetirement(sessionId)
       forcedEndDelivered = true
     } else {
       await terminalCall(socket, 'terminal:close', controlPayload())

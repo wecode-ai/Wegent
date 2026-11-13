@@ -206,20 +206,29 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
          VALUES (?, ?, '', true, 'user', 'password', '{}')",
         (OWNER_ID, USERNAME),
     ).await.unwrap();
-    let registration = fixture.mysql.execute(
-        "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
-         VALUES (?, 'Device', 'local-device', 'default', ?, false, now(), now())",
-        (OWNER_ID, json!({
-            "kind": "Device",
-            "metadata": {"name": "local-device", "namespace": "default"},
-            "spec": {
-                "deviceType": "remote", "deviceId": "local-device",
-                "runtimeInstanceId": "runtime-original", "appDeviceId": "local-device",
-            },
-        }).to_string()),
-    ).await.unwrap();
-    let route = format!("app-record-{}", registration.last_insert_id);
-    let key = format!("device:online:{OWNER_ID}:{route}");
+    let mut devices = Vec::new();
+    for (name, legacy_type) in [("local-device", "remote"), ("legacy-local-device", "local")] {
+        let registration = fixture.mysql.execute(
+            "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
+             VALUES (?, 'Device', ?, 'default', ?, false, now(), now())",
+            (OWNER_ID, name, json!({
+                "kind": "Device",
+                "metadata": {"name": name, "namespace": "default"},
+                "spec": {
+                    "deviceType": legacy_type, "deviceId": name,
+                    "runtimeInstanceId": "runtime-original", "appDeviceId": "electron-original",
+                },
+            }).to_string()),
+        ).await.unwrap();
+        let route = format!("app-record-{}", registration.last_insert_id);
+        let key = format!("device:online:{OWNER_ID}:{route}");
+        devices.push(LegacyDevice {
+            name,
+            legacy_type,
+            route,
+            key,
+        });
+    }
 
     let state = build_app_state_with_clients(fixture.mysql.clone(), Some(redis.clone()))
         .await
@@ -245,20 +254,24 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     let outcome = tokio::spawn({
         let mysql = fixture.mysql.clone();
         let redis = redis.clone();
-        let key = key.clone();
+        let devices = devices.clone();
         async move {
-            timeout(
-                Duration::from_secs(20),
-                assert_app_conflicts(&address, &token, &mysql, &redis, &key, &route, OWNER_ID),
-            )
-            .await
-            .expect("App registration scenario timed out");
+            for device in devices {
+                timeout(
+                    Duration::from_secs(20),
+                    assert_app_conflicts(&address, &token, &mysql, &redis, OWNER_ID, &device),
+                )
+                .await
+                .expect("App registration scenario timed out");
+            }
         }
     })
     .await;
     let _ = stop.send(());
     let stopped = server.await;
-    redis.del(key).await.unwrap();
+    for device in devices {
+        redis.del(device.key).await.unwrap();
+    }
     fixture.close().await;
     stopped.unwrap().unwrap();
     outcome.unwrap();
@@ -271,15 +284,28 @@ struct AppDeviceRecord {
     json: Value,
 }
 
+#[derive(Clone)]
+struct LegacyDevice {
+    name: &'static str,
+    legacy_type: &'static str,
+    route: String,
+    key: String,
+}
+
 async fn assert_app_conflicts(
     address: &str,
     token: &str,
     mysql: &brz_mysql::MysqlService,
     redis: &RedisService,
-    key: &str,
-    route: &str,
     owner_id: i32,
+    device: &LegacyDevice,
 ) {
+    let LegacyDevice {
+        name,
+        legacy_type,
+        route,
+        key,
+    } = device;
     let connect = || async {
         PollClient::connect(address, NAMESPACE, &json!({"token": token}).to_string())
             .await
@@ -289,15 +315,15 @@ async fn assert_app_conflicts(
         mysql
             .fetch_all::<_, _, AppDeviceRecord>(
                 "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
-             AND namespace = 'default' AND name = 'local-device'",
-                (owner_id,),
+             AND namespace = 'default' AND name = ?",
+                (owner_id, *name),
             )
             .await
             .unwrap()
     };
     let registration = |runtime: &str, app_id: &str| {
         json!({
-            "device_id": "local-device", "name": "App E2E", "device_type": "app",
+            "device_id": name, "name": "App E2E", "device_type": "app",
             "runtime_instance_id": runtime, "app_device_id": app_id,
         })
     };
@@ -320,8 +346,8 @@ async fn assert_app_conflicts(
     let rows = read_records().await;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].is_active, 0);
-    assert_eq!(rows[0].json["spec"]["deviceType"], "remote");
-    assert_eq!(rows[0].json["spec"]["appDeviceId"], "local-device");
+    assert_eq!(rows[0].json["spec"]["deviceType"], *legacy_type);
+    assert_eq!(rows[0].json["spec"]["appDeviceId"], "electron-original");
     assert!(redis.get::<_, String>(key).await.unwrap().is_none());
 
     assert_eq!(
@@ -329,10 +355,10 @@ async fn assert_app_conflicts(
             &original,
             1,
             "device:register",
-            registration("runtime-original", "local-device")
+            registration("runtime-original", "electron-original")
         )
         .await,
-        json!({"success": true, "device_id": "local-device", "device_route_id": route}),
+        json!({"success": true, "device_id": name, "device_route_id": route}),
     );
     assert_eq!(
         event_ack(
@@ -357,13 +383,13 @@ async fn assert_app_conflicts(
 
     let rows = read_records().await;
     assert_eq!(rows.len(), 1);
-    assert_eq!(format!("app-record-{}", rows[0].id), route);
+    assert_eq!(&format!("app-record-{}", rows[0].id), route);
     assert_eq!(rows[0].is_active, 1);
     assert_eq!(rows[0].json["spec"]["deviceType"], "app");
     assert_eq!(
         rows[0].json["spec"]["runtimeInstanceId"],
         "runtime-original"
     );
-    assert_eq!(rows[0].json["spec"]["appDeviceId"], "local-device");
+    assert_eq!(rows[0].json["spec"]["appDeviceId"], "electron-original");
     assert_eq!(online(redis, key).await["socket_id"], original.socket_id());
 }

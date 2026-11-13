@@ -440,11 +440,7 @@ fn select_registration_device<'a>(
         let exact: Vec<&DeviceKindRow> = devices
             .iter()
             .filter(|device| {
-                (!app_name_is_unique
-                    || matches!(
-                        spec_string(&device.json, "deviceType"),
-                        Some("app" | "remote")
-                    ))
+                (!app_name_is_unique || can_restore_as_app(&device.json))
                     && spec_string(&device.json, "runtimeInstanceId") == Some(runtime)
                     && spec_string(&device.json, "appDeviceId") == app_device_id
             })
@@ -458,10 +454,8 @@ fn select_registration_device<'a>(
         if app_name_is_unique && !devices.is_empty() {
             let same_runtime = runtime.is_some()
                 && devices.iter().any(|device| {
-                    matches!(
-                        spec_string(&device.json, "deviceType"),
-                        Some("app" | "remote")
-                    ) && spec_string(&device.json, "runtimeInstanceId") == runtime
+                    can_restore_as_app(&device.json)
+                        && spec_string(&device.json, "runtimeInstanceId") == runtime
                 });
             return Err(if same_runtime {
                 "App device identity changed; reconnect using the original installation identity"
@@ -499,6 +493,10 @@ fn select_registration_device<'a>(
         return Ok(Some(by_runtime[0]));
     }
     Ok(devices.first())
+}
+
+fn can_restore_as_app(json: &Value) -> bool {
+    is_local_device(json) || matches!(spec_string(json, "deviceType"), Some("app" | "remote"))
 }
 
 /// `upsert_device_crd`'s create branch.
