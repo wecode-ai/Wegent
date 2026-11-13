@@ -335,6 +335,13 @@ jobs:
           cargo test --locked --lib project_coordination::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-coordination-mysql.log
 
+      - name: Verify independent Issue invitations and transactions with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked -p wegent-backend-rs --lib personal_issues::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/personal-issues-mysql.log
+
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
         env:

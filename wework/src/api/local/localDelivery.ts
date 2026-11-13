@@ -1126,7 +1126,7 @@ export function createLocalDeliveryApi(
     async listMyWork(options?: {
       cursor?: string
       limit?: number
-      scope?: 'assigned' | 'participating'
+      scope?: 'assigned' | 'created' | 'participating'
       includeCompleted?: boolean
       order?: 'recent' | 'attention' | 'activity' | 'assignment' | 'priority'
       viewerIds?: readonly (string | number)[]

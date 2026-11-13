@@ -1155,3 +1155,17 @@ path = "/api/plugins/local-sync"
 [[routes]]
 methods = ["POST"]
 path = "/api/plugins/native-auth/exchange"
+
+# First-class independent Issues have no project or space.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/personal-issues"
+[[routes]]
+methods = ["GET", "PATCH", "DELETE"]
+path = "/api/v1/personal-issues/:issue_id"
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/personal-issues/:issue_id/comments"
+[[routes]]
+methods = ["POST"]
+path = "/api/v1/personal-issues/:issue_id/project"

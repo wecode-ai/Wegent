@@ -270,7 +270,9 @@ export function useCollaborationPlatformController({
         !force &&
         !location.workspaceId &&
         !location.projectId &&
-        (rootView === "home" || rootView === "devices") &&
+        (rootView === "home" ||
+          rootView === "devices" ||
+          rootView.startsWith("issues-")) &&
         navigationCacheStatusRef.current === "complete"
       ) {
         setState((current) => ({
