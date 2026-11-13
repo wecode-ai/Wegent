@@ -426,7 +426,13 @@ export function createHybridWorkbenchServices(
       }
     },
   })
-  const cloudRuntimeApis = new Map<string, NonNullable<WorkbenchServices['runtimeWorkApi']>>()
+  const cloudRuntimeApis = new Map<
+    string,
+    {
+      isAppDevice: boolean
+      api: NonNullable<WorkbenchServices['runtimeWorkApi']>
+    }
+  >()
   const cloudAutomationApis = new Map<string, NonNullable<WorkbenchServices['automationApi']>>()
   const rememberedCloudAutomations = new Map<string, Automation[]>()
   const cloudAutomationRequests = new Map<string, Promise<void>>()
@@ -596,13 +602,12 @@ export function createHybridWorkbenchServices(
     if (!logicalDeviceId) {
       throw new Error('Cloud runtime deviceId is required')
     }
+    const isAppDevice = rememberedCloudDevices.some(
+      device => device.device_id === logicalDeviceId && device.device_type === 'app'
+    )
     const cached = cloudRuntimeApis.get(logicalDeviceId)
-    if (cached) return cached
-    if (
-      rememberedCloudDevices.some(
-        device => device.device_id === logicalDeviceId && device.device_type === 'app'
-      )
-    ) {
+    if (cached?.isAppDevice === isAppDevice) return cached.api
+    if (isAppDevice) {
       // Personal App tasks use the same Backend task contract as Mobile. The
       // target keeps its own model catalog and installation-local settings.
       const api = {
@@ -619,7 +624,7 @@ export function createHybridWorkbenchServices(
             logicalDeviceId
           ),
       }
-      cloudRuntimeApis.set(logicalDeviceId, api)
+      cloudRuntimeApis.set(logicalDeviceId, { isAppDevice, api })
       return api
     }
     const api = createRuntimeWorkApiFromIpc(
@@ -644,7 +649,7 @@ export function createHybridWorkbenchServices(
           rememberedCloudDevices.find(device => device.device_id === deviceId)?.name,
       }
     ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
-    cloudRuntimeApis.set(logicalDeviceId, api)
+    cloudRuntimeApis.set(logicalDeviceId, { isAppDevice, api })
     return api
   }
   const runtimeApi = (deviceId?: string | null) =>

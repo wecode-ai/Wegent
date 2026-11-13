@@ -1381,6 +1381,40 @@ describe('createHybridWorkbenchServices', () => {
     ])
   })
 
+  it('reclassifies a cached cloud runtime client when discovery identifies a peer App', async () => {
+    const services = createServices()
+    const deviceId = 'app-record-22'
+    await services.runtimeWorkApi!.searchRuntimeTranscript({
+      deviceId,
+      taskId: 'restored-task',
+      query: 'needle',
+    })
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 22,
+        device_id: deviceId,
+        execution_target_id: deviceId,
+        runtime_instance_id: 'installation-b',
+        device_type: 'app',
+        status: 'online',
+        name: 'Other computer',
+        bind_shell: 'claudecode',
+        runtime_features: { remoteTaskAccess: { version: 1, enabled: true } },
+      },
+    ])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.cloudRuntimeIpcRequest.mockClear()
+    const request = { deviceId, runtime: 'codex' as const, message: 'run' }
+    mocks.cloudCreateRuntimeTask.mockResolvedValue({ accepted: true, taskId: 'new-task' })
+
+    await services.runtimeWorkApi!.prepareRuntimeModel(request)
+    await services.runtimeWorkApi!.createRuntimeTask(request)
+
+    expect(mocks.cloudServices.runtimeWorkApi.prepareRuntimeModel).toHaveBeenCalledWith(request)
+    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledWith(request)
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
   it('searches each remote App through its scoped runtime request without aggregate duplicates', async () => {
     mocks.cloudListDevices.mockResolvedValue(
       [11, 22].map(id => ({
