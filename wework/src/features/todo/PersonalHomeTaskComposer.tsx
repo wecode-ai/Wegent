@@ -18,6 +18,7 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 import { issueRuntimePort } from './issueRuntimePort'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
+import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 import { LOCAL_USER } from '@/api/local/localSession'
 
 /** Use the Tasks composer and its real controls; only the Issue linkage belongs here. */
@@ -145,16 +146,16 @@ export function PersonalHomeTaskComposer({
         onError: setError,
         prepareRuntimeTask: address =>
           prepareIssueRuntimeTask({
-            api,
             port,
             project,
             address,
             issueId: issue.id,
             title: issue.title,
-            onStatusError: message => setError(message || t('task_board_status_update_failed')),
           }),
       })
       if (!address) return false
+      const statusError = await updateIssueWhenPersonalTaskStarts(api.issues, issue.id)
+      if (statusError !== null) setError(statusError || t('task_board_status_update_failed'))
       draft.onTaskCreated?.(issue, toWorkspaceRuntimeTaskAddress(address))
       draft.onChange('')
       draft.onResetDraft?.()

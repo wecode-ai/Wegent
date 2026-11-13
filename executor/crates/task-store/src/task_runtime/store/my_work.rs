@@ -68,6 +68,20 @@ impl LocalTaskStore {
                AND p.id<>?1 AND COALESCE(json_extract(p.metadata,'$.task_provider'),'local')='local'
                AND json_extract(t.metadata,'$.archived_at') IS NULL
                AND (?2=0 OR t.assignee_user_id IN (SELECT value FROM json_each(?7)))
+               AND (COALESCE(t.created_by_user_id,0) IN (SELECT value FROM json_each(?7))
+                 OR t.assignee_user_id IN (SELECT value FROM json_each(?7))
+                 OR EXISTS(SELECT 1 FROM loop_items b WHERE b.resource_type='execution'
+                   AND b.loop_item_id=t.id AND b.cloud_project_id=t.cloud_project_id
+                   AND b.task_user_id IN (SELECT value FROM json_each(?7))
+                   AND b.unlinked_at IS NULL AND b.deleted_at IS NULL)
+                 OR EXISTS(SELECT 1 FROM loop_items a WHERE a.resource_type='chat_agent'
+                   AND a.id=t.assignee_agent_id AND a.cloud_project_id=t.cloud_project_id
+                   AND COALESCE(a.created_by_user_id,0) IN (SELECT value FROM json_each(?7))
+                   AND a.status='active' AND a.deleted_at IS NULL)
+                 OR EXISTS(SELECT 1 FROM loop_item_comments c WHERE c.task_id=t.id
+                   AND c.project_id=t.cloud_project_id AND c.sender_type='user'
+                   AND c.sender_id IN (SELECT CAST(value AS TEXT) FROM json_each(?7))
+                   AND c.deleted_at IS NULL))
                AND (?3=1 OR t.status NOT IN ('completed','cancelled'))
              ) SELECT * FROM work
              WHERE ?4 IS NULL OR attention_rank>?9
@@ -147,6 +161,145 @@ impl LocalTaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn participating_filters_relations_before_pagination_and_excludes_expired_relations() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("participating.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Participation"})).unwrap())
+            .unwrap();
+        let agent = store
+            .create_chat_agent(
+                &project.id,
+                serde_json::from_value(json!({"name":"owned-agent"})).unwrap(),
+            )
+            .unwrap();
+        let mut ids = Vec::new();
+        for index in 0..8 {
+            let issue = store
+                .create_task(
+                    &project.id,
+                    serde_json::from_value(json!({"title":format!("Work {index}")})).unwrap(),
+                )
+                .unwrap();
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_items SET created_by_user_id=99,assignee_user_id=NULL WHERE id=?1",
+                    [&issue.id],
+                )
+                .unwrap();
+            ids.push(issue.id);
+        }
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET created_by_user_id=7 WHERE id=?1",
+                [&ids[0]],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET assignee_user_id=7 WHERE id=?1",
+                [&ids[1]],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET created_by_user_id=7 WHERE id=?1",
+                [&agent.id],
+            )
+            .unwrap();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_items SET assignee_agent_id=?1 WHERE id=?2",
+                params![agent.id, ids[4]],
+            )
+            .unwrap();
+        for index in [2, 7] {
+            let task = format!("runtime-{index}");
+            store
+                .bind_task(
+                    &project.id,
+                    Some(&ids[index]),
+                    None,
+                    serde_json::from_value(json!({"deviceId":"mac","taskId":task})).unwrap(),
+                    None,
+                )
+                .unwrap();
+            store.connection().unwrap().execute("UPDATE loop_items SET task_user_id=7 WHERE resource_type='execution' AND task_id=?1", [&task]).unwrap();
+        }
+        store.connection().unwrap().execute("UPDATE loop_items SET unlinked_at='2026-11-12T12:00:00Z' WHERE resource_type='execution' AND task_id='runtime-7'", []).unwrap();
+        for index in [3, 6] {
+            let comment = store
+                .create_comment(&LocalCommentCreate {
+                    project_id: project.id.clone(),
+                    task_id: ids[index].clone(),
+                    client_message_id: None,
+                    sender_type: "user".into(),
+                    sender_id: "7".into(),
+                    sender_name: "Me".into(),
+                    content: "I participated".into(),
+                    metadata: json!({}),
+                    reply_to_message_id: None,
+                })
+                .unwrap();
+            if index == 6 {
+                store.connection().unwrap().execute("UPDATE loop_item_comments SET deleted_at='2026-11-12T12:00:00Z' WHERE message_id=?1", [&comment.message_id]).unwrap();
+            }
+        }
+        for (index, id) in ids.iter().enumerate() {
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE loop_items SET updated_at=?1 WHERE id=?2",
+                    params![format!("2026-11-12T12:00:0{index}Z"), id],
+                )
+                .unwrap();
+        }
+        let mut cursor = None;
+        let mut actual = Vec::new();
+        loop {
+            let page = store
+                .my_work_page(1, cursor.as_deref(), false, true, &[7], "recent")
+                .unwrap();
+            actual.extend(
+                page["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| row["issue"]["id"].as_str().unwrap().to_owned()),
+            );
+            cursor = page["next_cursor"].as_str().map(str::to_owned);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(actual, ids[..5].iter().rev().cloned().collect::<Vec<_>>());
+        let assigned = store
+            .my_work_page(30, None, true, true, &[7], "recent")
+            .unwrap();
+        assert_eq!(assigned["items"].as_array().unwrap().len(), 1);
+        assert_eq!(assigned["items"][0]["issue"]["id"], ids[1]);
+        for viewers in [vec![8], vec![]] {
+            assert!(store
+                .my_work_page(30, None, false, true, &viewers, "recent")
+                .unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+        }
+    }
 
     #[test]
     fn explicit_sort_modes_page_in_database_order_and_preserve_assignment_age() {

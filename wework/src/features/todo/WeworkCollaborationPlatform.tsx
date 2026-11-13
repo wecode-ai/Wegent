@@ -135,7 +135,7 @@ import {
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
 import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
-import { workItemComposerReference } from './workItemTaskInput'
+import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -1157,7 +1157,6 @@ export function WeworkSharedProject({
         onOpenRuntimeTask={onOpenRuntimeTask}
         prepareTask={address =>
           prepareIssueRuntimeTask({
-            api: scopedApi,
             port: runtimePort,
             project,
             address,
@@ -1171,11 +1170,15 @@ export function WeworkSharedProject({
                   assignmentId: taskComposer.dispatch.assignmentId,
                 }
               : (taskComposer.humanTaskBinding ?? null),
-            onStatusError: message =>
-              notify(message || t('task_board_status_update_failed'), 'error'),
           })
         }
         onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
+          const statusError = await updateIssueWhenPersonalTaskStarts(
+            scopedApi.issues,
+            taskComposer.issue.id
+          )
+          if (statusError !== null)
+            notify(statusError || t('task_board_status_update_failed'), 'error')
           if (localProject) {
             saveProjectSpaceCodeWorkspacePreference(
               userId,

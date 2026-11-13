@@ -182,3 +182,19 @@ it('keeps the draft and retries the same Issue after a rejected runtime start', 
   await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
   expect(api.issues.create).toHaveBeenCalledOnce()
 })
+
+it('does not mark the Issue started when its bound Runtime request is rejected', async () => {
+  const { createProjectRuntimeTask, api, draft, address, port } = setup()
+  createProjectRuntimeTask.mockImplementationOnce(async (_message, options) => {
+    const rollback = await options.prepareRuntimeTask(address)
+    await rollback()
+    return false as never
+  })
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
+  expect(port.bindTask).toHaveBeenCalledOnce()
+  expect(port.unbindTask).toHaveBeenCalledOnce()
+  expect(api.issues.update).not.toHaveBeenCalled()
+  expect(draft.onTaskCreated).not.toHaveBeenCalled()
+  expect(draft.onResetDraft).not.toHaveBeenCalled()
+})
