@@ -116,6 +116,24 @@ export function parseError(error: Error | string, backendType?: string): ParsedE
 function classifyByMessage(errorMessage: string): ParsedError {
   const lowerMessage = errorMessage.toLowerCase()
 
+  // Database driver errors (check first: the rendered SQL/statement text contains
+  // words such as "executor" that the container/executor rules below would match).
+  // Inspect only the wrapper before [SQL:]: statements and parameters can contain
+  // traceback or exit-code text as data. A user-code traceback plus an executor
+  // exit in that wrapper is still a container failure.
+  const sqlMarkerIndex = lowerMessage.indexOf('[sql:')
+  const outerMessage = sqlMarkerIndex >= 0 ? lowerMessage.slice(0, sqlMarkerIndex) : lowerMessage
+  const hasDatabaseDriverMarker =
+    sqlMarkerIndex >= 0 || outerMessage.includes('sqlalchemy') || outerMessage.includes('pymysql')
+  const hasExecutorExitMarker =
+    /\bexit code\s*:?\s*-?\d+/.test(outerMessage) ||
+    /\bexited(?: immediately)? with (?:code|status)\s*:?\s*-?\d+/.test(outerMessage)
+  const hasUserCodeFailureMarker =
+    outerMessage.includes('traceback (most recent call last):') && hasExecutorExitMarker
+  if (hasDatabaseDriverMarker && !hasUserCodeFailureMarker) {
+    return buildResult('generic_error', errorMessage)
+  }
+
   // Context length exceeded (check before general LLM errors)
   if (
     lowerMessage.includes('prompt is too long') ||

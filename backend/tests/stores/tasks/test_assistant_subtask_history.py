@@ -153,3 +153,59 @@ def test_ordered_task_history_preserves_filters_without_sorting_large_payloads(
     _assert_id_sort_projection(
         history_statements, empty=options.get("message_ids") == []
     )
+
+
+@pytest.mark.parametrize("owner_id", [None, 10, 20])
+def test_list_by_task_desc_sorts_ids_without_sorting_large_payloads(
+    test_db: Session,
+    assistant_history: dict,
+    history_statements: list[str],
+    owner_id: Optional[int],
+) -> None:
+    subtasks = SqlAlchemySubtaskStore().list_by_task_desc(
+        test_db, task_id=42, owner_user_id=owner_id
+    )
+
+    assert [subtask.id for subtask in subtasks] == (
+        [] if owner_id == 20 else [41, 42, 44]
+    )
+    for subtask in subtasks:
+        assert isinstance(subtask, Subtask)
+        assert subtask.result == assistant_history
+        assert subtask.prompt == "original prompt"
+        assert subtask.error_message == "Task output exceeded the device callback limit"
+    assert not any("subtask_contexts" in s for s in history_statements)
+    _assert_id_sort_projection(history_statements)
+
+
+@pytest.mark.parametrize(
+    ("statuses", "owner_id", "expected_id"),
+    [
+        ([SubtaskStatus.FAILED], None, 42),
+        ([SubtaskStatus.FAILED], 10, 42),
+        ([SubtaskStatus.FAILED], 20, None),
+        ([SubtaskStatus.COMPLETED], None, None),
+    ],
+)
+def test_latest_assistant_by_statuses_sorts_ids_without_sorting_large_payloads(
+    test_db: Session,
+    assistant_history: dict,
+    history_statements: list[str],
+    statuses: list[SubtaskStatus],
+    owner_id: Optional[int],
+    expected_id: Optional[int],
+) -> None:
+    latest = SqlAlchemySubtaskStore().get_latest_assistant_by_statuses(
+        test_db, task_id=42, statuses=statuses, owner_user_id=owner_id
+    )
+
+    if expected_id is None:
+        assert latest is None
+    else:
+        assert isinstance(latest, Subtask)
+        assert latest.id == expected_id
+        assert latest.result == assistant_history
+        assert latest.prompt == "original prompt"
+        assert latest.error_message == "Task output exceeded the device callback limit"
+    assert not any("subtask_contexts" in s for s in history_statements)
+    _assert_id_sort_projection(history_statements)

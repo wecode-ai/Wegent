@@ -610,13 +610,17 @@ class SqlAlchemySubtaskStore:
     ) -> Optional[Subtask]:
         if not statuses:
             return None
-        query = db.query(Subtask).filter(
+        query = db.query(Subtask.id).filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
             Subtask.status.in_(statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        return query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).first()
+        row = query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).first()
+        if row is None:
+            return None
+        subtasks = self._load_ordered(db, [row[0]], with_contexts=False)
+        return subtasks[0] if subtasks else None
 
     def get_latest_running_assistant_by_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
@@ -654,9 +658,11 @@ class SqlAlchemySubtaskStore:
     def list_by_task_desc(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> list[Subtask]:
-        query = db.query(Subtask).filter(Subtask.task_id == task_id)
+        # Sort ids only: MySQL filesorts whole rows otherwise (error 1038).
+        query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        return query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).all()
+        rows = query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).all()
+        return self._load_ordered(db, [row[0] for row in rows], with_contexts=False)
 
     def list_completed_before_message_id(
         self,
@@ -1498,17 +1504,21 @@ class SqlAlchemySubtaskStore:
         subtasks = query.all()
         return self._delete_subtasks(db, subtasks)
 
-    def _load_ordered(self, db: Session, subtask_ids: list[int]) -> list[Subtask]:
+    def _load_ordered(
+        self, db: Session, subtask_ids: list[int], *, with_contexts: bool = True
+    ) -> list[Subtask]:
         if not subtask_ids:
             return []
+        options = [
+            undefer(Subtask.prompt),
+            undefer(Subtask.result),
+            undefer(Subtask.error_message),
+        ]
+        if with_contexts:
+            options.append(subqueryload(Subtask.contexts))
         subtasks = (
             db.query(Subtask)
-            .options(
-                subqueryload(Subtask.contexts),
-                undefer(Subtask.prompt),
-                undefer(Subtask.result),
-                undefer(Subtask.error_message),
-            )
+            .options(*options)
             .filter(Subtask.id.in_(subtask_ids))
             .all()
         )

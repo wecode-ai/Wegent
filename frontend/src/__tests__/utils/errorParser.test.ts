@@ -6,6 +6,70 @@ import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 
 describe('errorParser', () => {
   describe('parseError', () => {
+    describe('database driver errors', () => {
+      it('should detect MySQL error 1038 with SQL text as generic_error', () => {
+        // chat:send returns {"error": str(e)}, so the driver error arrives as text
+        const error =
+          "(pymysql.err.OperationalError) (1038, 'Out of sort memory, consider increasing server sort buffer size')\n" +
+          '[SQL: SELECT subtasks.id AS subtasks_id, subtasks.task_id AS subtasks_task_id, ' +
+          'subtasks.executor_namespace AS subtasks_executor_namespace, ' +
+          'subtasks.executor_name AS subtasks_executor_name FROM subtasks ' +
+          'WHERE subtasks.task_id = %(task_id_1)s ORDER BY subtasks.message_id DESC, subtasks.id DESC]'
+        const result = parseError(error)
+        expect(result.type).toBe('generic_error')
+        expect(result.retryable).toBe(true)
+      })
+
+      it('should detect SQL text mentioning container and timeout as generic_error', () => {
+        const error = '[SQL: SELECT executor_container, timeout_seconds FROM subtasks WHERE id = 1]'
+        const result = parseError(error)
+        expect(result.type).toBe('generic_error')
+      })
+
+      it('should still detect container errors that are not database errors', () => {
+        expect(parseError('Container has stopped running').type).toBe('container_error')
+        expect(parseError('executor disconnected').type).toBe('container_error')
+      })
+
+      it('should keep user-code OperationalError tracebacks as container_error', () => {
+        const error =
+          'Traceback (most recent call last):\n' +
+          '  sqlite3.OperationalError: no such table: foo\n' +
+          'executor exited with exit code 1'
+        expect(parseError(error).type).toBe('container_error')
+      })
+
+      it('should keep user-code pymysql tracebacks as container_error', () => {
+        const error =
+          'Container exited with code 1. Logs:\n' +
+          'Traceback (most recent call last):\n' +
+          '  pymysql.err.OperationalError: (2003, "Can not connect to MySQL server")'
+        expect(parseError(error).type).toBe('container_error')
+      })
+
+      it('should keep user-code SQLAlchemy tracebacks with SQL text as container_error', () => {
+        const error =
+          'Container exited immediately with code 1: executor failed. Logs:\n' +
+          'Traceback (most recent call last):\n' +
+          '  sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) connection lost\n' +
+          '[SQL: SELECT executor_name FROM subtasks]'
+        expect(parseError(error).type).toBe('container_error')
+      })
+
+      it('should keep database service errors as generic_error', () => {
+        const error = '(pymysql.err.OperationalError) (2003, "Can not connect to MySQL server")'
+        expect(parseError(error).type).toBe('generic_error')
+      })
+
+      it('should not treat failure marker text inside SQL as user-code failure', () => {
+        const error =
+          "(pymysql.err.OperationalError) (1064, 'syntax error')\n" +
+          '[SQL: INSERT INTO logs (executor_name, message) VALUES ' +
+          "('worker', 'Traceback (most recent call last): exit code 1')]"
+        expect(parseError(error).type).toBe('generic_error')
+      })
+    })
+
     describe('forbidden/unauthorized errors', () => {
       it('should detect forbidden errors', () => {
         const error = new Error('forbidden')
