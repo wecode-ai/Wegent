@@ -37,7 +37,7 @@ export async function verifyCollaborationIssueHome(
       { text: project.name }
     )
   }
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
   assert.equal(
     Number(await control.command('getElementCount', `${projectRow} svg:not(.stand-in-icon)`)),
     0,
@@ -159,7 +159,8 @@ export async function verifyCollaborationIssueHome(
     assert.ok(created, 'Issue creation did not persist the composer content')
     assert.equal(String(created[target.field]), target.id, `${target.kind} owner was not persisted`)
     assert.match(created.description, /wework-issue:\/\//)
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('waitFor', scoped(`[data-testid="cloud-task-activity-${created.id}"]`))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
   }
 
   await openComposer()
