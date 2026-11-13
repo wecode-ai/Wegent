@@ -8,7 +8,7 @@
 //! `ArchiveService.restore_workspace`: read the task's stored archive
 //! descriptor, skip an expired or missing archive, confirm the object exists,
 //! presign a download URL, and hand it to the executor-manager restore
-//! endpoint. Every failure is swallowed into `False`, exactly like the
+//! endpoint. Every failure is reported as a missing restore result, like the
 //! source's broad `except Exception`.
 use serde_json::Value;
 
@@ -30,11 +30,40 @@ pub(crate) async fn restore_workspace(
     executor_name: &str,
     executor_namespace: &str,
 ) -> bool {
-    match restore(state, task_id, task_json, executor_name, executor_namespace).await {
+    restore_workspace_for_runtime(
+        state,
+        task_id,
+        task_json,
+        executor_name,
+        executor_namespace,
+        RUNTIME_TYPE_SANDBOX,
+    )
+    .await
+    .is_some()
+}
+
+pub(crate) async fn restore_workspace_for_runtime(
+    state: &AppState,
+    task_id: i64,
+    task_json: &Value,
+    executor_name: &str,
+    executor_namespace: &str,
+    runtime_type: &str,
+) -> Option<Value> {
+    match restore(
+        state,
+        task_id,
+        task_json,
+        executor_name,
+        executor_namespace,
+        runtime_type,
+    )
+    .await
+    {
         Ok(restored) => restored,
         Err(error) => {
             tracing::error!(task_id, %error, "workspace archive restore failed");
-            false
+            None
         }
     }
 }
@@ -45,22 +74,23 @@ async fn restore(
     task_json: &Value,
     executor_name: &str,
     executor_namespace: &str,
-) -> anyhow::Result<bool> {
+    runtime_type: &str,
+) -> anyhow::Result<Option<Value>> {
     // `Task.model_validate(task.json)` -> `task_crd.status.archive`.
     let Some(archive) = archive_status(task_json)? else {
         tracing::info!(task_id, "no archive found; git clone path applies");
-        return Ok(false);
+        return Ok(None);
     };
     // `not archive_info or not archive_info.storageKey`.
     let Some(storage_key) = archive.get("storageKey").and_then(Value::as_str) else {
-        return Ok(false);
+        return Ok(None);
     };
     if storage_key.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
     if is_expired(archive.get("expiresAt"))? {
         tracing::info!(task_id, "archive expired");
-        return Ok(false);
+        return Ok(None);
     }
 
     // `archive_storage_service.archive_exists` -> `generate_download_url`.
@@ -70,7 +100,7 @@ async fn restore(
         .await?
     {
         tracing::warn!(task_id, "archive object not found in storage");
-        return Ok(false);
+        return Ok(None);
     }
     let download_url = storage
         .generate_download_url(&state.attachment_http, storage_key)
@@ -78,20 +108,42 @@ async fn restore(
 
     // `_call_executor_restore`: a missing result or `success != True` skips
     // the restore.
-    let Some(result) = state
+    let result = state
         .executor_manager
         .restore_workspace(
             task_id,
             &download_url,
             executor_name,
             executor_namespace,
-            RUNTIME_TYPE_SANDBOX,
+            runtime_type,
         )
-        .await
-    else {
+        .await;
+    Ok(result.filter(|value| value.get("success").and_then(Value::as_bool) == Some(true)))
+}
+
+/// Pick the same preparation mode as Python's `check_archive_available`.
+/// A descriptor selects restoration before the object storage lookup, and an
+/// expired descriptor rejects recovery before an executor is prepared.
+pub(crate) fn recovery_archive_available(task_id: i64, task_json: &Value) -> anyhow::Result<bool> {
+    let Some(archive) = archive_status(task_json).ok().flatten() else {
         return Ok(false);
     };
-    Ok(result.get("success").and_then(Value::as_bool) == Some(true))
+    if !archive["storageKey"]
+        .as_str()
+        .is_some_and(|key| !key.is_empty())
+    {
+        return Ok(false);
+    }
+    match is_expired(archive.get("expiresAt")) {
+        Ok(true) => anyhow::bail!(
+            "Workspace archive for task {task_id} has expired (>30 days). This task can no longer be resumed. Please create a new task to continue."
+        ),
+        Ok(false) => Ok(true),
+        Err(error) => {
+            tracing::warn!(task_id, %error, "invalid workspace archive expiration");
+            Ok(false)
+        }
+    }
 }
 
 /// The `status.archive` object of a validated `Task` CRD, or `None` when the
@@ -115,7 +167,7 @@ fn archive_status(task_json: &Value) -> anyhow::Result<Option<&Value>> {
 /// The source's expired check: `normalize_workspace_archive_datetime(expiresAt)
 /// < workspace_archive_now()`. A missing `expiresAt` is never expired.
 fn is_expired(expires_at: Option<&Value>) -> anyhow::Result<bool> {
-    let Some(expires_at) = expires_at else {
+    let Some(expires_at) = expires_at.filter(|value| !value.is_null()) else {
         return Ok(false);
     };
     let offset = archive_offset();
@@ -183,6 +235,23 @@ mod tests {
         assert_eq!(
             archive.get("storageKey").and_then(Value::as_str),
             Some("workspace-archives/1/archive.tar.gz")
+        );
+    }
+
+    #[test]
+    fn recovery_uses_git_without_a_descriptor_and_rejects_expired_archives() {
+        assert!(!recovery_archive_available(1, &json!({})).unwrap());
+        let mut task = json!({"status": {"archive": {
+            "storageKey": "workspace-archives/1/archive.tar.gz",
+            "expiresAt": null
+        }}});
+        assert!(recovery_archive_available(1, &task).unwrap());
+        task["status"]["archive"]["expiresAt"] = json!("2000-01-01T00:00:00Z");
+        assert!(
+            recovery_archive_available(1, &task)
+                .unwrap_err()
+                .to_string()
+                .contains("has expired")
         );
     }
 

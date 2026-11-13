@@ -230,9 +230,13 @@ pub(super) async fn download_attachment(
         // context directly (`get_context_optional`, no `_ensure_attachment_access`).
         None => match share_token.filter(|token| !token.is_empty()) {
             Some(token) => {
-                let has_access =
-                    super::share_token::validate_share_token_access(state, attachment_id, token)
-                        .await?;
+                let has_access = super::share_token::validate_share_token_access(
+                    state,
+                    attachment_id,
+                    token,
+                    user.map(|user| i64::from(user.users_id)),
+                )
+                .await?;
                 if !has_access {
                     return Err(attachment_not_found());
                 }

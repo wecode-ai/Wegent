@@ -36,8 +36,49 @@ use crate::executor_manager::ExecutorManager;
 
 pub(crate) use collect::collect_completed_result;
 pub(crate) use events::publish_task_completed_for_owner;
-pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
+pub(crate) use persist::{
+    claim_running_subtask, mark_subtask_running, persist_completed_result, update_task_status,
+};
 pub(crate) use sql::Tables;
+
+pub(crate) async fn complete_executor_failure<M: Mysql, R: Redis>(
+    mysql: &M,
+    tables: Tables,
+    ctx: Option<&Completion<'_, M, R>>,
+    task_id: i64,
+    subtask_id: i64,
+    message: &str,
+    code: &str,
+) -> Option<Value> {
+    let result = match ctx {
+        Some(ctx) => {
+            collect_completed_result(ctx, subtask_id, "FAILED", None, Some(message), Some(code))
+                .await?
+        }
+        None => Value::Object(collect::failure_details(message, code)),
+    };
+    let (row, metrics_message) =
+        persist::persist_executor_failure(mysql, tables, task_id, subtask_id, &result, message)
+            .await?;
+    if let Some(ctx) = ctx {
+        persist::publish_task_run_metrics(ctx, &row, subtask_id, "FAILED", metrics_message).await;
+        if let Err(error) =
+            super::session::cleanup_streaming_state(ctx.redis, subtask_id, Some(task_id)).await
+        {
+            tracing::warn!(%error, "executor failure streaming cleanup failed");
+        }
+        events::publish_task_completed(
+            ctx,
+            task_id,
+            subtask_id,
+            "FAILED",
+            Some(&result),
+            Some(message),
+        )
+        .await;
+    }
+    Some(result)
+}
 
 /// The deployment inputs one completion flow renders.
 pub(crate) struct Completion<'a, M: Mysql, R: Redis> {
