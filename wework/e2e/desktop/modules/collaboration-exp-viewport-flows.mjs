@@ -13,6 +13,25 @@ import {
   readTeam,
 } from './collaboration-exp-state-motion.mjs'
 
+/** Native role settings are a body portal, outside workspace tab content. */
+export async function verifyCollaborationExpTeamManagement({
+  control,
+  runningRole,
+  click,
+  nativeTaskIdentities,
+  localIssueIdentities,
+}) {
+  const beforeManage = await nativeTaskIdentities()
+  const beforeManageIssues = await localIssueIdentities()
+  await click(control, runningRole)
+  const roleName =
+    '[data-testid="stand-in-profile-backdrop"]:not([inert]) [data-testid="stand-in-profile-panel"] [data-testid="stand-in-role-name"]'
+  await control.command('waitFor', roleName, { visible: true })
+  assert.equal(await control.command('getValue', roleName), 'Integration assistant')
+  assert.deepEqual(await nativeTaskIdentities(), beforeManage)
+  assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
+}
+
 /** Reuse one held native execution across every actual responsive presentation. */
 export async function verifyCollaborationExpViewports({
   control,
@@ -173,18 +192,13 @@ export async function verifyCollaborationExpViewports({
           visible: true,
           text: runningIssue.title,
         })
-        const beforeManage = await nativeTaskIdentities()
-        const beforeManageIssues = await localIssueIdentities()
-        await click(control, runningRole)
-        await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-role-name"]`, {
-          visible: true,
+        await verifyCollaborationExpTeamManagement({
+          control,
+          runningRole,
+          click,
+          nativeTaskIdentities,
+          localIssueIdentities,
         })
-        assert.equal(
-          await control.command('getValue', `${ACTIVE} [data-testid="stand-in-role-name"]`),
-          'Integration assistant'
-        )
-        assert.deepEqual(await nativeTaskIdentities(), beforeManage)
-        assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
         await control.command('navigate', 'body', { value: route() })
         await control.command('waitFor', `${runningRole}[data-state="running"]`, {
           visible: true,
