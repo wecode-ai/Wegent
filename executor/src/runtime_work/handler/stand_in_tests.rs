@@ -119,12 +119,13 @@ async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagg
     let bindings = Arc::new(AtomicUsize::new(0));
     let calls = bindings.clone();
     let router = Router::new()
+        .route("/api/users/me", get(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }))
         .route("/api/v1/loop-items/issue/assignments", get(|| async {
             Json(json!({"items":[{"id":"event","status":"active","created_at":"2026-11-12T10:01:00Z"}]}))
         }))
         .route("/api/v1/loop-items/issue/tasks", get(move || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async { Json(json!([{"human_assignment_id":"human","task_id":"stand-in-human"}])) }
+            let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+            async move { Json(if first { json!([{"human_assignment_id":"human","task_id":"stand-in-human"}]) } else { json!([]) }) }
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -158,6 +159,21 @@ async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagg
         handler.local_task_links(true).is_empty(),
         "The existing binding must prevent a second execution"
     );
+    let error = handler
+        .start_cloud_stand_in_with_roles(&configs, &issue)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_request_failed");
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    assert!(
+        store
+            .pending_stand_in_dispatches()
+            .unwrap()
+            .iter()
+            .any(|(_, intent)| intent["roleId"] == "general"),
+        "A transient failure must retain the actually selected eligible role for recovery"
+    );
+    assert!(handler.local_task_links(true).is_empty());
     server.abort();
 }
 

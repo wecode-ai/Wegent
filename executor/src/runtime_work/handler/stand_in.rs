@@ -23,6 +23,16 @@ pub(super) fn personal_task_claimed(issue: &Value) -> bool {
     })
 }
 
+pub(super) fn stand_in_origin_matches(config: &Value, issue: &Value, origin: &Value) -> bool {
+    origin["initiatedBy"] == "stand_in"
+        && origin["type"] == "issue_dispatch"
+        && origin["loopItemId"] == issue["id"]
+        && origin["standInId"] == config["id"]
+        && origin["userId"] == config["userId"]
+        && origin["projectStore"] == config["projectStore"]
+        && origin["cloudProjectId"] == config["projectId"]
+}
+
 pub(super) fn stand_in_issue_identity(config: &Value, issue: &Value) -> String {
     use sha2::{Digest, Sha256};
     let identity = json!([
@@ -307,7 +317,13 @@ impl RuntimeWorkRpcHandler {
             && (self.local_task_link(&task_id).is_some()
                 || self.store.is_deleted_archived_task_id(&task_id))
         {
-            return Ok(());
+            return self
+                .reconcile_accepted_stand_in_binding(
+                    config,
+                    issue,
+                    &stand_in_issue_receipt_binding(config, issue),
+                )
+                .await;
         }
         if config["projectStore"] != "local" {
             let issue_id = issue["id"].as_str().unwrap_or_default();
@@ -499,7 +515,11 @@ impl RuntimeWorkRpcHandler {
                 super::personal_stand_in::automatic_assignment_roles(&eligible, &issue_value)
             {
                 let task_id = self.stand_in_task_id(config, &issue_value);
-                if self.stand_in_assignment_is_handled(config, &task_id, &binding) {
+                if self.stand_in_assignment_is_handled(config, &task_id, &binding)
+                    && !bindings
+                        .iter()
+                        .any(|row| row.task_id == task_id && row.stand_in_pending == Some(true))
+                {
                     continue;
                 }
                 if let Err(error) = self
@@ -714,8 +734,12 @@ impl RuntimeWorkRpcHandler {
         if !self.use_stand_in_issue_reservation(config, issue, existing)? {
             return Ok(());
         }
+        // Persist the eligible role, which may differ from the original intake hint.
+        let intents = self.queue_stand_in_dispatches(std::slice::from_ref(config), issue)?;
         // Same-device reservations are not proof that a local task was accepted.
-        self.execute_stand_in_task(config, issue, binding).await
+        let result = self.execute_stand_in_task(config, issue, binding).await;
+        self.settle_stand_in_dispatches(&intents, result.as_ref().err());
+        result
     }
 
     pub(super) fn use_stand_in_issue_reservation(
@@ -820,16 +844,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(task) = self
             .local_task_links(true)
             .into_iter()
-            .filter(|task| {
-                let origin = &task.runtime_handle["origin"];
-                origin["initiatedBy"] == "stand_in"
-                    && origin["type"] == "issue_dispatch"
-                    && origin["loopItemId"] == issue["id"]
-                    && origin["standInId"] == config["id"]
-                    && origin["userId"] == config["userId"]
-                    && origin["projectStore"] == config["projectStore"]
-                    && origin["cloudProjectId"] == config["projectId"]
-            })
+            .filter(|task| stand_in_origin_matches(config, issue, &task.runtime_handle["origin"]))
             .min_by_key(|task| (task.created_at, task.local_task_id.clone()))
         {
             return task.local_task_id;

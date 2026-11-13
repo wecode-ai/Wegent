@@ -164,7 +164,9 @@ impl RuntimeWorkRpcHandler {
                 "task_already_exists",
                 json!({"taskId":task_id}),
             );
-            return Ok(());
+            return self
+                .reconcile_accepted_stand_in_binding(config, issue, binding)
+                .await;
         }
         if config["manual"] != true
             && config["intakeRouted"] != true
@@ -235,7 +237,9 @@ impl RuntimeWorkRpcHandler {
                 "task_already_exists",
                 json!({"taskId":task_id,"status":existing.as_ref().map(|task| &task.status)}),
             );
-            return Ok(());
+            return self
+                .reconcile_accepted_stand_in_binding(config, issue, binding)
+                .await;
         }
         if self.store.is_deleted_archived_task_id(&task_id) {
             self.store
@@ -304,9 +308,14 @@ impl RuntimeWorkRpcHandler {
         // A binding reserves ownership, not completion. Keep it on failure so
         // reconciliation can resume the same task without a compensating DELETE.
         self.dispatch_stand_in_task(payload, retry).await?;
+        self.record_stand_in_issue_wakeup(&task_id, binding);
         self.accept_stand_in_assignment(config, issue, binding)
             .await?;
-        self.store.update_task(&task_id, |task| {
+        Ok(())
+    }
+
+    pub(super) fn record_stand_in_issue_wakeup(&self, task_id: &str, binding: &Value) {
+        self.store.update_task(task_id, |task| {
             if !task.runtime_handle["standInIssueWakeups"].is_array() {
                 task.runtime_handle["standInIssueWakeups"] = json!([]);
             }
@@ -317,6 +326,5 @@ impl RuntimeWorkRpcHandler {
                 accepted.push(binding["humanAssignmentId"].clone());
             }
         });
-        Ok(())
     }
 }

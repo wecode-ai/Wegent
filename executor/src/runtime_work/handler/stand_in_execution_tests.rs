@@ -2,6 +2,68 @@ use super::*;
 use axum::{routing::get, Json, Router};
 use std::sync::atomic::AtomicUsize;
 
+#[tokio::test]
+async fn accepted_local_task_repairs_only_its_existing_pending_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Repair"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task(
+            &project.id,
+            serde_json::from_value(json!({"title":"Accepted"})).unwrap(),
+        )
+        .unwrap();
+    let issue = serde_json::to_value(issue).unwrap();
+    let config = json!({"id":"review","projectId":project.id,"projectStore":"local","userId":0});
+    let binding = json!({"humanAssignmentId":"human"});
+    handler
+        .accept_stand_in_assignment(&config, &issue, &binding)
+        .await
+        .unwrap();
+    let task_id = handler.stand_in_task_id(&config, &issue);
+    assert_eq!(
+        store
+            .find_user_task_binding("mac", &task_id)
+            .unwrap()
+            .stand_in_pending,
+        Some(true)
+    );
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: task_id.clone(), status: "done".into(),
+        runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":0,"projectStore":"local","cloudProjectId":project.id,"loopItemId":issue["id"],"humanAssignmentId":"human"}}),
+        ..Default::default()
+    });
+    handler
+        .reconcile_accepted_stand_in_binding(&config, &issue, &binding)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .find_user_task_binding("mac", &task_id)
+            .unwrap()
+            .stand_in_pending,
+        Some(false)
+    );
+    assert_eq!(handler.local_task_link(&task_id).unwrap().status, "done");
+    store
+        .unbind_task("mac", &task_id, issue["id"].as_str())
+        .unwrap();
+    handler
+        .reconcile_accepted_stand_in_binding(&config, &issue, &binding)
+        .await
+        .unwrap();
+    assert!(
+        store.find_user_task_binding("mac", &task_id).is_err(),
+        "Recovery must preserve an intentional unlink"
+    );
+    assert_eq!(handler.local_task_links(true).len(), 1);
+}
+
 #[test]
 fn assignment_handled_by_another_role_preserves_scope_and_new_wakeups() {
     let root = tempfile::tempdir().unwrap();
