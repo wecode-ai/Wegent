@@ -189,11 +189,11 @@ export async function verifyCollaborationLocalProjectImport(
       text: importedProjectName,
       timeoutMs: workbenchReadyTimeoutMs,
     })
-    await control.command('hover', row)
-    await control.command(
-      'click',
-      inCollaborationSidebar(`[data-testid="collaboration-project-new-conversation-${projectId}"]`)
-    )
+    await control.command('clickWhenEnabled', row)
+    await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+      text: projectName,
+    })
+    await control.command('clickWhenEnabled', scoped('[data-testid="project-space-chat-open"]'))
     await control.command('waitFor', scoped('[data-testid="project-space-chat-sidebar"]'), {
       text: projectName,
     })

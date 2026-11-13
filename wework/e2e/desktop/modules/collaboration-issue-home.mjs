@@ -19,8 +19,8 @@ export async function verifyCollaborationIssueHome(
   const projectRow = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-project-${project.id}"]`
   )
-  const newConversation = inCollaborationSidebar(
-    `[data-testid="collaboration-project-new-conversation-${project.id}"]`
+  const projectMenu = inCollaborationSidebar(
+    `[data-testid="collaboration-project-menu-${project.id}"]`
   )
   const input = scoped(
     '[data-testid="collaboration-issue-workspace"] [data-testid="collaboration-home-issue-content"]'
@@ -52,7 +52,19 @@ export async function verifyCollaborationIssueHome(
   )
   await control.command('hover', projectRow)
   assert.equal(
-    await control.command('getComputedStyleValue', `${newConversation}`, { value: 'height' }),
+    Number(
+      await control.command(
+        'getElementCount',
+        inCollaborationSidebar(
+          `[data-testid="collaboration-project-new-conversation-${project.id}"]`
+        )
+      )
+    ),
+    0,
+    'Project conversations must not add a trailing sidebar action'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', projectMenu, { value: 'height' }),
     '28px'
   )
   const rowHeight = await control.command(

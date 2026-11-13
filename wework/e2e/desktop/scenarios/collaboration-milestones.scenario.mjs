@@ -676,6 +676,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')
+      await showAllCollaborationIssues(control, CONTENT)
       await control.command('waitFor', scoped(`cloud-todo-card-${localIssue}`), {
         text: 'Local milestone Issue',
         timeoutMs: uiTimeoutMs,
