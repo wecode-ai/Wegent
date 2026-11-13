@@ -8,7 +8,7 @@
 //! `app/services/shared_task.py`).
 //!
 //! The route reads the caller's membership, then re-reads the task to reuse its
-//! owner for the encrypted share token. Every task read is the active-task
+//! owner for the persisted opaque share token. Every task read is the active-task
 //! projection (`id = ? AND kind = 'Task' AND is_active IN (1, 2)`): the access
 //! store's `_get_accessible_task` and the store's `get_task_by_states` render
 //! the same statement, so this handler reuses
@@ -16,13 +16,14 @@
 //! for both.
 
 use brz_http_server::StatusCode;
+use chrono::Duration;
 use tracing::warn;
 
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 
 use super::models::TaskShareResponse;
-use super::token::{generate_share_token, generate_share_url};
+use super::token::{generate_share_token, generate_share_url, token_hash};
 
 /// `401`-independent route details, matching the source's `HTTPException`
 /// messages.
@@ -39,9 +40,14 @@ const APPROVED_MEMBERSHIP_QUERY: &str = "SELECT resource_members.id AS resource_
      AND resource_members.entity_id = ? \nAND resource_members.status = 'approved' \
      AND resource_members.copied_resource_id = 0 \n LIMIT 1";
 
+const INSERT_SHARE_LINK_QUERY: &str = "INSERT INTO share_links \
+     (resource_type, resource_id, share_token, token_hash, token_version, require_approval, \
+     default_role, expires_at, created_by_user_id, is_active, created_at, updated_at) \
+     VALUES ('TaskShare', ?, ?, ?, 2, false, 'Reporter', ?, ?, true, NOW(6), NOW(6))";
+
 /// `task_member_service.is_member` over `task_access_store.is_member`: the
 /// viewer owns the active task, or holds an approved membership in it.
-pub(super) async fn is_member(
+pub(crate) async fn is_member(
     state: &AppState,
     task_id: i64,
     user_id: i64,
@@ -79,7 +85,7 @@ pub(super) async fn validate_task_exists(
 }
 
 /// `SharedTaskService.share_task`: re-check membership, read the task to reuse
-/// its owner, then render the encrypted token and its share link.
+/// its owner, then persist the opaque token and render its share link.
 pub(super) async fn share_task(
     state: &AppState,
     task_id: i64,
@@ -101,8 +107,22 @@ pub(super) async fn share_task(
     let owner: i64 = task
         .get_required("user_id")
         .map_err(|error| internal(&error))?;
-    let share_token =
-        generate_share_token(owner, task_id).map_err(|()| FastApiError::unhandled())?;
+    let share_token = generate_share_token().map_err(|()| FastApiError::unhandled())?;
+    let expires_at = chrono::Utc::now().naive_utc() + Duration::days(365 * 100);
+    state
+        .mysql
+        .execute(
+            INSERT_SHARE_LINK_QUERY,
+            (
+                task_id,
+                share_token.as_str(),
+                token_hash(&share_token),
+                expires_at,
+                owner,
+            ),
+        )
+        .await
+        .map_err(|error| internal(&error))?;
     let share_url = generate_share_url(&share_token);
     Ok(TaskShareResponse {
         share_url,
@@ -122,4 +142,14 @@ fn not_found(detail: &'static str) -> FastApiError {
 fn internal(error: &impl std::fmt::Display) -> FastApiError {
     warn!(%error, "[task_share] database error");
     FastApiError::detail(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+}
+
+#[cfg(test)]
+mod purpose_tests {
+    use super::INSERT_SHARE_LINK_QUERY;
+
+    #[test]
+    fn read_only_task_issuance_uses_a_separate_link_type() {
+        assert!(INSERT_SHARE_LINK_QUERY.contains("VALUES ('TaskShare'"));
+    }
 }

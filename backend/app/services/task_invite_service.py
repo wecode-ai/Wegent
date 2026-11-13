@@ -2,22 +2,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Service for task invite link functionality.
-Reuses existing AES encryption from SharedTaskService.
-"""
+"""Service for task invite link functionality."""
 
-import base64
 import logging
-import urllib.parse
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.core.config import settings
+from app.models.share_link import ResourceType, ShareLink
+from app.services.share.token_access import (
+    hash_share_token,
+    require_share_link_access,
+    share_token_lookup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,109 +26,74 @@ logger = logging.getLogger(__name__)
 class TaskInviteService:
     """Service for generating and validating group chat invite links."""
 
-    def __init__(self):
-        # Reuse existing AES key configuration from settings
-        self.aes_key = settings.SHARE_TOKEN_AES_KEY.encode("utf-8")
-        self.aes_iv = settings.SHARE_TOKEN_AES_IV.encode("utf-8")
-
-    def _aes_encrypt(self, data: str) -> str:
-        """Encrypt data using AES-256-CBC"""
-        cipher = Cipher(
-            algorithms.AES(self.aes_key),
-            modes.CBC(self.aes_iv),
-            backend=default_backend(),
-        )
-        encryptor = cipher.encryptor()
-
-        # Pad the data to 16-byte boundary (AES block size)
-        padder = padding.PKCS7(128).padder()
-        padded_data = padder.update(data.encode("utf-8")) + padder.finalize()
-
-        # Encrypt the data
-        encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
-
-        # Return base64 encoded encrypted data
-        return base64.b64encode(encrypted_bytes).decode("utf-8")
-
-    def _aes_decrypt(self, encrypted_data: str) -> Optional[str]:
-        """Decrypt data using AES-256-CBC"""
-        try:
-            # Decode base64 encrypted data
-            encrypted_bytes = base64.b64decode(encrypted_data.encode("utf-8"))
-
-            # Create cipher object
-            cipher = Cipher(
-                algorithms.AES(self.aes_key),
-                modes.CBC(self.aes_iv),
-                backend=default_backend(),
-            )
-            decryptor = cipher.decryptor()
-
-            # Decrypt the data
-            decrypted_padded_bytes = (
-                decryptor.update(encrypted_bytes) + decryptor.finalize()
-            )
-
-            # Unpad the data
-            unpadder = padding.PKCS7(128).unpadder()
-            decrypted_bytes = (
-                unpadder.update(decrypted_padded_bytes) + unpadder.finalize()
-            )
-
-            # Return decrypted string
-            return decrypted_bytes.decode("utf-8")
-        except Exception as e:
-            logger.warning(f"Failed to decrypt invite token: {e}")
-            return None
-
     def generate_invite_token(
-        self, task_id: int, inviter_id: int, expires_hours: int = 0
+        self, db: Session, task_id: int, inviter_id: int, expires_hours: int = 0
     ) -> str:
         """
-        Generate a group chat invite token.
-        Format: "invite#{task_id}#{inviter_id}#{expire_timestamp}"
-
-        expires_hours=0 means permanent link (set to 10 years from now)
+        Generate and persist a group chat invite token.
         """
         if expires_hours == 0:
-            # Permanent link: set expiration to 10 years from now
             expire_time = datetime.utcnow() + timedelta(days=3650)
         else:
             expire_time = datetime.utcnow() + timedelta(hours=expires_hours)
 
-        expire_ts = int(expire_time.timestamp())
-        invite_data = f"invite#{task_id}#{inviter_id}#{expire_ts}"
-        encrypted = self._aes_encrypt(invite_data)
-        return urllib.parse.quote(encrypted)
+        token = secrets.token_urlsafe(32)
+        db.add(
+            ShareLink(
+                resource_type=ResourceType.TASK_INVITE.value,
+                resource_id=task_id,
+                share_token=token,
+                token_hash=self._hash_share_token(token),
+                token_version=ShareLink.OPAQUE_TOKEN_VERSION,
+                require_approval=False,
+                default_role="Reporter",
+                expires_at=expire_time,
+                created_by_user_id=inviter_id,
+                is_active=True,
+            )
+        )
+        db.commit()
+        return token
 
-    def decode_invite_token(self, token: str) -> Optional[dict]:
+    def _hash_share_token(self, token: str) -> str:
+        """Return the SHA-256 digest used for token lookup."""
+        return hash_share_token(token)
+
+    def decode_invite_token(
+        self, db: Session, token: str, viewer_id: Optional[int] = None
+    ) -> Optional[dict]:
         """
-        Decode an invite token.
+        Resolve a group chat invite token to its active share record.
+
         Returns: {"task_id": int, "inviter_id": int, "expires_at": datetime, "is_expired": bool}
         """
-        try:
-            decoded_token = urllib.parse.unquote(token)
-            decrypted = self._aes_decrypt(decoded_token)
-
-            if not decrypted or not decrypted.startswith("invite#"):
-                return None
-
-            parts = decrypted.split("#")
-            if len(parts) != 4:
-                return None
-
-            _, task_id_str, inviter_id_str, expire_ts_str = parts
-            expires_at = datetime.fromtimestamp(int(expire_ts_str))
-
-            return {
-                "task_id": int(task_id_str),
-                "inviter_id": int(inviter_id_str),
-                "expires_at": expires_at,
-                "is_expired": datetime.utcnow() > expires_at,
-            }
-        except Exception as e:
-            logger.warning(f"Failed to decode invite token: {e}")
+        invite = (
+            db.query(ShareLink)
+            .filter(
+                share_token_lookup(token),
+                ShareLink.resource_type == ResourceType.TASK_INVITE.value,
+                ShareLink.is_active.is_(True),
+            )
+            .first()
+        )
+        if not invite:
+            logger.info("Invalid or inactive invite token")
             return None
+
+        require_share_link_access(
+            db,
+            invite,
+            viewer_id,
+            lambda uid: task_stores.task_access_store.is_member(
+                db, task_id=invite.resource_id, user_id=uid
+            ),
+        )
+        return {
+            "task_id": invite.resource_id,
+            "inviter_id": invite.created_by_user_id,
+            "expires_at": invite.expires_at,
+            "is_expired": invite.is_expired,
+        }
 
     def generate_invite_url(self, token: str) -> str:
         """Generate the full invite URL"""

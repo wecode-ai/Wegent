@@ -10,6 +10,7 @@ jest.mock('@playwright/test', () => ({
 }))
 
 const independent = new Set([
+  'tasks/executor-workspace-recovery.spec.ts',
   'tasks/pipeline-session-archive.spec.ts',
   'tasks/claude-background-lifecycle.spec.ts',
   'tasks/provider-native-claudecode.spec.ts',
@@ -21,6 +22,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/agent-conversation-regression.spec.ts': 22,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
+  'tasks/executor-workspace-recovery.spec.ts': 1,
   'tasks/pipeline-session-archive.spec.ts': 5,
   'tasks/claude-background-lifecycle.spec.ts': 4,
   'tasks/provider-native-claudecode.spec.ts': 2,

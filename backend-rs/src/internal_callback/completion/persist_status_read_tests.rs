@@ -4,77 +4,14 @@
 
 //! Focused test for the task read `_update_task_status_sync` issues.
 use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};
-use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, Redis, RedisResult, RedisValues};
 
 use super::update_task_status_on;
-use crate::internal_callback::completion::{Completion, Tables};
+use crate::internal_callback::completion::Tables;
 
 fn tables() -> Tables {
     Tables {
         tasks: "tasks_0030",
         subtasks: "subtasks_0030",
-    }
-}
-
-/// The status-update read issues no Redis command; the completion context
-/// still requires a Redis handle.
-struct NoRedis;
-
-impl Redis for NoRedis {
-    async fn get<K, R>(&self, _key: K) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        unreachable!("the task status read issues no Redis read")
-    }
-
-    async fn set<K, V>(&self, _key: K, _value: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        unreachable!("the task status read issues no Redis write")
-    }
-
-    async fn mget<K, R>(&self, _keys: K) -> RedisResult<Vec<Option<R>>>
-    where
-        K: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        unreachable!("the task status read issues no Redis read")
-    }
-
-    async fn del_many<K>(&self, _keys: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        unreachable!("the task status read issues no Redis write")
-    }
-
-    async fn pfcount<K>(&self, _keys: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        unreachable!("the task status read issues no Redis read")
-    }
-
-    async fn hget<K, F, R>(&self, _key: K, _field: F) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        unreachable!("the task status read issues no Redis read")
-    }
-
-    async fn hmget<K, F, R>(&self, _key: K, _fields: F) -> RedisResult<RedisValues<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        unreachable!("the task status read issues no Redis read")
     }
 }
 
@@ -163,19 +100,8 @@ impl MysqlTransaction for CapturedTransaction {
 /// active-task projection with no `FOR UPDATE`.
 #[tokio::test]
 async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lock() {
-    let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let redis = NoRedis;
-    let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
-        .expect("executor-manager client");
-    let ctx = Completion {
-        app: None,
-        mysql: &mysql,
-        redis: &redis,
-        tables: tables(),
-        executor_manager: &manager,
-    };
     let mut transaction = CapturedTransaction::default();
-    update_task_status_on(&ctx, &mut transaction, 426335633820493, 7).await;
+    update_task_status_on(tables(), &mut transaction, 426335633820493, 7).await;
 
     let statement = transaction
         .statements
@@ -206,22 +132,11 @@ async fn the_task_status_read_is_the_labeled_active_task_projection_without_a_lo
 /// propagating it into the request path.
 #[tokio::test]
 async fn a_failed_task_status_read_is_logged_and_swallowed() {
-    let mysql = crate::sql_test_support::KindQueryCapture::default();
-    let redis = NoRedis;
-    let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
-        .expect("executor-manager client");
-    let ctx = Completion {
-        app: None,
-        mysql: &mysql,
-        redis: &redis,
-        tables: tables(),
-        executor_manager: &manager,
-    };
     let mut transaction = CapturedTransaction {
         fail_reads: true,
         ..CapturedTransaction::default()
     };
-    update_task_status_on(&ctx, &mut transaction, 426335633820493, 7).await;
+    update_task_status_on(tables(), &mut transaction, 426335633820493, 7).await;
 
     assert_eq!(transaction.statements.len(), 1);
 }

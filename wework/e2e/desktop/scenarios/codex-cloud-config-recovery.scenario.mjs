@@ -66,15 +66,15 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       return { ...model.diagnostics(), evidence }
     },
     async verify(control) {
-      // A reply-prediction turn can acquire the router app-server after the
-      // held turn completes. This scenario controls all turns used to test
-      // authentication switches; reply prediction has its own checkpoint.
+      // The auth-mode switch below controls which turn is active. Reply
+      // predictions also open turns and have their own auth-mode checkpoint.
       const preferences = JSON.parse(
         await control.command('setAppPreferences', 'body', {
           value: JSON.stringify({ replyPredictionsEnabled: false }),
         })
       )
       assert.equal(preferences.replyPredictionsEnabled, false)
+
       const addresses = new Map()
       const rpc = (method, params, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) =>
         requestExecutor(control, method, params, timeoutMs)
