@@ -326,10 +326,8 @@ fn a_removed_rejection_message_is_still_flushed() {
     assert!(assigns.contains(&"error_message='Device rejected plugin removal'".to_string()));
 }
 
-/// A versioned record runs the source's `acquire_plugin_write_lock` reentrant
-/// checks: before the alias reconciliation rows, before the recording
-/// transaction's second state read, and before the watermark assignment's
-/// flush. The outer policy read and the commit check belong to the caller.
+/// Validate ownership before alias reconciliation, the CAS state read and the
+/// watermark flush. The outer policy read and commit check belong to the caller.
 #[tokio::test]
 async fn a_versioned_record_checks_the_lease_at_each_source_boundary() {
     let capture = crate::sql_test_support::KindQueryCapture::writing();
@@ -358,11 +356,15 @@ async fn a_versioned_record_checks_the_lease_at_each_source_boundary() {
     record_device_sync_result(&mut session, 203, &result, Some(&guard))
         .await
         .expect("the recording completes");
-    assert_eq!(guard.calls(), 3, "reconcile, second lock, before-flush");
+    assert_eq!(guard.calls(), 3, "entry, CAS state read, before-flush");
     let queries = capture.queries();
-    assert!(
-        queries[0].sql.contains("PluginSyncState"),
-        "the first state read precedes reconciliation: {queries:#?}"
+    assert_eq!(
+        queries
+            .iter()
+            .filter(|query| query.sql.contains("PluginSyncState"))
+            .count(),
+        1,
+        "only the state used to validate and commit the ACK is read: {queries:#?}"
     );
     assert!(
         queries

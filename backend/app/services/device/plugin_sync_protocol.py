@@ -64,7 +64,9 @@ def load_versioned_plugin_payload(
         db.commit()
         return payload, generation
 
-    payload, generation = run_plugin_transaction(build, session_factory, attempts=8)
+    payload, generation = run_plugin_transaction(
+        build, session_factory, retry_conflicts=True
+    )
     payload["plugin_sync"] = {
         "version": PLUGIN_SYNC_VERSION,
         "generation": generation,
@@ -88,7 +90,7 @@ def register_plugin_snapshot_intent(
     from app.services.plugin_write_operations import run_plugin_transaction
 
     def register(db: Session) -> None:
-        state = lock_plugin_sync_state(db, user_id)
+        state = lock_plugin_sync_state(db, user_id, merge=True)
         canonical_device_id = plugin_device_id(db, user_id, device_id)
         advance_plugin_snapshot_watermark(
             state,
@@ -103,7 +105,7 @@ def register_plugin_snapshot_intent(
         )
         db.commit()
 
-    run_plugin_transaction(register, session_factory, attempts=8)
+    run_plugin_transaction(register, session_factory, retry_conflicts=True)
 
 
 def lock_plugin_sync_state(db: Session, user_id: int, *, merge: bool = False) -> Kind:

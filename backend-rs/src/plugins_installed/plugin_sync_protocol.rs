@@ -28,7 +28,6 @@ use super::write_coordination::{PluginWriteLease, coordination_error};
 
 /// `PLUGIN_SYNC_VERSION`.
 pub(crate) const PLUGIN_SYNC_VERSION: i64 = 2;
-pub(super) const SNAPSHOT_WRITE_ATTEMPTS: usize = 8;
 /// `PLUGIN_SYNC_STATE_KIND`.
 const PLUGIN_SYNC_STATE_KIND: &str = "PluginSyncState";
 /// `PLUGIN_SYNC_STATE_NAMESPACE`.
@@ -48,28 +47,37 @@ where
 }
 
 /// Replay only optimistic database work, within one shared time budget.
-pub(super) async fn retry_sync_write<F, Fut, T>(attempts: usize, mut write: F) -> MysqlResult<T>
+pub(super) async fn retry_sync_write<F, Fut, T>(mut write: F) -> MysqlResult<T>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = MysqlResult<T>>,
 {
     with_sync_write_budget(async {
-        for attempt in 0..attempts {
+        let mut backoff = 10;
+        loop {
             let outcome = write().await;
-            if attempt + 1 < attempts
-                && matches!(&outcome, Err(error) if super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict"))
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    50 * (attempt as u64 + 1),
-                ))
-                .await;
+            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
                 continue;
             }
             return outcome;
         }
-        Err(coordination_error("plugin_write_conflict"))
     })
     .await
+}
+
+/// Back off after rollback, without holding a connection or a plugin lease.
+async fn wait_on_metadata_conflict(
+    error: Option<&brz_mysql::MysqlError>,
+    backoff_ms: &mut u64,
+) -> bool {
+    if !error.is_some_and(|error| {
+        super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict")
+    }) {
+        return false;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
+    *backoff_ms = (*backoff_ms + 10).min(250);
+    true
 }
 
 /// `_sync_state`'s optimistic read over one active account state row.
@@ -427,7 +435,8 @@ pub(crate) async fn load_versioned_registration_payload(
         ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
             .await
             .map_err(BuildError::Mysql)?;
-        for attempt in 0..SNAPSHOT_WRITE_ATTEMPTS {
+        let mut backoff = 10;
+        loop {
             let mut build_error = None;
             let mut generation = 0;
             let outcome = state
@@ -457,9 +466,7 @@ pub(crate) async fn load_versioned_registration_payload(
                     },
                 )
                 .await;
-            if attempt + 1 < SNAPSHOT_WRITE_ATTEMPTS
-                && matches!(&outcome, Err(error) if super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict"))
-            {
+            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
                 continue;
             }
             if let Some(error) = build_error {
@@ -469,9 +476,6 @@ pub(crate) async fn load_versioned_registration_payload(
             payload["plugin_sync"] = plugin_sync_metadata(generation, complete);
             return Ok(payload);
         }
-        Err(BuildError::Mysql(coordination_error(
-            "plugin_write_conflict",
-        )))
     })
     .await
 }
@@ -514,7 +518,8 @@ pub(crate) async fn register_plugin_snapshot_intent(
         let complete = metadata.get("complete") == Some(&Value::Bool(true));
         let installed_plugin_ids = payload_plugin_ids(payload);
         ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id).await?;
-        for attempt in 0..SNAPSHOT_WRITE_ATTEMPTS {
+        let mut backoff = 10;
+        loop {
             let outcome = state
                 .mysql
                 .with_transaction_options(
@@ -537,14 +542,11 @@ pub(crate) async fn register_plugin_snapshot_intent(
                     },
                 )
                 .await;
-            if attempt + 1 < SNAPSHOT_WRITE_ATTEMPTS
-                && matches!(&outcome, Err(error) if super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict"))
-            {
+            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
                 continue;
             }
             return outcome;
         }
-        Err(coordination_error("plugin_write_conflict"))
     })
     .await
 }
@@ -699,12 +701,12 @@ mod tests {
         assert_eq!(start.elapsed(), std::time::Duration::from_secs(40));
     }
 
-    #[tokio::test]
-    async fn local_snapshot_survives_more_than_two_concurrent_metadata_writers() {
+    #[tokio::test(start_paused = true)]
+    async fn local_snapshot_survives_more_than_eight_concurrent_metadata_writers() {
         let mut attempts = 0;
-        let result = super::retry_sync_write(super::SNAPSHOT_WRITE_ATTEMPTS, || {
+        let result = super::retry_sync_write(|| {
             attempts += 1;
-            std::future::ready(if attempts <= 3 {
+            std::future::ready(if attempts <= 9 {
                 Err(super::coordination_error("plugin_write_conflict"))
             } else {
                 Ok(17)
@@ -712,8 +714,28 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(attempts, 4);
+        assert_eq!(attempts, 10);
         assert_eq!(result, 17);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn continuous_metadata_conflicts_stop_at_the_original_budget() {
+        let start = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let error = super::retry_sync_write(|| {
+            attempts += 1;
+            std::future::ready(Err::<(), _>(super::coordination_error(
+                "plugin_write_conflict",
+            )))
+        })
+        .await
+        .unwrap_err();
+        assert!(attempts > 8);
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(20));
+        assert_eq!(
+            super::super::write_coordination::plugin_write_error_code(&error),
+            Some("plugin_write_busy")
+        );
     }
 
     use std::sync::{Arc, Mutex};

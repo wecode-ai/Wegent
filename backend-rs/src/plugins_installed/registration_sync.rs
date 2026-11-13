@@ -147,7 +147,7 @@ pub(crate) async fn record_registration_sync_result(
             (user_id, user_id),
         ).await?;
         for installed in installations {
-            if let Err(error) = super::plugin_sync_protocol::retry_sync_write(3, || {
+            if let Err(error) = super::plugin_sync_protocol::retry_sync_write(|| {
                 persist_registration_result(state, user_id, result, installed.id)
             })
             .await
@@ -430,7 +430,7 @@ mod tests {
     #[tokio::test]
     async fn acknowledgement_persistence_retries_metadata_conflicts() {
         let mut attempts = 0;
-        super::super::plugin_sync_protocol::retry_sync_write(3, || {
+        super::super::plugin_sync_protocol::retry_sync_write(|| {
             attempts += 1;
             std::future::ready(if attempts == 1 {
                 Err(super::super::write_coordination::coordination_error(
@@ -446,15 +446,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn acknowledgement_persistence_bounds_retries_and_rejects_lease_failures() {
+    async fn acknowledgement_persistence_rejects_lease_failures_without_retry() {
         for (code, expected_attempts) in [
-            ("plugin_write_conflict", 3),
             ("plugin_write_busy", 1),
             ("plugin_write_unavailable", 1),
             ("plugin_write_lease_lost", 1),
         ] {
             let mut attempts = 0;
-            let error = super::super::plugin_sync_protocol::retry_sync_write(3, || {
+            let error = super::super::plugin_sync_protocol::retry_sync_write(|| {
                 attempts += 1;
                 std::future::ready(Err::<(), _>(
                     super::super::write_coordination::coordination_error(code),

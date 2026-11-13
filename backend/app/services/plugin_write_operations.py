@@ -33,13 +33,14 @@ def run_plugin_transaction(
     *,
     attempts: int = 2,
     retry_busy: bool = False,
+    retry_conflicts: bool = False,
 ) -> T:
-    """Retry rolled-back work; snapshot transactions may also await contention."""
+    """Retry rolled-back work; metadata can use the shared 20-second budget."""
     deadline = time.monotonic() + 20
     last_error = None
     attempt = 0
     busy_backoff = 0.05
-    while attempt < attempts:
+    while retry_conflicts or attempt < attempts:
         if last_error is not None and time.monotonic() >= deadline:
             raise last_error
         with session_factory() as db:
@@ -56,9 +57,11 @@ def run_plugin_transaction(
                 if retry_busy and error.code == "plugin_write_busy":
                     delay = busy_backoff
                     busy_backoff = min(0.25, busy_backoff * 2)
-                elif error.code == "plugin_write_conflict" and attempt + 1 < attempts:
+                elif error.code == "plugin_write_conflict" and (
+                    retry_conflicts or attempt + 1 < attempts
+                ):
                     attempt += 1
-                    delay = 0.01 * attempt
+                    delay = min(0.25, 0.01 * attempt)
                 else:
                     raise
                 last_error = error

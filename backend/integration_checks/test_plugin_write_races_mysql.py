@@ -703,6 +703,44 @@ def test_stale_ack_merge_preserves_newer_dispatch_counters_on_real_mysql(context
         )
 
 
+def test_snapshot_survives_more_than_eight_committed_metadata_changes(context):
+    from app.services.device.plugin_sync_protocol import (
+        load_versioned_plugin_payload,
+        lock_plugin_sync_state,
+    )
+
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.commit()
+    reads = []
+
+    def load(db):
+        installed = db.get(Kind, context.plugin_id)
+        marker = installed.json["spec"].get("contentionMarker", 0)
+        reads.append(marker)
+        if len(reads) <= 9:
+            with context.sessions() as writer:
+                row = writer.get(Kind, context.plugin_id)
+                document = deepcopy(row.json)
+                document["spec"]["contentionMarker"] = len(reads)
+                row.json = document
+                state = lock_plugin_sync_state(writer, context.user_id, merge=True)
+                state.json = deepcopy(state.json)
+                writer.commit()
+        return {
+            "plugins": [{"installed_plugin_id": context.plugin_id, "marker": marker}]
+        }
+
+    snapshot = load_versioned_plugin_payload(
+        context.sessions, user_id=context.user_id, load_payload=load, complete=False
+    )
+    assert reads == list(range(10))
+    assert snapshot["plugins"][0]["marker"] == 9
+    with context.sessions() as db:
+        state = lock_plugin_sync_state(db, context.user_id)
+        assert snapshot["plugin_sync"]["generation"] == state.json["spec"]["generation"]
+
+
 def test_parallel_ack_metadata_commits_need_no_global_revision_retry(context):
     from app.services.device.plugin_sync_protocol import (
         advance_plugin_snapshot_watermark,

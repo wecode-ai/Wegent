@@ -125,7 +125,7 @@ export async function verifyPluginNativeAuth({
     const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
     try {
       await signalAutomaticRetry()
-      await backgroundRow.waitFor('contended')
+      await backgroundRow.waitFor('blocked')
       const installed = await sync({ action: 'install', targetId: release.pluginId })
       const id = Number(installed.operation.plugin.metadata.labels.id)
       assert.ok(await managedRoot(executorHome, id))

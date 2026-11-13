@@ -102,16 +102,13 @@ async fn local_sync(
     super::auto_update::complete_auto_update(async move {
         super::plugin_sync_protocol::ensure_sync_state(&mysql, redis.as_ref(), i64::from(user.id))
             .await?;
-        super::plugin_sync_protocol::retry_sync_write(
-            super::plugin_sync_protocol::SNAPSHOT_WRITE_ATTEMPTS,
-            || {
-                mysql.with_transaction_options(
-                    MysqlTransactionOptions::default()
-                        .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
-                    async |tx| local_plan(tx, i64::from(user.id), &body).await,
-                )
-            },
-        )
+        super::plugin_sync_protocol::retry_sync_write(|| {
+            mysql.with_transaction_options(
+                MysqlTransactionOptions::default()
+                    .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                async |tx| local_plan(tx, i64::from(user.id), &body).await,
+            )
+        })
         .await
     })
     .await

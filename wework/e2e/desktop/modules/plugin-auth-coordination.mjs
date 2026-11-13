@@ -160,7 +160,7 @@ export async function verifyPluginAuthCoordination({
   let pausedMarker
   try {
     await signalAutomaticRetry()
-    await backgroundRow.waitFor('contended')
+    await backgroundRow.waitFor('blocked')
     pausedMarker = await readFile(reconcileMarker, 'utf8')
     await verifyIndependentPluginMutations(cloud, independent, evidence)
     assert.equal(

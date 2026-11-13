@@ -243,12 +243,14 @@ def test_snapshot_contention_policy_does_not_retry_other_failures(
     sessions[0].rollback.assert_called_once()
 
 
+@pytest.mark.parametrize("code", ["plugin_write_busy", "plugin_write_conflict"])
 def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
     monkeypatch,
+    code,
 ):
     clock = [0.0]
     sessions = []
-    failure = PluginWriteError("plugin_write_busy")
+    failure = PluginWriteError(code)
 
     @contextmanager
     def session():
@@ -273,7 +275,9 @@ def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
         operations, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=backoff)
     )
     with pytest.raises(PluginWriteError) as caught:
-        operations.run_plugin_transaction(fail, session, retry_busy=True)
+        operations.run_plugin_transaction(
+            fail, session, retry_busy=True, retry_conflicts=True
+        )
     assert caught.value is failure
     assert clock[0] == 20
     assert len(sessions) > 2

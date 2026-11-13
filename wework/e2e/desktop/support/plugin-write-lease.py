@@ -50,6 +50,7 @@ def main() -> None:
         ):
             raise ValueError("The row lock requires the isolated E2E MySQL")
         with pymysql.connect(**options, user="root", autocommit=False) as db:
+            released = threading.Event()
             try:
                 with db.cursor() as cursor:
                     if mode == "plugin-row":
@@ -66,7 +67,7 @@ def main() -> None:
                             (record_id, user_id),
                         )
                         cursor.execute(
-                            "SELECT name FROM kinds WHERE id=%s AND user_id=%s "
+                            "SELECT id FROM kinds WHERE id=%s AND user_id=%s "
                             "AND namespace='default' AND kind='InstalledPlugin'",
                             (record_id, user_id),
                         )
@@ -88,23 +89,32 @@ def main() -> None:
                     row = cursor.fetchone()
                     if row is None:
                         raise ValueError("The fixture row does not exist")
-                    if mode == "plugin-row":
-                        key = f"wegent:plugin-write:{user_id}:{row[0]}"
                 if mode == "plugin-row":
 
-                    def observe_scope():
-                        with Redis.from_url(url).monitor() as monitor:
-                            emit("ready")
-                            for command in monitor.listen():
-                                if command["command"].startswith(f"SET {key} "):
-                                    emit("contended")
+                    def observe_database_wait():
+                        with pymysql.connect(
+                            **options, user="root", autocommit=True
+                        ) as observer:
+                            with observer.cursor() as cursor:
+                                while not released.is_set():
+                                    cursor.execute(
+                                        "SELECT COUNT(*) FROM performance_schema.data_lock_waits AS waits "
+                                        "JOIN performance_schema.threads AS threads "
+                                        "ON waits.BLOCKING_THREAD_ID=threads.THREAD_ID "
+                                        "WHERE threads.PROCESSLIST_ID=%s",
+                                        (db.thread_id(),),
+                                    )
+                                    if cursor.fetchone()[0]:
+                                        emit("blocked")
+                                        return
+                                    released.wait(0.01)
 
-                    threading.Thread(target=observe_scope, daemon=True).start()
-                else:
-                    emit("ready")
+                    threading.Thread(target=observe_database_wait, daemon=True).start()
+                emit("ready")
                 if sys.stdin.read():
                     raise ValueError("The row lock accepts only stdin closure")
             finally:
+                released.set()
                 db.rollback()
                 client.close()
                 emit("released")
