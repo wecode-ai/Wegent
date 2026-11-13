@@ -366,9 +366,11 @@ fn copy_file_synced(
     // Partial configuration stays private until the complete snapshot is durable.
     let mut file = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
     io::copy(source, &mut file)?;
-    file.as_file().sync_all()?;
     fs::set_permissions(file.path(), permissions)?;
+    file.as_file().sync_all()?;
     file.persist(target).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    fs::File::open(target.parent().unwrap())?.sync_all()?;
     Ok(())
 }
 
