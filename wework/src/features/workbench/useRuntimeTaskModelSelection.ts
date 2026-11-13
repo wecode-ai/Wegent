@@ -167,12 +167,17 @@ export function useRuntimeTaskModelSelection({
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
       if (!hasSelectionForScope(scopeKey)) {
         const selection = resolveRuntimeTaskModelSelection(address)
-        setSelectionForScope(
-          scopeKey,
-          selection.selectedModel,
-          selection.selectedModelOptions,
-          selection.taskSelection
-        )
+        // Seeding an unavailable saved model would make it look catalog-backed on
+        // the next resolve: its synthesized snapshot has no compatibility flag.
+        // Leave the scope unseeded so availability keeps coming from the task.
+        if (selection.selectionReady) {
+          setSelectionForScope(
+            scopeKey,
+            selection.selectedModel,
+            selection.selectedModelOptions,
+            selection.taskSelection
+          )
+        }
       }
       return scopeKey
     },

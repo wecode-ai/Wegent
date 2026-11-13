@@ -462,7 +462,7 @@ describe('bound remote task model selection', () => {
     })
   })
 
-  it('does not substitute another catalog model and retains the task model when editing an option', () => {
+  it('does not seed an unavailable saved model when editing an option', () => {
     const store = modelStore([
       { name: 'gpt-6-astra', displayName: 'GPT-6 Astra', type: 'runtime', provider: 'local' },
     ])
@@ -472,14 +472,44 @@ describe('bound remote task model selection', () => {
 
     result.current.setRuntimeTaskSelectedModelOption(address, 'reasoning', 'high')
 
-    expect(store.setSelectionForScope).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ name: selection.modelName, type: 'public' }),
-      selection.options,
-      selection
-    )
+    // The synthesized saved model must not be cached as if the catalog had it;
+    // otherwise the next resolve would report it ready and allow a send.
+    expect(store.setSelectionForScope).not.toHaveBeenCalled()
     expect(store.setSelectedModelOptionForScope).toHaveBeenCalledWith(
       expect.any(String),
+      'reasoning',
+      'high'
+    )
+    expect(result.current.resolveRuntimeTaskModelSelection(address)).toMatchObject({
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: { name: selection.modelName, type: selection.modelType },
+    })
+  })
+
+  it('seeds a catalog-backed task selection before applying an option change', () => {
+    const readyAddress = runtimeTaskBindingAddress({
+      device_id: 'remote-device',
+      task_id: 'runtime-ready',
+      modelSelection: { modelName: 'gpt-6-astra', modelType: 'runtime', options: {} },
+    })
+    const store = modelStore([
+      { name: 'gpt-6-astra', displayName: 'GPT-6 Astra', type: 'runtime', provider: 'local' },
+    ])
+    const { result } = renderHook(() =>
+      useRuntimeTaskModelSelection({ userId: 7, resolveTask: () => null, modelStore: store })
+    )
+
+    result.current.setRuntimeTaskSelectedModelOption(readyAddress, 'reasoning', 'high')
+
+    expect(store.setSelectionForScope).toHaveBeenCalledWith(
+      'user:7:runtime:remote-device:runtime-ready',
+      expect.objectContaining({ name: 'gpt-6-astra' }),
+      {},
+      expect.objectContaining({ modelName: 'gpt-6-astra' })
+    )
+    expect(store.setSelectedModelOptionForScope).toHaveBeenCalledWith(
+      'user:7:runtime:remote-device:runtime-ready',
       'reasoning',
       'high'
     )
