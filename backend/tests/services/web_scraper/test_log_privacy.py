@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.services.web_scraper.classifier import ScrapeResultClassifier
+from app.services.web_scraper.crawler_logging import RedactingCrawlerLogger
 from app.services.web_scraper.policy import ScrapePolicy
 from app.services.web_scraper.profiles import BrowserProfile
 from app.services.web_scraper.proxy import ProxyMode, ProxyPlan
@@ -24,6 +25,67 @@ from app.services.web_scraper.strategies.crawl4ai_strategy import Crawl4AIScrape
 
 URL = "https://log-user:log-password@example.com/page?token=log-secret#log-fragment"
 SECRETS = ("log-user", "log-password", "log-secret", "log-fragment")
+
+DIAGNOSTIC_CASES = [
+    pytest.param(
+        "{'token': 'opaque-credential-ABC123XYZ987",
+        ("opaq", "Z987"),
+        id="single-quoted-truncated",
+    ),
+    pytest.param(
+        '{"token": "opaque-credential-ABC123XYZ987',
+        ("opaq", "Z987"),
+        id="double-quoted-truncated",
+    ),
+    ("Authorization: Bearer opaque-credential-ABC123XYZ987", ("opaq", "Z987")),
+    ("Authorization: Basic dXNlcjpwYXNzd29yZA==", ("dXNl", "ZA==")),
+    ("{'token': 'opaque-credential-ABC123XYZ987'}", ("opaq", "Z987")),
+    ('{"token": "opaque-credential-ABC123XYZ987"}', ("opaq", "Z987")),
+    ("{'Authorization': 'Bearer opaque-credential-ABC123XYZ987'}", ("opaq", "Z987")),
+    ("token=opaque-credential-ABC123XYZ987", ("opaq", "Z987")),
+    ("https://example.com/report?token=prefix'credential-tail", ("credential-tail",)),
+    ("'https://example.com/report?token=prefix'credential-tail'", ("credential-tail",)),
+]
+
+
+@pytest.mark.parametrize(("diagnostic", "secrets"), DIAGNOSTIC_CASES)
+async def test_credentials_are_hidden_in_all_sinks_and_error_results(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    diagnostic: str,
+    secrets: tuple[str, ...],
+) -> None:
+    message = f"Request failed: {diagnostic}"
+    console = StringIO()
+    destination = tmp_path / "crawler.log"
+    handlers = [logging.StreamHandler(console), logging.FileHandler(destination)]
+    root_logger = logging.getLogger()
+    for handler in handlers:
+        root_logger.addHandler(handler)
+    service = WebScraperService()
+
+    async def fail(url: str) -> None:
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(service, "_scrape_url_impl", fail)
+    try:
+        with caplog.at_level(logging.ERROR):
+            RedactingCrawlerLogger().error(message)
+            result = await service.scrape_url("https://example.com/report")
+        for output in (
+            console.getvalue(),
+            destination.read_text(),
+            caplog.text,
+            result.error_message,
+        ):
+            assert "Request failed" in output
+            for secret in secrets:
+                assert secret not in output
+    finally:
+        for handler in handlers:
+            root_logger.removeHandler(handler)
+            handler.close()
 
 
 async def test_service_redacts_exception_chain_and_error_result(

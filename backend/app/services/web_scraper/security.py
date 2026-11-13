@@ -11,6 +11,22 @@ from app.services.url_metadata import _validate_url_for_ssrf
 from app.services.web_scraper.models import ERROR_INVALID_URL, ERROR_SSRF_BLOCKED
 from shared.utils.sensitive_data_masker import mask_string
 
+_SECRET_FIELD = r"(?:token|(?:access|refresh|auth)[_-]?token|api[_-]?key|password|passwd|pwd|secret)"
+_QUOTED_CREDENTIAL = re.compile(
+    rf"""(["']?\b(?:authorization|{_SECRET_FIELD})\b["']?\s*[:=]\s*)"""
+    r"""(["'])(?:\\.|(?!\2).)*(?:\2|$)""",
+    re.IGNORECASE | re.DOTALL,
+)
+_AUTHORIZATION = re.compile(
+    r"""(\bauthorization["']?\s*[:=]\s*["']?(?:Bearer|Basic)\s+)"""
+    r"""[^\s"'`,;}\]]+""",
+    re.IGNORECASE,
+)
+_BARE_CREDENTIAL = re.compile(
+    rf"""(["']?\b{_SECRET_FIELD}\b["']?\s*[:=]\s*)[^\s"'`,;}}\]]+""",
+    re.IGNORECASE,
+)
+
 
 class WebScraperSecurityError(Exception):
     """Controlled web scraper security exception."""
@@ -117,11 +133,24 @@ def redact_scraper_text(text: str) -> str:
     """Redact URLs embedded in third-party messages before any output sink."""
 
     def redact(match: re.Match[str]) -> str:
+        value = match.group()
+        suffix = ""
+        if match.start() and text[match.start() - 1] == "'":
+            closing_quote = value.rfind("'")
+            if closing_quote >= 0 and all(
+                char in ",.;:)]}>" for char in value[closing_quote + 1 :]
+            ):
+                suffix = value[closing_quote:]
+                value = value[:closing_quote]
         try:
-            return redact_url_for_logging(match.group())
+            return redact_url_for_logging(value) + suffix
         except ValueError:
             return "<invalid-url>"
 
-    return mask_string(
-        re.sub(r"(?:https?|wss?)://[^\s\"'`]+", redact, text, flags=re.IGNORECASE)
+    redacted = re.sub(r"(?:https?|wss?)://[^\s\"`]+", redact, text, flags=re.IGNORECASE)
+    redacted = _QUOTED_CREDENTIAL.sub(
+        lambda match: match[1] + match[2] + "<redacted>" + match[2], redacted
     )
+    redacted = _AUTHORIZATION.sub(r"\1<redacted>", redacted)
+    redacted = _BARE_CREDENTIAL.sub(r"\1<redacted>", redacted)
+    return mask_string(redacted)
