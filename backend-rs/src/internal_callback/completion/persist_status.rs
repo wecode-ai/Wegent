@@ -128,11 +128,8 @@ pub(super) async fn write_derived_task_status<T: MysqlTransaction>(
     let Some(Value::Object(status_object)) = payload.get("status").cloned() else {
         return None;
     };
-    let Some(decision) =
-        collaboration_status(tables, mysql, task_id, &payload, last, &last_status).await
-    else {
-        return None;
-    };
+    let decision =
+        collaboration_status(tables, mysql, task_id, &payload, last, &last_status).await?;
     let new_status = decision.status;
     let progress = decision.progress;
 
