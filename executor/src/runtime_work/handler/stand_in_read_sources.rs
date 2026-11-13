@@ -216,7 +216,7 @@ mod tests {
     fn collaboration_delegates_keep_the_same_exact_source_grants() {
         let (_root, handler, mut parent, source) = fixture();
         let mut actor = handler.local_task_link(&parent.task_id).unwrap();
-        parent.task_id.push_str(":collaboration");
+        parent.task_id.push_str("-collaboration");
         actor.local_task_id = parent.task_id.clone();
         actor.runtime_handle["origin"]["conversationScope"] = json!("collaboration");
         handler.upsert_local_task(actor.clone());

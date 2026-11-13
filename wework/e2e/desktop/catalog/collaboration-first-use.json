@@ -1,6 +1,6 @@
 {
   "order": 23000,
-  "scenario": "./scenarios/collaboration-home-assistant.scenario.mjs",
+  "scenario": "./scenarios/collaboration-first-use.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
     "core": {
@@ -13,14 +13,6 @@
     "packages/collaboration/src/theme/*",
     "wework/src/features/appearance/*",
     "wework/src/styles/*",
-    "wework/e2e/desktop/modules/appearance-theme.mjs",
-    "wework/e2e/desktop/scenarios/collaboration-home-assistant.scenario.mjs",
-    "wework/src/features/todo/StandInHomeWorkspace*",
-    "wework/src/features/todo/StandInConversation*",
-    "wework/src/api/personalStandIn.ts",
-    "executor/src/runtime_work/handler/stand_in_conversations.rs",
-    "executor/src/runtime_work/handler/stand_in_proposal_continuations.rs",
-    "executor/src/runtime_work/handler/stand_in_read_sources.rs",
-    "executor/src/runtime_work/handler/stand_in_task_results.rs"
+    "wework/e2e/desktop/modules/appearance-theme.mjs"
   ]
 }

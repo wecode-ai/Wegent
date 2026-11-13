@@ -39,7 +39,7 @@ pub(super) fn scoped_conversation_task_id(
     let task = conversation_task_id(user, role);
     match scope {
         Value::Null => Ok(task),
-        Value::String(scope) if scope == "collaboration" => Ok(format!("{task}:collaboration")),
+        Value::String(scope) if scope == "collaboration" => Ok(format!("{task}-collaboration")),
         _ => Err(AppIpcError::new(
             "bad_request",
             "Unknown conversation scope",
@@ -377,7 +377,7 @@ mod model_selection_tests {
         );
         assert_eq!(
             scoped_conversation_task_id(7, None, &json!("collaboration")).unwrap(),
-            "stand-in-chat-7-primary:collaboration"
+            "stand-in-chat-7-primary-collaboration"
         );
         assert!(scoped_conversation_task_id(7, None, &json!("unknown")).is_err());
         assert!(scoped_conversation_task_id(7, None, &json!({})).is_err());
@@ -387,7 +387,7 @@ mod model_selection_tests {
         let origin = json!({"type":"stand_in_identity","userId":7,"deviceId":"old",
             "conversationScope":"collaboration"});
         let link = RuntimeTaskLink {
-            local_task_id: "stand-in-chat-7-primary:collaboration".into(),
+            local_task_id: "stand-in-chat-7-primary-collaboration".into(),
             runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":7}}),
             project_instructions: "Saved collaboration instructions".into(),
             ..Default::default()

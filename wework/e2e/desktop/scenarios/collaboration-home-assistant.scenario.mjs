@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { createDesktopScenario as createFirstUseScenario } from './collaboration-first-use.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from '../modules/shared.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -23,9 +24,8 @@ const CONTINUE_RESULT = `${MARKER}_CONTEXT_RESTORED`
 const ORIGINAL = 'Draft ready for product review.'
 const UPDATED = `${ORIGINAL}\n\nAcceptance: the release owner reviews the approved copy.`
 
-/** Extend the existing first-use checkpoint without replacing any of its assertions. */
+/** Keep native collaboration and persistence real; simulate only model responses. */
 export function createDesktopScenario(options) {
-  const base = createFirstUseScenario(options)
   let project
   let issue
   let phase = 0
@@ -50,18 +50,23 @@ export function createDesktopScenario(options) {
     return true
   }
   return {
-    ...base,
+    appEnvironment: {
+      WEWORK_E2E_CLOUD_BACKEND_URL: '',
+      VITE_WEWORK_E2E_CLOUD_BACKEND_URL: '',
+      WEWORK_E2E_CLOUD_TOKEN: '',
+      VITE_WEWORK_E2E_CLOUD_TOKEN: '',
+    },
     async handleHttp(request, response, url) {
       if (
         !enabled ||
         request.method !== 'POST' ||
         !['/responses', '/v1/responses'].includes(url.pathname)
       )
-        return base.handleHttp?.(request, response, url) ?? false
+        return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const input = JSON.stringify(body.input ?? [])
-      if (!input.includes(MARKER)) return base.handleHttp?.(request, response, url) ?? false
+      if (!input.includes(MARKER)) return false
       if (phase === 0) {
         if (!requestContainsToolOutput(body, 'home-spaces'))
           return respond(response, tool(body, 'list_spaces', 'home-spaces', {}))
@@ -92,28 +97,26 @@ export function createDesktopScenario(options) {
       return respond(response, [assistantMessage(CONTINUE_RESULT)])
     },
     async verify(control) {
-      await base.verify(control)
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('waitFor', HOME, { timeoutMs: options.workbenchReadyTimeoutMs })
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
-      // Own fixtures make this regression independent of the preceding Issue selection.
+      // Each checkpoint owns its minimal local project and Issue fixtures.
       project = await rpc('projects.create', { name: `Home assistant ${process.pid}` })
       issue = await rpc('todos.create', {
         project_id: project.id,
         todo: { title: 'Review release notes', description: ORIGINAL },
       })
-      await control.command('clickWhenEnabled', '[data-testid="collaboration-primary-home"]')
-      await control.command('waitFor', CHAT)
+      await reloadMainWindow(control, 'The homepage must reconnect after creating its fixtures')
+      await control.command('waitFor', CHAT, { timeoutMs: options.workbenchReadyTimeoutMs })
       const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(
-        row => row.runtime === 'codex' && row.model_id === 'desktop-e2e-responses-model'
+        row =>
+          row.runtime === 'codex' &&
+          row.provider === MODEL_PROVIDER_ID &&
+          row.model_id === DEFAULT_MODEL_ID
       )
       assert.ok(model, 'The shared native Codex Responses model must be available')
       const settings = await rpc('runtime.stand_in.personal.get', { userId: 0 })
-      await rpc('runtime.stand_in.personal.save', {
-        userId: 0,
-        settings: { ...settings, primary: { ...settings.primary, model } },
-      })
-      await control.command('reloadApp')
-      await control.command('waitFor', CHAT, { timeoutMs: options.workbenchReadyTimeoutMs })
       const send = async (message, result) => {
         await control.command('fill', INPUT, { value: message })
         await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-message-button"]`)
@@ -130,7 +133,7 @@ export function createDesktopScenario(options) {
       enabled = true
       await send(`${MARKER}: read the current project progress without changing it.`, QUERY_RESULT)
       const before = (
-        await rpc('runtime.tasks.get', { taskId: 'stand-in-chat-0-primary:collaboration' })
+        await rpc('runtime.tasks.get', { taskId: 'stand-in-chat-0-primary-collaboration' })
       ).task
       assert.ok(before.threadId)
       assert.equal(before.runtimeHandle.origin.conversationScope, 'collaboration')
@@ -175,7 +178,7 @@ export function createDesktopScenario(options) {
         `${HOME} [data-testid="personal-home-tab-stand-in"]`
       )
       assert.equal(await control.command('getValue', INPUT), 'Keep my homepage draft')
-      await control.command('reloadApp')
+      await reloadMainWindow(control, 'The homepage must reconnect before restoring its chat')
       await control.command('waitFor', CHAT, {
         text: WRITE_RESULT,
         timeoutMs: options.workbenchReadyTimeoutMs,
@@ -184,10 +187,16 @@ export function createDesktopScenario(options) {
       await send(`${MARKER}: continue our previous discussion from this homepage.`, CONTINUE_RESULT)
       const after = (await rpc('runtime.tasks.get', { taskId: before.taskId })).task
       assert.equal(after.threadId, before.threadId, 'Homepage reentry must reuse its native thread')
+      assert.equal(after.runtime, 'codex')
+      assert.deepEqual(
+        await rpc('runtime.stand_in.personal.get', { userId: 0 }),
+        settings,
+        'Homepage chat must reuse the primary identity without copying or changing its configuration'
+      )
       assert.deepEqual([...calls].sort(), ['home-read', 'home-spaces', 'home-write'])
     },
     diagnostics() {
-      return { ...base.diagnostics?.(), homeAssistantCalls: [...calls], homeAssistantPhase: phase }
+      return { homeAssistantCalls: [...calls], homeAssistantPhase: phase }
     },
   }
 }

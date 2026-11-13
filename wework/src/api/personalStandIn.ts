@@ -120,7 +120,7 @@ export function standInConversationTaskId(
   roleId?: string,
   scope?: 'collaboration'
 ): string {
-  return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}${scope ? `:${scope}` : ''}`
+  return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}${scope ? `-${scope}` : ''}`
 }
 
 export function newStandInRole(deviceId: string, id: string = crypto.randomUUID()): StandInRole {

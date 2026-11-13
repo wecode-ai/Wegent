@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn collaboration_results_target_the_original_home_conversation() {
         let (_root, handler, _) = completion_fixture();
-        let source = "stand-in-chat-7-primary:collaboration";
+        let source = "stand-in-chat-7-primary-collaboration";
         handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: source.into(),
             thread_id: Some("home-thread".into()),
