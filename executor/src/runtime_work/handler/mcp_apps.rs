@@ -760,7 +760,7 @@ done
                 reloaded.upsert_local_task(wrong_server);
                 let isolated = reloaded.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"initialize"})).await.unwrap();
                 assert!(isolated["modelContext"].is_null(), "Another server must not receive saved state");
-                reloaded.codex_app_server.request("test/stop", json!({})).await.unwrap();
+                // Both handlers share the app-server for this binary.
                 handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"retain","sessionId":"instance"})).await.unwrap();
                 task.status = "archived".into();
                 handler.upsert_local_task(task);
