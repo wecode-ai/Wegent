@@ -104,8 +104,12 @@ impl CodexAppServerClient {
             ],
         );
         drop(state);
-        self.release_thread_subscription_under_admission(thread_id, true)
-            .await
+        let result = self
+            .release_thread_subscription_under_admission(thread_id, true)
+            .await;
+        // Unloading retires the old subscription generation, not the owning activity.
+        self.state.lock().await.renew_thread_generation(thread_id);
+        result
     }
 
     /// Caller cancellation detaches the worker without dropping its resources.
@@ -165,6 +169,61 @@ impl CodexAppServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn reloaded_model_action_retains_idle_subscription_cleanup() {
+        use futures_util::task::noop_waker;
+        use std::{future::Future, task::Context};
+
+        let _environment = LaunchEnvironment::new();
+        let _activation = crate::services::capability_activation::activate().await;
+        ensure_codex_mcp_endpoints().await.unwrap();
+        let mut client = CodexAppServerClient::new("model-action-idle-cleanup");
+        client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+        let mut child = super::super::tests::spawn_idle_app_server_child();
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        client.state.lock().await.process = Some(CodexAppServerProcess {
+            stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+            child,
+            pending: Arc::clone(&pending),
+            notifications: CodexNotificationHub::new(),
+            reader_task: tokio::spawn(async {}),
+        });
+        client.mark_thread_active("thread-1").await;
+        let previous_generation = client.state.lock().await.thread_generations["thread-1"];
+        let gate = client.thread_lifecycle_gate("thread-1").await;
+        let admission = gate.lock().await;
+        let configuration = Map::new();
+        let mut reload = Box::pin(client.reload_model_action_context("thread-1", &configuration));
+        let waker = noop_waker();
+        assert!(reload
+            .as_mut()
+            .poll(&mut Context::from_waker(&waker))
+            .is_pending());
+        let responses = std::mem::take(&mut *pending.lock().await);
+        assert_eq!(responses.len(), 1);
+        for (_, response) in responses {
+            response
+                .sender
+                .send(Ok(json!({"status":"notLoaded"})))
+                .unwrap();
+        }
+        reload.await.unwrap();
+        drop(admission);
+        let idle = client.mark_thread_idle("thread-1", true).await;
+        let active = client
+            .state
+            .lock()
+            .await
+            .active_threads
+            .contains_key("thread-1");
+        client.restart().await;
+
+        assert!(!active);
+        let (generation, overflow) = idle.expect("reloaded model actions must retain idle cleanup");
+        assert!(generation > previous_generation);
+        assert!(overflow.is_empty());
+    }
 
     #[tokio::test]
     async fn model_action_never_unloads_a_concurrent_live_activity() {

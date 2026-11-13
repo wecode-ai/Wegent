@@ -323,6 +323,14 @@ pub(super) enum CodexNativeRequest {
 }
 
 impl CodexAppServerSharedState {
+    pub(super) fn renew_thread_generation(&mut self, thread_id: &str) {
+        let generation = self.next_thread_generation;
+        self.next_thread_generation += 1;
+        self.thread_generations
+            .insert(thread_id.to_owned(), generation);
+        self.idle_thread_generations.remove(thread_id);
+    }
+
     pub(super) fn thread_has_active_turn(&self, thread_id: &str) -> bool {
         self.active_threads.get(thread_id).copied().unwrap_or(0) > 0
             || self.thread_has_native_turn(thread_id)
