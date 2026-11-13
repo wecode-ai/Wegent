@@ -218,6 +218,258 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
 }
 
 #[tokio::test]
+async fn web_chat_dispatches_coordinate_workers_and_keeps_pipeline_on_its_current_bot() {
+    let leader = stored_kind(
+        2,
+        0,
+        "Bot",
+        "leader",
+        json!({
+            "modelRef": {"name": "test-model", "namespace": "default"},
+            "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+        }),
+    );
+    let fixture = MysqlRows::start_results(coordinate_fixture).await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+
+    for mode in ["coordinate", "pipeline", "solo"] {
+        let team = stored_kind(
+            1,
+            0,
+            "Team",
+            "team",
+            json!({
+                "collaborationModel": mode,
+                "members": [
+                    {"botRef": {"name": "leader"}, "role": "leader"},
+                    {"botRef": {"name": "writer", "namespace": "reviews"}, "role": "writer", "prompt": "Write the result."},
+                    {"botRef": {"name": "reviewer"}, "role": "", "prompt": "Review the result."},
+                ],
+            }),
+        );
+        let mut input = chat_input(&team, &leader);
+        input.bot_ids = &[2, 3, 4];
+        let request = build_chat_execution_request(&state, &input, &[], None, None, None)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("mode={mode}: {error:?}; queries: {:?}", fixture.queries())
+            });
+        let configs = request.bot.as_array().expect("Bot configs");
+        assert_eq!(configs[0]["id"], 2);
+        assert_eq!(configs[0]["shell_type"], "ClaudeCode");
+        if mode == "coordinate" {
+            assert_eq!(configs.len(), 3);
+            assert_eq!(configs[0]["skills"], json!([ANALYSIS_SKILL]));
+            assert_eq!(configs[0]["skill_refs"][ANALYSIS_SKILL]["skill_id"], 11);
+            assert!(
+                configs[0]["mcp_servers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|server| { server["name"] == "worker-tool" && server["type"] == "http" })
+            );
+            let compiled: Vec<_> = configs
+                .iter()
+                .flat_map(|bot| bot["mcp_servers"].as_array().unwrap())
+                .chain(&request.mcp_servers)
+                .filter(|server| server["name"] == ANALYSIS_SKILL)
+                .collect();
+            assert_eq!(
+                compiled,
+                vec![&json!({
+                    "name": ANALYSIS_SKILL,
+                    "type": "http",
+                    "url": "https://skill.invalid",
+                    "headers": {"Authorization": "Bearer fixture"}
+                })]
+            );
+            assert_eq!(configs[1]["id"], 3);
+            assert_eq!(configs[1]["role"], "writer");
+            assert_eq!(
+                configs[1]["agent_config"]["env"]["model_id"],
+                "writer-model"
+            );
+            assert!(
+                configs[1]["system_prompt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Write the result.")
+            );
+            assert_eq!(configs[2]["id"], 4);
+            assert_eq!(configs[2]["role"], "worker");
+            assert_eq!(
+                configs[2]["agent_config"]["env"]["model_id"],
+                "reviewer-model"
+            );
+            assert!(
+                configs[2]["system_prompt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Review the result.")
+            );
+        } else {
+            assert_eq!(configs.len(), 1);
+        }
+
+        let cloud = super::super::dispatch::assemble(&request, false, true);
+        let device = super::super::dispatch::device_execution_payload(&request, "app-record-42");
+        assert_eq!(cloud.metadata["bot"], request.bot);
+        assert_eq!(device["bot"], request.bot);
+        assert_eq!(cloud.metadata["mode"], mode);
+        assert_eq!(device["mode"], mode);
+    }
+}
+
+fn coordinate_fixture(sql: &str) -> (Row, Vec<Row>) {
+    if sql.contains("'Skill'") && sql.contains("kinds.id = ?") {
+        return kind_result(stored_kind(
+            11,
+            0,
+            "Skill",
+            ANALYSIS_SKILL,
+            json!({
+                "mcpServers": {
+                    (ANALYSIS_SKILL): {
+                        "type": "streamable-http",
+                        "url": "https://skill.invalid",
+                        "headers": {"Authorization": "Bearer fixture"}
+                    }
+                }
+            }),
+        ));
+    }
+    if sql.contains("kinds.kind = 'Bot'") {
+        let (id, name, namespace) = if sql.contains("kinds.namespace = ?") {
+            (3, "writer", "reviews")
+        } else {
+            (4, "reviewer", "default")
+        };
+        let mut spec = json!({
+            "agent_config": {"env": {"model": "claude", "model_id": format!("{name}-model"), "api_key": "test-key"}},
+            "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+        });
+        if name == "writer" {
+            spec["ghostRef"] = json!({"name": "writer-ghost", "namespace": "default"});
+        } else {
+            spec["capability_mode"] = json!("follow_device");
+        }
+        let mut bot = stored_kind(id, 0, "Bot", name, spec);
+        bot.namespace = namespace.into();
+        return kind_result(bot);
+    }
+    if sql.contains("kinds.kind = 'Shell'") {
+        let (mut row, _) = kind_result(stored_kind(
+            15,
+            0,
+            "Shell",
+            "ClaudeCode",
+            json!({"shellType": "ClaudeCode"}),
+        ));
+        row.splice(
+            0..0,
+            [
+                ("requested_owner_id", SqlValue::I64(0)),
+                ("requested_name", SqlValue::Text("ClaudeCode".into())),
+                ("requested_namespace", SqlValue::Text("default".into())),
+            ],
+        );
+        return (row.clone(), vec![row]);
+    }
+    if sql.contains("kinds.user_id = 0 AND kinds.kind = ?") {
+        return kind_result(stored_kind(
+            12,
+            0,
+            "Ghost",
+            "writer-ghost",
+            json!({
+                "mcpServers": {
+                    "worker-tool": {"type": "streamable-http", "url": "https://worker.invalid"},
+                    (ANALYSIS_SKILL): {"type": "streamable-http", "url": "https://member.invalid"},
+                },
+                "skills": [ANALYSIS_SKILL],
+                "skill_refs": {(ANALYSIS_SKILL): {"skill_id": 11, "namespace": "default", "is_public": true}},
+            }),
+        ));
+    }
+    if sql.contains("kinds.kind = 'Ghost'") {
+        return (
+            kind_result(stored_kind(12, 0, "Ghost", "unused", json!({}))).0,
+            Vec::new(),
+        );
+    }
+    if sql.contains("FROM tasks") && sql.contains("WHERE id = ? AND user_id = ?") {
+        return (vec![("id", SqlValue::I64(0))], vec![]);
+    }
+    skill_fixture(sql, false, false)
+}
+
+#[tokio::test]
+async fn coordinate_member_skills_resolve_in_the_team_owner_and_group_scope() {
+    let fixture = MysqlRows::start_results(|sql| {
+        if sql.contains("kinds.name = 'personal-tool'") {
+            assert!(sql.contains("kinds.user_id = ?") && sql.contains("kinds.namespace = 'default'"));
+            return kind_result(stored_kind(
+                21,
+                42,
+                "Skill",
+                "personal-tool",
+                json!({"mcpServers": {"personal-tool": {"type": "http", "url": "https://personal.invalid"}}}),
+            ));
+        }
+        assert!(sql.contains("kinds.name = 'group-tool'"), "{sql}");
+        let mut skill = stored_kind(
+            22,
+            43,
+            "Skill",
+            "group-tool",
+            json!({"mcpServers": {"group-tool": {"type": "http", "url": "https://group.invalid"}}}),
+        );
+        skill.namespace = "reviews".into();
+        let (schema, rows) = kind_result(skill);
+        if sql.contains("kinds.user_id = ?") {
+            return (schema, vec![]);
+        }
+        assert!(sql.contains("kinds.namespace = 'reviews'"), "{sql}");
+        (schema, rows)
+    })
+    .await;
+    let cache = crate::task_skills::kinds::KindCacheStore::<_, brz_redis::RedisService> {
+        mysql: &fixture.mysql,
+        redis: None,
+        erp: None,
+        resolvers: None,
+    };
+    let mut members = [json!({
+        "skills": ["personal-tool", "group-tool"],
+        "skill_refs": {"group-tool": {"namespace": "reviews"}}
+    })];
+    let mut skills = super::super::skills::BotSkills::default();
+    let tokens = crate::user_mcp_oauth::token_service(7, &fixture.mysql);
+
+    super::super::skills::extend_resolved_skills_from_bot_configs(
+        &cache,
+        &members,
+        &mut skills,
+        None,
+        &tokens,
+        42,
+        "reviews",
+    )
+    .await
+    .unwrap();
+    super::super::skills::sync_bot_skill_refs(&mut members[0], &skills.skill_refs);
+
+    assert_eq!(skills.skills[0]["skill_user_id"], 42);
+    assert_eq!(skills.skills[1]["skill_user_id"], 43);
+    assert_eq!(members[0]["skill_refs"]["personal-tool"]["skill_id"], 21);
+    assert_eq!(members[0]["skill_refs"]["group-tool"]["skill_id"], 22);
+    let mut servers = Vec::new();
+    super::super::skills::append_coding_mcp(&mut servers, &skills, "ClaudeCode");
+    assert_eq!(servers[0]["url"], "https://personal.invalid");
+    assert_eq!(servers[1]["url"], "https://group.invalid");
+}
+
+#[tokio::test]
 async fn first_git_chat_dispatch_uses_written_workspace_while_replica_is_missing_it() {
     use crate::task_creation::{WorkspaceRepository, build_workspace_payload};
     use std::sync::Arc;

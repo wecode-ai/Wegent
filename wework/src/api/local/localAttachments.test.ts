@@ -157,6 +157,23 @@ describe('local attachment API', () => {
     })
   })
 
+  test('preserves all byte values across the base64 encoding blocks', async () => {
+    const bytes = Uint8Array.from({ length: 64 * 1024 + 1 }, (_, index) => index % 256)
+    desktopMocks.invoke
+      .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: bytes.byteLength })
+      .mockResolvedValueOnce(bytes.byteLength)
+      .mockResolvedValueOnce('/draft/generated.bin')
+
+    await createLocalAttachmentApi().uploadAttachment(new File([bytes], 'generated.bin'))
+
+    expect(desktopMocks.invoke).toHaveBeenNthCalledWith(2, 'attachment.append', {
+      uploadId: 'upload-1',
+      offset: 0,
+      appendId: expect.any(String),
+      chunkBase64: Buffer.from(bytes).toString('base64'),
+    })
+  })
+
   test('retries attachment.finish when the host response is lost in transport', async () => {
     vi.useFakeTimers()
     const transportError = Object.assign(new Error('Electron host response was interrupted'), {
