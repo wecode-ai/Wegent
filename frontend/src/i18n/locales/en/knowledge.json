@@ -1044,6 +1044,13 @@
       "selectTargets": "Select people or teams. Only failed authorizations will be retried.",
       "retryFailed": "Retry failed targets",
       "noMatchingSpaces": "No matching spaces"
+    },
+    "deletion": {
+      "continue": "Continue deleting",
+      "externalWarning": "External index cleanup failed. Continuing removes the content from Wegent, but external index data may remain. New searches and document reads will exclude it; operations already in progress may finish.",
+      "residualWarning": "Content deleted from Wegent. External index cleanup is unconfirmed; residual data may remain.",
+      "failed": "Deletion failed",
+      "serviceAuthFailed": "Index cleanup service authentication failed. Check the service configuration and retry."
     }
   },
   "add_repository": "Add Repository",

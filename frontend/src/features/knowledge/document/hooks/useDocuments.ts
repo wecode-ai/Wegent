@@ -10,6 +10,8 @@
  * fall back to server-side offset/limit pagination.
  */
 
+import client from '@/apis/client'
+import { isContinuableDeletionError } from '@/apis/knowledge-deletion'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { ApiError } from '@/apis/client'
 import {
@@ -161,6 +163,9 @@ export function useDocuments(options: UseDocumentsOptions) {
     origin,
   } = options
   const { t } = useTranslation('knowledge')
+  const deletionScope = JSON.stringify([knowledgeBaseId, client.getCacheScope()])
+  const deletionScopeRef = useRef(deletionScope)
+  deletionScopeRef.current = deletionScope
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -507,15 +512,24 @@ export function useDocuments(options: UseDocumentsOptions) {
   )
 
   const remove = useCallback(
-    async (id: number) => {
+    async (id: number, continueOnExternalFailure = false) => {
+      const requestScope = deletionScopeRef.current
+      const cacheScope = client.getCacheScope()
+      const current = () =>
+        deletionScopeRef.current === requestScope && client.getCacheScope() === cacheScope
       setLoading(true)
       setError(null)
       try {
-        await deleteDocument(id)
+        const outcome = await deleteDocument(id, continueOnExternalFailure)
+        if (!current()) return false
+        if (outcome?.index_cleanup === 'unconfirmed') {
+          toast({ title: t('knowledge:document.deletion.residualWarning') })
+        }
         if (paginationEnabledRef.current) {
           resetLocalSnapshot()
           const currentPage = pageRef.current
           await fetchDocuments()
+          if (!current()) return false
           // If the current page is now empty and we're not on page 1, go to previous page
           setDocuments(prev => {
             if (prev.length === 0 && currentPage > 1) {
@@ -528,12 +542,14 @@ export function useDocuments(options: UseDocumentsOptions) {
           setDocuments(prev => prev.filter(doc => doc.id !== id))
           setTotalCount(prev => Math.max(0, prev - 1))
         }
+        return true
       } catch (err) {
+        if (!current()) throw err
         const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.deleteFailed')
-        toast({ title: message, variant: 'destructive' })
+        if (!isContinuableDeletionError(err)) toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
-        setLoading(false)
+        if (current()) setLoading(false)
       }
     },
     [t, fetchDocuments, goToPage, resetLocalSnapshot]

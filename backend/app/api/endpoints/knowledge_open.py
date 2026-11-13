@@ -11,10 +11,23 @@ wegent-username header.  Business logic is fully delegated to
 KnowledgeOrchestrator so that REST API and MCP tools share the same path.
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.knowledge_deletion_responses import (
+    cleanup_failure_response,
+    confirmation_required_response,
+    deletion_response,
+)
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
@@ -43,12 +56,17 @@ from app.schemas.knowledge import (
 )
 from app.schemas.rag import RetrieveResponse
 from app.services.knowledge import KnowledgeFolderService, KnowledgeService
+from app.services.knowledge.deletion_cleanup import (
+    IndexCleanupConfirmationRequired,
+)
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
+from app.services.rag.remote_gateway import RemoteRagGatewayError
+from shared.knowledge_cleanup import ContentDeletionOutcome
 from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 router = APIRouter()
@@ -747,6 +765,7 @@ def update_document_open(
 @router.delete(
     "/documents/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={200: {"model": ContentDeletionOutcome}},
 )
 @trace_sync("delete_document_open", "knowledge.api")
 def delete_document_open(
@@ -754,9 +773,13 @@ def delete_document_open(
     background_tasks: BackgroundTasks,
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
-) -> None:
+    continue_on_external_engine_failure: bool = False,
+    include_cleanup_result: bool = False,
+) -> Response:
     """Delete a document, its RAG index, and associated attachment."""
-    from app.services.rag.remote_gateway import RemoteRagGatewayError
+    include_cleanup_result = (
+        include_cleanup_result or continue_on_external_engine_failure
+    )
 
     current_user = auth_context.user
     try:
@@ -764,14 +787,16 @@ def delete_document_open(
             db=db,
             document_id=document_id,
             user_id=current_user.id,
+            **(
+                {"continue_on_external_engine_failure": True}
+                if continue_on_external_engine_failure
+                else {}
+            ),
         )
+    except IndexCleanupConfirmationRequired as error:
+        raise confirmation_required_response(error) from error
     except RemoteRagGatewayError as exc:
-        # The remote index removal failed, so the document was kept. Surface the
-        # runtime failure instead of reporting a successful delete.
-        raise HTTPException(
-            status_code=exc.status_code or status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
+        raise cleanup_failure_response(exc) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -798,7 +823,9 @@ def delete_document_open(
         user_id=current_user.id,
         user_name=current_user.user_name,
     )
-    return None
+    return deletion_response(
+        result.cleanup if include_cleanup_result else None, include_cleanup_result
+    )
 
 
 # ---------------------------------------------------------------------------

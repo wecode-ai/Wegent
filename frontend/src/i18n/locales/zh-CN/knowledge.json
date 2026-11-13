@@ -1044,6 +1044,13 @@
       "selectTargets": "选择人员或团队，失败时只重试未成功项。",
       "retryFailed": "重试失败项",
       "noMatchingSpaces": "没有匹配的空间"
+    },
+    "deletion": {
+      "continue": "继续删除",
+      "externalWarning": "外部检索引擎清理失败。继续后，内容将从 Wegent 删除，外部索引可能残留。新的检索和原文读取不会返回该内容，已开始的操作可能继续完成。",
+      "residualWarning": "Wegent 内容已删除；外部索引清理未确认，可能仍有残留。",
+      "failed": "删除失败",
+      "serviceAuthFailed": "索引清理服务鉴权失败，请检查服务配置后重试。"
     }
   },
   "add_repository": "添加仓库",

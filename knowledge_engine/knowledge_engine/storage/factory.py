@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Dict, Optional, Type
+from urllib.parse import urlsplit
 
 from knowledge_engine.storage.capabilities import (
     STORAGE_BACKEND_SPECS,
@@ -54,6 +55,8 @@ def create_storage_backend_from_config(
 
 def create_storage_backend_from_runtime_config(
     retriever_config: RuntimeRetrieverConfig,
+    *,
+    request_timeout: float | None = None,
 ) -> BaseStorageBackend:
     storage_config = retriever_config.storage_config or {}
     storage_type = normalize_storage_type(storage_config.get("type") or "")
@@ -68,6 +71,22 @@ def create_storage_backend_from_runtime_config(
         "indexStrategy": storage_config.get("indexStrategy") or {"mode": "per_dataset"},
         "ext": storage_config.get("ext") or {},
     }
+    if request_timeout is not None:
+        url = storage_config["url"]
+        if not isinstance(url, str):
+            raise ValueError("Storage URL must be a string")
+        if storage_type == "qdrant" and "://" not in url:
+            url = f"http://{url}"
+        target = urlsplit(url)
+        allowed_schemes = (
+            {"http", "https", "tcp", "grpc"}
+            if storage_type == "milvus"
+            else {"http", "https"}
+        )
+        if target.scheme not in allowed_schemes or not target.hostname:
+            raise ValueError("External cleanup requires a valid network storage URL")
+        target.port
+        config["request_timeout"] = request_timeout
     return _load_backend_class(storage_type)(config)
 
 

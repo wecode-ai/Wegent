@@ -45,6 +45,7 @@ import asyncio
 import uuid
 
 import httpx
+from knowledge_confirmed_deletion import run_confirmed_deletion
 from knowledge_remote_index_admin import run_admin_scenarios
 from knowledge_remote_index_contracts import run_contract_scenarios
 from knowledge_remote_index_delete import (
@@ -806,6 +807,7 @@ def run() -> None:
         run_admin_scenarios(client, token, owner_user_id)
         run_document_delete_scenario(client, token, owner_user_id)
         run_delete_failure_scenario(client, token, owner_user_id)
+        run_confirmed_deletion(client, token, owner_user_id)
         _run_failure_scenario(client, token, owner_user_id)
 
 

@@ -32,6 +32,11 @@ from app.api.endpoints._knowledge_multimodal import (
     multimodal_update_kwargs,
 )
 from app.api.endpoints.knowledge_code_wiki import router as code_wiki_router
+from app.api.knowledge_deletion_responses import (
+    cleanup_failure_response,
+    confirmation_required_response,
+    deletion_response,
+)
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
@@ -83,6 +88,9 @@ from app.services.knowledge import (
     KnowledgeService,
     knowledge_base_qa_service,
 )
+from app.services.knowledge.deletion_cleanup import (
+    IndexCleanupConfirmationRequired,
+)
 from app.services.knowledge.dingtalk_auto_sync import (
     is_copy_sync_enabled,
     queue_dingtalk_scan,
@@ -99,6 +107,8 @@ from app.services.knowledge.orchestrator import (
     knowledge_orchestrator,
 )
 from app.services.knowledge.retrieval_profile import get_profile
+from app.services.rag.remote_gateway import RemoteRagGatewayError
+from shared.knowledge_cleanup import ContentDeletionOutcome
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async,
@@ -701,19 +711,34 @@ def update_knowledge_base(
         )
 
 
-@router.delete("/{knowledge_base_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{knowledge_base_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={200: {"model": ContentDeletionOutcome}},
+)
 @trace_sync("delete_knowledge_base", "knowledge.api")
 def delete_knowledge_base(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
-    """Delete a knowledge base and all its documents."""
+    continue_on_external_engine_failure: bool = False,
+    include_cleanup_result: bool = False,
+) -> Response:
+    """Delete an empty knowledge base or a removable Code Wiki."""
+    include_cleanup_result = (
+        include_cleanup_result or continue_on_external_engine_failure
+    )
     try:
         deleted = KnowledgeService.delete_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=current_user.id,
+            **(
+                {"continue_on_external_engine_failure": True}
+                if continue_on_external_engine_failure
+                else {}
+            ),
+            **({"return_outcome": True} if include_cleanup_result else {}),
         )
 
         if not deleted:
@@ -729,7 +754,14 @@ def delete_knowledge_base(
                 "user_id": str(current_user.id),
             },
         )
-        return None
+        return deletion_response(
+            deleted if isinstance(deleted, ContentDeletionOutcome) else None,
+            include_cleanup_result,
+        )
+    except IndexCleanupConfirmationRequired as error:
+        raise confirmation_required_response(error) from error
+    except RemoteRagGatewayError as error:
+        raise cleanup_failure_response(error) from error
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1227,22 +1259,35 @@ def synchronize_external_document(
     return KnowledgeDocumentResponse.model_validate(result)
 
 
-@document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@document_router.delete(
+    "/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={200: {"model": ContentDeletionOutcome}},
+)
 @trace_sync("delete_document", "knowledge.api")
 def delete_document(
     document_id: int,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+    continue_on_external_engine_failure: bool = False,
+    include_cleanup_result: bool = False,
+) -> Response:
     """Delete a document from the knowledge base."""
-    from app.services.rag.remote_gateway import RemoteRagGatewayError
+    include_cleanup_result = (
+        include_cleanup_result or continue_on_external_engine_failure
+    )
 
     try:
         result = KnowledgeService.delete_document(
             db=db,
             document_id=document_id,
             user_id=current_user.id,
+            **(
+                {"continue_on_external_engine_failure": True}
+                if continue_on_external_engine_failure
+                else {}
+            ),
         )
 
         if not result.success:
@@ -1273,14 +1318,13 @@ def delete_document(
                 user_name=current_user.user_name,
             )
 
-        return None
+        return deletion_response(
+            result.cleanup if include_cleanup_result else None, include_cleanup_result
+        )
+    except IndexCleanupConfirmationRequired as error:
+        raise confirmation_required_response(error) from error
     except RemoteRagGatewayError as e:
-        # The remote index removal failed, so the document was kept. Surface the
-        # runtime failure instead of reporting a successful delete.
-        raise HTTPException(
-            status_code=e.status_code or status.HTTP_502_BAD_GATEWAY,
-            detail=str(e),
-        ) from e
+        raise cleanup_failure_response(e) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -18,6 +18,7 @@ from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
 from knowledge_runtime.middleware.auth import require_internal_service_token_configured
+from shared.knowledge_cleanup import EXTERNAL_CLEANUP_ERROR, ExternalEngineCleanupError
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,22 @@ async def embedding_dimension_mismatch_handler(
     return JSONResponse(
         status_code=422,
         content=error_response.model_dump(mode="json"),
+    )
+
+
+@app.exception_handler(ExternalEngineCleanupError)
+async def external_cleanup_error_handler(
+    request: Request, exc: ExternalEngineCleanupError
+) -> JSONResponse:
+    """Keep external cleanup failure distinct from Runtime and authorization errors."""
+    return JSONResponse(
+        status_code=502,
+        content=RemoteRagError(
+            code=EXTERNAL_CLEANUP_ERROR,
+            message=str(exc),
+            retryable=True,
+            details=exc.details,
+        ).model_dump(mode="json"),
     )
 
 

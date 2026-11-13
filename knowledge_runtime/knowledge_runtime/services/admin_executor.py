@@ -10,10 +10,13 @@ import asyncio
 import logging
 from typing import Any
 
+from knowledge_engine.storage.capabilities import normalize_storage_type
+from knowledge_engine.storage.cleanup_errors import external_cleanup_boundary
 from knowledge_engine.storage.factory import (
     create_storage_backend_from_config,
     create_storage_backend_from_runtime_config,
 )
+from knowledge_runtime.services.cleanup_deadline import cleanup_deadline
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from shared.knowledge_module import (
     build_document_delete_request,
@@ -52,6 +55,7 @@ class AdminExecutor:
         span_name="delete_document_index",
         tracer_name="knowledge_runtime.services.admin",
     )
+    @cleanup_deadline
     async def delete_document_index(
         self,
         request: RemoteDeleteDocumentIndexRequest,
@@ -68,34 +72,41 @@ class AdminExecutor:
             authorized=request.authorized_resources,
         )
 
-        storage_backend = create_storage_backend_from_runtime_config(
-            config.retriever_config
+        storage_type = normalize_storage_type(
+            config.retriever_config.storage_config.get("type", "")
         )
-        knowledge_id = str(request.knowledge_base_id)
+        with external_cleanup_boundary(storage_type):
+            storage_backend = await asyncio.to_thread(
+                create_storage_backend_from_runtime_config,
+                config.retriever_config,
+                request_timeout=10.0,
+            )
+            knowledge_id = str(request.knowledge_base_id)
 
-        logger.info(
-            "Deleting document index: knowledge_base_id=%d, doc_ref=%s",
-            request.knowledge_base_id,
-            request.document_ref,
-        )
+            logger.info(
+                "Deleting document index: knowledge_base_id=%d, doc_ref=%s",
+                request.knowledge_base_id,
+                request.document_ref,
+            )
 
-        # The shared module owns the delete identity and the normalized result,
-        # so a document leaves exactly the chunks its index call created.
-        return await delete_document(
-            DocumentServiceIndexAdapter(
-                document_service=DocumentService(storage_backend=storage_backend)
-            ),
-            build_document_delete_request(
-                knowledge_id=knowledge_id,
-                doc_ref=request.document_ref,
-                user_id=config.index_owner_user_id,
-            ),
-        )
+            # The shared module owns the delete identity and the normalized result,
+            # so a document leaves exactly the chunks its index call created.
+            return await delete_document(
+                DocumentServiceIndexAdapter(
+                    document_service=DocumentService(storage_backend=storage_backend)
+                ),
+                build_document_delete_request(
+                    knowledge_id=knowledge_id,
+                    doc_ref=request.document_ref,
+                    user_id=config.index_owner_user_id,
+                ),
+            )
 
     @trace_async(
         span_name="purge_knowledge_index",
         tracer_name="knowledge_runtime.services.admin",
     )
+    @cleanup_deadline
     async def purge_knowledge_index(
         self,
         request: RemotePurgeKnowledgeIndexRequest,
@@ -107,24 +118,30 @@ class AdminExecutor:
             authorized=request.authorized_resources,
         )
 
-        storage_backend = create_storage_backend_from_runtime_config(
-            config.retriever_config
+        storage_type = normalize_storage_type(
+            config.retriever_config.storage_config.get("type", "")
         )
-        knowledge_id = str(request.knowledge_base_id)
+        with external_cleanup_boundary(storage_type):
+            storage_backend = await asyncio.to_thread(
+                create_storage_backend_from_runtime_config,
+                config.retriever_config,
+                request_timeout=10.0,
+            )
+            knowledge_id = str(request.knowledge_base_id)
 
-        logger.info(
-            "Purging knowledge base index: knowledge_base_id=%d",
-            request.knowledge_base_id,
-        )
+            logger.info(
+                "Purging knowledge base index: knowledge_base_id=%d",
+                request.knowledge_base_id,
+            )
 
-        result = await manage_index(
-            storage_backend,
-            operation="purge",
-            knowledge_id=knowledge_id,
-            user_id=config.index_owner_user_id,
-        )
+            result = await manage_index(
+                storage_backend,
+                operation="purge",
+                knowledge_id=knowledge_id,
+                user_id=config.index_owner_user_id,
+            )
 
-        return result
+            return result
 
     @trace_async(
         span_name="drop_knowledge_index",

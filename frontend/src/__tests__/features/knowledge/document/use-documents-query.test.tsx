@@ -5,7 +5,8 @@
 import '@testing-library/jest-dom'
 import { act, renderHook, waitFor } from '@testing-library/react'
 
-import { listDocuments } from '@/apis/knowledge'
+import { deleteDocument, listDocuments } from '@/apis/knowledge'
+import { toast } from '@/hooks/use-toast'
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 import type { KnowledgeContentOrigin } from '@/types/knowledge'
 
@@ -26,6 +27,8 @@ jest.mock('@/apis/knowledge', () => ({
 }))
 
 const mockListDocuments = listDocuments as jest.MockedFunction<typeof listDocuments>
+
+jest.mock('@/hooks/use-toast', () => ({ toast: jest.fn() }))
 
 function createDocument(id: number, name: string, overrides = {}) {
   return {
@@ -83,6 +86,22 @@ function deferredResponse(id: number, name: string) {
 }
 
 describe('useDocuments query parameters', () => {
+  it('reports residual index risk after a confirmed content deletion', async () => {
+    mockListDocuments.mockResolvedValue(createListResponse(11, 'document.txt'))
+    jest.mocked(deleteDocument).mockResolvedValue({
+      content_deleted: true,
+      index_cleanup: 'unconfirmed',
+      error_code: 'external_engine_unavailable',
+      can_continue: false,
+    })
+    const { result } = renderHook(() => useDocuments({ knowledgeBaseId: 1 }))
+    await waitFor(() => expect(result.current.documents).toHaveLength(1))
+    await act(async () => {
+      await result.current.remove(11, true)
+    })
+    expect(deleteDocument).toHaveBeenCalledWith(11, true)
+    expect(toast).toHaveBeenCalledWith({ title: 'knowledge:document.deletion.residualWarning' })
+  })
   beforeEach(() => {
     jest.clearAllMocks()
     mockListDocuments.mockResolvedValue({

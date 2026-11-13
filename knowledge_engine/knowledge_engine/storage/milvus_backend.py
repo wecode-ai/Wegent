@@ -44,6 +44,7 @@ from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.cleanup_timeout import CleanupTimeoutClient
 from knowledge_engine.storage.milvus_dimension import (
     CollectionSnapshot,
     embedding_model_name,
@@ -295,7 +296,14 @@ class MilvusBackend(BaseStorageBackend):
         Returns:
             MilvusClient instance for direct Milvus operations
         """
-        return MilvusClient(uri=self.base_url, token=self.token, db_name=self.db_name)
+        timeout = self.config.get("request_timeout")
+        client = MilvusClient(
+            uri=self.base_url,
+            token=self.token,
+            db_name=self.db_name,
+            **({"timeout": timeout} if timeout else {}),
+        )
+        return CleanupTimeoutClient(client, timeout) if timeout else client
 
     def _resolve_hybrid_ranker(self) -> str:
         """
@@ -933,10 +941,9 @@ class MilvusBackend(BaseStorageBackend):
         **kwargs,
     ) -> Dict:
         """
-        Delete document from Milvus using LlamaIndex API.
+        Delete document through bounded native SDK calls.
 
-        Uses delete_nodes with metadata filters to remove all chunks
-        with matching doc_ref.
+        The purge helper scopes both knowledge and document identity.
 
         Args:
             knowledge_id: Knowledge base ID
@@ -947,36 +954,11 @@ class MilvusBackend(BaseStorageBackend):
             Deletion result dict
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
-        if not self._collection_snapshot(collection_name).exists:
-            # Constructing a vector store would create the collection with the
-            # configured default dimension, so a missing collection only has
-            # parent nodes left to delete.
-            self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-            return {
-                "doc_ref": doc_ref,
-                "knowledge_id": knowledge_id,
-                "deleted_chunks": 0,
-                "status": "deleted",
-            }
-
-        vector_store = self.create_vector_store(collection_name)
-
-        load_for_document_cleanup(vector_store.client, collection_name)
-
-        # Build filters to match the document
-        filters = self._build_doc_ref_filters(knowledge_id, doc_ref)
-
-        # Get nodes first to count them
-        try:
-            nodes = vector_store.get_nodes(filters=filters)
-            deleted_count = len(nodes)
-        except Exception:
-            deleted_count = 0
-
-        # Delete nodes using LlamaIndex API
-        vector_store.delete_nodes(filters=filters)
+        client = self._get_client()
+        deleted_count = self._delete_collection_by_knowledge_id(
+            client, collection_name, knowledge_id, doc_ref=doc_ref
+        )
         self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
-
         return {
             "doc_ref": doc_ref,
             "knowledge_id": knowledge_id,
@@ -1261,20 +1243,29 @@ class MilvusBackend(BaseStorageBackend):
         client: MilvusClient,
         collection_name: str,
         knowledge_id: str,
+        doc_ref: str | None = None,
     ) -> int:
         if not client.has_collection(collection_name):
             return 0
 
+        if doc_ref is not None:
+            load_for_document_cleanup(client, collection_name)
+
         safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
+        filter_expr = (
+            self._build_parent_node_filter_expr(knowledge_id, doc_ref)
+            if doc_ref is not None
+            else f'knowledge_id == "{safe_knowledge_id}"'
+        )
         results = client.query(
             collection_name=collection_name,
-            filter=f'knowledge_id == "{safe_knowledge_id}"',
+            filter=filter_expr,
             output_fields=["doc_ref"],
             limit=MAX_QUERY_LIMIT,
         )
         client.delete(
             collection_name=collection_name,
-            filter=f'knowledge_id == "{safe_knowledge_id}"',
+            filter=filter_expr,
         )
         return len(results)
 

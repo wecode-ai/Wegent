@@ -98,10 +98,22 @@ class QdrantBackend(BaseStorageBackend):
             self.client = QdrantClient(
                 url=self.url,
                 api_key=self.api_key,
+                **(
+                    {"timeout": config["request_timeout"]}
+                    if "request_timeout" in config
+                    else {}
+                ),
             )
         else:
             # Local Qdrant connection
-            self.client = QdrantClient(url=self.url)
+            self.client = QdrantClient(
+                url=self.url,
+                **(
+                    {"timeout": config["request_timeout"]}
+                    if "request_timeout" in config
+                    else {}
+                ),
+            )
 
     def create_vector_store(self, collection_name: str):
         """
@@ -356,6 +368,7 @@ class QdrantBackend(BaseStorageBackend):
         # repeated delete finds nothing left. Both mean "no chunks to remove",
         # so report the idempotent result instead of a missing-collection error.
         if not self.client.collection_exists(collection_name):
+            self.delete_parent_nodes(knowledge_id, doc_ref, **kwargs)
             return {
                 "doc_ref": doc_ref,
                 "knowledge_id": knowledge_id,

@@ -826,15 +826,12 @@ export function DocumentList({
     }
   }
 
-  const handleDelete = async () => {
+  const handleDelete = async (continueOnExternalFailure = false) => {
     if (!deletingDoc) return
-    try {
-      await remove(deletingDoc.id)
-      setDeletingDoc(null)
-      onDocumentsChanged?.()
-    } catch {
-      // Error handled by hook
-    }
+    const targetId = deletingDoc.id
+    if (!(await remove(targetId, continueOnExternalFailure))) return
+    setDeletingDoc(current => (current?.id === targetId ? null : current))
+    onDocumentsChanged?.()
   }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
