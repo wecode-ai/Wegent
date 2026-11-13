@@ -30,6 +30,10 @@ describe("workspace DTO mappers", () => {
         name: "默认空间",
         is_default: true,
       }).is_system_default,
+    ).toBeUndefined();
+    expect(
+      mapCollaborationWorkspaceDto({ id: "business", is_system_default: false })
+        .is_system_default,
     ).toBe(false);
   });
   it.each(["available", "unavailable", "unchecked"])(
