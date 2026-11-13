@@ -108,6 +108,9 @@ impl RuntimeWorkRpcHandler {
                 .configure_git_webhook(&identity, &args, name == "git_webhook_plan")
                 .await;
         }
+        if name == "search_context" {
+            return self.search_stand_in_context(&identity, &args).await;
+        }
         if matches!(name, "list_tasks" | "read_task") {
             return self
                 .read_stand_in_conversations(&identity, name, &args)

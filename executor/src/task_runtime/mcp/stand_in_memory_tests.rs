@@ -177,6 +177,7 @@ async fn memory_review_tools_allow_evidence_but_reject_actions_even_when_called_
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let runtime = TaskRuntime::new(store).unwrap();
     for name in [
+        "search_context",
         "create_task",
         "continue_task",
         "schedule_task",
@@ -419,6 +420,7 @@ async fn delegated_worker_raw_catalog_is_readonly_and_roles_have_history_tools()
         vec![
             "list_tasks",
             "read_task",
+            "search_context",
             "list_connection_providers",
             "read_source"
         ]
@@ -510,7 +512,7 @@ async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no
         .into_iter()
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(names, vec!["list_tasks", "read_task"]);
+    assert_eq!(names, vec!["list_tasks", "read_task", "search_context"]);
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let runtime = TaskRuntime::new(store).unwrap();
