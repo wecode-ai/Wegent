@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
@@ -6,13 +7,8 @@ import { RuntimeEventProxy } from './runtime-event-proxy.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { currentExecutorPid } from './executor-restart-readiness.mjs'
-import {
-  CLOUD_PUBLIC_MODEL_NAME,
-  CLOUD_PUBLIC_MODEL_OPTIONS,
-  commandOutputAsync,
-  fetchJson,
-  repoDir,
-} from './shared.mjs'
+import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import { commandOutputAsync, fetchJson, repoDir } from './shared.mjs'
 import {
   createSse,
   handleEmptyReplyPrediction,
@@ -93,25 +89,39 @@ export function createRuntimeNotificationReconnect({
   async function createTask(name, subscribed = true) {
     const taskWorkspace = join(workspacePath, `notification-reconnect-${name}`)
     await mkdir(taskWorkspace, { recursive: true })
-    const teams = await request('/api/teams?page=1&limit=100')
-    const task = await request('/api/runtime-work/create', {
-      deviceId,
-      workspacePath: taskWorkspace,
-      teamId: teams.items[0].id,
-      runtime: 'codex',
-      message: `${PREFIX}${name}`,
-      title: `Reconnect ${name}`,
-      modelId: CLOUD_PUBLIC_MODEL_NAME,
-      modelType: 'public',
-      modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
-      modelSelection: {
-        modelName: CLOUD_PUBLIC_MODEL_NAME,
-        modelType: 'public',
-        options: CLOUD_PUBLIC_MODEL_OPTIONS,
+    // APP devices accept task commands through their local IPC, not remote APIs.
+    const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
+    const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
+    assert.ok(model, 'The reconnect fixture requires the configured real Codex model route')
+    const taskId = `notification-reconnect-${name}-${randomUUID()}`
+    const prompt = `${PREFIX}${name}`
+    const task = await requestExecutor(
+      control,
+      'runtime.tasks.create',
+      {
+        taskId,
+        workspacePath: taskWorkspace,
+        runtime: 'codex',
+        message: prompt,
+        title: `Reconnect ${name}`,
+        executionRequest: {
+          task_id: taskId,
+          subtask_id: `${taskId}-initial`,
+          user_id: userId,
+          prompt,
+          new_session: true,
+          bot: [{ shell_type: 'Codex', name: 'Reconnect verification' }],
+          model_config: {
+            model_id: model.local_model_id,
+            model_provider: model.provider,
+            runtime_config: { codex: { use_user_config: true, configured: true } },
+          },
+        },
       },
-    })
+      uiTimeoutMs
+    )
     assert.equal(task.accepted, true, task.error)
-    assert.ok(task.taskId)
+    assert.equal(task.taskId, taskId)
     const address = { deviceId, taskId: task.taskId, workspacePath: taskWorkspace }
     await until(
       () => gates.get(name),
@@ -249,7 +259,7 @@ export function createRuntimeNotificationReconnect({
         const baseline = Object.keys((await fixture({ operation: 'receipts' })).receipts).length
         const old = await createTask('old', false)
         gates.get('old')()
-        await cloud.waitForRuntimeTask(old)
+        await waitForCompletedRuntimeTaskThread(control, old.taskId, modelResponseTimeoutMs)
         await proxy.waitForEvent(entry => terminal(entry, old.taskId))
         await waitForBackendTerminal(old.taskId)
         await fixture({ operation: 'seed', apiBase: `http://127.0.0.1:${api.address().port}` })
@@ -276,7 +286,7 @@ export function createRuntimeNotificationReconnect({
         await proxy.waitForEvent(entry => terminal(entry, offline.taskId), {
           timeoutMs: uiTimeoutMs,
         })
-        await cloud.waitForRuntimeTask(offline)
+        await waitForCompletedRuntimeTaskThread(control, offline.taskId, modelResponseTimeoutMs)
         await waitForBackendTerminal(offline.taskId)
         assert.ifError(api.failure)
         assert.equal(messages.length, 1, 'Offline task must notify exactly once after reconnect')
@@ -288,7 +298,7 @@ export function createRuntimeNotificationReconnect({
         await proxy.waitForEvent(entry => terminal(entry, barrier.taskId), {
           timeoutMs: uiTimeoutMs,
         })
-        await cloud.waitForRuntimeTask(barrier)
+        await waitForCompletedRuntimeTaskThread(control, barrier.taskId, modelResponseTimeoutMs)
         await waitForBackendTerminal(barrier.taskId)
         assert.ifError(api.failure)
         assert.equal(
