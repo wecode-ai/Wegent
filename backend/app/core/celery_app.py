@@ -276,3 +276,8 @@ def mark_celery_worker_local_shutdown(*args, **kwargs):
 # Import dead letter queue handlers to register signal handlers
 # This must be done after celery_app is created
 import app.core.dead_letter_queue  # noqa: E402, F401
+
+# Register task outcome observation without starting a sender.
+from shared.event_reporting.celery import install_task_logging  # noqa: E402
+
+install_task_logging()

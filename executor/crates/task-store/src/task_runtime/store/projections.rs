@@ -251,6 +251,34 @@ pub(super) fn latest_execution(
 }
 
 /// Newest execution attempt for every task in a project.
+pub(super) fn latest_executions_for_items(
+    connection: &Connection,
+    item_ids: &[String],
+) -> Result<HashMap<String, ExecutionProjection>, TaskRuntimeError> {
+    if item_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = std::iter::repeat("?")
+        .take(item_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut statement = connection.prepare(&format!(
+        "SELECT e.id,e.status,e.observed_state,e.sync_state,a.name,a.title,a.metadata,e.completed_at,e.loop_item_id
+         FROM loop_item_executions e
+         LEFT JOIN loop_items a ON a.id=e.agent_id AND a.resource_type='chat_agent' AND a.cloud_project_id=e.cloud_project_id
+         WHERE e.loop_item_id IN ({placeholders}) ORDER BY e.id DESC"
+    ))?;
+    let rows = statement.query_map(params_from_iter(item_ids), |row| {
+        Ok((row.get::<_, String>(8)?, execution_projection(row)?))
+    })?;
+    let mut executions = HashMap::new();
+    for row in rows {
+        let (item_id, projection) = row?;
+        executions.entry(item_id).or_insert(projection);
+    }
+    Ok(executions)
+}
+
 pub(super) fn latest_executions_for_project(
     connection: &Connection,
     project_id: &str,

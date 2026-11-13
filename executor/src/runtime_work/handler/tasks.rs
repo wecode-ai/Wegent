@@ -218,6 +218,20 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(json!({"success": true, "skipped": true}));
         }
+        if let Err(error) = self.sync_generated_issue_title(&latest_link, &title).await {
+            log_executor_event(
+                "generated Issue title update failed",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("error", error.message),
+                ],
+            );
+        }
+        let latest_link =
+            self.commit_runtime_task_title(latest_link, title.clone(), Some(&source_title))?;
+        if latest_link.title != title {
+            return Ok(json!({"success": true, "skipped": true}));
+        }
         if let Some(thread_id) = latest_link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -234,10 +248,11 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.clone()),
                     ],
                 );
-                return Ok(json!({"success": false, "error": error}));
+                return Ok(
+                    json!({"success": false, "error": error, "titleApplied":true, "title":title}),
+                );
             }
         }
-        self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
             "friendly task title generation completed",
             &[("local_task_id", local_task_id)],
@@ -247,12 +262,28 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn commit_runtime_task_title(
         &self,
-        mut link: RuntimeTaskLink,
+        link: RuntimeTaskLink,
         title: String,
-    ) -> RuntimeTaskLink {
-        link.title = title.clone();
-        link.updated_at = now_ms();
-        self.upsert_local_task(link.clone());
+        expected_title: Option<&str>,
+    ) -> Result<RuntimeTaskLink, AppIpcError> {
+        let mut applied = false;
+        let link = self
+            .store
+            .update_task(&link.local_task_id, |current| {
+                if expected_title.is_some_and(|expected| current.title != expected) {
+                    return;
+                }
+                current.title = title.clone();
+                current.updated_at = now_ms();
+                applied = true;
+            })
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was removed before its title update")
+            })?;
+        if !applied {
+            return Ok(link);
+        }
+        self.project_runtime_link_status(&link);
         let request = runtime_event_request_from_link(&link);
         emit_response_event(
             &self.event_tx,
@@ -262,7 +293,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             json!({"title": title}),
         );
-        link
+        Ok(link)
     }
 
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {

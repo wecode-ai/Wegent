@@ -94,7 +94,30 @@ export function validateUpgradeCatalog(input) {
   return input
 }
 
-/** Explicit edges grant permission, including declared macOS architecture equivalence. */
+/** A verified pair covers published sources in [from, to), unless explicitly revoked. */
+export function upgradeTargets(catalog, currentVersion) {
+  if (!catalog.releases.some(r => r.version === currentVersion)) return []
+  const sources = new Map(catalog.releases.map(r => [r.version, r]))
+  const revoked = new Set(
+    catalog.edges.filter(e => e.from === currentVersion && e.revoked).map(e => e.to)
+  )
+  const witnesses = catalog.edges.filter(
+    e =>
+      !e.revoked &&
+      (e.from === currentVersion || !sources.get(e.from).revoked) &&
+      compareVersions(e.from, currentVersion) <= 0
+  )
+  return catalog.releases.filter(
+    r =>
+      !r.revoked &&
+      !revoked.has(r.version) &&
+      compareVersions(currentVersion, r.version) < 0 &&
+      compareVersions(currentVersion, r.minSourceVersion) >= 0 &&
+      witnesses.some(e => e.to === r.version)
+  )
+}
+
+/** Choose the shortest path to the newest release covered by verified intervals. */
 export function planUpgrade(catalog, currentVersion) {
   validateUpgradeCatalog(catalog)
   compareVersions(currentVersion, currentVersion)
@@ -104,19 +127,11 @@ export function planUpgrade(catalog, currentVersion) {
   for (let cursor = 0; cursor < queue.length; cursor++) {
     const path = queue[cursor]
     const from = path.at(-1)
-    const next = catalog.edges
-      .filter(
-        e =>
-          !e.revoked &&
-          e.from === from &&
-          allowed.has(e.to) &&
-          (catalog.channel === 'beta' || !e.to.includes('-beta.'))
-      )
-      .sort((a, b) => compareVersions(b.to, a.to))
-    for (const edge of next) {
-      if (paths.has(edge.to)) continue
-      const nextPath = [...path, edge.to]
-      paths.set(edge.to, nextPath.slice(1))
+    const next = upgradeTargets(catalog, from).sort((a, b) => compareVersions(b.version, a.version))
+    for (const release of next) {
+      if (paths.has(release.version)) continue
+      const nextPath = [...path, release.version]
+      paths.set(release.version, nextPath.slice(1))
       queue.push(nextPath)
     }
   }

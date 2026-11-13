@@ -121,7 +121,7 @@ export type CollaborationProjectRendererWorkspaceContext =
 
 export interface CollaborationProjectRendererContext {
   project: CollaborationProject;
-  workspace: CollaborationProjectRendererWorkspaceContext;
+  workspace: CollaborationProjectRendererWorkspaceContext | null;
 }
 
 function navigateWithin(
@@ -719,7 +719,9 @@ function IssueHomeLauncher({
   api,
   locale,
   renderTaskComposer,
+  currentUserId,
 }: {
+  currentUserId?: number;
   messages: PlatformMessages;
   projects: CollaborationProject[];
   workspaces: CollaborationWorkspace[];
@@ -746,6 +748,9 @@ function IssueHomeLauncher({
     import("../types").CollaborationGroup[]
   >([]);
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [issueReferenceError, setIssueReferenceError] = useState<string | null>(
+    null,
+  );
   const composerRef = useRef<ComposerInputHandle>(null);
   const selectedProject = projects.find(
     (project) => project.id === selectedProjectId,
@@ -763,19 +768,18 @@ function IssueHomeLauncher({
     setMembers([]);
     setAgents([]);
     setMentionIssues([]);
+    setIssueReferenceError(null);
     setMentionGroups([]);
     setMemberError(null);
     void Promise.all([
       api.members.list(selectedProjectId),
       api.agents.list(selectedProjectId),
-      api.issues.list(selectedProjectId),
       api.projects.listCollaborationGroups?.(selectedProjectId) ?? [],
     ])
-      .then(([items, projectAgents, issues, groups]) => {
+      .then(([items, projectAgents, groups]) => {
         if (active) {
           setMembers(items);
           setAgents(projectAgents);
-          setMentionIssues(issues);
           setMentionGroups(groups);
         }
       })
@@ -786,6 +790,30 @@ function IssueHomeLauncher({
       active = false;
     };
   }, [api, selectedProjectId, messages.issueHomeMembersFailed]);
+  const needsIssueReferences = content.includes("#");
+  useEffect(() => {
+    if (!needsIssueReferences) return;
+    let active = true;
+    void api.issues
+      .list(selectedProjectId)
+      .then((issues) => {
+        if (active) {
+          setMentionIssues(issues);
+          setIssueReferenceError(null);
+        }
+      })
+      .catch(() => {
+        if (active) setIssueReferenceError(messages.issueHomeMembersFailed);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    api,
+    selectedProjectId,
+    needsIssueReferences,
+    messages.issueHomeMembersFailed,
+  ]);
   const guides = [
     {
       Icon: SquarePen,
@@ -812,9 +840,13 @@ function IssueHomeLauncher({
   const composer = (
     <IssueHomeComposer
       renderTaskComposer={renderTaskComposer}
+      currentUserId={currentUserId}
       ref={composerRef}
       value={content}
-      onChange={setContent}
+      onChange={(value) => {
+        setContent(value);
+        if (!value.includes("#")) setIssueReferenceError(null);
+      }}
       onSubmit={onCreateIssue}
       pending={pending}
       members={members}
@@ -829,7 +861,7 @@ function IssueHomeLauncher({
       placeholder={messages.issueHomePlaceholder}
       projectLabel={messages.issueHomeProject}
       memberLabel={messages.members}
-      error={memberError}
+      error={memberError ?? issueReferenceError}
       environmentNotice={
         selectedProject ? (
           <IssueExecutionEnvironmentNotice
@@ -1421,6 +1453,12 @@ function CollaborationPlatformAppContent({
     null,
   );
   const [rootIssueLoading, setRootIssueLoading] = useState(false);
+  const [createdHomeIssue, setCreatedHomeIssue] =
+    useState<
+      Parameters<
+        NonNullable<CollaborationPlatformHostAdapter["renderPersonalHome"]>
+      >[0]["createdIssue"]
+    >();
   const rootIssueSubmitting = useRef(false);
   const [standInRetry, setStandInRetry] = useState<{
     projectId: string;
@@ -1778,13 +1816,25 @@ function CollaborationPlatformAppContent({
           });
         }
       }
-      navigateWithin(host, {
-        workspaceId: rootIssueProject.workspace_id,
-        workspaceView: "projects",
-        projectId: rootIssueProject.id,
-        projectView: "board",
-        issueId: created.id,
-      });
+      if (host.renderPersonalHome) {
+        setCreatedHomeIssue({
+          key: crypto.randomUUID(),
+          project: rootIssueProject,
+          issue: {
+            ...created,
+            project_key: rootIssueProject.project_key,
+            project_name: rootIssueProject.name,
+            has_active_task: false,
+          },
+        });
+      } else
+        navigateWithin(host, {
+          workspaceId: rootIssueProject.workspace_id,
+          workspaceView: "projects",
+          projectId: rootIssueProject.id,
+          projectView: "board",
+          issueId: created.id,
+        });
       return true;
     } catch (error) {
       host.notify?.(
@@ -1801,9 +1851,11 @@ function CollaborationPlatformAppContent({
     const project = state.projects.find(
       (candidate) => candidate.id === item.cloud_project_id,
     );
-    if (!project?.workspace_id) return;
+    if (!project) return;
     navigateWithin(host, {
-      workspaceId: project.workspace_id,
+      collaborationDomain:
+        project.project_store === "local" ? "local" : "cloud",
+      workspaceId: project.workspace_id ?? null,
       workspaceView: "projects",
       projectId: project.id,
       projectView: "board",
@@ -1970,7 +2022,13 @@ function CollaborationPlatformAppContent({
     );
   } else if (
     host.location.projectId &&
-    (state.workspace || state.workspaceNavigationContext)
+    (state.workspace ||
+      state.workspaceNavigationContext ||
+      state.projects.some(
+        (project) =>
+          String(project.id) === host.location.projectId &&
+          !project.workspace_id,
+      ))
   ) {
     const workspaceContext =
       state.workspace ?? state.workspaceNavigationContext;
@@ -1979,7 +2037,7 @@ function CollaborationPlatformAppContent({
         (project) => String(project.id) === host.location.projectId,
       ) ?? null;
     content =
-      selectedProject && renderProject && workspaceContext ? (
+      selectedProject && renderProject ? (
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
@@ -2016,10 +2074,10 @@ function CollaborationPlatformAppContent({
             manageResource: host.manageResource,
             projectAgentConfiguration: host.projectAgentConfiguration,
             projectAgentResourceContext: {
-              name: workspaceContext!.name,
+              name: workspaceContext?.name ?? selectedProject?.name ?? "",
               namespace:
-                "namespace" in workspaceContext!
-                  ? workspaceContext!.namespace
+                workspaceContext && "namespace" in workspaceContext
+                  ? workspaceContext.namespace
                   : "default",
             },
             defaultAssistant: host.defaultAssistant,
@@ -2223,7 +2281,36 @@ function CollaborationPlatformAppContent({
             />
           ) : (
             <IssueHomeLauncher
-              renderTaskComposer={host.renderIssueComposer}
+              renderTaskComposer={
+                host.renderIssueComposer
+                  ? (props) =>
+                      host.renderIssueComposer!({
+                        ...props,
+                        onTaskCreated: (issue, task) => {
+                          const project = props.projects.find(
+                            (item) => item.id === props.projectId,
+                          );
+                          if (!project) return;
+                          setCreatedHomeIssue({
+                            key: crypto.randomUUID(),
+                            project,
+                            issue: {
+                              ...issue,
+                              project_key: project.project_key,
+                              project_name: project.name,
+                              has_active_task: true,
+                            },
+                            task,
+                          });
+                        },
+                      })
+                  : undefined
+              }
+              currentUserId={
+                host.renderPersonalHome
+                  ? (rootIssueProject?.current_user_id ?? host.currentUser?.id)
+                  : undefined
+              }
               api={api}
               locale={locale}
               messages={messages}
@@ -2261,6 +2348,18 @@ function CollaborationPlatformAppContent({
           )}
         </div>
       );
+    if (rootView === "home" && host.renderPersonalHome) {
+      content = host.renderPersonalHome({
+        projects: state.navigationProjects,
+        createIssue: content,
+        createdIssue: createdHomeIssue,
+        onCreatedIssueHandled: (key) =>
+          setCreatedHomeIssue((current) =>
+            current?.key === key ? undefined : current,
+          ),
+        onOpenIssue: openMyWorkItem,
+      });
+    }
   } else {
     const workspace = state.workspace;
     const canManageWorkspace =

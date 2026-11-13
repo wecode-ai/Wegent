@@ -148,7 +148,7 @@ it('keeps an unavailable memory scope explicit until the user selects an availab
   f.render()
   const user = userEvent.setup()
   await user.click(await screen.findByTestId('stand-in-memory-edit'))
-  expect(screen.getByTestId('stand-in-memory-scope')).toHaveDisplayValue('原分身或工作来源暂不可用')
+  expect(screen.getByTestId('stand-in-memory-scope')).toHaveDisplayValue('原助理或工作来源暂不可用')
   expect(screen.getByTestId('stand-in-memory-save')).toBeDisabled()
   expect(f.api.saveMemory).not.toHaveBeenCalled()
   await user.selectOptions(

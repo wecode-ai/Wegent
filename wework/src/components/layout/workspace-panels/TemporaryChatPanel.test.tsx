@@ -20,6 +20,7 @@ import { runtimeTaskBindingAddress } from '@/features/todo/runtimeTaskBindingAdd
 import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
 import type {
   Attachment,
+  DeviceInfo,
   LocalDeviceApp,
   ModelOptions,
   ModelSelectionConfig,
@@ -70,6 +71,7 @@ const mocks = vi.hoisted(() => ({
         submit: ReturnType<typeof vi.fn>
       },
   catalogBindings: new Map<string, ComposerCatalogBinding>(),
+  devices: [] as DeviceInfo[],
   readCatalog: vi.fn(),
   readTask: vi.fn(),
   mainListApps: vi.fn(),
@@ -428,7 +430,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       composerCatalogApi: { readCatalog: mocks.readCatalog },
     },
     state: {
-      devices: [],
+      devices: mocks.devices,
       isBootstrapping: mocks.isBootstrapping,
       runtimeWork: mocks.runtimeWork,
     },
@@ -647,6 +649,7 @@ describe('TemporaryChatPanel', () => {
     mocks.renderToolBlocks = false
     mocks.inputHost = undefined
     mocks.catalogBindings.clear()
+    mocks.devices = []
     mocks.mainListApps.mockClear()
     mocks.readCatalog.mockReset()
     mocks.readTask.mockReset()
@@ -707,6 +710,44 @@ describe('TemporaryChatPanel', () => {
       if (value) mocks.inputByScope[scope] = value
       else delete mocks.inputByScope[scope]
     })
+  })
+
+  it('reads a cloud-bound local task catalog through its resolved IPC device', async () => {
+    mocks.devices = [
+      {
+        id: 0,
+        device_id: 'device-1',
+        name: 'Local Executor',
+        device_type: 'local',
+        status: 'online',
+        is_default: true,
+        runtime_instance_id: 'runtime-1',
+        runtime_routes: [
+          {
+            kind: 'cloud-relay',
+            device_id: 'app-record-42',
+            runtime_device_id: 'app-record-42',
+            status: 'online',
+          },
+        ],
+      },
+    ]
+    const bound = { ...address, deviceId: 'app-record-42' }
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={bound}
+        initialAddress={bound}
+        instanceId="registered-catalog"
+      />
+    )
+    await waitFor(() => expect(mocks.catalogBindings.size).toBe(1))
+    await mocks.catalogBindings.values().next().value!.listApps!()
+    expect(mocks.readCatalog).toHaveBeenCalledWith(
+      { deviceId: address.deviceId, taskId: address.taskId },
+      true
+    )
+    expect(bound.deviceId).toBe('app-record-42')
   })
 
   it('preserves the first file action and line range while navigating to its owning task', async () => {

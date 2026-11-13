@@ -147,7 +147,7 @@ fn finalize(request: &mut ExecutionRequest, configs: &mut [Value]) {
         leader["mcp_servers"] = Value::Array(servers);
     }
 }
-fn merge_leader_capabilities(configs: &mut [Value]) {
+pub(super) fn merge_leader_capabilities(configs: &mut [Value]) {
     let mut servers = configs[0]["mcp_servers"]
         .as_array()
         .cloned()

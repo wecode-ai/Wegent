@@ -1,3 +1,5 @@
+import { WorkspaceTitleTab } from './WorkspaceTitleTab'
+import { revealWorkspaceTab } from './revealWorkspaceTab'
 import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
 import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
 import {
@@ -26,7 +28,6 @@ import {
   Puzzle,
   RefreshCw,
   SquareTerminal,
-  X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -40,7 +41,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode, Ref } from 'react'
+import type { ComponentType, ReactNode, Ref } from 'react'
 import {
   FileChangesReviewPanel,
   type FileChangesReviewViewOption,
@@ -700,17 +701,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const renderTabsInTitlebar =
     renderTabsInAppTitlebar && isDesktopRuntime() && platform !== 'win' && visible && showTabs
   useLayoutEffect(() => {
-    const viewport = tabsViewportRef.current
-    const activeTab = viewport?.querySelector<HTMLElement>('[aria-selected="true"]')
-    if (!viewport || !activeTab) return
-
-    const viewportRect = viewport.getBoundingClientRect()
-    const tabRect = activeTab.getBoundingClientRect()
-    if (tabRect.left < viewportRect.left) {
-      viewport.scrollLeft += tabRect.left - viewportRect.left
-    } else if (tabRect.right > viewportRect.right) {
-      viewport.scrollLeft += tabRect.right - viewportRect.right
-    }
+    revealWorkspaceTab(tabsViewportRef.current)
   }, [activeView, renderTabsInTitlebar, showTabs, visible])
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
@@ -1278,40 +1269,16 @@ function RightWorkspaceTitleTab({
   onSelect: () => void
   onClose: () => void
 }) {
-  const { t } = useTranslation('common')
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') {
-      return
-    }
-    event.preventDefault()
-    onSelect()
-  }
-
   return (
-    <div
-      data-testid={getRightWorkspaceTabTestId(tab)}
-      role="tab"
-      aria-selected={active}
+    <WorkspaceTitleTab
+      testId={getRightWorkspaceTabTestId(tab)}
+      active={active}
+      label={filePath ? workspaceFileTabLabel(filePath) : label}
       title={title ?? filePath}
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={handleKeyDown}
-      className={cn(
-        'group/tab relative flex h-8 min-w-0 max-w-[200px] shrink-0 cursor-pointer items-stretch rounded-md text-left text-xs font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 pointer-events-auto',
-        active
-          ? 'bg-muted text-text-primary'
-          : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-      )}
-    >
-      <button
-        type="button"
-        onClick={event => {
-          event.stopPropagation()
-          onSelect()
-        }}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-2 pr-7 text-left"
-      >
-        {filePath ? (
+      onSelect={onSelect}
+      onClose={onClose}
+      icon={
+        filePath ? (
           <WorkspaceFileIcon path={filePath} testId={`${getRightWorkspaceTabTestId(tab)}-icon`} />
         ) : (
           <RightWorkspaceTabIcon
@@ -1322,26 +1289,9 @@ function RightWorkspaceTitleTab({
             agentActive={agentActive}
             testId={getRightWorkspaceTabTestId(tab)}
           />
-        )}
-        <span className="min-w-0 flex-1 truncate">
-          {filePath ? workspaceFileTabLabel(filePath) : label}
-        </span>
-      </button>
-      <span className="pointer-events-none absolute right-1 top-1/2 z-critical flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-        <button
-          type="button"
-          data-testid={`${getRightWorkspaceTabTestId(tab)}-close-button`}
-          onClick={event => {
-            event.stopPropagation()
-            onClose()
-          }}
-          className="flex h-[18px] w-[18px] items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-text-primary/70 hover:text-background focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:hover:bg-black/70 wework:hover:text-white"
-          aria-label={t('workbench.close_right_workspace_panel')}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      </span>
-    </div>
+        )
+      }
+    />
   )
 }
 

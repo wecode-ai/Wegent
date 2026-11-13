@@ -14,7 +14,7 @@ import {
 import { runtimePaneQueue } from './runtimePaneQueues'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
 import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
-import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   runtimeQueuedMessageRequest,
   type RuntimeConversationQueuePort,
@@ -223,7 +223,9 @@ export function TemporaryChatPanel({
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
-  const catalogDeviceId = resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
+  const catalogDeviceId =
+    findWorkbenchDevice(state.devices, catalogAddress?.deviceId)?.device_id ??
+    resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
   const composerCatalog = useRuntimeComposerCatalog(
     catalogAddress && catalogDeviceId ? { ...catalogAddress, deviceId: catalogDeviceId } : null,
     services,

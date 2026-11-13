@@ -408,6 +408,7 @@ class TestKnowledgeTool:
             document_id=9,
             offset=0,
             limit=4,
+            entrypoint="mcp",
         )
         mock_session.close.assert_called_once()
 

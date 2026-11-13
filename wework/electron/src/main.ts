@@ -101,6 +101,7 @@ import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
+import { setE2EWindowSize } from './host/e2e-window-size.js'
 import { desktopWindowFrameOptions, startupWindowLayout } from './host/window-layout.js'
 import { MainWindowStateController } from './host/main-window-state.js'
 import { prepareStartupMainWindow } from './host/startup-window-handoff.js'
@@ -2700,6 +2701,13 @@ async function configureDesktopRuntime(): Promise<void> {
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           startupSplashInspect: () => startupSplashObserver?.inspect() ?? startupSplashInspection(),
           startupSplashClick: testId => clickStartupSplash(startupSplashWindow, testId),
+          startupSplashSize: (width, height) => {
+            const target = startupSplashWindow
+            if (!target || target.isDestroyed()) {
+              throw new Error('Startup splash is unavailable for resizing')
+            }
+            return setE2EWindowSize(target, width, height)
+          },
           startupLogPath: path => app.setPath('logs', path ?? applicationLogDirectory),
           closeStartupSplash: () => {
             const target = startupSplashWindow
