@@ -1076,6 +1076,7 @@ function OwnedWorkbenchProvider({
     isOptionsLocked,
     attachmentSelection,
     modelSelection,
+    resolveRuntimeTaskModelSelection,
     skillSelection,
     refreshWorkLists,
   })
@@ -1694,6 +1695,7 @@ function OwnedWorkbenchProvider({
       activeModel,
       supportsModelProviderSwitch,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      selectionRevision: modelSelection.selectionRevision,
       modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
@@ -1791,6 +1793,7 @@ function OwnedWorkbenchProvider({
       supportsModelProviderSwitch,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
+      modelSelection.selectionRevision,
       modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,

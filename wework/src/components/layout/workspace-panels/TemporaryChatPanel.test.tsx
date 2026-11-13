@@ -106,6 +106,7 @@ const mocks = vi.hoisted(() => ({
     }
   } | null,
   activeModelSelection: null as ModelSelectionConfig | null,
+  taskSelectionResolved: null as boolean | null,
   isBootstrapping: false,
   runtimeWork: null as {
     projects: unknown[]
@@ -464,6 +465,12 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
             })
           : null
         return {
+          selectionResolved:
+            mocks.taskSelectionResolved ??
+            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
+          selectionReady:
+            mocks.taskSelectionResolved ??
+            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
           taskSelection: selection,
           selectedModel: model,
           activeModel: model,

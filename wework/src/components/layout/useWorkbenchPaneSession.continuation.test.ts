@@ -260,6 +260,21 @@ beforeEach(() => {
       },
       selectedModel: { name: 'original-model', type: 'runtime' },
       selectedModelOptions: { reasoning: 'high' },
+      resolveRuntimeTaskModelSelection: vi.fn(() => ({
+        selectionResolved: true,
+        selectionReady: true,
+        taskSelection: {
+          modelName: 'original-model',
+          modelType: 'runtime' as const,
+          options: { reasoning: 'high' },
+        },
+        selectedModel: { name: 'original-model', type: 'runtime' as const },
+        activeModel: { name: 'original-model', type: 'runtime' as const },
+        selectedModelOptions: { reasoning: 'high' },
+      })),
+      setRuntimeTaskSelectedModel: vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+      setRuntimeTaskSelectedModelOption: vi.fn(),
       models: [],
       setInputForScope: mocks.setInput,
       getInputRevisionForScope: (scope: string) => sharedRevisions.get(scope) ?? 0,
@@ -1013,6 +1028,23 @@ describe('composer draft during an in-flight send', () => {
     }
   )
 
+  test('writes the goal collaboration mode to the bound conversation', async () => {
+    const projectChat = mocks.context.projectChat as Record<string, unknown>
+    projectChat.setSelectedModelOption = vi.fn()
+    const { result } = await renderSession()
+
+    await act(async () => {
+      expect(await result.current.setCurrentGoal()).toBe(true)
+    })
+
+    expect(projectChat.setRuntimeTaskSelectedModelOption).toHaveBeenCalledWith(
+      address,
+      'collaborationMode',
+      'default'
+    )
+    expect(projectChat.setSelectedModelOption).not.toHaveBeenCalled()
+  })
+
   test.each([true, false])(
     'restores a rejected new goal only without newer edits (edited=%s)',
     async edited => {
@@ -1347,6 +1379,47 @@ describe('pane continuation without composer submission', () => {
     expect(request).not.toHaveProperty('attachments')
     expect(request.message).not.toContain(codeComment.comment)
     expectDraftPreserved(result.current)
+  })
+
+  test('continues with the addressed task model when another pane owns the active selection', async () => {
+    const resolveSelection = vi.fn((target: RuntimeTaskAddress) => ({
+      selectionResolved: true,
+      selectionReady: true,
+      taskSelection: {
+        modelName: target.taskId === address.taskId ? 'original-model' : 'other-model',
+        modelType: 'runtime' as const,
+        options: { reasoning: target.taskId === address.taskId ? 'high' : 'low' },
+      },
+      selectedModel: {
+        name: target.taskId === address.taskId ? 'original-model' : 'other-model',
+        type: 'runtime' as const,
+      },
+      activeModel: {
+        name: target.taskId === address.taskId ? 'original-model' : 'other-model',
+        type: 'runtime' as const,
+      },
+      selectedModelOptions: { reasoning: target.taskId === address.taskId ? 'high' : 'low' },
+    }))
+    Object.assign(mocks.context.projectChat as object, {
+      selectedModel: { name: 'active-pane-model', type: 'runtime' },
+      selectedModelOptions: { reasoning: 'low' },
+      resolveRuntimeTaskModelSelection: resolveSelection,
+    })
+    const { result } = await renderSession()
+
+    await act(async () => expect(await result.current.sendContinuation(continuation)).toBe(true))
+
+    expect(resolveSelection).toHaveBeenCalledWith(address)
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        modelId: 'original-model',
+        modelOptions: expect.objectContaining({ reasoning: 'high' }),
+      }),
+      expect.any(Object)
+    )
+    const [request] = mocks.send.mock.calls[0]
+    expect(request.modelOptions?.reasoning).not.toBe('low')
   })
 
   test('retains a continuation queued by the original executor without consuming the draft', async () => {

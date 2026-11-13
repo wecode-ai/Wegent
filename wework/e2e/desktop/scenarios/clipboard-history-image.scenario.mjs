@@ -88,7 +88,12 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchRead
       await control.command('waitFor', `${CONTENT} [data-testid="collaboration-platform-root"]`, {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME)
+      // Project creation runs through the local executor. Budget it like the
+      // rest of this checkpoint's readiness waits so a loaded macOS runner is
+      // not mistaken for a failed import.
+      await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME, {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
 
       await control.command(
         'clickWhenEnabled',

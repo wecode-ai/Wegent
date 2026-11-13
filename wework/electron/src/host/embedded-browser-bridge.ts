@@ -634,7 +634,9 @@ function isRetryableWaitError(error: unknown, label: string): boolean {
   const message = errorMessage(error)
   return (
     message === `Embedded browser is unavailable: ${label}` ||
-    message === 'Inspected target navigated or closed'
+    // A document navigation replaces the inspected target while the wait
+    // condition is evaluated; the next poll evaluates against the new document.
+    message.includes('Inspected target navigated or closed')
   )
 }
 
