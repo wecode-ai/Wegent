@@ -1,4 +1,3 @@
-import type { ProjectChatMessage } from '@wegent/chat-core'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import type {
   CollaborationProject,
@@ -73,12 +72,6 @@ export function bindingAddress(
       ? { worktreeId: context?.worktreeId ?? task?.worktreeId }
       : {}),
   }
-}
-
-export function messageSourceIds(message: ProjectChatMessage): string[] {
-  return [message.triggerMessageId, message.replyToMessageId, message.rootMessageId].filter(
-    (id): id is string => Boolean(id) && id !== message.messageId
-  )
 }
 
 export function validSourceTimestamp(value: string | null | undefined): string | null {

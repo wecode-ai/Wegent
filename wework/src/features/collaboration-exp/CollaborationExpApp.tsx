@@ -204,6 +204,12 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
       ? stream.timeline.nodes.find(node => node.id === params.get('nodeId'))?.conversation.items
       : stream.conversations.items
     )?.find(conversation => conversation.key === params.get('discussion')) ?? null
+  const discussionIdentity = `${identity}:${discussion?.key ?? ''}`
+  const [conclusionView, setConclusionView] = useState<string | null>(null)
+  const onConclusionViewChange = useCallback(
+    (open: boolean) => setConclusionView(open ? discussionIdentity : null),
+    [discussionIdentity]
+  )
   const [attachment, setAttachment] = useState<{
     identity: string
     value: TimelineAttachmentSelection
@@ -567,7 +573,13 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
   if (view === 'tasks' && discussionData && source && params.get('discussion'))
     panes.push({
       id: 'discussion',
-      title: t(params.get('nodeId') ? 'private.sourceTitle' : 'private.title'),
+      title: t(
+        params.get('nodeId')
+          ? 'private.sourceTitle'
+          : conclusionView === discussionIdentity
+            ? 'private.previewTitle'
+            : 'private.title'
+      ),
       actions: <Lock size={15} aria-hidden="true" />,
       scroll: false,
       minWidth: 320,
@@ -587,6 +599,8 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
             active={active}
             embedded
             onClose={onBack}
+            onContinue={() => navigate({ nodeId: null })}
+            onConclusionViewChange={onConclusionViewChange}
             onPublished={refresh}
           />
         ) : (

@@ -625,13 +625,137 @@ describe('experience canonical timeline', () => {
     ).toEqual({ state: 'unknown', items: [] })
   })
 
+  it('uses the exact human trigger when an owned reply executes within another users thread', () => {
+    const root = message({
+      messageId: 'foreign-root',
+      sender: { type: 'user', id: '8', name: 'Other member' },
+    })
+    const reply = message({
+      messageId: 'owned-reply',
+      clientMessageId: 'native-owned-reply',
+      sequenceNumber: 2,
+      replyToMessageId: root.messageId,
+      rootMessageId: root.messageId,
+    })
+    const run = message({
+      messageId: 'owned-execution',
+      sequenceNumber: 3,
+      sender: { type: 'agent', id: 'agent', name: 'Assistant' },
+      triggerMessageId: reply.messageId,
+      replyToMessageId: reply.messageId,
+      rootMessageId: root.messageId,
+      metadata: { runtime_turn_id: 'owned-native-turn' },
+      runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    const nodes = selectTaskTimeline(timelineInput({ messages: [root, reply, run] })).nodes
+    expect(nodes[0].conversation).toEqual({ state: 'hidden', items: [] })
+    expect(nodes[1].conversation.items.map(item => item.address.taskId)).toEqual(['task-1'])
+    expect(nodes[2]).toMatchObject({
+      author: { id: '7', name: 'Member' },
+      conversation: {
+        state: 'ready',
+        items: [
+          {
+            address: { deviceId: 'device-1', taskId: 'task-1' },
+            historySource: {
+              turnId: 'owned-native-turn',
+              userMessageIds: ['owned-reply', 'native-owned-reply'],
+            },
+          },
+        ],
+      },
+    })
+  })
+
+  it.each([
+    { trigger: 'foreign-trigger', state: 'hidden' },
+    { trigger: 'unavailable-trigger', state: 'unknown' },
+    { trigger: 'agent-trigger', state: 'unknown' },
+    { trigger: undefined, state: 'unknown' },
+  ] as const)('never substitutes an owned parent for $trigger', ({ trigger, state }) => {
+    const own = message()
+    const other = message({
+      messageId: 'foreign-trigger',
+      sequenceNumber: 2,
+      sender: { type: 'user', id: '8', name: 'Other member' },
+      replyToMessageId: own.messageId,
+      rootMessageId: own.messageId,
+    })
+    const agent = message({
+      messageId: 'agent-trigger',
+      sequenceNumber: 3,
+      sender: { type: 'agent', id: 'agent', name: 'Assistant' },
+      triggerMessageId: own.messageId,
+    })
+    const run = message({
+      messageId: 'run',
+      sequenceNumber: 4,
+      sender: { type: 'agent', id: 'agent', name: 'Assistant' },
+      triggerMessageId: trigger,
+      replyToMessageId: own.messageId,
+      rootMessageId: own.messageId,
+      runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    const node = selectTaskTimeline(timelineInput({ messages: [own, other, agent, run] })).nodes[3]
+    expect(node.conversation).toEqual({ state, items: [] })
+    expect(node.author).toEqual(state === 'hidden' ? { id: '8', name: 'Other member' } : null)
+  })
+
+  it('does not borrow another owned runtime address from a thread ancestor', () => {
+    const root = message({ runtimeAddress: { deviceId: 'device-1', taskId: 'root-task' } })
+    const reply = message({
+      messageId: 'reply',
+      sequenceNumber: 2,
+      replyToMessageId: root.messageId,
+      rootMessageId: root.messageId,
+    })
+    const rootRun = message({
+      messageId: 'root-execution',
+      sequenceNumber: 3,
+      sender: { type: 'agent', id: 'agent', name: 'Assistant' },
+      triggerMessageId: root.messageId,
+      runtimeAddress: root.runtimeAddress,
+    })
+    const replyRun = message({
+      messageId: 'reply-execution',
+      sequenceNumber: 4,
+      sender: { type: 'agent', id: 'agent', name: 'Assistant' },
+      triggerMessageId: reply.messageId,
+      replyToMessageId: reply.messageId,
+      rootMessageId: root.messageId,
+      runtimeAddress: { deviceId: 'device-1', taskId: 'reply-task' },
+    })
+    const input = timelineInput({
+      messages: [root, reply, rootRun, replyRun],
+      taskBindings: [
+        binding({ id: 'root-binding', taskId: 'root-task' }),
+        binding({ id: 'reply-binding', taskId: 'reply-task' }),
+      ],
+    })
+    const nodes = selectTaskTimeline(input).nodes
+    expect(nodes.map(node => node.conversation.items.map(item => item.address.taskId))).toEqual([
+      ['root-task'],
+      ['reply-task'],
+      ['root-task'],
+      ['reply-task'],
+    ])
+    const unavailable = selectTaskTimeline({
+      ...input,
+      messages: [root, reply, rootRun, { ...replyRun, runtimeAddress: null }],
+    }).nodes
+    expect(unavailable[1].conversation).toEqual({ state: 'unknown', items: [] })
+    expect(unavailable[3].conversation).toEqual({ state: 'unknown', items: [] })
+  })
+
   it('attributes shared execution to its proven user and strips assistant prompts, arbitrary metadata and full private execution body', () => {
     const run = message({
       messageId: 'run',
       sequenceNumber: 2,
       sender: { type: 'agent', id: 'assistant', name: 'PRIVATE-ASSISTANT' },
+      triggerMessageId: 'message-1',
       rootMessageId: 'message-1',
-      content: 'PRIVATE-EXECUTION-BODY',
+      content:
+        'PRIVATE-EXECUTION-BODY\n[PRIVATE-FILE-NAME](wegent://attachments/PRIVATE-FILE-ID)\n<!-- wegent-attachment:PRIVATE-FILE-ID -->',
       metadata: { prompt: 'PRIVATE-PROMPT', privateArguments: 'PRIVATE-ARGS' },
       runtimeAddress: {
         deviceId: 'device-1',
@@ -645,6 +769,7 @@ describe('experience canonical timeline', () => {
       body: null,
       author: { id: '7', name: 'Member' },
       executionAddress: { deviceId: 'device-1', taskId: 'task-1' },
+      attachments: [],
     })
     expect(JSON.stringify(nodes)).not.toContain('PRIVATE-')
   })
@@ -664,6 +789,23 @@ describe('experience canonical timeline', () => {
       at: null,
       attachments: [{ id: 'file-1', name: 'Report', sourceNodeId: 'message-1' }],
       conversation: { state: 'unknown', items: [] },
+    })
+  })
+
+  it('retains explicitly published system attachments while execution attachments stay private', () => {
+    const node = selectTaskTimeline(
+      timelineInput({
+        messages: [
+          message({
+            sender: { type: 'system', id: 'system', name: 'System' },
+            content: '[Published report](wegent://attachments/published-file)',
+          }),
+        ],
+      })
+    ).nodes[0]
+    expect(node).toMatchObject({
+      kind: 'system',
+      attachments: [{ id: 'published-file', name: 'Published report', sourceNodeId: 'message-1' }],
     })
   })
 })

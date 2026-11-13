@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
@@ -15,24 +15,16 @@ import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { waitForCompletedRuntimeTaskThread } from '../modules/runtime-task-evidence.mjs'
 import {
   verifyCollaborationExpIssueCreateAndEdit,
+  verifyCollaborationExpNotificationTab,
   verifyCollaborationExpPrivateMessage,
 } from '../modules/collaboration-exp-issue-flows.mjs'
-import { assertDesktopPanes } from '../modules/collaboration-exp-pane-verification.mjs'
+import { verifyCollaborationExpViewports } from '../modules/collaboration-exp-viewport-flows.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
 import {
   COLLABORATION_EXP_RHYTHM_MARKER,
-  COLLABORATION_EXP_RHYTHM_ROLE,
-  assertUnchangedGeometry,
   createCollaborationExpRhythmFixture,
 } from '../modules/collaboration-exp-rhythm.mjs'
-import {
-  assertMobileAssistantPriority,
-  assertNativeWorkOpened,
-  assertReducedStateMotion,
-  assertStableStateGeometry,
-  readTeam,
-} from '../modules/collaboration-exp-state-motion.mjs'
 
 const ACTIVE = '[data-workspace-tab-content][aria-hidden="false"]'
 const APP = `${ACTIVE} [data-testid="collaboration-exp-app"]`
@@ -487,6 +479,31 @@ export function createDesktopScenario({
           !sourceHistory.includes(UNRELATED),
           'A source discussion must hide all unrelated native turns'
         )
+        const [historyViewport] = JSON.parse(
+          await control.command(
+            'getElementMetrics',
+            `${testId('collaboration-exp-private-conversation')} [data-testid="right-workspace-chat-scroll-area"]`
+          )
+        )
+        assert.ok(historyViewport?.height > 0, 'Historical messages need a real visible viewport')
+        assert.equal(Number(await control.command('getElementCount', PRIVATE_INPUT)), 0)
+        assert.equal(
+          Number(
+            await control.command('getElementCount', testId('collaboration-exp-conclusion-form'))
+          ),
+          0
+        )
+        const originalDiscussion = new URL(
+          JSON.parse(await control.command('snapshot', APP)).location
+        ).searchParams.get('discussion')
+        const originalNativeTasks = await nativeTaskIdentities()
+        await click(control, testId('collaboration-exp-private-continue'))
+        await control.command('waitFor', PRIVATE_INPUT, { visible: true })
+        const continuedRoute = new URL(JSON.parse(await control.command('snapshot', APP)).location)
+          .searchParams
+        assert.equal(continuedRoute.get('nodeId'), null)
+        assert.equal(continuedRoute.get('discussion'), originalDiscussion)
+        assert.deepEqual(await nativeTaskIdentities(), originalNativeTasks)
         await click(control, testId('collaboration-exp-pane-header-discussion-back'))
 
         await control.command('activateSystemNotification', 'body', {
@@ -499,6 +516,14 @@ export function createDesktopScenario({
           'local',
           JSON.stringify(['local', localProject.id])
         )
+        await verifyCollaborationExpNotificationTab({
+          control,
+          conversation,
+          appSelector: APP,
+          tabSelector: TAB,
+          click,
+          uiTimeoutMs,
+        })
         await control.command('openWeworkScheme', 'body', {
           value: `wework://boards/${cloudProject.id}/issues/${encodeURIComponent(cloudIssue.id)}`,
         })
@@ -547,6 +572,7 @@ export function createDesktopScenario({
         const cloudComments = await request(
           `/api/v1/cloud-projects/${cloudProject.id}/loop-items/${cloudIssue.id}/activity-comments`
         )
+        await click(control, testId('collaboration-exp-conclusion-open'))
         await control.command('fill', testId('collaboration-exp-conclusion-text'), {
           value: PUBLIC,
         })
@@ -633,202 +659,30 @@ export function createDesktopScenario({
 
         const logPath = join(resultDir, 'app.log')
         const logOffset = (await readFile(logPath, 'utf8')).length
-        let lightStructure
-        let lightColors
-        for (const [name, width, height, appearanceMode] of [
-          ['wide-light', 1440, 900, 'light'],
-          ['wide-dark', 1440, 900, 'dark'],
-          ['mobile-light', 390, 844, 'light'],
-        ]) {
-          const oldSize = await control.command('setMainWindowSize', 'body', {
-            value: JSON.stringify({ width, height }),
-          })
-          previousSize ??= oldSize
-          await control.command('setAppPreferences', 'body', {
-            value: JSON.stringify({ appearanceMode }),
-          })
-          await control.command('waitFor', `html[data-theme="${appearanceMode}"]`)
-          await control.command('navigate', 'body', { value: route() })
-          await click(control, testId('collaboration-exp-navigation-assistant'))
-          await control.command('setReducedMotion', 'body', { value: 'no-preference' })
-          const relay = testId('collaboration-exp-team-relay')
-          const runningRole = `${relay} [data-assistant-id="${COLLABORATION_EXP_RHYTHM_ROLE}"]`
-          await control.command('waitFor', `${runningRole}[data-state="running"]`, {
-            visible: true,
-          })
-          const teamBefore = await readTeam(control, relay)
-          const boxesBefore = JSON.parse(await control.command('getElementMetrics', relay))
-          await control.command('setReducedMotion', 'body', { value: 'reduce' })
-          await assertReducedStateMotion(control, relay)
-          assert.deepEqual(await readTeam(control, relay), teamBefore)
-          assertUnchangedGeometry(
-            boxesBefore,
-            JSON.parse(await control.command('getElementMetrics', relay)),
-            'Reduced-motion team'
-          )
-          await assertStableStateGeometry(control, relay)
-          if (width === 390) {
-            await assertMobileAssistantPriority(
-              control,
-              testId,
-              runningRole,
-              localProject.id,
-              localIssue.id
-            )
-            await assertNoOverflow(control, testId('collaboration-exp-assistant-home'), width)
-          }
-          await captureScreenshot(control, `collaboration-exp-team-${name}.png`, APP)
-          if (name === 'wide-light') {
-            await control.command('waitFor', testId('collaboration-exp-assistant-current'), {
-              visible: true,
-              text: runningIssue.title,
-            })
-            await click(control, testId('collaboration-exp-assistant-current'))
-            await assertNativeWorkOpened(control, runningAddress, uiTimeoutMs)
-            await control.command('navigate', 'body', { value: route() })
-            await control.command('waitFor', APP, { visible: true })
-          }
-          await click(control, testId('collaboration-exp-navigation-tasks'))
-          await control.command('waitFor', `${runningRole}[data-state="running"]`, {
-            visible: true,
-          })
-          assert.deepEqual(await readTeam(control, relay), teamBefore)
-          await assertReducedStateMotion(control, relay)
-          for (const state of ['waiting', 'running', 'completed'])
-            await control.command('waitFor', testId(`collaboration-exp-task-rhythm-${state}`), {
-              text: '1',
-            })
-          for (const state of ['waiting', 'running', 'completed'])
-            assert.equal(
-              await control.command('getText', testId(`collaboration-exp-task-rhythm-${state}`)),
-              '1'
-            )
-          await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
-            text: runningIssue.title,
-          })
-          await assertStableStateGeometry(control, testId('collaboration-exp-task-rhythm'))
-          await captureScreenshot(control, `collaboration-exp-rhythm-${name}.png`, APP)
-          if (name === 'wide-light') {
-            await click(control, testId('collaboration-exp-filter-status'))
-            await click(control, '[data-testid="collaboration-exp-filter-status-option-completed"]')
-            await control.command('waitFor', testId('collaboration-exp-clear-status'), {
-              visible: true,
-            })
-            for (const [state, expected] of [
-              ['waiting', '0'],
-              ['running', '0'],
-              ['completed', '1'],
-            ]) {
-              await control.command('waitFor', testId(`collaboration-exp-task-rhythm-${state}`), {
-                text: expected,
-              })
-              assert.equal(
-                await control.command('getText', testId(`collaboration-exp-task-rhythm-${state}`)),
-                expected
-              )
-            }
-            await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
-              visible: false,
-            })
-            assert.equal(
-              Number(
-                await control.command(
-                  'getElementCount',
-                  testId('collaboration-exp-task-rhythm-current')
-                )
-              ),
-              0
-            )
-            assert.deepEqual(await readTeam(control, relay), teamBefore)
-            await click(control, testId('collaboration-exp-clear-status'))
-            await control.command('waitFor', testId('collaboration-exp-clear-status'), {
-              visible: false,
-            })
-            for (const state of ['waiting', 'running', 'completed']) {
-              await control.command('waitFor', testId(`collaboration-exp-task-rhythm-${state}`), {
-                text: '1',
-              })
-              assert.equal(
-                await control.command('getText', testId(`collaboration-exp-task-rhythm-${state}`)),
-                '1'
-              )
-            }
-            await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
-              visible: true,
-              text: runningIssue.title,
-            })
-            const beforeManage = await nativeTaskIdentities()
-            const beforeManageIssues = await localIssueIdentities()
-            await click(control, runningRole)
-            await control.command('waitFor', `${ACTIVE} [data-testid="stand-in-role-name"]`, {
-              visible: true,
-            })
-            assert.equal(
-              await control.command('getValue', `${ACTIVE} [data-testid="stand-in-role-name"]`),
-              'Integration assistant'
-            )
-            assert.deepEqual(await nativeTaskIdentities(), beforeManage)
-            assert.deepEqual(await localIssueIdentities(), beforeManageIssues)
-            await control.command('navigate', 'body', { value: route() })
-            await control.command('waitFor', `${runningRole}[data-state="running"]`, {
-              visible: true,
-            })
-          }
-          await click(control, testId('collaboration-exp-task-rhythm-current'))
-          await assertSingleton(control, localProject, runningIssue, 'local')
-          await click(control, testId('collaboration-exp-pane-header-timeline-back'))
-          await control.command('waitFor', testId(`collaboration-exp-task-${localIssue.id}`), {
-            visible: true,
-          })
-          await click(control, testId(`collaboration-exp-task-project-${localIssue.id}`))
-          await click(control, testId('collaboration-exp-project-plan'))
-          await control.command(
-            'waitFor',
-            testId('collaboration-exp-project-plan') + '[aria-current="page"]'
-          )
-          await assertReducedStateMotion(control, APP)
-          await click(control, testId('collaboration-exp-pane-header-project-back'))
-          await click(control, testId(`collaboration-exp-task-${localIssue.id}`))
-          await openPrivate(control)
-          await control.command('fill', PRIVATE_INPUT, { value: DRAFT })
-          assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
-          await assertNoOverflow(control, APP, width)
-          await assertNoOverflow(control, testId('collaboration-exp-private-pane'), width)
-          if (width === 1440) {
-            const structure = JSON.parse(await control.command('snapshot', APP))
-              .testIds.filter(id => id.startsWith('collaboration-exp-'))
-              .sort()
-            const colors = await Promise.all(
-              ['color', 'background-color'].map(value =>
-                control.command('getComputedStyleValue', APP, { value })
-              )
-            )
-            if (appearanceMode === 'light') {
-              lightStructure = structure
-              lightColors = colors
-            } else {
-              assert.deepEqual(structure, lightStructure)
-              assert.notDeepEqual(colors, lightColors)
-            }
-            await assertDesktopPanes(control, {
-              appSelector: APP,
-              testId,
-              privateInput: PRIVATE_INPUT,
-              draft: DRAFT,
-            })
-          } else {
-            const headers = JSON.parse(
-              await control.command('getElementMetrics', `${APP} .experience-header`)
-            ).filter(row => row.width > 0)
-            assert.equal(headers.length, 1, 'Mobile must show only the current layer')
-            await click(control, testId('collaboration-exp-pane-header-discussion-back'))
-            await click(control, testId('collaboration-exp-pane-header-timeline-back'))
-            await click(control, testId(`collaboration-exp-task-${localIssue.id}`))
-            await openPrivate(control)
-            assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
-          }
-          await captureScreenshot(control, `collaboration-exp-${name}.png`, APP)
-        }
+        await verifyCollaborationExpViewports({
+          control,
+          localProject,
+          localIssue,
+          runningIssue,
+          runningAddress,
+          uiTimeoutMs,
+          route,
+          testId,
+          click,
+          assertSingleton,
+          openPrivate,
+          nativeTaskIdentities,
+          localIssueIdentities,
+          captureScreenshot,
+          assertNoOverflow,
+          appSelector: APP,
+          activeSelector: ACTIVE,
+          privateInput: PRIVATE_INPUT,
+          draft: DRAFT,
+          onWindowSizeCaptured: value => {
+            previousSize ??= value
+          },
+        })
         finishRhythmResponse()
         await rhythm.assertCompleted(control)
         await verifyCollaborationExpPrivateMessage({
@@ -857,6 +711,7 @@ export function createDesktopScenario({
           'The three-viewport main path must emit no renderer warnings or errors'
         )
         const beforePublish = await comments()
+        await click(control, testId('collaboration-exp-conclusion-open'))
         await control.command('fill', testId('collaboration-exp-conclusion-text'), {
           value: PUBLIC,
         })
@@ -956,6 +811,19 @@ export function createDesktopScenario({
         await click(control, TAB)
         await control.command('waitFor', PRIVATE_INPUT, { visible: true })
         assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
+      } catch (error) {
+        const diagnostics = await Promise.allSettled([
+          control
+            .command('snapshot', APP)
+            .then(value =>
+              writeFile(join(resultDir, 'collaboration-exp-failure-before-cleanup.json'), value)
+            ),
+          captureScreenshot(control, 'collaboration-exp-failure-before-cleanup.png', APP),
+        ])
+        for (const result of diagnostics)
+          if (result.status === 'rejected')
+            console.error('Cannot capture experiment failure', result.reason)
+        throw error
       } finally {
         finishPrivateResponse()
         finishRhythmResponse()

@@ -29,6 +29,33 @@ const filters: TaskFilterValue = {
   search: '',
 }
 
+it('shows selected labels inside both real searchable filter triggers', () => {
+  const view = render(
+    <TaskFilters
+      value={filters}
+      projects={projects}
+      statuses={[{ value: 'pending', label: 'Pending' }]}
+      onChange={vi.fn()}
+    />
+  )
+  expect(view.getByTestId('collaboration-exp-filter-status')).toHaveTextContent('Pending')
+  expect(view.getByTestId('collaboration-exp-filter-projectKey')).toHaveTextContent(project.name)
+})
+
+it('shows all-status and all-project labels after opening unselected filters', () => {
+  const view = render(
+    <TaskFilters
+      value={{ ...filters, projectKey: '', status: '' }}
+      projects={projects}
+      statuses={[{ value: 'pending', label: 'Pending' }]}
+      onChange={vi.fn()}
+    />
+  )
+  fireEvent.click(view.getByTestId('collaboration-exp-search-toggle'))
+  expect(view.getByTestId('collaboration-exp-filter-status')).toHaveTextContent('全部状态')
+  expect(view.getByTestId('collaboration-exp-filter-projectKey')).toHaveTextContent('全部项目')
+})
+
 it('clears one filter, retains the others and restores its trigger focus', () => {
   const onChange = vi.fn()
   const view = render(

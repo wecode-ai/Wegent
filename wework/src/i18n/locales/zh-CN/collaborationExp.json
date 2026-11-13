@@ -136,12 +136,12 @@
     "visibility": "仅你和你的助理可见。",
     "close": "关闭私人讨论",
     "sourceUnavailable": "无法验证这条历史来源，不能回看其中的私人消息。",
-    "sourceScope": "仅展示已验证的来源轮次，以及从此面板继续发送的讨论。",
+    "sourceScope": "回看已验证的来源轮次 · 仅你可见",
     "empty": "和助理继续处理这件事。",
     "placeholder": "和助理私下讨论",
-    "conclusion": "要共享的结论",
+    "conclusion": "以下内容将对项目成员可见",
     "publishHint": "仅发布你在这里确认的正文，私人消息和附件仍留在讨论中。",
-    "publish": "发布结论",
+    "publish": "确认并提交结论",
     "publishing": "正在发布…",
     "errors": {
       "permission": "你已无权发表评论，草稿已保留。",
@@ -152,7 +152,13 @@
       "draftStorage": "草稿无法保存到此设备，请保持面板打开以保留正文。"
     },
     "taskProgress": "任务进展",
-    "sourceTitle": "当时的私人讨论"
+    "sourceTitle": "当时的私人讨论",
+    "continueCurrent": "继续当前讨论",
+    "reviewHint": "提交前请检查结论正文，私人聊天和文件不会提交。",
+    "reviewConclusion": "查看建议结论",
+    "previewTitle": "确认要提交的结论",
+    "finalCheck": "最后确认",
+    "continueDiscussion": "继续讨论"
   },
   "assistant": {
     "runtimeWorkUnavailable": "工作目录加载失败，请重试以确认助理团当前状态。",

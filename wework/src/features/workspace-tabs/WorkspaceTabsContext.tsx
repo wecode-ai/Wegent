@@ -226,12 +226,16 @@ function workspaceTabsReducer(
       if (isSettingsRoute(action.pathname)) return state
       const location = parseWorkspaceLocation(action.pathname, action.search)
       const dedicatedRoute = isCollaborationExpPath(action.pathname)
+      const kind = inferWorkspaceTabKind(action.pathname)
       const requested = dedicatedRoute
         ? state.tabs.find(tab => isCollaborationExpPath(tab.contentRoute))
         : location.tabId
-          ? state.tabs.find(tab => tab.id === location.tabId)
-          : undefined
-      const kind = inferWorkspaceTabKind(action.pathname)
+          ? state.tabs.find(tab => tab.id === location.tabId && tab.id !== COLLABORATION_EXP_TAB_ID)
+          : state.activeTabId === COLLABORATION_EXP_TAB_ID
+            ? state.tabs.find(
+                tab => tab.kind === kind && tab.contentRoute === location.contentRoute
+              )
+            : undefined
       if (requested) {
         const title =
           location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels)
@@ -257,7 +261,7 @@ function workspaceTabsReducer(
       }
       if (!location.tabId && !dedicatedRoute) {
         const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
-        if (activeTab) {
+        if (activeTab && activeTab.id !== COLLABORATION_EXP_TAB_ID) {
           const title = workspaceTabTitle(kind, location.contentRoute, action.labels)
           if (
             activeTab.kind === kind &&
@@ -279,7 +283,11 @@ function workspaceTabsReducer(
         }
       }
       const next = createWorkspaceTab(kind, action.labels, {
-        id: dedicatedRoute ? COLLABORATION_EXP_TAB_ID : (location.tabId ?? undefined),
+        id: dedicatedRoute
+          ? COLLABORATION_EXP_TAB_ID
+          : location.tabId === COLLABORATION_EXP_TAB_ID
+            ? undefined
+            : (location.tabId ?? undefined),
         title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),
         contentRoute: location.contentRoute,
       })
@@ -663,6 +671,20 @@ export function WorkspaceTabsProvider({
       if (isCollaborationExpPath(path)) {
         event.preventDefault()
         openTab('auxiliary', { contentRoute })
+        return
+      }
+      if (activeTab?.id === COLLABORATION_EXP_TAB_ID) {
+        event.preventDefault()
+        navigateWorkspaceTab(
+          {
+            ...stateRef.current,
+            tabs: stateRef.current.tabs.filter(tab => tab.id !== COLLABORATION_EXP_TAB_ID),
+            selectTab,
+            openTab,
+          },
+          kind,
+          contentRoute
+        )
         return
       }
       const target = parseRuntimeTaskRoute(path, search)

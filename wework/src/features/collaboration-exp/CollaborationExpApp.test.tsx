@@ -174,6 +174,21 @@ vi.mock('./private', () => ({
         <button data-testid="private-context-back" onClick={props.onClose}>
           Task progress
         </button>
+        <button data-testid="private-continue" onClick={props.onContinue}>
+          Continue current discussion
+        </button>
+        <button
+          data-testid="private-open-conclusion"
+          onClick={() => props.onConclusionViewChange?.(true)}
+        >
+          Review conclusion
+        </button>
+        <button
+          data-testid="private-back-conclusion"
+          onClick={() => props.onConclusionViewChange?.(false)}
+        >
+          Continue discussion
+        </button>
       </div>
     )
   },
@@ -442,6 +457,61 @@ describe('CollaborationExpApp integration', () => {
     fireEvent.click(screen.getByTestId('private-context-back'))
     expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()
     expect(new URLSearchParams(window.location.search).has('discussion')).toBe(false)
+  })
+
+  test('continues verified source history in the same bound discussion without losing list scope', async () => {
+    messages = [
+      experienceMessageFixture(),
+      experienceMessageFixture({
+        messageId: 'execution-1',
+        sequenceNumber: 2,
+        sender: { type: 'agent', id: 'agent' },
+        type: 'execution',
+        triggerMessageId: 'message-1',
+        runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+        metadata: { runtime_turn_id: 'turn-1' },
+      }),
+    ]
+    const discussion = JSON.stringify(['device-1', 'task-1'])
+    const scope = JSON.stringify(['backend', project.id])
+    open({
+      projectStore: 'backend',
+      projectId: project.id,
+      issueId: issue.id,
+      discussion,
+      nodeId: 'message-1',
+      projectScope: scope,
+      projectView: 'plan',
+      planView: 'gantt',
+      search: 'Release',
+    })
+    await screen.findByTestId('private-leaf')
+    expect(screen.getByRole('heading', { name: '当时的私人讨论' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('private-continue'))
+    const selected = new URLSearchParams(window.location.search)
+    expect(selected.has('nodeId')).toBe(false)
+    expect(selected.get('discussion')).toBe(discussion)
+    expect(selected.get('projectId')).toBe(project.id)
+    expect(selected.get('issueId')).toBe(issue.id)
+    expect(selected.get('projectScope')).toBe(scope)
+    expect(selected.get('projectView')).toBe('plan')
+    expect(selected.get('planView')).toBe('gantt')
+    expect(selected.get('search')).toBe('Release')
+    expect(privateProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sourceNodeId: undefined,
+        historyScope: 'task',
+        conversation: expect.objectContaining({
+          bindingIds: ['binding-1'],
+          address: { deviceId: 'device-1', taskId: 'task-1' },
+        }),
+      })
+    )
+    fireEvent.click(screen.getByTestId('private-open-conclusion'))
+    expect(screen.getByRole('heading', { name: '确认要提交的结论' })).toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('discussion')).toBe(discussion)
+    fireEvent.click(screen.getByTestId('private-back-conclusion'))
+    expect(screen.getByRole('heading', { name: '私人讨论' })).toBeInTheDocument()
   })
 
   test('anchors canonical and client comment ids and repeats focus for another notification', async () => {

@@ -7,6 +7,59 @@ import {
 } from './runtime-task-evidence.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
+export async function verifyCollaborationExpNotificationTab({
+  control,
+  conversation,
+  appSelector,
+  tabSelector,
+  click,
+  uiTimeoutMs,
+}) {
+  const query = async () => {
+    const snapshot = JSON.parse(await control.command('snapshot', appSelector))
+    const params = new URL(snapshot.location).searchParams
+    params.delete('workspaceTab')
+    params.delete('workspaceTabTitle')
+    return [...params].sort(([left], [right]) => left.localeCompare(right))
+  }
+  const original = await query()
+  let pendingTab
+  let tabCount
+  for (const requestKey of ['experiment-navigation-first', 'experiment-navigation-second']) {
+    await control.command('activateSystemNotification', 'body', {
+      value: `wework://interactions/${encodeURIComponent(conversation.deviceId)}/${encodeURIComponent(conversation.taskId)}/${requestKey}`,
+    })
+    await waitForValue(
+      () => control.command('getRoute', 'body'),
+      value => value === '/pending-interactions' && value,
+      'The native interaction notification must leave the experiment tab',
+      uiTimeoutMs
+    )
+    await control.command('waitFor', `${tabSelector}[aria-selected="false"]`)
+    const [selected] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        '[role="tab"][aria-selected="true"][data-testid^="workspace-tab-select-"]'
+      )
+    )
+    assert.ok(
+      selected?.testId && selected.testId !== 'workspace-tab-select-fixed-collaboration-exp'
+    )
+    if (pendingTab) assert.equal(selected.testId, pendingTab)
+    pendingTab = selected.testId
+    const tabs = JSON.parse(await control.command('snapshot', 'body')).testIds.filter(id =>
+      id.startsWith('workspace-tab-select-')
+    )
+    assert.equal(tabs.filter(id => id === 'workspace-tab-select-fixed-collaboration-exp').length, 1)
+    if (tabCount) assert.equal(tabs.length, tabCount, 'Repeated notifications must reuse one tab')
+    tabCount = tabs.length
+    await click(control, tabSelector)
+    await control.command('waitFor', `${tabSelector}[aria-selected="true"]`)
+    await control.command('waitFor', appSelector, { visible: true })
+    assert.deepEqual(await query(), original, 'The original experiment query must be retained')
+  }
+}
+
 export async function verifyCollaborationExpIssueCreateAndEdit({
   control,
   localProject,

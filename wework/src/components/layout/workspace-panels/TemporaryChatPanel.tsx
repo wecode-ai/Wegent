@@ -774,7 +774,8 @@ export function TemporaryChatPanel({
 
   const sendConversationMessage = useCallback(
     async (message: RuntimePaneQueuedMessage, interrupt = false) => {
-      if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
+      if (!address || !active || readOnly)
+        return { sent: false, error: t('workbench.project_chat_send_failed') }
       const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
       let error: string | null = null
       let queued = false
@@ -785,7 +786,6 @@ export function TemporaryChatPanel({
             address,
             ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
             ...(sendEphemeral ? { ephemeral: true } : {}),
-            ...runtimeContext,
           },
           message
         ),
@@ -814,10 +814,11 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      active,
+      readOnly,
       interruptAndSendRuntimePaneMessage,
       lifecycleStore,
       nativeConversation,
-      runtimeContext,
       sendEphemeral,
       sendRuntimePaneMessage,
       t,
@@ -833,13 +834,14 @@ export function TemporaryChatPanel({
       guidanceFailedText: t('workbench.project_chat_send_failed'),
       send: sendConversationMessage,
       async guide(message) {
-        if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
+        if (!address || !active || readOnly)
+          return { sent: false, error: t('workbench.project_chat_send_failed') }
         const request = runtimeQueuedMessageRequest({ address }, message)
         return sendRuntimePaneGuidance({
           address,
           message: request.message,
-          ...(runtimeContext?.conversationContext
-            ? { conversationContext: runtimeContext.conversationContext }
+          ...(request.conversationContext
+            ? { conversationContext: request.conversationContext }
             : {}),
           clientGuidanceId: message.id,
           ...(request.attachmentIds ? { attachmentIds: request.attachmentIds } : {}),
@@ -847,25 +849,28 @@ export function TemporaryChatPanel({
         })
       },
     }),
-    [address, lifecycleStore, runtimeContext, sendConversationMessage, sendRuntimePaneGuidance, t]
+    [address, active, readOnly, lifecycleStore, sendConversationMessage, sendRuntimePaneGuidance, t]
   )
 
   useEffect(() => {
-    if (address) void conversationQueue.pump(queuePort, busy)
-  }, [address, busy, taskLifecycle, queuedMessages, conversationQueue, queuePort])
+    if (address && active && !readOnly) void conversationQueue.pump(queuePort, busy)
+  }, [address, active, readOnly, busy, taskLifecycle, queuedMessages, conversationQueue, queuePort])
 
   const sendQueuedMessageAsGuidance = useCallback(
-    (message: RuntimePaneQueuedMessage, forceActiveTurn = false) =>
-      conversationQueue.guide(
+    async (message: RuntimePaneQueuedMessage, forceActiveTurn = false) => {
+      if (!active || readOnly) return false
+      return conversationQueue.guide(
         message.id,
         queuePort,
         forceActiveTurn || Boolean(address && lifecycleStore.getTask(address)?.derived.isTurnActive)
-      ),
-    [address, conversationQueue, lifecycleStore, queuePort]
+      )
+    },
+    [address, active, readOnly, conversationQueue, lifecycleStore, queuePort]
   )
 
   const send = useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
+      if (!active || readOnly) return false
       const draftValue = valueOverride ?? input
       const message = draftValue.trim()
       if (!message) return false
@@ -893,6 +898,7 @@ export function TemporaryChatPanel({
         attachments: persistAttachmentReferences(currentAttachments),
         ...selectedModelFields,
         ...sessionStartFields,
+        ...runtimeContext,
       }
       if (nativeConversation && address) {
         nativeSubmission.current = true
@@ -909,8 +915,8 @@ export function TemporaryChatPanel({
             ? await sendRuntimePaneGuidance({
                 address,
                 message,
-                ...(runtimeContext?.conversationContext
-                  ? { conversationContext: runtimeContext.conversationContext }
+                ...(queuedMessage.conversationContext
+                  ? { conversationContext: queuedMessage.conversationContext }
                   : {}),
                 clientGuidanceId: queuedMessage.id,
                 attachments: localRuntimeAttachments(currentAttachments),
@@ -1106,6 +1112,8 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      active,
+      readOnly,
       nativeConversation,
       draft,
       historySource,
@@ -1138,6 +1146,7 @@ export function TemporaryChatPanel({
   )
 
   useEffect(() => {
+    if (!active || readOnly) return
     if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
       return
     }
@@ -1159,15 +1168,26 @@ export function TemporaryChatPanel({
       }, restoreInitialDraft)
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [autoSubmitInitialInput, initialInput, send, setInput, taskModelIdentityPending])
+  }, [
+    active,
+    readOnly,
+    autoSubmitInitialInput,
+    initialInput,
+    send,
+    setInput,
+    taskModelIdentityPending,
+  ])
 
   const cancelQueuedMessage = useCallback(
-    (id: string) => conversationQueue.cancel(id),
-    [conversationQueue]
+    (id: string) => {
+      if (active && !readOnly) conversationQueue.cancel(id)
+    },
+    [active, readOnly, conversationQueue]
   )
 
   const editQueuedMessage = useCallback(
     (id: string) => {
+      if (!active || readOnly) return
       const message = conversationQueue.take(id)
       if (!message) return
       draftEditVersionRef.current += 1
@@ -1176,7 +1196,7 @@ export function TemporaryChatPanel({
       sideChatProjectChat.resetAttachments()
       message.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
     },
-    [conversationQueue, setInput, sideChatProjectChat]
+    [active, readOnly, conversationQueue, setInput, sideChatProjectChat]
   )
 
   const guideQueuedMessage = useCallback(
@@ -1189,11 +1209,11 @@ export function TemporaryChatPanel({
   )
 
   const pause = useCallback(() => {
-    if (!address) return
+    if (!address || !active || readOnly) return
     void cancelRuntimePaneTask(address, {
       onError: message => setError(message),
     }).finally(() => setSending(false))
-  }, [address, cancelRuntimePaneTask])
+  }, [address, active, readOnly, cancelRuntimePaneTask])
 
   const openRuntimeTask = useCallback(() => {
     if (!address || !onOpenRuntimeTask) return
@@ -1225,7 +1245,7 @@ export function TemporaryChatPanel({
 
   const retryFailedMessage = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
-      if (!address || retryInFlightRef.current) return false
+      if (!address || !active || readOnly || retryInFlightRef.current) return false
       if (modelControls && !canSendWithCurrentModel()) return false
       retryInFlightRef.current = true
       setError(null)
@@ -1277,6 +1297,8 @@ export function TemporaryChatPanel({
     [
       address,
       presentation.messages,
+      active,
+      readOnly,
       runtimeContext,
       selectedModelFields,
       sendRuntimePaneMessage,
@@ -1290,7 +1312,7 @@ export function TemporaryChatPanel({
 
   const submitRequestUserInput = useCallback(
     async (response: RequestUserInputResponse): Promise<boolean> => {
-      if (!address) return false
+      if (!address || !active || readOnly) return false
       const payload = findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
       const hosted = await requestUserInputHost?.submit(response, payload)
       if (hosted !== undefined) return hosted
@@ -1305,6 +1327,7 @@ export function TemporaryChatPanel({
           status: 'queued',
           createdAt: new Date().toISOString(),
           ...selectedModelFields,
+          ...runtimeContext,
         }
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
@@ -1320,6 +1343,8 @@ export function TemporaryChatPanel({
       address,
       conversationQueue,
       messages,
+      active,
+      readOnly,
       queuedMessages.length,
       runtimeContext,
       selectedModelFields,
@@ -1331,7 +1356,7 @@ export function TemporaryChatPanel({
 
   const ignoreRequestUserInput = useCallback(
     async (payload: RequestUserInputPayload) => {
-      if (!address) return
+      if (!address || !active || readOnly) return
       const key = requestUserInputPayloadKey(payload)
       if (key) {
         setHiddenRequestUserInputIds(current => new Set(current).add(key))
@@ -1345,7 +1370,7 @@ export function TemporaryChatPanel({
         })
       }
     },
-    [address, cancelRuntimePaneTask]
+    [address, active, readOnly, cancelRuntimePaneTask]
   )
 
   const sourceMessageId = presentation.messages.find(message =>
@@ -1534,7 +1559,7 @@ export function TemporaryChatPanel({
         contentFooterClassName={DESKTOP_MESSAGE_LIST_CLASS}
         scrollTestId="right-workspace-chat-scroll-area"
         onRetryFailedMessage={
-          address && !readOnly
+          address && active && !readOnly
             ? message => {
                 void retryFailedMessage(message)
               }
@@ -1548,7 +1573,7 @@ export function TemporaryChatPanel({
             : undefined
         }
         onRevertFileChanges={
-          address && !readOnly
+          address && active && !readOnly
             ? (subtaskId, fileChanges) =>
                 revertTurnFileChanges(subtaskId, presentation.messages, fileChanges, address)
             : undefined
@@ -1556,8 +1581,12 @@ export function TemporaryChatPanel({
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onOpenWorkspaceFile={onOpenRuntimeTask ? openWorkspaceFile : undefined}
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onRequestUserInputSubmit={address && !readOnly ? submitRequestUserInput : undefined}
-        onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
+        onRequestUserInputSubmit={
+          address && active && !readOnly ? submitRequestUserInput : undefined
+        }
+        onRequestUserInputIgnore={
+          address && active && !readOnly ? ignoreRequestUserInput : undefined
+        }
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         hideRequestUserInputBlocks={

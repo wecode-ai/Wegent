@@ -248,7 +248,7 @@ export function useExperienceTasks(
       (relevance === 'all' && all.some(row => row.loading)),
     errors,
     relatedError: related.error,
-    hasMore: relevance === 'related' && related.hasMore,
+    hasMore: related.hasMore,
     loadMore: related.loadMore,
     reload,
     revision: revision + related.revision,

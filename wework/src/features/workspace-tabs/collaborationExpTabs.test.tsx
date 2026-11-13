@@ -9,6 +9,7 @@ import type { WorkspaceTabsContextValue } from './workspaceTabsContextValue'
 import { RoutingHarness } from './workspaceTabsTestHarness'
 import { labels } from './workspaceTabsTestLabels'
 import { createWorkspaceTab, workspaceTabsStorageKey } from './workspaceTabs'
+import { weworkDestinationRoute } from '@/features/notifications/scheme'
 
 const experimentLabels = {
   ...labels,
@@ -101,6 +102,77 @@ describe('collaboration experiment workspace tab', () => {
     expect(
       current.tabs.filter(tab => tab.contentRoute.startsWith(COLLABORATION_EXP_PATH))
     ).toHaveLength(1)
+  })
+
+  test.each([true, false])(
+    'preserves the experiment when notification navigation leaves it (pending tab exists: %s)',
+    pendingExists => {
+      const task = createWorkspaceTab('task', experimentLabels, { id: 'task', fixed: true })
+      const board = createWorkspaceTab('board', experimentLabels, { id: 'board', fixed: true })
+      const pending = createWorkspaceTab('auxiliary', experimentLabels, {
+        id: 'pending',
+        fixed: true,
+        contentRoute: '/pending-interactions',
+      })
+      let current!: WorkspaceTabsContextValue
+      render(
+        <RoutingHarness
+          labels={experimentLabels}
+          fixedTabs={[task, board, ...(pendingExists ? [pending] : [])]}
+          onContextValue={value => {
+            current = value
+          }}
+        />
+      )
+      const experimentRoute = '/collaboration-exp?projectId=one&issueId=first&search=release'
+      act(() => navigateTo(experimentRoute))
+      const experiment = { ...current.activeTab }
+      let pendingId: string | undefined
+      let tabCount: number | undefined
+      for (const requestKey of ['first-request', 'second-request']) {
+        const notificationRoute = weworkDestinationRoute({
+          kind: 'interaction',
+          deviceId: 'device',
+          taskId: 'native-task',
+          requestKey,
+        })
+        act(() => navigateTo(notificationRoute))
+        expect(current.activeTab.contentRoute).toBe(notificationRoute)
+        expect(current.activeTab.id).not.toBe(COLLABORATION_EXP_TAB_ID)
+        if (pendingId) expect(current.activeTab.id).toBe(pendingId)
+        pendingId = current.activeTab.id
+        if (pendingExists) expect(pendingId).toBe(pending.id)
+        if (tabCount) expect(current.tabs).toHaveLength(tabCount)
+        tabCount = current.tabs.length
+        expect(current.tabs.find(tab => tab.id === experiment.id)).toEqual(experiment)
+        act(() => navigateTo(COLLABORATION_EXP_PATH))
+        expect(current.activeTab).toEqual(experiment)
+        expect(current.tabs.filter(tab => tab.id === COLLABORATION_EXP_TAB_ID)).toHaveLength(1)
+      }
+      expect(current.tabs.find(tab => tab.id === task.id)).toEqual(task)
+      expect(current.tabs.find(tab => tab.id === board.id)).toEqual(board)
+    }
+  )
+
+  test('cannot repurpose the experiment identity through an explicitly misaddressed route', () => {
+    let current!: WorkspaceTabsContextValue
+    render(
+      <RoutingHarness
+        labels={experimentLabels}
+        onContextValue={value => {
+          current = value
+        }}
+      />
+    )
+    act(() => navigateTo('/collaboration-exp?projectId=one'))
+    const experiment = { ...current.activeTab }
+    act(() => navigateTo(`/pending-interactions?workspaceTab=${COLLABORATION_EXP_TAB_ID}`))
+    expect(current.activeTab.id).not.toBe(COLLABORATION_EXP_TAB_ID)
+    expect(current.activeTab.contentRoute).toBe('/pending-interactions')
+    expect(current.tabs.find(tab => tab.id === experiment.id)).toEqual(experiment)
+    act(() => navigateTo(COLLABORATION_EXP_PATH))
+    expect(current.activeTab).toEqual(experiment)
+    expect(current.tabs.filter(tab => tab.id === COLLABORATION_EXP_TAB_ID)).toHaveLength(1)
   })
 
   test('hides a disabled experiment without deleting its persisted fixed tab or query', () => {

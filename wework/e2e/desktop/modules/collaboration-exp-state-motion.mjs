@@ -72,11 +72,14 @@ export async function assertReducedStateMotion(control, scope) {
 }
 
 /** Sample real frames after state readiness; no delay substitutes for layout evidence. */
-export async function assertStableStateGeometry(control, selector) {
+export async function assertStableStateGeometry(
+  control,
+  selector,
+  descendants = '[data-assistant-id], .assistant-presence-mark, .assistant-team-rail-signal, dl, button'
+) {
   await control.command('startElementMetricsSampling', selector, {
     value: '180',
-    target:
-      '[data-assistant-id], .assistant-presence-mark, .assistant-team-rail-signal, dl, button',
+    target: descendants,
   })
   const sample = await waitForValue(
     async () => JSON.parse(await control.command('getElementMetricsSample', 'body')),
@@ -95,6 +98,28 @@ export async function assertStableStateGeometry(control, selector) {
       assert.deepEqual(element.animations, [], 'Reduced-motion states must have no live animation')
     }
   }
+}
+
+/** Project plans own canonical Issue statuses rather than assistant team nodes. */
+export async function assertReducedPlanMotion(control, scope) {
+  const selector = `${scope} [data-testid^="cloud-todo-card-status-"]`
+  await control.command('waitFor', selector, { visible: true })
+  const states = await metrics(control, selector)
+  assert.ok(states.length > 0, 'The real project plan must expose canonical Issue statuses')
+  for (const state of states) {
+    assert.ok(state.text.length > 0, 'Project status text must remain readable')
+    assert.ok(
+      state.width > 0 && state.height > 0,
+      'Project status markers must retain their geometry'
+    )
+    const target = `${scope} [data-testid=${JSON.stringify(state.testId)}]`
+    assertNoStateAnimation(
+      await control.command('getComputedStyleValue', target, { value: 'animation-name' }),
+      await control.command('getComputedStyleValue', target, { value: 'animation-duration' }),
+      target
+    )
+  }
+  await assertStableStateGeometry(control, scope, '[data-testid^="cloud-todo-card-status-"]')
 }
 
 export async function assertMobileAssistantPriority(

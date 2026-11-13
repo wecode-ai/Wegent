@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { ChevronRight, Lock, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ArrowRight, ChevronRight, Lock, X } from 'lucide-react'
 import {
   canStartWorkOnCollaborationIssue,
   type CollaborationIssue,
@@ -30,6 +30,8 @@ export interface PrivateDiscussionPaneProps {
   historyScope?: 'source' | 'task'
   onPublished(): void | Promise<void>
   onClose?(): void
+  onContinue?(): void
+  onConclusionViewChange?(open: boolean): void
 }
 
 export function PrivateDiscussionPane(props: PrivateDiscussionPaneProps) {
@@ -100,6 +102,36 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const [history, setHistory] = useState<{ identity: string; available: boolean } | null>(null)
   const historyAvailable =
     sourceScope === 'task' || (history?.identity === identity && history.available)
+  const [preview, setPreview] = useState<{ identity: string; key: string | null }>({
+    identity,
+    key: null,
+  })
+  if (preview.identity !== identity) setPreview({ identity, key: null })
+  const showConclusion =
+    sourceScope === 'task' && preview.identity === identity && preview.key === conclusionKey
+  const reviewButton = useRef<HTMLButtonElement>(null)
+  const conclusionInput = useRef<HTMLTextAreaElement>(null)
+  const wasPreview = useRef(false)
+  const mounted = useRef(true)
+  const previewGeneration = useRef(0)
+  const [publishedPreview, setPublishedPreview] = useState<number | null>(null)
+  const { onConclusionViewChange } = props
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  useEffect(() => {
+    onConclusionViewChange?.(showConclusion)
+    return () => onConclusionViewChange?.(false)
+  }, [onConclusionViewChange, showConclusion])
+  useLayoutEffect(() => {
+    previewGeneration.current += 1
+    if (showConclusion) conclusionInput.current?.focus()
+    else if (wasPreview.current) reviewButton.current?.focus()
+    wasPreview.current = showConclusion
+  }, [showConclusion])
   const address = useMemo(() => ({ ...conversation.address }), [conversation.address])
   const draft = {
     value: conclusionDraft.value,
@@ -112,18 +144,40 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
     ...props,
     scopeKey: conclusionKey,
     expectedUserId: Number(actorId),
-    active: active && owned && sourceKnown && historyAvailable,
+    active:
+      active &&
+      owned &&
+      sourceKnown &&
+      historyAvailable &&
+      sourceScope === 'task' &&
+      showConclusion,
     draft,
   })
+  useEffect(() => {
+    if (
+      publishedPreview === previewGeneration.current &&
+      showConclusion &&
+      !publication.publishing &&
+      !publication.error
+    )
+      setPreview({ identity, key: null })
+  }, [identity, publishedPreview, showConclusion, publication.publishing, publication.error])
+  const title = t(
+    sourceScope === 'source'
+      ? 'private.sourceTitle'
+      : showConclusion
+        ? 'private.previewTitle'
+        : 'private.title'
+  )
   return (
     <section
       data-testid="collaboration-exp-private-pane"
       className="experience-private-discussion"
-      aria-label={t('private.title')}
+      aria-label={title}
     >
       {!props.embedded && (
         <header className="experience-private-standalone-heading">
-          <h2>{t('private.title')}</h2>
+          <h2>{title}</h2>
           {onClose && (
             <button
               type="button"
@@ -170,9 +224,22 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
             <div className="experience-private-history-notice">
               <Lock size={13} aria-hidden="true" />
               <span>{t('private.sourceScope')}</span>
+              {props.onContinue && (
+                <button
+                  type="button"
+                  data-testid="collaboration-exp-private-continue"
+                  onClick={props.onContinue}
+                >
+                  {t('private.continueCurrent')} <ArrowRight size={13} aria-hidden="true" />
+                </button>
+              )}
             </div>
           )}
-          <div className="experience-private-native">
+          <div
+            className="experience-private-native"
+            data-read-only={sourceScope === 'source' || undefined}
+            hidden={showConclusion}
+          >
             <TemporaryChatPanel
               key={identity}
               currentProject={null}
@@ -188,9 +255,10 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               }}
               sendEphemeral={false}
               runtimeContext={{ conversationContext: 'private_discussion' }}
+              readOnly={sourceScope === 'source'}
               nativeConversation
               coordinateUserInput
-              active={active}
+              active={active && !showConclusion}
               historySource={source}
               historySourceUnavailableText={t('private.sourceUnavailable')}
               onHistorySourceAvailabilityChange={available =>
@@ -203,21 +271,47 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               emptyStateText={t('private.empty')}
               placeholder={t('private.placeholder')}
               onOpenRuntimeTask={openRuntimeTask}
+              composerHeader={
+                sourceScope === 'task' && (
+                  <div
+                    className="experience-private-ready"
+                    data-testid="collaboration-exp-private-ready"
+                  >
+                    <span>{t('private.reviewHint')}</span>
+                    <button
+                      ref={reviewButton}
+                      type="button"
+                      data-testid="collaboration-exp-conclusion-open"
+                      onClick={() => setPreview({ identity, key: conclusionKey })}
+                    >
+                      {t('private.reviewConclusion')}
+                      <ArrowRight size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                )
+              }
             />
           </div>
-          {historyAvailable && (
+          {showConclusion && historyAvailable && (
             <form
               className="experience-private-conclusion"
               data-testid="collaboration-exp-conclusion-form"
               onSubmit={event => {
                 event.preventDefault()
-                void publication.publish()
+                const generation = previewGeneration.current
+                void publication.publish().then(published => {
+                  if (published && mounted.current && previewGeneration.current === generation)
+                    setPublishedPreview(generation)
+                })
               }}
             >
+              <p className="experience-private-conclusion-eyebrow">{t('private.finalCheck')}</p>
+              <h3>{issue.title}</h3>
               <label htmlFor={`conclusion-${encodeURIComponent(conclusionKey)}`}>
                 {t('private.conclusion')}
               </label>
               <textarea
+                ref={conclusionInput}
                 id={`conclusion-${encodeURIComponent(conclusionKey)}`}
                 data-testid="collaboration-exp-conclusion-text"
                 value={draft.value}
@@ -232,10 +326,13 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               ) : null}
               {publication.error && <p role="alert">{t(`private.errors.${publication.error}`)}</p>}
               <div className="experience-private-conclusion-actions">
-                <span className="experience-private-visibility">
-                  <Lock size={11} aria-hidden="true" />
-                  {t('private.visibility')}
-                </span>
+                <button
+                  type="button"
+                  data-testid="collaboration-exp-conclusion-back"
+                  onClick={() => setPreview({ identity, key: null })}
+                >
+                  {t('private.continueDiscussion')}
+                </button>
                 <button
                   type="submit"
                   data-testid="collaboration-exp-conclusion-publish"

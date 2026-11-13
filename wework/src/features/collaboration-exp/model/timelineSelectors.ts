@@ -6,7 +6,6 @@ import { mergeHistoryNodes, selectHistoryNodes } from './historySelectors'
 import {
   knownRuntimeAddress,
   matchesExperienceViewer,
-  messageSourceIds,
   projectViewer,
   runtimeAddressKey,
   validSourceTimestamp,
@@ -38,38 +37,17 @@ function scopedMessages(input: ExperienceTimelineInput): ProjectChatMessage[] {
   )
 }
 
-function sourceMessages(
-  message: ProjectChatMessage,
-  index: MessageIndex,
-  seen = new Set<string>()
-): ProjectChatMessage[] {
-  if (seen.has(message.messageId)) return []
-  seen.add(message.messageId)
-  return [
-    message,
-    ...messageSourceIds(message).flatMap(id => {
-      const source = index.get(id)
-      return source ? sourceMessages(source, index, seen) : []
-    }),
-  ]
-}
-
 function humanSource(message: ProjectChatMessage, index: MessageIndex): ProjectChatMessage | null {
   if (message.sender.type === 'user') return message
-  const sources = sourceMessages(message, index).filter(source => source.sender.type === 'user')
-  const owners = new Set(sources.map(source => source.sender.id))
-  return owners.size === 1 ? sources[0] : null
+  const trigger = message.triggerMessageId ? index.get(message.triggerMessageId) : null
+  return trigger?.sender.type === 'user' ? trigger : null
 }
 
 function sourceAddresses(message: ProjectChatMessage, index: MessageIndex): RuntimeTaskAddress[] {
-  const sources = sourceMessages(message, index)
+  const sources = [message]
   if (message.sender.type === 'user')
     for (const candidate of index.values()) {
-      if (
-        candidate.sender.type === 'agent' &&
-        messageSourceIds(candidate).includes(message.messageId) &&
-        humanSource(candidate, index)?.messageId === message.messageId
-      )
+      if (candidate.sender.type === 'agent' && candidate.triggerMessageId === message.messageId)
         sources.push(candidate)
     }
   return sources.flatMap(source =>
@@ -126,7 +104,7 @@ function timelineNode(
         : 'system'
   const owner = humanSource(message, index)
   const attachments = new Map(
-    markdownAttachmentRows(message.content).map(attachment => [
+    (kind === 'execution' ? [] : markdownAttachmentRows(message.content)).map(attachment => [
       attachment.id,
       {
         id: attachment.id,

@@ -69,7 +69,12 @@ test('collaboration experiment acceptance uses the existing core runner and owns
     ['core:collaboration-exp']
   )
   assert.ok(catalog.ci.core_shards.some(shard => shard.split(',').includes('collaboration-exp')))
-  for (const helper of ['collaboration-exp-rhythm', 'collaboration-exp-state-motion'])
+  for (const helper of [
+    'collaboration-exp-rhythm',
+    'collaboration-exp-state-motion',
+    'collaboration-exp-pane-verification',
+    'collaboration-exp-viewport-flows',
+  ])
     assert.deepEqual(catalog.PATH_TARGETS.get(`wework/e2e/desktop/modules/${helper}.mjs`), [
       'core:collaboration-exp',
     ])

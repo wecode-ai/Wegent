@@ -6,11 +6,29 @@ export async function assertDesktopPanes(
 ) {
   const metrics = async selector => JSON.parse(await control.command('getElementMetrics', selector))
   const visible = rows => rows.filter(row => row.width > 0 && row.height > 0)
-  const headers = visible(await metrics(`${APP} .experience-header`))
-  assert.ok(headers.length >= 3, 'Desktop must retain the task, timeline and discussion panes')
+  const headers = visible(
+    await metrics(`${APP} .experience-header, ${APP} .experience-task-toolbar`)
+  )
+  assert.equal(
+    headers.length,
+    3,
+    'Desktop must retain exactly the task, timeline and discussion headers'
+  )
+  for (const pane of ['tasks', 'timeline', 'discussion'])
+    assert.equal(
+      visible(await metrics(testId(`collaboration-exp-pane-header-${pane}`))).length,
+      1,
+      `The ${pane} pane must retain its own real header`
+    )
   for (const header of headers) assert.equal(header.height, 60)
   const separators = visible(await metrics(`${APP} [role="separator"][data-separator]`))
   assert.ok(separators.length >= 2, 'Desktop pane boundaries must remain resizable')
+  for (const boundary of ['tasks-timeline', 'timeline-discussion'])
+    assert.equal(
+      visible(await metrics(`${APP} #collaboration-exp-resize-${boundary}`)).length,
+      1,
+      `The ${boundary} boundary must remain independently resizable`
+    )
   for (const separator of separators) assert.equal(separator.width, 8)
   const separator = `${APP} #collaboration-exp-resize-timeline-discussion`
   const timeline = testId('collaboration-exp-pane-timeline')

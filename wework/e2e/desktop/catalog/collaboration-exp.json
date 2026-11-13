@@ -8,6 +8,8 @@
   "paths": [
     "wework/e2e/desktop/modules/collaboration-exp-rhythm.mjs",
     "wework/e2e/desktop/modules/collaboration-exp-state-motion.mjs",
+    "wework/e2e/desktop/modules/collaboration-exp-pane-verification.mjs",
+    "wework/e2e/desktop/modules/collaboration-exp-viewport-flows.mjs",
     "wework/src/features/collaboration-exp/*",
     "wework/src/features/collaboration-exp/**/*",
     "wework/src/features/notifications/WeworkSchemeBridge.tsx",

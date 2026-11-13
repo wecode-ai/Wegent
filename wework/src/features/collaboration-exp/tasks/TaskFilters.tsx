@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { ChevronDown, Plus, Search, X } from 'lucide-react'
 import { IssueDetailSearchableSelect } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -115,7 +115,15 @@ export function TaskFilters({
             accessibleLabel={t('tasks.status')}
             searchPlaceholder={t('tasks.findStatus')}
             emptyLabel={t('tasks.noMatches')}
-            className="experience-task-filter-select"
+            className="experience-task-filter-select flex items-center gap-2"
+            triggerContent={
+              <>
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {selectedStatus?.label ?? t('tasks.allStatuses')}
+                </span>
+                <ChevronDown size={14} className="shrink-0" aria-hidden="true" />
+              </>
+            }
             onChange={status => onChange({ ...value, status })}
           />
           <IssueDetailSearchableSelect
@@ -128,7 +136,15 @@ export function TaskFilters({
             accessibleLabel={t('tasks.project')}
             searchPlaceholder={t('tasks.findProject')}
             emptyLabel={t('tasks.noMatches')}
-            className="experience-task-filter-select"
+            className="experience-task-filter-select flex items-center gap-2"
+            triggerContent={
+              <>
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {selectedProject?.name ?? t('tasks.allProjects')}
+                </span>
+                <ChevronDown size={14} className="shrink-0" aria-hidden="true" />
+              </>
+            }
             onChange={projectKey => onChange({ ...value, projectKey })}
           />
           {(selectedStatus || selectedProject) && (

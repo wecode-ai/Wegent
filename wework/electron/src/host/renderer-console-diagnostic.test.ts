@@ -1,5 +1,29 @@
 import { expect, test } from 'vitest'
 import { rendererConsoleDiagnostic } from './renderer-console-diagnostic.js'
+import { redactLog } from '../runtime/rotating-log.js'
+
+test.each([2, 3])(
+  'removes complete Basic header values before renderer level %s reaches main-process logging',
+  level => {
+    const result = rendererConsoleDiagnostic({
+      e2e: true,
+      level,
+      message:
+        'request failed {"headers":{"Authorization":"Basic dXNlcjpwYXNz","Accept":"application/json"},"status":401}',
+      sourceId: 'https://example.test/renderer.js?token=synthetic-source-secret',
+    })
+    expect(result?.data).toEqual({
+      message:
+        'request failed {"headers":{"Authorization":"[REDACTED]","Accept":"application/json"},"status":401}',
+      sourcePath: '/renderer.js',
+    })
+    const mainProcessEntry = redactLog(JSON.stringify(result))
+    expect(mainProcessEntry).not.toContain('dXNlcjpwYXNz')
+    expect(mainProcessEntry).not.toContain('synthetic-source-secret')
+    expect(mainProcessEntry).toContain('request failed')
+    expect(mainProcessEntry).toContain('401')
+  }
+)
 
 test('retains renderer warnings and errors after startup with the existing redaction boundary', () => {
   for (const [level, type] of [

@@ -138,12 +138,12 @@
     "visibility": "Only you and your assistant can see this discussion.",
     "close": "Close private discussion",
     "sourceUnavailable": "This historical source cannot be verified. Its private messages are unavailable.",
-    "sourceScope": "Showing the verified source turn and replies sent from this pane.",
+    "sourceScope": "Reviewing the verified source turn · Only you can see this",
     "empty": "Continue this discussion with your assistant.",
     "placeholder": "Discuss privately with your assistant",
-    "conclusion": "Conclusion to share",
+    "conclusion": "The following text will be visible to project members",
     "publishHint": "Only the text you confirm here is shared. Private messages and attachments stay in the discussion.",
-    "publish": "Publish conclusion",
+    "publish": "Confirm and submit conclusion",
     "publishing": "Publishing…",
     "errors": {
       "permission": "You no longer have permission to comment. Your draft is preserved.",
@@ -154,7 +154,13 @@
       "draftStorage": "The draft could not be saved on this device. Keep this pane open to preserve your text."
     },
     "taskProgress": "Task progress",
-    "sourceTitle": "The original private discussion"
+    "sourceTitle": "The original private discussion",
+    "continueCurrent": "Continue the current discussion",
+    "reviewHint": "Check the conclusion before submitting. Private messages and files will not be shared.",
+    "reviewConclusion": "Review suggested conclusion",
+    "previewTitle": "Confirm the conclusion to submit",
+    "finalCheck": "Final check",
+    "continueDiscussion": "Continue discussion"
   },
   "assistant": {
     "runtimeWorkUnavailable": "The work list could not be loaded. Retry to confirm the team's current status.",

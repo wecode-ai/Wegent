@@ -1049,6 +1049,179 @@ describe('TemporaryChatPanel', () => {
     expect(screen.getByText('Original source')).toBeInTheDocument()
   })
 
+  it('keeps verified historical messages visible without any native mutation controls', async () => {
+    mocks.busy = true
+    mocks.conversationTurns = [
+      {
+        id: 'source-turn',
+        status: 'failed',
+        items: [
+          {
+            id: 'source-user',
+            type: 'user_message',
+            message: {
+              id: 'source-user',
+              role: 'user',
+              content: 'Original source',
+              status: 'done',
+            },
+          },
+          {
+            id: 'source-answer',
+            type: 'assistant_text',
+            content: 'Failed original answer',
+            createdAt: '',
+          },
+        ],
+      },
+    ]
+    mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+    const onAvailable = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        controlledAddress={address}
+        initialAddress={address}
+        instanceId="readonly-source-controls"
+        nativeConversation
+        readOnly
+        runtimeContext={{ conversationContext: 'private_discussion' }}
+        historySource={{ turnId: 'source-turn', userMessageIds: ['source-user'] }}
+        onHistorySourceAvailabilityChange={onAvailable}
+      />
+    )
+    await waitFor(() => expect(onAvailable).toHaveBeenCalledWith(true))
+    expect(screen.getByText('Original source')).toBeInTheDocument()
+    expect(screen.getByText('Failed original answer')).toBeInTheDocument()
+    for (const testId of [
+      'mock-composer',
+      'mock-send',
+      'mock-retry',
+      'mock-guide',
+      'mock-interrupt',
+      'mock-submit-input',
+      'mock-ignore-input',
+    ])
+      expect(screen.queryByTestId(testId)).not.toBeInTheDocument()
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
+    expect(mocks.interruptAndSendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(mocks.createTask).not.toHaveBeenCalled()
+  })
+
+  it.each(['read-only', 'inactive'] as const)(
+    'does not pump another drawer queue while its private view is %s',
+    async mode => {
+      mocks.busy = true
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      const original = render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          instanceId={`original-queue-${mode}`}
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      expect(screen.getByTestId('mock-queue-row')).toBeInTheDocument()
+      expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+      original.unmount()
+      mocks.busy = false
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          controlledAddress={address}
+          initialAddress={address}
+          instanceId={`private-queue-${mode}`}
+          nativeConversation
+          readOnly={mode === 'read-only'}
+          active={mode !== 'inactive'}
+          runtimeContext={{ conversationContext: 'private_discussion' }}
+        />
+      )
+      await act(async () => {})
+      expect(screen.queryByTestId('mock-composer')).not.toBeInTheDocument()
+      expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+      expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
+      expect(mocks.interruptAndSendRuntimePaneMessage).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    { sourceScope: undefined, targetScope: 'private_discussion', delivery: 'send' },
+    { sourceScope: 'private_discussion', targetScope: undefined, delivery: 'send' },
+    { sourceScope: undefined, targetScope: 'private_discussion', delivery: 'guide' },
+    { sourceScope: 'private_discussion', targetScope: undefined, delivery: 'guide' },
+  ] as const)(
+    'retains the original $sourceScope queued intent when another $targetScope pane drives $delivery',
+    async ({ sourceScope, targetScope, delivery }) => {
+      mocks.busy = true
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: true, isTurnActive: true },
+        turn: { id: 'active-turn' },
+      }
+      mocks.sendRuntimePaneGuidance.mockResolvedValue({ sent: true })
+      const original = render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          initialAddress={address}
+          instanceId={`source-queue-${sourceScope}-${delivery}`}
+          runtimeContext={{
+            conversationContext: sourceScope,
+            origin: { source: 'manual', external_id: 'source-intent' },
+            cloudProjectId: 'source-project',
+            additionalContext: { source: { value: 'source-intent', kind: 'application' } },
+          }}
+        />
+      )
+      await userEvent.click(screen.getByTestId('mock-send'))
+      expect(screen.getByTestId('mock-queue-row')).toBeInTheDocument()
+      original.unmount()
+      mocks.busy = delivery === 'guide'
+      render(
+        <TemporaryChatPanel
+          currentProject={null}
+          source={address}
+          controlledAddress={address}
+          initialAddress={address}
+          instanceId={`target-queue-${targetScope}-${delivery}`}
+          nativeConversation
+          runtimeContext={{ conversationContext: targetScope }}
+        />
+      )
+      if (delivery === 'guide') {
+        await userEvent.click(screen.getByTestId('mock-guide'))
+        expect(mocks.sendRuntimePaneGuidance).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            address,
+            message: '发送附件',
+            ...(sourceScope ? { conversationContext: sourceScope } : {}),
+          })
+        )
+        expect(mocks.sendRuntimePaneGuidance.mock.calls[0][0].conversationContext).toBe(sourceScope)
+        expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+      } else {
+        await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+        const request = mocks.sendRuntimePaneMessage.mock.calls[0][0]
+        expect(request.conversationContext).toBe(sourceScope)
+        expect(request).toMatchObject({
+          address,
+          message: '发送附件',
+          origin: { source: 'manual', external_id: 'source-intent' },
+          cloudProjectId: 'source-project',
+          additionalContext: { source: { value: 'source-intent', kind: 'application' } },
+          clientUserMessageId: expect.stringContaining('queued-side-chat-'),
+        })
+        expect(mocks.sendRuntimePaneGuidance).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it('hides all transcript messages and the composer when a historical source cannot be proven', async () => {
     mocks.conversationMessages = [
       { id: 'newest-user', role: 'user', content: 'PRIVATE NEWEST CONTENT', status: 'done' },

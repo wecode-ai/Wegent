@@ -134,6 +134,67 @@ describe('source-owned experience requests', () => {
     expect(api.projects.get).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['local', 'backend'] as const)(
+    'continues bounded %s discovery in all mode and retains known tasks across a failed next page',
+    async store => {
+      const { source, api, project, myWork } = sourceFixture(store)
+      const other = sourceFixture(store === 'local' ? 'backend' : 'local')
+      const personal = { ...project, id: DEFAULT_WORK_ITEM_PROJECT_ID }
+      const personalIssue = {
+        ...myWork,
+        id: 'personal-second-page',
+        cloud_project_id: personal.id,
+        title: 'Personal task from the second page',
+      }
+      api.projects.get.mockResolvedValue(personal)
+      api.myWork.page
+        .mockResolvedValueOnce({ items: [myWork], nextCursor: 'opaque-personal-page' })
+        .mockRejectedValueOnce(new Error('Discovery temporarily unavailable'))
+        .mockResolvedValueOnce({ items: [myWork, personalIssue], nextCursor: null })
+      api.issues.list.mockImplementation(async id =>
+        id === personal.id ? [personalIssue] : [myWork]
+      )
+      const sources = [source, other.source]
+      const { result } = renderHook(() => useExperienceTasks(sources, [7], true, 'all'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(api.myWork.page).toHaveBeenCalledTimes(1)
+      expect(api.projects.get).not.toHaveBeenCalled()
+      expect(result.current.hasMore).toBe(true)
+
+      await act(() => result.current.loadMore())
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(result.current.relatedError).toBe(true)
+      expect(result.current.hasMore).toBe(true)
+      expect(result.current.projects.find(row => row.project === project)?.issues).toContainEqual(
+        expect.objectContaining({ id: myWork.id })
+      )
+      expect(other.api.myWork.page).toHaveBeenCalledTimes(1)
+
+      await act(() => result.current.loadMore())
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(result.current.relatedError).toBe(false)
+      expect(result.current.hasMore).toBe(false)
+      expect(api.myWork.page.mock.calls.slice(1)).toEqual([
+        [expect.objectContaining({ cursor: 'opaque-personal-page', limit: 30 })],
+        [expect.objectContaining({ cursor: 'opaque-personal-page', limit: 30 })],
+      ])
+      expect(api.projects.get.mock.calls).toEqual([[personal.id]])
+      expect(other.api.projects.get).not.toHaveBeenCalled()
+      expect(api.issues.list).toHaveBeenCalledWith(personal.id)
+      const rows = selectTaskRows(
+        { projects: result.current.projects, viewer: 7 },
+        { relevance: 'all' }
+      )
+      expect(
+        rows
+          .filter(row => row.project.store === store)
+          .map(row => row.id)
+          .sort()
+      ).toEqual([myWork.id, personalIssue.id].sort())
+      expect(api.myWork.page).toHaveBeenCalledTimes(3)
+    }
+  )
+
   it('retains a failed hydration error on its exact source without probing another store, and recovers on explicit reload', async () => {
     const local = sourceFixture('local')
     const cloud = sourceFixture('backend')
