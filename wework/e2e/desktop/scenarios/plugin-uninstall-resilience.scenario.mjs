@@ -101,15 +101,53 @@ export async function createDesktopScenario({
     const startIndex = apiProxy.requests.length
     apiProxy.rule = request =>
       request.method === 'DELETE' && request.path === deletePath(item) ? 'hold-response' : null
-    await uninstallInUi(control, item)
-    await until(
-      () => deletes(item),
-      requests => requests.some(request => request.status === 204 && request.committedResponseHeld),
-      'Real DELETE never committed'
-    )
+    // Device capability sync and auto-update take the same account plugin-write
+    // lease. A slow writer can hold it past the backend's three-second
+    // acquisition wait, so the real DELETE returns 503 plugin_write_busy and
+    // changes nothing. Deliver that real rejection and repeat the user action;
+    // only a committed DELETE whose response was lost is verified, never
+    // replayed.
+    let attempts = 0
+    while (true) {
+      attempts += 1
+      const attemptStart = deletes(item).length
+      await uninstallInUi(control, item)
+      const settled = await until(
+        () => deletes(item).slice(attemptStart),
+        requests =>
+          requests.some(request => request.status === 204 && request.committedResponseHeld) ||
+          requests.some(request => request.status === 503 && request.committedResponseHeld),
+        'Real DELETE neither committed nor was rejected'
+      )
+      if (settled.some(request => request.status === 204 && request.committedResponseHeld)) break
+      const rejected = settled.find(
+        request => request.status === 503 && request.committedResponseHeld
+      )
+      if (attempts === 3 || !rejected) throw new Error('Real DELETE never committed')
+      const verificationStart = apiProxy.requests.length
+      // The proxy withheld the real rejection; deliver it so the renderer
+      // completes this attempt before the next one starts.
+      await rejected.release()
+      await until(
+        () => apiProxy.requests.slice(verificationStart),
+        requests =>
+          requests.some(
+            request =>
+              request.method === 'GET' &&
+              request.path === '/api/plugins/installed' &&
+              request.unscoped &&
+              request.responseCompleted
+          ),
+        'The rejected uninstall was not verified against the account'
+      )
+    }
     assert.equal(await accountPlugin(cloud, item.slug), undefined)
     await assertInstallButton(control, item, 20_000)
-    assert.equal(deletes(item).length, 1, 'Lost response caused a second destructive DELETE')
+    assert.equal(
+      deletes(item).filter(request => request.status === 204).length,
+      1,
+      'Lost response caused a second destructive DELETE'
+    )
     assert.ok(
       apiProxy.requests
         .slice(startIndex)
@@ -122,7 +160,12 @@ export async function createDesktopScenario({
       'Missing authoritative account verification GET'
     )
     await assertSurfaces(control, item, false)
-    evidence.push({ case: 'committed-delete-lost-response', deleteCount: deletes(item).length })
+    evidence.push({
+      case: 'committed-delete-lost-response',
+      attempts,
+      deleteCount: deletes(item).length,
+      committedDeleteCount: 1,
+    })
     apiProxy.rule = () => null
   }
 
