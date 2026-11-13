@@ -356,6 +356,7 @@ class RealCloudEnvironment {
     initialExecutorLatestVersion,
     managedCloudIdentity = false,
     modelServerUrl,
+    modelCatalogOverrides = [],
     scenarioConfigToml = '',
     workspacePath,
   }) {
@@ -365,6 +366,7 @@ class RealCloudEnvironment {
     this.initialExecutorLatestVersion = initialExecutorLatestVersion
     this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
+    this.modelCatalogOverrides = modelCatalogOverrides
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
@@ -858,6 +860,18 @@ class RealCloudEnvironment {
     this.remoteDockerCodexHome = join(remoteDockerHome, 'codex')
     await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     await writeCodexConfig(this.remoteDockerCodexHome, this.modelServerUrl)
+    if (this.modelCatalogOverrides.length) {
+      await Promise.all(
+        [remoteHome, remoteDockerHome].map(async home => {
+          const capabilities = join(home, 'capabilities')
+          await mkdir(capabilities, { recursive: true })
+          await writeFile(
+            join(capabilities, 'model-catalog-overrides.json'),
+            JSON.stringify(this.modelCatalogOverrides)
+          )
+        })
+      )
+    }
     this.remoteExecutorEnv = this.executorEnv({
       deviceId: CLOUD_DEVICE_ID,
       deviceName: 'Wework E2E Cloud Device',
