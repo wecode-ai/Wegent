@@ -7,6 +7,7 @@ import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
 import { verifyStandInEventVersions } from '../modules/stand-in-event-versions.mjs'
 import { createProjectVersionStory } from '../modules/stand-in-project-version-story.mjs'
+import { createSourceArchiveRegression } from '../modules/stand-in-source-archive.mjs'
 import {
   verifyStandInResourceScopes,
   verifyStandInCalendarPolicy,
@@ -32,6 +33,7 @@ export function createDesktopScenario(options) {
     workbenchReadyTimeoutMs,
   } = options
   const story = createProjectVersionStory(options, PROVIDER)
+  const archiveRegression = createSourceArchiveRegression(options, PROVIDER)
   const root = join(resultDir, 'connection-marketplace')
   const source = join(root, 'source')
   const records = join(resultDir, 'records.json')
@@ -56,6 +58,7 @@ export function createDesktopScenario(options) {
   return {
     reviewApproval: story.model.reviewApproval,
     async handleHttp(req, _response, url) {
+      if (archiveRegression.active) return archiveRegression.handleHttp(req, _response, url)
       if (story.model.active) return story.model.handleHttp(req, _response, url)
       if (req.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname))
         modelRequests++
@@ -126,7 +129,7 @@ export function createDesktopScenario(options) {
                   resourceKinds: ['record'],
                   allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
-                  eventTypes: ['record.received'],
+                  eventTypes: ['record.received', 'message.received'],
                   versionedEventTypes: ['record.received'],
                   assistance: ASSISTANCE,
                 },
@@ -249,6 +252,11 @@ export function createDesktopScenario(options) {
       let storyFailure
       try {
         await story.verify(control, (method, params) => rpc(control, method, params), records)
+        await archiveRegression.verify(
+          control,
+          (method, params) => rpc(control, method, params),
+          records
+        )
       } catch (error) {
         storyFailure = error
         throw error
