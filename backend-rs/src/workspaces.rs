@@ -219,6 +219,7 @@ struct WorkspaceBody {
     execution_environment_count: i64,
     execution_environment: ExecutionEnvironment,
     is_default: bool,
+    is_system_default: bool,
     status: &'static str,
     version: i64,
     created_at: String,
@@ -282,6 +283,7 @@ fn workspace_crd(json: &serde_json::Value) -> WorkspaceCrdView {
     WorkspaceCrdView {
         description: crd_scalar_text(crd_field(spec, "description")).unwrap_or_default(),
         is_default: crd_truthy(crd_field(spec, "isDefault")),
+        is_system_default: crd_truthy(crd_field(spec, "isSystemDefault")),
         public_id: crd_scalar_text(crd_field(metadata, "publicId")),
         created_by_user_id: crd_scalar_int(crd_field(metadata, "createdByUserId"))
             .map(|value| value as i32),
@@ -293,6 +295,7 @@ fn workspace_crd(json: &serde_json::Value) -> WorkspaceCrdView {
 struct WorkspaceCrdView {
     description: String,
     is_default: bool,
+    is_system_default: bool,
     public_id: Option<String>,
     created_by_user_id: Option<i32>,
     version: i64,
@@ -363,6 +366,7 @@ async fn workspaces_list<M: Mysql>(
                     .unwrap_or(0),
                 execution_environment: execution_environment(&json)?,
                 is_default: crd.is_default,
+                is_system_default: crd.is_system_default,
                 status: if workspace.is_active != 0 {
                     "active"
                 } else {
@@ -490,17 +494,19 @@ mod tests {
     fn crd_view_applies_source_fallbacks() {
         let view = workspace_crd(&serde_json::json!({
             "metadata": {"publicId": "c592c1fa", "createdByUserId": 6177},
-            "spec": {"description": "team space", "isDefault": true},
+            "spec": {"description": "team space", "isDefault": true, "isSystemDefault": true},
             "status": {"version": 4},
         }));
         assert_eq!(view.public_id.as_deref(), Some("c592c1fa"));
         assert_eq!(view.created_by_user_id, Some(6177));
         assert_eq!(view.description, "team space");
         assert!(view.is_default);
+        assert!(view.is_system_default);
         assert_eq!(view.version, 4);
 
         let empty = workspace_crd(&serde_json::json!({}));
         assert_eq!(empty.public_id, None);
+        assert!(!empty.is_system_default);
         assert_eq!(empty.created_by_user_id, None);
         assert_eq!(empty.description, "");
         assert!(!empty.is_default);
@@ -530,6 +536,7 @@ mod tests {
                 devices: serde_json::Map::new(),
             },
             is_default: false,
+            is_system_default: false,
             status: "active",
             version: 1,
             created_at: "2026-10-14T03:31:30".to_string(),
@@ -559,6 +566,7 @@ mod tests {
                 "execution_environment_count",
                 "execution_environment",
                 "is_default",
+                "is_system_default",
                 "status",
                 "version",
                 "created_at",
