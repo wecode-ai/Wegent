@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { openProjectBoard } from '../modules/collaboration-board-personal-view.mjs'
+import { createLocalCollaborationProject } from '../modules/workspace-flows.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const CHAT = `${CONTENT} [data-testid="project-space-chat-panel"]`
@@ -75,7 +75,7 @@ function pngDimensions(bytes) {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
 }
 
-export function createDesktopScenario({ executorHome, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({ executorHome, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   return {
     async verify(control) {
       if (process.platform !== 'darwin') {
@@ -83,25 +83,12 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workspacePath
         return { skipped: 'macos-only' }
       }
 
-      // In the failed run (07:17:14.942 UTC), executor.log records project import
-      // succeeding at 07:18:49.752. In app.log, Chromium restarted its network
-      // service at 07:18:53.785 and the renderer's RPC and event requests aborted.
-      // The sidebar lookup then failed before any paste (see failure.txt).
-      // https://github.com/wecode-ai/Wegent/actions/runs/43382146308/artifacts/14018626553
-      // Project import has its own checkpoint; seed through the local Executor.
-      const projectKey = `clipboard-history-image-${process.pid}`
-      const projectId = `local-code-${createHash('sha256').update(projectKey).digest('hex')}`
-      const seeded = JSON.parse(
-        await control.command('seedLocalProject', 'body', {
-          value: JSON.stringify({ projectKey, name: PROJECT_NAME, path: workspacePath }),
-        })
-      )
-      assert.equal(seeded.accepted, true)
       await ensureExperimentalFeaturesEnabled(control)
-      await openProjectBoard(control, selector => `${CONTENT} ${selector}`.trim(), {
-        id: projectId,
-        name: PROJECT_NAME,
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('waitFor', `${CONTENT} [data-testid="collaboration-platform-root"]`, {
+        timeoutMs: workbenchReadyTimeoutMs,
       })
+      await createLocalCollaborationProject(control, CONTENT, PROJECT_NAME)
 
       await control.command(
         'clickWhenEnabled',
@@ -176,8 +163,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs, workspacePath
       })
 
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      const project = (await rpc('projects.list', {})).find(row => row.id === projectId)
-      assert.equal(project?.name, PROJECT_NAME, 'The clipboard image fixture was not persisted')
+      const project = (await rpc('projects.list', {})).find(row => row.name === PROJECT_NAME)
+      assert.ok(project, 'The clipboard image fixture project was not persisted')
       const issue = await waitFor(
         async () => {
           const rows = await rpc('todos.list', { project_id: project.id })
