@@ -302,6 +302,53 @@ it('restores ready attachments and goal mode after reopening without uploading o
   expect(createProjectRuntimeTask.mock.lastCall![1].initialGoal.objective).toBe(props.draft.value)
 })
 
+it('retains new attachment-only work after a successful task clears the previous draft', async () => {
+  mocks.attachments.mockImplementation(options => useComposerAttachments(options))
+  const { props, rerender, unmount, draft, api, issue, createProjectRuntimeTask } = setup(
+    false,
+    true
+  )
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  rerender(<PersonalHomeTaskComposer {...props} draft={{ ...props.draft, value: '' }} />)
+  const file = new File(['next work'], 'next.bin', { type: 'application/octet-stream' })
+  const uploadAttachment = vi.fn(async () => ({ id: 61, filename: file.name, status: 'ready' }))
+  const services = {
+    ...props.services,
+    attachmentApi: { uploadAttachment, deleteAttachment: vi.fn() },
+  } as never
+  rerender(
+    <PersonalHomeTaskComposer
+      {...props}
+      services={services}
+      draft={{ ...props.draft, value: '' }}
+    />
+  )
+  await act(async () => mocks.input.mock.lastCall![0].projectChat.handleFileSelect(file))
+  expect(props.drafts.get('backend:project')?.attachments.map(item => item.id)).toEqual([61])
+  unmount()
+  api.issues.create.mockResolvedValueOnce({
+    ...issue,
+    id: 'attachment-work',
+    title: file.name,
+    description: '',
+  })
+  render(
+    <PersonalHomeTaskComposer
+      {...props}
+      services={services}
+      draft={{ ...props.draft, value: '' }}
+    />
+  )
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledTimes(2))
+  expect(api.issues.create).toHaveBeenCalledTimes(2)
+  expect(
+    createProjectRuntimeTask.mock.lastCall![1].attachments.map((item: { id: number }) => item.id)
+  ).toEqual([61])
+  expect(uploadAttachment).toHaveBeenCalledOnce()
+})
+
 it('retains the created Issue when saving its description fails before Runtime creation', async () => {
   const { props, api, rerender, unmount, draft, issue } = setup()
   const changed = 'Updated description'
