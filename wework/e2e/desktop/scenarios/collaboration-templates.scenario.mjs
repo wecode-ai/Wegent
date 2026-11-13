@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow, selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationSpaces,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
@@ -307,6 +311,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await wait(control, 'collaboration-platform-root')
+      await expandCollaborationSpaces(control, CONTENT)
       await click(control, 'collaboration-primary-templates')
       await click(control, 'template-tab-available')
       await wait(

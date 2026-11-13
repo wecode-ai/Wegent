@@ -3,6 +3,10 @@ import { getScrollViewportElement } from '@wegent/collaboration/conversation'
 const WHEEL_MESSAGE_TYPE = 'wework-inline-visualization-wheel'
 const MODIFIER_KEYS = ['altKey', 'ctrlKey', 'metaKey', 'shiftKey'] as const
 
+export function withVisualizationWheel(html: string, token: string): string {
+  return `${html}\n<script>${createVisualizationWheelScript(token)}</script>`
+}
+
 export function forwardVisualizationWheel(
   frame: HTMLIFrameElement,
   value: unknown,

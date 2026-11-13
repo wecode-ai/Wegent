@@ -969,12 +969,9 @@ export function useCollaborationPlatformController({
         },
         workspaceId = location.workspaceId,
       ) {
-        if (!workspaceId) {
-          throw new Error("Workspace is unavailable");
-        }
         const project = await api.projects.create({
           ...input,
-          workspaceId,
+          workspaceId: workspaceId ?? undefined,
         });
         registerProject(project);
         return project;

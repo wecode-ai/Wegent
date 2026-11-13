@@ -2,9 +2,15 @@ import { requestExecutor } from './executor-rpc.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { currentExecutorPid, waitForRestartedExecutor } from './executor-restart-readiness.mjs'
+import { isDeepStrictEqual } from 'node:util'
+import {
+  currentExecutorPid,
+  restartCodexWhenIdle,
+  waitForRestartedExecutor,
+} from './executor-restart-readiness.mjs'
 import { waitForLogPattern } from './shared.mjs'
-import { waitForValue } from './workspace-agent-setup.mjs'
+
+const loadedCatalogOverrides = new WeakMap()
 
 /** Interrupt a real catalog restart, then reconcile without the failure cooldown. */
 export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeoutMs }) {
@@ -90,17 +96,21 @@ export async function setNativeCatalogOverride(control, slug, fields, timeoutMs)
   const catalog = await rpc('runtime.codex.catalog.overrides.read', { slugs: [slug] })
   const model = catalog.models.find(entry => entry.slug === slug)
   assert.ok(model, `Missing native catalog fixture: ${slug}`)
-  await rpc('runtime.codex.catalog.overrides.write', {
-    slug,
-    entry: { ...model.effective, ...fields },
-  })
-  // A background prediction can briefly defer an idle-only restart. Wait for
-  // the native process to admit that restart instead of interrupting work.
-  const restarted = await waitForValue(
+  const loaded = loadedCatalogOverrides.get(control) ?? new Map()
+  loadedCatalogOverrides.set(control, loaded)
+  const unchanged = Object.entries(fields).every(([key, value]) =>
+    isDeepStrictEqual(model.effective[key], value)
+  )
+  if (unchanged && isDeepStrictEqual(loaded.get(slug), model.effective)) return
+  loaded.delete(slug)
+  const entry = { ...model.effective, ...fields }
+  if (!unchanged) {
+    await rpc('runtime.codex.catalog.overrides.write', { slug, entry })
+  }
+  const restarted = await restartCodexWhenIdle(
     () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
-    result => result.restarted === true,
-    'The native app server did not become idle before loading the model catalog',
     timeoutMs
   )
   assert.equal(restarted.restarted, true, JSON.stringify(restarted))
+  loaded.set(slug, structuredClone(entry))
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import {
-  expandCollaborationWorkspace,
+  revealCollaborationSidebarElement,
   reloadMainWindow,
   selectCollaborationProjectView,
 } from './workspace-flows.mjs'
@@ -9,9 +9,9 @@ import {
 export async function openProjectBoard(control, scoped, project) {
   await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]')
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-  await expandCollaborationWorkspace(
+  await revealCollaborationSidebarElement(
     control,
-    scoped(`[data-testid="collaboration-workspace-toggle-${project.workspace_id}"]`)
+    scoped(`[data-testid="collaboration-workspace-project-${project.id}"]`)
   )
   // Restored expansion does not prove that the refreshed project rows are mounted.
   await control.command(
