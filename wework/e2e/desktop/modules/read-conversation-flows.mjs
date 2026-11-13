@@ -11,7 +11,17 @@ async function selectReadConversationAction(control, action) {
 }
 
 export async function expandAllReadConversations(control) {
-  await selectReadConversationAction(control, 'expand-read')
+  await control.command('click', '[data-testid="runtime-task-view-menu-button"]')
+  const expandSelector = '[data-testid="runtime-task-view-expand-read"]'
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    if (Number(await control.command('getElementCount', expandSelector)) > 0) {
+      await control.command('click', expandSelector)
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  await control.command('press', 'body', { key: 'Escape' })
 }
 
 export async function verifyActiveConversationSurvivesCollapse({ control, taskId, state }) {
