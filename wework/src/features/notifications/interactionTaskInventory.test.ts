@@ -87,6 +87,50 @@ it('scopes reminders to every alias of the current runtime', async () => {
   expect(inventory.localDeviceIds.has('other-device')).toBe(false)
 })
 
+it('includes every alias when the local identity matches an alternate device alias', async () => {
+  const inventory = await readInteractionTaskInventory({
+    items: [],
+    devices: [
+      {
+        device_id: 'app-record-65',
+        status: 'online',
+        runtime_instance_id: 'runtime-app',
+        app_device_id: 'local-device',
+        socket_device_id: 'socket-local',
+        runtime_routes: [
+          {
+            kind: 'cloud-relay',
+            device_id: 'cloud-alias',
+            runtime_device_id: 'cloud-runtime-alias',
+            status: 'online',
+          },
+        ],
+      },
+    ],
+    services: {
+      getLocalRuntimeSidebarIdentity: async () => ({
+        deviceId: 'local-device',
+        runtimeInstanceId: 'runtime-local',
+        provenance: 'local-ipc',
+      }),
+      runtimeWorkApi: {
+        listRuntimeWork: async () => ({ projects: [], chats: [], totalTasks: 0 }),
+      },
+    },
+  } as unknown as TaskSource)
+  expect(inventory.localDeviceIds).toEqual(
+    new Set([
+      'local-device',
+      'runtime-local',
+      'app-record-65',
+      'socket-local',
+      'runtime-app',
+      'cloud-alias',
+      'cloud-runtime-alias',
+    ])
+  )
+})
+
 it('discovers authorized device requests independently and isolates a failed device', async () => {
   const log = vi.spyOn(console, 'info').mockImplementation(() => {})
   const list = vi.fn(async ({ deviceId }) => {

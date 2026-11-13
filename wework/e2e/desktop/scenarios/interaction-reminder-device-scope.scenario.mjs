@@ -60,6 +60,24 @@ async function taskSystemNotifications(control) {
   return JSON.parse(await control.command('getSystemNotifications', 'body'))
 }
 
+async function assertNotificationsRemain(control, predicate, message, durationMs = 1000) {
+  const deadline = Date.now() + durationMs
+  do {
+    const notifications = await taskSystemNotifications(control)
+    if (!predicate(notifications)) throw new Error(`${message}: ${JSON.stringify(notifications)}`)
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < deadline)
+}
+
+async function assertElementCountRemains(control, selector, expected, message, durationMs = 1000) {
+  const deadline = Date.now() + durationMs
+  do {
+    const count = Number(await control.command('getElementCount', selector))
+    if (count !== expected) throw new Error(`${message}: found ${count} element(s)`)
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < deadline)
+}
+
 async function enableTaskSystemNotifications(control) {
   await control.command('click', '[data-testid="wework-notifications-button"]')
   await control.command('click', '[data-testid="wework-notifications-settings"]')
@@ -96,6 +114,10 @@ function questionForPrompt(prompt) {
     [REMOTE_SYSTEM_PROMPT]: REMOTE_SYSTEM_QUESTION,
     [LOCAL_SYSTEM_PROMPT]: LOCAL_SYSTEM_QUESTION,
   }[prompt]
+}
+
+function interactionUrlPrefix(address) {
+  return `wework://interactions/${encodeURIComponent(address.deviceId)}/${encodeURIComponent(address.taskId)}/`
 }
 
 export function createDesktopScenario({
@@ -287,8 +309,9 @@ export function createDesktopScenario({
       await control.command('waitFor', pendingCountSelector(1), {
         timeoutMs: uiTimeoutMs * 4,
       })
-      assert.equal(
-        Number(await control.command('getElementCount', INTERACTION_NOTICE)),
+      await assertElementCountRemains(
+        control,
+        INTERACTION_NOTICE,
         0,
         'A remote-only question produced an in-app reminder on the current device'
       )
@@ -346,14 +369,29 @@ export function createDesktopScenario({
       await control.command('waitFor', pendingCountSelector(4), {
         timeoutMs: uiTimeoutMs * 4,
       })
+      const localSystemNotification = notifications => {
+        if (notifications.length !== 1 || notifications[0].body !== LOCAL_SYSTEM_QUESTION)
+          return false
+        const prefix = interactionUrlPrefix(localSystem)
+        return Boolean(
+          notifications[0].url?.startsWith(prefix) && notifications[0].url.slice(prefix.length)
+        )
+      }
+      await assertNotificationsRemain(
+        control,
+        notifications => notifications.length === 0,
+        'A remote-only question produced a system reminder on the current device'
+      )
       const alerts = await waitForValue(
         () => taskSystemNotifications(control),
-        values =>
-          values.length === 1 &&
-          values[0].body === LOCAL_SYSTEM_QUESTION &&
-          values[0].address?.deviceId === localFirst.deviceId,
+        localSystemNotification,
         'The local background question did not produce exactly one system reminder',
         uiTimeoutMs * 4
+      )
+      await assertNotificationsRemain(
+        control,
+        localSystemNotification,
+        'The system reminder set changed after the local background question'
       )
       assert.equal(
         alerts.some(alert => alert.body === REMOTE_SYSTEM_QUESTION),

@@ -36,12 +36,13 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
     localDeviceIds.add(localIdentity.deviceId)
     localDeviceIds.add(localIdentity.runtimeInstanceId)
     for (const device of source.devices ?? []) {
+      const aliases = getWorkbenchDeviceIds(device)
       if (
-        device.device_id !== localIdentity.deviceId &&
-        device.runtime_instance_id !== localIdentity.runtimeInstanceId
+        !aliases.includes(localIdentity.deviceId) &&
+        !aliases.includes(localIdentity.runtimeInstanceId)
       )
         continue
-      for (const deviceId of getWorkbenchDeviceIds(device)) localDeviceIds.add(deviceId)
+      for (const deviceId of aliases) localDeviceIds.add(deviceId)
     }
   }
   const devices: Array<string | undefined> = [
