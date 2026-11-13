@@ -579,6 +579,12 @@ async fn dispatch_device_turn(
     device_route: &str,
 ) -> Result<(), FastApiError> {
     set_subtask_executor(state, request, device_route).await?;
+    if !claim_executor_dispatch(state, request.subtask_id).await {
+        return Err(FastApiError::detail(
+            StatusCode::CONFLICT,
+            "Subtask is no longer dispatchable",
+        ));
+    }
     let Some(redis) = state.redis.as_ref() else {
         tracing::error!(task_id = request.task_id, "device dispatch has no Redis");
         return Err(FastApiError::internal());
@@ -695,7 +701,7 @@ async fn set_subtask_executor(
                 .execute(
                     format!(
                         "UPDATE {table} SET executor_namespace=?, executor_name=?, updated_at=? \
-                         WHERE {table}.id=?",
+                         WHERE {table}.id=? AND task_id=? AND status IN ('PENDING', 'RUNNING')",
                         table = tables.subtasks
                     ),
                     (
@@ -703,6 +709,7 @@ async fn set_subtask_executor(
                         format!("device-{runtime_device_id}"),
                         now,
                         request.subtask_id,
+                        request.task_id,
                     ),
                 )
                 .await?;
@@ -921,7 +928,6 @@ pub(crate) async fn dispatch_chat_turn(
         return Ok(());
     }
     recover_before_dispatch(state, request, device_id).await?;
-    mark_subtask_running(state, request.subtask_id).await;
     if target.mode == routing::CommunicationMode::Websocket {
         let Some(route) = resolved_device.as_deref() else {
             tracing::error!(task_id = request.task_id, "device dispatch has no route");
@@ -929,6 +935,7 @@ pub(crate) async fn dispatch_chat_turn(
         };
         return dispatch_device_turn(state, request, created_task, route).await;
     }
+    mark_subtask_running(state, request.subtask_id).await;
     if target.mode == routing::CommunicationMode::Polling {
         return crate::background_jobs::video::create::dispatch(state, request)
             .await

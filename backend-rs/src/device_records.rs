@@ -136,7 +136,7 @@ pub(crate) async fn lock_online_device_for_binding<T: MysqlTransaction>(
     lock_device_owner(transaction, user_id).await?;
     let mut query = &mut *transaction;
     let Some(device) =
-        crate::device_identity::resolve_owned_device_alias_on(&mut query, user_id, device_id)
+        crate::device_identity::resolve_device_for_binding_on(&mut query, user_id, device_id)
             .await?
     else {
         return Ok(None);

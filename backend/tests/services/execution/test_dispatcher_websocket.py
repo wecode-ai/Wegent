@@ -402,7 +402,25 @@ async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, onl
     from app.models.subtask import Subtask, SubtaskStatus
     from app.models.task import TaskResource
 
-    task = TaskResource(user_id=9, kind="Task", name="device-turn", json={})
+    task = TaskResource(
+        user_id=9,
+        kind="Task",
+        name="device-turn",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": "device-turn", "namespace": "default"},
+            "spec": {
+                "title": "Device turn",
+                "prompt": "Run on device",
+                "device_id": "device-1",
+                "teamRef": {"name": "device-test-team"},
+                "workspaceRef": {"name": "device-test-workspace"},
+            },
+            "status": {"status": "PENDING"},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
     test_db.add(task)
     test_db.flush()
     subtask = Subtask(
@@ -426,7 +444,21 @@ async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, onl
         room="device:9:device-1",
     )
     delivery = AsyncMock(side_effect=RuntimeError("Redis publish failed"))
+    from types import SimpleNamespace
+
+    from app.schemas.device_chat_task import DeviceChatTaskRequest
+    from app.services.device_chat_task_service import _run_ai_response
+
+    async def dispatch_turn(**kwargs):
+        await dispatcher.dispatch(
+            request, device_id=kwargs["device_id"], emitter=AsyncMock()
+        )
+
     with (
+        patch(
+            "app.services.device_chat_task_service.trigger_ai_response_unified",
+            side_effect=dispatch_turn,
+        ),
         patch("app.services.execution.dispatcher.SessionLocal", return_value=test_db),
         patch("app.db.session.SessionLocal", return_value=test_db),
         patch(
@@ -443,22 +475,29 @@ async def test_device_dispatch_failure_cannot_leave_running_subtask(test_db, onl
             "app.services.execution.dispatcher.lock_online_device_for_binding",
             return_value="device-1" if online else None,
         ),
-        patch("app.services.chat.storage.db.db_handler._update_task_status_sync"),
         patch(
             "app.services.execution.emitters.status_updating.collect_completed_result",
             AsyncMock(return_value={}),
         ),
     ):
-        with pytest.raises(
-            RuntimeError, match="publish failed" if online else "offline"
-        ):
-            await dispatcher.dispatch(
-                request, device_id="device-1", emitter=AsyncMock()
-            )
+        await _run_ai_response(
+            task=task,
+            assistant_subtask=subtask,
+            team=SimpleNamespace(id=1),
+            user=SimpleNamespace(id=9),
+            message="Run on device",
+            payload=DeviceChatTaskRequest(teamId=1, message="Run on device"),
+            device_id="device-1",
+            user_subtask_id=0,
+            auth_token="",
+        )
 
     subtask = test_db.get(Subtask, subtask_id)
     assert subtask is not None
-    assert subtask.status == (SubtaskStatus.FAILED if online else SubtaskStatus.PENDING)
+    assert subtask.status == SubtaskStatus.FAILED
+    assert (
+        test_db.get(TaskResource, subtask.task_id).json["status"]["status"] == "FAILED"
+    )
     if online:
         delivery.assert_awaited_once()
     else:

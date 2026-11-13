@@ -340,3 +340,29 @@ def test_heartbeat_connection_lookup_keeps_same_name_local_device(test_db, recor
     local.is_active = False
     test_db.commit()
     assert not active_device_connection(test_db, local.user_id, local.name, None)
+
+
+def test_binding_resolves_cloud_config_connection_route(test_db, monkeypatch):
+    from app.services.device.identity import lock_online_device_for_binding
+
+    device = Kind(
+        user_id=7,
+        namespace="default",
+        name="cloud-name",
+        kind="Device",
+        json={
+            "spec": {"deviceType": "cloud", "cloudConfig": {"deviceId": "cloud-route"}}
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+    monkeypatch.setattr(
+        record_operations.cache_manager,
+        "get_sync_or_raise",
+        lambda key: (
+            {"socket_id": "sid"} if key == "device:online:7:cloud-route" else None
+        ),
+    )
+
+    assert lock_online_device_for_binding(test_db, 7, "cloud-route") == "cloud-route"
+    assert lock_online_device_for_binding(test_db, 7, "cloud-name") == "cloud-route"

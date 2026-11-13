@@ -205,7 +205,17 @@ def lock_online_device_for_binding(
     from app.core.cache import cache_manager
 
     lock_device_owner(db, user_id)
-    device = resolve_owned_device_alias(db, user_id=user_id, device_id=device_id)
+    devices = _owned_devices_query(db, user_id)
+    record_id = record_id_from_route(device_id)
+    if record_id is not None:
+        devices = devices.filter_by(id=record_id)
+    rows = devices.all()
+    exact = [
+        device for device in rows if device_connection_route_id(device) == device_id
+    ]
+    if len(exact) > 1:
+        return None
+    device = exact[0] if exact else _resolve_device_alias(rows, device_id)
     if device is None:
         return None
     route_id = device_connection_route_id(device)

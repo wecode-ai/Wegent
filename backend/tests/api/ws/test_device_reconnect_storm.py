@@ -730,3 +730,37 @@ async def test_rejected_device_status_does_not_broadcast(monkeypatch):
     assert result == {"error": "Stale device connection"}
     update.assert_awaited_once_with(7, "device-1", "busy", socket_id="sid-old")
     broadcast.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_lookup_failure_returns_reconnect_ack(monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(namespace, "save_session", AsyncMock())
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        device_namespace.device_service,
+        "refresh_device_heartbeat",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(side_effect=SQLAlchemyError("lookup unavailable")),
+    )
+
+    result = await namespace.on_device_heartbeat("sid", {"device_id": "device-1"})
+
+    assert result == {
+        "error": "Device identity operation is temporarily unavailable; reconnect to retry"
+    }

@@ -2218,7 +2218,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 error, recovered_name = await self._recover_heartbeat(
                     sid, session, payload, refresh
                 )
-            except (RedisError, TimeoutError):
+            except (RedisError, SQLAlchemyError, TimeoutError):
+                logger.warning(
+                    "Device heartbeat recovery unavailable: user=%s, device=%s",
+                    user_id,
+                    payload.device_id,
+                    exc_info=True,
+                )
                 return {
                     "error": "Device identity operation is temporarily unavailable; reconnect to retry"
                 }

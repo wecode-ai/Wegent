@@ -72,9 +72,40 @@ pub(crate) async fn retry(
                 subtask_id = payload.subtask_id,
                 "chat:retry trigger failed"
             );
+            finalize_retry_failure(
+                state,
+                payload.task_id,
+                payload.subtask_id,
+                user_id,
+                prepared.turn.assistant_message_id,
+                &error,
+            )
+            .await;
             Ok(Reply::payload(error_ack("Internal server error")))
         }
     }
+}
+
+async fn finalize_retry_failure(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+    message_id: i64,
+    error: &crate::http_compat::FastApiError,
+) {
+    let message = error
+        .detail_message()
+        .unwrap_or("Execution could not start");
+    crate::responses::dispatch::finalize_executor_failure(
+        &crate::responses::dispatch::ConsumerState::from_app(state),
+        task_id,
+        subtask_id,
+        user_id,
+        Some(message_id),
+        (message, "EXECUTOR_DISPATCH_FAILED"),
+    )
+    .await;
 }
 
 /// `ChatRetryPayload`.
@@ -569,6 +600,66 @@ fn local_isoformat() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn offline_device_retry_finalizes_pending_subtask_and_task() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
+        use crate::task_store_statements::{subtask_column_index, task_column_index};
+
+        let fixture = MysqlRows::start_results(|sql| {
+            if sql.starts_with("UPDATE ") {
+                return (vec![], vec![]);
+            }
+            let mut row: Row;
+            if sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`") {
+                row = vec![("unused", SqlValue::Null); 23];
+                for (column, value) in [
+                    ("id", SqlValue::I64(20)),
+                    ("task_id", SqlValue::I64(10)),
+                    ("user_id", SqlValue::I32(7)),
+                    ("status", SqlValue::Text("FAILED".into())),
+                ] {
+                    row[subtask_column_index(column).unwrap()] = (column, value);
+                }
+            } else if sql.contains("FROM tasks") || sql.contains("FROM `tasks`") {
+                row = vec![("unused", SqlValue::Null); 12];
+                for (column, value) in [
+                    ("id", SqlValue::I64(10)),
+                    ("user_id", SqlValue::I32(7)),
+                    (
+                        "json",
+                        SqlValue::Text(json!({"status": {"status": "PENDING"}}).to_string()),
+                    ),
+                ] {
+                    row[task_column_index(column).unwrap()] = (column, value);
+                }
+            } else {
+                return (vec![("id", SqlValue::I64(0))], vec![]);
+            }
+            (row.clone(), vec![row])
+        })
+        .await;
+        let state = crate::app_test_support::app(fixture.mysql.clone());
+        let error = crate::http_compat::FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "Selected device is offline",
+        );
+
+        finalize_retry_failure(&state, 10, 20, 7, 2, &error).await;
+
+        let queries = fixture.queries();
+        assert!(
+            queries.iter().any(|sql| {
+                sql.starts_with("UPDATE subtasks")
+                    && sql.contains("status IN ('PENDING', 'RUNNING')")
+            }),
+            "{queries:?}"
+        );
+        assert!(
+            queries.iter().any(|sql| sql.starts_with("UPDATE tasks")),
+            "{queries:?}"
+        );
+    }
 
     #[test]
     fn retry_restores_image_size_from_the_user_turn() {

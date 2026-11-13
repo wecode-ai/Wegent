@@ -100,7 +100,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         subtask_id: int,
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
-        expected_status: Optional[str] = None,
+        expected_status: str | tuple[str, ...] | None = None,
     ):
         """Initialize the status updating emitter.
 
@@ -134,6 +134,11 @@ class StatusUpdatingEmitter(ResultEmitter):
     def terminal_transition_lost(self) -> bool:
         """True when a terminal update was dropped because status changed."""
         return self._terminal_transition_lost
+
+    @property
+    def failure_handled(self) -> bool:
+        """Report whether the terminal update was persisted, deferred, or superseded."""
+        return self._status_updated or self._terminal_transition_lost
 
     def _resolve_owner_user_id(self) -> Optional[int]:
         from app.db.session import SessionLocal

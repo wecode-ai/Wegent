@@ -268,6 +268,37 @@ where
     Ok(resolve_device_alias(&all, submitted).cloned())
 }
 
+/// Resolve dispatch addresses by transport route, then by their logical aliases.
+pub(crate) async fn resolve_device_for_binding_on<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<Option<DeviceKindRow>> {
+    let submitted = device_id.trim();
+    if record_id_from_route(submitted).is_some() {
+        return resolve_owned_device_alias_on(query, user_id, submitted).await;
+    }
+    let devices: Vec<DeviceKindRow> = query.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(resolve_device_for_binding(&devices, submitted).cloned())
+}
+
+fn resolve_device_for_binding<'a>(
+    devices: &'a [DeviceKindRow],
+    submitted: &str,
+) -> Option<&'a DeviceKindRow> {
+    if submitted.is_empty() {
+        return None;
+    }
+    let mut exact = devices
+        .iter()
+        .filter(|device| device_connection_route_id(device) == submitted);
+    match exact.next() {
+        Some(device) if exact.next().is_none() => Some(device),
+        Some(_) => None,
+        None => resolve_device_alias(devices, submitted),
+    }
+}
+
 /// Match the connection route before considering any logical aliases.
 pub(crate) async fn active_device_connection_on<Q: PluginQuery>(
     query: &mut Q,
@@ -744,6 +775,26 @@ mod tests {
         assert_eq!(record_id_from_route("app-record-abc"), None);
         assert_eq!(record_id_from_route("electron-abc"), None);
         assert_eq!(record_id_from_route(""), None);
+    }
+
+    #[test]
+    fn binding_accepts_cloud_config_route_without_changing_logical_aliases() {
+        let rows = [DeviceKindRow {
+            id: 1,
+            name: "cloud-name".into(),
+            json: serde_json::json!({
+                "spec": {"deviceType": "cloud", "cloudConfig": {"deviceId": "cloud-route"}}
+            }),
+        }];
+        assert!(resolve_device_alias(&rows, "cloud-route").is_none());
+        assert_eq!(
+            resolve_device_for_binding(&rows, "cloud-route").map(|row| row.id),
+            Some(1)
+        );
+        assert_eq!(
+            resolve_device_for_binding(&rows, "cloud-name").map(|row| row.id),
+            Some(1)
+        );
     }
 
     #[test]
