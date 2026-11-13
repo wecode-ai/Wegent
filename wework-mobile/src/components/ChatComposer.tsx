@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import * as DocumentPicker from 'expo-document-picker'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import * as ImagePicker from 'expo-image-picker'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 
@@ -11,7 +11,7 @@ import { chatComposerPresentation } from '@/domain/chatComposerPresentation'
 import type { RuntimeAttachment, RuntimeComposerApp, RuntimeUploadAsset } from '@/types/runtime'
 import { ComposerContextMenu, type ComposerMenuAnchor } from './ComposerContextMenu'
 import { KeyboardSafeTextInput, type KeyboardSafeTextInputHandle } from './KeyboardSafeInput'
-import { LiquidGlassButton, LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import { LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
 
 export interface ComposerSendOptions {
   attachmentIds: number[]
@@ -19,10 +19,12 @@ export interface ComposerSendOptions {
 }
 
 interface ChatComposerProps {
-  contextLabel?: string | null
+  focusRequest?: number
   disabled: boolean
   emptyContextPlaceholder?: string
   modelLabel: string
+  speed?: string
+  onToggleSpeed?: () => void
   onLoadApps: () => Promise<RuntimeComposerApp[]>
   onClearPlanMode: () => void
   onSelectModel: () => void
@@ -60,19 +62,19 @@ const defaultTestIDs: ChatComposerTestIDs = {
 
 const emptyMenuAnchor: ComposerMenuAnchor = { x: 12, y: 120, width: 320, height: 56 }
 
-const COMPACT_COMPOSER_HEIGHT = 56
-const EXPANDED_COMPOSER_MIN_HEIGHT = 88
+const COMPACT_COMPOSER_HEIGHT = 48
+const EXPANDED_COMPOSER_MIN_HEIGHT = 100
 const composerLineHeight = 24
 const compactInputVerticalInset = (COMPACT_COMPOSER_HEIGHT - composerLineHeight) / 2
 const compactTextOpticalOffset = Platform.OS === 'ios' ? 2 : 0
-const stopGlassTint = 'rgba(255, 59, 48, 0.58)'
-const stopGlassBorder = 'rgba(255, 105, 97, 0.76)'
 
 export function ChatComposer({
-  contextLabel,
+  focusRequest = 0,
   disabled,
   emptyContextPlaceholder = '跟进',
   modelLabel,
+  speed,
+  onToggleSpeed,
   onLoadApps,
   onClearPlanMode,
   onSelectModel,
@@ -97,6 +99,12 @@ export function ChatComposer({
   const [menuAnchor, setMenuAnchor] = useState(emptyMenuAnchor)
   const wrapperRef = useRef<View>(null)
   const inputRef = useRef<KeyboardSafeTextInputHandle>(null)
+  const consumedFocusRequest = useRef(0)
+  useEffect(() => {
+    if (disabled || focusRequest <= consumedFocusRequest.current || !inputRef.current) return
+    inputRef.current.focus()
+    consumedFocusRequest.current = focusRequest
+  }, [disabled, focusRequest])
   const theme = useTheme()
   const outgoingMessage = composerMessage(message, selectedApps)
   const canSend = Boolean(outgoingMessage) && !disabled && !running && !sendDisabled && !uploading
@@ -124,14 +132,10 @@ export function ChatComposer({
         }
       : null
   const placeholder = goalDraftActive
-    ? 'Wegent 应该往哪个方向努力？'
+    ? 'Wework 应该往哪个方向努力？'
     : hasStructuredSelection && !message
       ? ''
-      : contextLabel
-        ? expanded
-          ? `在 ${contextLabel} 上工作`
-          : '跟进'
-        : emptyContextPlaceholder
+      : emptyContextPlaceholder
 
   const submit = async () => {
     const value = composerMessage(message, selectedApps)
@@ -234,59 +238,59 @@ export function ChatComposer({
       accessibilityRole="button"
       disabled={disabled || uploading}
       onPress={openMenu}
-      style={({ pressed }) => [
-        styles.actionButton,
-        { width: expanded ? 40 : 44 },
-        pressed && styles.pressed,
-      ]}
+      accessibilityState={{ disabled: disabled || uploading }}
+      style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
       testID={resolvedTestIDs.attachment}
     >
       {uploading ? (
         <ActivityIndicator color={theme.colors.onSurface} size={20} />
       ) : (
-        <Ionicons color={theme.colors.onSurface} name="add" size={23} />
+        <Ionicons color={theme.colors.onSurface} name="add" size={27} />
       )}
     </Pressable>
   )
-  const stopButton = running ? (
-    <LiquidGlassButton
-      accessibilityLabel="停止当前回复"
-      colorScheme={glassColorScheme}
-      contentStyle={[styles.stopButtonContent, stopping && styles.stopping]}
-      disabled={disabled || stopping}
-      fallbackStyle={{ backgroundColor: stopGlassTint, borderColor: stopGlassBorder }}
-      onPress={() => void onStop()}
-      style={[
-        styles.sendButton,
-        styles.stopButtonOverlay,
-        expanded ? styles.expandedStopButton : styles.compactStopButton,
-      ]}
-      testID={resolvedTestIDs.stop}
-      tintColor={stopGlassTint}
-    >
-      <View style={styles.stopGlyph} />
-    </LiquidGlassButton>
-  ) : null
   const sendButton = running ? (
-    <View style={styles.sendButton} />
+    <Pressable
+      accessibilityLabel="停止当前回复"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: disabled || stopping }}
+      disabled={disabled || stopping}
+      onPress={() => void onStop()}
+      style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
+      testID={resolvedTestIDs.stop}
+    >
+      <View
+        style={[
+          styles.sendButton,
+          { backgroundColor: theme.colors.onSurface },
+          stopping && styles.stopping,
+        ]}
+      >
+        <View style={[styles.stopGlyph, { backgroundColor: theme.colors.surface }]} />
+      </View>
+    </Pressable>
   ) : (
     <Pressable
       accessibilityLabel="发送"
       accessibilityRole="button"
+      accessibilityState={{ disabled: !canSend }}
       disabled={!canSend}
       onPress={() => void submit()}
-      style={({ pressed }) => [
-        styles.sendButton,
-        { backgroundColor: canSend ? '#f5f5f7' : theme.colors.surfaceVariant },
-        pressed && styles.pressed,
-      ]}
+      style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
       testID={resolvedTestIDs.send}
     >
-      <Ionicons
-        color={canSend ? '#111111' : theme.colors.onSurfaceVariant}
-        name="arrow-up"
-        size={24}
-      />
+      <View
+        style={[
+          styles.sendButton,
+          { backgroundColor: canSend ? theme.colors.onSurface : theme.colors.surfaceVariant },
+        ]}
+      >
+        <Ionicons
+          color={canSend ? theme.colors.surface : theme.colors.onSurfaceVariant}
+          name="arrow-up"
+          size={22}
+        />
+      </View>
     </Pressable>
   )
 
@@ -299,7 +303,7 @@ export function ChatComposer({
             backgroundColor: theme.colors.surface,
             borderColor: theme.colors.outlineVariant,
           }}
-          style={[styles.surface, expanded ? styles.expandedSurface : styles.compactSurface]}
+          style={expanded ? styles.expandedSurface : styles.compactSurface}
         >
           {selectedMode ? (
             <View style={styles.modeRow}>
@@ -409,12 +413,11 @@ export function ChatComposer({
           <View
             style={[styles.inputRow, expanded ? styles.expandedInputRow : styles.compactInputRow]}
           >
-            <View style={expanded ? styles.hidden : undefined}>{attachmentButton}</View>
+            {expanded ? null : attachmentButton}
             <KeyboardSafeTextInput
               accessibilityLabel="消息"
               editable={!disabled}
               multiline
-              numberOfLines={expanded ? 3 : 1}
               onBlur={() => setFocused(false)}
               onChangeText={setMessage}
               onFocus={() => setFocused(true)}
@@ -422,6 +425,7 @@ export function ChatComposer({
               placeholderTextColor={theme.colors.onSurfaceVariant}
               ref={inputRef}
               scrollEnabled={expanded}
+              textAlignVertical={expanded ? 'top' : 'center'}
               style={[
                 styles.input,
                 expanded ? styles.expandedInput : styles.compactInput,
@@ -430,31 +434,42 @@ export function ChatComposer({
               testID={resolvedTestIDs.input}
               value={message}
             />
-            <View style={expanded ? styles.hidden : undefined}>{sendButton}</View>
+            {expanded ? null : sendButton}
           </View>
           {expanded ? (
             <View style={styles.actions}>
               {attachmentButton}
               {secondaryLeadingAction}
+              <View style={styles.actionSpacer} />
+              {onToggleSpeed ? (
+                <Pressable
+                  accessibilityLabel={`速度：${speed === 'fast' ? '快速' : '标准'}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: speed === 'fast' }}
+                  onPress={onToggleSpeed}
+                  style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}
+                  testID="composer-speed"
+                >
+                  <Ionicons
+                    name={speed === 'fast' ? 'flash' : 'flash-outline'}
+                    size={23}
+                    color={theme.colors.onSurface}
+                  />
+                </Pressable>
+              ) : null}
               <Pressable
+                accessibilityLabel={`选择模型，当前 ${modelLabel}`}
                 accessibilityRole="button"
                 onPress={onSelectModel}
-                style={styles.modelButton}
+                style={({ pressed }) => [styles.modelButton, pressed && styles.pressed]}
                 testID={resolvedTestIDs.model}
               >
-                <Text
-                  numberOfLines={1}
-                  style={{ color: theme.colors.onSurface }}
-                  variant="labelLarge"
-                >
-                  {modelLabel}
-                </Text>
+                <Ionicons color="#2387f5" name="speedometer-outline" size={25} />
               </Pressable>
               {sendButton}
             </View>
           ) : null}
         </LiquidGlassSurface>
-        {stopButton}
       </LiquidGlassGroup>
 
       <ComposerContextMenu
@@ -529,17 +544,18 @@ function mimeTypeFromName(name: string): string {
 
 const styles = StyleSheet.create({
   composerGlassGroup: { position: 'relative' },
-  surface: { marginHorizontal: 8 },
   compactSurface: {
+    marginHorizontal: 36,
     height: COMPACT_COMPOSER_HEIGHT,
     borderRadius: COMPACT_COMPOSER_HEIGHT / 2,
-    paddingHorizontal: 4,
+    paddingHorizontal: 2,
   },
   expandedSurface: {
+    marginHorizontal: 12,
     minHeight: EXPANDED_COMPOSER_MIN_HEIGHT,
-    borderRadius: 30,
+    borderRadius: 28,
     paddingHorizontal: 6,
-    paddingTop: 4,
+    paddingTop: 8,
     paddingBottom: 4,
   },
   modeRow: { paddingHorizontal: 8, paddingTop: 6 },
@@ -556,7 +572,7 @@ const styles = StyleSheet.create({
   },
   inputRow: { flexDirection: 'row', alignItems: 'center' },
   compactInputRow: { height: COMPACT_COMPOSER_HEIGHT },
-  expandedInputRow: { minHeight: 36 },
+  expandedInputRow: { minHeight: 44 },
   input: { flex: 1, fontSize: 17, lineHeight: composerLineHeight },
   compactInput: {
     height: COMPACT_COMPOSER_HEIGHT,
@@ -564,34 +580,24 @@ const styles = StyleSheet.create({
     paddingTop: compactInputVerticalInset - compactTextOpticalOffset,
     paddingBottom: compactInputVerticalInset + compactTextOpticalOffset,
   },
-  expandedInput: { minHeight: 36, maxHeight: 108, paddingHorizontal: 9, paddingVertical: 6 },
-  hidden: { display: 'none' },
-  actionButton: { height: 44, alignItems: 'center', justifyContent: 'center' },
+  expandedInput: { minHeight: 44, maxHeight: 132, paddingHorizontal: 9, paddingVertical: 6 },
+  actionButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   actions: { height: 44, flexDirection: 'row', alignItems: 'center' },
+  actionSpacer: { flex: 1 },
   modelButton: {
-    maxWidth: 180,
-    marginLeft: 'auto',
-    paddingHorizontal: 8,
-    paddingVertical: 10,
-  },
-  sendButton: {
     width: 44,
     height: 44,
-    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stopButtonContent: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 22,
+  sendButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stopButtonOverlay: { position: 'absolute' },
-  compactStopButton: { right: 12, top: 6 },
-  expandedStopButton: { right: 14, bottom: 4 },
-  stopGlyph: { width: 14, height: 14, borderRadius: 3, backgroundColor: '#ffffff' },
+  stopGlyph: { width: 11, height: 11, borderRadius: 2 },
   stopping: { opacity: 0.55 },
   attachmentStrip: { gap: 8, paddingHorizontal: 8, paddingTop: 8 },
   attachmentChip: {

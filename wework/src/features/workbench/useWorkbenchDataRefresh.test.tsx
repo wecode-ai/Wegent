@@ -206,6 +206,51 @@ describe('useWorkbenchDataRefresh', () => {
     expect(hook.result.current.state.isBootstrapping).toBe(false)
   })
 
+  test.each(['remote', 'app'] as const)(
+    'preserves %s devices during a local refresh until cloud inventory removes them',
+    async deviceType => {
+      const pendingDevices = deferred<DeviceInfo[]>()
+      const remoteDevice: DeviceInfo = {
+        ...devices[0],
+        device_id: 'remote-device',
+        device_type: deviceType,
+        is_default: false,
+        execution_target_id: 'remote-device',
+        runtime_features: {
+          schemaVersion: 4,
+          remoteTaskAccess: { version: 1, enabled: true },
+        },
+      }
+      const cloudApi = {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi
+          .fn()
+          .mockResolvedValueOnce([remoteDevice])
+          .mockReturnValue(pendingDevices.promise),
+        listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+      }
+      const hook = setup(undefined, undefined, {
+        cloudBackgroundApi: cloudApi,
+      } as WorkbenchServices)
+      await waitFor(() =>
+        expect(hook.result.current.cloudWorkStatus.availability).toBe('available')
+      )
+
+      await act(async () => hook.result.current.refreshDevices())
+      await waitFor(() => expect(cloudApi.listDevices).toHaveBeenCalledTimes(2))
+      expect(hook.result.current.state.devices.map(device => device.device_id)).toContain(
+        'remote-device'
+      )
+
+      await act(async () => pendingDevices.resolve([]))
+      await waitFor(() =>
+        expect(hook.result.current.state.devices.map(device => device.device_id)).not.toContain(
+          'remote-device'
+        )
+      )
+    }
+  )
+
   test('keeps cloud navigation while refreshing only the changed work inventory', async () => {
     const cloudDevice = {
       ...devices[0],

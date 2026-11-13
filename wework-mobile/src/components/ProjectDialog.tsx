@@ -30,7 +30,8 @@ export function ProjectDialog(props: ProjectDialogProps) {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const onlineDevices = useMemo(
-    () => props.devices.filter(device => device.status !== 'offline'),
+    () =>
+      props.devices.filter(device => device.status !== 'offline' && device.device_type !== 'app'),
     [props.devices]
   )
 

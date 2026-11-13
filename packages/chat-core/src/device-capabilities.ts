@@ -13,6 +13,7 @@ type DeviceLike = Pick<DeviceInfo, 'device_type' | 'bind_shell' | 'status'> &
       | 'running_task_ids'
       | 'runtime_routes'
       | 'runtime_features'
+      | 'execution_target_id'
     >
   >
 
@@ -58,6 +59,23 @@ export function isAppDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
   return device.device_type === 'app'
 }
 
+export function isRemoteTaskAccessEnabled(device: Pick<DeviceInfo, 'runtime_features'>): boolean {
+  const access = device.runtime_features?.remoteTaskAccess
+  return access?.version === 1 && access.enabled === true
+}
+
+export function isRemoteTaskDevice(
+  device: Pick<DeviceInfo, 'device_type' | 'runtime_features' | 'execution_target_id'>
+): boolean {
+  return (
+    isCloudDevice(device) ||
+    isRemoteDevice(device) ||
+    (isAppDevice(device) &&
+      Boolean(device.execution_target_id) &&
+      isRemoteTaskAccessEnabled(device))
+  )
+}
+
 export function isUsableDevice(device: Pick<DeviceInfo, 'status'>): boolean {
   return device.status === 'online' || device.status === 'busy'
 }
@@ -97,6 +115,7 @@ export function canRequestDeviceUpgrade(device: DeviceLike): boolean {
 
 export function canUseForProjectCreation(device: DeviceLike): boolean {
   return (
+    !isAppDevice(device) &&
     isClaudeCodeDevice(device) &&
     isUsableDevice(device) &&
     isWeWorkExecutorVersionCompatible(device.executor_version)
@@ -104,7 +123,7 @@ export function canUseForProjectCreation(device: DeviceLike): boolean {
 }
 
 export function hasLocalRuntimeRoute(device: DeviceLike): boolean {
-  if (!isCloudDevice(device) && !isRemoteDevice(device)) return true
+  if (!isRemoteTaskDevice(device)) return true
   return Boolean(
     device.runtime_routes?.some(route => route.kind === 'local-ipc' || route.kind === 'app-ipc')
   )
@@ -142,7 +161,7 @@ export function supportsCloudSessions(device: DeviceLike, deviceId?: string | nu
 }
 
 export function supportsRemoteSessions(device: DeviceLike, deviceId?: string | null): boolean {
-  if (!isClaudeCodeDevice(device)) return false
+  if (!isClaudeCodeDevice(device) || isAppDevice(device)) return false
   const routeKind = selectedRuntimeRouteKind(device, deviceId)
   return routeKind ? routeKind === 'remote-relay' : isRemoteDevice(device)
 }
@@ -171,6 +190,7 @@ export function supportsRemoteTerminalSessions(
 ): boolean {
   if (
     !isClaudeCodeDevice(device) ||
+    isAppDevice(device) ||
     !isUsableDevice(device) ||
     !isDeviceInteractiveSessionEnabled(device, 'terminal')
   ) {
@@ -183,7 +203,12 @@ export function supportsRemoteTerminalSessions(
 }
 
 export function supportsLocalTerminalLaunch(device: DeviceLike): boolean {
-  return !isCloudDevice(device) && !isRemoteDevice(device) && isClaudeCodeDevice(device)
+  return (
+    !isCloudDevice(device) &&
+    !isRemoteDevice(device) &&
+    !isAppDevice(device) &&
+    isClaudeCodeDevice(device)
+  )
 }
 
 export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): boolean {

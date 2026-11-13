@@ -67,6 +67,7 @@ where
     running_tasks: LocalRunningTaskTracker,
     capability_reporter: Arc<dyn CapabilityReportProvider>,
     runtime_transfer_port: Arc<Mutex<Option<u16>>>,
+    pub(super) remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess,
 }
 
 impl<T> LocalBackendClient<T>
@@ -108,6 +109,8 @@ where
             running_tasks,
             capability_reporter: Arc::new(capability_reporter),
             runtime_transfer_port: Arc::new(Mutex::new(None)),
+            remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env(
+            ),
         }
     }
 
@@ -129,8 +132,7 @@ where
     ///
     /// The route id uniquely identifies the persisted Device record for the
     /// current Runtime registration, even when historical records share this
-    /// device's submitted id. `Ok(None)` means the backend rejected the
-    /// registration.
+    /// device's submitted id. An unrecognized rejection returns `Ok(None)`.
     pub async fn register_device(&self, timeout: Duration) -> Result<Option<String>, String> {
         if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
             return Err(
@@ -142,7 +144,14 @@ where
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
             .await?;
         if !ack_success(&response) {
-            return Ok(None);
+            // Other registration failures can contain raw database diagnostics.
+            match ack_payload(&response).and_then(|payload| payload.get("error")).and_then(Value::as_str) {
+                Some(message @ (
+                    "Registration failed: App device identity changed; reconnect using the original installation identity"
+                    | "Registration failed: Device name is already registered; configure a unique persistent device ID for this installation"
+                )) => return Err(message.to_owned()),
+                _ => return Ok(None),
+            }
         }
         let route_id = ack_payload(&response)
             .and_then(|payload| payload.get("device_route_id"))
@@ -357,6 +366,25 @@ where
             .expect("runtime transfer port lock should not be poisoned") = port;
     }
 
+    pub(super) fn runtime_features(&self) -> Value {
+        let mut features = runtime_features();
+        if self.config.device_type == "app" {
+            features["remoteTaskAccess"] = json!({
+                "version": 1,
+                "taskCreation": true,
+                "enabled": self.remote_task_access.enabled(),
+            });
+        }
+        features
+    }
+
+    pub(super) fn runtime_event(&self, mut event: Value) -> Value {
+        if self.config.device_type == "app" {
+            event["appRemoteTaskAccessEnabled"] = json!(self.remote_task_access.enabled());
+        }
+        event
+    }
+
     fn registration_payload(&self) -> Value {
         let runtime_transfer_port = *self
             .runtime_transfer_port
@@ -373,7 +401,7 @@ where
             "runtime_transfer_host": self.config.runtime_transfer_host,
             "runtime_transfer_port": runtime_transfer_port,
             "app_device_id": self.config.app_device_id,
-            "runtime_features": runtime_features(),
+            "runtime_features": self.runtime_features(),
         })
     }
 
@@ -389,7 +417,7 @@ where
             "running_task_ids": running_task_ids,
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
-            "runtime_features": runtime_features(),
+            "runtime_features": self.runtime_features(),
             "runtime_auth_files": build_runtime_auth_file_report(
                 &crate::agents::wework_codex_home()
             ),

@@ -17,7 +17,125 @@ const config = {
 }
 
 describe('RuntimeApi', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('sends blocking answers through the PC structured-response endpoint with scoped identity', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"accepted":true,"taskId":"task"}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    const address = { deviceId: 'device', taskId: 'task' }
+    const response = {
+      requestId: 0,
+      itemId: 'item',
+      interactionScope: 'turn',
+      answers: { choice: { answers: ['One'] } },
+    }
+    await api.respondToUserInput(address, response)
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/send`)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      address,
+      message: 'One',
+      requestUserInputResponse: response,
+    })
+  })
+
+  it('guides an active async question without sending a blocking response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"accepted":true}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const address = { deviceId: 'device', taskId: 'task' }
+    await new RuntimeApi(config).guideTask(address, 'One', 'guidance')
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/guidance`)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      address,
+      message: 'One',
+      clientGuidanceId: 'guidance',
+    })
+  })
+
+  it('uses the latest access token without rebuilding its data scope', async () => {
+    let token = 'before'
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config, undefined, () => token)
+    await api.listDevices()
+    token = 'after'
+    await api.listDevices()
+    expect(fetchMock.mock.calls.map(call => call[1].headers.Authorization)).toEqual([
+      'Bearer before',
+      'Bearer after',
+    ])
+  })
+
+  it('coalesces composer inventory reads, caches for 30 seconds, and isolates devices', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1)
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    const one = api.listInstalledPlugins('first')
+    expect(api.listInstalledPlugins('first')).toBe(one)
+    await one
+    await api.listInstalledPlugins('first')
+    expect(fetchMock).toHaveBeenCalledOnce()
+    await api.listInstalledPlugins('second')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    now.mockReturnValue(30_002)
+    await api.listInstalledPlugins('first')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    api.clearPluginCatalogs()
+    await api.listInstalledPlugins('first')
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('never caches failed inventory reads', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"detail":"denied"}', { status: 403 }))
+      .mockResolvedValueOnce(new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    await expect(api.listInstalledPlugins('first')).rejects.toThrow('denied')
+    await expect(api.listInstalledPlugins('first')).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('recovers a rejected read only when its in-flight token has already been replaced', async () => {
+    let token = 'expired'
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        token = 'fresh'
+        return new Response('{}', { status: 401 })
+      })
+      .mockResolvedValueOnce(new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(new RuntimeApi(config, undefined, () => token).listDevices()).resolves.toEqual({
+      items: [],
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]![1].headers.Authorization).toBe('Bearer fresh')
+  })
+
+  it('never repeats a rejected mutation or a read with an unchanged invalid token', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{}', { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(new RuntimeApi(config).listDevices()).rejects.toBeInstanceOf(RuntimeApiError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    let token = 'old'
+    fetchMock.mockImplementation(async () => {
+      token = 'new'
+      return new Response('{}', { status: 401 })
+    })
+    await expect(
+      new RuntimeApi(config, undefined, () => token).setGoal(
+        { deviceId: 'device', taskId: 'task' },
+        'goal'
+      )
+    ).rejects.toBeInstanceOf(RuntimeApiError)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 
   it('loads the Wework model catalog including execution configuration', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -36,6 +154,72 @@ describe('RuntimeApi', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
       })
     )
+  })
+
+  it('loads only the selected APP catalog through the existing authorized PC endpoint', async () => {
+    const native = { runtime: 'codex', provider: 'openai', model_id: 'gpt-6.1-sol' }
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: '11', models: [native], catalog_error: null },
+            { id: '12', models: [{ ...native, model_id: 'other-device' }] },
+          ])
+        )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi({ ...config, apiBaseUrl: 'https://wegent.example/api' })
+
+    await expect(api.listNativeModels(11)).resolves.toEqual({
+      models: [native],
+      catalog_error: null,
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://wegent.example/api/v1/resources/execution-environments',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
+      })
+    )
+    await expect(api.listNativeModels(13)).rejects.toThrow('设备已不可用')
+  })
+
+  it('creates a standalone chat through the existing create endpoint without preparing a directory', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accepted: true,
+          deviceId: 'app-record-11',
+          taskId: 'task',
+          workspacePath: '/Users/owner/Documents/Codex/task',
+          runtime: 'codex',
+        })
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      new RuntimeApi(config).createConversation({
+        schemaVersion: 2,
+        deviceId: 'app-record-11',
+        taskId: 'task',
+        runtime: 'codex',
+        message: '你好',
+        clientUserMessageId: 'message',
+        title: '你好',
+        modelId: 'public-model',
+        modelType: 'public',
+        modelOptions: {},
+        standaloneChatWorkspace: true,
+      })
+    ).resolves.toMatchObject({ accepted: true, workspacePath: '/Users/owner/Documents/Codex/task' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, request] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://wegent.example/api/v1/runtime-work/create')
+    expect(request.method).toBe('POST')
+    expect(JSON.parse(request.body)).toMatchObject({
+      deviceId: 'app-record-11',
+      standaloneChatWorkspace: true,
+    })
+    expect(JSON.parse(request.body)).not.toHaveProperty('workspacePath')
   })
 
   it('creates a chat using its prepared workspace path', async () => {
@@ -73,7 +257,7 @@ describe('RuntimeApi', () => {
     expect(body).not.toHaveProperty('standaloneChatWorkspace')
   })
 
-  it('prepares a standalone conversation workspace through device commands', async () => {
+  it('reads the home directory and creates project directories on a cloud device', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(

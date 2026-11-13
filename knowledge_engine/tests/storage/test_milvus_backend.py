@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from llama_index.core.schema import TextNode
-from milvus_contract_stubs import patch_collection
+from milvus_contract_stubs import parent_insert_request, patch_collection
 
 from knowledge_engine.retrieval.filters import parse_metadata_filters
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -979,6 +979,9 @@ class TestSaveParentNodes:
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
         mock_client.has_collection.return_value = True
+        mock_client._get_connection.return_value._prepare_row_insert_request.side_effect = (
+            parent_insert_request
+        )
 
         parent_node = MagicMock()
         parent_node.node_id = "parent-1"

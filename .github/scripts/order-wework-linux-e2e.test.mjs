@@ -567,7 +567,13 @@ test('one existing producer builds MinIO for exactly the consumers that need it 
       required.push({ scope, segment: match[1] })
     }
   }
-  assert.equal(required.length, 6)
+  assert.equal(required.length, 7)
+  assert.ok(
+    required.some(
+      ({ scope, segment }) =>
+        scope === 'cloud' && segment === 'plugin-package-integrity-recovery',
+    ),
+  )
   const evaluate = new Function(
     'needs',
     'contains',

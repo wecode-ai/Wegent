@@ -33,6 +33,7 @@ pub(crate) mod native_transcript;
 mod notification_mapping;
 mod reader;
 mod remote_projects;
+pub(crate) mod remote_task_access;
 mod response;
 mod restored_workspaces;
 mod runtime_handle_messages;
