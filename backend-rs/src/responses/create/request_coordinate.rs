@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashSet;
+
 use serde_json::{Map, Value};
 
 use super::super::{
     bot_config::{BotConfigInput, build_bot_config},
+    dispatch::ExecutionRequest,
     ghost::{
         MergedGhostCapabilities, bot_system_prompt, load_ghost_chain, merge_ghost_capabilities,
     },
@@ -20,6 +23,38 @@ use crate::{
     http_compat::FastApiError, llm_proxy::CredentialRequest, state::AppState,
     task_skills::kinds::KindCacheStore,
 };
+
+/// Publish each compiled server once. Executor merges duplicate definitions by
+/// name and can otherwise carry headers across different endpoints.
+pub(super) fn keep_compiled_mcp_servers(request: &mut ExecutionRequest) {
+    let Some((leader, members)) = request
+        .bot
+        .as_array_mut()
+        .and_then(|bots| bots.split_first_mut())
+    else {
+        return;
+    };
+    let Some(servers) = leader["mcp_servers"].as_array_mut() else {
+        return;
+    };
+    // Skill MCPs are appended after Ghost MCPs, including late preloads.
+    let mut names = HashSet::new();
+    servers.reverse();
+    servers.retain(|server| {
+        server["name"]
+            .as_str()
+            .is_none_or(|name| names.insert(name.to_owned()))
+    });
+    servers.reverse();
+    for member in members {
+        member["mcp_servers"] = Value::Array(Vec::new());
+    }
+    request.mcp_servers.retain(|server| {
+        server["name"]
+            .as_str()
+            .is_none_or(|name| !names.contains(name))
+    });
+}
 
 pub(super) async fn members(
     state: &AppState,

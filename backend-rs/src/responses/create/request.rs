@@ -837,11 +837,13 @@ async fn build_request_with_runtime(
     };
     if coordinate_team && super::skills::is_coding_shell(&shell_type) {
         super::skills::extend_resolved_skills_from_bot_configs(
-            &state.mysql,
+            &kinds_cache,
             &member_configs,
             &mut skills,
             input.user_preferences,
             &tokens,
+            input.team.user_id,
+            &input.team.namespace,
         )
         .await?;
     }
@@ -1108,6 +1110,9 @@ async fn build_request_with_runtime(
         &input.team.namespace,
     )
     .await?;
+    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
+        coordinate::keep_compiled_mcp_servers(&mut request);
+    }
     if !resolved_api_key.is_empty() {
         // The key belongs to the primary model unless an explicit runtime
         // override gives every team member the same model.

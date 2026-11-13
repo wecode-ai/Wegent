@@ -82,6 +82,22 @@ pub struct SkillKindRow {
     pub kinds_updated_at: Option<chrono::NaiveDateTime>,
 }
 
+impl From<crate::task_skills::repository::KindRow> for SkillKindRow {
+    fn from(row: crate::task_skills::repository::KindRow) -> Self {
+        Self {
+            kinds_id: row.kinds_id,
+            kinds_user_id: row.kinds_user_id,
+            kinds_kind: row.kinds_kind,
+            kinds_name: row.kinds_name,
+            kinds_namespace: row.kinds_namespace,
+            kinds_json: Json(row.kinds_json.0.to_value()),
+            kinds_is_active: row.kinds_is_active,
+            kinds_created_at: Some(row.kinds_created_at),
+            kinds_updated_at: Some(row.kinds_updated_at),
+        }
+    }
+}
+
 /// `build_skill_ref_meta`: the runtime skill reference metadata.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SkillRefMeta {
