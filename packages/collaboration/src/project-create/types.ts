@@ -271,6 +271,12 @@ export interface ProjectCreateDialogProps {
   defaultLocation: ProjectCreateLocation;
   allowDingTalkAITable: boolean;
   labels: ProjectCreateLabels;
+  workspaceSelection?: {
+    label: string;
+    value: string;
+    options: Array<{ value: string; label: string }>;
+    onChange(value: string): void;
+  };
   workspaceContext?: {
     name: string;
     owner: string;

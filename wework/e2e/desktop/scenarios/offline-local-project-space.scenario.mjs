@@ -138,7 +138,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'waitFor',
         sidebarScoped(`[data-testid="collaboration-workspace-${LOCAL_WORKSPACE_ID}"]`),
         {
-          text: '本地空间',
+          text: '本地项目',
           timeoutMs: uiTimeoutMs,
         }
       )
@@ -190,7 +190,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       const activeLocalWorkspace = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
       await control.command('waitFor', `${activeLocalWorkspace}[aria-current="page"]`, {
-        text: '本地空间',
+        text: '本地项目',
         timeoutMs: uiTimeoutMs,
       })
       await control.command(
@@ -399,7 +399,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         'The local Workspace tree lost its active state after leaving Project settings'
       )
       await control.command('waitFor', localWorkspaceTree, {
-        text: '本地空间',
+        text: '本地项目',
         timeoutMs: uiTimeoutMs,
       })
 

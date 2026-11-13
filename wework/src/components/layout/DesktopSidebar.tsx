@@ -2684,7 +2684,7 @@ function ProjectItem({
                 {
                   label: projectArchiving
                     ? t('workbench.archiving_conversations', '归档中...')
-                    : t('workbench.archive_project_conversations', '归档对话'),
+                    : t('workbench.archive_all_chats', '归档所有聊天'),
                   icon: Archive,
                   testId: `archive-project-conversations-${project.id}`,
                   disabled: !canArchiveProjectConversations,

@@ -48,6 +48,49 @@ def import_dispatches(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     return calls
 
 
+@pytest.mark.parametrize(
+    "reason", ["stale_generation", "already_in_progress", "dispatch_failed"]
+)
+def test_refresh_reports_the_claim_outcome(
+    test_db, imported_copy, live_update_time, monkeypatch, reason
+):
+    from app.services.knowledge.dingtalk_auto_sync import refresh_dingtalk_copy
+    from app.services.knowledge.external_document_import import (
+        ExternalDocumentRefreshResult,
+    )
+    from shared.event_reporting import register_event_receiver
+
+    events = []
+
+    class Receiver:
+        def accepts(self, event_type):
+            return event_type == "knowledge.external.document.checked"
+
+        def receive(self, event):
+            events.append(event)
+
+    live_update_time.return_value = 1789562645000
+    monkeypatch.setattr(
+        external_document_import_service,
+        "refresh_existing_document",
+        lambda *args, **kwargs: ExternalDocumentRefreshResult(
+            imported_copy, started=reason == "dispatch_failed", reason=reason
+        ),
+    )
+    register_event_receiver(Receiver())
+    try:
+        assert not refresh_dingtalk_copy(
+            test_db, imported_copy.id, imported_copy.index_generation
+        )
+        event = events[-1]
+        assert event["status"] == (
+            "failure" if reason == "dispatch_failed" else "skipped"
+        )
+        assert event["data"]["decision"] == reason
+    finally:
+        register_event_receiver(None)
+
+
 @pytest.fixture(autouse=True)
 def live_update_time(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     probe = AsyncMock(return_value=1789562644000)
