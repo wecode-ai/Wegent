@@ -288,15 +288,6 @@ export function useCollaborationPlatformController({
         }));
         return;
       }
-      if (!api.workspaces) {
-        if (revision !== loadRevisionRef.current) return;
-        setState((current) => ({
-          ...current,
-          loading: false,
-          error: loadFailedMessage,
-        }));
-        return;
-      }
       // A location that names one project opens it directly. Resolving which
       // workspace the project belongs to here keeps the board from loading —
       // and painting — the whole workspace home on the way in.
@@ -314,6 +305,90 @@ export function useCollaborationPlatformController({
           workspaceId = null;
         }
         if (revision !== loadRevisionRef.current) return;
+      }
+      if (requestedProjectAuthorized && requestedProject && !workspaceId) {
+        const project = requestedProject;
+        navigationCacheRef.current.projects = mergeByKey(
+          [navigationCacheRef.current.projects, [project]],
+          (item) => item.id,
+        );
+        setState((current) => ({
+          ...current,
+          workspace: null,
+          workspaceNavigationContext: null,
+          projects: [project],
+          navigationProjects: mergeByKey(
+            [current.navigationProjects, [project]],
+            (item) => item.id,
+          ),
+          projectIssues: {},
+          members: [],
+          agents: [],
+          collaborationGroups: [],
+          executionEnvironments: [],
+          loading: false,
+          error: null,
+        }));
+        const publishStandaloneNavigation = (
+          collections: NavigationCollections,
+        ) => {
+          if (revision !== loadRevisionRef.current) return;
+          const projects = mergeByKey(
+            [collections.projects, [project]],
+            (item) => item.id,
+          );
+          navigationCacheRef.current = {
+            workspaces: collections.workspaces,
+            projects,
+          };
+          setState((current) => ({
+            ...current,
+            workspaces: collections.workspaces,
+            navigationProjects: projects,
+          }));
+        };
+        if (!force && navigationCacheStatusRef.current === "complete") {
+          publishStandaloneNavigation({
+            ...navigationCacheRef.current,
+            complete: true,
+            successfulLoads: 1,
+          });
+        } else {
+          void collectNavigation(
+            loadNavigationCollections(
+              navigationApis?.length ? navigationApis : [api],
+              publishStandaloneNavigation,
+            ),
+          )
+            .then((collections) => {
+              if (revision !== loadRevisionRef.current) return;
+              publishStandaloneNavigation(collections);
+              navigationCacheStatusRef.current = collections.complete
+                ? "complete"
+                : "partial";
+              setState((current) => ({
+                ...current,
+                navigationIncomplete: !collections.complete,
+              }));
+            })
+            .catch(() => {
+              if (revision === loadRevisionRef.current)
+                setState((current) => ({
+                  ...current,
+                  navigationIncomplete: true,
+                }));
+            });
+        }
+        return;
+      }
+      if (!api.workspaces) {
+        if (revision !== loadRevisionRef.current) return;
+        setState((current) => ({
+          ...current,
+          loading: false,
+          error: loadFailedMessage,
+        }));
+        return;
       }
       setState((current) => ({
         ...current,
@@ -969,14 +1044,18 @@ export function useCollaborationPlatformController({
         },
         workspaceId = location.workspaceId,
       ) {
-        if (!workspaceId) {
-          throw new Error("Workspace is unavailable");
-        }
         const project = await api.projects.create({
           ...input,
-          workspaceId,
+          workspaceId: workspaceId ?? undefined,
         });
         registerProject(project);
+        if (
+          project.workspace_id &&
+          !navigationCacheRef.current.workspaces.some(
+            (workspace) => workspace.id === project.workspace_id,
+          )
+        )
+          void activeLoadRef.current(true);
         return project;
       },
       registerProject,

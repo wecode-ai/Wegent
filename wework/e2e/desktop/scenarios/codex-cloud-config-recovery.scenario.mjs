@@ -185,6 +185,17 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       const restoreOfficial = async name => {
         model.recoverBundle()
+        // A completed task can still have a native composer prediction or read
+        // in flight. Reuse the idle-only restart gate before changing auth modes.
+        const idleRestart = await waitForValue(
+          async () =>
+            JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          value => value.restarted === true,
+          'The native Codex process did not become idle before restoring official auth',
+          RECOVERY_TIMEOUT_MS
+        )
+        assert.equal(idleRestart.activeTaskCount, 0)
+        evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
         const taskId = await create(name, { official: true })
@@ -215,7 +226,11 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       })
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
-      await assertDegraded(resumeFault, { method: 'thread/resume' })
+      await assertDegraded(resumeFault, {
+        methods: ['thread/resume', 'plugin/installed'],
+        taskId: oldTask,
+        threadId: oldThread,
+      })
       assert.equal((await task(oldTask)).threadId, oldThread)
       assert.ok(continued.turns.length > original.turns.length)
       assert.ok(JSON.stringify(continued.messages).includes(`${PREFIX}_OLD_COMPLETE`))
@@ -282,14 +297,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       // Exercise the primary config/read and thread/start recovery entry points.
       const configFault = await startFault()
       assert.ok((await native('config/read', { includeLayers: true, cwd: null })).config)
-      await assertDegraded(configFault, { method: 'config/read' })
+      await assertDegraded(configFault, { methods: ['config/read', 'plugin/installed'] })
       assert.ok((await rpc('runtime.codex.models.list', { includeHidden: true })).data.length > 0)
       await restoreOfficial('OFFICIAL_BEFORE_START')
       const startFaultState = await startFault()
       model.plan(`${PREFIX}_NEW_RECOVERED`)
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
-      await assertDegraded(startFaultState, { method: 'thread/start' })
+      await assertDegraded(startFaultState, { methods: ['thread/start', 'plugin/installed'] })
 
       await restoreOfficial('OFFICIAL_BEFORE_GOAL')
       const goalMarker = `${PREFIX}_GOAL`

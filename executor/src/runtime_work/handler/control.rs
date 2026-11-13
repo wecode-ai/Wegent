@@ -13,6 +13,8 @@ mod query;
 mod remote_continuation;
 mod schedules;
 use remote_continuation::validate_continuation_target;
+#[cfg(test)]
+mod app_tests;
 #[cfg(all(test, unix))]
 mod local_execution_tests;
 #[cfg(test)]
@@ -48,6 +50,9 @@ impl RuntimeWorkRpcHandler {
         }
         // Use the Runtime dispatcher so only the selected branch occupies a worker's stack.
         match operation {
+            "present_interaction" => {
+                boxed_rpc(move || async move { workbench_control::apps::present(args) })
+            }
             "get_current_context" => boxed_rpc(move || async move {
                 Ok(
                     json!({"conversation_id": workbench_control::conversation_id(&self.device_id, &context.task_id),
@@ -387,6 +392,9 @@ impl RuntimeWorkRpcHandler {
                     json!({"address":address,"title":args["title"]}),
                 ),
                 "archive_conversation" => ("/runtime-work/archive", address),
+                "unarchive_conversation" => {
+                    ("/runtime-work/archived-conversations/unarchive", address)
+                }
                 "cancel_conversation" => ("/runtime-work/cancel", address),
                 "guide_conversation" => (
                     "/runtime-work/guidance",
@@ -406,6 +414,7 @@ impl RuntimeWorkRpcHandler {
         match operation {
             "rename_conversation" => self.rename_task(payload).await,
             "archive_conversation" => self.archive_task(payload).await,
+            "unarchive_conversation" => self.unarchive_task(payload).await,
             "cancel_conversation" => self.cancel_task(payload).await,
             "guide_conversation" => self.send_guidance(payload).await,
             "get_conversation_goal" => self.get_task_goal(payload).await,

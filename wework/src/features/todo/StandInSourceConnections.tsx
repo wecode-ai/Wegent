@@ -1,13 +1,12 @@
 import { Button } from '@/components/ui/button'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { MessageSquare, Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { MessageSquare } from 'lucide-react'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 type Connection = Pick<
@@ -225,6 +224,40 @@ export function StandInSourceConnections({
               {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
             </p>
           </div>
+          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+            row.kind === 'group' &&
+            row.scope !== 'all' && (
+              <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+                {t('standIn.workspace.group_message_scope')}
+                <select
+                  data-testid={`${prefix}-message-scope-${row.id}`}
+                  aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
+                  value={row.collectionKey ?? 'mentions'}
+                  disabled={disabled}
+                  onChange={event => {
+                    const allMessages = event.target.value === 'all-messages'
+                    updateRows(
+                      rows.map(value => {
+                        if (value !== row) return value
+                        const next = { ...value }
+                        if (allMessages) next.collectionKey = 'all-messages'
+                        else delete next.collectionKey
+                        next.configurationSummary = t(
+                          allMessages
+                            ? 'standIn.workspace.group_all_messages'
+                            : 'standIn.workspace.group_mentions'
+                        )
+                        return next
+                      })
+                    )
+                  }}
+                  className="min-h-11 rounded-md border border-border bg-background px-2 text-sm text-text-primary md:min-h-8 [&>option]:bg-background [&>option]:text-text-primary"
+                >
+                  <option value="mentions">{t('standIn.workspace.group_mentions')}</option>
+                  <option value="all-messages">{t('standIn.workspace.group_all_messages')}</option>
+                </select>
+              </label>
+            )}
           <button
             type="button"
             data-testid={`${prefix}-remove-${row.id}`}

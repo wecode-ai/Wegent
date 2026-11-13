@@ -11,12 +11,19 @@ sidebar_position: 3
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
 ## Collaboration spaces and global resource catalogs
 
 <a id="workspace-resource-controls"></a>
 
-Open **top + → Collaboration**. Global catalogs, space settings and project settings are separate levels: spaces contain projects, while code directories remain separate resources. Project AI team settings do not replace space membership management.
+Open **top + → Collaboration**. Local projects appear directly under **Local projects**. Remote projects use **Remote projects → space → project**. Spaces expand by default and collapse independently; each project appears only once. Use the **+** beside either group to create a project without first choosing or creating a collaboration space. Remote projects require a cloud connection. These groups describe project storage; configure execution devices separately inside the project.
+
+The local list does not expose the internal local space. Click the **Local projects** heading to manage device projects. Use the arrow beside a remote space to collapse or expand its projects. Scroll the sidebar vertically when its content exceeds the window height to reach lower spaces and entries. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
+
+For remote projects, **Choose a workspace** initially selects **Default space**, or you can choose an existing space. The first use creates an independent default space, which later requests reuse. Existing business spaces and their projects are not adopted or moved. The add-folder button beside Remote projects creates a space. Local projects stay on the current device and have no redundant space selector. Switching spaces preserves the project name and description and clears the previous space's member, agent, and template selections; configure these again in the target space before creating.
+
+Global catalogs, space settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace space membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -63,7 +70,31 @@ To delete an imported personal template, open **Collaboration → Templates → 
 
 ## New Issue content and assignee
 
-Open **Collaboration → New Issue**, choose the project first and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+Record an issue directly at the top of **Collaboration → My work**; choose the project and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+
+<a id="personal-collaboration-home"></a>
+
+### Personal collaboration home
+
+The home defaults to a compact **Record an issue** composer. Choose a project, enter content, optionally assign it to a member, agent or team, and select **Record**. Recording does not directly launch a task; automatic handling of assigned Issues still follows the assistant settings. To begin immediately, select **Create task**; the draft and attachments carry into the Tasks composer with model, plugin, workspace, attachment, plan-mode and voice controls. Submitting automatically derives the Issue title from the content and creates the linked execution in one flow. Results use the existing Issue publication flow. The list stays visible and the new Issue and task open on the right. A rejected start retains the draft and retries the same Issue. Switching back to **Record an issue** preserves drafts.
+
+Collaboration opens **My work** with **Assigned to me** selected, showing Issues whose assignee is you. Choose **Participating** for the broader participation list. Both scopes group issues by project and initially show **Unfinished** work. Choose **All** to include completed or cancelled issues. Pending questions explicitly addressed to you show **Needs my input** in the same list.
+
+**Assigned to me** prioritizes questions, reviews and approvals addressed to you, followed by unstarted assignments, ongoing work and other unfinished issues. Within each category, priority precedes recent activity; finished and cancelled issues come last. **Participating** keeps issues needing your intervention first and otherwise uses recent activity. New comments and execution completion count as activity; execution heartbeats do not. Projects needing intervention come first, with other projects retaining their existing order. Both local and cloud stores apply ordering before pagination. Use **Sort** above the list to select **Needs my attention**, **Longest assigned**, **Recent activity**, or **Priority**. Issues show the age of their current assignment to you; reassignment resets it and missing assignment evidence does not fall back to creation time. Newly created Issues appear near the top and open on the right. Use **Open in project** in the detail header to view the Issue in its project.
+
+Starting work through **Create task** prevents assistants from automatically taking over that assignment or reserving extra role tasks. Once AI title generation finishes, its title updates the new Issue's provisional title, preserving any manual title edit. A later reassignment can be handled by assistants again. Ordinary assignments made through **Record an issue** still follow assistant settings; one automatic assignment selects one matching role. A reservation awaiting Runtime creation shows **Waiting for assistant** and cannot open as a running task. After the Runtime creates the task, its original conversation becomes available.
+
+**Record an issue** and **Create task** are parallel modes: select either label to switch while preserving the draft. The project selector has no background at rest and uses a subtle hover state. Issues appear in a project-grouped list with title, status and assignee kept together, followed by the summary, assignment comment and a single-line linked-task summary. The list does not use a multi-column card grid. Select an issue for details or a linked task to open its execution.
+
+The right workspace uses the task interface's tab style and opens **Stand-in** by default. The assistant tab remains available alongside at most one Issue detail tab. Selecting another Issue replaces the current detail without navigating the list; selecting it again focuses that detail. The tab shows the Issue title, with its project and number in the tooltip. Closing the detail returns to the assistant. Unsubmitted edits are retained and restored when reopening the Issue. Only the visible stand-in conversation confirms messages as read. Details reuse the full board Issue workflow. Where the existing creation conditions allow it, **Create task** initially appears only beside **Linked tasks**. Once you scroll past that control, the complete **Let AI help me** action bar appears at the top; it disappears when you scroll back. It opens a second conversation pane in the same right-hand tab and widens the workspace. Linked tasks use the same second pane; closing the conversation returns to the Issue and closing the Issue returns to the home list.
+
+**Stand-in** defaults to tasks grouped by role, with **In progress** and **Completed** sections per role; failed and cancelled work retains its actual status. **Needs my input** on the right contains only collaboration Issues explicitly waiting for you and opens the corresponding Issue. Select a task to continue its original conversation in the right pane and use Back to return. **Assistant settings** opens the existing primary configuration. This list includes only assistant tasks linked to collaboration Issues, excluding unrelated mail, calendar and general assistant work. If no enabled primary assistant or role connects an accessible board, **Connect a board so your assistant can help** guides you through the existing assistant setup. Creating an assistant or completing the earlier onboarding alone does not count as connecting a board.
+
+Issue rows show title, status, assignee, tags, date and a content excerpt. When an actual assignment comment exists, **Assignment comment** shows its text and author. Assignment context and task bindings load in the same bounded page without per-Issue requests. One task-summary line shows the first two names, task count and live execution status. A single task opens directly; multiple tasks open a picker. Collaboration items awaiting you show a bell and **Needs my input**, linking to the Issue. Projects use readable group names, cards use #numbers, and detail tabs show Issue titles, with project names and numbers in their tooltips.
+
+Discussions exceeding 20 activity entries preserve the first two and latest ten, with an expandable middle. Comment links and reply targets remain visible.
+
+Notifications remain in the title-bar bell. Reading them does not resolve pending work. Failed list requests show an error and retry action. Reopening the home or focusing the app refreshes the list.
 
 Type **#** and select a matching Issue from this project. After switching projects, recheck/reselect references rather than retaining invalid old-project links. This creates an Issue, not a runtime task, so do not assume task plan-mode/plugin/Skill-slash controls are available. Review project, assignee and references before submitting, then continue in details.
 
@@ -101,7 +132,7 @@ Hover **left sidebar → Projects → project** and select …, or right-click t
 | Change project appearance | Use the appearance action to cycle project styling      | Not the global theme setting                                                                           |
 | Reveal in file manager    | Choose Finder/system file manager                       | Requires an accessible local path                                                                      |
 | Create permanent worktree | Select the action and complete its dialog               | Requires a supported Git source; differs from a temporary task worktree eligible for automatic cleanup |
-| Archive conversations     | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
+| Archive all chats         | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
 | Remove project            | Select Remove and review confirmation                   | Handle uncommitted work and linked worktrees first; removing a record is not a backup                  |
 
 For project-space Issues, open **top + → Collaboration → project**, then use the board view menu, Issue details or project settings. Role and visibility rules govern available actions. The following sections explain individual fields and workflows.

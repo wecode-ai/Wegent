@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { McpAppHost } from './McpAppHost'
+import { WEWORK_OPEN_SCHEME_EVENT } from '@/features/notifications/schemeEvents'
 
 const translate = vi.hoisted(() => (key: string) => key)
 const native = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -76,6 +77,30 @@ afterEach(() => {
 })
 
 describe('MCP App discovery', () => {
+  it.each(['Completed', { content: [{ type: 'text', text: 'Completed' }] }])(
+    'keeps the saved interaction title when streamed output has no title: %j',
+    async toolOutput => {
+      const result = { content: [], structuredContent: { title: 'Saved title' } }
+      const loaded = {
+        ...discovery,
+        result,
+        resource: { contents: [{ uri: 'ui://app', mimeType: 'text/html', text: '<p>Saved</p>' }] },
+      }
+      native.invoke.mockResolvedValue({ id: 'saved-title', url: 'http://127.0.0.1/saved-title' })
+      await act(async () =>
+        render(
+          <McpAppHost
+            block={{ ...running, status: 'done', toolOutput }}
+            address={address}
+            api={{ requestMcpApp: vi.fn().mockResolvedValue(loaded) }}
+          />
+        )
+      )
+      expect(screen.getByTestId('mcp-app')).toHaveTextContent('Saved title')
+      expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('title', 'Saved title')
+    }
+  )
+
   it('discovers again when a streamed call becomes a native invocation', async () => {
     const requestMcpApp = vi.fn().mockResolvedValue(null)
     const api = { requestMcpApp }
@@ -209,6 +234,48 @@ describe('MCP App discovery', () => {
     expect(requestMcpApp).toHaveBeenCalledTimes(2)
     expect(native.invoke).not.toHaveBeenCalledWith('mcpApps.createDocument', expect.anything())
   })
+
+  it('keeps a historical card visible when its service is unavailable and restores it on retry', async () => {
+    const result = {
+      content: [],
+      structuredContent: { title: 'Saved interaction' },
+      _meta: { ui: { resourceUri: 'ui://app', html: '<p>Saved card</p>', tools: [] } },
+    }
+    const knownApp = { ...discovery, result }
+    const loaded = {
+      ...knownApp,
+      resource: { contents: [{ uri: 'ui://app', mimeType: 'text/html', text: '<p>Host</p>' }] },
+      modelContext: { structuredContent: { state: { view: 'created', id: 'saved-id' } } },
+    }
+    const requestMcpApp = vi
+      .fn()
+      .mockResolvedValueOnce(knownApp)
+      .mockRejectedValueOnce(new Error('Source MCP server is no longer available'))
+      .mockResolvedValueOnce(knownApp)
+      .mockResolvedValueOnce(loaded)
+    native.invoke.mockResolvedValue({ id: 'restored-document', url: 'http://127.0.0.1/restored' })
+    await act(async () =>
+      render(
+        <McpAppHost
+          block={{ ...running, status: 'done', toolOutput: result }}
+          address={address}
+          api={{ requestMcpApp }}
+        />
+      )
+    )
+    expect(screen.getByTestId('mcp-app')).toHaveTextContent('Saved interaction')
+    expect(screen.getByRole('alert')).toHaveTextContent('Source MCP server is no longer available')
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-retry')))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mcp-app-frame')).toHaveAttribute('data-ready', 'true')
+    expect(toolResults).toHaveBeenCalledWith({ ...result, isError: false })
+    expect(requestMcpApp.mock.calls.map(([request]) => request.method)).toEqual([
+      'discover',
+      'initialize',
+      'discover',
+      'initialize',
+    ])
+  })
 })
 
 describe('MCP App close completion', () => {
@@ -300,6 +367,148 @@ describe('MCP App close completion', () => {
     expect(
       native.invoke.mock.calls.filter(([method]) => method === 'mcpApps.releaseDocument')
     ).toHaveLength(0)
+  })
+
+  it('forwards wheel input from its mounted document to the conversation only while inline', async () => {
+    native.invoke.mockResolvedValue({ id: 'wheel-document', url: 'http://127.0.0.1/wheel' })
+    const view = render(
+      <div data-scroll-origin="bottom">
+        <McpAppHost
+          block={{ ...running, status: 'done' }}
+          address={address}
+          api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+        />
+      </div>
+    )
+    await act(async () => {})
+    const viewport = view.container.firstElementChild as HTMLElement
+    const sequence: string[] = []
+    viewport.addEventListener('wheel', () => sequence.push('user-input'))
+    viewport.scrollBy = vi.fn(() => sequence.push('scroll'))
+    const frame = screen.getByTestId<HTMLIFrameElement>('mcp-app-frame')
+    const html = native.invoke.mock.calls.find(
+      ([method]) => method === 'mcpApps.createDocument'
+    )?.[1].html as string
+    const token = html.match(/const token="([^"]+)"/)?.[1]
+    expect(html).toContain("addEventListener('wheel'")
+    expect(token).toBeTruthy()
+    const data = {
+      type: 'wework-inline-visualization-wheel',
+      token,
+      deltaX: 0,
+      deltaY: -80,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+    }
+    const send = (source: Window | null, origin: string, value = data) =>
+      window.dispatchEvent(new MessageEvent('message', { source, origin, data: value }))
+    act(() => {
+      send(window, 'http://127.0.0.1')
+      send(frame.contentWindow, 'https://foreign.example')
+      send(frame.contentWindow, 'http://127.0.0.1', { ...data, token: 'foreign-token' })
+    })
+    expect(viewport.scrollBy).not.toHaveBeenCalled()
+    act(() => send(frame.contentWindow, 'http://127.0.0.1'))
+    expect(sequence).toEqual(['user-input', 'scroll'])
+    expect(viewport.scrollBy).toHaveBeenCalledExactlyOnceWith({
+      left: 0,
+      top: -80,
+      behavior: 'instant',
+    })
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-expand')))
+    act(() => send(frame.contentWindow, 'http://127.0.0.1'))
+    expect(viewport.scrollBy).toHaveBeenCalledTimes(1)
+    await act(async () => view.unmount())
+    act(() => send(frame.contentWindow, 'http://127.0.0.1'))
+    expect(viewport.scrollBy).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an inline-preferred app in the message until the user expands it', async () => {
+    native.invoke.mockImplementation((method: string) => {
+      if (method === 'mcpApps.createDocument')
+        return Promise.resolve({
+          id: 'inline-document',
+          url: 'http://127.0.0.1:9000/inline-document',
+        })
+      return Promise.resolve()
+    })
+    const onDisplayModeChange = vi.fn()
+    const inline = {
+      ...descriptor,
+      result: {
+        content: [],
+        structuredContent: { title: 'Generated workflow' },
+        _meta: { ui: { html: '<button>Generated action</button>' } },
+      },
+      preferredDisplayMode: 'fullscreen',
+      resource: {
+        contents: [
+          {
+            ...descriptor.resource.contents[0],
+            _meta: {
+              'openai/ui': {
+                availableDisplayModes: ['inline', 'fullscreen'],
+                preferredDisplayMode: 'inline',
+              },
+            },
+          },
+        ],
+      },
+    }
+    await act(async () =>
+      render(
+        <McpAppHost
+          block={{ ...running, status: 'done' }}
+          address={address}
+          api={{ requestMcpApp: vi.fn().mockResolvedValue(inline) }}
+          onDisplayModeChange={onDisplayModeChange}
+        />
+      )
+    )
+    const frame = screen.getByTestId('mcp-app-frame')
+    expect(frame).toHaveAttribute('data-ready', 'true')
+    expect(screen.getByTestId('mcp-app')).toHaveTextContent('Generated workflow')
+    expect(toolResults).toHaveBeenCalledWith(
+      expect.objectContaining({ _meta: inline.result._meta })
+    )
+    expect(screen.getByTestId('mcp-app')).toHaveAttribute('data-display-mode', 'inline')
+    expect(onDisplayModeChange.mock.calls.every(([mode]) => mode === 'inline')).toBe(true)
+    const resize = bridges.at(-1)!.onsizechange as (size: { height: number }) => void
+    await act(async () => resize({ height: 1100 }))
+    expect(frame).toHaveStyle({ height: '1100px' })
+    await act(async () => resize({ height: 360 }))
+    expect(frame).toHaveStyle({ height: '360px' })
+    await act(async () => fireEvent.click(screen.getByTestId('mcp-app-expand')))
+    expect(screen.getByTestId('mcp-app')).toHaveAttribute('data-display-mode', 'fullscreen')
+    expect(screen.getByTestId('mcp-app-frame')).toBe(frame)
+  })
+
+  it('connects internal links to existing native navigation and rejects unsupported schemes', async () => {
+    native.invoke.mockResolvedValue({ id: 'navigation', url: 'http://127.0.0.1/navigation' })
+    await act(async () =>
+      render(
+        <McpAppHost
+          block={{ ...running, status: 'done' }}
+          address={address}
+          api={{ requestMcpApp: vi.fn().mockResolvedValue(descriptor) }}
+        />
+      )
+    )
+    const open = bridges.at(-1)!.onopenlink as (params: { url: string }) => Promise<unknown>
+    const navigated = vi.fn()
+    window.addEventListener(WEWORK_OPEN_SCHEME_EVENT, navigated)
+    try {
+      await expect(open({ url: 'wework://tasks/device/task' })).resolves.toEqual({ isError: false })
+      expect(navigated.mock.calls[0][0].detail).toBe('wework://tasks/device/task')
+      await expect(open({ url: 'wework://navigate/%2Fnot-registered' })).resolves.toEqual({
+        isError: true,
+      })
+      await expect(open({ url: 'javascript:alert(1)' })).resolves.toEqual({ isError: true })
+    } finally {
+      window.removeEventListener(WEWORK_OPEN_SCHEME_EVENT, navigated)
+    }
   })
 
   it('downloads remaining resources when a resource filename contains malformed percent encoding', async () => {

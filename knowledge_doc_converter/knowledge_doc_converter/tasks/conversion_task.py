@@ -13,6 +13,7 @@ Converter worker startup:
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 from knowledge_doc_converter.celery_app import celery_app
 from knowledge_doc_converter.config import settings
@@ -32,12 +33,61 @@ from knowledge_doc_converter.services.conversion_engine import (
 )
 from knowledge_doc_converter.services.error_mapper import map_conversion_failure
 from knowledge_doc_converter.services.lock_service import lock_service
+from shared.event_reporting.catalogs.knowledge import (
+    emit_conversion_event,
+    error_code_for,
+)
 from shared.knowledge_module import ConversionRequest, convert_content
 
 logger = logging.getLogger(__name__)
 
 
 from knowledge_engine.conversion import MinerUConfig, S3Config
+
+
+def _emit_attempt(
+    *,
+    kb_id: int | str | None,
+    document_id: int,
+    attempt_id: str,
+    status: str,
+    file_extension: str,
+    generation: int,
+    started_at: float,
+    retry_scheduled: bool = False,
+    error_code: str | None = None,
+    task_state: str,
+    result_status: str | None = None,
+) -> None:
+    # Every attempt in this task runs the MinerU conversion engine.
+    elapsed = max(0.0, time.monotonic() - started_at)
+    started_wall = datetime.now(timezone.utc) - timedelta(seconds=elapsed)
+    data = {
+        "file_extension": file_extension,
+        "started_at": started_wall.isoformat(),
+        "generation": generation,
+        "retry_scheduled": retry_scheduled,
+        "converter": "mineru",
+        "task_state": task_state,
+    }
+    # result_status follows the index-attempt vocabulary (success/failed/
+    # skipped); started events have no result yet and omit the field.
+    if result_status:
+        data["result_status"] = result_status
+    emit_conversion_event(
+        (
+            "knowledge.conversion.attempt.started"
+            if status == "started"
+            else "knowledge.conversion.attempt.finished"
+        ),
+        kb_id=kb_id,
+        document_id=document_id,
+        status=status,
+        operation_id=attempt_id,
+        data=data,
+        error_code=error_code,
+        duration_ms=round(elapsed * 1000) if status != "started" else None,
+    )
 
 
 def _build_mineru_config() -> MinerUConfig:
@@ -108,6 +158,8 @@ def convert_document_task(
     task_id = getattr(self.request, "id", "unknown")
     retry_count = getattr(self.request, "retries", 0)
     worker_hostname = getattr(self.request, "hostname", "unknown")
+    attempt_id = f"{task_id}:{retry_count}"
+    knowledge_base_id = index_dispatch_payload.get("knowledge_base_id")
 
     logger.info(
         f"[Conversion] Task started: task_id={task_id}, "
@@ -118,6 +170,16 @@ def convert_document_task(
 
     start_time = time.monotonic()
     record_conversion_started()
+    _emit_attempt(
+        kb_id=knowledge_base_id,
+        document_id=document_id,
+        attempt_id=attempt_id,
+        status="started",
+        file_extension=file_extension,
+        generation=index_generation,
+        started_at=start_time,
+        task_state="started",
+    )
 
     # Acquire distributed lock
     lock_name = f"knowledge:convert_document:{document_id}"
@@ -132,6 +194,19 @@ def convert_document_task(
                 logger.warning(
                     f"[Conversion] Lock held, retry: task_id={task_id}, "
                     f"document_id={document_id}, retry={retry_count + 1}"
+                )
+                _emit_attempt(
+                    kb_id=knowledge_base_id,
+                    document_id=document_id,
+                    attempt_id=attempt_id,
+                    status="failure",
+                    file_extension=file_extension,
+                    generation=index_generation,
+                    started_at=start_time,
+                    retry_scheduled=True,
+                    error_code="conversion_lock_held",
+                    task_state="failed",
+                    result_status="failed",
                 )
                 raise self.retry(
                     exc=RuntimeError(f"conversion_lock_held:{document_id}"),
@@ -160,6 +235,18 @@ def convert_document_task(
             logger.error(
                 f"[Conversion] Lock retry exhausted: document_id={document_id}"
             )
+            _emit_attempt(
+                kb_id=knowledge_base_id,
+                document_id=document_id,
+                attempt_id=attempt_id,
+                status="failure",
+                file_extension=file_extension,
+                generation=index_generation,
+                started_at=start_time,
+                error_code="conversion_lock_timeout",
+                task_state="failed",
+                result_status="failed",
+            )
             return {
                 "status": "skipped",
                 "reason": "lock_retry_exhausted",
@@ -180,6 +267,18 @@ def convert_document_task(
                     f"[Conversion] Skipped: document_id={document_id}, " f"resp={resp}"
                 )
                 record_conversion_skipped("not_exists_or_stale")
+                _emit_attempt(
+                    kb_id=knowledge_base_id,
+                    document_id=document_id,
+                    attempt_id=attempt_id,
+                    status="cancelled",
+                    file_extension=file_extension,
+                    generation=index_generation,
+                    started_at=start_time,
+                    error_code="not_exists_or_stale",
+                    task_state="skipped",
+                    result_status="skipped",
+                )
                 return {"status": "skipped", "reason": "not_exists_or_stale"}
         except Exception as e:
             # Log but do NOT abort — the conversion itself can still proceed.
@@ -242,6 +341,18 @@ def convert_document_task(
                     f"[Conversion] Backend skipped (stale): document_id={document_id}"
                 )
                 record_conversion_skipped("stale_conversion")
+                _emit_attempt(
+                    kb_id=knowledge_base_id,
+                    document_id=document_id,
+                    attempt_id=attempt_id,
+                    status="cancelled",
+                    file_extension=file_extension,
+                    generation=index_generation,
+                    started_at=start_time,
+                    error_code="stale_conversion",
+                    task_state="skipped",
+                    result_status="skipped",
+                )
                 return {"status": "skipped", "reason": "stale_conversion"}
 
             if not resp.get("ok"):
@@ -250,6 +361,18 @@ def convert_document_task(
                     f"resp={resp}"
                 )
                 record_conversion_failed(file_extension, time.monotonic() - start_time)
+                _emit_attempt(
+                    kb_id=knowledge_base_id,
+                    document_id=document_id,
+                    attempt_id=attempt_id,
+                    status="failure",
+                    file_extension=file_extension,
+                    generation=index_generation,
+                    started_at=start_time,
+                    error_code="backend_rejected",
+                    task_state="failed",
+                    result_status="failed",
+                )
                 return {"status": "error", "reason": "backend_rejected"}
 
             duration = time.monotonic() - start_time
@@ -262,6 +385,17 @@ def convert_document_task(
             logger.info(
                 f"[Conversion] Completed: document_id={document_id}, "
                 f"index_task_id={resp.get('index_task_id')}"
+            )
+            _emit_attempt(
+                kb_id=knowledge_base_id,
+                document_id=document_id,
+                attempt_id=attempt_id,
+                status="success",
+                file_extension=file_extension,
+                generation=index_generation,
+                started_at=start_time,
+                task_state="converted",
+                result_status="success",
             )
             return {
                 "status": "converted",
@@ -305,6 +439,18 @@ def convert_document_task(
                         f"[Conversion] Failed to notify soft timeout: "
                         f"{callback_err}"
                     )
+                _emit_attempt(
+                    kb_id=knowledge_base_id,
+                    document_id=document_id,
+                    attempt_id=attempt_id,
+                    status="failure",
+                    file_extension=file_extension,
+                    generation=index_generation,
+                    started_at=start_time,
+                    error_code="conversion_soft_timeout",
+                    task_state="failed",
+                    result_status="failed",
+                )
                 return {
                     "status": "failed",
                     "reason": "soft_timeout",
@@ -343,7 +489,31 @@ def convert_document_task(
                         f"conversion, skipping retry"
                     )
                     record_conversion_skipped("document_deleted")
+                    _emit_attempt(
+                        kb_id=knowledge_base_id,
+                        document_id=document_id,
+                        attempt_id=attempt_id,
+                        status="cancelled",
+                        file_extension=file_extension,
+                        generation=index_generation,
+                        started_at=start_time,
+                        error_code="document_deleted",
+                        task_state="skipped",
+                        result_status="skipped",
+                    )
                     return {"status": "skipped", "reason": "document_deleted"}
             except Exception as callback_err:
                 logger.error(f"[Conversion] Failed to notify failure: {callback_err}")
+            _emit_attempt(
+                kb_id=knowledge_base_id,
+                document_id=document_id,
+                attempt_id=attempt_id,
+                status="failure",
+                file_extension=file_extension,
+                generation=index_generation,
+                started_at=start_time,
+                error_code=error_code_for(exc),
+                task_state="failed",
+                result_status="failed",
+            )
             raise

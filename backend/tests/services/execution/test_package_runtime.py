@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Embedded Chat Shell transport authentication and lifecycle contracts."""
+"""Private Python runtime transport and lifecycle contracts."""
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -45,6 +46,86 @@ def test_http_mode_does_not_mount_embedded_engine(monkeypatch):
     assert (
         TestClient(app).post(f"{PACKAGE_RUNTIME_PATH}/v1/responses").status_code == 404
     )
+
+
+def test_image_runtime_in_http_mode_streams_the_agent_result(monkeypatch):
+    from app.services.chat.storage.session import session_manager
+    from app.services.execution.agents.image import image_agent
+    from app.services.execution.agents.image.providers.base import (
+        ImageGenerationResult,
+        ImageResult,
+    )
+
+    monkeypatch.setattr(settings, "CHAT_SHELL_MODE", "http")
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "unit-image-token")
+    monkeypatch.setattr(session_manager, "is_cancelled", AsyncMock(return_value=False))
+    register = AsyncMock()
+    unregister = AsyncMock()
+    monkeypatch.setattr(session_manager, "register_stream", register)
+    monkeypatch.setattr(session_manager, "unregister_stream", unregister)
+    provider = AsyncMock(name="image-provider")
+    provider.generate.return_value = ImageGenerationResult(
+        images=[ImageResult(url="https://images.example.com/generated.png")],
+        model="gpt-image-e2e",
+    )
+    selected = []
+
+    def select_provider(protocol, config):
+        selected.append((protocol, config["model_id"]))
+        return provider
+
+    monkeypatch.setattr(image_agent, "get_image_provider", select_provider)
+    upload = AsyncMock(return_value=41)
+    monkeypatch.setattr(image_agent.ImageAgent, "_upload_attachment", upload)
+    app = FastAPI()
+    mount_package_runtime(app)
+    client = TestClient(app)
+    path = f"{PACKAGE_RUNTIME_PATH}/v1/image-execution"
+    reference = "https://images.example.com/reference.png"
+    request = {
+        "task_id": 7,
+        "subtask_id": 8,
+        "message_id": 2,
+        "user": {"id": 9},
+        "prompt": "Draw a blue square",
+        "attachments": [{"mime_type": "image/png", "url": reference}],
+        "model_config": {
+            "modelType": "image",
+            "protocol": "gpt-image",
+            "model_id": "gpt-image-e2e",
+        },
+    }
+
+    assert client.post(path, json=request).status_code == 401
+    provider.generate.assert_not_awaited()
+    response = client.post(
+        path, json=request, headers={"Authorization": "Bearer unit-image-token"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert [event["type"] for event in events] == ["start", "chunk", "done"]
+    assert all(
+        event["subtask_id"] == 8 and event["message_id"] == 2 for event in events
+    )
+    placeholder = events[1]["result"]["blocks"][0]
+    result = events[2]["result"]["blocks"][0]
+    assert placeholder["is_placeholder"] is True
+    assert result["id"] == placeholder["id"]
+    assert result["image_attachment_ids"] == [41]
+    assert result["image_download_urls"]
+    assert selected == [("gpt-image", "gpt-image-e2e")]
+    provider.generate.assert_awaited_once_with(
+        prompt="Draw a blue square", reference_images=[reference]
+    )
+    assert upload.await_args.kwargs["user_id"] == 9
+    register.assert_not_awaited()
+    unregister.assert_not_awaited()
 
 
 def test_embedded_engine_reuses_chat_shell_sse(runtime, monkeypatch):

@@ -257,6 +257,14 @@ impl RuntimeWorkRpcHandler {
         link.continuable = true;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.work.changed",
+            &link.local_task_id,
+            &runtime_event_request_from_link(&link),
+            json!({"taskId":link.local_task_id,"archived":false}),
+        );
         Ok(task_action_success(&link))
     }
 
@@ -265,6 +273,13 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "name"))
             .ok_or_else(|| AppIpcError::new("bad_request", "title is required"))?;
         let mut link = self.task_link_from_payload(&payload, false).await?;
+        link = self
+            .store
+            .materialize_discovered_task(link)
+            .map_err(|error| AppIpcError::new("task_state_update_failed", error.to_string()))?
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was deleted before its rename")
+            })?;
         if let Some(thread_id) = link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -277,7 +292,7 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        link = self.commit_runtime_task_title(link, title);
+        link = self.commit_runtime_task_title(link, title, None)?;
 
         let mut response = task_action_success(&link);
         response["codexRename"] = json!({"stateUpdated": true});

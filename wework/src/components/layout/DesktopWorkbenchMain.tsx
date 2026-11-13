@@ -11,6 +11,7 @@ import {
 import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
 import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
 import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
+import { useBoundRuntimeTaskReconciliation } from './useBoundRuntimeTaskReconciliation'
 import { conversationTerminals } from './backgroundTerminals'
 import type { BackgroundTerminal } from './backgroundTerminals'
 import {
@@ -360,23 +361,6 @@ function runtimeTaskForkModelOptions(
       options: executionModel.modelOptions ?? {},
     },
   }
-}
-
-function hasResolvedExecutionAddress(
-  current: RuntimeTaskAddress,
-  resolved: RuntimeTaskAddress
-): boolean {
-  return (
-    current.deviceId === resolved.deviceId &&
-    current.taskId === resolved.taskId &&
-    current.runtime === resolved.runtime &&
-    current.threadId === resolved.threadId &&
-    current.workspacePath === resolved.workspacePath &&
-    current.workspaceKind === resolved.workspaceKind &&
-    current.worktreeId === resolved.worktreeId &&
-    JSON.stringify(current.runtimeHandle?.modelSelection ?? null) ===
-      JSON.stringify(resolved.runtimeHandle?.modelSelection ?? null)
-  )
 }
 
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
@@ -1460,16 +1444,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
-  useEffect(() => {
-    if (
-      !currentRuntimeTask ||
-      !boundRuntimeTaskAddress ||
-      hasResolvedExecutionAddress(currentRuntimeTask, boundRuntimeTaskAddress)
-    ) {
-      return
-    }
-    void openRuntimeTask(boundRuntimeTaskAddress)
-  }, [boundRuntimeTaskAddress, currentRuntimeTask, openRuntimeTask])
+  useBoundRuntimeTaskReconciliation(
+    paneActive && paneVisible && workbenchVisible,
+    currentRuntimeTask,
+    boundRuntimeTaskAddress,
+    openRuntimeTask
+  )
   const workItemContextAvailable = Boolean(
     currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
   )

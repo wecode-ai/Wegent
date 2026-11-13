@@ -3121,6 +3121,7 @@ dependencies = [
  "wegent-protocol",
  "wegent-runtime-config",
  "wegent-runtime-logging",
+ "zstd",
 ]
 
 [[package]]

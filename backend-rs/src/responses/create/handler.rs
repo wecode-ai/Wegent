@@ -333,6 +333,7 @@ async fn resolve_create_scope(
             model_override_type: None,
             model_options: None,
             input_text,
+            user_result: None,
             additional_skills: &[],
             crd: TaskCrdInput {
                 task_id: 0,

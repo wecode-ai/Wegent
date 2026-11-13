@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
-  expandCollaborationWorkspace,
+  revealCollaborationSidebarElement,
   selectCollaborationDomain,
 } from '../modules/workspace-flows.mjs'
 import {
@@ -257,14 +257,14 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await selectCollaborationDomain(control, CONTENT, 'cloud')
-      await expandCollaborationWorkspace(
+      await revealCollaborationSidebarElement(
         control,
-        scoped(`collaboration-workspace-toggle-${workspace.id}`)
+        scoped(`collaboration-workspace-project-${project.id}`)
       )
       await control.command('click', scoped(`collaboration-workspace-project-${project.id}`))
       await selectCollaborationProjectView(control, CONTENT, 'board')
       await control.command('clickWhenEnabled', scoped(`cloud-todo-card-${manualIssue.id}`))
-      await control.command('clickWhenEnabled', scoped('cloud-todo-personal-task-start'))
+      await control.command('clickWhenEnabled', scoped('cloud-todo-create-task'))
       const composer = `${scoped('work-item-new-task-chat-panel')} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer)
       await selectE2EModel(control, undefined, undefined, scoped('work-item-new-task-chat-panel'))
@@ -277,7 +277,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           timeoutMs: modelResponseTimeoutMs,
         }
       )
-      await assertCompleted(control, manualIssue, desktop.app_device_id ?? desktop.device_id)
+      await assertCompleted(control, manualIssue, currentDeviceRoute)
       await assertCollaboration(manualIssue)
       await control.command('click', scoped('ai-chat-modal-close'))
       await control.command('click', scoped('cloud-todo-detail-close'))

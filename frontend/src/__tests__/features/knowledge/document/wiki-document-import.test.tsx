@@ -452,7 +452,10 @@ describe('WikiDocumentImport', () => {
   it('renders connection guidance when not configured', async () => {
     mockListConnections.mockResolvedValue({ connections: [], available_connectors: [] })
     renderTab()
-    expect(await screen.findByTestId('wiki-import-need-connection')).toBeInTheDocument()
+    const guidance = await screen.findByTestId('wiki-import-need-connection')
+    expect(screen.getByTestId('wiki-import-content')).toContainElement(guidance)
+    expect(guidance).toHaveTextContent('请先在「设置 → 集成」配置外部 Wiki 连接')
+    expect(screen.getByTestId('wiki-import-submit-button')).toBeDisabled()
   })
 
   it('unbinds a bound document from the list', async () => {

@@ -35,7 +35,9 @@ fn persisted_side_source_is_resolved_by_id_outside_the_default_provider_catalog(
                 workspace_path: root.path().to_string_lossy().into_owned(),
             };
             let ready = tokio::time::timeout(
-                Duration::from_secs(5),
+                // Match the production side-source wait; Windows app-server startup can
+                // exceed five seconds on a loaded runner.
+                Duration::from_secs(30),
                 handler.wait_for_side_source_rollout(&mut source),
             )
             .await;

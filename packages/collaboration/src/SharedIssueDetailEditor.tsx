@@ -39,7 +39,6 @@ import {
   ListTodo,
   Maximize2,
   Minimize2,
-  Play,
   Plus,
   Tag,
   Trash2,
@@ -151,6 +150,7 @@ export interface SharedIssueDetailExtensionContext {
 export interface SharedIssueDetailExtensions {
   onSaveError?(error: unknown): void;
   normalizeDescription?(value: string): string;
+  normalizePastedFiles?(files: File[]): Promise<File[]>;
   dueDateInputType?: "date" | "datetime-local";
   startDateFromSource?(value: string | null): string;
   startDateToSource?(value: string, context: DueDateSourceContext): string;
@@ -726,27 +726,32 @@ export function TodoEditor(props: TodoEditorProps) {
   const [createMilestoneId, setCreateMilestoneId] = useState<string | null>(
     draft ? draft.milestoneId : (createProps?.initialMilestoneId ?? null),
   );
-  const [editingContent, setEditingContent] = useState(!readFirst);
 
-  const { draft: issueDraft, setField: setIssueDraftField } =
-    useIssueDetailDraft({
-      source: item,
-      initial: {
-        title: createProps?.initialTitle ?? draft?.title ?? "",
-        description: draft?.markdown ?? "",
-        status: createProps?.initialStatus ?? "inbox",
-        priority: draft?.priority ?? "none",
-        parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
-        startDate: draft?.startDate ?? "",
-        dueDate: draft?.dueDate ?? "",
-        assigneeTarget: draft?.assigneeTarget ?? "",
-        tags: draft?.tags ?? createProps?.initialTags ?? [],
-      },
-      normalizeDescription: extensions?.normalizeDescription,
-      startDateFromSource:
-        extensions?.startDateFromSource ?? todoDueDateFromSource,
-      dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
-    });
+  const {
+    draft: issueDraft,
+    setField: setIssueDraftField,
+    restoredContentDirty,
+  } = useIssueDetailDraft({
+    source: item,
+    initial: {
+      title: createProps?.initialTitle ?? draft?.title ?? "",
+      description: draft?.markdown ?? "",
+      status: createProps?.initialStatus ?? "inbox",
+      priority: draft?.priority ?? "none",
+      parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
+      startDate: draft?.startDate ?? "",
+      dueDate: draft?.dueDate ?? "",
+      assigneeTarget: draft?.assigneeTarget ?? "",
+      tags: draft?.tags ?? createProps?.initialTags ?? [],
+    },
+    normalizeDescription: extensions?.normalizeDescription,
+    startDateFromSource:
+      extensions?.startDateFromSource ?? todoDueDateFromSource,
+    dueDateFromSource: extensions?.dueDateFromSource ?? todoDueDateFromSource,
+  });
+  const [editingContent, setEditingContent] = useState(
+    !readFirst || restoredContentDirty,
+  );
   const {
     title,
     description,
@@ -989,6 +994,30 @@ export function TodoEditor(props: TodoEditorProps) {
   const [statusHistoryOpen, setStatusHistoryOpen] = useState(false);
   const statusHistoryTriggerRef = useRef<HTMLButtonElement>(null);
   const detailScrollRef = useRef<HTMLDivElement>(null);
+  const personalTaskActionRef = useRef<HTMLButtonElement>(null);
+  const [personalTaskActionPinned, setPersonalTaskActionPinned] =
+    useState(false);
+  const canPinPersonalTaskAction = Boolean(
+    workspacePanel &&
+    item &&
+    props.onCreateTask &&
+    extensions?.renderPersonalTaskAction,
+  );
+  useEffect(() => {
+    setPersonalTaskActionPinned(false);
+    const anchor = personalTaskActionRef.current;
+    const root = detailScrollRef.current;
+    if (!canPinPersonalTaskAction || !anchor || !root) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const top = entry.rootBounds?.top ?? root.getBoundingClientRect().top;
+        setPersonalTaskActionPinned(entry.boundingClientRect.bottom <= top);
+      },
+      { root, threshold: 0 },
+    );
+    observer.observe(anchor);
+    return () => observer.disconnect();
+  }, [item?.id, canPinPersonalTaskAction]);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const descriptionCollapseRef = useRef<HTMLDivElement>(null);
   const propertyTagsRef = useRef<TagEditorHandle>(null);
@@ -1860,7 +1889,8 @@ export function TodoEditor(props: TodoEditorProps) {
     };
   }
 
-  async function pasteAttachments(files: File[]): Promise<string | null> {
+  async function pasteAttachments(rawFiles: File[]): Promise<string | null> {
+    const files = await normalizedPastedFiles(rawFiles);
     if (isCreate) {
       setPendingFiles((current) => [...current, ...files]);
       return null;
@@ -1891,6 +1921,15 @@ export function TodoEditor(props: TodoEditorProps) {
     } finally {
       if (isCurrentItemLoad(itemId, itemLoadGeneration))
         setAttachmentBusy(false);
+    }
+  }
+
+  async function normalizedPastedFiles(files: File[]): Promise<File[]> {
+    if (!extensions?.normalizePastedFiles) return files;
+    try {
+      return await extensions.normalizePastedFiles(files);
+    } catch {
+      return files;
     }
   }
 
@@ -2883,6 +2922,15 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null}
         </header>
 
+        {personalTaskAction && personalTaskActionPinned ? (
+          <div
+            className="task-detail-persistent-action shrink-0 border-b border-border bg-background px-4 py-2"
+            data-testid="issue-persistent-task-action"
+          >
+            {personalTaskAction}
+          </div>
+        ) : null}
+
         <div
           className={cn(
             "min-h-0 flex-1",
@@ -3140,19 +3188,6 @@ export function TodoEditor(props: TodoEditorProps) {
                           </Tooltip>
                         ) : null}
                       </span>
-                    ) : null}
-                    {canStartWork &&
-                    !props.defaultAssistant &&
-                    executionTaskCount === 0 ? (
-                      <button
-                        type="button"
-                        data-testid="cloud-todo-create-task"
-                        onClick={() => props.onCreateTask?.()}
-                        className="task-detail-state-action task-detail-state-action-primary"
-                      >
-                        <Play aria-hidden="true" size={14} />
-                        {t("todo.start_work", "开始处理")}
-                      </button>
                     ) : null}
                   </section>
                 ) : (
@@ -3440,6 +3475,7 @@ export function TodoEditor(props: TodoEditorProps) {
                   ) : null}
 
                   {canStartWork &&
+                  !personalTaskAction &&
                   props.defaultAssistant &&
                   !hasExecutionDetails ? (
                     <section
@@ -3480,20 +3516,16 @@ export function TodoEditor(props: TodoEditorProps) {
                   />
                   {!isCreate ? (
                     <>
-                      {personalTaskAction &&
-                      displayedTasks.length === 0 &&
-                      executionChildItems.length === 0 ? (
-                        <section className="task-detail-workspace-section">
-                          <h3 className="task-detail-workspace-section-title">
-                            {t("todo.linked_tasks", "关联任务")}
-                          </h3>
-                          {personalTaskAction}
-                        </section>
-                      ) : null}
                       <IssueLinkedTasks
                         key={item.id}
-                        creationAction={personalTaskAction}
                         tasks={displayedTasks}
+                        createTaskRef={
+                          personalTaskAction ? personalTaskActionRef : undefined
+                        }
+                        createTaskLabel={t(
+                          "todo.create_personal_task",
+                          "创建任务",
+                        )}
                         childItems={executionChildItems}
                         statusOptions={statusOptions}
                         statusDotClasses={columnDotClasses}
@@ -3502,7 +3534,11 @@ export function TodoEditor(props: TodoEditorProps) {
                         selectedTaskId={props.selectedTaskId}
                         showCurrentTaskOnly={props.showCurrentTaskOnly}
                         onCreateTask={
-                          personalTaskAction ? undefined : props.onCreateTask
+                          canStartWork ||
+                          personalTaskAction ||
+                          executionTaskCount > 0
+                            ? props.onCreateTask
+                            : undefined
                         }
                         onOpenTaskConversation={props.onOpenTaskConversation}
                         onOpenChildTask={props.onOpenChildTask}

@@ -10,9 +10,11 @@ use serde_json::{json, Value};
 
 use crate::{local::app_ipc::AppIpcError, protocol::ExecutionRequest};
 
+pub(crate) mod apps;
 mod catalog;
 mod creation_schema;
 pub(crate) mod journal;
+mod output_schema;
 pub(crate) mod read_budget;
 pub(crate) use catalog::{capabilities, validate_arguments};
 
@@ -20,8 +22,15 @@ pub(crate) const SERVER_NAME: &str = "wework_control";
 pub(crate) const INSTRUCTIONS: &str = concat!(
     "Wework control routing:\n",
     "- Use wework_control for Wework conversation discovery, native history, cross-conversation continuation, confirmed PR bindings and personal schedules. Discovery and history queries cover this device, cloud history and other owned devices by default. Native conversation continuation supports other owned devices through the desktop's existing send API and device policy.\n",
+    "- Standalone Wework tasks are conversations, including archived tasks. For a missing, archived or accidentally deleted task, first call list_conversations with include_archived:true, or search_conversations with include_archived:true when a query is known. A title or deletion time is not required for listing candidates. Inspect actual results and coverage before claiming absence or inability to recover; offer matching candidates and restoration using the user's preferred presentation instead of only directing the user to Settings. Permanent deletion and archival are different states; these tools restore archived conversations.\n",
     "- Use get_conversation_creation_options before choosing creation settings. create_conversation accepts composer options and an explicit target device/model; remote creation uses existing Backend device policy. Use the native conversation_id returned by discovery for remote continuation; cloud-history references without a Runtime address are read-only.\n",
     "- Read get_current_context and discover capabilities when needed. Continue the exact conversation_id returned by the tools. Use a stable request_key per user instruction or CI failure (repository, PR, head SHA, run ID and attempt). Check get_operation after delivery; accepted is not completed.\n",
+    "- Interactive HTML is optional. Respect explicit user preferences for text, direct execution or an interactive page. For a clear, fully specified request, direct tool execution and a concise reply are valid. Choose present_interaction when selection, editable inputs, multiple results or ongoing management help the user. These choices apply equally to every capability.\n",
+    "- When choosing present_interaction in Codex, generate HTML for the current scenario and follow the visualize skill's fragment and design guidance. Bind real operations with window.wework.callTool and existing destinations with window.wework.navigate. Declare only needed tools. Restore window.wework.state and persist completed interactions with setState so reopening does not repeat operations. Collect unknown values in the form. Pure explanatory visualizations use the ordinary visualize reference.\n",
+    "- Generated interactions default to high information density unless the user requests otherwise. For simple records, use one compact list or table: one row per item with name, key status/time and a small action button together on desktop. Do not use per-item cards, split panels, repeated headings or large vertical gaps. Hide internal IDs and secondary details unless decision-relevant. Keep readable type and compact desktop controls; 44px touch targets apply on mobile. A short list must not need several screens, internal scrolling or artificial pagination.\n",
+    "- Every capability has inputSchema and outputSchema in the same catalog, available through list_capabilities and describe_capability and supplied to bound HTML tools. Newly registered capabilities share discovery, tool binding and execution without a dedicated UI adapter. When an interaction helps, discover its real contracts, query current data and generate the relevant form or actions. HTML writes execute only on user action. A missing dedicated app is not a missing capability. When no operation exists, use window.wework.navigationTargets for a registered destination; never invent tools or routes.\n",
+    "- callTool returns the business data matching that capability's outputSchema, not the MCP content wrapper. Do not assume all operations return the same object shape. Use one render(state) function after a successful operation and when restoring saved state. Render a concise result immediately; never display a raw JSON result as the success or error view. Save the same completed state with setState. A later rendering or card-state save failure does not undo the operation; do not re-enable or repeat the mutation.\n",
+    "- When using an interaction, match its primary action to the user's goal and the target's state. For archived-conversation recovery, show matching candidates with unarchive_conversation actions. After accepted is true, show the restored state and offer opening the conversation. A navigation button is not a substitute for a restoration operation.\n",
     "- For weekly reports, list conversations with updated_after set to the period start, include archived conversations, follow every next_cursor and every history cursor, and select messages by their timestamps. Do not use updated_before to exclude conversations with newer activity. State any missing coverage.\n",
     "- When a user names a device, resolve its device_id from creation options and query that device directly. Use list_conversations/search_conversations to inspect existing conversations; do not create a new conversation just to discover them. query_timeout in coverage identifies a source to retry with device_id.\n",
     "- Inspect coverage.unavailable_reasons in conversation search and listings. Failed checks can mean invalid Backend requests, connectivity or permission errors, or timeouts; incomplete results do not prove a conversation is absent.\n",
@@ -179,7 +188,10 @@ pub(crate) async fn call(context: &ControlContext, name: &str, mut arguments: Va
     }
     .await;
     match result {
-        Ok(value) => {
+        Ok(mut value) => {
+            let metadata = value
+                .as_object_mut()
+                .and_then(|object| object.remove("_meta"));
             let failed = value.get("success") == Some(&Value::Bool(false))
                 || value.get("accepted") == Some(&Value::Bool(false))
                 || value
@@ -188,7 +200,11 @@ pub(crate) async fn call(context: &ControlContext, name: &str, mut arguments: Va
                     .is_some_and(|status| {
                         matches!(status, "pending" | "needs_attention" | "rejected")
                     });
-            json!({"content": [{"type": "text", "text": value.to_string()}], "structuredContent": value, "isError": failed})
+            let mut result = json!({"content": [{"type": "text", "text": value.to_string()}], "structuredContent": value, "isError": failed});
+            if let Some(metadata) = metadata {
+                result["_meta"] = metadata;
+            }
+            result
         }
         Err(error) => {
             json!({"content": [{"type": "text", "text": json!({"code": error.code, "error": error.message}).to_string()}], "isError": true})
@@ -199,11 +215,30 @@ pub(crate) async fn call(context: &ControlContext, name: &str, mut arguments: Va
 pub(crate) fn tools() -> Vec<Value> {
     let mut tools = capabilities();
     tools.extend([
-        json!({"name":"list_capabilities", "description":"Discover Wework application operations and their input schemas.", "inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
+        json!({"name":"list_capabilities", "description":"Discover all Wework operations and their input/output contracts for dynamically generated HTML or direct execution.", "inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
         json!({"name":"describe_capability", "description":"Read the contract of one Wework operation.", "inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}}),
         json!({"name":"invoke_capability", "description":"Invoke a discovered Wework operation using its exact input schema.", "inputSchema":{"type":"object","properties":{"name":{"type":"string"},"arguments":{"type":"object"}},"required":["name","arguments"],"additionalProperties":false}}),
     ]);
+    for tool in &mut tools {
+        let name = tool["name"].as_str().unwrap_or_default().to_owned();
+        if tool.get("outputSchema").is_none() {
+            tool["outputSchema"] = output_schema::discovery(&name);
+        }
+        tool["_meta"] = apps::tool_metadata(&name);
+    }
     tools
+}
+
+#[cfg(test)]
+pub(crate) fn assert_output_contract(name: &str, value: &Value) {
+    let definition = tools()
+        .into_iter()
+        .find(|tool| tool["name"] == name)
+        .unwrap();
+    assert!(
+        catalog::matches_schema(&definition["outputSchema"], value),
+        "{name} returned data outside its outputSchema: {value}"
+    );
 }
 
 #[cfg(test)]
@@ -266,12 +301,24 @@ mod tests {
         );
         let result = call(&context, "list_capabilities", json!({})).await;
         assert_eq!(result["isError"], false);
+        let listed = result["structuredContent"]["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == "list_conversations")
+            .unwrap();
+        assert_eq!(listed["inputSchema"]["required"], json!([]));
+        assert_eq!(listed["annotations"]["readOnlyHint"], true);
         assert_eq!(
-            result["structuredContent"]["capabilities"]
-                .as_array()
-                .unwrap()
-                .len(),
-            30
+            listed["inputSchema"]["properties"]["include_archived"]["type"],
+            "boolean"
+        );
+        assert!(
+            validate_arguments("list_conversations", &json!({"include_archived":true})).is_ok()
+        );
+        assert_eq!(
+            result["structuredContent"]["capabilities"],
+            json!(capabilities())
         );
     }
 }

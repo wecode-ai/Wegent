@@ -218,6 +218,20 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(json!({"success": true, "skipped": true}));
         }
+        if let Err(error) = self.sync_generated_issue_title(&latest_link, &title).await {
+            log_executor_event(
+                "generated Issue title update failed",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("error", error.message),
+                ],
+            );
+        }
+        let latest_link =
+            self.commit_runtime_task_title(latest_link, title.clone(), Some(&source_title))?;
+        if latest_link.title != title {
+            return Ok(json!({"success": true, "skipped": true}));
+        }
         if let Some(thread_id) = latest_link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -234,10 +248,11 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.clone()),
                     ],
                 );
-                return Ok(json!({"success": false, "error": error}));
+                return Ok(
+                    json!({"success": false, "error": error, "titleApplied":true, "title":title}),
+                );
             }
         }
-        self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
             "friendly task title generation completed",
             &[("local_task_id", local_task_id)],
@@ -247,12 +262,28 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn commit_runtime_task_title(
         &self,
-        mut link: RuntimeTaskLink,
+        link: RuntimeTaskLink,
         title: String,
-    ) -> RuntimeTaskLink {
-        link.title = title.clone();
-        link.updated_at = now_ms();
-        self.upsert_local_task(link.clone());
+        expected_title: Option<&str>,
+    ) -> Result<RuntimeTaskLink, AppIpcError> {
+        let mut applied = false;
+        let link = self
+            .store
+            .update_task(&link.local_task_id, |current| {
+                if expected_title.is_some_and(|expected| current.title != expected) {
+                    return;
+                }
+                current.title = title.clone();
+                current.updated_at = now_ms();
+                applied = true;
+            })
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was removed before its title update")
+            })?;
+        if !applied {
+            return Ok(link);
+        }
+        self.project_runtime_link_status(&link);
         let request = runtime_event_request_from_link(&link);
         emit_response_event(
             &self.event_tx,
@@ -262,7 +293,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             json!({"title": title}),
         );
-        link
+        Ok(link)
     }
 
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1164,7 +1195,17 @@ impl RuntimeWorkRpcHandler {
             })
         }) && self.is_active_local_task(&local_task_id)
             && !self.is_queued_local_task(&local_task_id);
-        if was_busy && !queue_if_busy && !completed_native_turn {
+        let replacing_quota_wait = self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .iter()
+            .any(|turn| {
+                turn.local_task_id == local_task_id
+                    && turn.request.extra.contains_key(quota_recovery::MARKER)
+            });
+        if was_busy && !queue_if_busy && !completed_native_turn && !replacing_quota_wait {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -2163,6 +2204,13 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
     ) -> Result<String, String> {
         let mut request = runtime_event_request_from_link(link);
+        // Execution identities are intentionally omitted from the persisted profile.
+        // Rebind the authoritative owner before rebuilding managed MCP services.
+        crate::runtime_work::api_context::bind_task_identity(
+            &mut request,
+            &self.device_id,
+            &link.local_task_id,
+        );
         self.apply_backend_connection(&mut request);
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
@@ -2323,7 +2371,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_worktree_turn(&local_task_id) {
+        if self.cancel_preparing_turn(&local_task_id) {
+            self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -2334,9 +2383,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if had_active_local_execution {
-            self.request_active_turn_stop(&local_task_id);
-        }
+        let had_active_local_execution =
+            self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
         if is_codex && !had_active_local_execution {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
@@ -2444,7 +2492,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
-        self.reserve_worktree_preparation(&queued_turn);
+        self.reserve_turn_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
@@ -2454,6 +2502,10 @@ impl RuntimeWorkRpcHandler {
             .request
             .extra
             .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+            || queued_turn
+                .request
+                .extra
+                .contains_key(quota_recovery::MARKER)
         {
             self.start_queued_turn(queued_turn);
         } else if queued_turn

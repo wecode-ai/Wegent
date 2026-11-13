@@ -38,6 +38,7 @@ import {
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
+import { readMcpToolOutput } from './mcp-tool-results.mjs'
 
 import {
   assistantMessage,
@@ -1261,7 +1262,12 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const { expectClientReplacement = false, exitProcessId, ...commandOptions } = options
+    const {
+      expectClientReplacement = false,
+      exitProcessId,
+      preserveResultAcrossClientReplacement = false,
+      ...commandOptions
+    } = options
     assert.ok(
       !expectClientReplacement || action === 'click',
       'Only clicks may expect client replacement'
@@ -1307,6 +1313,8 @@ class DesktopE2EServer {
         resolveDelivery,
         started: false,
         expectClientReplacement,
+        preserveResultAcrossClientReplacement,
+        windowLabel: this.controlWindowsByClient.get(clientId),
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -2107,6 +2115,10 @@ class DesktopE2EServer {
         })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
+          if (pending.preserveResultAcrossClientReplacement && pending.started) {
+            pending.clientReplacedAt = new Date().toISOString()
+            continue
+          }
           this.commandResults.delete(id)
           // A started refresh click may replace its renderer before reporting its result.
           if (pending.expectClientReplacement && pending.started) pending.resolve('')
@@ -2208,10 +2220,16 @@ class DesktopE2EServer {
         return true
       }
       const resultWindowLabel = this.controlWindowsByClient.get(result.clientId)
+      const acceptsRetiredClientResult =
+        pending.preserveResultAcrossClientReplacement &&
+        pending.started &&
+        result.clientId === pending.clientId &&
+        !resultWindowLabel
       if (
         result.clientId !== pending.clientId ||
-        !resultWindowLabel ||
-        this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId
+        (!acceptsRetiredClientResult &&
+          (!resultWindowLabel ||
+            this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId))
       ) {
         json(response, 409, {
           error: `Command ${result.id} belongs to a different desktop control client`,
@@ -2227,8 +2245,10 @@ class DesktopE2EServer {
       // Observations may check readiness during an input cooldown, but must
       // neither extend nor shorten the interval between state-changing actions.
       if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        const cooldownClientId =
+          this.controlClientsByWindow.get(pending.windowLabel) ?? result.clientId
         this.controlCommandAvailableAt.set(
-          result.clientId,
+          cooldownClientId,
           Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
         )
       }
@@ -4217,9 +4237,10 @@ class DesktopE2EServer {
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
       const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
-      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
-      const round = Math.ceil(requestNumber / 3)
-      const stage = ((requestNumber - 1) % 3) + 1
+      assert.ok(requestNumber <= 13, `Unexpected MCP elicitation request ${requestNumber}`)
+      const toolRequestNumber = Math.min(requestNumber, 12)
+      const round = Math.ceil(toolRequestNumber / 3)
+      const stage = ((toolRequestNumber - 1) % 3) + 1
       const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
       const requestText = JSON.stringify(body)
       const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
@@ -4254,17 +4275,26 @@ class DesktopE2EServer {
         return
       }
 
+      const outputId = requestNumber === 13 ? `${callId}-wait` : callId
+      const output = readMcpToolOutput(body, outputId)
+      const cell = output.match(/Script running with cell ID (\S+)/)?.[1]
+      if (requestNumber === 12 && cell) {
+        // The native execution can yield before the form's real deadline.
+        const wait = selectTool(body, 'wait', { cell_id: cell, yield_time_ms: 30_000 })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(`${callId}-wait`, wait),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       assert.ok(
-        requestContainsToolOutput(body, callId),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(
+        output.includes(
           timeoutScenario
             ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
             : MCP_ELICITATION_ACCEPTED_MARKER
         ),
-        'The MCP server did not return the expected answer or timeout cancellation to the model'
+        `The MCP tool returned an unexpected result for ${timeoutScenario ?? 'acceptance'}: ${output}`
       )
       this.writeSse(response, [
         responseCreated(responseId),

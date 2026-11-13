@@ -17,6 +17,7 @@ import {
 } from 'react'
 import type { CollaborationIssueBadge } from '@wegent/collaboration'
 import type { CloudLoopItem } from '@/api/deliveries'
+import { isRuntimeChatStreamDebugEnabled } from '@/api/runtime/runtimeChatStream'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
@@ -506,5 +507,32 @@ function useRuntimeTaskProjection(
   )
   const turns = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  return useMemo(() => runtimeTaskProgress(turns, active), [active, turns])
+  const projection = useMemo(() => runtimeTaskProgress(turns, active), [active, turns])
+  useEffect(() => {
+    if (!address || !isRuntimeChatStreamDebugEnabled()) return
+    console.debug('[Wework project board] runtime progress projection', {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      active,
+      turns: turns.map(turn => ({
+        id: turn.id,
+        status: turn.status,
+        items: turn.items.length,
+        itemOrder: turn.items.map(item => ({
+          id: item.id,
+          type: item.type,
+          ...(item.type === 'block'
+            ? {
+                blockType: item.block.type,
+                blockStatus: item.block.status,
+                contentLength: 'content' in item.block ? item.block.content?.length : undefined,
+              }
+            : {}),
+        })),
+      })),
+      activityActive: projection.activity.active,
+      processTextLength: projection.activity.processText.length,
+    })
+  }, [address, active, projection, turns])
+  return projection
 }

@@ -15,6 +15,7 @@ import {
 } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  revealCollaborationSidebarElement,
   reloadMainWindow,
   selectCollaborationDomain,
   configureFirstProjectExecutionEnvironment,
@@ -176,13 +177,10 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
         await selectCollaborationDomain(control, CONTENT, 'cloud')
-        const toggle = `${CONTENT} [data-testid="collaboration-workspace-toggle-${workspace.id}"]`
-        await control.command('waitFor', toggle)
-        if (
-          (await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true'
-        ) {
-          await control.command('click', toggle)
-        }
+        await revealCollaborationSidebarElement(
+          control,
+          `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
+        )
         await control.command(
           'click',
           `${CONTENT} [data-testid="collaboration-workspace-project-${project.id}"]`
@@ -384,7 +382,7 @@ export function createDesktopScenario({
           { text: '处理完毕' }
         )
         assert.equal(await control.command('getElementCount', processing), '1')
-        await control.command('waitFor', processing, { text: '分身处理' })
+        await control.command('waitFor', processing, { text: '助理处理' })
         assert.ok(
           (await control.command('getText', processing)).includes('云端设备自动接手'),
           'Completed stand-in notification must preserve its assignment title'
