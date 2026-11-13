@@ -15,7 +15,8 @@ export function registerModelConfigurationCapabilities(
   secrets: SecureValueStore,
   events: DesktopHostEventBroker,
   configuration?: ModelConfigurationStore,
-  syncRuntime?: () => Promise<void>
+  syncRuntime?: () => Promise<void>,
+  requestRuntime?: (input: Record<string, unknown>) => Promise<unknown>
 ): void {
   let instance: ModelConfigurationStore | null = configuration ?? null
   /** Lazily share one serialized model configuration service across host capability requests. */
@@ -25,6 +26,10 @@ export function registerModelConfigurationCapabilities(
       secrets,
       join(app.getPath('userData'), 'model-connections')
     ))
+  router.register('modelConfiguration.requestRuntime', params => {
+    if (!requestRuntime) throw new Error('Native model execution is unavailable')
+    return requestRuntime(params)
+  })
   router.register('modelConfiguration.read', async () => {
     const result = await store().read()
     await syncRuntime?.()

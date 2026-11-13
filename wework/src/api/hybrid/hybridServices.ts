@@ -3,6 +3,8 @@ import {
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { hasNativeModelReference } from '../../../electron/src/host/model-interface-runtime'
 import {
   assertLocalRuntimeSidebarIdentity,
   qualifyLocalRuntimeWork,
@@ -361,11 +363,39 @@ function projectCloudRuntimeEventDeviceId(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
-  const cloudRuntimeIpc = createCloudRuntimeIpcClient({
+  const cloudRuntimeTransport = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
     token: options.token,
   })
+  const cloudRuntimeIpc = {
+    ...cloudRuntimeTransport,
+    request: <T>(
+      method: string,
+      params?: Record<string, unknown>,
+      deviceId?: string,
+      timeoutMs?: number
+    ): Promise<T> =>
+      hasNativeModelReference(params)
+        ? invokeDesktopHost<T>('modelConfiguration.requestRuntime', {
+            method,
+            params,
+            deviceId,
+            timeoutMs,
+            expectedUserId: options.user.id,
+            target: {
+              apiBaseUrl: options.apiBaseUrl,
+              socketBaseUrl: options.socketBaseUrl,
+              socketPath: options.socketPath,
+            },
+          })
+        : cloudRuntimeTransport.request<T>(
+            method,
+            params,
+            deviceId,
+            ...(timeoutMs === undefined ? [] : [timeoutMs])
+          ),
+  }
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,

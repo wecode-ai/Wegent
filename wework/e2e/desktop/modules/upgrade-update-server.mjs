@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs'
 import { createServer } from 'node:http'
 import { unavailableUpdatePolicy } from './app-update-retry.mjs'
+import { createIntervalUpgradeProbe } from './interval-upgrade-policy.mjs'
 
 /** Serve immutable package bytes through the real update protocol. */
 export async function createUpgradeUpdateServer({ pair, channel, currentOffer }) {
@@ -14,6 +15,7 @@ export async function createUpgradeUpdateServer({ pair, channel, currentOffer })
     channel,
   })
   const requests = []
+  const intervalProbe = createIntervalUpgradeProbe(pair, () => origin, requests)
   // Observe asynchronous acceptance before releasing real package bytes. A fixed
   // six-second server delay charged every checkpoint without establishing state.
   let releaseHostDownload
@@ -29,6 +31,7 @@ export async function createUpgradeUpdateServer({ pair, channel, currentOffer })
       range: request.headers.range ?? null,
     })
     if (url.pathname.startsWith('/components-')) {
+      if (intervalProbe.handleManifest(response)) return
       if (offer === 'refresh-failed') {
         response.writeHead(503)
         response.end()
@@ -107,5 +110,5 @@ export async function createUpgradeUpdateServer({ pair, channel, currentOffer })
     server.listen(0, '127.0.0.1', accept)
   })
   origin = `http://127.0.0.1:${server.address().port}`
-  return { server, origin, requests, releaseHostDownload, unavailablePolicy }
+  return { server, origin, requests, releaseHostDownload, unavailablePolicy, intervalProbe }
 }

@@ -41,6 +41,28 @@ afterEach(() => {
 
 describe('external link helpers', () => {
   test.each([
+    'wework-conversation://%7B%22deviceId%22%3A%22device%22%2C%22taskId%22%3A%22task%22%7D',
+    'wework-issue://project/issue',
+  ])(
+    'keeps validated internal reference handlers reachable without browser navigation: %s',
+    href => {
+      const cleanup = installExternalLinkHandler()
+      const anchor = document.createElement('a')
+      anchor.href = href
+      document.body.append(anchor)
+      const handler = vi.fn()
+      anchor.addEventListener('click', handler)
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      anchor.dispatchEvent(event)
+      expect(handler).toHaveBeenCalledOnce()
+      expect(event.defaultPrevented).toBe(true)
+      expect(desktopHostMock).not.toHaveBeenCalled()
+      expect(openWindowMock).not.toHaveBeenCalled()
+      cleanup()
+    }
+  )
+
+  test.each([
     'javascript:alert(1)',
     'JaVaScRiPt:alert(1)',
     'java\nscript:alert(1)',

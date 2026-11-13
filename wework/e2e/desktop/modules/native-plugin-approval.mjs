@@ -3,7 +3,12 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
-const TITLE = 'Confirm Core plugin installation'
+const TITLES = [
+  'Confirm Core plugin installation',
+  'Confirm Core plugin update',
+  'Core 插件安装确认',
+  'Core 插件更新确认',
+]
 
 /** Act as the test user on the real OS dialog; never replace the native decision. */
 export async function withNativePluginDecision(control, operation, { allow = true } = {}) {
@@ -74,7 +79,7 @@ $deadline = [DateTime]::UtcNow.AddSeconds(10)
 while ([DateTime]::UtcNow -lt $deadline) {
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
   foreach ($window in $windows) {
-    if ($window.Current.Name -notin @('${TITLE}', 'Core 插件安装确认')) { continue }
+    if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($button in $buttons) {
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
@@ -105,12 +110,13 @@ throw 'The isolated app did not display its native Core plugin decision'
     'xdotool',
     [
       'search',
+      '--all',
       '--sync',
       '--onlyvisible',
       '--pid',
       String(pid),
       '--name',
-      `^(${TITLE}|Core 插件安装确认)$`,
+      `^(${TITLES.join('|')})$`,
     ],
     options
   )

@@ -8,6 +8,7 @@ import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
+import { readInspectorEndpoint } from './inspect-before-start.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -1514,18 +1515,12 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    if (desktopScenario?.requiresNativeCloudAuthorization) {
-      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
-      nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
-        electronUserDataDirectory,
-        appBinary
-      )
-      await nativeCloudLogin.authorize()
-    }
     await desktopScenario?.prepareUserDataLaunch?.()
+    const usesNativeCloudInspector =
+      cloudEnvironment && (!desktopScenario || desktopScenario.requiresNativeCloudAuthorization)
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
+        ...(usesNativeCloudInspector ? ['--inspect=127.0.0.1:0'] : []),
         ...(process.platform === 'win32'
           ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
           : []),
@@ -1544,6 +1539,8 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
+      nativeInspector?.catch(() => undefined)
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       // Observe early failure now; the await below still propagates it after log setup.
       scenarioStartup?.catch(() => undefined)
@@ -1585,6 +1582,9 @@ async function main() {
       }
       try {
         await scenarioStartup
+        if (nativeInspector) {
+          control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
+        }
       } catch (error) {
         await stopDesktopAppProcess(child)
         throw error
@@ -1689,6 +1689,15 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
+    if (desktopScenario?.requiresNativeCloudAuthorization) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        control
+      )
+      await nativeCloudLogin.authorize()
+    }
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
       await verifyInitialTelemetryConsent(control, [
         workspacePath,

@@ -135,7 +135,7 @@ export async function createDesktopScenario(options) {
   const continuity = createUpgradeConversationContinuity(() => control, workbenchReadyTimeoutMs)
   const goalContinuity = createUpgradeGoalContinuity(pair, () => control, workbenchReadyTimeoutMs)
   const auxiliaryHistory = createUpgradeAuxiliaryHistory(pair, () => control, options)
-  const { server, origin, requests, releaseHostDownload, unavailablePolicy } =
+  const { server, origin, requests, releaseHostDownload, unavailablePolicy, intervalProbe } =
     await createUpgradeUpdateServer({
       pair,
       channel,
@@ -692,6 +692,10 @@ export async function createDesktopScenario(options) {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })
         await about()
+        if (checkpoint === 'app-rollback') {
+          await routeRunningUpgradeRequests(inspectorPorts, control, origin)
+          await intervalProbe.verify(control, resultDir)
+        }
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
         const beforeRollback = control.readyCount

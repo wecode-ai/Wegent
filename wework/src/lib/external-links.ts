@@ -6,6 +6,8 @@ import { requestEmbeddedBrowserOpen } from './embedded-browser'
 import { browserDiagnosticOrigin } from './browser-url'
 import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferences'
 import { openWeworkScheme } from '@/features/notifications/schemeEvents'
+import { parseConversationMentionHref } from './conversation-mentions'
+import { parseIssueMentionHref } from './issue-mentions'
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
@@ -146,6 +148,11 @@ export function installExternalLinkHandler() {
     const anchor = findClickedAnchor(event)
     if (!anchor) return
     const href = anchorHref(anchor)
+    if (parseConversationMentionHref(href) || parseIssueMentionHref(href)) {
+      // Internal references navigate through their owning React handler, never the browser.
+      event.preventDefault()
+      return
+    }
     if (
       !isHttpUrl(resolvedAnchorHref(anchor)) &&
       !href.startsWith('#') &&

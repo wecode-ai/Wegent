@@ -155,3 +155,41 @@ export function modelInterfaceRunnerModels(entries: ResolvedProviderModel[]) {
     ]
   })
 }
+
+/** A reference identifies configuration; it never carries authority to change its endpoint. */
+export function hasNativeModelReference(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  if (Array.isArray(value)) return value.some(hasNativeModelReference)
+  const record = value as Record<string, unknown>
+  return (
+    record.wework_model_kind === 'model-interface' ||
+    Object.values(record).some(hasNativeModelReference)
+  )
+}
+
+/** The harness and task paths use the same native provider projection. */
+export function modelHarnessUpstream(config: Record<string, unknown>): Record<string, unknown> {
+  const headers = config.default_headers as Record<string, unknown> | undefined
+  return {
+    ...(config.wework_model_kind === 'model-interface'
+      ? {
+          wework_model_kind: config.wework_model_kind,
+          wework_local_model_id: config.wework_local_model_id,
+          model_provider: config.model_provider,
+        }
+      : {}),
+    base_url: config.base_url,
+    request_url: config.responses_url,
+    api_format: config.upstream_api_format,
+    convert_custom_tools: config.tool_profile !== 'custom',
+    native_tool_search: config.native_tool_search === true,
+    native_namespace_tools: config.native_namespace_tools === true,
+    codex_request_mode: config.codex_request_mode ?? 'auto',
+    api_key: config.api_key,
+    default_headers: Object.entries(headers ?? {}).filter(([, value]) => typeof value === 'string'),
+    proxy_url: (config.proxy as { url?: string } | undefined)?.url ?? null,
+    model_id: config.model_id,
+    routing_model_id: null,
+    max_output_tokens: config.max_output_tokens ?? null,
+  }
+}

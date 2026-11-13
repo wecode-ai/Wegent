@@ -10,6 +10,9 @@ import {
 import { resolveLocalCodexProxyUrl } from './systemProxy'
 import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { flushDesktopLocalStoragePersistence } from './localStoragePersistence'
+import { hasNativeModelReference } from '../../electron/src/host/model-interface-runtime'
 
 export type UnlistenFn = () => void
 
@@ -730,10 +733,16 @@ export function requestLocalExecutor<T = unknown>(
       failure.resolve()
       return Promise.reject(new Error(failure.message))
     }
-    const send = (query: Record<string, unknown>) =>
-      requestOptions
+    const send = async (query: Record<string, unknown>) => {
+      if (hasNativeModelReference(query)) {
+        await flushDesktopLocalStoragePersistence()
+        requestOptions?.signal?.throwIfAborted()
+        return invokeDesktopHost<T>('modelConfiguration.requestRuntime', { method, params: query })
+      }
+      return requestOptions
         ? requestDshExecutor<T>(method, query, requestOptions)
         : requestDshExecutor<T>(method, query)
+    }
     const request =
       method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
         ? readRuntimeTranscript<T>(params, send)

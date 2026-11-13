@@ -210,7 +210,7 @@ async function verifyCoreDshPluginManagement({
     value: pluginRoot,
   })
   await withNativePluginDecision(control, () =>
-    control.command('click', '[data-testid="core-dsh-plugin-install-button"]')
+    control.command('clickWhenEnabled', '[data-testid="core-dsh-plugin-install-button"]')
   )
   await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

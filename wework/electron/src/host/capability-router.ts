@@ -134,6 +134,7 @@ export const HOST_CAPABILITIES = [
   'notification.acknowledgeReply',
   'modelConfiguration.read',
   'modelConfiguration.runtime',
+  'modelConfiguration.requestRuntime',
   'modelConfiguration.test',
   'modelConfiguration.save',
   'modelConfiguration.choose',

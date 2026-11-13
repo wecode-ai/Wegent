@@ -1,4 +1,11 @@
 import { ModelConfigurationStore } from './host/model-configuration-store.js'
+import { ModelRuntimeRequest } from './host/model-runtime-request.js'
+import { CloudModelRuntime } from './host/cloud-model-runtime.js'
+import {
+  LOCAL_PROXY_SETTINGS_STORAGE_KEY,
+  storedLocalProxyConfig,
+  normalizeLocalProxyUrl,
+} from './shared/local-proxy-config.js'
 import { confirmCoreDshPluginInstall } from './host/core-dsh-plugin-approval.js'
 import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import {
@@ -377,6 +384,7 @@ await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch
 const workspaceWindows = new Map<string, BrowserWindow>()
 const mcpAppCleanups = new Set<() => Promise<void>>()
 let mcpAppRuntime: McpAppRuntime | null = null
+let cloudModelRuntime: CloudModelRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
 let nativeDialogLanguage: string | undefined
@@ -2248,6 +2256,8 @@ async function shutdown(): Promise<void> {
     mcpAppCleanups.clear()
     mcpAppRuntime?.dispose()
     mcpAppRuntime = null
+    cloudModelRuntime?.dispose()
+    cloudModelRuntime = null
   })
   systemResume.stop()
   systemSleep.stop()
@@ -2404,6 +2414,29 @@ async function configureDesktopRuntime(): Promise<void> {
     join(protectedCredentialDirectory(app.getPath('userData')), 'model-connections'),
     secureStorage,
     join(app.getPath('userData'), 'model-connections')
+  )
+  cloudModelRuntime = new CloudModelRuntime(
+    () => readCloudConnection(rendererStorage!),
+    async (apiBaseUrl, expectedUserId) =>
+      (await requiredCloudCredentials().refreshAccessToken(apiBaseUrl, expectedUserId)).accessToken
+  )
+  const modelRuntimeRequest = new ModelRuntimeRequest(
+    modelConfiguration,
+    {
+      request: (method, params) => {
+        if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+        return desktopRuntime.requestExecutor(method, params)
+      },
+      dispose: () => {},
+    },
+    input => cloudModelRuntime!.transport(input),
+    async targetUrl => {
+      const raw = (await rendererStorage!.read())[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
+      const config = storedLocalProxyConfig(raw ? JSON.parse(raw) : {})
+      if (config.mode === 'custom') return normalizeLocalProxyUrl(config.proxyUrl) || null
+      if (config.mode === 'direct') return null
+      return resolveSystemProxy(session.defaultSession, targetUrl)
+    }
   )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),
@@ -2634,6 +2667,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           modelConfiguration,
+          requestModelRuntime: input => modelRuntimeRequest.request(input),
           syncLocalModels: () => desktopRuntime!.syncLocalModels(),
           secureStorage,
           takePendingWorkspaceOpenRequests,

@@ -1143,6 +1143,9 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         scope: expect.stringMatching(/^harness:opencode:/),
         upstream: {
+          wework_model_kind: 'model-interface',
+          wework_local_model_id: 'local-model:harness-model',
+          model_provider: 'local-harness-model',
           base_url: 'https://models.example.com/v1',
           request_url: 'https://models.example.com/v1/chat/completions',
           api_format: 'openai-chat-completions',
