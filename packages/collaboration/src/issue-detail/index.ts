@@ -55,3 +55,9 @@ export * from "./IssueTaskConversationPanel";
 export { issueTaskSummaryForMessage } from "./issueTaskSummary";
 
 export { issueCommentBody } from "./useIssueCommentAttachments";
+
+export { IssueCommentChildAction } from "./IssueCommentChildAction";
+export type {
+  CommentChildInput,
+  CommentSubmissionOptions,
+} from "./useCommentAssignment";

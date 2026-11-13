@@ -80,4 +80,71 @@ export async function verifyCommentAssignment(control, { request, project, owner
     `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
   )
   assert.equal(after.length, comments.length)
+
+  // Story: sending a child assignment retains the original discussion and never reassigns the parent.
+  const childBody = '把这条不含提及的评论分派成子事项'
+  await control.command('select', `${form} [data-testid="task-comment-form-assignment-mode"]`, {
+    value: 'child',
+  })
+  await control.command('fill', editor, { value: childBody })
+  await control.command('click', selector)
+  await control.command('click', `[data-testid="task-comment-form-assignee-option-${member.id}"]`)
+  await control.command('clickWhenEnabled', send)
+  await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
+    text: childBody,
+  })
+  await control.command('waitFor', `${selector}[data-value=""]`)
+  const children = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
+  const createdChild = children.items.find(
+    item => item.parent_id === issue.id && item.title === childBody
+  )
+  assert.ok(createdChild, 'The comment must create a real child Issue')
+  assert.equal(String(createdChild.assignee_user_id), String(member.id))
+  assert.equal(
+    String((await request(`/api/v1/loop-items/${issue.id}`)).assignee_user_id),
+    String(owner.id),
+    'Child assignment must not reassign its parent'
+  )
+  const parentComments = await request(
+    `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
+  )
+  assert.equal(
+    parentComments.filter(comment => comment.body.includes(childBody)).length,
+    1,
+    'The original parent comment must be saved exactly once'
+  )
+
+  // Story: an existing visible comment without @mentions can also seed a child and records a source reply.
+  const original = parentComments.find(comment => comment.body.includes(childBody))
+  await control.command(
+    'click',
+    scoped(`[data-testid="issue-comment-create-child-${original.id}"]`)
+  )
+  await control.command('click', `[data-testid="issue-comment-child-assignee-${original.id}"]`)
+  await control.command(
+    'click',
+    `[data-testid="issue-comment-child-assignee-${original.id}-option-${owner.id}"]`
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="issue-comment-child-confirm-${original.id}"]`
+  )
+  await control.command('waitFor', `[data-testid="issue-comment-child-form-${original.id}"]`, {
+    visible: false,
+  })
+  const laterChildren = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
+  const copied = laterChildren.items.find(
+    item => item.parent_id === issue.id && item.title === childBody && item.id !== createdChild.id
+  )
+  assert.ok(copied)
+  assert.equal(String(copied.assignee_user_id), String(owner.id))
+  const childComments = await request(
+    `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
+  )
+  assert.ok(
+    childComments.some(comment =>
+      comment.body.includes(`wework-issue://${project.id}/${copied.id}`)
+    ),
+    'Creating from an existing comment must leave a linked discussion record'
+  )
 }

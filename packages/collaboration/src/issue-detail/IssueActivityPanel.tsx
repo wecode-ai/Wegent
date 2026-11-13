@@ -1,3 +1,4 @@
+import { IssueCommentChildAction } from './IssueCommentChildAction'
 import { BrowserIssueExecution } from './BrowserIssueExecution'
 import { BrowserIssueActivityTools } from './BrowserIssueActivityTools'
 import { useIssueActivityScroll } from './useIssueActivityScroll'
@@ -256,6 +257,23 @@ export function IssueActivityPanel({
                     key={`thread:${entry.thread.root.messageId}`}
                     thread={entry.thread}
                     canComment={canComment}
+                    childAssignment={commentAssignment}
+                    onChildComment={
+                      api.activity
+                        ? async (text, requestId, sourceMessageId) => {
+                            const message = await api.activity!.send({
+                              projectId: issue.cloud_project_id,
+                              taskId: issue.id,
+                              clientMessageId: requestId,
+                              text,
+                              replyToMessageId: sourceMessageId,
+                              model: null,
+                              mentions: [],
+                            })
+                            chat.merge([message])
+                          }
+                        : undefined
+                    }
                     send={chat.send}
                     members={members}
                     agents={agents}
@@ -386,6 +404,18 @@ export function IssueActivityPanel({
                       </IssueActivityContent>
                     )}
                   </IssueActivityMessage>
+                  {entry.kind === 'comment' && canComment && commentAssignment?.createChild ? (
+                    <IssueCommentChildAction
+                      body={entry.comment.body}
+                      messageId={entry.comment.id}
+                      assignment={commentAssignment}
+                      translate={translate}
+                      onComment={async text => {
+                        await api.comments.create(issue.id, text)
+                        onCommentsChange(await api.comments.list(issue.id))
+                      }}
+                    />
+                  ) : null}
                 </IssueActivityCard>
               )
             })}

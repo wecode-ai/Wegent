@@ -1,5 +1,7 @@
-import { isImeComposingEvent } from '@wegent/chat-core/ime'
-import { useRef, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Folder } from 'lucide-react'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import type { CloudProject } from '@/api/deliveries'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -8,12 +10,20 @@ import {
   type IndependentIssueInput,
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
+import { IssueParticipantPicker } from './IssueParticipantPicker'
+import { participantKey, resourceInvitations, type IssueParticipant } from './issueParticipants'
 
+export interface IssueCreationInput extends IndependentIssueInput {
+  project_id?: string
+  project_status?: string
+}
 const control =
-  'min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 text-base text-text-primary md:min-h-8'
+  'min-h-11 w-full rounded-md border border-border bg-background px-2 py-1 text-base text-text-primary md:min-h-8'
 
 export function IndependentIssueEditor({
   api,
+  collaborationApi,
+  allowProjectSelection,
   issue,
   userId,
   busy,
@@ -21,13 +31,16 @@ export function IndependentIssueEditor({
   onCancel,
 }: {
   api: PersonalIssuesApi
+  collaborationApi?: SharedWorkspaceApi
+  allowProjectSelection?: boolean
   issue: IndependentIssue | null
   userId: number
   busy: boolean
-  onSave(input: IndependentIssueInput): Promise<void>
+  onSave(input: IssueCreationInput): Promise<void>
   onCancel(): void
 }) {
   const { t } = useTranslation('common')
+  const canSelectProject = allowProjectSelection ?? !issue
   const [draft, setDraft] = useState<IndependentIssueInput>(() =>
     issue
       ? independentIssueInput(issue)
@@ -38,113 +51,242 @@ export function IndependentIssueEditor({
           priority: 'medium',
           assignee_id: userId,
           participants: [],
+          resource_participants: [],
           archived: false,
           due_at: null,
         }
   )
-  const [people, setPeople] = useState<Record<string, string>>(issue?.people ?? {})
-  const [search, setSearch] = useState('')
-  const [results, setResults] = useState<Array<{ id: number; user_name: string }>>([])
-  const [searching, setSearching] = useState(false)
-  const [searchError, setSearchError] = useState('')
-  const searchGeneration = useRef(0)
   const owner = issue?.creator_id ?? userId
-  const mayInvite = owner === userId
-  const name = (id: number) => (id === userId ? t('personalHome.me') : (people[id] ?? `#${id}`))
+  const [people, setPeople] = useState<IssueParticipant[]>(() => [
+    {
+      key: `human:${owner}`,
+      kind: 'human',
+      id: owner,
+      name: owner === userId ? t('personalHome.me') : (issue?.people[owner] ?? `#${owner}`),
+    },
+    ...(issue?.metadata.direct_participants ?? issue?.metadata.participants ?? [])
+      .filter(id => id !== owner)
+      .map(id => ({
+        key: `human:${id}`,
+        kind: 'human' as const,
+        id,
+        name: issue?.people[id] ?? `#${id}`,
+      })),
+    ...(issue?.metadata.resource_participants ?? []).map(resource => ({
+      key: participantKey(resource),
+      kind: resource.kind,
+      id: resource.id,
+      name: resource.name,
+    })),
+  ])
+  const [projectId, setProjectId] = useState('')
+  const [projectStatus, setProjectStatus] = useState('')
+  const [projects, setProjects] = useState<CloudProject[]>([])
+  const [projectError, setProjectError] = useState('')
+  const [revision, setRevision] = useState(0)
+  const [loadingProjects, setLoadingProjects] = useState(canSelectProject)
+  useEffect(() => {
+    if (!canSelectProject) return
+    let active = true
+    void api
+      .projects()
+      .then(
+        page => {
+          if (active) {
+            setProjects(
+              page.items.filter(
+                project =>
+                  ['local', 'backend'].includes(project.task_provider) &&
+                  project.access_role !== 'Viewer'
+              )
+            )
+            setProjectError('')
+          }
+        },
+        error => {
+          if (active) setProjectError(error instanceof Error ? error.message : String(error))
+        }
+      )
+      .finally(() => {
+        if (active) setLoadingProjects(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [api, canSelectProject, revision])
+  const project = projects.find(row => String(row.id) === projectId)
+  const statuses = project?.board_config?.statuses ?? []
   const set = <K extends keyof IndependentIssueInput>(key: K, value: IndependentIssueInput[K]) =>
     setDraft(previous => ({ ...previous, [key]: value }))
-  const findPeople = async () => {
-    const current = ++searchGeneration.current
-    setSearching(true)
-    setSearchError('')
-    try {
-      const page = await api.searchUsers(search.trim())
-      if (current !== searchGeneration.current) return
-      setResults(page.users)
-      setPeople(previous => ({
-        ...previous,
-        ...Object.fromEntries(page.users.map(user => [user.id, user.user_name])),
-      }))
-    } catch (error) {
-      if (current === searchGeneration.current)
-        setSearchError(error instanceof Error ? error.message : String(error))
-    } finally {
-      if (current === searchGeneration.current) setSearching(false)
-    }
+  const changePeople = (next: IssueParticipant[]) => {
+    setPeople(next)
+    setDraft(previous => ({
+      ...previous,
+      participants: next
+        .filter(person => person.kind === 'human' && person.id !== owner)
+        .map(person => person.id),
+      resource_participants: resourceInvitations(next),
+      assignee_id:
+        previous.assignee_id !== owner &&
+        !next.some(person => person.kind === 'human' && person.id === previous.assignee_id)
+          ? null
+          : previous.assignee_id,
+      assignee_resource:
+        previous.assignee_resource &&
+        !next.some(person => person.key === participantKey(previous.assignee_resource!))
+          ? null
+          : previous.assignee_resource,
+    }))
   }
-  const invite = (id: number) =>
-    setDraft(previous => ({
-      ...previous,
-      participants: [...new Set([...previous.participants, id])],
-    }))
-  const remove = (id: number) =>
-    setDraft(previous => ({
-      ...previous,
-      participants: previous.participants.filter(value => value !== id),
-      assignee_id: previous.assignee_id === id ? null : previous.assignee_id,
-    }))
-  const field = (label: string, children: React.ReactNode) => (
-    <label className="grid gap-2 text-sm">
-      <span>{label}</span>
+  const assignee = draft.assignee_resource
+    ? participantKey(draft.assignee_resource)
+    : draft.assignee_id
+      ? `human:${draft.assignee_id}`
+      : ''
+  const field = (label: string, children: ReactNode) => (
+    <label className="grid min-w-0 gap-1 text-sm">
+      <span className="text-text-secondary">{label}</span>
       {children}
     </label>
   )
   return (
     <DialogForm
-      className="grid gap-5"
+      className="flex min-w-0 flex-col gap-5"
       onSubmit={event => {
         event.preventDefault()
-        void onSave(draft)
+        void onSave({
+          ...draft,
+          ...(projectId ? { project_id: projectId, project_status: projectStatus } : {}),
+        })
       }}
     >
       <fieldset disabled={busy} className="grid min-w-0 gap-5">
-        {field(
-          t('independentIssues.title'),
+        {canSelectProject && (
+          <div className="grid gap-1">
+            <label className="flex items-center gap-2 text-sm">
+              <Folder className="h-4 w-4 shrink-0 text-text-muted" />
+              <span className="shrink-0 text-text-secondary">
+                {t('issue_creation.project_label')}
+              </span>
+              <select
+                data-testid="independent-issue-project"
+                aria-label={t('issue_creation.project_label')}
+                className={`${control} flex-1`}
+                disabled={loadingProjects}
+                value={projectId}
+                onChange={event => {
+                  setProjectId(event.target.value)
+                  const target = projects.find(row => String(row.id) === event.target.value)
+                  setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
+                }}
+              >
+                <option value="">{t('issue_creation.independent_option')}</option>
+                {projects.map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="text-sm text-text-muted">
+              {t(
+                projectId
+                  ? 'issue_creation.project_scope_hint'
+                  : 'issue_creation.independent_scope_hint'
+              )}
+            </p>
+            {projectError && (
+              <p role="alert" className="text-sm text-error">
+                {projectError}
+                <button
+                  type="button"
+                  data-testid="issue-project-retry"
+                  className="ml-2 underline"
+                  onClick={() => {
+                    setLoadingProjects(true)
+                    setRevision(v => v + 1)
+                  }}
+                >
+                  {t('independentIssues.retry')}
+                </button>
+              </p>
+            )}
+          </div>
+        )}
+        <label className="grid gap-1">
+          <span className="sr-only">{t('independentIssues.title')}</span>
           <input
             autoFocus
-            data-testid="independent-issue-title"
             required
             maxLength={255}
+            data-testid="independent-issue-title"
+            aria-label={t('independentIssues.title')}
+            placeholder={t('issue_creation.title_placeholder')}
             value={draft.title}
             onChange={event => set('title', event.target.value)}
-            className={control}
+            className="min-h-11 w-full border-0 bg-transparent text-heading-sm font-medium outline-none placeholder:text-text-muted md:min-h-8"
           />
-        )}
-        {field(
-          t('independentIssues.description'),
+        </label>
+        <IssueParticipantPicker
+          api={api}
+          collaborationApi={collaborationApi}
+          userId={userId}
+          selected={people}
+          onChange={changePeople}
+          disabled={busy || owner !== userId}
+        />
+        <label className="grid gap-1">
+          <span className="sr-only">{t('independentIssues.description')}</span>
           <textarea
             data-testid="independent-issue-description"
+            aria-label={t('independentIssues.description')}
+            placeholder={t('issue_creation.description_placeholder')}
             value={draft.description}
             onChange={event => set('description', event.target.value)}
-            rows={4}
-            className={control}
+            rows={6}
+            className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none focus:border-primary"
           />
-        )}
-        <div className="grid gap-4 sm:grid-cols-2">
+        </label>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {field(
             t('independentIssues.status'),
-            <select
-              data-testid="independent-issue-status"
-              value={draft.status}
-              onChange={event => set('status', event.target.value as IndependentIssue['status'])}
-              className={control}
-            >
-              {(['pending', 'in_progress', 'completed'] as const).map(status => (
-                <option key={status} value={status}>
-                  {t(`independentIssues.${status}`)}
-                </option>
-              ))}
-            </select>
+            projectId && statuses.length ? (
+              <select
+                data-testid="independent-issue-project-status"
+                className={control}
+                value={projectStatus}
+                onChange={event => setProjectStatus(event.target.value)}
+              >
+                {statuses.map(status => (
+                  <option key={status.id} value={status.id}>
+                    {status.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                data-testid="independent-issue-status"
+                className={control}
+                value={draft.status}
+                onChange={event => set('status', event.target.value as IndependentIssue['status'])}
+              >
+                {(['pending', 'in_progress', 'completed'] as const).map(status => (
+                  <option key={status} value={status}>
+                    {t(`independentIssues.${status}`)}
+                  </option>
+                ))}
+              </select>
+            )
           )}
           {field(
             t('independentIssues.priority'),
             <select
               data-testid="independent-issue-priority"
+              className={control}
               value={draft.priority}
               onChange={event =>
                 set('priority', event.target.value as IndependentIssue['priority'])
               }
-              className={control}
             >
               {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
                 <option key={priority} value={priority}>
@@ -157,16 +299,22 @@ export function IndependentIssueEditor({
             t('independentIssues.assignee'),
             <select
               data-testid="independent-issue-assignee"
-              value={draft.assignee_id ?? ''}
-              onChange={event =>
-                set('assignee_id', event.target.value ? Number(event.target.value) : null)
-              }
               className={control}
+              value={assignee}
+              onChange={event => {
+                const target = people.find(person => person.key === event.target.value)
+                setDraft(previous => ({
+                  ...previous,
+                  assignee_id: target?.kind === 'human' ? target.id : null,
+                  assignee_resource:
+                    target && target.kind !== 'human' ? { kind: target.kind, id: target.id } : null,
+                }))
+              }}
             >
               <option value="">{t('independentIssues.unassigned')}</option>
-              {[...new Set([owner, ...draft.participants])].map(id => (
-                <option key={id} value={id}>
-                  {name(id)}
+              {people.map(person => (
+                <option key={person.key} value={person.key}>
+                  {person.name}
                 </option>
               ))}
             </select>
@@ -176,111 +324,47 @@ export function IndependentIssueEditor({
             <input
               type="date"
               data-testid="independent-issue-due"
+              className={control}
               value={draft.due_at ?? ''}
               onChange={event => set('due_at', event.target.value || null)}
-              className={control}
             />
           )}
         </div>
-        <section aria-label={t('independentIssues.participants')} className="grid gap-3">
-          <h3 className="text-sm font-medium">{t('independentIssues.participants')}</h3>
-          <p className="text-sm text-text-secondary">{t('independentIssues.privateHint')}</p>
-          <div className="flex flex-wrap gap-2">
-            {draft.participants.map(id => (
-              <span
-                key={id}
-                className="inline-flex items-center gap-2 rounded-md bg-muted px-3 text-sm"
-              >
-                {name(id)}
-                {mayInvite ? (
-                  <button
-                    type="button"
-                    data-testid={`independent-issue-remove-person-${id}`}
-                    aria-label={t('independentIssues.removePerson', { name: name(id) })}
-                    className="min-h-11 min-w-11 md:min-h-8 md:min-w-8"
-                    onClick={() => remove(id)}
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </span>
-            ))}
-          </div>
-          {mayInvite ? (
-            <>
-              <div className="flex gap-2">
-                <input
-                  aria-label={t('independentIssues.searchPeople')}
-                  data-testid="independent-issue-search-people"
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !isImeComposingEvent(event)) {
-                      event.preventDefault()
-                      if (search.trim() && !searching) void findPeople()
-                    }
-                  }}
-                  value={search}
-                  onChange={event => {
-                    searchGeneration.current++
-                    setSearching(false)
-                    setResults([])
-                    setSearch(event.target.value)
-                  }}
-                  className={control}
-                  placeholder={t('independentIssues.searchPeople')}
-                />
-                <button
-                  type="button"
-                  data-testid="independent-issue-search-submit"
-                  disabled={searching || !search.trim()}
-                  onClick={() => void findPeople()}
-                  className="min-h-11 shrink-0 rounded-md border border-border px-3 md:min-h-8"
-                >
-                  {t('independentIssues.search')}
-                </button>
-              </div>
-              {searchError ? (
-                <p role="alert" className="text-sm text-error">
-                  {searchError}
-                </p>
-              ) : null}
-              <div className="grid gap-1">
-                {results
-                  .filter(user => user.id !== owner && !draft.participants.includes(user.id))
-                  .map(user => (
-                    <button
-                      key={user.id}
-                      type="button"
-                      data-testid={`independent-issue-invite-${user.id}`}
-                      onClick={() => invite(user.id)}
-                      className="flex min-h-11 items-center justify-between rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
-                    >
-                      <span>{user.user_name}</span>
-                      <span>{t('independentIssues.invite')}</span>
-                    </button>
-                  ))}
-              </div>
-            </>
-          ) : null}
-        </section>
       </fieldset>
-      <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          data-testid="independent-issue-editor-cancel"
-          onClick={onCancel}
-          className="min-h-11 rounded-md border border-border px-3 md:min-h-8"
-        >
-          {t('independentIssues.cancel')}
-        </button>
-        <button
-          type="submit"
-          disabled={busy || !draft.title.trim()}
-          data-testid="independent-issue-save"
-          className="min-h-11 rounded-md bg-text-primary px-3 text-background disabled:opacity-50 md:min-h-8"
-        >
-          {t(busy ? 'independentIssues.saving' : 'independentIssues.save')}
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+        <span className="text-sm text-text-muted">
+          {project?.name ?? t('issue_creation.independent_short')} ·{' '}
+          {t('issue_creation.participant_count', { count: people.length })}
+        </span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            data-testid="independent-issue-editor-cancel"
+            onClick={onCancel}
+            className="min-h-11 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
+          >
+            {t('independentIssues.cancel')}
+          </button>
+          <button
+            type="submit"
+            disabled={
+              busy ||
+              !draft.title.trim() ||
+              (Boolean(projectId) && statuses.length > 0 && !projectStatus)
+            }
+            data-testid="independent-issue-save"
+            className="min-h-11 rounded-md bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-8"
+          >
+            {t(
+              busy
+                ? 'independentIssues.saving'
+                : issue
+                  ? 'independentIssues.save'
+                  : 'issue_creation.create_issue'
+            )}
+          </button>
+        </div>
       </div>
     </DialogForm>
   )

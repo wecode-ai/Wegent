@@ -1116,6 +1116,25 @@ export function createLocalDeliveryApi(
       invalidateProjectRecords()
       return localProject(record)
     },
+    readProjectMigrationSnapshot(projectId: string) {
+      return request<
+        import('@/features/workbench/workbenchServices').LocalProjectMigrationSnapshot
+      >('projects.migration_snapshot', { project_id: projectId })
+    },
+    async archiveMigratedProject(
+      projectId: string,
+      version: number,
+      fingerprint: string,
+      target: string
+    ) {
+      await request('projects.archive_migrated', {
+        project_id: projectId,
+        version,
+        fingerprint,
+        target,
+      })
+      invalidateProjectRecords()
+    },
     async archiveCloudProject(projectId: CloudProjectId, version: number) {
       await request('projects.archive', {
         project_id: projectId,

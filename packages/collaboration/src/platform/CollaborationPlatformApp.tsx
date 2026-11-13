@@ -1194,7 +1194,7 @@ function RootTeamEditor({
               <p>
                 {error ??
                   (locale === "zh-CN"
-                    ? "正在加载空间成员与智能体…"
+                    ? "正在加载分组成员与智能体…"
                     : "Loading workspace members and agents…")}
               </p>
             </div>
@@ -1704,7 +1704,12 @@ function CollaborationPlatformAppContent({
       host.capabilities.projectNavigation === "projects" &&
       !host.location.workspaceId
     ) {
-      startStandaloneProjectCreation("local", mode);
+      startStandaloneProjectCreation(
+        mode === "blank"
+          ? (host.capabilities.projectLocation ?? "local")
+          : "local",
+        mode,
+      );
       return;
     }
     if (
@@ -1915,7 +1920,7 @@ function CollaborationPlatformAppContent({
           if (workspace?.location !== "local") {
             throw new Error(
               locale === "zh-CN"
-                ? "本地智能体只能在本地空间中使用"
+                ? "本地智能体只能在本地分组中使用"
                 : "Local Agents can only be used in the local space",
             );
           }
@@ -2387,7 +2392,9 @@ function CollaborationPlatformAppContent({
       });
     }
   } else {
-    const workspace = state.workspace;
+    const workspace = state.workspace.is_system_default
+      ? { ...state.workspace, name: messages.defaultProjectWorkspace }
+      : state.workspace;
     const canManageWorkspace =
       workspace.access_role === "Owner" ||
       workspace.access_role === "Maintainer";
@@ -2709,34 +2716,6 @@ function CollaborationPlatformAppContent({
       onCreateProject={openWorkspaceProjectCreator}
       onCreateStandaloneProject={startStandaloneProjectCreation}
       onArchiveProject={setArchiveProject}
-      onNewConversation={(project) => {
-        if (host.openProjectConversation) {
-          host.navigate({
-            platformView: "spaces",
-            collaborationDomain:
-              project.project_store === "local" ? "local" : "cloud",
-            workspaceId: project.workspace_id ?? null,
-            workspaceView: "projects",
-            projectId: project.id,
-            projectView: "board",
-            issueId: null,
-          });
-          host.openProjectConversation(project);
-          return;
-        }
-        const projectId = project.id;
-        setRootIssueProjectId(projectId);
-        host.navigate({
-          platformView: "spaces",
-          collaborationDomain,
-          rootView: "home",
-          workspaceId: null,
-          workspaceView: "home",
-          projectId: null,
-          projectView: "board",
-          issueId: null,
-        });
-      }}
       footer={sidebarFooter}
     />
   );

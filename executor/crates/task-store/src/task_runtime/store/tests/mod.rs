@@ -792,3 +792,5 @@ mod cases_4;
 mod cases_5;
 
 mod cases_6;
+
+mod project_migration;

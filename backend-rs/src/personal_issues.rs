@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 
 use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 
+mod participants;
+use participants::{ResourceInvitation, ResourceParticipant};
+
 const SELECT: &str = "SELECT id,COALESCE(title,'') AS title,description,status,priority,created_by_user_id AS creator_id,NULLIF(assignee_user_id,0) AS assignee_id,version,metadata,CAST(created_at AS CHAR) AS created_at,CAST(updated_at AS CHAR) AS updated_at,(SELECT COALESCE(JSON_OBJECTAGG(CAST(u.id AS CHAR),u.user_name),JSON_OBJECT()) FROM users u WHERE u.id=loop_items.created_by_user_id OR JSON_CONTAINS(loop_items.metadata,CAST(u.id AS JSON),'$.participants')) AS people FROM loop_items";
 const LIVE: &str = "resource_type='task' AND (cloud_project_id IS NULL OR cloud_project_id='') AND JSON_EXTRACT(metadata,'$.standalone')=true AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))";
 
@@ -14,6 +17,9 @@ const LIVE: &str = "resource_type='task' AND (cloud_project_id IS NULL OR cloud_
 struct Metadata {
     standalone: bool,
     participants: Vec<i32>,
+    direct_participants: Option<Vec<i32>>,
+    assignee_resource: Option<ResourceInvitation>,
+    resource_participants: Vec<ResourceParticipant>,
     archived: bool,
     due_at: Option<String>,
     assigned_at: Option<String>,
@@ -29,12 +35,28 @@ struct Issue {
     creator_id: i32,
     assignee_id: Option<i32>,
     version: i64,
-    #[serde(serialize_with = "serialize_json")]
+    #[serde(serialize_with = "serialize_metadata")]
     metadata: Json<Metadata>,
     #[serde(serialize_with = "serialize_json")]
     people: Json<std::collections::HashMap<String, String>>,
     created_at: String,
     updated_at: String,
+}
+
+fn serialize_metadata<S: serde::Serializer>(
+    value: &Json<Metadata>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut public = serde_json::to_value(&value.0).map_err(serde::ser::Error::custom)?;
+    if let Some(resources) = public["resource_participants"].as_array_mut() {
+        for resource in resources {
+            if let Some(resource) = resource.as_object_mut() {
+                resource.remove("instructions");
+                resource.remove("group_snapshot");
+            }
+        }
+    }
+    public.serialize(serializer)
 }
 
 fn serialize_json<T: Serialize, S: serde::Serializer>(
@@ -63,6 +85,9 @@ struct Input {
     assignee_id: Option<i32>,
     #[serde(default)]
     participants: Vec<i32>,
+    #[serde(default)]
+    resource_participants: Vec<ResourceInvitation>,
+    assignee_resource: Option<ResourceInvitation>,
     #[serde(default)]
     archived: bool,
     due_at: Option<String>,
@@ -96,6 +121,10 @@ impl Input {
             )
             || !matches!(self.priority.as_str(), "low" | "medium" | "high" | "urgent")
             || self.participants.iter().any(|id| *id <= 0)
+            || self
+                .resource_participants
+                .iter()
+                .any(|r| r.id <= 0 || !matches!(r.kind.as_str(), "agent" | "group"))
             || self.assignee_id.is_some_and(|id| id <= 0)
             || self
                 .due_at
@@ -103,6 +132,14 @@ impl Input {
                 .is_some_and(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_err())
         {
             return Err(invalid("Invalid Issue fields"));
+        }
+        if self
+            .assignee_resource
+            .as_ref()
+            .is_some_and(|r| !self.resource_participants.contains(r))
+            || (self.assignee_resource.is_some() && self.assignee_id.is_some())
+        {
+            return Err(invalid("Invite the resource before assigning"));
         }
         Ok(())
     }
@@ -113,6 +150,9 @@ impl Input {
         participants.dedup();
         Metadata {
             standalone: true,
+            direct_participants: Some(participants.clone()),
+            resource_participants: Vec::new(),
+            assignee_resource: self.assignee_resource.clone(),
             participants,
             archived: self.archived,
             due_at: self.due_at.clone(),
@@ -254,6 +294,20 @@ async fn create_issue(
             if !valid_people(tx, &body.participants).await? {
                 return Ok(false);
             }
+            let Some(resources) =
+                participants::resolve(tx, user.0.id, &body.resource_participants).await?
+            else {
+                return Ok(false);
+            };
+            metadata.resource_participants = resources;
+            for resource in &metadata.resource_participants {
+                metadata.participants.extend(&resource.human_ids);
+            }
+            metadata.participants.sort_unstable();
+            metadata.participants.dedup();
+            if !valid_people(tx, &metadata.participants).await? {
+                return Ok(false);
+            }
             let required = crate::loop_node_storage::required_columns(tx).await?;
             tx.execute(
                 insert_sql(&required),
@@ -296,10 +350,19 @@ fn admission(row: &Issue, user: i32, body: &Input) -> Admission {
     if body.version != Some(row.version) {
         return Admission::Conflict;
     }
-    let mut previous = row.metadata.0.participants.clone();
+    let mut previous = row
+        .metadata
+        .0
+        .direct_participants
+        .clone()
+        .unwrap_or_else(|| row.metadata.0.participants.clone());
     previous.sort_unstable();
     previous.dedup();
-    if user != row.creator_id && previous != body.metadata().participants {
+    if user != row.creator_id
+        && (previous != body.metadata().participants
+            || participants::references(&row.metadata.0.resource_participants)
+                != body.resource_participants)
+    {
         return Admission::OwnerRequired;
     }
     if !assignee_is_invited(body, row.creator_id) {
@@ -341,6 +404,11 @@ async fn update_issue(
         let added: Vec<_> = body.participants.iter().copied().filter(|id| !row.metadata.0.participants.contains(id)).collect();
         if !valid_people(tx, &added).await? || (body.assignee_id != row.assignee_id && !valid_people(tx, &body.assignee_id.into_iter().collect::<Vec<_>>()).await?) { return Ok(Admission::InvalidPeople); }
         let mut metadata = body.metadata();
+        metadata.resource_participants = if participants::references(&row.metadata.0.resource_participants) == body.resource_participants { row.metadata.0.resource_participants.clone() } else { let Some(resources) = participants::resolve(tx, user.0.id, &body.resource_participants).await? else { return Ok(Admission::InvalidPeople) }; resources };
+        for resource in &metadata.resource_participants { metadata.participants.extend(&resource.human_ids); }
+        metadata.participants.sort_unstable();
+        metadata.participants.dedup();
+        if !valid_people(tx, &metadata.participants).await? { return Ok(Admission::InvalidPeople); }
         metadata.assigned_at = if body.assignee_id == row.assignee_id { row.metadata.0.assigned_at } else { body.assignee_id.map(|_| chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string()) };
         tx.execute("UPDATE loop_items SET title=?,description=?,status=?,priority=?,assignee_user_id=?,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?", (body.title.trim(),body.description.as_str(),body.status.as_str(),body.priority.as_str(),body.assignee_id,Json(metadata),issue_id)).await?;
         Ok(Admission::Allowed)
@@ -524,9 +592,15 @@ async fn associate_project(
         if !statuses.is_empty() && !statuses.iter().any(|(id,_)| id == requested_status) { return Ok(Admission::InvalidTarget); }
         let target_status = if statuses.is_empty() { "" } else { requested_status };
         let sequence = project.next_item_number.unwrap_or(1);
-        let metadata = json!({"security_level":"related","archived_at":if row.metadata.0.archived {Some(chrono::Utc::now().to_rfc3339())} else {None},"independent_issue_origin":{"creator_id":row.creator_id,"participant_ids":row.metadata.0.participants},"due_at":row.metadata.0.due_at});
+        let assignee_team = row.metadata.0.assignee_resource.as_ref().filter(|r| r.kind == "agent").map(|r| r.id);
+        let mut metadata = json!({"security_level":"related","archived_at":if row.metadata.0.archived {Some(chrono::Utc::now().to_rfc3339())} else {None},"independent_issue_origin":{"creator_id":row.creator_id,"participant_ids":row.metadata.0.participants},"due_at":row.metadata.0.due_at,"resource_participants":row.metadata.0.resource_participants,"assignee_resource":row.metadata.0.assignee_resource});
+        if let Some(assigned) = row.metadata.0.assignee_resource.as_ref().filter(|r| r.kind == "group") {
+            let grant: Option<UserId> = tx.fetch_optional("SELECT 1 AS id FROM resource_members g JOIN resource_members p ON p.entity_type='workspace' AND p.entity_id=g.entity_id AND p.status='approved' WHERE g.resource_type='CollaborationGroup' AND g.resource_id=? AND g.entity_type='workspace' AND g.status='approved' AND p.resource_type='CloudProject' AND p.resource_id=? LIMIT 1",(assigned.id,number)).await?;
+            if grant.is_none() { return Ok(Admission::InvalidTarget); }
+            metadata["collaboration_group"] = row.metadata.0.resource_participants.iter().find(|r| r.kind == "group" && r.id == assigned.id).and_then(|r| r.group_snapshot.clone()).unwrap_or(Value::Null);
+        }
         tx.execute("UPDATE loop_items SET next_item_number=? WHERE id=?",(sequence+1,body.project_id.as_str())).await?;
-        tx.execute("UPDATE loop_items SET cloud_project_id=?,sequence_number=?,status=?,due_at=?,metadata=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(body.project_id.as_str(),sequence,target_status,row.metadata.0.due_at.as_ref().map(|date|format!("{date} 00:00:00")),Json(metadata),issue_id)).await?;
+        tx.execute("UPDATE loop_items SET cloud_project_id=?,sequence_number=?,status=?,due_at=?,metadata=?,assignee_team_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(body.project_id.as_str(),sequence,target_status,row.metadata.0.due_at.as_ref().map(|date|format!("{date} 00:00:00")),Json(metadata),assignee_team,issue_id)).await?;
         tx.execute("UPDATE loop_items SET cloud_project_id=? WHERE loop_item_id=? AND resource_type='comment'",(body.project_id.as_str(),issue_id)).await?;
         let required=crate::loop_node_storage::required_columns(tx).await?;
         for person in row.metadata.0.participants {
@@ -544,3 +618,33 @@ async fn associate_project(
 mod mysql_tests;
 #[cfg(test)]
 mod tests;
+
+#[brz_http_server::get("/api/v1/personal-issues/:issue_id/resources/:kind/:resource_id")]
+#[tracing::instrument(skip_all, name = "collaboration.processing_resource")]
+async fn processing_resource(
+    #[inject(state)] state: &AppState,
+    #[auth] user: SessionUser,
+    issue_id: &str,
+    kind: &str,
+    resource_id: &str,
+) -> Result<Value, FastApiError> {
+    let issue = read(&state.mysql, issue_id, user.0.id).await?;
+    let id = resource_id.parse::<i64>().map_err(|_| missing())?;
+    let invitation = ResourceInvitation {
+        kind: kind.into(),
+        id,
+    };
+    if !participants::references(&issue.metadata.0.resource_participants).contains(&invitation) {
+        return Err(missing());
+    }
+    let resources = state
+        .mysql
+        .with_transaction(async |tx| participants::resolve(tx, user.0.id, &[invitation]).await)
+        .await
+        .map_err(internal)?
+        .ok_or_else(missing)?;
+    let resource = resources.first().ok_or_else(missing)?;
+    Ok(
+        json!({"name":resource.name,"team_id":resource.team_id,"instructions":resource.instructions}),
+    )
+}

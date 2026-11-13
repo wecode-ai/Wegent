@@ -5,6 +5,7 @@ import type {
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
+import { X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import type { PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
@@ -21,6 +22,7 @@ export function PersonalHomeIssuePanel({
   renderDetail,
   onCreateTask,
   refreshKey,
+  presentation,
 }: PersonalHomeIssueDetailContext & {
   api: SharedWorkspaceApi
   renderDetail(context: CollaborationIssueDetailRenderContext): ReactNode
@@ -135,13 +137,31 @@ export function PersonalHomeIssuePanel({
       </button>
     </div>
   ) : null
-  if (!current?.detail && error) return error
-  if (!current?.detail)
-    return (
+  if (!current?.detail) {
+    const content = error ?? (
       <p role="status" className="p-5 text-sm text-text-muted">
         {t('personalHome.loading')}
       </p>
     )
+    if (presentation !== 'drawer') return content
+    return (
+      <>
+        <header className="flex items-center justify-between gap-2 border-b border-border p-4">
+          <span className="truncate">{issue.title}</span>
+          <button
+            type="button"
+            data-testid="cloud-todo-detail-close"
+            aria-label={t('independentIssues.close')}
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+        {content}
+      </>
+    )
+  }
   const detail = current.detail
   return (
     <div

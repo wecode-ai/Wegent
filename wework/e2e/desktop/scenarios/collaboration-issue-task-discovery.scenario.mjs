@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import {
   handlePersonalHomeModel,
@@ -315,6 +316,10 @@ export function createDesktopScenario({
     const creates = proxy.requests.filter(
       entry => entry.method === 'POST' && entry.path === createPath
     ).length
+    await revealCollaborationSidebarElement(
+      control,
+      inCollaborationSidebar('[data-testid="collaboration-primary-agents"]')
+    )
     await control.command(
       'click',
       inCollaborationSidebar('[data-testid="collaboration-primary-agents"]')

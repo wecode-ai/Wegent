@@ -247,7 +247,7 @@ test('waits for the saved Issue editor before assigning a persisted Issue', asyn
   assert.ok(saved)
 })
 
-test('waits for directly visible storage groups without clicking a section toggle', async () => {
+test('waits for the unified project tree without clicking a section toggle', async () => {
   const calls = []
   const control = {
     async command(action, selector) {
@@ -257,10 +257,9 @@ test('waits for directly visible storage groups without clicking a section toggl
   await expandCollaborationSpaces(control)
   assert.deepEqual(
     calls.map(call => call.action),
-    ['waitFor', 'waitFor']
+    ['waitFor']
   )
-  assert.ok(calls[0].selector.includes('collaboration-project-group-local'))
-  assert.ok(calls[1].selector.includes('collaboration-project-group-cloud'))
+  assert.ok(calls[0].selector.includes('collaboration-project-tree'))
 })
 
 test('reveals offscreen navigation controls before testing visibility or clicking', async () => {
@@ -277,6 +276,25 @@ test('reveals offscreen navigation controls before testing visibility or clickin
     '[data-testid="collaboration-workspace-home-guest-parent"]'
   )
   assert.ok(visible)
+})
+
+test('expands collapsed collaboration management before revealing a resource destination', async () => {
+  let expanded = false
+  const calls = []
+  const control = {
+    async command(action, selector) {
+      calls.push({ action, selector })
+      if (action === 'getAttribute') return expanded ? 'true' : 'false'
+      if (action === 'click') expanded = true
+      if (selector.includes('collaboration-primary-agents')) assert.ok(expanded)
+    },
+  }
+  await revealCollaborationSidebarElement(
+    control,
+    '[data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-primary-agents"]'
+  )
+  assert.equal(calls[1].action, 'click')
+  assert.ok(calls[1].selector.endsWith('[data-testid="collaboration-management-toggle"]'))
 })
 
 test('reveals a workspace identity independently of its section toggle position', async () => {

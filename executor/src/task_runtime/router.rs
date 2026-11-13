@@ -118,6 +118,24 @@ impl TaskRuntime {
         self.local_store.archive_project(project_id, version)
     }
 
+    pub fn project_migration_snapshot(
+        &self,
+        project: &str,
+    ) -> Result<super::store::ProjectMigrationSnapshot, TaskRuntimeError> {
+        self.local_store.project_migration_snapshot(project)
+    }
+
+    pub fn archive_migrated_project(
+        &self,
+        project: &str,
+        version: i64,
+        fingerprint: &str,
+        target: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store
+            .archive_migrated_project(project, version, fingerprint, target)
+    }
+
     pub fn configure_external_project(
         &self,
         project: ProjectDescriptor,

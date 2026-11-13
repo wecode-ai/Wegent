@@ -147,6 +147,12 @@ class IssueBadge(BaseModel):
     tooltip: str = ""
 
 
+class IssueResourceParticipant(BaseModel):
+    kind: Literal["agent", "group"]
+    id: int
+    name: str
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -165,6 +171,7 @@ class LoopItemResponse(BaseModel):
     assignee_agent_name: str | None = None
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
+    resource_participants: list[IssueResourceParticipant] = Field(default_factory=list)
     ai_state: dict[str, Any] | None = None
     processing_actor: dict[str, str] | None = None
     human_waiting_since: str | None = None

@@ -85,10 +85,7 @@ export async function verifyCollaborationLocalProjectImport(
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
     const localWorkspace = inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-wework-local-workspace"]'
-    )
-    const localWorkspaceTree = inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]'
+      '[data-testid="collaboration-local-project-actions"]'
     )
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
@@ -112,8 +109,8 @@ export async function verifyCollaborationLocalProjectImport(
       'The unified board still exposed local/cloud mode selectors'
     )
     assert.ok(
-      (await control.command('getText', localWorkspace)).trim(),
-      'The local Workspace name must remain visible on the unified board'
+      await control.command('getAttribute', localWorkspace, { value: 'aria-label' }),
+      'The local project management action must remain available on the unified board'
     )
 
     assert.ok(
@@ -139,10 +136,6 @@ export async function verifyCollaborationLocalProjectImport(
         'An archived Task project must remain absent before explicit import'
       )
       await control.command('click', localWorkspace)
-      await control.command(
-        'click',
-        `${localWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
-      )
       await control.command('click', '[data-testid="collaboration-workspace-nav-create-project"]')
       await control.command(
         'click',

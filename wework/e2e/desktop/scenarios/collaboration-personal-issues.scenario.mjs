@@ -1,3 +1,4 @@
+import { verifyLocalProjectMigration } from '../modules/local-project-migration.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -8,8 +9,17 @@ import {
 
 // Stories: start a private Issue without a project, invite a colleague, revoke access,
 // find work through the three lists, restore/delete, and associate a real project.
-export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) {
-  let cloud, participant, outsider, participantToken, outsiderToken, project, issue
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  let cloud,
+    participant,
+    outsider,
+    participantToken,
+    outsiderToken,
+    project,
+    issue,
+    sibling,
+    agent,
+    group
   const title = `Independent Issue ${process.pid}`
   const sidebar = id => inCollaborationSidebar(`[data-testid="${id}"]`)
   async function request(path, method = 'GET', body, token = cloud.authToken, expected = 200) {
@@ -75,6 +85,36 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         cloud.authToken,
         201
       )
+      const bot = await request('/api/bots', 'POST', {
+        name: `personal-issue-bot-${process.pid}`, shell_name:'Codex', namespace:'default',
+        agent_config:{bind_model:'desktop-e2e-cloud-responses',bind_model_type:'public'},
+        system_prompt:'Handle the invited Issue when explicitly requested.',
+      }, cloud.authToken, 201)
+      agent = await request('/api/teams','POST',{
+        name: `personal-issue-agent-${process.pid}`, bots:[{bot_id:bot.id,role:'worker',bot_prompt:''}], namespace:'default',bind_mode:['task'],requires_workspace:false,is_active:true,
+      }, cloud.authToken, 201)
+      const owner = await request('/api/users/me')
+      group = await request(
+        `/api/v1/workspaces/${project.workspace_id}/collaboration-groups`,
+        'POST',
+        {
+          name: 'Issue invitation group',
+          leader: { kind: 'human', id: String(owner.id) },
+          members: [{ kind: 'human', id: String(owner.id) }],
+        },
+        cloud.authToken,
+        201
+      )
+      sibling = await request(
+        `/api/v1/cloud-projects/${project.id}/loop-items`,
+        'POST',
+        {
+          title: 'Narrow list retains a readable title',
+          notify_assignee: false,
+        },
+        cloud.authToken,
+        201
+      )
     },
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
@@ -109,14 +149,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         404
       )
       await click(control, 'independent-issue-edit')
+      await click(control, 'issue-participant-add')
       await control.command('fill', '[data-testid="independent-issue-search-people"]', {
         value: participant.user_name,
       })
-      await click(control, 'independent-issue-search-submit')
       await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
       await click(control, `independent-issue-invite-${participant.id}`)
+      await click(control, 'issue-participant-done')
       await control.command('select', '[data-testid="independent-issue-assignee"]', {
-        value: String(participant.id),
+        value: `human:${participant.id}`,
       })
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
@@ -165,7 +206,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: 'Participant progress persisted',
       })
       await click(control, 'independent-issue-edit')
-      await click(control, `independent-issue-remove-person-${participant.id}`)
+      await click(control, `issue-participant-remove-human:${participant.id}`)
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const revoked = await request(`/api/v1/personal-issues/${issue.id}`)
@@ -214,6 +255,46 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       for (const scope of ['assigned', 'created', 'participating']) {
         await navigate(control, `collaboration-primary-issues-${scope}`)
         await wait(control, `[data-testid="personal-issues-${scope}"]`)
+        if (scope === 'created') {
+          await wait(control, `[data-testid="personal-home-issue-${issue.id}"]`)
+          await click(control, `personal-home-issue-${issue.id}`)
+          await wait(
+            control,
+            '[data-testid="personal-issues-detail"] [data-testid="collaboration-issue-detail"][role="region"]'
+          )
+          await wait(control, '[data-testid="personal-issues-created"]', { visible: true })
+          await wait(control, `[data-testid="personal-home-issue-${sibling.id}"]`)
+          await wait(control, `[data-testid="personal-home-issue-${issue.id}"] time[datetime]`)
+          const metrics = async selector =>
+            JSON.parse(await control.command('getElementMetrics', selector))[0]
+          const center = await metrics('[data-testid="personal-issues-created"]')
+          const detail = await metrics('[data-testid="personal-issues-detail"]')
+          assert.ok(
+            center.left + center.width <= detail.left + 1,
+            'Drawer must push the list, not cover it'
+          )
+          await click(control, 'personal-issue-detail-expand')
+          await wait(control, '[data-testid="personal-issue-detail-expand"][aria-pressed="true"]')
+          await click(control, `personal-home-issue-${sibling.id}`)
+          await wait(control, '[data-testid="personal-issue-detail-expand"][aria-pressed="true"]')
+          const titleBounds = await metrics(`[data-testid="cloud-todo-card-title-${sibling.id}"]`)
+          assert.ok(titleBounds.width >= 90, 'Narrow card title must keep usable width')
+          const expandedDetail = await metrics('[data-testid="personal-issues-detail"]')
+          assert.ok(
+            expandedDetail.width > detail.width,
+            'Expanded preference must survive switching Issues'
+          )
+
+          await captureScreenshot(control, 'personal-issues-narrow-expanded.png')
+          await click(control, 'cloud-todo-detail-close')
+          await wait(control, '[data-testid="personal-issues-detail"]', { visible: false })
+          await click(control, `personal-issues-project-${project.id}`)
+          await wait(
+            control,
+            `${sidebar(`collaboration-workspace-project-${project.id}`)}[aria-current="page"]`
+          )
+          await wait(control, '[data-testid="collaboration-board"]')
+        }
       }
       await navigate(control, 'collaboration-primary-create-issue')
       await control.command('fill', '[data-testid="independent-issue-title"]', {
@@ -236,6 +317,59 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         cloud.authToken,
         404
       )
+      // Story: invite Agents and groups before creating, with an optional project destination.
+      const typedTitle = `Typed participants ${process.pid}`
+      await navigate(control, 'collaboration-primary-create-issue')
+      await control.command('fill', '[data-testid="independent-issue-title"]', {
+        value: typedTitle,
+      })
+      await click(control, 'issue-participant-add')
+      await click(control, 'issue-participant-tab-agent')
+      await wait(control, `[data-testid="issue-participant-invite-agent:${agent.id}"]`)
+      await click(control, `issue-participant-invite-agent:${agent.id}`)
+      await click(control, 'issue-participant-tab-group')
+      await wait(control, `[data-testid="issue-participant-invite-group:${group.id}"]`)
+      await click(control, `issue-participant-invite-group:${group.id}`)
+      await click(control, 'issue-participant-done')
+      await control.command('select', '[data-testid="independent-issue-assignee"]', {
+        value: `agent:${agent.id}`,
+      })
+      await click(control, 'independent-issue-save')
+      await wait(control, '[data-testid="independent-issue-edit"]')
+      const typed = (await request('/api/v1/personal-issues?scope=created')).items.find(
+        item => item.title === typedTitle
+      )
+      assert.ok(typed)
+      assert.equal(typed.metadata.resource_participants.length, 2)
+      assert.deepEqual(typed.metadata.assignee_resource, { kind: 'agent', id: agent.id })
+      for (const resource of typed.metadata.resource_participants) {
+        assert.equal(resource.instructions, undefined)
+        assert.equal(resource.group_snapshot, undefined)
+      }
+      await request(`/api/v1/personal-issues/${typed.id}/resources/agent/${agent.id}`)
+      await request(
+        `/api/v1/personal-issues/${typed.id}/resources/agent/${agent.id}`,
+        'GET',
+        undefined,
+        outsiderToken,
+        404
+      )
+      await click(control, 'independent-issue-close')
+      await navigate(control, 'collaboration-primary-create-issue')
+      await control.command('fill', '[data-testid="independent-issue-title"]', {
+        value: `Project selection ${process.pid}`,
+      })
+      await wait(control, `[data-testid="independent-issue-project"] option[value="${project.id}"]`)
+      await control.command('select', '[data-testid="independent-issue-project"]', {
+        value: String(project.id),
+      })
+      await click(control, 'independent-issue-save')
+      await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
+      const selectedProjectIssues = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
+      assert.ok(
+        selectedProjectIssues.items.some(item => item.title === `Project selection ${process.pid}`)
+      )
+      await verifyLocalProjectMigration(control, request, uiTimeoutMs)
     },
   }
 }

@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -231,6 +232,7 @@ export function createDesktopScenario({
         text: '已保存到我的模板',
       })
       await control.command('click', selector('template-save-close'))
+      await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
       await control.command('click', selector('collaboration-primary-templates'))
       await control.command('click', selector('template-tab-mine'))
       const card = await waitForTestIdByText(control, CONTENT, 'template-card-', savedName)
@@ -407,6 +409,7 @@ export function createDesktopScenario({
         value: `wework://boards/local/${copied.id}`,
       })
       await control.command('waitFor', selector('cloud-project-header-title'), { text: copiedName })
+      await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
       await control.command('click', selector('collaboration-primary-templates'))
       await control.command('click', selector('template-tab-mine'))
       await control.command('click', selector(card.replace('template-card-', 'template-details-')))

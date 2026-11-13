@@ -121,6 +121,7 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  resource_participants?: CollaborationIssue['resource_participants']
   human_requests?: CollaborationIssue['human_requests']
   milestone_id?: string | null
   runner_binding?: { environment_id: string } | null

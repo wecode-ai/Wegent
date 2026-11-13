@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
 import {
@@ -334,6 +335,10 @@ export function createDesktopScenario({
         await projectOnlyNavigation.verify(control, scoped)
         await capture(control, 'collaboration-shared-core-project-only-navigation.png')
 
+        await revealCollaborationSidebarElement(
+          control,
+          scoped('[data-testid="collaboration-primary-devices"]')
+        )
         await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
         const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
         await control.command('waitFor', deviceRow, { visible: true, timeoutMs: uiTimeoutMs })
