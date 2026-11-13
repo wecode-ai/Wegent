@@ -75,7 +75,7 @@ When a question is already handled but a notification reply was not sent, **Need
 
 From **Projects → New project → Cloud project** in the sidebar, you can add a device while choosing the remote host. See [Projects and workspaces](./projects.md#add-device-from-project).
 
-Edit Agent definitions from **Project settings → AI team**. Imported and manually created Agents share the same entry and permission rules; see [Agent configuration](./projects.md#agent-capabilities).
+Edit Agent definitions from **Project settings → AI team**. Project Maintainers can edit non-private project definitions; shared source definitions retain their original permissions. Imported and manually created Agents share the same entry. See [Agent configuration](./projects.md#agent-capabilities) for device-conflict recovery.
 
 ## Sidebar feature entries
 
