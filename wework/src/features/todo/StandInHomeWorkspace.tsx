@@ -1,5 +1,13 @@
 import { useContext, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, CheckCircle2, Circle, CircleAlert, LoaderCircle, Settings } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  CheckCircle2,
+  Circle,
+  CircleAlert,
+  LoaderCircle,
+  Settings,
+} from 'lucide-react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -156,13 +164,23 @@ export function StandInHomeWorkspace(props: Props) {
         )}
         {connected && inbox.scope && !items.length && !inbox.error && (
           <div className="px-4 py-6">
-            <p className="text-base font-medium text-text-secondary">{t('personalHome.assistantEmpty')}</p>
-            <p className="mt-2 max-w-xs text-sm leading-5 text-text-muted">{t('personalHome.assistantEmptyHint')}</p>
+            <p className="text-base font-medium text-text-secondary">
+              {t('personalHome.assistantEmpty')}
+            </p>
+            <p className="mt-2 max-w-xs text-sm leading-5 text-text-muted">
+              {t('personalHome.assistantEmptyHint')}
+            </p>
           </div>
         )}
         {roleIds.map(roleId => (
-          <section key={roleId} data-testid={`personal-home-role-${roleId}`} className="border-b border-border/50 py-4 last:border-b-0">
-            <h3 className="px-4 pb-2 text-sm font-medium text-text-secondary">{roleName(roleId)}</h3>
+          <section
+            key={roleId}
+            data-testid={`personal-home-role-${roleId}`}
+            className="border-b border-border/50 py-4 last:border-b-0"
+          >
+            <h3 className="px-4 pb-2 text-sm font-medium text-text-secondary">
+              {roleName(roleId)}
+            </h3>
             {(['processing', 'completed'] as const).map(group => {
               const grouped = items.filter(
                 item =>
@@ -174,11 +192,20 @@ export function StandInHomeWorkspace(props: Props) {
                 <div key={group} data-testid={`personal-home-role-${roleId}-${group}`}>
                   <h4 className="flex items-center gap-2 px-4 py-2 text-sm font-medium">
                     {t(`personalHome.${group}`)}
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">{grouped.length}</span>
+                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+                      {grouped.length}
+                    </span>
                   </h4>
                   {grouped.map(item => {
                     const taskState = standInState(item).status
-                    const Icon = taskState === 'completed' ? CheckCircle2 : taskState === 'running' ? LoaderCircle : taskState === 'failed' ? CircleAlert : Circle
+                    const Icon =
+                      taskState === 'completed'
+                        ? CheckCircle2
+                        : taskState === 'running'
+                          ? LoaderCircle
+                          : taskState === 'failed'
+                            ? CircleAlert
+                            : Circle
                     const work = inbox.items.find(work => work.taskId === item.task.taskId)
                     const status =
                       work && work.status !== 'sent'
@@ -194,12 +221,20 @@ export function StandInHomeWorkspace(props: Props) {
                         onClick={() => openTask(item.address, item.task.title)}
                         className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
                       >
-                        <Icon aria-hidden="true" className={`mt-0.5 h-4 w-4 shrink-0 ${taskState === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} ${taskState === 'running' ? 'motion-safe:animate-spin' : ''}`} />
+                        <Icon
+                          aria-hidden="true"
+                          className={`mt-0.5 h-4 w-4 shrink-0 ${taskState === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} ${taskState === 'running' ? 'motion-safe:animate-spin' : ''}`}
+                        />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium">{item.task.title}</span>
                           <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
                             <span className="shrink-0">{status}</span>
-                            {item.projectName && <><span aria-hidden="true">·</span><span className="truncate">{item.projectName}</span></>}
+                            {item.projectName && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="truncate">{item.projectName}</span>
+                              </>
+                            )}
                           </span>
                         </span>
                         <ArrowUpRight

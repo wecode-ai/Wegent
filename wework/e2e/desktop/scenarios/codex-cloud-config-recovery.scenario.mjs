@@ -194,6 +194,17 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       }
       const restoreOfficial = async name => {
         model.recoverBundle()
+        // A completed task can still have a native composer prediction or read
+        // in flight. Reuse the idle-only restart gate before changing auth modes.
+        const idleRestart = await waitForValue(
+          async () =>
+            JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          value => value.restarted === true,
+          'The native Codex process did not become idle before restoring official auth',
+          RECOVERY_TIMEOUT_MS
+        )
+        assert.equal(idleRestart.activeTaskCount, 0)
+        evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
         const taskId = await create(name, { official: true })
