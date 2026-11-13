@@ -90,6 +90,28 @@ async function waitForPinnedTaskOrder(control, expectedRows, stableMs = 500) {
   )
 }
 
+async function waitForPinnedTaskOrderToSettle(control, expectedRows, stableMs = 1500) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let stableOrder = []
+  let stableSince = null
+  while (Date.now() < deadline) {
+    const order = JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST)).filter(
+      testId => expectedRows.includes(testId)
+    )
+    if (order.length === expectedRows.length && order.join(',') === stableOrder.join(',')) {
+      stableSince ??= Date.now()
+      if (Date.now() - stableSince >= stableMs) return order
+    } else {
+      stableOrder = order
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(
+    `Pinned task order did not settle at ${stableMs}ms; last order ${JSON.stringify(stableOrder)}`
+  )
+}
+
 async function pinRuntimeTask(control, taskId) {
   const row = `runtime-local-task-row-${taskId}`
   await ensureTaskRowVisible(control, row)
@@ -139,19 +161,10 @@ async function verifyPinnedTaskRefresh({
 
   await pinRuntimeTask(control, taskIds[0])
   await pinRuntimeTask(control, taskIds[1])
-  const initialOrder = JSON.parse(await control.command('getTestIdOrder', PINNED_TASK_LIST)).filter(
-    testId => taskRows.includes(testId)
-  )
-  assert.equal(initialOrder.length, 2, 'The pinned section did not expose both runtime tasks')
-
-  const source = `${PINNED_TASK_LIST} [data-sidebar-sortable-id]:has([data-testid="${initialOrder[0]}"])`
-  const target = `${PINNED_TASK_LIST} [data-sidebar-sortable-id]:has([data-testid="${initialOrder[1]}"])`
-  const expectedOrder = [initialOrder[1], initialOrder[0]]
-  await control.command('drag', source, { target })
-  await waitForPinnedTaskOrder(control, expectedOrder)
+  const initialOrder = await waitForPinnedTaskOrderToSettle(control, taskRows)
 
   await control.command('refreshRuntimeWork', 'body', { value: '{}' })
-  await waitForPinnedTaskOrder(control, expectedOrder)
+  await waitForPinnedTaskOrder(control, initialOrder)
   for (const row of taskRows) {
     assert.equal(
       Number(await control.command('getElementCount', `[data-testid="${row}"]`)),

@@ -137,25 +137,33 @@ async function spreadsheetOffset(control) {
   return { x: -Number(match[1]), y: -Number(match[2]) }
 }
 
+async function scrollSpreadsheetUntil(control, delta, predicate, description, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let offset
+  while (Date.now() < deadline) {
+    await control.command('wheel', EXCEL_STAGE, { value: JSON.stringify(delta) })
+    offset = await spreadsheetOffset(control)
+    if (predicate(offset)) return offset
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.fail(`${description}: ${JSON.stringify(offset)}`)
+}
+
 async function verifyWorkbook(control, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'workbook.xlsx')
   await control.command('waitFor', '.excel-wrapper .sheet-tab[title="Data"][aria-pressed="true"]')
   await control.command('waitFor', EXCEL_LAYER)
-  await control.command('wheel', EXCEL_STAGE, {
-    value: JSON.stringify({ deltaX: 800, deltaY: 100000 }),
-  })
-  await waitForValue(
-    () => spreadsheetOffset(control),
+  await scrollSpreadsheetUntil(
+    control,
+    { deltaX: 800, deltaY: 100000 },
     ({ x, y }) => x >= 800 && y > 1000,
     'Excel must handle both horizontal and vertical wheel input',
     timeoutMs
   )
   await captureScreenshot(control, 'office-preview-excel-scrolled.png')
-  await control.command('wheel', EXCEL_STAGE, {
-    value: JSON.stringify({ deltaX: -100000, deltaY: -100000 }),
-  })
-  await waitForValue(
-    () => spreadsheetOffset(control),
+  await scrollSpreadsheetUntil(
+    control,
+    { deltaX: -100000, deltaY: -100000 },
     ({ x, y }) => x === 0 && y === 0,
     'Excel must scroll back to the first row and column',
     timeoutMs

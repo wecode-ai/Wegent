@@ -419,6 +419,10 @@ function preservePrimaryPinState(
   const task = { ...selectedTask, pinned: primaryTask.pinned }
   if (primaryTask.pinned && primaryTask.pinnedOrder != null) {
     task.pinnedOrder = primaryTask.pinnedOrder
+  } else if (primaryTask.pinned && selectedTask.pinned && selectedTask.pinnedOrder != null) {
+    // An optimistic pin has no order until the executor confirms it. Keep the
+    // selected snapshot's confirmed order instead of making the row jump.
+    task.pinnedOrder = selectedTask.pinnedOrder
   } else {
     delete task.pinnedOrder
   }

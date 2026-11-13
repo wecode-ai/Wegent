@@ -103,6 +103,18 @@ describe('runtime project identity', () => {
     expect(task.pinnedOrder).toBe(primaryPinned ? 0 : undefined)
   })
 
+  test('keeps a confirmed pin order while the primary snapshot is optimistic', () => {
+    const primary = project()
+    const secondary = project()
+    primary.deviceWorkspaces[0].tasks = [{ ...pinnedTask(true), pinnedOrder: undefined }]
+    secondary.deviceWorkspaces[0].tasks = [pinnedTask(true)]
+
+    const merged = mergeRuntimeWorkLists(list(primary), list(secondary), context)
+    const task = merged.projects[0].deviceWorkspaces[0].tasks[0]
+
+    expect(task).toMatchObject({ taskId: 'task-pinned', pinned: true, pinnedOrder: 0 })
+  })
+
   test('keeps the primary pin state when a duplicate task changes workspace kind', () => {
     const primary = project()
     primary.deviceWorkspaces[0].tasks = [pinnedTask(true)]
