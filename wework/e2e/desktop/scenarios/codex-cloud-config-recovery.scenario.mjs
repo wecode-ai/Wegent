@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { restartCodexWhenIdle } from '../modules/executor-restart-readiness.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
@@ -184,6 +185,12 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         })
       }
       const restoreOfficial = async name => {
+        // The completed task can still be releasing its native turn when the
+        // next auth mode is requested; wait for the idle-only restart to admit.
+        await restartCodexWhenIdle(
+          () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
+          RECOVERY_TIMEOUT_MS
+        )
         model.recoverBundle()
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
