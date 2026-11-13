@@ -43,6 +43,8 @@ pub(super) fn read_tools() -> Vec<Value> {
 
 pub(super) fn memory_review_tools() -> Vec<Value> {
     let mut tools = read_tools();
+    // Unattended consolidation retains its existing guarded tool contract.
+    tools.retain(|tool| tool["name"] != "search_context");
     let mut list = tools[0].clone();
     list["name"] = json!("list_memory_sources");
     list["description"] = json!("List currently authorized conversations with unprocessed changes. Follow nextCursor even when a filtered page is empty. The host excludes already completed source increments.");
