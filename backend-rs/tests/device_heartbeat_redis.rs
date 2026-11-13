@@ -205,9 +205,10 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         (),
     ).await.unwrap();
     fixture.mysql.execute(
-        "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)
-         VALUES (?, ?, '', true, 'user', 'password', '{}'),
-         (9, 'app-registration-admin', '', true, 'admin', 'password', '{}')",
+        "INSERT INTO users (id, user_name, password_hash, git_info, is_active, role, auth_source,
+         preferences, created_at, updated_at)
+         VALUES (?, ?, '', JSON_ARRAY(), true, 'user', 'password', '{}', NOW(), NOW()),
+         (9, 'app-registration-admin', '', JSON_ARRAY(), true, 'admin', 'password', '{}', NOW(), NOW())",
         (OWNER_ID, USERNAME),
     ).await.unwrap();
     let registration = fixture.mysql.execute(
@@ -524,8 +525,17 @@ async fn assert_rebind(
         }
     };
     let call = |token, expected| send(request.url, token, expected);
-    assert_eq!(call(None, "local-device").await.0, 401);
-    assert_eq!(call(Some(request.owner), "local-device").await.0, 403);
+    assert_eq!(
+        call(None, "local-device").await,
+        (401, json!({"detail": "Not authenticated"})),
+    );
+    assert_eq!(
+        call(Some(request.owner), "local-device").await,
+        (
+            403,
+            json!({"detail": "Permission denied. Admin access required."})
+        ),
+    );
     let wrong_owner = request.url.replace("/users/8/", "/users/9/");
     assert_eq!(
         send(&wrong_owner, Some(request.admin), "local-device")
