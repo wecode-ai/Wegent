@@ -391,11 +391,20 @@ export function useWorkbenchRuntimeMessaging({
       }
       const selection = resolveRuntimeTaskModelSelection(request.address)
       if (!selection.selectionReady || !selection.selectedModel) return request
+      const requestOptions = request.modelOptions ?? {}
+      // Downstream readers prefer the canonical key, and alias normalization
+      // does not rename keys, so promote an explicit request alias.
+      const requestModeAlias = requestOptions.collaboration_mode
+      const requestCollaborationMode: ModelOptions =
+        requestModeAlias && !requestOptions.collaborationMode
+          ? { collaborationMode: requestModeAlias }
+          : {}
       return {
         ...request,
         ...selectedModelExecutionFields(selection.selectedModel, {
           ...selection.selectedModelOptions,
-          ...request.modelOptions,
+          ...requestOptions,
+          ...requestCollaborationMode,
         }),
       }
     },
