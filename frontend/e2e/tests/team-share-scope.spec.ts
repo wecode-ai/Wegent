@@ -555,9 +555,15 @@ test.describe('Agent share scope', () => {
         const removed = await fixture.ownerApi.delete(`/api/v1/kinds/skills/${privateSkillId}`)
         expect(removed.status, JSON.stringify(removed.data)).toBe(204)
       }
-      if (otherBotId !== undefined) {
+      if (otherBotId !== undefined && otherGroupName !== undefined) {
         const removed = await fixture.ownerApi.delete(`/api/bots/${otherBotId}?force=true`)
         expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+        // Bot deletion preserves its dedicated Model; remove that fixture
+        // explicitly before the group enforces its empty-resource requirement.
+        const modelRemoved = await fixture.ownerApi.delete(
+          `/api/v1/namespaces/${otherGroupName}/models/${prefix}-other-group-bot-model`
+        )
+        expect(modelRemoved.status, JSON.stringify(modelRemoved.data)).toBe(200)
       }
       if (otherGroupName !== undefined) {
         const removed = await fixture.ownerApi.deleteGroup(otherGroupName)
@@ -583,6 +589,8 @@ test.describe('Agent share scope', () => {
       const response = await fixture.ownerApi.get<{
         agent_config: { bind_model: string; bind_model_type: string }
         system_prompt: string
+        secondary_model_name: string | null
+        secondary_model_namespace: string | null
       }>(botPath)
       expect(response.status, JSON.stringify(response.data)).toBe(200)
       return response.data!
@@ -619,6 +627,7 @@ test.describe('Agent share scope', () => {
 
       const configured = await fixture.ownerApi.put(botPath, {
         agent_config: { bind_model: ownerModelName, bind_model_type: 'user' },
+        secondary_model_name: ownerModelName,
       })
       expect(configured.status, JSON.stringify(configured.data)).toBe(200)
 
@@ -638,10 +647,12 @@ test.describe('Agent share scope', () => {
         bind_model_type: 'user',
       })
       expect(browserSaved.system_prompt).toBe('Browser retains the private model.')
+      expect(browserSaved.secondary_model_name).toBe(ownerModelName)
 
       const retained = await fixture.developerApi.put(botPath, {
         team_id: fixture.groupTeamId,
         agent_config: { bind_model: ownerModelName, bind_model_type: 'user' },
+        secondary_model_name: ownerModelName,
         system_prompt: 'Creator model remains bound after a group editor save.',
       })
       expect(retained.status, JSON.stringify(retained.data)).toBe(200)
@@ -651,6 +662,7 @@ test.describe('Agent share scope', () => {
         bind_model_type: 'user',
       })
       expect(original.system_prompt).toBe('Creator model remains bound after a group editor save.')
+      expect(original.secondary_model_name).toBe(ownerModelName)
 
       const restricted = await fixture.ownerApi.adminUpdatePublicModel(publicModelIds[1], {
         json: {
@@ -680,6 +692,24 @@ test.describe('Agent share scope', () => {
         },
       })
       expect(unrestricted.status, JSON.stringify(unrestricted.data)).toBe(200)
+
+      const secondarySelected = await fixture.developerApi.put(botPath, {
+        team_id: fixture.groupTeamId,
+        secondary_model_name: publicModelName,
+      })
+      expect(secondarySelected.status, JSON.stringify(secondarySelected.data)).toBe(200)
+      expect((await readSelection()).secondary_model_name).toBe(publicModelName)
+      for (const name of [`${prefix}-missing-model`, editorModelName, ownerModelName]) {
+        const rejected = await fixture.developerApi.put(botPath, {
+          team_id: fixture.groupTeamId,
+          secondary_model_name: name,
+          system_prompt: 'Invalid secondary selections must not persist.',
+        })
+        expect(rejected.status, JSON.stringify(rejected.data)).toBe(403)
+        const unchanged = await readSelection()
+        expect(unchanged.secondary_model_name).toBe(publicModelName)
+        expect(unchanged.system_prompt).toBe(original.system_prompt)
+      }
 
       for (const agentConfig of [
         { bind_model: `${prefix}-missing-model` },
@@ -726,7 +756,9 @@ test.describe('Agent share scope', () => {
 
       const groupModelName = `${prefix}-group-model`
       const groupModelPath = `/api/v1/namespaces/${fixture.groupName}/models`
-      const groupModel = await fixture.developerApi.post(groupModelPath, {
+      // Generic CRD creation requires Maintainer-or-higher permission; the
+      // Developer remains the actor selecting this independently shared Model.
+      const groupModel = await fixture.ownerApi.post(groupModelPath, {
         apiVersion: 'agent.wecode.io/v1',
         kind: 'Model',
         metadata: { name: groupModelName, namespace: fixture.groupName },
@@ -734,7 +766,7 @@ test.describe('Agent share scope', () => {
       })
       expect(groupModel.status, JSON.stringify(groupModel.data)).toBe(201)
       privateModels.push({
-        api: fixture.developerApi,
+        api: fixture.ownerApi,
         path: `${groupModelPath}/${groupModelName}`,
       })
       for (const agentConfig of [
@@ -748,12 +780,18 @@ test.describe('Agent share scope', () => {
         const selected = await fixture.developerApi.put(botPath, {
           team_id: fixture.groupTeamId,
           agent_config: agentConfig,
+          secondary_model_name: groupModelName,
+          secondary_model_namespace: fixture.groupName,
         })
         expect(selected.status, JSON.stringify(selected.data)).toBe(200)
         expect((await readSelection()).agent_config).toMatchObject({
           bind_model: groupModelName,
           bind_model_namespace: fixture.groupName,
           bind_model_type: 'group',
+        })
+        expect(await readSelection()).toMatchObject({
+          secondary_model_name: groupModelName,
+          secondary_model_namespace: fixture.groupName,
         })
       }
     } finally {

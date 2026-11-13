@@ -174,7 +174,12 @@ def test_group_editor_can_select_shared_group_model_and_reload(
         test_db,
         bot_id=bot.id,
         user_id=test_user.id,
-        obj_in=BotUpdate(team_id=team.id, agent_config=config),
+        obj_in=BotUpdate(
+            team_id=team.id,
+            agent_config=config,
+            secondary_model_name=model.name,
+            secondary_model_namespace=namespace.name,
+        ),
     )
     test_db.expire_all()
     saved_bot = test_db.get(Kind, bot.id)
@@ -186,9 +191,10 @@ def test_group_editor_can_select_shared_group_model_and_reload(
     )
 
 
+@pytest.mark.parametrize("secondary", [False, True])
 @pytest.mark.parametrize("missing_access", ["owner", "editor"])
 def test_group_model_requires_both_owner_and_editor_access(
-    test_db, test_user, group_agent, missing_access
+    test_db, test_user, group_agent, missing_access, secondary
 ):
     """Neither side can use the other's unrelated namespace authority."""
     _, team, bot, _, _ = group_agent
@@ -214,26 +220,34 @@ def test_group_model_requires_both_owner_and_editor_access(
         name="unshared-group-model",
         namespace=namespace.name,
     )
+    selection = (
+        {
+            "secondary_model_name": model.name,
+            "secondary_model_namespace": namespace.name,
+        }
+        if secondary
+        else {
+            "agent_config": {
+                "bind_model": model.name,
+                "bind_model_type": "group",
+                "bind_model_namespace": namespace.name,
+            }
+        }
+    )
     with pytest.raises(HTTPException) as exc_info:
         bot_kinds_service.update_with_user(
             test_db,
             bot_id=bot.id,
             user_id=test_user.id,
-            obj_in=BotUpdate(
-                team_id=team.id,
-                agent_config={
-                    "bind_model": model.name,
-                    "bind_model_type": "group",
-                    "bind_model_namespace": namespace.name,
-                },
-            ),
+            obj_in=BotUpdate(team_id=team.id, **selection),
         )
     assert exc_info.value.status_code == 403
 
 
+@pytest.mark.parametrize("secondary", [False, True])
 @pytest.mark.parametrize("excluded", ["owner", "editor"])
 def test_new_public_model_requires_both_owner_and_editor_whitelist(
-    test_db, test_user, test_admin_user, group_agent, excluded
+    test_db, test_user, test_admin_user, group_agent, excluded, secondary
 ):
     """A reference must be available when the creator reloads it independently."""
     _, team, bot, _, _ = group_agent
@@ -248,6 +262,41 @@ def test_new_public_model_requires_both_owner_and_editor_whitelist(
         },
     }
     test_db.commit()
+    selection = (
+        {"secondary_model_name": model.name}
+        if secondary
+        else {
+            "agent_config": {
+                "bind_model": model.name,
+                "bind_model_type": "public",
+            }
+        }
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            user_id=test_user.id,
+            obj_in=BotUpdate(team_id=team.id, **selection),
+        )
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.parametrize("selection", ["missing", "editor_private", "owner_private"])
+def test_secondary_model_selection_requires_shared_owner_scope(
+    test_db, test_user, group_agent, selection
+):
+    """Secondary references cannot bypass the primary selection boundary."""
+    _, team, bot, ghost, _ = group_agent
+    name = "new-secondary-model"
+    if selection != "missing":
+        _create_model(
+            test_db,
+            owner_id=test_user.id if selection == "editor_private" else bot.user_id,
+            name=name,
+        )
+    original_bot = dict(bot.json["spec"])
+    original_ghost = dict(ghost.json["spec"])
     with pytest.raises(HTTPException) as exc_info:
         bot_kinds_service.update_with_user(
             test_db,
@@ -255,10 +304,61 @@ def test_new_public_model_requires_both_owner_and_editor_whitelist(
             user_id=test_user.id,
             obj_in=BotUpdate(
                 team_id=team.id,
-                agent_config={
-                    "bind_model": model.name,
-                    "bind_model_type": "public",
-                },
+                secondary_model_name=name,
+                system_prompt="Invalid secondary selection must not persist",
             ),
         )
     assert exc_info.value.status_code == 403
+    test_db.rollback()
+    test_db.expire_all()
+    assert test_db.get(Kind, bot.id).json["spec"] == original_bot
+    assert test_db.get(Kind, ghost.id).json["spec"] == original_ghost
+
+
+def test_group_editor_can_select_public_secondary_model_and_reload(
+    test_db, test_user, group_agent
+):
+    """A public secondary reference resolves identically after reloading."""
+    _, team, bot, _, _ = group_agent
+    model = _create_model(test_db, owner_id=0, name="public-secondary-model")
+    result = bot_kinds_service.update_with_user(
+        test_db,
+        bot_id=bot.id,
+        user_id=test_user.id,
+        obj_in=BotUpdate(team_id=team.id, secondary_model_name=model.name),
+    )
+    test_db.expire_all()
+    reference = test_db.get(Kind, bot.id).json["spec"]["secondaryModelRef"]
+    assert result["secondary_model_name"] == model.name
+    assert reference == {"name": model.name, "namespace": "default"}
+    assert (
+        bot_kinds_service._get_model_by_name(
+            test_db, reference["name"], reference["namespace"], bot.user_id
+        ).id
+        == model.id
+    )
+
+
+def test_group_editor_can_retain_or_clear_creator_private_secondary_model(
+    test_db, test_user, group_agent
+):
+    """Retaining or removing an existing private reference grants no new access."""
+    _, team, bot, _, _ = group_agent
+    model = _create_model(test_db, owner_id=bot.user_id, name="private-secondary-model")
+    bot.json = {
+        **bot.json,
+        "spec": {
+            **bot.json["spec"],
+            "secondaryModelRef": {"name": model.name, "namespace": "default"},
+        },
+    }
+    test_db.commit()
+    for name in (model.name, None):
+        result = bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            user_id=test_user.id,
+            obj_in=BotUpdate(team_id=team.id, secondary_model_name=name),
+        )
+        assert result["secondary_model_name"] == name
+    assert test_db.get(Kind, model.id).is_active

@@ -185,7 +185,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             .filter(
                 Kind.id == team_id,
                 Kind.kind == "Team",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -1112,6 +1112,24 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         )
         existing_bot_spec = Bot.model_validate(bot.json).spec
         existing_ghost_spec = Ghost.model_validate(ghost.json).spec if ghost else None
+        if bot.user_id != user_id and "secondary_model_name" in update_data:
+            name = obj_in.secondary_model_name
+            namespace = obj_in.secondary_model_namespace or "default"
+            existing_ref = existing_bot_spec.secondaryModelRef
+            retained = (
+                existing_ref is not None
+                and existing_ref.name == name
+                and (existing_ref.namespace or "default") == namespace
+            )
+            if name and not retained:
+                self._require_shared_model_reference(
+                    db,
+                    name=name,
+                    namespace=namespace,
+                    owner_id=bot.user_id,
+                    editor_id=user_id,
+                    model_type=None,
+                )
         retained_skill_refs = {}
         if (
             existing_ghost_spec
