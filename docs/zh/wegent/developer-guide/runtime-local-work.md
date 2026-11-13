@@ -184,6 +184,10 @@ runtime.tasks.compact
 
 Wework App 只通过本机 executor IPC 调用 `runtime.tasks.compact`，不提供 Backend HTTP 接口。executor 必须先用 LocalTask 的 opaque `runtimeHandle.threadId` 调用 Codex app-server `thread/resume`，再调用 `thread/compact/start`，不能把 `/compact` 当作普通用户消息发送。手动压缩使用独立的运行时 subtask id：`<localTaskId>-context-compact`，这样 UI 可以把 `context_compaction` tool block 渲染成一条独立完成消息，并且不会结束正在回复的普通 assistant turn。
 
+压缩前必须应用当前任务的完整模型配置。已加载且仍被订阅的 Codex 会话可能忽略 `thread/resume` 的配置覆盖，因此 executor 将模型提供方及其配置摘要纳入会话配置一致性检查；配置变化或原配置未知时，先复用原生卸载流程，等待 `thread/closed`，再恢复会话。不能卸载其他正在执行的 turn 或操作。ChatGPT 账号的模型推理由 Codex 直连官方服务，本地模型目录入口不能成为其推理地址。
+
+本地模型代理先处理 HTTP 内容编码，再解析线程元数据和选择任务路由。支持 `zstd` 请求，解压后仍执行 64 MiB 大小限制与线程归属校验；损坏数据、超限数据和不支持的编码分别返回 400、413 和 415，不能统一误报为缺少线程元数据。
+
 如果当前 pane 仍在回复，Wework 应阻止手动压缩并提示用户等待当前回复结束。Codex 自动触发的上下文压缩仍然属于当前 turn 的 subtask；前端只能显示对应 `context_compaction` block，不能因为这个 block 完成就补发 `assistant_done` 或结算当前回复。
 
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。

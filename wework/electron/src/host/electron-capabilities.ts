@@ -307,6 +307,10 @@ export interface ElectronE2EHost {
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   startupSplashInspect: () => Promise<Record<string, unknown>>
   startupSplashClick: (testId: string) => Promise<void>
+  startupSplashSize: (
+    width: number,
+    height: number
+  ) => Promise<{ width: number; height: number; maximized: boolean }>
   startupLogPath: (path: string | null) => void
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -396,6 +400,7 @@ export function createElectronCapabilityRouter(
     startupSplashSnapshot: () => null,
     startupSplashInspect: () => Promise.reject(new Error('Startup splash is unavailable')),
     startupSplashClick: () => Promise.reject(new Error('Startup splash is unavailable')),
+    startupSplashSize: () => Promise.reject(new Error('Startup splash is unavailable')),
     startupLogPath: () => undefined,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -493,13 +498,18 @@ export function createElectronCapabilityRouter(
   })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
-    attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
+    attachments.begin(
+      stringParam(params, 'filename'),
+      requiredIntegerParam(params, 'size'),
+      optionalStringParam(params, 'uploadId')
+    )
   )
   router.register('attachment.append', params =>
     attachments.append(
       stringParam(params, 'uploadId'),
       requiredIntegerParam(params, 'offset'),
-      stringParam(params, 'chunkBase64')
+      stringParam(params, 'chunkBase64'),
+      optionalStringParam(params, 'appendId')
     )
   )
   router.register('attachment.finish', params =>
@@ -938,6 +948,12 @@ export function createElectronCapabilityRouter(
     }
     return e2eHost.startupSplashClick(testId)
   })
+  router.register('e2e.setStartupSplashSize', params =>
+    e2eHost.startupSplashSize(
+      requiredIntegerParam(params, 'width'),
+      requiredIntegerParam(params, 'height')
+    )
+  )
   router.register('e2e.setStartupLogPath', params => {
     assertE2EEnabled('Startup log directory failure fixture')
     return e2eHost.startupLogPath(nullableStringParam(params, 'path') ?? null)

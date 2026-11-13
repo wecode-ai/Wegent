@@ -13,7 +13,7 @@ pub(super) fn mcp_thread_configuration(params: &Value) -> Map<String, Value> {
         .collect()
 }
 
-/// Admission identity covers tool authority, native agents and compaction's policy baseline.
+/// Admission identity covers tool authority, inference profiles and native policy.
 pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value> {
     use sha2::{Digest, Sha256};
     let mut configuration = mcp_thread_configuration(params);
@@ -30,6 +30,27 @@ pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value>
         configuration.insert(
             "developerInstructions.sha256".into(),
             json!(format!("{:x}", Sha256::digest(instructions.as_bytes()))),
+        );
+    }
+    let providers: Map<String, Value> = params["config"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(key, _)| key.starts_with("model_providers."))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    if !providers.is_empty() || params.get("modelProvider").is_some() {
+        configuration.insert(
+            "inferenceProfile.sha256".into(),
+            json!(format!(
+                "{:x}",
+                Sha256::digest(
+                    serde_json::to_vec(
+                        &json!({"provider":params["modelProvider"],"profiles":providers})
+                    )
+                    .expect("JSON inference profiles serialize")
+                )
+            )),
         );
     }
     configuration
@@ -137,6 +158,40 @@ impl CodexAppServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inference_profile_changes_and_removal_require_native_reload() {
+        let params = json!({"threadId":"thread-1","modelProvider":"~", "config":{
+            "model_providers.~":{"name":"OpenAI","base_url":"http://localhost/discovery","experimental_bearer_token":"synthetic"}
+        }});
+        let loaded = thread_context_configuration(&params);
+        assert!(!serde_json::to_string(&loaded)
+            .unwrap()
+            .contains("synthetic"));
+        assert!(!serde_json::to_string(&loaded)
+            .unwrap()
+            .contains("localhost"));
+        let mut native = params.clone();
+        native["config"]["model_providers.~"] =
+            json!({"name":"OpenAI","requires_openai_auth":true});
+        let mut different_provider = params.clone();
+        different_provider["modelProvider"] = json!("another");
+        for desired in [native, different_provider, json!({"threadId":"thread-1"})] {
+            let plan = CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params: desired,
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(&plan, &ExecutionRequest::default(), Some(&loaded)),
+                Some("thread-1")
+            );
+        }
+        assert_eq!(loaded, thread_context_configuration(&params));
+    }
 
     #[test]
     fn resumes_reload_changed_removed_or_unknown_mcp_configuration() {
