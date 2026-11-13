@@ -494,6 +494,7 @@ class RealCloudEnvironment {
 
   async launchBackend({ retryPortConflicts = false } = {}) {
     const rustLogDirectory = join(resultDir, 'backend-rs-logs')
+    this.backendApiLogPath = join(rustLogDirectory, 'api.log')
     await mkdir(rustLogDirectory, { recursive: true })
     const attempts = retryPortConflicts ? BACKEND_START_ATTEMPTS : 1
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -645,6 +646,19 @@ class RealCloudEnvironment {
       FRONTEND_URL: frontendUrl,
     }
     await this.launchBackend()
+  }
+
+  async waitForAuthorizationPolling(sessionId) {
+    assert.match(sessionId, /^[a-f0-9-]{36}$/)
+    // A cold system browser can outlive an ordinary UI step. Observe the real
+    // poll after its launch returns before the fixture acts as the approving user.
+    await this.observePreparation('authorization-browser-ready', () =>
+      waitForLogPattern(
+        this.backendApiLogPath,
+        new RegExp(`\\[API\\] GET /api/auth/wework/sessions/${sessionId}/poll\\?\\S+ 200(?:\\s|$)`),
+        { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+      )
+    )
   }
 
   async publishOfficialSmartApp(sourcePath) {

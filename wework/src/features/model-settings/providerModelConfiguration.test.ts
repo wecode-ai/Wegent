@@ -24,7 +24,7 @@ const provider = {
 
 describe('Provider configuration runtime adapter', () => {
   test.each(['custom', 'function', undefined] as const)(
-    'preserves saved %s tools independently of provider identity',
+    'preserves saved %s tools independently of provider identity while keeping credentials native',
     toolProfile => {
       const resolved = resolveProviderModel({
         provider,
@@ -39,9 +39,10 @@ describe('Provider configuration runtime adapter', () => {
         id: 'saved-deepseek',
         toolProfile: toolProfile ?? 'function',
         apiFormat: 'openai-responses',
-        apiKey: provider.api_key,
+        apiKeyConfigured: true,
         baseUrl: provider.base_url,
       })
+      expect(resolved).not.toHaveProperty('apiKey')
     }
   )
 
@@ -102,7 +103,7 @@ describe('Provider configuration runtime adapter', () => {
     const entry = { provider, model: { id: 'stable-id', model_id: 'model-a' } }
     const before = { ...resolveProviderModel(entry), catalogReady: true }
     const after = resolveProviderModel(
-      { ...entry, provider: { ...provider, api_key: 'new-key' } },
+      { ...entry, provider: { ...provider, credential_revision: 'rotated-credential-revision' } },
       before
     )
     expect(after.catalogReady).toBe(true)
@@ -116,7 +117,8 @@ describe('Provider configuration runtime adapter', () => {
     })
     expect(model.requestPath).toBe('/messages')
     expect(model.toolProfile).toBe('function')
-    expect(model.apiKey).toBe(provider.api_key)
+    expect(model.apiKey).toBeUndefined()
+    expect(model.apiKeyConfigured).toBe(true)
   })
   test('migration groups only identical connections and preserves capabilities and IDs', () => {
     const first = saveLocalModelConfig({

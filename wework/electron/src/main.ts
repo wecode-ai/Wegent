@@ -1,4 +1,12 @@
 import { ModelConfigurationStore } from './host/model-configuration-store.js'
+import { ModelRuntimeRequest } from './host/model-runtime-request.js'
+import { CloudModelRuntime } from './host/cloud-model-runtime.js'
+import {
+  LOCAL_PROXY_SETTINGS_STORAGE_KEY,
+  storedLocalProxyConfig,
+  normalizeLocalProxyUrl,
+} from './shared/local-proxy-config.js'
+import { confirmCoreDshPluginInstall } from './host/core-dsh-plugin-approval.js'
 import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import {
   readCloudConnection,
@@ -191,6 +199,7 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { desktopE2EApplicationName } from './host/e2e-application-name.js'
 import {
   applyWorkbenchBackgroundPolicy,
   workbenchBackgroundThrottling,
@@ -219,6 +228,7 @@ import {
   type LocalWorkspaceOpenRequest,
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
+import { protectedCredentialDirectory } from './host/credential-storage-paths.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { installedMacosReleaseResources } from './runtime/macos-release-installation.js'
 import { syncDockBadge } from './host/dock-badge.js'
@@ -243,7 +253,14 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkDataSchema?: number
   weworkReadableDataSchemas?: number[]
 } & BrandRuntimeMetadata
-if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
+if (packageMetadata.weworkProductName?.trim())
+  app.setName(
+    desktopE2EApplicationName(
+      packageMetadata.weworkProductName.trim(),
+      process.env,
+      process.platform
+    )
+  )
 const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 isolateDevelopmentEnvironment(process.env, {
   packaged: packagedApplication,
@@ -376,8 +393,10 @@ await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch
 const workspaceWindows = new Map<string, BrowserWindow>()
 const mcpAppCleanups = new Set<() => Promise<void>>()
 let mcpAppRuntime: McpAppRuntime | null = null
+let cloudModelRuntime: CloudModelRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
+let nativeDialogLanguage: string | undefined
 let lastMenuWindow: BrowserWindow | null = null
 const menuCapabilities = new Map<string, ApplicationMenuCapabilityState>()
 let primaryDshLoaded = false
@@ -2246,6 +2265,8 @@ async function shutdown(): Promise<void> {
     mcpAppCleanups.clear()
     mcpAppRuntime?.dispose()
     mcpAppRuntime = null
+    cloudModelRuntime?.dispose()
+    cloudModelRuntime = null
   })
   systemResume.stop()
   systemSleep.stop()
@@ -2354,6 +2375,8 @@ async function configureDesktopRuntime(): Promise<void> {
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
+      confirmInstall: request =>
+        confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
       onStateChanged: state => {
         desktopHostEvents.publish(
           'plugin-development.state',
@@ -2397,8 +2420,32 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   const modelConfiguration = new ModelConfigurationStore(
-    join(app.getPath('userData'), 'model-connections'),
-    secureStorage
+    join(protectedCredentialDirectory(app.getPath('userData')), 'model-connections'),
+    secureStorage,
+    join(app.getPath('userData'), 'model-connections')
+  )
+  cloudModelRuntime = new CloudModelRuntime(
+    () => readCloudConnection(rendererStorage!),
+    async (apiBaseUrl, expectedUserId) =>
+      (await requiredCloudCredentials().refreshAccessToken(apiBaseUrl, expectedUserId)).accessToken
+  )
+  const modelRuntimeRequest = new ModelRuntimeRequest(
+    modelConfiguration,
+    {
+      request: (method, params) => {
+        if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+        return desktopRuntime.requestExecutor(method, params)
+      },
+      dispose: () => {},
+    },
+    input => cloudModelRuntime!.transport(input),
+    async targetUrl => {
+      const raw = (await rendererStorage!.read())[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
+      const config = storedLocalProxyConfig(raw ? JSON.parse(raw) : {})
+      if (config.mode === 'custom') return normalizeLocalProxyUrl(config.proxyUrl) || null
+      if (config.mode === 'direct') return null
+      return resolveSystemProxy(session.defaultSession, targetUrl)
+    }
   )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),
@@ -2526,6 +2573,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   desktopRuntime = new DesktopRuntime({
     applicationId,
+    confirmPluginInstall: request =>
+      confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
     modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),
@@ -2590,7 +2639,10 @@ async function configureDesktopRuntime(): Promise<void> {
             const window = applicationMenuWindow()
             if (window && menuLabelForWindow(window) === label) syncApplicationMenuCapabilities()
           },
-          updateApplicationMenuLanguage: language => applicationMenu?.setLanguage(language),
+          updateApplicationMenuLanguage: language => {
+            nativeDialogLanguage = language
+            applicationMenu?.setLanguage(language)
+          },
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
           relaunchApplication: () => {
             app.relaunch()
@@ -2624,6 +2676,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           modelConfiguration,
+          requestModelRuntime: input => modelRuntimeRequest.request(input),
           syncLocalModels: () => desktopRuntime!.syncLocalModels(),
           secureStorage,
           takePendingWorkspaceOpenRequests,

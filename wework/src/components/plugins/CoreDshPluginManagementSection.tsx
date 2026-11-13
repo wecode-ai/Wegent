@@ -38,7 +38,6 @@ export function CoreDshPluginManagementSection({
   const [operation, setOperation] = useState<Operation>(null)
   const [restartRequired, setRestartRequired] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [installConfirmation, setInstallConfirmation] = useState<string | null>(null)
   const [uninstallConfirmation, setUninstallConfirmation] = useState<string | null>(null)
 
   useEffect(() => {
@@ -77,13 +76,6 @@ export function CoreDshPluginManagementSection({
     event.preventDefault()
     const requested = spec.trim()
     if (!requested || operation) return
-    setInstallConfirmation(requested)
-  }
-
-  const confirmInstall = () => {
-    const requested = installConfirmation
-    if (!requested || operation) return
-    setInstallConfirmation(null)
     void run('install', async () => {
       setPlugins(await installCoreDshPlugin(requested))
       setSpec('')
@@ -231,19 +223,6 @@ export function CoreDshPluginManagementSection({
         </div>
       </section>
 
-      <ConfirmDialog
-        open={installConfirmation !== null}
-        title={t('workbench.core_dsh_plugins_install_confirm_title', '安装 Wework 插件？')}
-        description={t(
-          'workbench.core_dsh_plugins_install_confirm_description',
-          '插件及其安装脚本会以当前用户权限运行。仅安装你信任的 npm、Git 或本地包。'
-        )}
-        cancelLabel={t('common.cancel', '取消')}
-        confirmLabel={t('workbench.core_dsh_plugins_install', '安装')}
-        confirmTestId="core-dsh-plugin-install-confirm"
-        onClose={() => setInstallConfirmation(null)}
-        onConfirm={confirmInstall}
-      />
       <ConfirmDialog
         open={uninstallConfirmation !== null}
         title={t('workbench.core_dsh_plugins_uninstall_confirm_title', '卸载 Wework 插件？')}

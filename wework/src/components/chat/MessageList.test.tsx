@@ -1,6 +1,7 @@
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import '@/i18n'
 import { setPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
+import { installExternalLinkHandler } from '@/lib/external-links'
 import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, RuntimeConversationTurn } from '@/types/workbench'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -1663,11 +1664,16 @@ describe('MessageList', () => {
     const conversationLink = screen.getByTestId(/^sent-conversation-token-/)
     expect(conversationLink).toHaveAttribute('href', href)
     expect(conversationLink).toHaveAttribute('aria-disabled', 'false')
-    fireEvent.click(conversationLink)
-    expect(`${window.location.pathname}${window.location.search}`).toBe(
-      '/runtime-tasks?deviceId=local-device&taskId=runtime-42'
-    )
-    window.history.replaceState({}, '', '/')
+    const removeHandler = installExternalLinkHandler()
+    try {
+      fireEvent.click(conversationLink)
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        '/runtime-tasks?deviceId=local-device&taskId=runtime-42'
+      )
+    } finally {
+      removeHandler()
+      window.history.replaceState({}, '', '/')
+    }
   })
 
   test('opens referenced issues from user messages', () => {
@@ -1689,11 +1695,16 @@ describe('MessageList', () => {
     const issueLink = screen.getByTestId(/^sent-issue-token-/)
     expect(issueLink).toHaveAttribute('href', href)
     expect(issueLink).toHaveAttribute('aria-disabled', 'false')
-    fireEvent.click(issueLink)
-    expect(`${window.location.pathname}${window.location.search}`).toBe(
-      '/todo?projectStore=backend&projectId=2753648597973755964&itemId=WEWORK2D8526-113'
-    )
-    window.history.replaceState({}, '', '/')
+    const removeHandler = installExternalLinkHandler()
+    try {
+      fireEvent.click(issueLink)
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        '/todo?projectStore=backend&projectId=2753648597973755964&itemId=WEWORK2D8526-113'
+      )
+    } finally {
+      removeHandler()
+      window.history.replaceState({}, '', '/')
+    }
   })
 })
 

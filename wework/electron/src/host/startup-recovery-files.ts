@@ -1,6 +1,7 @@
 import { readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { resetCoreDshRuntime } from '../runtime/core-dsh-runtime.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
 
 export async function clearStartupRuntimeFiles(dataDirectory: string): Promise<void> {
   await resetCoreDshRuntime(dataDirectory)
@@ -24,6 +25,7 @@ export async function clearStartupUserFiles(paths: StartupUserDataPaths): Promis
     join(paths.dataDirectory, 'dsh-core'),
     join(paths.dataDirectory, 'secure-values.json'),
     join(paths.dataDirectory, 'secure-values.key'),
+    join(protectedCredentialDirectory(paths.dataDirectory), 'secure-values.json'),
     join(paths.codexHome, 'plugins'),
     join(paths.codexHome, 'config.toml'),
     join(paths.codexHome, 'auth.json'),

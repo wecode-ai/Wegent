@@ -40,6 +40,81 @@ afterEach(() => {
 })
 
 describe('external link helpers', () => {
+  test.each([
+    'wework-conversation://%7B%22deviceId%22%3A%22device%22%2C%22taskId%22%3A%22task%22%7D',
+    'wework-issue://project/issue',
+  ])(
+    'keeps validated internal reference handlers reachable without browser navigation: %s',
+    href => {
+      const cleanup = installExternalLinkHandler()
+      const anchor = document.createElement('a')
+      anchor.href = href
+      document.body.append(anchor)
+      const handler = vi.fn()
+      anchor.addEventListener('click', handler)
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+      anchor.dispatchEvent(event)
+      expect(handler).toHaveBeenCalledOnce()
+      expect(event.defaultPrevented).toBe(true)
+      expect(desktopHostMock).not.toHaveBeenCalled()
+      expect(openWindowMock).not.toHaveBeenCalled()
+      cleanup()
+    }
+  )
+
+  test.each([
+    'javascript:alert(1)',
+    'JaVaScRiPt:alert(1)',
+    'java\nscript:alert(1)',
+    'data:text/html,test',
+    'file:///private/key',
+    'vbscript:test',
+  ])('blocks document navigation before renderer handlers for %s', href => {
+    const cleanup = installExternalLinkHandler()
+    const anchor = document.createElement('a')
+    anchor.href = href
+    const nested = document.createElement('span')
+    anchor.append(nested)
+    document.body.append(anchor)
+    const listener = vi.fn((event: Event) => event.stopPropagation())
+    anchor.addEventListener('click', listener)
+    for (const type of ['click', 'auxclick']) {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        button: type === 'click' ? 0 : 1,
+      })
+      nested.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    expect(listener).not.toHaveBeenCalled()
+    cleanup()
+  })
+  test('blocks unsafe document links inside open shadow roots', () => {
+    const cleanup = installExternalLinkHandler()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const shadow = host.attachShadow({ mode: 'open' })
+    shadow.innerHTML = '<a href="javascript:alert(1)">link</a>'
+    const event = new MouseEvent('click', { bubbles: true, composed: true, cancelable: true })
+    shadow.querySelector('a')!.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    cleanup()
+  })
+
+  test('blocks SVG links with namespaced href attributes before their handlers run', () => {
+    const cleanup = installExternalLinkHandler()
+    document.body.innerHTML =
+      '<svg><a xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="javascript:alert(1)"><text>Open</text></a></svg>'
+    const handler = vi.fn()
+    const anchor = document.querySelector('a')!
+    anchor.addEventListener('click', handler)
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    anchor.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(handler).not.toHaveBeenCalled()
+    cleanup()
+  })
   test.each(['file:///Users/', 'file:///Users/example/test.txt', 'https://example.com/'])(
     'sends explicit browser-toolbar target %s to the browser capability',
     async url => {
@@ -135,6 +210,40 @@ describe('external link helpers', () => {
     )
     cleanup()
   })
+
+  test.each([
+    { href: '', cancelNavigation: true },
+    { href: '#', cancelNavigation: true },
+    { href: ' # ', cancelNavigation: true },
+    { href: '#section', cancelNavigation: false },
+    { href: ' #section ', cancelNavigation: false },
+  ])(
+    'preserves fragment behavior without opening another browser for $href',
+    ({ href, cancelNavigation }) => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      const cleanup = installExternalLinkHandler()
+      const originalUrl = window.location.href
+      const base = document.createElement('base')
+      base.href = `${window.location.origin}/`
+      document.head.append(base)
+      window.history.replaceState(null, '', '/wework/app/runtime-tasks')
+      try {
+        const anchor = document.createElement('a')
+        anchor.setAttribute('href', href)
+        document.body.append(anchor)
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+        anchor.dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(cancelNavigation)
+        expect(getAppPreferencesMock).not.toHaveBeenCalled()
+        expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+        expect(desktopHostMock).not.toHaveBeenCalled()
+      } finally {
+        cleanup()
+        base.remove()
+        window.history.replaceState(null, '', originalUrl)
+      }
+    }
+  )
 
   test('keeps URL credentials and private paths out of link diagnostics', async () => {
     vi.stubGlobal('open', openWindowMock)

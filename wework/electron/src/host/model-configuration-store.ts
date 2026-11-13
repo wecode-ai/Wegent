@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { isMap, isSeq, type Document, type YAMLMap, type YAMLSeq } from 'yaml'
 import {
   MAX_MODEL_CONFIGURATION_BYTES,
@@ -51,7 +51,8 @@ export class ModelConfigurationStore {
   /** Use an application configuration directory and the existing encrypted credential store. */
   constructor(
     private readonly directory: string,
-    private readonly secrets: Pick<SecureValueStore, 'get' | 'set' | 'delete'>
+    private readonly secrets: Pick<SecureValueStore, 'get' | 'set' | 'delete'>,
+    private readonly legacyDirectory?: string
   ) {}
 
   /** Serialize mutations and reads while allowing later operations after a rejected request. */
@@ -66,17 +67,92 @@ export class ModelConfigurationStore {
 
   /** Resolve the explicit file binding or the default per-user configuration file. */
   private async boundPath(): Promise<string> {
+    let binding: { path?: unknown }
     try {
-      const binding = JSON.parse(
-        await readFile(join(this.directory, 'model-binding.json'), 'utf8')
-      ) as { path?: unknown }
+      binding = JSON.parse(await readFile(join(this.directory, 'model-binding.json'), 'utf8')) as {
+        path?: unknown
+      }
       if (typeof binding.path !== 'string' || !binding.path)
         throw new Error('Invalid model file binding')
-      return binding.path
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      if (this.legacyDirectory) await this.importLegacyConfiguration()
       return join(this.directory, 'model.yml')
     }
+    const path = binding.path as string
+    const destination = await this.bindingDestination(path)
+    return destination === path ? path : (await this.selectFile(path, destination)).path
+  }
+
+  /** Keep every file owned by the previous release outside the new store's write boundary. */
+  private async bindingDestination(path: string): Promise<string> {
+    if (!this.legacyDirectory) return path
+    const canonical = async (value: string): Promise<string | null> => {
+      try {
+        return await realpath(value)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        return null
+      }
+    }
+    const selected = await canonical(path)
+    if (!selected) return path
+    const legacy = await canonical(this.legacyDirectory)
+    if (legacy) {
+      const offset = relative(legacy, selected)
+      if (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`))
+        return join(this.directory, 'model.yml')
+    }
+    let binding: { path?: unknown } | null = null
+    try {
+      binding = JSON.parse(await readFile(join(this.legacyDirectory, 'model-binding.json'), 'utf8'))
+    } catch (error) {
+      if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== 'ENOENT')
+        throw error
+    }
+    return typeof binding?.path === 'string' && (await canonical(binding.path)) === selected
+      ? join(this.directory, 'model.yml')
+      : path
+  }
+
+  /** Validate and secure a selected file before committing its current-release binding. */
+  private async selectFile(path: string, destination: string): Promise<LoadedConfiguration> {
+    const loaded = await this.protectInlineCredentials(await this.load(path, false), destination)
+    await atomicWrite(
+      join(this.directory, 'model-binding.json'),
+      JSON.stringify({ path: destination })
+    )
+    return loaded
+  }
+
+  /** Copy the selected legacy file once; old releases keep their file and binding unchanged. */
+  private async importLegacyConfiguration(): Promise<void> {
+    const path = join(this.directory, 'model.yml')
+    let missing = false
+    try {
+      await stat(path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      missing = true
+    }
+    if (missing) {
+      const directory = this.legacyDirectory!
+      let legacyPath = join(directory, 'model.yml')
+      try {
+        const binding = JSON.parse(await readFile(join(directory, 'model-binding.json'), 'utf8'))
+        if (typeof binding.path !== 'string' || !binding.path)
+          throw new Error('Invalid legacy model file binding')
+        legacyPath = binding.path
+      } catch (bindingError) {
+        if ((bindingError as NodeJS.ErrnoException).code !== 'ENOENT') throw bindingError
+      }
+      await this.protectInlineCredentials(
+        await this.load(legacyPath, legacyPath === join(directory, 'model.yml')),
+        path
+      )
+    }
+    // The binding is also a durable import marker for an intentionally empty configuration.
+    await atomicWrite(join(this.directory, 'model-binding.json'), JSON.stringify({ path }))
   }
 
   /** Read and validate a bounded file, allowing an empty initial configuration only when requested. */
@@ -98,8 +174,45 @@ export class ModelConfigurationStore {
     }
   }
 
+  /** Remove inline credentials only when accepting the file, never during a stale save check. */
+  private async protectInlineCredentials(
+    loaded: LoadedConfiguration,
+    path = loaded.path
+  ): Promise<LoadedConfiguration> {
+    let { source } = loaded
+    const { config } = loaded
+    if (config.providers.some(provider => provider.api_key)) {
+      const references: string[] = []
+      try {
+        for (const provider of config.providers) {
+          if (!provider.api_key) continue
+          const reference = `wework-model-key.${randomUUID()}`
+          await this.secrets.set(reference, provider.api_key)
+          references.push(reference)
+          delete provider.api_key
+          provider.api_key_ref = reference
+        }
+        const { document } = parseModelConfiguration(source)
+        patchProviders(document, config.providers)
+        const protectedSource = document.toString({ lineWidth: 100 })
+        if ((await readFile(loaded.path, 'utf8')) !== source)
+          throw new Error('model.yml changed while securing credentials')
+        await atomicWrite(path, protectedSource)
+        source = protectedSource
+      } catch (error) {
+        for (const reference of references) {
+          const committed = await readFile(path, 'utf8').catch(() => '')
+          if (!committed.includes(reference)) await this.secrets.delete(reference)
+        }
+        throw error
+      }
+    } else if (path !== loaded.path) await atomicWrite(path, source)
+    return { path, source, revision: digest(path, source), config }
+  }
+
   /** Persist the encrypted recovery snapshot before publishing a new valid configuration. */
-  private async accept(loaded: LoadedConfiguration): Promise<void> {
+  private async accept(input: LoadedConfiguration): Promise<LoadedConfiguration> {
+    const loaded = await this.protectInlineCredentials(input)
     // Persist only a recovery snapshot, never a second editable configuration.
     // The existing encrypted credential store protects inline keys in this snapshot.
     if (this.lastGood?.revision !== loaded.revision || this.lastGood.path !== loaded.path) {
@@ -110,6 +223,7 @@ export class ModelConfigurationStore {
     }
     this.lastGood = loaded
     this.lastError = undefined
+    return loaded
   }
 
   /** Resolve one credential without making unrelated providers or the recovery UI unavailable. */
@@ -143,51 +257,41 @@ export class ModelConfigurationStore {
     }
   }
 
-  /** Load the selected configuration or retain its last valid snapshot with a visible file error. */
+  private async restoreLastGood(path: string): Promise<void> {
+    if (this.lastGood) return
+    const saved = await this.secrets.get(LAST_GOOD_KEY)
+    if (!saved) return
+    const recovery = JSON.parse(saved) as { path: string; source: string }
+    if (recovery.path !== path) return
+    this.lastGood = {
+      path,
+      source: recovery.source,
+      revision: digest(path, recovery.source),
+      config: parseModelConfiguration(recovery.source).config,
+    }
+  }
+
+  private configurationError(error: unknown): string {
+    return error instanceof Error && error.message.startsWith('model.yml')
+      ? error.message
+      : 'model.yml could not be read; choose or repair the file, then reload'
+  }
+
+  /** Keep configuration repair available even when importing the previous release fails. */
   async read(): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
-      const path = await this.boundPath()
-      if (!this.lastGood) {
-        const saved = await this.secrets.get(LAST_GOOD_KEY)
-        if (saved) {
-          const recovery = JSON.parse(saved) as { path: string; source: string }
-          if (recovery.path === path) {
-            this.lastGood = {
-              path,
-              source: recovery.source,
-              revision: digest(path, recovery.source),
-              config: parseModelConfiguration(recovery.source).config,
-            }
-          }
-        }
-      }
+      let path = join(this.directory, 'model.yml')
       try {
+        path = await this.boundPath()
+        await this.restoreLastGood(path)
         const loaded = await this.load(
           path,
           (!this.lastGood || this.lastGood.config.providers.length === 0) &&
             path === join(this.directory, 'model.yml')
         )
-        await this.accept(loaded)
-        return this.publicSnapshot(loaded)
+        return this.publicSnapshot(await this.accept(loaded))
       } catch (error) {
-        this.lastError =
-          error instanceof Error && error.message.startsWith('model.yml')
-            ? error.message
-            : 'model.yml could not be read; the previous valid configuration is retained'
-        if (!this.lastGood) {
-          const saved = await this.secrets.get(LAST_GOOD_KEY)
-          if (saved) {
-            const recovery = JSON.parse(saved) as { path: string; source: string }
-            if (recovery.path === path) {
-              this.lastGood = {
-                path,
-                source: recovery.source,
-                revision: digest(path, recovery.source),
-                config: parseModelConfiguration(recovery.source).config,
-              }
-            }
-          }
-        }
+        this.lastError = this.configurationError(error)
         return this.publicSnapshot(
           this.lastGood ?? {
             path,
@@ -204,11 +308,7 @@ export class ModelConfigurationStore {
   async bind(path: string): Promise<ModelConfigurationSnapshot> {
     return this.serial(async () => {
       const canonical = await realpath(path)
-      const loaded = await this.load(canonical, false)
-      await atomicWrite(
-        join(this.directory, 'model-binding.json'),
-        JSON.stringify({ path: canonical })
-      )
+      const loaded = await this.selectFile(canonical, await this.bindingDestination(canonical))
       await this.accept(loaded)
       return this.publicSnapshot(loaded)
     })
@@ -217,7 +317,13 @@ export class ModelConfigurationStore {
   /** Create only a fresh default file; never recreate a missing populated configuration. */
   async ensureFile(): Promise<string> {
     return this.serial(async () => {
-      const path = await this.boundPath()
+      let path: string
+      try {
+        path = await this.boundPath()
+      } catch (error) {
+        this.lastError = this.configurationError(error)
+        throw new Error(this.lastError, { cause: error })
+      }
       try {
         await stat(path)
       } catch (error) {
@@ -253,6 +359,18 @@ export class ModelConfigurationStore {
           const provider = { ...(value as Record<string, unknown>) }
           delete provider.api_key_configured
           const before = previous.get(provider.id as string)
+          if (
+            before &&
+            (before.api_key || before.api_key_ref) &&
+            before.base_url !== provider.base_url &&
+            !provider.api_key
+          ) {
+            throw new Error('Enter the API key again when changing the connection address')
+          }
+          // Credential references belong to the saved provider, never to arbitrary renderer input.
+          if (provider.api_key_ref !== undefined && provider.api_key_ref !== before?.api_key_ref) {
+            throw new Error('A credential reference cannot be transferred between providers')
+          }
           if (provider.api_key === undefined && provider.api_key_ref === undefined && before) {
             if (before.api_key) provider.api_key = before.api_key
             if (before.api_key_ref) provider.api_key_ref = before.api_key_ref
@@ -332,6 +450,9 @@ export class ModelConfigurationStore {
         // Drafts may reuse only the credential owned by their saved provider.
         delete provider.api_key_ref
         if (!provider.api_key && saved) {
+          if (provider.base_url !== saved.base_url && (saved.api_key || saved.api_key_ref)) {
+            throw new Error('Enter the API key again when changing the connection address')
+          }
           provider.api_key = saved.api_key
           provider.api_key_ref = saved.api_key_ref
         }
@@ -379,6 +500,14 @@ export class ModelConfigurationStore {
         }).providers[0]
       }
       if (!provider) throw new Error('Enter the connection address before retrieving models')
+      if (
+        saved &&
+        provider.base_url !== saved.base_url &&
+        !provider.api_key &&
+        (saved.api_key || saved.api_key_ref)
+      ) {
+        throw new Error('Enter the API key again when changing the connection address')
+      }
       const apiKey = provider.api_key ?? (saved ? await this.credential(saved) : null)
       if (saved?.api_key_ref && !apiKey)
         throw new Error('The saved API key is unavailable. Enter it again to retrieve models.')

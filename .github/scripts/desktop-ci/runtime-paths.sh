@@ -499,6 +499,8 @@ classify_path() {
       .github/actions/setup-sccache/* | \
       .github/actions/setup-node-workspace/* | \
       .github/actions/setup-python-uv-cache/* | \
+      .github/actions/setup-wework-native-test-dependencies/* | \
+      .github/ci/wework-native-test-ubuntu.sources | \
       .github/actions/build-wework-windows-e2e/* | \
       .github/actions/build-wework-macos-e2e/* | \
       .github/workflows/wework-e2e.yml | \

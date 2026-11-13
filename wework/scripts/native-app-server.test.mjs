@@ -18,6 +18,7 @@ vi.mock('node:child_process', async importOriginal => {
             [
               '-e',
               `
+          require('node:assert/strict').equal(process.env.ELECTRON_RUN_AS_NODE, '1')
           require('node:readline').createInterface({input:process.stdin}).on('line', line => {
             const message=JSON.parse(line)
             if(message.id) process.stdout.write(JSON.stringify({id:message.id,result:{}})+'\\n')

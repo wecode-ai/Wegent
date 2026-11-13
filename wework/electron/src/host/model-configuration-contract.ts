@@ -55,6 +55,9 @@ export interface ModelConfigurationSnapshot {
   error?: string
 }
 export interface ResolvedProviderModel {
-  provider: Omit<ModelProvider, 'models'>
+  provider: Omit<ModelProvider, 'models'> & {
+    api_key_configured?: boolean
+    credential_revision?: string
+  }
   model: ProviderModel
 }

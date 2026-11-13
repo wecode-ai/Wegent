@@ -10,6 +10,17 @@ const RETRY_DIALOG = '[data-testid="app-update-retry-dialog"]'
 const RETRY_CONFIRM = '[data-testid="app-update-retry-confirm"]'
 const RETRY_CANCEL = '[data-testid="app-update-retry-cancel"]'
 
+/** A delivered source may require its rollback confirmation before preparation can start. */
+export async function confirmPendingUpdateRetry(control, version) {
+  const progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
+  const confirmation = progress.update?.retryConfirmation
+  if (!confirmation) return false
+  assert.equal(confirmation.version, version, 'Retry confirmation identifies another target')
+  await control.command('waitFor', RETRY_DIALOG, { text: version })
+  await control.command('clickWhenEnabled', RETRY_CONFIRM)
+  return true
+}
+
 export async function quitActiveRelease(control, root) {
   const pid = Number(await readFile(join(root, 'active-pid'), 'utf8'))
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'The active release must identify its process')
@@ -41,7 +52,7 @@ export async function readRollbackHistory(root, target, reason) {
   return history
 }
 
-async function requestRetry(control, version) {
+export async function requestRetryConfirmation(control, version) {
   let progress = JSON.parse(await control.command('getAppUpdateProgress', 'body'))
   if (progress.update?.retryConfirmation?.version !== version) {
     await control.command('clickWhenEnabled', UPDATE_BUTTON)
@@ -93,7 +104,7 @@ export async function finishFailedUpgradeRetry(control, options) {
   assert.equal(await installedVersion(), pair.from.version)
   await routeCurrentUpdateRequests()
   await about()
-  const initial = await requestRetry(control, pair.to.version)
+  const initial = await requestRetryConfirmation(control, pair.to.version)
   assert.equal(initial.reason, 'startup-failed')
   await captureScreenshot(control, 'app-update-retry-confirmation.png', RETRY_DIALOG)
   const archiveRequests = () => requests.filter(item => item.path === `/${pair.to.name}`).length
@@ -113,7 +124,7 @@ export async function finishFailedUpgradeRetry(control, options) {
 
   await control.command('clickWhenEnabled', UPDATE_BUTTON)
   await control.command('waitFor', RETRY_DIALOG)
-  await control.command('clickWhenEnabled', RETRY_CONFIRM)
+  assert.equal(await confirmPendingUpdateRetry(control, pair.to.version), true)
   await waitForUpdatePreparation(async () =>
     JSON.parse(await control.command('getAppUpdateProgress', 'body'))
   )
@@ -150,7 +161,7 @@ export async function finishFailedUpgradeRetry(control, options) {
   )
   await routeCurrentUpdateRequests()
   await about()
-  assert.equal((await requestRetry(control, pair.to.version)).reason, 'rolled-back')
+  assert.equal((await requestRetryConfirmation(control, pair.to.version)).reason, 'rolled-back')
   await captureScreenshot(control, 'app-update-manual-rollback-confirmation.png', RETRY_DIALOG)
   await control.command('click', RETRY_CANCEL)
   await writeFile(

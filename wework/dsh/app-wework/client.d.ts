@@ -420,16 +420,6 @@ export interface WeworkStorageRegistry {
   scope(namespace: string): WeworkScopedStorage
 }
 
-export interface WeworkScopedSecrets {
-  get(key: string): Promise<string | null>
-  set(key: string, value: string): Promise<void>
-  delete(key: string): Promise<void>
-}
-
-export interface WeworkSecretRegistry {
-  scope(namespace: string): WeworkScopedSecrets
-}
-
 export interface WeworkTelemetrySink {
   readonly id: string
   readonly protocol: 'telemetry-sink/v1'
@@ -448,7 +438,7 @@ export interface WeworkTelemetryService {
 }
 
 export interface WeworkService {
-  readonly host: WeworkDesktopService
+  readonly host: Omit<WeworkDesktopService, 'secureStorage'>
   readonly backend: WeworkPluginBackendRegistry
   readonly chat: WeworkChatService
   readonly commands: WeworkCommandRegistry
@@ -462,7 +452,6 @@ export interface WeworkService {
   readonly localization: WeworkLocalizationService
   readonly configuration: WeworkConfigurationRegistry
   readonly storage: WeworkStorageRegistry
-  readonly secrets: WeworkSecretRegistry
   readonly telemetry: WeworkTelemetryService
   readonly testing: WeworkTestingService
 }
@@ -482,7 +471,6 @@ export interface WeworkExtensionHost extends Pick<
   | 'localization'
   | 'configuration'
   | 'storage'
-  | 'secrets'
   | 'telemetry'
   | 'testing'
 > {

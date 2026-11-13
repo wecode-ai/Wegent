@@ -17,6 +17,7 @@ import {
 import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { disconnectDesktopCloud, signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
+import { withNativePluginDecision } from '../modules/native-plugin-approval.mjs'
 
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
 const execFileAsync = promisify(execFile)
@@ -312,10 +313,12 @@ export async function createDesktopScenario({
         'body'
       )
 
-      await control.command(
-        'clickWhenEnabled',
-        '[data-testid="wework-plugin-development-sidebar-start"]',
-        { timeoutMs: workbenchReadyTimeoutMs, visible: true }
+      await withNativePluginDecision(control, () =>
+        control.command(
+          'clickWhenEnabled',
+          '[data-testid="wework-plugin-development-sidebar-start"]',
+          { timeoutMs: workbenchReadyTimeoutMs, visible: true }
+        )
       )
       const isolatedReady = await control.awaitReadyAfter(readyCountBeforeStart)
       assert.ok(

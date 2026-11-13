@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
+import { withNativePluginDecision } from '../modules/native-plugin-approval.mjs'
 import { withTimeout } from '../modules/shared.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
 import { verifyStandInEventVersions } from '../modules/stand-in-event-versions.mjs'
@@ -45,12 +46,17 @@ export function createDesktopScenario(options) {
     rpc(control, 'runtime.codex.app_server.request', { method, params })
   async function host(control, capability, params) {
     const origin = await control.command('getLocationOrigin', 'body')
-    const response = await fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ capability, params }),
-      timeoutMs: workbenchReadyTimeoutMs,
-    })
+    const invoke = () =>
+      fetchLocalRuntime(control, `${origin}/wework/electron-host/v1/invoke`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ capability, params }),
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+    const response =
+      capability === 'runtime.installCoreDshPlugin'
+        ? await withNativePluginDecision(control, invoke)
+        : await invoke()
     const result = await response.json()
     assert.equal(result.ok, true, JSON.stringify(result.error))
     return result.result

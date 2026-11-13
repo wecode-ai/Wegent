@@ -254,8 +254,10 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         await control.command('waitFor', `${probeResult}[role="alert"]`)
         await control.command('click', '[data-testid="provider-editor-test-error-details"]')
         await control.command('waitFor', `${probeResult}[role="alert"]`, {
-          text: 'required capability probe tool call',
+          text: '连接失败',
         })
+        assert.equal(probeRequests, 1, 'The invalid function arguments must be rejected')
+        assert.equal(nativeProbeRequests, 1, 'Both configured tool protocols must be probed')
         await control.command('clickWhenEnabled', probe)
         await control.command('waitFor', `${probeResult}[role="status"]`)
         assert.equal(

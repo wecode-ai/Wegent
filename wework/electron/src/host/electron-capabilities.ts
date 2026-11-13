@@ -146,6 +146,7 @@ export type ProcessExplorerHostService = ProcessExplorerClient
 export interface ElectronDesktopServices {
   modelConfiguration?: ModelConfigurationStore
   syncLocalModels?: () => Promise<void>
+  requestModelRuntime?: (input: Record<string, unknown>) => Promise<unknown>
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
@@ -447,7 +448,8 @@ export function createElectronCapabilityRouter(
     desktopServices.secureStorage,
     desktopServices.events,
     desktopServices.modelConfiguration,
-    desktopServices.syncLocalModels
+    desktopServices.syncLocalModels,
+    desktopServices.requestModelRuntime
   )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -788,6 +790,15 @@ export function createElectronCapabilityRouter(
         minimized: !destroyed && target.isMinimized(),
         focusable: !destroyed && target.isFocusable(),
         focused: !destroyed && target.isFocused(),
+        focusedWindowId: BrowserWindow.getFocusedWindow()?.id ?? null,
+        primaryContentsFocused: e2eHost.captureTarget('main')?.isFocused() ?? null,
+        windows: BrowserWindow.getAllWindows().map(window => ({
+          id: window.id,
+          parentId: window.getParentWindow()?.id ?? null,
+          focused: window.isFocused(),
+          visible: window.isVisible(),
+          modal: window.isModal(),
+        })),
         appHidden: process.platform === 'darwin' ? app.isHidden() : null,
       })
       throw error

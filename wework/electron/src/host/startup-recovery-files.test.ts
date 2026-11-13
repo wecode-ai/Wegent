@@ -27,6 +27,9 @@ async function fixture() {
     [join(profile, '.wework-core-plugins.json')]: '{"disabled":["user-plugin"]}',
     [join(paths.dataDirectory, 'managed-components/state.json')]: 'damaged component state',
     [join(paths.dataDirectory, 'renderer-local-storage.json')]: 'layout and sign-in',
+    [join(paths.dataDirectory, 'protected-credentials/secure-values.json')]: 'protected model keys',
+    [join(paths.dataDirectory, 'protected-credentials/cloud-credentials.json')]:
+      'protected cloud login',
     [join(paths.codexHome, 'sessions/task.jsonl')]: 'conversation',
     [join(paths.codexHome, 'plugins/installed.json')]: 'installed plugin',
     [join(paths.codexHome, 'config.toml')]: 'model settings',
@@ -82,6 +85,7 @@ describe('startup recovery file boundaries', () => {
       join(paths.codexHome, 'plugins/installed.json'),
       join(paths.codexHome, 'auth.json'),
       join(paths.claudeHome, 'plugins/installed_plugins.json'),
+      join(paths.dataDirectory, 'protected-credentials/secure-values.json'),
     ]) {
       await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
     }
@@ -91,6 +95,10 @@ describe('startup recovery file boundaries', () => {
       [join(root, 'workspace/project/index.ts'), 'project source'],
       [join(root, 'shared/plugins/source.ts'), 'shared plugin source'],
       [authSource, 'synthetic authentication'],
+      [
+        join(paths.dataDirectory, 'protected-credentials/cloud-credentials.json'),
+        'protected cloud login',
+      ],
     ])
       expect(await readFile(path, 'utf8')).toBe(content)
     expect(

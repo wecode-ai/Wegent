@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { createReadStream } from 'node:fs'
 import {
   mkdir,
   readFile,
@@ -11,7 +10,6 @@ import {
   rm,
   symlink,
 } from 'node:fs/promises'
-import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { compareVersions } from '../../../electron/src/runtime/upgrade-policy.mjs'
@@ -21,13 +19,12 @@ import { createUpgradeGoalContinuity } from '../modules/upgrade-goal-continuity.
 import { createUpgradeAuxiliaryHistory } from '../modules/upgrade-auxiliary-history.mjs'
 import { assertUpgradeComposition } from '../modules/upgrade-selected-composition.mjs'
 import { createUpgradeWriterWait } from '../modules/upgrade-writer-wait.mjs'
-import { retainStoppedPreparationDiagnostics } from '../modules/upgrade-stopped-diagnostics.mjs'
-import { UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
+import { retainUpgradeReleaseDiagnostics } from '../modules/upgrade-stopped-diagnostics.mjs'
+import { credentialsRequireReupgrade, UPGRADE_SUITE_VERSION } from '../upgrade-suite.mjs'
 import { waitForUpdatePreparation } from '../modules/update-preparation-progress.mjs'
-import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
+import { createUpgradeUpdateServer } from '../modules/upgrade-update-server.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
 import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
-import { createIntervalUpgradeProbe } from '../modules/interval-upgrade-policy.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
 import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
@@ -47,6 +44,10 @@ import {
   restartUpgradedHost,
 } from '../modules/empty-capability-manifest-upgrade.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
+import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
+import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
+import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
+import { openAboutSettings } from '../modules/app-update-navigation.mjs'
 import {
   installPreparedSource,
   installedSourcePlugins,
@@ -126,118 +127,20 @@ export async function createDesktopScenario(options) {
   const verifiesRetry = checkpoint === 'app-update-retry'
   const verifiesFailedActivation = checkpoint === 'app-upgrade-recovery' || verifiesRetry
   let offer = verifiesRefreshedUpdate ? 'unavailable' : 'target'
-  const unavailablePolicy = () => ({
-    ...unavailableUpdatePolicy(
-      { ...pair.from, appVersion: pair.from.version },
-      { platform: pair.to.platform, arch: pair.to.arch },
-      origin
-    ),
-    channel,
-  })
   let control
-  let inspectorPort
+  const inspectorPorts = []
   let launchedAppPid
   let passed = false
-  let origin
   let modelRequests = 0
   const continuity = createUpgradeConversationContinuity(() => control, workbenchReadyTimeoutMs)
   const goalContinuity = createUpgradeGoalContinuity(pair, () => control, workbenchReadyTimeoutMs)
   const auxiliaryHistory = createUpgradeAuxiliaryHistory(pair, () => control, options)
-  const requests = []
-  const intervalProbe = createIntervalUpgradeProbe(pair, () => origin, requests)
-  // Observe asynchronous acceptance before releasing real package bytes. A fixed
-  // six-second server delay charged every checkpoint without establishing state.
-  let releaseHostDownload
-  const hostDownloadAccepted = new Promise(accept => {
-    releaseHostDownload = accept
-  })
-  const server = createServer((request, response) => {
-    const url = new URL(request.url, origin)
-    requests.push({
-      path: url.pathname,
-      method: request.method,
-      range: request.headers.range ?? null,
+  const { server, origin, requests, releaseHostDownload, unavailablePolicy, intervalProbe } =
+    await createUpgradeUpdateServer({
+      pair,
+      channel,
+      currentOffer: () => offer,
     })
-    if (url.pathname.startsWith('/components-')) {
-      if (intervalProbe.handleManifest(response)) return
-      if (offer === 'refresh-failed') {
-        response.writeHead(503)
-        response.end()
-        return
-      }
-      if (offer !== 'target') {
-        const policy = unavailablePolicy()
-        response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(
-          JSON.stringify({
-            schemaVersion: 1,
-            upgradePolicy:
-              offer === 'withdrawn'
-                ? { ...policy, releases: policy.releases.slice(0, 1), edges: [] }
-                : policy,
-          })
-        )
-        return
-      }
-      const releases = [pair.from, pair.to].map(asset => ({
-        ...asset,
-        url: `${origin}/${asset.name}`,
-        minSourceVersion: pair.from.version === asset.version ? '0.0.0' : pair.from.version,
-        revoked: false,
-      }))
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          schemaVersion: 1,
-          upgradePolicy: {
-            schemaVersion: 1,
-            channel,
-            platform: pair.to.platform,
-            arch: pair.to.arch,
-            releases,
-            edges: [
-              {
-                from: pair.from.version,
-                to: pair.to.version,
-                fromSha256: pair.from.sha256,
-                toSha256: pair.to.sha256,
-                fromSourceSha: pair.from.sourceSha,
-                toSourceSha: pair.to.sourceSha,
-                runId: String(process.env.GITHUB_RUN_ID || 1),
-                evidenceSha256: 'a'.repeat(64),
-                upgrade: 'passed',
-                rollback: 'passed',
-                revoked: false,
-              },
-            ],
-          },
-        })
-      )
-    } else if (url.pathname === '/unavailable-release.tar.gz') {
-      response.writeHead(503)
-      response.end()
-    } else if (url.pathname === `/${pair.to.name}`) {
-      response.writeHead(200, {
-        'content-type': 'application/gzip',
-        'content-length': pair.to.bytes,
-      })
-      if (request.headers.range) {
-        response.destroy(new Error('Whole release downloads must not use byte ranges'))
-        return
-      }
-      void hostDownloadAccepted.then(() => {
-        if (!response.destroyed) createReadStream(pair.to.path).pipe(response)
-      })
-    } else {
-      response.writeHead(404)
-      response.end()
-    }
-  })
-  await new Promise((accept, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', accept)
-  })
-  origin = `http://127.0.0.1:${server.address().port}`
   const root = join(electronUserDataDirectory, 'releases')
   const capabilities = join(executorHome, 'capabilities')
   const verifiesEmptyManifest = checkpoint === 'app-rollback'
@@ -261,14 +164,28 @@ export async function createDesktopScenario(options) {
     assert.ok(profileState.disabled.includes(OPTIONAL_PLUGIN), message)
   }
   const compositions = []
+  const credentials = upgradeCredentials()
+  let rollbackProtection
+  const verifyCredentials = (stage, options) =>
+    credentials.verify(
+      control,
+      inspectorPorts,
+      stage,
+      [electronUserDataDirectory, legacyDataDirectory].filter(Boolean),
+      options
+    )
   let macosIdentity
   const assertSelectedComposition = version =>
-    assertUpgradeComposition({ control, root, version, compositions, macosIdentity, resultDir })
-  const about = async () => {
-    await control.command('clickWhenEnabled', '[data-testid="settings-button"]')
-    await control.command('clickWhenEnabled', '[data-testid="about-menu-button"]')
-    await control.command('waitFor', '[data-testid="about-settings-page"]')
-  }
+    assertUpgradeComposition({
+      control,
+      root,
+      version,
+      compositions,
+      macosIdentity,
+      resultDir,
+      inspectorPorts,
+    })
+  const about = () => openAboutSettings(control)
   const send = text => continuity.send(text, `${ANSWER} ${modelRequests + 1}`)
   return {
     usesReleasePackageRuntimeAssets: true,
@@ -276,12 +193,13 @@ export async function createDesktopScenario(options) {
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
           appProcessStarted: async child => {
-            inspectorPort = await routeUpgradeRequests(
+            const port = await routeUpgradeRequests(
               child,
               origin,
               join(resultDir, 'upgrade-transport.log'),
               { followHandoffs: true }
             )
+            inspectorPorts.push(port)
             launchedAppPid = child.pid
           },
         }
@@ -409,6 +327,7 @@ export async function createDesktopScenario(options) {
       }
     },
     async prepareUserDataLaunch() {
+      await credentials.seed(electronUserDataDirectory)
       if (usesDefaultUserData) {
         // Start from the real default application-data location. The shipped
         // migration, bootstrap and updater must agree on the resulting userData.
@@ -422,6 +341,7 @@ export async function createDesktopScenario(options) {
       }
     },
     async handleHttp(request, response, url) {
+      if (credentials.handleHttp(request, response, url)) return true
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -457,6 +377,7 @@ export async function createDesktopScenario(options) {
         `${JSON.stringify({ version: pair.from.version, ...sourceRuntime }, null, 2)}\n`
       )
       console.log(`[upgrade-e2e] Source ${pair.from.version} is ready`)
+      await verifyCredentials('source')
       const workspace = join(workspacePath, 'upgrade-source-project')
       await mkdir(workspace, { recursive: true })
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -607,7 +528,7 @@ export async function createDesktopScenario(options) {
       if (verifiesEmptyManifest) {
         const { executorPid } = await runtimeDiagnostics()
         // Historical source packages may not expose a process snapshot action.
-        await armEmptyManifestUpgrade(inspectorPort, launchedAppPid, {
+        await armEmptyManifestUpgrade(inspectorPorts, launchedAppPid, {
           root,
           capabilities,
           targetVersion: pair.to.version,
@@ -667,14 +588,22 @@ export async function createDesktopScenario(options) {
             assertSelectedComposition,
             captureScreenshot: options.captureScreenshot,
             routeCurrentUpdateRequests: () =>
-              routeRunningUpgradeRequests(inspectorPort, control, origin),
+              routeRunningUpgradeRequests(inspectorPorts, control, origin),
           })
         passed = true
         return
       }
       assert.equal(await installedVersion(), pair.to.version)
       const targetReleaseId = (await readFile(join(root, 'active'), 'utf8')).trim()
+      const preparedTarget = JSON.parse(
+        await readFile(join(root, 'slots', targetReleaseId, 'release.json'), 'utf8')
+      )
+      assert.equal(preparedTarget.id, targetReleaseId)
+      assert.equal(preparedTarget.version, pair.to.version)
+      if (preparedTarget.packageSha256 !== undefined)
+        assert.equal(preparedTarget.packageSha256, pair.to.sha256)
       console.log(`[upgrade-e2e] Running target ${pair.to.version}`)
+      await verifyCredentials('upgraded')
       await control.command(
         'waitFor',
         '[data-testid="new-chat-button"], [data-testid="settings-back-button"]',
@@ -721,7 +650,7 @@ export async function createDesktopScenario(options) {
             timeoutMs: workbenchReadyTimeoutMs,
           })
         } else {
-          await restartUpgradedHost(control, inspectorPort, workbenchReadyTimeoutMs)
+          await restartUpgradedHost(control, inspectorPorts, workbenchReadyTimeoutMs)
         }
         assert.equal(await installedVersion(), pair.to.version)
         await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -764,7 +693,7 @@ export async function createDesktopScenario(options) {
         })
         await about()
         if (checkpoint === 'app-rollback') {
-          await routeRunningUpgradeRequests(inspectorPort, control, origin)
+          await routeRunningUpgradeRequests(inspectorPorts, control, origin)
           await intervalProbe.verify(control, resultDir)
         }
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
@@ -786,6 +715,7 @@ export async function createDesktopScenario(options) {
         await control.awaitReadyAfter(beforeRollback, workbenchReadyTimeoutMs)
         assert.equal(await installedVersion(), pair.from.version)
         console.log(`[upgrade-e2e] Rolled back to ${pair.from.version}`)
+        await verifyCredentials('rolled-back', { write: true })
         await assert.rejects(
           readFile(join(root, 'previousHealthy')),
           { code: 'ENOENT' },
@@ -811,6 +741,7 @@ export async function createDesktopScenario(options) {
         if (process.platform === 'darwin' && checkpoint === 'app-rollback-recovery') {
           await assertDelayedRecoveryHandoffs({
             root,
+            inspectorPorts,
             targetId: targetReleaseId,
             control,
             environment: launchEnvironment,
@@ -851,6 +782,32 @@ export async function createDesktopScenario(options) {
             'Rollback did not preserve the newer local data'
           )
         }
+        if (checkpoint === 'app-rollback') {
+          rollbackProtection = await verifyRollbackProtection({
+            control,
+            root,
+            target: pair.to,
+            preparedTarget,
+            requests,
+            about,
+            route: () => routeRunningUpgradeRequests(inspectorPorts, control, origin),
+          })
+        }
+        if (checkpoint === 'app-rollback' && credentialsRequireReupgrade(credentials.stages)) {
+          await reupgradeAfterRollback({
+            control,
+            routeCurrentUpdateRequests: () =>
+              routeRunningUpgradeRequests(inspectorPorts, control, origin),
+            about,
+            version: pair.to.version,
+            installedVersion,
+            assertSelectedComposition,
+            send,
+            verifyCredentials: () => verifyCredentials('re-upgraded'),
+            timeoutMs: workbenchReadyTimeoutMs,
+          })
+          rollbackProtection.retryConfirmed = true
+        }
       }
       const evidence = JSON.stringify({
         schemaVersion: 1,
@@ -878,6 +835,11 @@ export async function createDesktopScenario(options) {
             : 'not-run',
         requests,
         compositions,
+        credentials: credentials.stages,
+        ...(rollbackProtection ? { rollbackProtection } : {}),
+        reupgrade: credentials.stages.some(stage => stage.stage === 're-upgraded')
+          ? 'passed'
+          : 'not-run',
         conversationContinuity: continuity.evidence(),
         goalContinuity: goalContinuity.evidence(),
         auxiliaryHistory: auxiliaryHistory.evidence(),
@@ -935,46 +897,13 @@ export async function createDesktopScenario(options) {
         // Default-layout runs keep product log locations. Retain diagnostics before
         // the shared result compactor removes the isolated Home and its databases.
         if (usesDefaultUserData) {
-          await retainStoppedPreparationDiagnostics(
+          await retainUpgradeReleaseDiagnostics({
             root,
-            pair.to.version,
-            join(resultDir, 'stopped-preparation-result.json')
-          ).catch(error =>
-            console.warn(`Cannot retain stopped preparation metadata: ${error.code ?? error.name}`)
-          )
-          for (const [name, directory] of [
-            ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
-            ['release-logs', join(electronUserDataDirectory, 'logs')],
-            ...(legacyDataDirectory
-              ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
-              : []),
-          ]) {
-            await fs.cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
-              if (error.code !== 'ENOENT') throw error
-            })
-          }
-          const state = {}
-          for (const name of [
-            'active',
-            'active-pid',
-            'bridge',
-            'macos-rollback',
-            'trial',
-            'attempted',
-            'healthy',
-            'failed',
-            'activation.json',
-            'last-activation.json',
-          ]) {
-            state[name] = await readFile(join(root, name), 'utf8').catch(error => {
-              if (error.code !== 'ENOENT') throw error
-              return null
-            })
-          }
-          await writeFile(
-            join(resultDir, 'release-state-result.json'),
-            JSON.stringify(state, null, 2)
-          )
+            version: pair.to.version,
+            resultDir,
+            electronUserDataDirectory,
+            legacyDataDirectory,
+          })
         }
         // A failed activation can leave the native recovery shell waiting for
         // confirmation before it connects to the renderer control channel.

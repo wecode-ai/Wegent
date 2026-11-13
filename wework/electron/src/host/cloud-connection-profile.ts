@@ -26,3 +26,48 @@ export function requireCloudCredentialOwner(connection: unknown, apiBaseUrl: str
   }
   return id
 }
+
+export interface CloudRuntimeTarget {
+  apiBaseUrl: string
+  socketBaseUrl: string
+  socketPath: string
+}
+
+/** Bind native authentication to the complete saved destination, never renderer overrides. */
+export function configuredCloudRuntimeTarget(
+  target: unknown,
+  connection: unknown
+): { target: CloudRuntimeTarget; account: number } {
+  if (!target || typeof target !== 'object' || Array.isArray(target))
+    throw new Error('Cloud runtime target is not configured')
+  const route = target as CloudRuntimeTarget
+  const profile = connection as
+    | (CloudRuntimeTarget & { token?: string; credentialMode?: string })
+    | null
+  if (
+    !profile ||
+    !['apiBaseUrl', 'socketBaseUrl', 'socketPath'].every(
+      key =>
+        typeof (target as Record<string, unknown>)[key] === 'string' &&
+        (target as Record<string, unknown>)[key] ===
+          (profile as unknown as Record<string, unknown>)[key]
+    )
+  )
+    throw new Error('Cloud runtime target is not configured')
+  const account = requireCloudCredentialOwner(profile, route.apiBaseUrl)
+  return { target: route, account }
+}
+
+export async function configuredCloudRuntimeCredentials(
+  target: unknown,
+  connection: unknown,
+  refresh: (apiBaseUrl: string, expectedUserId: number) => Promise<string>
+): Promise<{ target: CloudRuntimeTarget; account: number; token: string }> {
+  const { target: route, account } = configuredCloudRuntimeTarget(target, connection)
+  const profile = connection as { token?: string; credentialMode?: string }
+  const token =
+    profile.credentialMode !== 'desktop_refresh' && profile.token
+      ? profile.token
+      : await refresh(route.apiBaseUrl, account)
+  return { target: route, account, token }
+}

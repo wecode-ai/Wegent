@@ -155,9 +155,11 @@ file:/absolute/path/to/copied/ui-extension-demo
 ```
 
 安装、更新、启停或卸载会修改受管的 `wework-core` profile；配置变更后需要重启
-Core DSH。安装流程会先快照 profile，再运行包管理命令、校验
+Core DSH。每次安装或更新先通过原生窗口确认来源和执行风险；取消或关闭时不运行包管理或恢复命令。允许后才快照 profile，再运行包管理命令、校验
 `dsh.bundle.patch`、执行 `dsh --profile wework-core --dump-config` 预检；失败时
 恢复快照。插件不能依赖“安装后立即热生效”。
+
+独立插件开发入口也必须先通过同一原生来源确认，允许后才创建子进程、链接源码并启动 HMR。取消时保留已有开发会话；已运行会话的聚焦操作不会再次安装。
 
 复制 Demo 开发自己的插件时：
 

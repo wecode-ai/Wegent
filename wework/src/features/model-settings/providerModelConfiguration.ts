@@ -84,6 +84,7 @@ export function resolveProviderModel(
   const config: LocalModelConfig = {
     id: model.id,
     providerConnectionId: provider.id,
+    providerRevision: provider.credential_revision,
     providerProfileId: profileId,
     displayName,
     group: model.group ?? provider.name,
@@ -91,8 +92,7 @@ export function resolveProviderModel(
     baseUrl: provider.base_url,
     apiFormat,
     requestPath,
-    apiKey: provider.api_key,
-    apiKeyConfigured: Boolean(provider.api_key),
+    apiKeyConfigured: provider.api_key_configured ?? Boolean(provider.api_key),
     toolProfile,
     codexToolCompatibility:
       apiFormat === 'openai-responses'

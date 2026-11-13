@@ -252,11 +252,25 @@ async function runRecoveryVerification() {
     for (const file of [
       pluginPath,
       path.join(dataDirectory, 'app-preferences.json'),
-      path.join(dataDirectory, 'cloud-credentials.json'),
       path.join(paths.codexHome, 'plugins/installed.json'),
     ]) {
       await assert.rejects(fs.stat(file), { code: 'ENOENT' })
     }
+    assert.equal(
+      await fs.readFile(path.join(dataDirectory, 'cloud-credentials.json'), 'utf8'),
+      'synthetic credentials',
+      'Resetting the current release must preserve independent legacy credentials'
+    )
+    assert.deepEqual(
+      JSON.parse(
+        await fs.readFile(
+          path.join(dataDirectory, 'protected-credentials/cloud-credentials.json'),
+          'utf8'
+        )
+      ),
+      { version: 3, ciphertext: null },
+      'The native empty marker must prevent legacy credentials from being imported again'
+    )
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
     assert.deepEqual(manifest.plugins, {})
     assert.deepEqual(manifest.skills, { skill: {} })

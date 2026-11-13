@@ -16,30 +16,23 @@ const provider: ModelProvider = {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  invoke.mockImplementation(async (_method, params) => ({
-    models: params.provider.models.map((model: object) => ({
-      provider: { ...params.provider, api_key: 'resolved-key' },
-      model,
-    })),
-  }))
+  invoke.mockImplementation(async (_method, params) =>
+    params.provider.models.map((model: { model_id: string }) => ({ model: model.model_id }))
+  )
   probe.mockResolvedValue({ status: 200, toolCalling: true })
 })
 test('tests the draft using resolved credentials without saving or requiring exact probe contents', async () => {
   await expect(
     testProviderConnection({ ...provider, api_key_ref: 'saved-ref', api_key_configured: true })
   ).resolves.toEqual([{ model: 'upstream-a' }])
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('modelConfiguration.runtime', { provider })
-  expect(probe).toHaveBeenCalledWith(
-    expect.objectContaining({
-      modelId: 'upstream-a',
-      apiKey: 'resolved-key',
-      baseUrl: provider.base_url,
-    }),
-    { verifyExactProbePayload: false }
-  )
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('modelConfiguration.test', { provider })
+  expect(probe).not.toHaveBeenCalled()
 })
 test('uses model overrides and reports each failed model without discarding successful results', async () => {
-  probe.mockRejectedValueOnce(new Error('HTTP 401: bad key'))
+  invoke.mockResolvedValueOnce([
+    { model: 'upstream-a', error: 'connection_test_failed' },
+    { model: 'upstream-b' },
+  ])
   const draft = {
     ...provider,
     models: [
@@ -53,16 +46,14 @@ test('uses model overrides and reports each failed model without discarding succ
     ],
   }
   await expect(testProviderConnection(draft)).resolves.toEqual([
-    { model: 'upstream-a', error: 'HTTP 401: bad key' },
+    { model: 'upstream-a', error: 'connection_test_failed' },
     { model: 'upstream-b' },
   ])
-  expect(probe).toHaveBeenLastCalledWith(
-    expect.objectContaining({ apiFormat: 'anthropic-messages', requestPath: '/messages' }),
-    expect.any(Object)
-  )
+  expect(probe).not.toHaveBeenCalled()
+  expect(invoke).toHaveBeenCalledWith('modelConfiguration.test', { provider: draft })
 })
 test('missing saved credentials cannot become an anonymous successful probe', async () => {
-  invoke.mockResolvedValue({ models: [] })
+  invoke.mockResolvedValue([])
   await expect(testProviderConnection(provider)).rejects.toThrow('saved API Key is unavailable')
   expect(probe).not.toHaveBeenCalled()
 })

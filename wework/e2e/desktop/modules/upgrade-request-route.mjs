@@ -1,4 +1,8 @@
-import { inspectBeforeStart, inspectRunningApp } from './inspect-before-start.mjs'
+import {
+  inspectBeforeStart,
+  inspectRunningApp,
+  readConnectedApplicationPid,
+} from './inspect-before-start.mjs'
 import { appendFileSync } from 'node:fs'
 
 const publishedBase = 'https://github.com/wecode-ai/Wegent/releases/download/wework-updater/'
@@ -36,10 +40,10 @@ export async function routeUpgradeRequests(
 export async function routeRunningUpgradeRequests(port, control, origin) {
   // A normal installed startup need not refresh the launcher's active-pid file.
   // Bind the inspector to the host serving the connected workbench instead.
-  const { applicationPid } = JSON.parse(await control.command('getOwnedProcessSnapshot', 'body'))
-  if (!Number.isSafeInteger(applicationPid) || applicationPid <= 0)
-    throw new Error('The connected workbench has no valid application process ID')
-  await inspectRunningApp(port, applicationPid, upgradeTransportScript(origin, null, port))
+  const applicationPid = await readConnectedApplicationPid(control)
+  await inspectRunningApp(port, applicationPid, selected =>
+    upgradeTransportScript(origin, null, selected)
+  )
 }
 
 export function upgradeTransportScript(origin, pauseArgument, inspectorPort = null) {

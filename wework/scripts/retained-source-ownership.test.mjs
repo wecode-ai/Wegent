@@ -7,7 +7,16 @@ import { assertRetainedSourceOwnership } from '../e2e/desktop/modules/retained-s
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'retained-source-ownership-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  const noAsar = process.noAsar
+  // Match the release verifier's physical archive filesystem.
+  process.noAsar = true
+  t.after(async () => {
+    try {
+      await rm(root, { recursive: true, force: true })
+    } finally {
+      process.noAsar = noAsar
+    }
+  })
   const data = join(root, 'data')
   const profile = join(data, 'dsh-core/profiles/wework-core')
   const originalPrograms = join(data, 'managed-components')

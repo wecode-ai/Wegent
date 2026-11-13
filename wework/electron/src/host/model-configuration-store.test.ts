@@ -1,8 +1,13 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { stringify } from 'yaml'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ModelConfigurationStore } from './model-configuration-store.js'
+import { SecureValueStore } from './secure-value-store.js'
+import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { verifyLegacyModelBindings } from '../../../e2e/desktop/modules/upgrade-model-binding.mjs'
 import {
   parseModelConfiguration,
   validateModelConfiguration,
@@ -70,6 +75,187 @@ describe('Provider YAML schema', () => {
 })
 
 describe('Provider configuration file store', () => {
+  test('the packaged binding regression exercises the production model store', async () => {
+    const nativeRequire = createRequire(import.meta.url)
+    const protection = createTestSecretProtection()
+    await expect(
+      verifyLegacyModelBindings({
+        directory,
+        host: directory,
+        nativeRequire: (name: string) => {
+          if (basename(name) === 'model-configuration-store.js') return { ModelConfigurationStore }
+          if (basename(name) === 'secure-value-store.js')
+            return {
+              SecureValueStore: class extends SecureValueStore {
+                constructor(profile: string) {
+                  super(profile, protection)
+                }
+              },
+            }
+          return nativeRequire(name)
+        },
+      })
+    ).resolves.toBe(true)
+  })
+  test.each(['binding', 'deleted', 'oversized'])(
+    'keeps legacy import failures visible and repairable (%s)',
+    async failure => {
+      const legacy = join(directory, 'legacy')
+      const target = join(directory, 'protected')
+      await mkdir(legacy)
+      const legacyPath = join(legacy, 'selected.yml')
+      const binding = failure === 'binding' ? '{broken' : JSON.stringify({ path: legacyPath })
+      await writeFile(join(legacy, 'model-binding.json'), binding)
+      if (failure === 'oversized') await writeFile(legacyPath, '#'.repeat(2 * 1024 * 1024 + 1))
+      const store = new ModelConfigurationStore(target, secrets, legacy)
+      const snapshot = await store.read()
+      expect(snapshot.error).toBeTruthy()
+      expect(snapshot.providers).toEqual([])
+      await expect(store.save(snapshot.revision, [])).rejects.toThrow('Fix and reload')
+      await expect(store.ensureFile()).rejects.toThrow(/model.yml/)
+      await expect(readFile(join(target, 'model-binding.json'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      expect(await readFile(join(legacy, 'model-binding.json'), 'utf8')).toBe(binding)
+      await writeFile(legacyPath, YAML)
+      await writeFile(join(legacy, 'model-binding.json'), JSON.stringify({ path: legacyPath }))
+      const recovered = await store.read()
+      expect(recovered.error).toBeUndefined()
+      expect(recovered.providers).toHaveLength(1)
+      expect(await readFile(legacyPath, 'utf8')).toBe(YAML)
+    }
+  )
+  test.each([false, true])(
+    'imports legacy configuration once and preserves rollback data (bound: %s)',
+    async bound => {
+      const legacy = join(directory, 'legacy')
+      const protectedDirectory = join(directory, 'protected')
+      await mkdir(legacy)
+      const legacyPath = join(legacy, bound ? 'selected.yml' : 'model.yml')
+      await writeFile(legacyPath, YAML)
+      const binding = JSON.stringify({ path: legacyPath })
+      if (bound) await writeFile(join(legacy, 'model-binding.json'), binding)
+      const store = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+      const snapshot = await store.read()
+      expect(snapshot.error).toBeUndefined()
+      expect(snapshot.path).toBe(join(protectedDirectory, 'model.yml'))
+      expect(await readFile(legacyPath, 'utf8')).toBe(YAML)
+      if (bound) expect(await readFile(join(legacy, 'model-binding.json'), 'utf8')).toBe(binding)
+      expect(await readFile(snapshot.path, 'utf8')).not.toContain('secret-not-for-output')
+      expect((await store.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
+      const providers = parseModelConfiguration(await readFile(snapshot.path, 'utf8')).config
+        .providers
+      delete providers[0].api_key_ref
+      providers[0].api_key = 'new-store-secret'
+      await store.save(snapshot.revision, providers)
+      expect(await readFile(legacyPath, 'utf8')).toBe(YAML)
+      await rm(legacy, { recursive: true })
+      const reopened = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+      expect((await reopened.read()).error).toBeUndefined()
+      expect((await reopened.runtime()).models[0].provider.api_key).toBe('new-store-secret')
+    }
+  )
+
+  test('does not import a legacy file created after an empty first initialization', async () => {
+    const legacy = join(directory, 'legacy')
+    const protectedDirectory = join(directory, 'protected')
+    const first = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+    expect((await first.read()).providers).toEqual([])
+    await mkdir(legacy)
+    await writeFile(join(legacy, 'model.yml'), YAML)
+    const reopened = new ModelConfigurationStore(protectedDirectory, secrets, legacy)
+    expect((await reopened.read()).providers).toEqual([])
+  })
+
+  test.each(['default', 'external binding', 'directory alias'])(
+    'explicitly selecting the legacy %s copies it without changing rollback data',
+    async selection => {
+      const legacy = join(directory, 'legacy')
+      const target = join(directory, 'protected')
+      await mkdir(legacy)
+      const source = join(selection === 'external binding' ? directory : legacy, 'model.yml')
+      await writeFile(source, YAML)
+      const binding = JSON.stringify({ path: source })
+      if (selection === 'external binding')
+        await writeFile(join(legacy, 'model-binding.json'), binding)
+      const store = new ModelConfigurationStore(target, secrets, legacy)
+      await store.read()
+      let selected = source
+      if (selection === 'directory alias') {
+        const alias = join(directory, 'alias')
+        await symlink(legacy, alias, process.platform === 'win32' ? 'junction' : 'dir')
+        selected = join(alias, 'model.yml')
+      }
+      const snapshot = await store.bind(selected)
+      expect(await readFile(source, 'utf8')).toBe(YAML)
+      expect(snapshot.path).toBe(join(target, 'model.yml'))
+      expect(await readFile(snapshot.path, 'utf8')).not.toContain('secret-not-for-output')
+      const updated = await store.save(
+        snapshot.revision,
+        snapshot.providers.map(provider => ({ ...provider, api_key: 'new-version-key' }))
+      )
+      expect(updated.path).toBe(snapshot.path)
+      expect(await readFile(source, 'utf8')).toBe(YAML)
+      if (selection === 'external binding')
+        expect(await readFile(join(legacy, 'model-binding.json'), 'utf8')).toBe(binding)
+      await writeFile(source, YAML.replace('secret-not-for-output', 'rollback-version-key'))
+      const restarted = new ModelConfigurationStore(target, secrets, legacy)
+      expect((await restarted.read()).path).toBe(snapshot.path)
+      expect((await restarted.runtime()).models[0].provider.api_key).toBe('new-version-key')
+      expect(await readFile(source, 'utf8')).toContain('rollback-version-key')
+    }
+  )
+
+  test.each([false, true])(
+    'a persisted legacy binding is isolated before securing keys (external: %s)',
+    async external => {
+      const legacy = join(directory, 'legacy')
+      const target = join(directory, 'protected')
+      await mkdir(legacy)
+      await mkdir(target)
+      const source = join(external ? directory : legacy, 'model.yml')
+      await writeFile(source, YAML)
+      if (external)
+        await writeFile(join(legacy, 'model-binding.json'), JSON.stringify({ path: source }))
+      await writeFile(join(target, 'model-binding.json'), JSON.stringify({ path: source }))
+      const store = new ModelConfigurationStore(target, secrets, legacy)
+      const snapshot = await store.read()
+      expect(snapshot.error).toBeUndefined()
+      expect(snapshot.path).toBe(join(target, 'model.yml'))
+      expect(await readFile(source, 'utf8')).toBe(YAML)
+      expect((await store.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
+    }
+  )
+
+  test.each(['damaged', 'valid', 'missing'])(
+    'ordinary external bindings remain editable when the legacy binding is %s',
+    async state => {
+      const legacy = join(directory, 'legacy')
+      await mkdir(legacy)
+      const legacySource = join(legacy, 'model.yml')
+      await writeFile(legacySource, YAML)
+      if (state !== 'missing')
+        await writeFile(
+          join(legacy, 'model-binding.json'),
+          state === 'damaged' ? '{broken' : JSON.stringify({ path: legacySource })
+        )
+      const source = join(directory, 'independent.yml')
+      await writeFile(source, YAML)
+      const store = new ModelConfigurationStore(join(directory, 'protected'), secrets, legacy)
+      expect(Boolean((await store.read()).error)).toBe(state === 'damaged')
+      const snapshot = await store.bind(source)
+      expect(snapshot.error).toBeUndefined()
+      expect(snapshot.path).toBe(await realpath(source))
+      expect(await readFile(source, 'utf8')).toContain('api_key_ref:')
+      await store.save(
+        snapshot.revision,
+        snapshot.providers.map(provider => ({ ...provider, api_key: 'independent-key' }))
+      )
+      expect((await store.runtime()).models[0].provider.api_key).toBe('independent-key')
+      expect(await readFile(legacySource, 'utf8')).toBe(YAML)
+    }
+  )
+
   test('resolves draft credentials from its saved provider without persisting changes', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
     const empty = await store.read()
@@ -80,7 +266,7 @@ describe('Provider configuration file store', () => {
     const original = await readFile(join(directory, 'model.yml'), 'utf8')
     const { api_key_configured, ...draft } = snapshot.providers[0]
     expect(api_key_configured).toBe(true)
-    draft.base_url = 'https://draft.example/v1'
+    draft.base_url = 'https://relay.example/v1'
     draft.api_key_ref = 'wework-model-key.untrusted-ref'
     const runtime = await store.runtime(draft)
     expect(runtime.models[0].provider).toMatchObject({
@@ -88,6 +274,9 @@ describe('Provider configuration file store', () => {
       api_key: 'secret-not-for-output',
     })
     delete draft.api_key_ref
+    await expect(
+      store.runtime({ ...draft, base_url: 'https://attacker.example/v1' })
+    ).rejects.toThrow(/API key again/)
     expect(
       (await store.runtime({ ...draft, api_key: 'replacement' })).models[0].provider.api_key
     ).toBe('replacement')
@@ -200,11 +389,14 @@ describe('Provider configuration file store', () => {
     const other = join(directory, 'other.yml')
     await writeFile(other, YAML)
     const after = await store.bind(other)
+    const protectedSource = await readFile(other, 'utf8')
+    expect(protectedSource).not.toContain('secret-not-for-output')
     expect(after.revision).not.toBe(before.revision)
     await expect(store.save(before.revision, before.providers)).rejects.toThrow(
       /changed externally/
     )
-    expect(await readFile(other, 'utf8')).toBe(YAML)
+    expect(await readFile(other, 'utf8')).toBe(protectedSource)
+    expect(parseModelConfiguration(protectedSource).config.providers[0].id).toBe('relay')
   })
   test('binding rejects an invalid file and preserves the previous binding', async () => {
     const store = new ModelConfigurationStore(directory, secrets)
@@ -281,10 +473,16 @@ describe('Provider credential recovery and retirement', () => {
     const empty = await store.read()
     let saved = await store.save(empty.revision, parseModelConfiguration(YAML).config.providers)
     const oldRef = saved.providers[0].api_key_ref!
-    saved = await store.save(saved.revision, [
-      ...saved.providers,
-      { ...saved.providers[0], id: 'shared', models: [] },
-    ])
+    await expect(
+      store.save(saved.revision, [
+        ...saved.providers,
+        { ...saved.providers[0], id: 'shared', models: [] },
+      ])
+    ).rejects.toThrow(/transferred/)
+    const imported = parseModelConfiguration(await readFile(saved.path, 'utf8')).config
+    imported.providers.push({ ...imported.providers[0], id: 'shared', models: [] })
+    await writeFile(saved.path, stringify(imported))
+    saved = await store.read()
     saved = await store.save(
       saved.revision,
       saved.providers.filter(provider => provider.id !== 'relay')
@@ -398,9 +596,9 @@ describe('Provider model discovery', () => {
     const secretsBefore = new Map(values)
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
-    await store.discover('relay', { ...draft, api_key: '' })
+    await store.discover('relay', { ...draft, base_url: 'https://relay.example/v1', api_key: '' })
     expect(request).toHaveBeenCalledWith(
-      'https://draft.example/v1/models',
+      'https://relay.example/v1/models',
       expect.objectContaining({
         headers: { Authorization: 'Bearer secret-not-for-output' },
       })
@@ -413,6 +611,7 @@ describe('Provider model discovery', () => {
     await writeFile(join(directory, 'model.yml'), YAML)
     const store = new ModelConfigurationStore(directory, secrets)
     await store.read()
+    const protectedSource = await readFile(join(directory, 'model.yml'), 'utf8')
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
     await store.discover('relay', draft)
@@ -423,7 +622,8 @@ describe('Provider model discovery', () => {
       })
     )
     expect((await store.runtime()).models[0].provider.api_key).toBe('secret-not-for-output')
-    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toBe(YAML)
+    expect(protectedSource).not.toContain('secret-not-for-output')
+    expect(await readFile(join(directory, 'model.yml'), 'utf8')).toBe(protectedSource)
   })
 
   test('retains saved-provider discovery for older callers', async () => {
@@ -506,9 +706,13 @@ describe('Provider model discovery', () => {
     values.clear()
     const request = vi.fn().mockResolvedValue(response({ data: [] }))
     vi.stubGlobal('fetch', request)
-    await expect(store.discover('relay', { ...draft, api_key: undefined })).rejects.toThrow(
-      /saved API key/
-    )
+    await expect(
+      store.discover('relay', {
+        ...draft,
+        base_url: 'https://relay.example/v1',
+        api_key: undefined,
+      })
+    ).rejects.toThrow(/saved API key/)
     expect(request).not.toHaveBeenCalled()
     await expect(store.discover('relay', draft)).resolves.toEqual([])
   })

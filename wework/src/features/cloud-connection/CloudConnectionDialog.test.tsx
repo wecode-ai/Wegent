@@ -34,6 +34,18 @@ function renderDialog(connection: CloudConnectionContextValue, onClose = vi.fn()
 }
 
 describe('CloudConnectionDialog', () => {
+  it('keeps explicit disconnect available to repair failed native sign-in', async () => {
+    const connection = {
+      ...cloudConnection('https://saved.example.com'),
+      status: 'error' as const,
+      error: 'Cloud credentials are unreadable',
+    }
+    renderDialog(connection)
+    expect(screen.getByTestId('cloud-connection-error')).toBeInTheDocument()
+    expect(connection.disconnect).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('cloud-disconnect-button'))
+    expect(connection.disconnect).toHaveBeenCalledOnce()
+  })
   afterEach(() => {
     vi.unstubAllEnvs()
   })

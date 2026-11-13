@@ -81,6 +81,23 @@ function fixture(required = []) {
       channel,
       upgrade: 'passed',
       rollback: 'passed',
+      reupgrade: 'passed',
+      rollbackProtection: {
+        version: target.version,
+        packageSha256: target.sha256,
+        kind: 'confirmation-required',
+        historyPreserved: true,
+        downloadPrevented: true,
+        retryConfirmed: true,
+      },
+      credentials: ['source', 'upgraded', 'rolled-back', 're-upgraded'].map((stage, index) => ({
+        stage,
+        format: index === 0 ? 2 : 3,
+        storageVersion: index % 2 === 0 ? 2 : 3,
+        modelAuthenticated: true,
+        cloudDeviceSignature: true,
+        ...(['upgraded', 'rolled-back'].includes(stage) ? { writeAuthenticated: true } : {}),
+      })),
       manifestRecovery: {
         schemaVersion: 2,
         backup: 'manifest.json.empty-recovered',

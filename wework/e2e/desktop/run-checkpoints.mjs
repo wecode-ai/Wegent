@@ -41,6 +41,7 @@ const weworkDir = resolve(scriptDir, '..', '..')
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
 const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
 const openboxPath = join(scriptDir, 'run-with-openbox.sh')
+const keyringPath = join(scriptDir, 'run-with-keyring.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 const allocateXvfbDisplay = createXvfbDisplayAllocator()
@@ -63,7 +64,18 @@ function runTaskFlow(args, env, label) {
     const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
     const command = isolateDisplay ? 'sh' : process.execPath
     const commandArgs = isolateDisplay
-      ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
+      ? [
+          isolatedXvfbPath,
+          'dbus-run-session',
+          '--',
+          'sh',
+          keyringPath,
+          'sh',
+          openboxPath,
+          process.execPath,
+          taskFlowPath,
+          ...args,
+        ]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
       env: isolateDisplay

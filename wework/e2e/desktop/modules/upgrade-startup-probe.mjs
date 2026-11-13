@@ -14,7 +14,7 @@ export const PROBE_QUIT_SCRIPT = forceQuit
   ? "app.once('quit', () => process.kill(process.pid, 'SIGKILL'))"
   : ''
 
-async function captureStartupNativeStack(child) {
+export async function captureStartupNativeStack(child) {
   if (child.exitCode !== null || child.signalCode !== null) return
   if (process.platform !== 'linux' && process.platform !== 'darwin') return
   const command = process.platform === 'linux' ? 'sudo' : '/usr/bin/sample'

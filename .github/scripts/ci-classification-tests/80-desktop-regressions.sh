@@ -1,5 +1,12 @@
 # Sourced by test-classify-ci-changes.sh; all assertions share its helpers.
 
+native_setup_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" --all)"
+for path in .github/actions/setup-wework-native-test-dependencies/action.yml \
+  .github/ci/wework-native-test-ubuntu.sources; do
+  assert_desktop_case "Native preparation keeps all desktop consumers covered: $path" \
+    "$native_setup_expected" "$path"
+done
+
 for path in \
   wework/e2e/desktop/modules/harness-tool-result-order.mjs \
   wework/e2e/desktop/modules/harness-tool-result-order.d.mts; do
