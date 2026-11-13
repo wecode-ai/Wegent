@@ -113,7 +113,8 @@ export function ConversationScreen(props: ConversationScreenProps) {
   )
   const selectedDeviceName =
     props.devices.find(
-      device => device.device_id === (props.currentAddress?.deviceId ?? props.selectedDeviceId)
+      device =>
+        device.device_id === (props.currentAddress?.deviceId ?? configurationDevice?.device_id)
     )?.name ?? null
   const conversationProjectName =
     props.selectedProjectName ?? props.selectedWorkspace?.label ?? null

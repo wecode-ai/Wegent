@@ -109,22 +109,9 @@ async fn runtime_event(
     let Value::Object(data) = data else {
         return Ok(Reply::payload(device_runtime_event::invalid_payload()));
     };
-    let logical_device_id = snapshot
-        .device
-        .logical_device_id
-        .clone()
-        .unwrap_or_else(|| device_id.clone());
     // `_forward_runtime_event` runs under `_get_runtime_event_lock(sid)`.
     turn.wait().await;
-    let forwarded = device_runtime_event::forward(
-        app,
-        runtime,
-        snapshot.user_id,
-        &device_id,
-        &logical_device_id,
-        &data,
-    )
-    .await;
+    let forwarded = device_runtime_event::forward(app, runtime, &snapshot, &data).await;
     // Release the session's next frame as soon as this frame's whole forward
     // settled; the framework ACK stays outside the serialised region, exactly
     // as it was outside the source lock.

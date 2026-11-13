@@ -185,10 +185,10 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       )
 
       const listing = await rpc('runtime.tasks.list')
-      assert.equal(listing.ok, true)
+      assert.equal(listing.ok, true, JSON.stringify(listing.error))
       assert.ok(tasks(decode(listing.result)).some(item => taskId(item) === address.taskId))
       const history = await rpc('runtime.tasks.transcript', address)
-      assert.equal(history.ok, true)
+      assert.equal(history.ok, true, JSON.stringify(history.error))
       assert.ok(JSON.stringify(decode(history.result)).includes(`${LOCAL_PROMPT}_COMPLETE`))
       const peerDenied = await rpc('runtime.tasks.list', {}, peer.execution_target_id)
       assert.equal(
