@@ -17,6 +17,8 @@ from knowledge_engine.storage.factory import create_storage_backend_from_runtime
 from knowledge_runtime.services.config_loader import RuntimeConfigLoader
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
+from shared.event_reporting.catalogs.knowledge._common import loaded_scalar
+from shared.event_reporting.catalogs.knowledge.quality import RetrievalResultObserver
 from shared.knowledge_module import QueryTarget, query_documents
 from shared.models import (
     RemoteAuthorizedRetrievalResources,
@@ -103,8 +105,11 @@ class QueryExecutor:
             metadata_condition=request.metadata_condition,
             max_results=request.max_results,
         )
-        records = [
-            RemoteQueryRecord(
+        result_records = result["records"]
+        observer = RetrievalResultObserver.start(len(result_records))
+        records = []
+        for rank, record in enumerate(result_records, start=1):
+            remote_record = RemoteQueryRecord(
                 content=record.get("content", ""),
                 title=record.get("title", ""),
                 score=record.get("score"),
@@ -112,8 +117,9 @@ class QueryExecutor:
                 knowledge_base_id=int(record["knowledge_id"]),
                 document_id=record["document_id"],
             )
-            for record in result["records"]
-        ]
+            records.append(remote_record)
+            observer.capture(remote_record, rank)
+        observer.flush()
         logger.info(
             "Query result: query_mode=%s, total_records=%d, returned_records=%d",
             plan.hint_source,
@@ -170,7 +176,24 @@ class QueryExecutor:
             config.retrieval_config.retrieval_mode,
         )
         return QueryTarget(
-            KnowledgeQueryExecutor(storage_backend=storage, embed_model=embedding),
+            KnowledgeQueryExecutor(
+                storage_backend=storage,
+                embed_model=embedding,
+                attribution_factory=lambda: {
+                    "retriever_name": config.retriever_config.name,
+                    "retriever_namespace": config.retriever_config.namespace,
+                    "storage_type": storage.event_storage_type,
+                    "embedding_model_name": config.embedding_model_config.model_name,
+                    "embedding_model_namespace": config.embedding_model_config.model_namespace,
+                    "model_name": loaded_scalar(embedding, "model_name"),
+                    "model_id": config.embedding_model_config.resolved_config.get(
+                        "model_id"
+                    ),
+                    "protocol": config.embedding_model_config.resolved_config.get(
+                        "protocol"
+                    ),
+                },
+            ),
             str(knowledge_base_id),
             config.retrieval_config,
             config.index_owner_user_id,

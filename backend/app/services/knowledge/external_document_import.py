@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -49,6 +50,7 @@ from app.services.knowledge.index_state_machine import (
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
+from app.services.knowledge.wiki_reporting import binding_fact
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +214,7 @@ class ExternalDocumentImportService:
         if not decision.should_enqueue:
             if decision.reason in {"already_in_progress", "stale_generation"}:
                 db.refresh(document)
+                binding_fact(db, document, decision.reason)
                 return ExternalDocumentRefreshResult(
                     document, started=False, reason=decision.reason
                 )
@@ -241,7 +244,11 @@ class ExternalDocumentImportService:
         # timestamp. Overwrite the key first: the saved baseline may carry it.
         refreshed_metadata["source_update_time"] = None
         document.update_external_source_config(**refreshed_metadata)
+        from app.services.knowledge.wiki_reporting import emit_binding_snapshot
+
+        binding_snapshot = binding_fact(db, document, "refreshed", committed=True)
         db.commit()
+        emit_binding_snapshot(binding_snapshot)
         db.refresh(document)
         return ExternalDocumentRefreshResult(document, started=True)
 
@@ -297,6 +304,7 @@ class ExternalDocumentImportService:
             if plan.action == "processing":
                 assert plan.document is not None
                 processing.append(plan.document)
+                binding_fact(db, plan.document, "processing")
                 continue
             if plan.action == "refresh":
                 assert plan.document is not None
@@ -329,6 +337,7 @@ class ExternalDocumentImportService:
                         "This external document could not be imported; please retry"
                     ) from None
                 processing.append(concurrent)
+                binding_fact(db, concurrent, "concurrent_processing")
                 continue
             self._dispatch_import_task(db, document)
             created.append(document)
@@ -400,6 +409,7 @@ class ExternalDocumentImportService:
             canonical_existing = canonical_wiki_documents.get(canonical_key)
             if existing is None and canonical_existing is not None:
                 duplicates.append(canonical_existing)
+                binding_fact(db, canonical_existing, "duplicate")
                 continue
             if existing:
                 from app.services.knowledge.external_sync_providers import (
@@ -798,6 +808,16 @@ class ExternalDocumentImportService:
     def _dispatch_import_task(db: Session, document: KnowledgeDocument) -> bool:
         """Start the background body fetch and report whether it was queued."""
         from app.tasks.knowledge_tasks import import_external_document_task
+        from shared.event_reporting.catalogs.knowledge import (
+            emit_external_event,
+            error_code_for,
+            loaded_scalar,
+        )
+
+        # external_provider is a property over the external_source
+        # relationship, so loaded_scalar(document, ...) structurally misses
+        # it; read it via the property while the session is live.
+        provider = getattr(document, "external_provider", None)
 
         generation = document.index_generation
         try:
@@ -824,14 +844,42 @@ class ExternalDocumentImportService:
                 document.id,
                 exc,
             )
+            emit_external_event(
+                "knowledge.external.import.dispatched",
+                kb_id=loaded_scalar(document, "kind_id"),
+                document_id=loaded_scalar(document, "id"),
+                status="failure",
+                operation_id=generation,
+                data={
+                    "provider": provider,
+                    "trigger": "external_import",
+                    "generation": generation,
+                },
+                error_code=error_code_for(exc),
+            )
             return False
+        task_id = getattr(queued, "id", None)
         logger.info(
             "[External Import] Body fetch queued document_id=%s kb_id=%s "
             "generation=%s task_id=%s",
             document.id,
             document.kind_id,
             generation,
-            getattr(queued, "id", None) or "unavailable",
+            task_id or "unavailable",
+        )
+        emit_external_event(
+            "knowledge.external.import.dispatched",
+            kb_id=loaded_scalar(document, "kind_id"),
+            document_id=loaded_scalar(document, "id"),
+            status="success" if task_id else "failure",
+            operation_id=task_id or generation,
+            data={
+                "provider": provider,
+                "trigger": "external_import",
+                "generation": generation,
+                "task_id": task_id,
+            },
+            error_code=None if task_id else "missing_task_id",
         )
         return True
 
@@ -879,6 +927,13 @@ async def run_external_document_import_async(
     provider_id = document.external_provider
     resource_id = document.external_resource_id
     owner_user_id = document.user_id
+    kb_id = document.__dict__.get("kind_id")
+    from shared.event_reporting.catalogs.knowledge import (
+        emit_external_event,
+        error_code_for,
+        loaded_scalar,
+    )
+
     try:
         if user is None:
             raise ExternalDocumentFetchError(
@@ -912,7 +967,7 @@ async def run_external_document_import_async(
                 )
         else:
             content = await provider.fetch_content(db, user, resource_id)
-        knowledge_orchestrator.attach_external_document_content(
+        attach_result = knowledge_orchestrator.attach_external_document_content(
             db=db,
             document=document,
             user=user,
@@ -929,6 +984,19 @@ async def run_external_document_import_async(
             len(content.content),
             (content.metadata or {}).get("source_update_time"),
         )
+        emit_external_event(
+            "knowledge.external.import.attempt.finished",
+            kb_id=kb_id,
+            document_id=document_id,
+            status="completed",
+            operation_id=generation,
+            data={
+                "provider": provider_id,
+                "generation": generation,
+                "retry_scheduled": False,
+                "index_scheduled": loaded_scalar(attach_result, "scheduled"),
+            },
+        )
         return True
     except (ExternalImportLostWriteError, ObjectDeletedError):
         logger.info(
@@ -936,6 +1004,19 @@ async def run_external_document_import_async(
             "generation %s; standing down without touching the document",
             document_id,
             generation,
+        )
+        emit_external_event(
+            "knowledge.external.import.attempt.finished",
+            kb_id=kb_id,
+            document_id=document_id,
+            status="cancelled",
+            operation_id=generation,
+            data={
+                "provider": provider_id,
+                "generation": generation,
+                "retry_scheduled": False,
+            },
+            error_code="lost_write_right",
         )
         return False
     except ExternalSourceUnavailableError as exc:
@@ -951,6 +1032,19 @@ async def run_external_document_import_async(
             "[External Import] Source of document %s is no longer accessible: %s",
             document_id,
             exc,
+        )
+        emit_external_event(
+            "knowledge.external.import.attempt.finished",
+            kb_id=kb_id,
+            document_id=document_id,
+            status="failure",
+            operation_id=generation,
+            data={
+                "provider": provider_id,
+                "generation": generation,
+                "retry_scheduled": False,
+            },
+            error_code=exc.error_code,
         )
         return False
     except Exception as exc:
@@ -982,6 +1076,19 @@ async def run_external_document_import_async(
             document_id,
             exc,
             exc_info=True,
+        )
+        emit_external_event(
+            "knowledge.external.import.attempt.finished",
+            kb_id=kb_id,
+            document_id=document_id,
+            status="failure",
+            operation_id=generation,
+            data={
+                "provider": provider_id,
+                "generation": generation,
+                "retry_scheduled": False,
+            },
+            error_code=(error_code if error_code else error_code_for(exc)),
         )
         return False
 

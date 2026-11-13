@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.knowledge import DocumentStatus, KnowledgeDocument
 from app.models.subtask_context import ContextType, SubtaskContext
+from app.services.knowledge.read_reporting import report_read
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,8 @@ class DocumentReadService:
         knowledge_base_ids: Optional[list[int]] = None,
         user_subtask_id: Optional[int] = None,
         user_id: Optional[int] = None,
+        actor_user_id: Optional[int] = None,
+        entrypoint: Optional[str] = None,
         searchable_only: bool = True,
     ) -> list[Dict[str, Any]]:
         """Read searchable bodies, or stored bodies for authorized management preview."""
@@ -199,6 +202,13 @@ class DocumentReadService:
                         "error_code": DOCUMENT_READ_ERROR_NOT_FOUND,
                     }
                 )
+                report_read(
+                    results[-1],
+                    user_id=user_id,
+                    actor_user_id=actor_user_id,
+                    subtask_id=user_subtask_id,
+                    entrypoint=entrypoint,
+                )
                 continue
 
             if allowed_kb_ids and document.kind_id not in allowed_kb_ids:
@@ -214,6 +224,13 @@ class DocumentReadService:
                         "error": "Access denied: document not in allowed knowledge bases",
                         "error_code": DOCUMENT_READ_ERROR_ACCESS_DENIED,
                     }
+                )
+                report_read(
+                    results[-1],
+                    user_id=user_id,
+                    actor_user_id=actor_user_id,
+                    subtask_id=user_subtask_id,
+                    entrypoint=entrypoint,
                 )
                 continue
 
@@ -233,6 +250,13 @@ class DocumentReadService:
                 )
             )
             document_ids_by_kb.setdefault(document.kind_id, []).append(document.id)
+            report_read(
+                results[-1],
+                user_id=user_id,
+                actor_user_id=actor_user_id,
+                subtask_id=user_subtask_id,
+                entrypoint=entrypoint,
+            )
 
         if user_subtask_id and user_id is not None and user_id > 0:
             try:

@@ -925,8 +925,42 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
         }}
       >
         <div className="collaboration-project-create-body">
+          {props.workspaceSelection && (
+            <label className="collaboration-project-create-field">
+              <span>{props.workspaceSelection.label}</span>
+              <select
+                data-testid="collaboration-project-workspace-select"
+                value={props.workspaceSelection.value}
+                disabled={
+                  state.saving ||
+                  Boolean(state.createdProject) ||
+                  groupGenerating
+                }
+                onChange={(event) => {
+                  commands.setMemberUserIds([]);
+                  commands.setAgentResourceIds([]);
+                  commands.setExecutionEnvironmentDeviceIds(null);
+                  commands.setCollaborationGroupDrafts([]);
+                  commands.setTemplateDocument(null);
+                  commands.setTemplatePending(false);
+                  commands.clearError();
+                  setTemplateSelected(false);
+                  setCollaboratorPickerOpen(false);
+                  setGroupEditorDraft(null);
+                  props.workspaceSelection?.onChange(event.target.value);
+                }}
+              >
+                {props.workspaceSelection.options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {resourceSetup && (
             <TemplateCreateSection
+              key={props.workspaceSelection?.value}
               setup={resourceSetup}
               locale={labels.locale}
               initialTemplate={props.initialTemplate}
