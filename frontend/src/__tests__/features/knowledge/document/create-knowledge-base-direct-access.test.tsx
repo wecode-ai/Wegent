@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
@@ -259,5 +259,108 @@ it('does not silently change an unavailable team to personal and requires explic
   fireEvent.click(screen.getByTestId('submit-create-kb'))
   await waitFor(() =>
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({ selectedGroupId: 'personal' }))
+  )
+})
+
+it('keeps a creation draft while refreshing locations after organization management', async () => {
+  let finish!: () => void
+  const refresh = jest.fn(
+    () =>
+      new Promise<void>(resolve => {
+        finish = resolve
+      })
+  )
+  const submit = jest.fn().mockResolvedValue(undefined)
+  const groups = [
+    {
+      id: 'group-team',
+      name: 'team',
+      displayName: 'Team',
+      type: 'group' as const,
+      canCreate: true,
+    },
+  ]
+  render(
+    <CreateKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      onSubmit={submit}
+      showGroupSelector
+      availableGroups={groups}
+      defaultGroupId="group-team"
+      onRefreshGroups={refresh}
+    />
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+  fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+  fireEvent.click(screen.getByTestId('group-selector'))
+  const manage = screen.getByTestId('create-manage-organizations')
+  expect(manage).toHaveAttribute('href', '/settings?tab=group-manager')
+  expect(manage).toHaveAttribute('target', '_blank')
+  fireEvent.click(manage)
+  fireEvent.focus(window)
+  expect(refresh).toHaveBeenCalledTimes(1)
+  expect(screen.getByTestId('submit-create-kb')).toBeDisabled()
+  await act(async () => finish())
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  await waitFor(() =>
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Private docs', selectedGroupId: 'group-team' })
+    )
+  )
+})
+
+it('blocks stale group permission on refresh failure but keeps personal creation available', async () => {
+  const submit = jest.fn().mockResolvedValue(undefined)
+  const refresh = jest
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(undefined)
+  const groups = [
+    {
+      id: 'personal',
+      name: 'personal',
+      displayName: 'Personal',
+      type: 'personal' as const,
+      canCreate: true,
+    },
+    {
+      id: 'group-team',
+      name: 'team',
+      displayName: 'Team',
+      type: 'group' as const,
+      canCreate: true,
+    },
+  ]
+  render(
+    <CreateKnowledgeBaseDialog
+      open
+      onOpenChange={jest.fn()}
+      onSubmit={submit}
+      showGroupSelector
+      availableGroups={groups}
+      defaultGroupId="group-team"
+      onRefreshGroups={refresh}
+    />
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'set name' }))
+  fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
+  fireEvent.click(screen.getByTestId('group-selector'))
+  fireEvent.click(screen.getByTestId('create-manage-organizations'))
+  fireEvent.focus(window)
+  expect(await screen.findByTestId('retry-creation-locations')).toBeInTheDocument()
+  expect(screen.getByTestId('submit-create-kb')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('group-selector'))
+  fireEvent.click(screen.getByTestId('create-space-option-personal'))
+  expect(screen.getByTestId('submit-create-kb')).toBeEnabled()
+  fireEvent.click(screen.getByTestId('retry-creation-locations'))
+  await waitFor(() =>
+    expect(screen.queryByTestId('retry-creation-locations')).not.toBeInTheDocument()
+  )
+  fireEvent.click(screen.getByTestId('submit-create-kb'))
+  await waitFor(() =>
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Private docs', selectedGroupId: 'personal' })
+    )
   )
 })

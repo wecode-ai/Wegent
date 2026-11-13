@@ -23,10 +23,12 @@ export function KnowledgeCreateSpaceSelect({
   spaces,
   value,
   onValueChange,
+  onManageOrganizations,
 }: {
   spaces: AvailableGroup[]
   value: string
   onValueChange: (value: string) => void
+  onManageOrganizations?: () => void
 }) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
@@ -120,6 +122,24 @@ export function KnowledgeCreateSpaceSelect({
             </div>
           </CommandList>
         </Command>
+        <Button
+          asChild
+          variant="ghost"
+          className="min-h-11 w-full justify-start border-t border-border"
+        >
+          <a
+            href="/settings?tab=group-manager"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="create-manage-organizations"
+            onClick={() => {
+              onManageOrganizations?.()
+              setOpen(false)
+            }}
+          >
+            {t('document.navigation.manageTeams')}
+          </a>
+        </Button>
       </PopoverContent>
     </Popover>
   )

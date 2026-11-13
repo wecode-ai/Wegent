@@ -47,6 +47,7 @@ import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTask
 import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { useCreationLocationRefresh } from '../hooks/useCreationLocationRefresh'
 import { KnowledgeCreateSpaceSelect } from './KnowledgeCreateSpaceSelect'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
@@ -85,6 +86,9 @@ interface CreateKnowledgeBaseDialogProps {
   defaultGroupId?: string
   /** Whether to show group selector (true when creating from "All" page) */
   showGroupSelector?: boolean
+  onRefreshGroups?: () => Promise<void>
+  groupsLoading?: boolean
+  groupsFailed?: boolean
 }
 
 /** Documents are uploaded and organised; code is generated from a repository. */
@@ -114,8 +118,14 @@ export function CreateKnowledgeBaseDialog({
   availableGroups,
   defaultGroupId,
   showGroupSelector = false,
+  onRefreshGroups,
+  groupsLoading = false,
+  groupsFailed = false,
 }: CreateKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
+  const locations = useCreationLocationRefresh(open && showGroupSelector, onRefreshGroups)
+  const refreshingLocations = groupsLoading || locations.refreshing
+  const failedLocations = groupsFailed || locations.failed
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
@@ -181,16 +191,23 @@ export function CreateKnowledgeBaseDialog({
 
   // Get the selected group for retrieval scope
   const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
+  const previousLocation = useRef<AvailableGroup | undefined>(selectedGroup)
+  if (selectedGroup) previousLocation.current = selectedGroup
+  const retrievalLocation =
+    selectedGroup ??
+    (previousLocation.current?.id === selectedGroupId ? previousLocation.current : undefined)
   const effectiveScope =
-    showGroupSelector && selectedGroup ? selectedGroup.type : scope || 'personal'
+    showGroupSelector && retrievalLocation ? retrievalLocation.type : scope || 'personal'
   const effectiveGroupName =
-    showGroupSelector && selectedGroup && selectedGroup.type === 'group'
-      ? selectedGroup.name
+    showGroupSelector && retrievalLocation && retrievalLocation.type === 'group'
+      ? retrievalLocation.name
       : groupName
 
-  // Reset selectedKbType and selectedGroupId when dialog opens
+  const wasOpen = useRef(false)
+
+  // Reset only on opening, never when a refresh changes default location props.
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
@@ -208,6 +225,7 @@ export function CreateKnowledgeBaseDialog({
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
     }
+    wasOpen.current = open
   }, [open, initialKbType, defaultGroupId])
 
   useEffect(() => {
@@ -236,7 +254,13 @@ export function CreateKnowledgeBaseDialog({
     setSelectedKbType(newType)
   }
 
+  const needsLocationVerification = showGroupSelector
+    ? selectedGroupId !== 'personal'
+    : scope === 'group' || scope === 'organization'
+  const locationBlocked = needsLocationVerification && (refreshingLocations || failedLocations)
+
   const handleSubmit = async () => {
+    if (locationBlocked) return
     setError('')
     if (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate)) {
       setError(t('knowledge:document.creation.spaceUnavailable'))
@@ -503,6 +527,25 @@ export function CreateKnowledgeBaseDialog({
               </Button>
             </div>
           )}
+          {refreshingLocations && (
+            <p role="status" className="text-sm text-text-muted">
+              {t('knowledge:document.creation.refreshingLocations')}
+            </p>
+          )}
+          {failedLocations && (
+            <div role="alert" className="text-sm text-error">
+              {t('knowledge:document.creation.refreshLocationsFailed')}
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="retry-creation-locations"
+                onClick={() => void locations.retry()}
+              >
+                {t('common:actions.retry')}
+              </Button>
+            </div>
+          )}
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
@@ -748,6 +791,7 @@ export function CreateKnowledgeBaseDialog({
                         spaces={availableGroups}
                         value={selectedGroupId}
                         onValueChange={setSelectedGroupId}
+                        onManageOrganizations={locations.onManage}
                       />
                       {selectedGroup?.type === 'group' && selectedGroup.canCreate && (
                         <p role="status" className="text-xs text-text-muted">
@@ -838,7 +882,9 @@ export function CreateKnowledgeBaseDialog({
             onClick={handleSubmit}
             variant="primary"
             disabled={
-              loading || (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate))
+              loading ||
+              locationBlocked ||
+              (showGroupSelector && (!selectedGroup || !selectedGroup.canCreate))
             }
             className="h-11 min-w-[44px]"
             data-testid="submit-create-kb"
