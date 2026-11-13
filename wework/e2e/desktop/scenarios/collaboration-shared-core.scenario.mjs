@@ -33,6 +33,7 @@ import {
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
@@ -52,6 +53,24 @@ const AGENT_NAME = '协作核心 Codex'
 const TERMINAL_STATUS_ISSUE_TITLE = '验证终态任务不再显示执行中'
 const FIXED_TASK_TAB_CONTENT = '[data-testid="workspace-tab-content-fixed-task"]'
 const FIXED_TASK_TAB_SELECT = '[data-testid="workspace-tab-select-fixed-task"]'
+
+async function createPickerTask(control, uiTimeoutMs) {
+  await control.command('click', FIXED_TASK_TAB_SELECT)
+  await control.command('click', '[data-testid="new-chat-button"]')
+  const composer = '[data-testid="chat-message-input"]'
+  await control.command('waitFor', composer, { timeoutMs: uiTimeoutMs })
+  await control.command('fill', composer, { value: 'COLLABORATION_PICKER_TASK' })
+  await control.command('press', composer, { key: 'Enter' })
+  return waitForValue(
+    async () => {
+      const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      return state.workbench?.currentRuntimeTask
+    },
+    task => Boolean(task?.taskId) && task.running === false,
+    'The standalone picker task did not settle',
+    uiTimeoutMs
+  )
+}
 
 async function verifyCurrentTableAssignment(control, scoped, issueId, assigneeName, timeoutMs) {
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
@@ -293,10 +312,6 @@ export function createDesktopScenario({
         'remote'
       )
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
-      const initialTaskAddress = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
-      ).workbench?.currentRuntimeTask
-      assert.ok(initialTaskAddress?.taskId, 'The standalone picker task is unavailable')
 
       try {
         await ensureExperimentalFeaturesEnabled(control)
@@ -1033,9 +1048,10 @@ export function createDesktopScenario({
           scoped,
           workbenchReadyTimeoutMs,
         })
+        const pickerTask = await createPickerTask(control, uiTimeoutMs)
         await projectSpacePicker.verify(control, {
-          deviceId: initialTaskAddress.deviceId,
-          taskId: initialTaskAddress.taskId,
+          deviceId: pickerTask.deviceId,
+          taskId: pickerTask.taskId,
         })
       } finally {
         linkedIssueTaskModel?.release()
