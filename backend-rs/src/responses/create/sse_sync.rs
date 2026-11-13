@@ -44,6 +44,9 @@ use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
 
+pub(crate) type DispatchAcceptance =
+    std::sync::Mutex<Option<tokio::sync::oneshot::Sender<Result<(), String>>>>;
+
 /// The dependencies one chat-shell SSE consumer needs.
 ///
 /// The synchronous create branch builds this from `AppState`; the background
@@ -72,6 +75,7 @@ pub(crate) struct ConsumerContext<'a, M: Mysql, R: Redis> {
     /// `request.user.id`: the owner room the terminal `task:status` frame
     /// addresses when forwarding to Socket.IO.
     pub owner_user_id: Option<i64>,
+    pub acceptance: Option<DispatchAcceptance>,
 }
 
 impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
@@ -89,6 +93,7 @@ impl<'a> ConsumerContext<'a, brz_mysql::MysqlService, brz_redis::RedisService> {
             start_data: Value::Null,
             created_task: None,
             owner_user_id: None,
+            acceptance: None,
         }
     }
 }
@@ -218,6 +223,14 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
             Ok(collected)
         }
         Err(failure) => {
+            if let Some(sender) = ctx
+                .acceptance
+                .as_ref()
+                .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
+            {
+                let _ = sender.send(Err(failure.message.clone()));
+                return Err(failure.message);
+            }
             if failure.persist {
                 Box::pin(complete_failure(ctx, request, &failure)).await;
             }
@@ -493,6 +506,13 @@ async fn open_and_consume<M: Mysql, R: Redis>(
             let Some(event_type) = event.get("type").and_then(Value::as_str) else {
                 continue;
             };
+            if let Some(sender) = ctx
+                .acceptance
+                .as_ref()
+                .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
+            {
+                let _ = sender.send(Ok(()));
+            }
             let parsed = if image_stream {
                 Some(parse_image_event(&event, request, &ctx.start_data)?)
             } else {

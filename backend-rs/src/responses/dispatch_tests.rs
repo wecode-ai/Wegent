@@ -538,7 +538,7 @@ async fn chat_shell_500_is_observable() {
         RecordingRedis::default(),
     );
     let capture = LogCapture::default();
-    let result = capture.capture(run_chat_shell(job)).await;
+    let result = capture.capture(run_chat_shell(job, None)).await;
 
     let error = result.expect_err("a 500 is not a completion");
     assert!(error.contains("HTTP status code: 500"), "{error}");
@@ -568,7 +568,7 @@ async fn mid_stream_error_is_observable() {
         RecordingRedis::default(),
     );
     let capture = LogCapture::default();
-    let result = capture.capture(run_chat_shell(job)).await;
+    let result = capture.capture(run_chat_shell(job, None)).await;
 
     let error = result.expect_err("a stream without a terminal frame is not a completion");
     assert!(error.contains("without terminal event"), "{error}");

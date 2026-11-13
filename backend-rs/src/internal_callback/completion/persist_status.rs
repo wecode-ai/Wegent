@@ -46,7 +46,7 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
     task: MysqlRow,
     task_id: i64,
     changed_subtask_id: i64,
-    pending_delivery: Option<Delivery>,
+    pending_delivery: Option<(Delivery, Option<&Value>)>,
 ) -> MysqlResult<Option<bool>> {
     let task_table = ctx.tables.tasks;
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
@@ -128,13 +128,16 @@ pub(super) async fn update_locked_task_status<M: Mysql, R: Redis, T: MysqlTransa
 
     complete_task_model(&mut payload);
     let mut document = Value::Object(render_task_crd(payload));
-    if let Some(pending) = pending_delivery {
+    if let Some((pending, payload)) = pending_delivery {
         let marker = if decision.auto_advance {
             "advance"
         } else {
             "notify"
         };
-        delivery::labels(&mut document)[pending.label(changed_subtask_id)] = json!(marker);
+        delivery::labels(&mut document)[pending.label(changed_subtask_id)] = match payload {
+            Some(payload) => json!({"kind": marker, "event": payload}).to_string().into(),
+            None => json!(marker),
+        };
     }
     let json_text = python_dumps(&document);
     let row_updated_at = local_datetime();

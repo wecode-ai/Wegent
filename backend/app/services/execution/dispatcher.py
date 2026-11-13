@@ -19,6 +19,7 @@ OpenAI Responses API compatible endpoint.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
@@ -86,6 +87,7 @@ class ExecutionDispatcher:
         emitter: Optional[ResultEmitter] = None,
         *,
         already_running: bool = False,
+        on_accepted: Callable[[], None] | None = None,
     ) -> None:
         """Unified dispatch entry point for task execution.
 
@@ -116,6 +118,13 @@ class ExecutionDispatcher:
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
         wrapped_emitter = None
+
+        def accept() -> None:
+            nonlocal on_accepted
+            if on_accepted is not None:
+                on_accepted()
+                on_accepted = None
+
         try:
             if device_id:
                 user_id = request.user.get("id") if request.user else None
@@ -165,7 +174,17 @@ class ExecutionDispatcher:
                 await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
-                await self._dispatch_sse(request, target, wrapped_emitter)
+                if on_accepted is None:
+                    await self._dispatch_sse(request, target, wrapped_emitter)
+                else:
+                    await dispatch_sse(
+                        request,
+                        target,
+                        wrapped_emitter,
+                        self.event_parser,
+                        self._build_start_event_data(request),
+                        on_accepted=accept,
+                    )
             elif target.mode == CommunicationMode.WEBSOCKET:
                 await self._dispatch_websocket(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.POLLING:
@@ -173,12 +192,22 @@ class ExecutionDispatcher:
             elif target.mode == CommunicationMode.INPROCESS:
                 await self._dispatch_inprocess(request, target, wrapped_emitter)
             else:
-                await self._dispatch_http_callback(request, target, wrapped_emitter)
+                if on_accepted is None:
+                    await self._dispatch_http_callback(request, target, wrapped_emitter)
+                else:
+                    await self._dispatch_http_callback(
+                        request, target, wrapped_emitter, on_accepted=accept
+                    )
+            accept()
         except asyncio.CancelledError:
             # A cancelled SSE owner has already closed its stream. Persist the
             # terminal state before closing the emitter, including lease loss.
             # Remote dispatch modes retain their executor-owned lifecycle.
-            if wrapped_emitter is not None and target.mode == CommunicationMode.SSE:
+            if (
+                on_accepted is None
+                and wrapped_emitter is not None
+                and target.mode == CommunicationMode.SSE
+            ):
                 logger.info(
                     "[ExecutionDispatcher] SSE dispatch task cancelled: "
                     "task_id=%s, subtask_id=%s",
@@ -206,7 +235,7 @@ class ExecutionDispatcher:
                 f"subtask_id={request.subtask_id}, error={e}"
             )
             # Try to emit error to frontend if emitter is available
-            if wrapped_emitter is not None:
+            if wrapped_emitter is not None and on_accepted is None:
                 try:
                     from shared.utils.error_classifier import (
                         classify_error,
@@ -702,6 +731,8 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         target: ExecutionTarget,
         emitter: ResultEmitter,
+        *,
+        on_accepted: Callable[[], None] | None = None,
     ) -> None:
         """Dispatch task via HTTP+Callback using OpenAI background mode.
 
@@ -763,6 +794,9 @@ class ExecutionDispatcher:
                     "model_config": openai_request.get("model_config", {}),
                 },
             )
+
+        if on_accepted is not None:
+            on_accepted()
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "

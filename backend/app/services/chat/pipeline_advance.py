@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, make_transient
 
 from app.api.ws.events import ServerEvents
 from app.core.async_utils import run_in_threadpool_with_cleanup
+from app.core.cache import cache_manager
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.core.distributed_lock import distributed_lock
 from app.core.socketio import get_sio
@@ -116,10 +117,11 @@ async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             task_room=f"task:{task.id}",
             skip_sid=None,
         )
-        # Keep the claim and scheduling in the same event-loop turn.
+        # Keep the durable handoff until the receiving service accepts.
         if not _claim_auto_advance(pending):
             return False
-        asyncio.create_task(_dispatch_claimed_stage(request))
+        await _dispatch_until_accepted(request)
+        _acknowledge_auto_advance(pending)
         try:
             schedule_chat_memory_save(
                 db, task, result.user_subtask, user, team, existing_subtasks
@@ -170,14 +172,16 @@ def _prepare_handoff_pair(
         intent.next_pair[1] if intent.next_pair else intent.completed_subtask_id
     )
     expected_status = (
-        SubtaskStatus.PENDING if intent.next_pair else SubtaskStatus.COMPLETED
+        (SubtaskStatus.PENDING, SubtaskStatus.RUNNING)
+        if intent.next_pair
+        else (SubtaskStatus.COMPLETED,)
     )
     current_stage = task.json["spec"].get("currentStage") or 0
     next_stage = intent.advance_info["next_stage_index"]
     if (
         not latest
         or latest.id != expected_id
-        or latest.status != expected_status
+        or latest.status not in expected_status
         or current_stage != (next_stage if intent.next_pair else next_stage - 1)
     ):
         _clear_auto_advance(db, task, intent)
@@ -253,27 +257,93 @@ def _claim_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             from_status=SubtaskStatus.PENDING,
             to_status=SubtaskStatus.RUNNING,
         )
-        _clear_auto_advance(db, task, intent)
         if claimed:
             document = task.json
             document["status"]["status"] = "RUNNING"
             task_store.update_json(db, task=task, payload=document)
+        else:
+            subtask = subtask_store.get_basic_by_id_for_update(
+                db, subtask_id=assistant_id
+            )
+            claimed = bool(
+                subtask
+                and subtask.task_id == task.id
+                and subtask.status == SubtaskStatus.RUNNING
+            )
         db.commit()
 
     return claimed
 
 
-async def _dispatch_claimed_stage(request: "ExecutionRequest") -> None:
+def _acknowledge_auto_advance(intent: PipelineAutoAdvanceIntent) -> None:
+    with SessionLocal() as db:
+        task = task_store.get_by_id_for_update(db, task_id=intent.task_id)
+        if task:
+            pending = PipelineAutoAdvanceIntent.read(task, intent.completed_subtask_id)
+            if pending and pending.next_pair == intent.next_pair:
+                _clear_auto_advance(db, task, intent)
+                db.commit()
+
+
+async def _dispatch_until_accepted(request: "ExecutionRequest") -> None:
     from app.services.execution import execution_dispatcher
 
+    accepted = asyncio.Event()
+    request.request_id = f"pipeline-{request.task_id}-{request.subtask_id}"
+
+    async def dispatch() -> None:
+        key = f"wegent:lock:pipeline-execution:{request.task_id}:{request.subtask_id}"
+        async with cache_manager._client_context() as redis:
+            lock = redis.lock(key, timeout=30, blocking_timeout=5, thread_local=False)
+            async with lock:
+                with SessionLocal() as db:
+                    current = subtask_store.get_basic_by_id_for_update(
+                        db, subtask_id=request.subtask_id
+                    )
+                    running = current and current.status == SubtaskStatus.RUNNING
+                if not running:
+                    accepted.set()
+                    return
+                execution = asyncio.create_task(
+                    execution_dispatcher.dispatch(
+                        request, already_running=True, on_accepted=accepted.set
+                    )
+                )
+                try:
+                    while not execution.done():
+                        done, _ = await asyncio.wait({execution}, timeout=10)
+                        if not done:
+                            await lock.reacquire()
+                    await execution
+                finally:
+                    if not execution.done():
+                        execution.cancel()
+                        await asyncio.gather(execution, return_exceptions=True)
+
+    job = asyncio.create_task(dispatch())
+
+    def log_execution_failure(task: asyncio.Task) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error(
+                "Pipeline execution failed for subtask %s",
+                request.subtask_id,
+                exc_info=error,
+            )
+
+    job.add_done_callback(log_execution_failure)
+    wait = asyncio.create_task(accepted.wait())
     try:
-        await execution_dispatcher.dispatch(request, already_running=True)
-    except Exception:
-        logger.exception(
-            "[PipelineAdvance] Failed to dispatch next stage: task_id=%s subtask_id=%s",
-            request.task_id,
-            request.subtask_id,
-        )
+        await asyncio.wait({job, wait}, return_when=asyncio.FIRST_COMPLETED)
+        if not accepted.is_set():
+            await job
+            raise RuntimeError("Pipeline execution did not acknowledge dispatch")
+    except BaseException:
+        if not accepted.is_set():
+            job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+        raise
+    finally:
+        wait.cancel()
 
 
 async def advance_pipeline_stage_and_send(

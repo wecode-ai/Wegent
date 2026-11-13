@@ -26,6 +26,8 @@ mod pipeline;
 pub(crate) use wegent_python_compat::py_json;
 pub(crate) mod session;
 mod socketio;
+pub(crate) use session::publish_terminal_callback;
+pub(crate) use socketio::publish_terminal_emit;
 pub(crate) mod status_frames;
 
 pub(crate) use session::is_cancelled;
@@ -188,6 +190,7 @@ async fn deliver_terminal_callback(
         executor_name,
         executor_namespace,
         completion::Delivery::Callback,
+        None,
     )
     .await
     .map_err(|_| FastApiError::internal())?;
@@ -196,6 +199,7 @@ async fn deliver_terminal_callback(
         user_id,
         auto_advance,
         replay_error,
+        ..
     }) = completion
     else {
         return Ok(());
@@ -238,7 +242,7 @@ async fn deliver_terminal_callback(
     };
     // `WebSocketResultEmitter.emit`'s terminal branch: the event's frame
     // (`chat:done` / `chat:error` / `chat:cancelled`) then `task:status`.
-    emitter::emit_terminal_frames(redis, event, user_id, &result, contexts.as_ref())
+    emitter::emit_terminal_frames_once(redis, event, user_id, &result, contexts.as_ref())
         .await
         .map_err(|error| {
             tracing::warn!(%error, "callback terminal frames failed");
@@ -248,7 +252,7 @@ async fn deliver_terminal_callback(
         pipeline::dispatch_next(state, advance).await?;
     }
 
-    session::publish_callback_event(redis, event.subtask_id, event)
+    session::publish_terminal_callback(redis, event)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "terminal callback channel publish failed");

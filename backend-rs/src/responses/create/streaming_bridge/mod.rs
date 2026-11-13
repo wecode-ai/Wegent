@@ -587,8 +587,7 @@ impl Bridge {
             {
                 Ok(Some(committed)) => event.result = committed.result,
                 Ok(None) => {
-                    self.finish_persistence_error("The execution was already settled")
-                        .await;
+                    self.finish_committed_winner().await;
                     return;
                 }
                 Err(_) => {
@@ -622,6 +621,48 @@ impl Bridge {
         self.terminal = true;
     }
 
+    async fn finish_committed_winner(&mut self) {
+        match completion::read_terminal_result(
+            &self.mysql,
+            self.tables,
+            self.task_id,
+            self.subtask_id,
+        )
+        .await
+        {
+            Ok(Some(completion::StoredTerminal {
+                status,
+                result,
+                error,
+            })) => {
+                self.dispatch_exit_unregister().await;
+                self.cleanup().await;
+                self.state
+                    .use_committed_result(&mut self.queue, result.as_ref());
+                self.state.finish(
+                    &mut self.queue,
+                    if status == "FAILED" {
+                        "failed"
+                    } else {
+                        "completed"
+                    },
+                    error
+                        .filter(|_| status == "FAILED")
+                        .map(|message| json!({"code": "stream_error", "message": message})),
+                );
+                self.finished = true;
+            }
+            Ok(None) => {
+                self.finish_persistence_error("The execution was already settled")
+                    .await
+            }
+            Err(_) => {
+                self.finish_persistence_error("Could not read the committed execution result")
+                    .await
+            }
+        }
+    }
+
     async fn drain_and_finish(&mut self) {
         if let Some(response) = self.response.as_mut() {
             drain_terminal_stream(response).await;
@@ -651,12 +692,19 @@ impl Bridge {
         &mut self,
         persisted: brz_mysql::MysqlResult<Option<completion::TerminalCompletion>>,
     ) {
-        // The cancel endpoint can commit the partial result before the
-        // stream observes the flag. Only a database error fails the stream.
-        if persisted.is_err() {
-            self.finish_persistence_error("Could not save the cancellation")
-                .await;
-            return;
+        // The cancel endpoint can commit before the stream observes the flag.
+        // Read the winner when this stream did not own the terminal write.
+        match persisted {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                self.finish_committed_winner().await;
+                return;
+            }
+            Err(_) => {
+                self.finish_persistence_error("Could not save the cancellation")
+                    .await;
+                return;
+            }
         }
         // Cancellation is observed after the dispatch exits; the inner
         // `unregister_stream` belongs to the dispatch, not the final response

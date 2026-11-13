@@ -276,6 +276,7 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
     });
     let channel = format!("callback:channel:{subtask_id}");
     let mut subscription = redis.subscribe(channel.as_str()).await.unwrap();
+    let mut socket_events = redis.subscribe("socketio").await.unwrap();
     // Publications on the same channel are ordered. A barrier sent after the
     // HTTP response detects an unwanted callback without waiting for silence.
     let barrier = json!({"type": "fixture-barrier"});
@@ -346,8 +347,8 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         .await
         .unwrap();
 
-    // Concurrent retries must deliver once and use the original committed
-    // payload even if the retried callback contains a different result.
+    // Concurrent retries only acknowledge the original publication, even
+    // when the retried callback contains a different result.
     let retry = json!({
         "response": {"output": [{"type":"message","content":[{"type":"output_text","text":"retry payload"}]}]}
     });
@@ -356,10 +357,8 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         send("response.completed", retry),
     );
     assert_eq!((first, second), (200, 200));
-    let event = next_callback(&mut subscription).await;
-    assert_eq!(event["type"], "done");
-    assert_eq!(event["subtask_id"], subtask_id);
-    assert_eq!(event["result"]["value"], "saved result");
+    assert_eq!(first_delivery["type"], "done");
+    assert_eq!(first_delivery["subtask_id"], subtask_id);
     let after_retry: (Json<Value>, chrono::NaiveDateTime) = mysql
         .fetch_one(
             "SELECT result, completed_at FROM subtasks WHERE id = ?",
@@ -372,6 +371,22 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
     assert_eq!(send("error", json!({"message": "late error"})).await, 200);
     assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
 
+    redis
+        .publish("socketio", barrier.to_string())
+        .await
+        .unwrap();
+    let mut done_count = 0;
+    loop {
+        let frame = next_callback(&mut socket_events).await;
+        if frame == barrier {
+            break;
+        }
+        if frame["event"] == "chat:done" && frame["data"][0]["subtask_id"] == subtask_id {
+            done_count += 1;
+        }
+    }
+    assert_eq!(done_count, 1);
+    socket_events.close().await.unwrap();
     assert_no_callback(&mut subscription).await;
     subscription.close().await.unwrap();
     stop.send(()).unwrap();

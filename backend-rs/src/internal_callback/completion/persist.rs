@@ -205,6 +205,7 @@ pub(super) enum Transition {
         auto_advance: bool,
         result: Option<Value>,
         error: Option<String>,
+        source: Option<Value>,
     },
 }
 
@@ -224,7 +225,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     device_attempt: Option<&DeviceAttempt<'_>>,
-    delivery: Option<Delivery>,
+    delivery: Option<(Delivery, Option<&Value>)>,
 ) -> MysqlResult<Option<Transition>> {
     let normalized_status = status.to_uppercase();
     let mysql = ctx
@@ -246,16 +247,21 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         {
             return Ok(None);
         }
-        if let Some(delivery) = delivery
+        if let Some((delivery, _)) = delivery
             && subtask_column::<String>(&row, "status").as_deref() == Some(&normalized_status)
             && let Some(Json(task_json)) = task_column::<Json<Value>>(&task, "json")
             && let Some(marker) =
                 task_json["metadata"]["labels"][delivery.label(subtask_id)].as_str()
         {
+            let saved = serde_json::from_str::<Value>(marker).ok();
             return Ok(Some(PendingTransition::Replay(Transition::Replay {
-                auto_advance: marker == "advance",
+                auto_advance: marker == "advance"
+                    || saved
+                        .as_ref()
+                        .is_some_and(|value| value["kind"] == "advance"),
                 result: subtask_column::<Json<Value>>(&row, "result").map(|value| value.0),
                 error: subtask_column::<String>(&row, "error_message"),
+                source: saved.and_then(|value| value.get("event").cloned()),
             })));
         }
         let Some((row, metrics_message)) = update_subtask_status_on(
@@ -562,8 +568,13 @@ async fn collaboration_status<T: MysqlTransaction>(
                 });
             }
             return Ok(CollaborationStatus {
-                status: "COMPLETED".to_string(),
-                progress: Some(100),
+                status: if stage.auto_advance {
+                    "PENDING"
+                } else {
+                    "COMPLETED"
+                }
+                .to_owned(),
+                progress: Some(if stage.auto_advance { 0 } else { 100 }),
                 auto_advance: stage.auto_advance,
             });
         }

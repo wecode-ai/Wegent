@@ -1489,7 +1489,11 @@ async def openai_responses(http_request: Request):
         queue_type = metadata.get("type") or "online"
         service_pool = os.getenv("SERVICE_POOL", "default")
         queue_service = TaskQueueService(service_pool, queue_type)
-        success = queue_service.enqueue_task(request_data)
+        request_id = metadata.get("request_id")
+        if task_id and subtask_id and request_id == f"pipeline-{task_id}-{subtask_id}":
+            success = queue_service.enqueue_pipeline_task(request_data)
+        else:
+            success = queue_service.enqueue_task(request_data)
 
         if not success:
             logger.error(f"[v1/responses] Failed to enqueue task {task_id}")

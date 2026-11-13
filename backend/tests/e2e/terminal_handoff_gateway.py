@@ -11,7 +11,7 @@ import time
 import unittest
 import uuid
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypeVar
@@ -254,34 +254,54 @@ class TerminalHandoffGateway(unittest.TestCase):
                 db.execute(text(f"DROP TRIGGER {name}"))
                 db.commit()
 
-    def _callback(self, task_id: int, subtask_id: int, answer: str) -> dict:
-        # The batch route still belongs to Python in the hybrid route table.
-        return self._json(
-            self.api.post(
-                "/api/internal/callback/batch",
-                json=[
-                    {
-                        "event_type": "response.completed",
-                        "task_id": task_id,
-                        "subtask_id": subtask_id,
-                        "data": {
-                            "response": {
-                                "status": "completed",
-                                "output": [
-                                    {
-                                        "type": "message",
-                                        "role": "assistant",
-                                        "content": [
-                                            {"type": "output_text", "text": answer}
-                                        ],
-                                    }
-                                ],
-                            }
-                        },
-                    }
-                ],
+    @contextmanager
+    def _block_pipeline_receiver(
+        self, task_id: int, assistant_id: int
+    ) -> Iterator[None]:
+        # A previous worker owns the dispatch identity. Force a rejected
+        # delivery after the writer has committed RUNNING.
+        key = f"wegent:lock:pipeline-execution:{task_id}:{assistant_id}"
+        self.assertTrue(self.redis.set(key, "fixture", nx=True, ex=20))
+        try:
+            yield
+        finally:
+            self.redis.delete(key)
+
+    def _callback(
+        self,
+        task_id: int,
+        subtask_id: int,
+        answer: str,
+        *,
+        rust: bool,
+        fail: bool = False,
+    ) -> dict:
+        event = {
+            "event_type": "response.completed",
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "data": {
+                "response": {
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": answer}],
+                        }
+                    ],
+                }
+            },
+        }
+        # The single callback is Rust-owned. The batch still routes to Python.
+        if rust:
+            return self._json(
+                self.api.post("/api/internal/callback", json=event),
+                500 if fail else 200,
             )
-        )
+        result = self._json(self.api.post("/api/internal/callback/batch", json=[event]))
+        self.assertEqual(result["status"], "partial" if fail else "ok", result)
+        return result
 
     def _wait_for(self, check: Callable[[], T | None]) -> T:
         deadline = time.monotonic() + 15
@@ -291,7 +311,13 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, f"Timed out in {self.id()}")
             time.sleep(0.05)
 
-    def test_callback_retries_pipeline_handoff_once(self) -> None:
+    def test_python_callback_retries_pipeline_handoff_once(self) -> None:
+        self._retry_pipeline_handoff(rust=False)
+
+    def test_rust_callback_retries_pipeline_handoff_once(self) -> None:
+        self._retry_pipeline_handoff(rust=True)
+
+    def _retry_pipeline_handoff(self, *, rust: bool) -> None:
         team_id, bot_ids = self._create_team(pipeline=True)
         task_id, subtask_id = self._seed_running_stage(team_id, bot_ids[0])
         answer = f"{self.marker}-stage-one"
@@ -303,20 +329,25 @@ class TerminalHandoffGateway(unittest.TestCase):
             )
         )
         with self._reject_handoff_write(task_id):
-            failed = self._callback(task_id, subtask_id, answer)
-            self.assertEqual(failed["status"], "partial", failed)
+            self._callback(task_id, subtask_id, answer, rust=rust, fail=True)
         before, original = self._snapshot(task_id)
         self.assertEqual(before["spec"]["currentStage"], 0, before)
         self.assertEqual(before["status"]["status"], "PENDING", before)
         self.assertEqual(len(original), 2, original)
-        self.assertIn(f"pipelineAutoAdvance:{subtask_id}", before["metadata"]["labels"])
+        marker = (
+            f"terminal-delivery-callback-{subtask_id}"
+            if rust
+            else f"pipelineAutoAdvance:{subtask_id}"
+        )
+        self.assertIn(marker, before["metadata"]["labels"])
         self.assertEqual(original[-1]["status"], "COMPLETED", original)
         self.assertEqual(original[-1]["result"]["value"], answer)
         self.assertFalse(self._model_requests())
 
         with self._reject_handoff_write(task_id, after_pair=True):
-            failed_claim = self._callback(task_id, subtask_id, "late callback payload")
-            self.assertEqual(failed_claim["status"], "partial", failed_claim)
+            self._callback(
+                task_id, subtask_id, "late callback payload", rust=rust, fail=True
+            )
         prepared, saved_rows = self._snapshot(task_id)
         self.assertEqual(prepared["spec"]["currentStage"], 1, prepared)
         self.assertEqual(prepared["status"]["status"], "PENDING", prepared)
@@ -324,10 +355,24 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(saved_rows[-1]["status"], "PENDING", saved_rows)
         self.assertFalse(self._model_requests())
 
-        retried = self._callback(task_id, subtask_id, "late callback payload")
-        self.assertEqual(retried["status"], "ok", retried)
-        duplicate = self._callback(task_id, subtask_id, "duplicate callback payload")
-        self.assertIn("1 skipped", duplicate["message"])
+        with self._block_pipeline_receiver(task_id, saved_rows[-1]["id"]):
+            self._callback(
+                task_id, subtask_id, "unaccepted callback", rust=rust, fail=True
+            )
+            running, pending_rows = self._snapshot(task_id)
+            self.assertEqual(running["status"]["status"], "RUNNING", running)
+            self.assertEqual(pending_rows[-1]["status"], "RUNNING", pending_rows)
+            self.assertIn(marker, running["metadata"]["labels"])
+            if rust:
+                self.assertIn("pipelinePendingHandoff", running["metadata"]["labels"])
+            self.assertFalse(self._model_requests())
+
+        self._callback(task_id, subtask_id, "late callback payload", rust=rust)
+        duplicate = self._callback(
+            task_id, subtask_id, "duplicate callback payload", rust=rust
+        )
+        if not rust:
+            self.assertIn("1 skipped", duplicate["message"])
 
         def completed() -> tuple[dict, list[dict]] | None:
             snapshot = self._snapshot(task_id)
@@ -340,9 +385,8 @@ class TerminalHandoffGateway(unittest.TestCase):
         after, rows = self._wait_for(completed)
         self.assertEqual(after["status"]["status"], "COMPLETED", (after, rows))
         self.assertEqual(after["spec"]["currentStage"], 1, after)
-        self.assertNotIn(
-            f"pipelineAutoAdvance:{subtask_id}", after["metadata"]["labels"]
-        )
+        self.assertNotIn(marker, after["metadata"]["labels"])
+        self.assertNotIn("pipelinePendingHandoff", after["metadata"]["labels"])
         self.assertEqual(rows[:2], original)
         self.assertEqual([r["id"] for r in rows], [r["id"] for r in saved_rows])
         self.assertEqual([r["role"] for r in rows], ["USER", "ASSISTANT"] * 2)
@@ -355,6 +399,14 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertNotIn("late callback payload", json.dumps(captures[0]))
 
     def test_cancel_endpoint_settles_active_sse_with_partial_content(self) -> None:
+        self._cancel_active_stream(terminal_arrives_first=False)
+
+    def test_sse_terminal_frame_uses_cancellation_already_committed_in_mysql(
+        self,
+    ) -> None:
+        self._cancel_active_stream(terminal_arrives_first=True)
+
+    def _cancel_active_stream(self, *, terminal_arrives_first: bool) -> None:
         self._create_team(pipeline=False)
         partial = f"{self.marker}-partial"
         self._json(
@@ -363,7 +415,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                 json={
                     "matchText": self.marker,
                     "responseContent": partial,
-                    "doneDelayMs": 12_000,
+                    "holdDone": True,
                 },
             )
         )
@@ -389,7 +441,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                         if event["type"] == "response.output_text.delta":
                             delta.set()
 
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             stream = executor.submit(read_stream)
             if not delta.wait(timeout=15):
                 stream.result(timeout=15)
@@ -405,11 +457,16 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertEqual(rows[-1]["status"], "RUNNING", rows)
             subtask_id = rows[-1]["id"]
             self._wait_for(lambda: self.redis.get(f"chat:streaming:{subtask_id}"))
-            cancelled = self._json(
-                self.api.post(f"/api/v1/responses/{response_id}/cancel")
-            )
-            self.assertEqual(cancelled["status"], "completed", cancelled)
-            stream.result(timeout=6)
+            if terminal_arrives_first:
+                self._finish_upstream_during_cancel(
+                    stream, response_id, task_id, subtask_id
+                )
+            else:
+                cancelled = self._json(
+                    self.api.post(f"/api/v1/responses/{response_id}/cancel")
+                )
+                self.assertEqual(cancelled["status"], "completed", cancelled)
+                stream.result(timeout=6)
 
         terminal = [
             frame
@@ -425,6 +482,95 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(rows[-1]["status"], "COMPLETED")
         self.assertEqual(rows[-1]["result"]["value"], partial)
         self.assertIsNone(self.redis.get(f"chat:cancel:{subtask_id}"))
+
+    def _finish_upstream_during_cancel(
+        self, stream: Future[None], response_id: str, task_id: int, subtask_id: int
+    ) -> None:
+        # The model gate and a MySQL advisory lock put the terminal frame in
+        # flight while the cancel endpoint owns the task and subtask row locks.
+        # Rust must then render the winning committed result even though its
+        # terminal handler began before the Redis cancellation flag was set.
+        lock_name = self.marker
+        trigger = f"{self.marker.replace('-', '_')}_cancel"
+        with SessionLocal() as ddl:
+            ddl.execute(
+                text(
+                    f"""
+                    CREATE TRIGGER {trigger} BEFORE UPDATE ON subtasks
+                    FOR EACH ROW BEGIN
+                        IF NEW.id = {subtask_id:d} AND NEW.status = 'COMPLETED'
+                           AND NEW.progress = 100 THEN
+                            IF GET_LOCK('{lock_name}', 10) = 1 THEN
+                                DO RELEASE_LOCK('{lock_name}');
+                            END IF;
+                        END IF;
+                    END
+                    """
+                )
+            )
+            ddl.commit()
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor, SessionLocal() as lock:
+                self.assertEqual(
+                    lock.scalar(text("SELECT GET_LOCK(:name, 0)"), {"name": lock_name}),
+                    1,
+                )
+                try:
+                    cancel = executor.submit(
+                        self.api.post, f"/api/v1/responses/{response_id}/cancel"
+                    )
+                    self._wait_for(lambda: self._cancel_is_waiting(lock_name))
+                    released = self._json(
+                        self.model.post(
+                            "/stream-rules/release", json={"matchText": self.marker}
+                        )
+                    )
+                    self.assertEqual(released["released"], 1)
+                    self._wait_for(lambda: self._terminal_is_waiting(task_id))
+                finally:
+                    lock.execute(
+                        text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name}
+                    )
+                cancelled = self._json(cancel.result(timeout=5))
+            self.assertEqual(cancelled["status"], "completed", cancelled)
+            stream.result(timeout=6)
+        finally:
+            with SessionLocal() as ddl:
+                ddl.execute(text(f"DROP TRIGGER {trigger}"))
+                ddl.commit()
+
+    def _cancel_is_waiting(self, lock_name: str) -> bool:
+        with SessionLocal() as db:
+            return bool(
+                db.scalar(
+                    text(
+                        """
+                SELECT COUNT(*) FROM performance_schema.metadata_locks
+                WHERE OBJECT_TYPE = 'USER LEVEL LOCK' AND LOCK_STATUS = 'PENDING'
+                  AND OBJECT_NAME = :name
+            """
+                    ),
+                    {"name": lock_name},
+                )
+            )
+
+    def _terminal_is_waiting(self, task_id: int) -> bool:
+        with SessionLocal() as db:
+            return bool(
+                db.scalar(
+                    text(
+                        """
+                SELECT COUNT(*)
+                FROM performance_schema.data_lock_waits AS waiting
+                JOIN performance_schema.data_locks AS requested
+                  ON requested.ENGINE_LOCK_ID = waiting.REQUESTING_ENGINE_LOCK_ID
+                WHERE requested.OBJECT_NAME = 'tasks'
+                  AND requested.LOCK_DATA = :task_id
+            """
+                    ),
+                    {"task_id": str(task_id)},
+                )
+            )
 
 
 if __name__ == "__main__":

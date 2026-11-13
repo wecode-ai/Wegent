@@ -12,6 +12,8 @@ use crate::responses::dispatch::DefaultDispatchJob;
 use crate::state::AppState;
 use crate::task_store::PipelineStageAdvance;
 
+const PIPELINE_HANDOFF_PATH: &str = "/metadata/labels/pipelinePendingHandoff";
+
 /// Source stage creation/notification failures still propagate, while the
 /// asynchronous next-stage request-preparation/dispatch failure is contained.
 pub(super) async fn dispatch_next(
@@ -157,6 +159,7 @@ async fn prepare_dispatch(
         },
     )
     .await?;
+    execution.request_id.clone_from(&request_id);
     execution.new_session = advance.previous_bot_id != advance.bot.id;
     let chat_shell = seam::chat_shell_url();
     let chat_shell_mode = routing::chat_shell_mode();
@@ -240,14 +243,17 @@ async fn claim_and_dispatch(
         let task: Option<MysqlRow> = transaction.fetch_optional(
             crate::task_store::task_for_update_first_statement(&tables.tasks), (advance.task_id,)).await?;
         let Some(Json(mut current)) = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
-        if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage") { return Ok(false); }
+        if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
+            || current.pointer(PIPELINE_HANDOFF_PATH) != advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
+        {
+            return Ok(false);
+        }
         let now = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S%.6f").to_string();
         let changed = transaction.execute(
-            format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status = 'PENDING'", tables.subtasks),
+            format!("UPDATE {} SET status = 'RUNNING', updated_at = ? WHERE id = ? AND task_id = ? AND status IN ('PENDING','RUNNING')", tables.subtasks),
             (now.as_str(), advance.pair.assistant_subtask_id, advance.task_id)).await?;
         if changed.rows_affected == 0 { return Ok(false); }
         current["status"]["status"] = json!("RUNNING");
-        wegent_task_store::clear_pending_pipeline_handoff(&mut current);
         transaction.execute(crate::task_store::update_task_json_statement(&tables.tasks),
             (crate::json_compat::python_json_value(&current), now, advance.task_id)).await?;
         Ok(true)
@@ -255,8 +261,62 @@ async fn claim_and_dispatch(
     if !running {
         return Ok(());
     }
-    permit.send(job);
-    Ok(())
+    let (accepted, acknowledgement) = tokio::sync::oneshot::channel();
+    permit.send(DefaultDispatchJob::Pipeline(Box::new(job), accepted));
+    acknowledgement
+        .await
+        .map_err(|_| FastApiError::internal())?
+        .map_err(|error| {
+            tracing::warn!(%error, task_id = advance.task_id, "pipeline dispatch was not accepted");
+            FastApiError::internal()
+        })?;
+    clear_dispatched_pair(state, advance).await
+}
+
+async fn clear_dispatched_pair(
+    state: &AppState,
+    advance: &PipelineStageAdvance,
+) -> Result<(), FastApiError> {
+    let tables = state
+        .task_store
+        .message_edit_tables(advance.task_id)
+        .await
+        .map_err(dependency)?;
+    let mysql = state
+        .mysql
+        .route(crate::task_routing::ByTaskId(advance.task_id as u64));
+    mysql
+        .with_transaction(async |transaction| {
+            let row: Option<MysqlRow> = transaction
+                .fetch_optional(
+                    crate::task_store::task_for_update_first_statement(&tables.tasks),
+                    (advance.task_id,),
+                )
+                .await?;
+            let Some(Json(mut task)) = row
+                .as_ref()
+                .and_then(|row| super::completion::task_column::<Json<Value>>(row, "json"))
+            else {
+                return Ok(());
+            };
+            if task.pointer(PIPELINE_HANDOFF_PATH)
+                == advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
+            {
+                wegent_task_store::clear_pending_pipeline_handoff(&mut task);
+                transaction
+                    .execute(
+                        format!("UPDATE {} SET json=? WHERE id=?", tables.tasks),
+                        (
+                            crate::json_compat::python_json_value(&task),
+                            advance.task_id,
+                        ),
+                    )
+                    .await?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(dependency)
 }
 
 fn user_message(advance: &PipelineStageAdvance) -> Value {

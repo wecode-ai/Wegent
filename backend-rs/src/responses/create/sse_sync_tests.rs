@@ -379,6 +379,7 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
     };
 
     let collected = tokio::time::timeout(
@@ -424,6 +425,7 @@ async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried()
         start_data: Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
     };
 
     collect(
@@ -493,6 +495,7 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
     };
 
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
@@ -549,6 +552,7 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
     };
 
     let request = execution_request();
@@ -616,6 +620,7 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
     };
 
     let request = execution_request();
@@ -790,6 +795,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
     };
 
     let mut collect_fut = Box::pin(collect(&ctx, &url, &request, "req-test", Some(2)));
@@ -861,6 +867,7 @@ async fn a_forwarded_dispatch_publishes_the_chat_frames() {
             project_id: 0,
         }),
         owner_user_id: Some(6501),
+        acceptance: None,
     };
     let request = execution_request();
     collect(&ctx, &url, &request, "req-test", Some(2))
@@ -927,6 +934,7 @@ async fn parent_status_write_failure_rolls_back_and_does_not_deliver_completion(
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: Some(6501),
+        acceptance: None,
     };
 
     let result = collect(&ctx, &url, &execution_request(), "req-test", Some(2)).await;

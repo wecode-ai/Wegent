@@ -29,14 +29,17 @@ mod text_value;
 #[path = "tests.rs"]
 mod tests;
 
-use brz_mysql::{Mysql, MysqlResult};
+use brz_mysql::{Mysql, MysqlResult, MysqlTransaction};
 use brz_redis::Redis;
 use serde_json::Value;
 
 use crate::executor_manager::ExecutorManager;
 
 pub(crate) use collect::collect_completed_result;
-pub(crate) use delivery::{Delivery, acknowledge_delivery, with_delivery_lock};
+pub(crate) use delivery::{
+    Delivery, acknowledge_delivery, notification_key, publish_once, with_delivery_lock,
+    with_owned_lease,
+};
 pub(crate) use events::publish_task_completed_for_owner;
 pub(crate) use persist::{mark_subtask_running, persist_completed_result, update_task_status};
 pub(crate) use sql::Tables;
@@ -86,6 +89,35 @@ pub(crate) async fn task_status_user_id<M: Mysql>(
 
 pub(crate) use wegent_task_store::projection::task_column;
 
+pub(crate) struct StoredTerminal {
+    pub status: String,
+    pub result: Option<Value>,
+    pub error: Option<String>,
+}
+
+/// Read the winning terminal result on the writer after a competing commit.
+pub(crate) async fn read_terminal_result<M: Mysql>(
+    mysql: &M,
+    tables: Tables,
+    task_id: i64,
+    subtask_id: i64,
+) -> MysqlResult<Option<StoredTerminal>> {
+    let mysql = mysql.route(crate::task_routing::ByTaskId(task_id as u64));
+    mysql.with_transaction(async |tx| {
+        let row: Option<(String, Option<brz_mysql::Json<Value>>, Option<String>)> = tx
+            .fetch_optional(
+                format!("SELECT status, result, error_message FROM {} WHERE id = ? AND task_id = ? AND status IN ('COMPLETED','FAILED','CANCELLED')", tables.subtasks),
+                (subtask_id, task_id),
+            )
+            .await?;
+        Ok(row.map(|(status, result, error)| StoredTerminal {
+            status,
+            result: result.map(|json| json.0),
+            error,
+        }))
+    }).await
+}
+
 /// The status string a terminal event maps to (`SubtaskStatus`).
 pub(crate) fn terminal_status(event_type: &str) -> Option<&'static str> {
     match event_type {
@@ -102,6 +134,7 @@ pub(crate) struct TerminalCompletion {
     pub(crate) user_id: Option<i64>,
     pub(crate) auto_advance: bool,
     pub(crate) replay_error: Option<Option<String>>,
+    pub(crate) replay_source: Option<Value>,
 }
 
 /// Terminal delivery can be retried independently of the database transition.
@@ -113,6 +146,7 @@ pub(crate) async fn complete_with_delivery<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     delivery: Delivery,
+    source: Option<&Value>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
     let user_id = task_status_user_id(ctx.mysql, ctx.tables, event.task_id).await;
     let result = finish_terminal_event(
@@ -126,7 +160,7 @@ pub(crate) async fn complete_with_delivery<M: Mysql, R: Redis>(
         executor_name,
         executor_namespace,
         None,
-        Some(delivery),
+        Some((delivery, source)),
     )
     .await?;
     Ok(result.map(|completion| TerminalCompletion {
@@ -256,7 +290,7 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
     device_attempt: Option<&DeviceAttempt<'_>>,
-    delivery: Option<Delivery>,
+    delivery: Option<(Delivery, Option<&Value>)>,
 ) -> MysqlResult<Option<TerminalCompletion>> {
     let final_result = collect::collect_completed_result(
         ctx, task_id, subtask_id, status, result, error, error_code,
@@ -289,13 +323,14 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
         return Ok(None);
     };
 
-    let (auto_advance, final_result, replay_error) = match transition {
-        persist::Transition::Committed(auto_advance) => (auto_advance, final_result, None),
+    let (auto_advance, final_result, replay_error, replay_source) = match transition {
+        persist::Transition::Committed(auto_advance) => (auto_advance, final_result, None, None),
         persist::Transition::Replay {
             auto_advance,
             result,
             error,
-        } => (auto_advance, result, Some(error)),
+            source,
+        } => (auto_advance, result, Some(error), source),
     };
     if replay_error.is_none() {
         events::publish_task_completed(
@@ -314,5 +349,6 @@ async fn finish_terminal_event<M: Mysql, R: Redis>(
         user_id: None,
         auto_advance,
         replay_error,
+        replay_source,
     }))
 }

@@ -258,10 +258,18 @@ async fn deliver_remote_terminal(
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    let Some(committed) =
-        completion::complete_with_delivery(&ctx, event, status, None, None, delivery)
-            .await
-            .map_err(|error| error.to_string())?
+    let source = Value::Object(data.clone());
+    let Some(committed) = completion::complete_with_delivery(
+        &ctx,
+        event,
+        status,
+        None,
+        None,
+        delivery,
+        Some(&source),
+    )
+    .await
+    .map_err(|error| error.to_string())?
     else {
         return Ok(());
     };
@@ -270,6 +278,23 @@ async fn deliver_remote_terminal(
     }
     event.result = committed.result;
     let result = event.result.clone().unwrap_or_else(|| json!({}));
+    let mut canonical = committed.replay_source.unwrap_or(source);
+    let raw = canonical.as_object_mut().expect("device event payload");
+    if let Some(body) = raw.get_mut("data").and_then(Value::as_object_mut) {
+        if status == "COMPLETED" {
+            body.insert("result".into(), result.clone());
+            if let Some(text) = result.get("value").and_then(Value::as_str) {
+                body.insert("value".into(), json!(text));
+            }
+        } else if status == "FAILED" {
+            body.insert("message".into(), json!(event.error));
+            event.error_code = result
+                .get("error_type")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+    }
+    let data = raw;
     let contexts = if status == "COMPLETED" {
         Some(
             crate::responses::create::contexts::context_briefs(&state.mysql, subtask_id)
@@ -284,20 +309,23 @@ async fn deliver_remote_terminal(
     )
     .await
     .map_err(|error| error.to_string())?;
-    emitter::emit_terminal_frames(redis, event, Some(user_id), &result, contexts.as_ref())
+    emitter::emit_terminal_frames_once(redis, event, Some(user_id), &result, contexts.as_ref())
         .await
         .map_err(|error| error.to_string())?;
-    emit_response_api_event(
-        state,
+    let raw_key = completion::notification_key(task_id, subtask_id, "device-response");
+    crate::internal_callback::publish_terminal_emit(
+        redis,
+        &raw_key,
         event_name,
-        response_api_payload(data, device_id),
         room,
+        response_api_payload(data, device_id),
     )
-    .await?;
-    publish_callback_event(redis, subtask_id, event)
+    .await
+    .map_err(|error| error.to_string())?;
+    device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await?;
+    crate::internal_callback::publish_terminal_callback(redis, event)
         .await
         .map_err(|error| error.to_string())?;
-    device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await?;
     completion::acknowledge_delivery(&ctx, task_id, subtask_id, delivery)
         .await
         .map_err(|error| error.to_string())

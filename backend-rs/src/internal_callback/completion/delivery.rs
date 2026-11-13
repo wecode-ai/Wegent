@@ -30,6 +30,30 @@ impl Delivery {
     }
 }
 
+/// Publish and record the individual delivery step atomically in Redis.
+pub(crate) async fn publish_once<R: Redis>(
+    redis: &R,
+    key: &str,
+    channel: &str,
+    message: &str,
+) -> brz_redis::RedisResult<bool> {
+    let published: i64 = redis
+        .eval(
+            "if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+         redis.call('SET', KEYS[1], '1', 'EX', ARGV[3])
+         redis.call('PUBLISH', ARGV[1], ARGV[2])
+         return 1",
+            [key],
+            [channel, message, "604800"],
+        )
+        .await?;
+    Ok(published == 1)
+}
+
+pub(crate) fn notification_key(task_id: i64, subtask_id: i64, step: &str) -> String {
+    format!("wegent:terminal-delivery:{task_id}:{subtask_id}:{step}")
+}
+
 pub(super) fn labels(task: &mut Value) -> &mut Value {
     &mut task["metadata"]["labels"]
 }
@@ -55,22 +79,35 @@ pub(crate) async fn with_delivery_lock<T, E, F>(
 where
     F: Future<Output = Result<T, E>>,
 {
-    const LEASE_MS: u64 = 30_000;
     let key = format!("wegent:lock:{}", delivery.label(subtask_id));
+    with_owned_lease(redis, &key, dependency, work).await
+}
+
+pub(crate) async fn with_owned_lease<R, T, E, F>(
+    redis: &R,
+    key: &str,
+    dependency: impl Fn() -> E,
+    work: F,
+) -> Result<T, E>
+where
+    R: Redis,
+    F: Future<Output = Result<T, E>>,
+{
+    const LEASE_MS: u64 = 30_000;
     let token = crate::device_identity_lock::lock_token();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let options = SetOptions::default()
         .with_expiration(SetExpiration::Milliseconds(LEASE_MS))
         .if_absent();
     loop {
-        match redis.set_with(key.as_str(), token.as_str(), options).await {
+        match redis.set_with(key, token.as_str(), options).await {
             Ok(true) => break,
             Ok(false) if tokio::time::Instant::now() < deadline => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             Ok(false) => return Err(dependency()),
             Err(error) => {
-                tracing::warn!(%error, subtask_id, "terminal delivery lock unavailable");
+                tracing::warn!(%error, key, "delivery lock unavailable");
                 return Err(dependency());
             }
         }
@@ -90,7 +127,7 @@ where
                         return redis.call('PEXPIRE', KEYS[1], ARGV[2])
                      end
                      return 0",
-                    [key.as_str()],
+                    [key],
                     [token.as_str(), ttl.as_str()],
                 ).await;
                 if !matches!(renewed, Ok(1)) {
@@ -105,12 +142,12 @@ where
             return redis.call('DEL', KEYS[1])
          end
          return 0",
-            [key.as_str()],
+            [key],
             [token.as_str()],
         )
         .await;
     if let Err(error) = released {
-        tracing::warn!(%error, subtask_id, "terminal delivery lock release failed");
+        tracing::warn!(%error, key, "delivery lock release failed");
     }
     result
 }

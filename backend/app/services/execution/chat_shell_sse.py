@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from shared.models import (
@@ -167,6 +168,8 @@ async def dispatch_sse(
     emitter: ResultEmitter,
     event_parser: ResponsesAPIEventParser,
     start_event_data: dict[str, str],
+    *,
+    on_accepted: Callable[[], None] | None = None,
 ) -> None:
     """Dispatch images directly or consume Chat Shell on an owned SDK connection."""
     if (request.model_config or {}).get("modelType", "llm") == "image":
@@ -193,6 +196,7 @@ async def dispatch_sse(
                 event_parser,
                 start_event_data,
                 client,
+                on_accepted,
             )
 
 
@@ -205,6 +209,7 @@ async def _dispatch_chat_shell_sse(
     event_parser: ResponsesAPIEventParser,
     start_event_data: dict[str, str],
     client: AsyncOpenAI,
+    on_accepted: Callable[[], None] | None = None,
 ) -> None:
     """Stream a Chat Shell response within the caller's scoped request context."""
     from app.services.chat.storage.session import session_manager
@@ -353,6 +358,9 @@ async def _dispatch_chat_shell_sse(
                     event_type = getattr(event, "type", None)
                     if not event_type:
                         continue
+                    if on_accepted is not None:
+                        on_accepted()
+                        on_accepted = None
 
                     if event_count <= 5 or event_type in (
                         "response.completed",

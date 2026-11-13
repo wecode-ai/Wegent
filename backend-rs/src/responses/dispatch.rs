@@ -28,7 +28,7 @@ use brz_http::Client as HttpClient;
 use brz_mysql::{Mysql, MysqlService};
 use brz_redis::{Redis, RedisService};
 use serde_json::Value;
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::{Id, JoinSet};
 
 use crate::executor_manager::ExecutorManager;
@@ -162,6 +162,8 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `chat_session.py:137-170`'s fire-and-forget memory save: the prepared
     /// context goes to the mem0 client off the request path.
     MemorySave(crate::responses::create::memory_context::SaveRequest),
+    /// An automatic handoff is acknowledged only after its destination accepts.
+    Pipeline(Box<DispatchJob<M, R>>, oneshot::Sender<Result<(), String>>),
 }
 
 /// The production job type (`AppState`'s specialization).
@@ -178,6 +180,7 @@ struct JobContext {
 impl<M: Mysql, R: Redis> DispatchJob<M, R> {
     fn context(&self) -> JobContext {
         match self {
+            Self::Pipeline(job, _) => job.context(),
             Self::Executor {
                 url,
                 task_id,
@@ -379,6 +382,10 @@ where
     M: Mysql + 'static,
     R: Redis + Clone + 'static,
 {
+    let (job, accepted) = match job {
+        DispatchJob::Pipeline(job, sender) => (*job, Some(sender)),
+        job => (job, None),
+    };
     match job {
         DispatchJob::Executor {
             url,
@@ -391,19 +398,27 @@ where
             message_id,
         } => match send_executor(http, &url, &body).await {
             Ok(()) => {
+                if let Some(accepted) = accepted {
+                    let _ = accepted.send(Ok(()));
+                }
                 if let Some(start) = start {
                     emit_executor_start(start).await;
                 }
             }
             Err(error) => {
                 tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
-                finalize_executor_failure(&consumer, task_id, subtask_id, user_id, message_id)
-                    .await;
+                if let Some(accepted) = accepted {
+                    let _ = accepted.send(Err(error));
+                } else {
+                    finalize_executor_failure(&consumer, task_id, subtask_id, user_id, message_id)
+                        .await;
+                }
             }
         },
         DispatchJob::ChatShell(job) => {
-            let _ = run_chat_shell(*job).await;
+            let _ = run_chat_shell(*job, accepted).await;
         }
+        DispatchJob::Pipeline(..) => unreachable!("nested pipeline dispatch"),
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;
         }
@@ -516,7 +531,10 @@ async fn finalize_executor_failure<M: Mysql, R: Redis>(
 /// its finally (the late, strategy-ending DEL). A 500, a mid-stream error and a
 /// stream without a terminal frame all surface as an error here and are logged
 /// with the job identity; they are never reported as completion.
-async fn run_chat_shell<M, R>(job: ChatShellJob<M, R>) -> Result<Collected, String>
+async fn run_chat_shell<M, R>(
+    job: ChatShellJob<M, R>,
+    accepted: Option<oneshot::Sender<Result<(), String>>>,
+) -> Result<Collected, String>
 where
     M: Mysql,
     R: Redis + Clone,
@@ -533,16 +551,64 @@ where
         start_data: job.start_data.clone(),
         created_task: job.created_task.clone(),
         owner_user_id: job.forward.then_some(job.request.user_id),
+        acceptance: accepted.map(|sender| std::sync::Mutex::new(Some(sender))),
     };
     // Keep the streaming state machine off the dispatch worker's stack.
-    let result = Box::pin(sse_sync::collect(
+    let collect = Box::pin(sse_sync::collect(
         &consumer,
         &job.target_url,
         &job.request,
         &job.request_id,
         job.request.message_id,
-    ))
-    .await;
+    ));
+    let result = if consumer.acceptance.is_some() {
+        let key = format!(
+            "wegent:lock:pipeline-execution:{}:{}",
+            job.task_id, job.subtask_id
+        );
+        let Some(redis) = consumer.redis else {
+            return Err("Redis is required for pipeline dispatch".to_owned());
+        };
+        crate::internal_callback::completion::with_owned_lease(
+            redis,
+            &key,
+            || "Pipeline execution is already owned or Redis is unavailable".to_owned(),
+            async {
+                match crate::internal_callback::completion::read_terminal_result(
+                    consumer.mysql,
+                    consumer.tables,
+                    job.task_id,
+                    job.subtask_id,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                {
+                    Some(_) => {
+                        if let Some(sender) = consumer.acceptance.as_ref().and_then(|value| {
+                            value.lock().expect("dispatch acceptance lock").take()
+                        }) {
+                            let _ = sender.send(Ok(()));
+                        }
+                        Ok(Collected {
+                            content: String::new(),
+                        })
+                    }
+                    None => collect.await,
+                }
+            },
+        )
+        .await
+    } else {
+        collect.await
+    };
+    if let Err(error) = &result
+        && let Some(sender) = consumer
+            .acceptance
+            .as_ref()
+            .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
+    {
+        let _ = sender.send(Err(error.clone()));
+    }
     match &result {
         Ok(collected) => tracing::info!(
             task_id = job.task_id,

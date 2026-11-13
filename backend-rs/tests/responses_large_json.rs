@@ -268,6 +268,20 @@ async fn pipeline_retry_resumes_the_committed_pair_without_inserting_again() {
         )
         .await
         .unwrap();
+    let after_claim = advance()
+        .await
+        .expect("recover after committed RUNNING claim");
+    assert_eq!(
+        first.pair.assistant_subtask_id,
+        after_claim.pair.assistant_subtask_id
+    );
+    mysql
+        .execute(
+            "UPDATE subtasks SET status='COMPLETED' WHERE id=?",
+            (after_claim.pair.assistant_subtask_id,),
+        )
+        .await
+        .unwrap();
     assert!(advance().await.is_none());
     fixture.close().await;
 }

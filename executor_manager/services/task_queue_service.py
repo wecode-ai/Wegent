@@ -118,6 +118,45 @@ class TaskQueueService:
             logger.error(f"[TaskQueue] Failed to enqueue task: {e}")
             return False
 
+    def enqueue_pipeline_task(self, task: Dict[str, Any]) -> bool:
+        """A repeated handoff receives the original queue acknowledgement."""
+        client = self.redis_client
+        if client is None:
+            return False
+        task_id, subtask_id = self._get_task_ids(task)
+        now = time.time()
+        pending = json.dumps(
+            {
+                "task_id": str(task_id),
+                "subtask_id": str(subtask_id),
+                "queue_key": self.queue_key,
+                "enqueued_at": now,
+                "dequeued_at": None,
+            }
+        )
+        client.eval(
+            """
+            if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+            redis.call('LPUSH', KEYS[2], ARGV[1])
+            redis.call('SETEX', KEYS[3], ARGV[2], ARGV[3])
+            redis.call('ZADD', KEYS[4], ARGV[4], ARGV[5])
+            redis.call('SET', KEYS[1], '1', 'EX', ARGV[6])
+            return 1
+            """,
+            4,
+            f"{QUEUE_KEY_PREFIX}:pipeline-dispatched:{task_id}:{subtask_id}",
+            self.queue_key,
+            PENDING_KEY_TEMPLATE.format(task_id=task_id),
+            PENDING_INDEX_KEY,
+            json.dumps(task),
+            PENDING_KEY_TTL,
+            pending,
+            now,
+            str(task_id),
+            7 * 24 * 60 * 60,
+        )
+        return True
+
     def enqueue_tasks(self, tasks: List[Dict[str, Any]]) -> int:
         """Push multiple tasks to queue.
 

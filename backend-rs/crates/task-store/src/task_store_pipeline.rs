@@ -253,7 +253,7 @@ async fn load_pending_handoff<T: MysqlTransaction>(
     assistant: i64,
 ) -> MysqlResult<Option<(i64, String, SubtaskPairInsert)>> {
     let row: Option<MysqlRow> = transaction.fetch_optional(
-        format!("SELECT u.message_id, u.prompt, a.executor_name, a.executor_namespace, a.executor_deleted_at, a.created_at FROM {subtasks} a JOIN {subtasks} u ON u.task_id = a.task_id WHERE a.task_id = ? AND u.id = ? AND a.id = ? AND a.status = 'PENDING'"),
+        format!("SELECT u.message_id, u.prompt, a.executor_name, a.executor_namespace, a.executor_deleted_at, a.created_at FROM {subtasks} a JOIN {subtasks} u ON u.task_id = a.task_id WHERE a.task_id = ? AND u.id = ? AND a.id = ? AND a.status IN ('PENDING','RUNNING')"),
         (task_id, user, assistant),
     ).await?;
     let Some(row) = row else { return Ok(None) };

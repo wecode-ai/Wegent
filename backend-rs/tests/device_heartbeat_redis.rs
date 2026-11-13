@@ -217,6 +217,7 @@ async fn assert_terminal_delivery(
         )
         .await
         .unwrap();
+    let mut raw_events = redis.subscribe("socketio").await.unwrap();
     let completed = json!({
         "task_id":task_id, "subtask_id":subtask_id, "message_id":1,
         "data":{"response":{"output":[{"type":"message","content":[{"type":"output_text","text":"device result"}]}]}}
@@ -242,14 +243,29 @@ async fn assert_terminal_delivery(
         )
         .await
         .unwrap();
+    let mut replay = completed.clone();
+    replay["data"]["response"]["output"][0]["content"][0]["text"] = json!("different retry result");
     assert_eq!(
-        event_ack(client, 3, "response.completed", completed.clone()).await,
+        event_ack(client, 3, "response.completed", replay).await,
         json!({"success":true})
     );
     assert_eq!(
         next_callback(&mut subscription).await["result"]["value"],
         "device result"
     );
+    loop {
+        let frame = next_callback(&mut raw_events).await;
+        if frame["event"] == "response.completed" && frame["data"][0]["subtask_id"] == subtask_id {
+            let data = &frame["data"][0]["data"];
+            assert_eq!(
+                data["response"]["output"][0]["content"][0]["text"],
+                "device result"
+            );
+            assert_eq!(data["result"]["value"], "device result");
+            break;
+        }
+    }
+    raw_events.close().await.unwrap();
 
     assert_eq!(
         event_ack(client, 4, "error", completed).await,
