@@ -325,14 +325,18 @@ pub(super) enum CodexNativeRequest {
 impl CodexAppServerSharedState {
     pub(super) fn thread_has_active_turn(&self, thread_id: &str) -> bool {
         self.active_threads.get(thread_id).copied().unwrap_or(0) > 0
-            || self.process.as_ref().is_some_and(|process| {
-                process
-                    .notifications
-                    .native_activity
-                    .lock()
-                    .expect("Codex native activity registry should not be poisoned")
-                    .has_active_turn(thread_id)
-            })
+            || self.thread_has_native_turn(thread_id)
+    }
+
+    pub(super) fn thread_has_native_turn(&self, thread_id: &str) -> bool {
+        self.process.as_ref().is_some_and(|process| {
+            process
+                .notifications
+                .native_activity
+                .lock()
+                .expect("Codex native activity registry should not be poisoned")
+                .has_active_turn(thread_id)
+        })
     }
 
     pub(super) fn protected_turn_count(&self) -> usize {
