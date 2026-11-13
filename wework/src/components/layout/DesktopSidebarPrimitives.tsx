@@ -116,7 +116,7 @@ export function DesktopSidebarSectionHeader({
       </button>
       <div
         data-testid={`${toggleTestId}-actions`}
-        className="absolute inset-y-0 right-1 z-[70] flex items-center"
+        className="absolute inset-y-0 right-1 flex items-center"
       >
         {children}
       </div>
