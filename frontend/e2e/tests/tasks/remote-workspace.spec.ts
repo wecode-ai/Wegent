@@ -21,6 +21,7 @@ type CreateTaskIdResponse = {
 type TaskDetailSubtask = {
   id: number
   role: string
+  status: string
 }
 
 type TaskDetailResponse = {
@@ -50,7 +51,9 @@ test.describe('Remote Workspace', () => {
     }
   })
 
-  test('desktop code task shows disabled entry when sandbox unavailable', async ({ page }) => {
+  test('desktop code task shows a disabled workspace entry when the sandbox is unavailable', async ({
+    page,
+  }) => {
     const teamsResponse = await apiClient.get<TeamListResponse>(
       '/api/teams?page=1&limit=100&scope=all'
     )
@@ -72,6 +75,8 @@ test.describe('Remote Workspace', () => {
       team_id: teamWithBots?.id,
       type: 'offline',
       task_type: 'code',
+      // Fail model resolution before the scheduler can provision a sandbox.
+      model_id: `e2e-unavailable-workspace-model-${taskId}`,
       git_url: '',
       git_repo: '',
       git_repo_id: 0,
@@ -88,18 +93,21 @@ test.describe('Remote Workspace', () => {
     const subtasks = taskDetailResponse.data?.subtasks ?? []
     const assistantSubtask = subtasks.find(subtask => String(subtask.role) === 'ASSISTANT')
     expect(assistantSubtask).toBeTruthy()
+    const subtaskPath = `/api/subtasks/${assistantSubtask!.id}`
+    await expect
+      .poll(async () => {
+        const response = await apiClient.get<TaskDetailSubtask>(subtaskPath)
+        expect(response.status).toBe(200)
+        return response.data?.status
+      })
+      .toBe('FAILED')
 
-    const callbackResponse = await apiClient.post('/api/internal/callback', {
-      event_type: 'error',
-      task_id: taskId,
-      subtask_id: assistantSubtask?.id,
+    // Record the executor reference of a failed round with no live sandbox.
+    const binding = await apiClient.put(subtaskPath, {
       executor_name: `executor-${taskId}`,
       executor_namespace: 'default',
-      data: {
-        message: 'force unavailable state for e2e',
-      },
     })
-    expect(callbackResponse.status).toBe(200)
+    expect(binding.status).toBe(200)
 
     const statusResponse = await apiClient.get<RemoteWorkspaceStatusResponse>(
       `/api/tasks/${taskId}/remote-workspace/status`
@@ -107,60 +115,19 @@ test.describe('Remote Workspace', () => {
     expect(statusResponse.status).toBe(200)
     expect(statusResponse.data?.connected).toBe(true)
     expect(statusResponse.data?.available).toBe(false)
+    expect(statusResponse.data?.reason).toBe('sandbox_not_running')
     // root_path is task-scoped: /workspace/{task_id} when sandbox is unavailable
     expect(statusResponse.data?.root_path).toBe(`/workspace/${taskId}`)
 
-    await page.goto(`/chat?agent=code&taskId=${taskId}`)
-    await page.waitForLoadState('domcontentloaded')
-
-    // Wait for task list to load in sidebar and find the created task
-    // The task should appear in the sidebar after creation
-    const taskListItem = page.locator(
-      `[data-testid="task-item-${taskId}"], [data-task-id="${taskId}"]`
-    )
-    const taskTitleInSidebar = page.locator(`text=e2e remote workspace unavailable state`).first()
-
-    // Try to find and click the task in sidebar to trigger selection
-    // This is necessary because RemoteWorkspaceEntry only renders when selectedTask is set
-    let taskSelected = false
-    try {
-      // First try by task ID
-      if (await taskListItem.isVisible({ timeout: 5000 })) {
-        await taskListItem.click()
-        taskSelected = true
-      }
-    } catch {
-      // Ignore - will try by title
-    }
-
-    if (!taskSelected) {
-      try {
-        // Then try by task title
-        if (await taskTitleInSidebar.isVisible({ timeout: 5000 })) {
-          await taskTitleInSidebar.click()
-          taskSelected = true
-        }
-      } catch {
-        // Ignore - task might not be in visible list
-      }
-    }
-
-    // If task selection failed via sidebar, verify at least the API behavior is correct
-    // The UI part of the test may not work if the task isn't in the visible sidebar list
-    if (!taskSelected) {
-      // API verification already passed above, just skip UI verification
-      // This can happen in CI where the task list might not include the newly created task yet
-      return
-    }
-
-    // Wait for page to update after task selection
-    await page.waitForTimeout(1000)
-
-    const remoteWorkspaceButton = page.getByRole('button', {
-      name: /Remote Workspace|远程工作区|tasks:remote_workspace.button/,
+    await page.goto(`/chat?agent=code&taskId=${taskId}`, {
+      waitUntil: 'domcontentloaded',
     })
-
+    const remoteWorkspaceButton = page.getByTestId('remote-workspace-button')
     await expect(remoteWorkspaceButton).toBeVisible({ timeout: 20000 })
+    await expect(remoteWorkspaceButton).toHaveAttribute(
+      'title',
+      /Remote sandbox is not running|远程沙箱未运行/
+    )
     await expect(remoteWorkspaceButton).toBeDisabled()
   })
 

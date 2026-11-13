@@ -61,12 +61,11 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
     };
     let owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
-    if task_json
+    let task_status = task_json
         .as_ref()
         .and_then(|task| task.pointer("/status/status"))
-        .and_then(Value::as_str)
-        .is_some_and(|status| matches!(status, "CANCELLED" | "CANCELLING" | "DELETE"))
-    {
+        .and_then(Value::as_str);
+    if matches!(task_status, Some("CANCELLED" | "DELETE")) {
         return false;
     }
 
@@ -99,6 +98,9 @@ pub(crate) async fn update_task_status_on<M: Mysql, R: Redis, T: MysqlTransactio
         return false;
     };
     let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
+    if task_status == Some("CANCELLING") && last_status != "CANCELLED" {
+        return false;
+    }
     // `list_assistant_by_task` labels its columns too, so the last subtask's
     // result — the payload `_apply_status_update` writes into the task CRD's
     // `status.result` — is decoded positionally.

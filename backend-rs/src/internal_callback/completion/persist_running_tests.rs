@@ -453,5 +453,19 @@ async fn verify_obsolete_dispatches(writer: &MysqlService, tables: Tables) -> an
             .unwrap(),
         json!({"status": "bound"})
     );
+    writer
+        .execute(
+            "UPDATE tasks SET json = JSON_SET(json, '$.status.status', 'CANCELLING') WHERE id = 12",
+            (),
+        )
+        .await?;
+    writer
+        .execute("UPDATE subtasks SET status = 'CANCELLED' WHERE id = 43", ())
+        .await?;
+    super::update_task_status(&ctx, 12, 43).await;
+    let task: brz_mysql::Json<Value> = writer
+        .fetch_one("SELECT json FROM tasks WHERE id = 12", ())
+        .await?;
+    assert_eq!(task.0["status"]["status"], "CANCELLED");
     Ok(())
 }
