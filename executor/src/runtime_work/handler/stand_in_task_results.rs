@@ -1,5 +1,11 @@
 //! Deliver private source and delegated-work updates through the existing durable queue.
 use super::*;
+
+struct IdentityConversationTarget<'a> {
+    user: i64,
+    role: Option<&'a str>,
+    task: Option<&'a str>,
+}
 use sha2::{Digest, Sha256};
 
 fn completion_generation(handle: &Value) -> Value {
@@ -59,7 +65,42 @@ impl RuntimeWorkRpcHandler {
         preview: &str,
         expected: Option<&Value>,
     ) -> Result<Option<Value>, AppIpcError> {
-        let source = super::stand_in_conversations::conversation_task_id(user, role);
+        let task = expected.and_then(|owner| owner["taskId"].as_str());
+        self.deliver_identity_activity_to(
+            IdentityConversationTarget { user, role, task },
+            command,
+            message,
+            preview,
+            expected,
+        )
+        .await
+    }
+
+    async fn deliver_identity_activity_to(
+        &self,
+        target: IdentityConversationTarget<'_>,
+        command: &str,
+        message: &str,
+        preview: &str,
+        expected: Option<&Value>,
+    ) -> Result<Option<Value>, AppIpcError> {
+        let IdentityConversationTarget { user, role, task } = target;
+        let source = task
+            .map(str::to_owned)
+            .unwrap_or_else(|| super::stand_in_conversations::conversation_task_id(user, role));
+        let parent = self.local_task_link(&source);
+        let scope = parent
+            .as_ref()
+            .map(|parent| parent.runtime_handle["origin"]["conversationScope"].clone())
+            .unwrap_or(Value::Null);
+        if super::stand_in_conversations::scoped_conversation_task_id(user, role, &scope)?.as_str()
+            != source
+        {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "Conversation activity target does not match its identity",
+            ));
+        }
         if self.local_task_link(&source).is_some_and(|parent| {
             parent.status == "archived" || parent.interaction_status.is_some()
         }) {
@@ -74,6 +115,9 @@ impl RuntimeWorkRpcHandler {
             Err(error) => return Err(error),
         }
         let mut options = json!({"clientUserMessageId":command});
+        if !scope.is_null() {
+            options["conversationScope"] = scope;
+        }
         if let Some(parent) = self.local_task_link(&source) {
             let selected = &parent.runtime_handle["modelSelection"];
             if selected["modelName"].is_string() {
@@ -133,10 +177,18 @@ impl RuntimeWorkRpcHandler {
         } else {
             return None;
         };
-        if source != super::stand_in_conversations::conversation_task_id(user, None) {
+        let parent = self.local_task_link(source);
+        let scope = parent
+            .as_ref()
+            .map(|parent| parent.runtime_handle["origin"]["conversationScope"].clone())
+            .unwrap_or(Value::Null);
+        if super::stand_in_conversations::scoped_conversation_task_id(user, None, &scope)
+            .ok()
+            .as_deref()
+            != Some(source)
+        {
             return None;
         }
-        let parent = self.local_task_link(source);
         if parent.as_ref().is_some_and(|parent| {
             parent.status == "archived"
                 || parent.interaction_status.is_some()
@@ -186,13 +238,18 @@ impl RuntimeWorkRpcHandler {
             };
             let command = payload["commandId"].clone();
             let result = self
-                .deliver_primary_activity(
-                    payload["userId"].as_i64().unwrap(),
+                .deliver_identity_activity_to(
+                    IdentityConversationTarget {
+                        user: payload["userId"].as_i64().unwrap(),
+                        role: None,
+                        task: payload["taskId"].as_str(),
+                    },
                     command.as_str().unwrap(),
                     payload["message"].as_str().unwrap(),
                     payload["userMessagePresentation"]["content"]
                         .as_str()
                         .unwrap(),
+                    None,
                 )
                 .await;
             match result {
@@ -226,6 +283,35 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collaboration_results_target_the_original_home_conversation() {
+        let (_root, handler, _) = completion_fixture();
+        let source = "stand-in-chat-7-primary:collaboration";
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: source.into(),
+            thread_id: Some("home-thread".into()),
+            runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,
+                "conversationScope":"collaboration"},"executionRequest":{"user_id":7}}),
+            ..Default::default()
+        });
+        let child = RuntimeTaskLink {
+            local_task_id: "home-child".into(),
+            status: "done".into(),
+            completed_at: Some(123),
+            runtime_handle: json!({"origin":{"type":"stand_in_task","deviceId":"mac","userId":7,"sourceTaskId":source},
+                "executionRequest":{"user_id":7}}),
+            ..Default::default()
+        };
+        assert_eq!(
+            handler.stand_in_result_delivery(&child).unwrap()["taskId"],
+            source
+        );
+        handler.store.update_task(source, |parent| {
+            parent.runtime_handle["origin"]["conversationScope"] = Value::Null
+        });
+        assert!(handler.stand_in_result_delivery(&child).is_none());
+    }
 
     fn completion_fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, PathBuf) {
         let root = tempfile::tempdir().unwrap();

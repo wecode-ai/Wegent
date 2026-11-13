@@ -83,7 +83,14 @@ impl RuntimeWorkRpcHandler {
         let role = origin["standInId"].as_str();
         if origin["userId"] != user
             || origin["deviceId"] != self.device_id
-            || task != super::stand_in_conversations::conversation_task_id(user, role)
+            || super::stand_in_conversations::scoped_conversation_task_id(
+                user,
+                role,
+                &origin["conversationScope"],
+            )
+            .ok()
+            .as_deref()
+                != Some(task)
         {
             return Err(denied());
         }

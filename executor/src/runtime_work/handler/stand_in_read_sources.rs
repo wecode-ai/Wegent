@@ -51,12 +51,17 @@ fn selection(value: Option<&Value>) -> Result<Vec<Value>, AppIpcError> {
 
 impl RuntimeWorkRpcHandler {
     fn primary_read_sources(&self, user: i64, parent: &str) -> Result<Vec<Value>, AppIpcError> {
-        if parent != super::stand_in_conversations::conversation_task_id(user, None) {
-            return Err(denied());
-        }
         let actor = self.local_task_link(parent).ok_or_else(denied)?;
         let origin = &actor.runtime_handle["origin"];
-        if actor.ephemeral
+        if super::stand_in_conversations::scoped_conversation_task_id(
+            user,
+            None,
+            &origin["conversationScope"],
+        )
+        .ok()
+        .as_deref()
+            != Some(parent)
+            || actor.ephemeral
             || actor.status == "archived"
             || self.archived_link_is_deleted(&actor)
             || origin["type"] != "stand_in_identity"
@@ -206,6 +211,41 @@ impl RuntimeWorkRpcHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collaboration_delegates_keep_the_same_exact_source_grants() {
+        let (_root, handler, mut parent, source) = fixture();
+        let mut actor = handler.local_task_link(&parent.task_id).unwrap();
+        parent.task_id.push_str(":collaboration");
+        actor.local_task_id = parent.task_id.clone();
+        actor.runtime_handle["origin"]["conversationScope"] = json!("collaboration");
+        handler.upsert_local_task(actor.clone());
+        let args = json!({"readSources":[source_ref(&source).unwrap()]});
+        assert_eq!(
+            handler
+                .capture_delegated_read_sources(&parent, &args)
+                .unwrap()
+                .len(),
+            1
+        );
+        for (field, value) in [
+            ("userId", json!(8)),
+            ("deviceId", json!("foreign")),
+            ("conversationScope", Value::Null),
+            ("conversationScope", json!("unknown")),
+        ] {
+            handler.store.update_task(&parent.task_id, |row| {
+                row.runtime_handle["origin"][field] = value
+            });
+            assert!(
+                handler
+                    .capture_delegated_read_sources(&parent, &args)
+                    .is_err(),
+                "{field}"
+            );
+            handler.upsert_local_task(actor.clone());
+        }
+    }
 
     fn fixture() -> (
         tempfile::TempDir,
