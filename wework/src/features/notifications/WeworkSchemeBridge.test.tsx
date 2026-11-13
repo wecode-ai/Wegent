@@ -97,7 +97,7 @@ describe('Wework scheme bridge', () => {
         kind: 'auxiliary',
         title: '协作 exp',
         contentRoute:
-          '/collaboration-exp?view=tasks&projectStore=local&projectId=old&issueId=old&nodeId=old&discussion=private&search=release&status=in_progress&relevance=all&future=keep',
+          '/collaboration-exp?view=tasks&projectStore=local&projectId=old&issueId=old&nodeId=old&discussion=private&inspector=details&timelineFilter=attachments&projectView=plan&assistantDeviceId=device&assistantTaskId=task&search=release&status=in_progress&relevance=all&future=keep',
         fixed: true,
       },
     ]
@@ -127,6 +127,14 @@ describe('Wework scheme bridge', () => {
       })
       expect(params.has('nodeId')).toBe(false)
       expect(params.has('discussion')).toBe(false)
+      for (const key of [
+        'inspector',
+        'timelineFilter',
+        'projectView',
+        'assistantDeviceId',
+        'assistantTaskId',
+      ])
+        expect(params.has(key)).toBe(false)
     }
   })
 

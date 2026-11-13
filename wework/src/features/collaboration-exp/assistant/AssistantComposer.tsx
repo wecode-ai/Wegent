@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -12,6 +13,7 @@ import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { recordAcceptedAssistantConversation } from './acceptedAssistantConversations'
+import { IssueDetailSearchableSelect } from '@wegent/collaboration'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
 
 export interface AssistantComposerProps {
@@ -24,11 +26,24 @@ export function AssistantComposer(props: AssistantComposerProps) {
   const { state } = useWorkbench()
   const connection = useOptionalCloudConnection()
   const accountKey = workbenchOwnershipKey(connection, state.user)
+  const [selection, setSelection] = useState({
+    accountKey,
+    userId: props.settings.userId,
+    roleId: '',
+  })
+  const selectedRoleId =
+    selection.accountKey === accountKey && selection.userId === props.settings.userId
+      ? selection.roleId
+      : ''
+  const role = props.settings.roles.find(item => item.id === selectedRoleId)
+  const deviceId = role?.executionDeviceId || props.settings.executionDeviceId
   return (
     <AssistantComposerSession
-      key={JSON.stringify([accountKey, props.settings.userId, props.settings.executionDeviceId])}
+      key={JSON.stringify([accountKey, props.settings.userId, deviceId, role?.id ?? null])}
       {...props}
       accountKey={accountKey}
+      roleId={role?.id}
+      onRoleChange={roleId => setSelection({ accountKey, userId: props.settings.userId, roleId })}
     />
   )
 }
@@ -38,14 +53,23 @@ function AssistantComposerSession({
   settings,
   onCreated,
   accountKey,
-}: AssistantComposerProps & { accountKey: string }) {
+  roleId,
+  onRoleChange,
+}: AssistantComposerProps & {
+  accountKey: string
+  roleId?: string
+  onRoleChange(id: string): void
+}) {
   const { t } = useTranslation('collaborationExp')
   const { services, projectChat, refreshWorkLists } = useWorkbench()
+  const role = settings.roles.find(item => item.id === roleId)
+  const deviceId = role?.executionDeviceId || settings.executionDeviceId
   const scopeKey = JSON.stringify([
     'collaboration-exp-assistant',
     accountKey,
     settings.userId,
-    settings.executionDeviceId,
+    deviceId,
+    ...(role ? [role.id] : []),
   ])
   const draft = useExperienceDraftInput({
     accountKey,
@@ -72,11 +96,11 @@ function AssistantComposerSession({
   const controls = useStandInConversationModel(
     services,
     {
-      ...settings.primary,
+      ...(role ?? settings.primary),
       enabled: true,
       prompt: '',
       version: settings.version,
-      executionDeviceId: settings.executionDeviceId,
+      executionDeviceId: deviceId,
     },
     active
   )
@@ -100,9 +124,9 @@ function AssistantComposerSession({
       submission = draft.beginSubmission(content)
       const address = await services.standInApi!.conversation(
         settings.userId,
-        settings.executionDeviceId,
+        deviceId,
         content.trim(),
-        undefined,
+        role?.id,
         {
           ...selectedModelExecutionFields(controls.selectedModel, controls.selectedModelOptions),
           attachments: localRuntimeAttachments(attachments.attachments),
@@ -147,6 +171,38 @@ function AssistantComposerSession({
       submitButtonTestId="collaboration-exp-assistant-send"
       showExecutionTools={false}
       showModelSelector
+      toolbarLeadingContext={
+        <>
+          <IssueDetailSearchableSelect
+            value={role ? JSON.stringify([role.id]) : 'auto'}
+            options={[
+              { value: 'auto', label: t('assistant.automatic') },
+              ...settings.roles.map(item => ({
+                value: JSON.stringify([item.id]),
+                label: item.name || t('assistant.specialist'),
+              })),
+            ]}
+            accessibleLabel={t('assistant.chooseRole')}
+            searchPlaceholder={t('assistant.chooseRole')}
+            emptyLabel={t('tasks.noMatches')}
+            testId="collaboration-exp-assistant-role-select"
+            className="assistant-role-select text-xs"
+            triggerContent={
+              <>
+                <span>{role?.name || t('assistant.automatic')}</span>
+                <ChevronDown size={14} aria-hidden="true" />
+              </>
+            }
+            disabled={!active || submitting}
+            onChange={value =>
+              onRoleChange(
+                settings.roles.find(item => JSON.stringify([item.id]) === value)?.id ?? ''
+              )
+            }
+          />
+          <small className="assistant-private-label">{t('assistant.privateScope')}</small>
+        </>
+      }
       variant="desktop"
       requireText
       projectChat={{

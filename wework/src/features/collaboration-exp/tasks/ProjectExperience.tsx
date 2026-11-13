@@ -123,9 +123,12 @@ function ProjectOverview({
     }
   }, [api, project.id, owner, active, revision])
   return (
-    <section className="space-y-6 p-5" data-testid="collaboration-exp-project-overview-body">
-      <div>
-        <h2 className="heading-sm mb-2">{project.name}</h2>
+    <section
+      className="experience-project-overview"
+      data-testid="collaboration-exp-project-overview-body"
+    >
+      <div className="experience-project-overview-heading">
+        <h2>{project.name}</h2>
         <p className="text-sm text-text-muted">{project.project_key}</p>
       </div>
       {project.description ? (
@@ -133,13 +136,18 @@ function ProjectOverview({
       ) : (
         <p className="text-sm text-text-secondary">{t('tasks.noProjectDescription')}</p>
       )}
-      <div>
-        <h3 className="mb-2 font-medium">{t('tasks.members')}</h3>
-        {snapshot.members.map(member => (
-          <p key={member.user_id} className="py-1 text-sm">
-            {member.user_name}
-          </p>
-        ))}
+      <div className="experience-project-members">
+        <h3>{t('tasks.members')}</h3>
+        <div className="experience-project-member-list">
+          {snapshot.members.map(member => (
+            <span key={member.user_id}>
+              <span className="experience-project-member-avatar" aria-hidden="true">
+                {member.user_name?.slice(0, 1)}
+              </span>
+              {member.user_name}
+            </span>
+          ))}
+        </div>
         {snapshot.error ? (
           <div role="alert" className="text-sm">
             <p>{t('tasks.membersFailed')}</p>

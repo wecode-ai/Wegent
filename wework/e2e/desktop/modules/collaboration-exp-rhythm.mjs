@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { waitForValue } from './workspace-agent-setup.mjs'
-import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import {
+  waitForCompletedRuntimeTaskThread,
+  waitForRunningRuntimeTask,
+} from './runtime-task-evidence.mjs'
 
 export const COLLABORATION_EXP_RHYTHM_ROLE = 'collaboration-exp-rhythm'
 export const COLLABORATION_EXP_RHYTHM_MARKER = 'COLLABORATION_EXP_REAL_RUNNING_WORK'
@@ -54,22 +57,41 @@ export function createCollaborationExpRhythmFixture(rpc, timeoutMs) {
         todo: { title: COLLABORATION_EXP_RHYTHM_MARKER },
       })
       await rpc('runtime.stand_in.run', { ...target, issueId: runningIssue.id })
-      runningIssue = await waitForValue(
-        () => rpc('todos.get', { project_id: project.id, task_id: runningIssue.id }),
-        issue => issue.execution_state === 'running' && issue,
-        'Task rhythm requires an actual running native execution',
+      const bindings = await waitForValue(
+        () => rpc('todos.bindings', { task_id: runningIssue.id }),
+        rows => rows.length > 0 && rows,
+        'Task rhythm requires its real Issue-to-runtime binding',
         timeoutMs
       )
-      const bindings = await rpc('todos.bindings', { task_id: runningIssue.id })
       assert.equal(bindings.length, 1)
+      assert.equal(bindings[0].loop_item_id, runningIssue.id)
       taskId = bindings[0].task_id
+      assert.ok(taskId, 'The existing binding must identify its native task')
       const address = { deviceId: bindings[0].device_id, taskId }
       assert.ok(address.deviceId, 'The existing binding must retain its owning native device')
-      const native = await rpc('runtime.tasks.get', { taskId })
-      assert.equal(native.success, true)
-      assert.equal(native.task.runtimeHandle.origin.initiatedBy, 'stand_in')
-      assert.equal(native.task.runtimeHandle.origin.standInId, COLLABORATION_EXP_RHYTHM_ROLE)
-      assert.equal(native.task.runtimeHandle.origin.userId, ownerId)
+      const native = await waitForRunningRuntimeTask(
+        async id => {
+          const response = await rpc('runtime.tasks.get', { taskId: id })
+          assert.equal(response.success, true)
+          return response.task
+        },
+        taskId,
+        timeoutMs
+      )
+      assert.equal(native.status, 'running')
+      assert.equal(native.runtimeHandle.origin.type, 'issue_dispatch')
+      assert.equal(native.runtimeHandle.origin.initiatedBy, 'stand_in')
+      assert.equal(native.runtimeHandle.origin.standInId, COLLABORATION_EXP_RHYTHM_ROLE)
+      assert.equal(native.runtimeHandle.origin.userId, ownerId)
+      assert.equal(native.runtimeHandle.origin.projectStore, 'local')
+      assert.equal(native.runtimeHandle.origin.cloudProjectId, project.id)
+      assert.equal(native.runtimeHandle.origin.loopItemId, runningIssue.id)
+      runningIssue = await waitForValue(
+        () => rpc('todos.get', { project_id: project.id, task_id: runningIssue.id }),
+        issue => issue.status === 'in_progress' && issue,
+        'The actual running native task must project its bound Issue as in progress',
+        timeoutMs
+      )
       const current = await rpc('todos.get', {
         project_id: project.id,
         task_id: completedIssue.id,

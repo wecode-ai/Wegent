@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SharedWorkspaceApi, WorkspaceTaskBinding } from '@wegent/collaboration'
 import type { ProjectChatMessage } from '@wegent/chat-core'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
+import type { ProjectSpaceApis } from '@/features/workbench/workbenchServices'
 import { navigateTo } from '@/lib/navigation'
 import type { ExperiencePanesProps } from './shell/types'
 import type { PrivateDiscussionPaneProps } from './private/PrivateDiscussionPane'
@@ -25,6 +26,10 @@ const privateProps = vi.hoisted(() => vi.fn())
 const assistantProps = vi.hoisted(() => vi.fn())
 const assistantConversationProps = vi.hoisted(() => vi.fn())
 const teamRelayProps = vi.hoisted(() => vi.fn())
+const issueDetailsProps = vi.hoisted(() => vi.fn())
+type IssueDetailsProps = ComponentProps<
+  typeof import('./timeline/ExperienceIssueDetails').ExperienceIssueDetails
+>
 
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => workbench }))
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
@@ -33,50 +38,54 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 vi.mock('@/features/todo/useCollaborationMarkdownServices', () => ({
   useCollaborationMarkdownServices: () => ({}),
 }))
-vi.mock('./assistant', () => ({
-  AssistantTeamRelay: (props: AssistantTeamRelayProps) => {
-    teamRelayProps(props)
-    return <div data-testid="team-relay-leaf" />
-  },
-  AssistantHome: (props: AssistantHomeProps) => {
-    assistantProps(props)
-    return (
-      <div data-testid="assistant-leaf">
-        {props.conversations?.map(conversation => (
+vi.mock('./assistant', async importOriginal => {
+  const original = await importOriginal<typeof import('./assistant')>()
+  return {
+    ...original,
+    AssistantTeamRelay: (props: AssistantTeamRelayProps) => {
+      teamRelayProps(props)
+      return <div data-testid="team-relay-leaf" />
+    },
+    AssistantHome: (props: AssistantHomeProps) => {
+      assistantProps(props)
+      return (
+        <div data-testid="assistant-leaf">
+          {props.conversations?.map(conversation => (
+            <button
+              type="button"
+              key={conversation.key}
+              data-testid={`recent-${conversation.address.taskId}`}
+              onClick={() => props.onOpenConversation?.(conversation)}
+            >
+              {conversation.title}
+            </button>
+          ))}
           <button
             type="button"
-            key={conversation.key}
-            data-testid={`recent-${conversation.address.taskId}`}
-            onClick={() => props.onOpenConversation?.(conversation)}
+            data-testid="open-ordinary-conversation"
+            onClick={() =>
+              props.onOpenConversation?.({
+                key: JSON.stringify(['assistant-device', 'ordinary-conversation']),
+                address: { deviceId: 'assistant-device', taskId: 'ordinary-conversation' },
+                bindingIds: [],
+                sourceNodeIds: [],
+                ownerUserId: 7,
+                title: 'Ordinary conversation',
+                linkedAt: null,
+              })
+            }
           >
-            {conversation.title}
+            Open ordinary conversation
           </button>
-        ))}
-        <button
-          type="button"
-          data-testid="open-ordinary-conversation"
-          onClick={() =>
-            props.onOpenConversation?.({
-              key: JSON.stringify(['assistant-device', 'ordinary-conversation']),
-              address: { deviceId: 'assistant-device', taskId: 'ordinary-conversation' },
-              bindingIds: [],
-              sourceNodeIds: [],
-              ownerUserId: 7,
-              title: 'Ordinary conversation',
-              linkedAt: null,
-            })
-          }
-        >
-          Open ordinary conversation
-        </button>
-      </div>
-    )
-  },
-  AssistantConversationPane: (props: AssistantConversationPaneProps) => {
-    assistantConversationProps(props)
-    return <div data-testid="assistant-conversation-leaf">{props.address.taskId}</div>
-  },
-}))
+        </div>
+      )
+    },
+    AssistantConversationPane: (props: AssistantConversationPaneProps) => {
+      assistantConversationProps(props)
+      return <div data-testid="assistant-conversation-leaf">{props.address.taskId}</div>
+    },
+  }
+})
 vi.mock('@wegent/collaboration/markdown', () => ({
   MarkdownServicesProvider: ({ children }: { children: ReactNode }) => children,
 }))
@@ -109,14 +118,27 @@ vi.mock('./shell', async importOriginal => {
       <div>
         {navigation}
         {panes.map(pane => (
-          <section key={pane.id} data-testid={`pane-${pane.id}`}>
-            <h1>{pane.title}</h1>
-            {pane.onBack ? (
-              <button type="button" data-testid={`back-${pane.id}`} onClick={pane.onBack}>
-                Back
-              </button>
-            ) : null}
-            {pane.content}
+          <section
+            key={pane.id}
+            data-testid={`pane-${pane.id}`}
+            data-back-visibility={pane.backVisibility}
+          >
+            {pane.header === null
+              ? null
+              : (pane.header ?? (
+                  <header>
+                    <h1>{pane.title}</h1>
+                    {pane.onBack ? (
+                      <button type="button" data-testid={`back-${pane.id}`} onClick={pane.onBack}>
+                        Back
+                      </button>
+                    ) : null}
+                    {pane.actions}
+                  </header>
+                ))}
+            {typeof pane.content === 'function'
+              ? pane.content(pane.onBack ?? (() => {}))
+              : pane.content}
           </section>
         ))}
       </div>
@@ -124,14 +146,56 @@ vi.mock('./shell', async importOriginal => {
   }
 })
 vi.mock('./tasks/ProjectExperience', () => ({
-  ProjectExperience: ({ project }: { project: { name: string } }) => (
-    <div data-testid="project-leaf">{project.name}</div>
+  ProjectExperience: ({
+    project,
+    view,
+    planView,
+    onOpenIssue,
+  }: {
+    project: { name: string }
+    view: string
+    planView: string
+    onOpenIssue(id: string): void
+  }) => (
+    <div data-testid="project-leaf" data-project-view={view} data-plan-view={planView}>
+      {project.name}
+      <button data-testid="open-project-task" onClick={() => onOpenIssue('EXP-1')}>
+        Open task from plan
+      </button>
+    </div>
   ),
 }))
 vi.mock('./private', () => ({
   PrivateDiscussionPane: (props: PrivateDiscussionPaneProps) => {
     privateProps(props)
-    return <div data-testid="private-leaf">{props.conversation.address.taskId}</div>
+    return (
+      <div data-testid="private-leaf">
+        {props.conversation.address.taskId}
+        <button data-testid="private-context-back" onClick={props.onClose}>
+          Task progress
+        </button>
+      </div>
+    )
+  },
+}))
+vi.mock('./timeline/ExperienceIssueDetails', () => ({
+  ExperienceIssueDetails: (props: IssueDetailsProps) => {
+    issueDetailsProps(props)
+    return (
+      <div data-testid="issue-details-leaf">
+        <span>{props.data.issue.title}</span>
+        <button
+          type="button"
+          data-testid="issue-details-save-leaf"
+          onClick={() => props.onChange(currentIssue)}
+        >
+          Saved
+        </button>
+        <button type="button" data-testid="issue-details-close-leaf" onClick={props.onClose}>
+          Close
+        </button>
+      </div>
+    )
   },
 }))
 
@@ -180,6 +244,7 @@ function createApi() {
       subscribeLoopItemChanges: vi.fn(async () => vi.fn()),
     },
     attachments: { list: vi.fn(async () => []), read: vi.fn() },
+    members: { list: vi.fn(async () => []) },
   } as unknown as SharedWorkspaceApi
 }
 
@@ -209,6 +274,7 @@ describe('CollaborationExpApp integration', () => {
     assistantProps.mockClear()
     assistantConversationProps.mockClear()
     teamRelayProps.mockClear()
+    issueDetailsProps.mockClear()
     currentIssue = issue
     bindings = [experienceBindingFixture()]
     messages = []
@@ -220,6 +286,59 @@ describe('CollaborationExpApp integration', () => {
     window.history.replaceState({}, '', '/collaboration-exp')
   })
   afterEach(cleanup)
+
+  test.each([
+    { cloudAvailable: false, projectStore: undefined },
+    { cloudAvailable: true, projectStore: undefined },
+    { cloudAvailable: true, projectStore: 'local' },
+    { cloudAvailable: true, projectStore: 'backend' },
+  ] as const)(
+    'initializes standalone tasks in the native local container with cloud=$cloudAvailable and explicit source=$projectStore',
+    async ({ cloudAvailable, projectStore }) => {
+      const localProject = experienceProjectFixture({
+        id: 'default-work-items',
+        project_store: 'local',
+        metadata: { system_kind: 'default_work_items' },
+      })
+      const listLocalProjects = vi.fn(async () => ({ items: [localProject] }))
+      const local = {
+        listCloudProjects: listLocalProjects,
+        listMyWork: vi.fn(async () => ({ items: [], next_cursor: null })),
+      } as unknown as ProjectSpaceApis['local']
+      vi.mocked(api.projects.get).mockImplementation(async id => {
+        if (id === localProject.id) throw new Error('No cloud standalone container exists')
+        return id === project.id ? project : otherProject
+      })
+      workbench = {
+        ...workbench,
+        services: {
+          ...workbench.services,
+          sharedWorkspaceApi: cloudAvailable ? api : undefined,
+          projectSpaceApis: { local, defaultLocation: 'cloud' },
+          localParticipationIdentity: {
+            nativeOwnerUserId: 0,
+            currentUser: workbench.state.user,
+            viewerUserIds: [0, 7],
+          },
+        },
+      } as unknown as WorkbenchContextValue
+      open(projectStore ? { projectStore } : {})
+      await waitFor(() => expect(listLocalProjects).toHaveBeenCalled())
+      const localReads = listLocalProjects.mock.calls.length
+      fireEvent.click(screen.getByTestId('collaboration-exp-task-create'))
+      const dialog = await screen.findByTestId('collaboration-exp-create-dialog')
+      fireEvent.change(within(dialog).getByTestId('collaboration-exp-create-goal'), {
+        target: { value: 'Create in the selected available source' },
+      })
+      await waitFor(() =>
+        expect(within(dialog).getByTestId('collaboration-exp-create-submit')).toBeEnabled()
+      )
+      expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+      expect(listLocalProjects).toHaveBeenCalledTimes(localReads + 1)
+      expect(api.projects.get).not.toHaveBeenCalledWith('default-work-items')
+      expect(api.members.list).not.toHaveBeenCalled()
+    }
+  )
 
   test('opens a task without narrowing the global list and returns to the same list state', async () => {
     open({ search: 'Release', status: 'pending', future: 'keep' })
@@ -267,6 +386,41 @@ describe('CollaborationExpApp integration', () => {
     expect(screen.getByTestId('collaboration-exp-clear-projectKey')).toBeInTheDocument()
   })
 
+  test('returns from a project task to the same plan, project scope, filters and mounted scroll', async () => {
+    const scope = JSON.stringify(['backend', project.id])
+    open({
+      view: 'tasks',
+      projectStore: 'backend',
+      projectId: project.id,
+      projectScope: scope,
+      projectView: 'plan',
+      planView: 'gantt',
+      search: 'Implement',
+      status: 'pending',
+    })
+    const plan = await screen.findByTestId('project-leaf')
+    plan.scrollTop = 240
+    fireEvent.click(screen.getByTestId('open-project-task'))
+    await screen.findByTestId('collaboration-exp-timeline')
+    expect(screen.getByTestId('pane-timeline')).toHaveAttribute(
+      'data-back-visibility',
+      'collapsed-parent'
+    )
+    fireEvent.click(screen.getByTestId('back-timeline'))
+    expect(screen.queryByTestId('collaboration-exp-timeline')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-leaf')).toBe(plan)
+    expect(plan).toHaveAttribute('data-project-view', 'plan')
+    expect(plan).toHaveAttribute('data-plan-view', 'gantt')
+    expect(plan.scrollTop).toBe(240)
+    const restored = new URLSearchParams(window.location.search)
+    expect(restored.get('projectScope')).toBe(scope)
+    expect(restored.get('projectId')).toBe(project.id)
+    expect(restored.get('projectView')).toBe('plan')
+    expect(restored.get('planView')).toBe('gantt')
+    expect(restored.get('search')).toBe('Implement')
+    expect(restored.get('status')).toBe('pending')
+  })
+
   test('restores an exact owned private binding from the URL without creating a conversation', async () => {
     const discussion = JSON.stringify(['device-1', 'task-1'])
     open({ projectStore: 'backend', projectId: project.id, issueId: issue.id, discussion })
@@ -285,7 +439,7 @@ describe('CollaborationExpApp integration', () => {
       })
     )
     expect(api.taskBindings.list).toHaveBeenCalledExactlyOnceWith(issue.id, project.id)
-    fireEvent.click(screen.getByTestId('back-discussion'))
+    fireEvent.click(screen.getByTestId('private-context-back'))
     expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()
     expect(new URLSearchParams(window.location.search).has('discussion')).toBe(false)
   })
@@ -314,9 +468,9 @@ describe('CollaborationExpApp integration', () => {
       })
       const node = await screen.findByTestId('collaboration-exp-timeline-node-message-1')
       await waitFor(() => expect(node).toHaveFocus())
-      expect(node).toHaveClass('bg-muted')
-      expect(screen.getByTestId('collaboration-exp-timeline-node-message-2')).not.toHaveClass(
-        'bg-muted'
+      expect(node).toHaveAttribute('data-linked', 'true')
+      expect(screen.getByTestId('collaboration-exp-timeline-node-message-2')).not.toHaveAttribute(
+        'data-linked'
       )
       expect(scroll).toHaveBeenLastCalledWith({ block: 'nearest' })
       const firstCount = scroll.mock.calls.length
@@ -331,7 +485,7 @@ describe('CollaborationExpApp integration', () => {
       act(() => navigateTo(`/collaboration-exp?${params}`))
       const restored = await screen.findByTestId('collaboration-exp-timeline-node-message-1')
       await waitFor(() => expect(restored).toHaveFocus())
-      expect(restored).toHaveClass('bg-muted')
+      expect(restored).toHaveAttribute('data-linked', 'true')
       expect(scroll.mock.calls.length).toBeGreaterThan(firstCount)
       const secondCount = scroll.mock.calls.length
 
@@ -349,7 +503,7 @@ describe('CollaborationExpApp integration', () => {
       act(() => navigateTo(`/collaboration-exp?${params}`))
       const execution = await screen.findByTestId('collaboration-exp-timeline-node-message-2')
       await waitFor(() => expect(scroll.mock.calls.length).toBeGreaterThan(executionScrollCount))
-      expect(execution).toHaveClass('bg-muted')
+      expect(execution).toHaveAttribute('data-linked', 'true')
       expect(execution).not.toHaveFocus()
       expect(screen.getByTestId('collaboration-exp-timeline-filter-all')).toHaveAttribute(
         'aria-pressed',
@@ -374,7 +528,7 @@ describe('CollaborationExpApp integration', () => {
     expect(await screen.findByTestId('collaboration-exp-comment-unavailable')).toBeInTheDocument()
     for (const id of ['message-1', 'message-2']) {
       const node = screen.getByTestId(`collaboration-exp-timeline-node-${id}`)
-      expect(node).not.toHaveClass('bg-muted')
+      expect(node).not.toHaveAttribute('data-linked')
       expect(node).not.toHaveFocus()
     }
     expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()
@@ -554,5 +708,181 @@ describe('CollaborationExpApp integration', () => {
     expect(selected.get('search')).toBe('Release')
     expect(selected.get('future')).toBe('keep')
     expect(assistantProps).not.toHaveBeenCalled()
+  })
+
+  test('controls the same timeline filter from both the header attachment action and filter tabs', async () => {
+    messages = [
+      experienceMessageFixture({ content: 'Plain shared comment' }),
+      experienceMessageFixture({
+        messageId: 'with-file',
+        sequenceNumber: 2,
+        content: '[Report](wegent://attachments/file-1)',
+      }),
+    ]
+    const scope = JSON.stringify(['backend', project.id])
+    open({
+      projectStore: 'backend',
+      projectId: project.id,
+      issueId: issue.id,
+      commentId: 'message-1',
+      focusRequest: 'header-filter',
+      projectScope: scope,
+      search: 'Release',
+      status: 'pending',
+      future: 'keep',
+    })
+    await screen.findByTestId('collaboration-exp-timeline-node-message-1')
+    expect(screen.getByTestId('collaboration-exp-timeline-node-with-file')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-exp-header-attachments'))
+    expect(new URLSearchParams(window.location.search).get('timelineFilter')).toBe('attachments')
+    for (const key of ['nodeId', 'commentId', 'focusRequest'])
+      expect(new URLSearchParams(window.location.search).has(key)).toBe(false)
+    expect(screen.getByTestId('collaboration-exp-timeline-filter-attachments')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(
+      screen.queryByTestId('collaboration-exp-timeline-node-message-1')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-exp-timeline-node-with-file')).toBeInTheDocument()
+    const anchored = new URLSearchParams(window.location.search)
+    anchored.set('nodeId', 'message-1')
+    anchored.set('commentId', 'message-1')
+    anchored.set('focusRequest', 'tab-filter')
+    act(() => navigateTo(`/collaboration-exp?${anchored}`))
+    expect(await screen.findByTestId('collaboration-exp-timeline-node-message-1')).toHaveAttribute(
+      'data-linked',
+      'true'
+    )
+    expect(new URLSearchParams(window.location.search).get('timelineFilter')).toBe('attachments')
+    expect(screen.getByTestId('collaboration-exp-timeline-filter-all')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-header-attachments'))
+    expect(new URLSearchParams(window.location.search).get('timelineFilter')).toBe('attachments')
+    for (const key of ['nodeId', 'commentId', 'focusRequest'])
+      expect(new URLSearchParams(window.location.search).has(key)).toBe(false)
+    expect(screen.getByTestId('collaboration-exp-timeline-filter-attachments')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(
+      screen.queryByTestId('collaboration-exp-timeline-node-message-1')
+    ).not.toBeInTheDocument()
+    act(() => navigateTo(`/collaboration-exp?${anchored}`))
+    expect(await screen.findByTestId('collaboration-exp-timeline-node-message-1')).toHaveAttribute(
+      'data-linked',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-timeline-filter-conclusions'))
+    expect(new URLSearchParams(window.location.search).get('timelineFilter')).toBe('conclusions')
+    for (const key of ['nodeId', 'commentId', 'focusRequest'])
+      expect(new URLSearchParams(window.location.search).has(key)).toBe(false)
+    expect(screen.getByTestId('collaboration-exp-timeline-node-message-1')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-exp-header-attachments'))
+    fireEvent.click(screen.getByTestId('collaboration-exp-header-attachments'))
+    const selected = new URLSearchParams(window.location.search)
+    expect(selected.has('timelineFilter')).toBe(false)
+    expect(selected.get('issueId')).toBe(issue.id)
+    expect(selected.get('projectScope')).toBe(scope)
+    expect(selected.get('search')).toBe('Release')
+    expect(selected.get('status')).toBe('pending')
+    expect(selected.get('future')).toBe('keep')
+    expect(screen.getByTestId('collaboration-exp-timeline-filter-all')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('collaboration-exp-timeline-node-message-1')).toBeInTheDocument()
+  })
+
+  test('opens the native details leaf and reloads authoritative task data after its save callback', async () => {
+    open({
+      projectStore: 'backend',
+      projectId: project.id,
+      issueId: issue.id,
+      discussion: JSON.stringify(['device-1', 'task-1']),
+      search: 'Release',
+    })
+    await screen.findByTestId('private-leaf')
+    fireEvent.click(screen.getByTestId('collaboration-exp-header-details'))
+    expect(await screen.findByTestId('issue-details-leaf')).toHaveTextContent(issue.title)
+    expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('inspector')).toBe('details')
+    expect(new URLSearchParams(window.location.search).has('discussion')).toBe(false)
+    const initialReads = vi.mocked(api.issues.get).mock.calls.length
+    const initialRevision = (issueDetailsProps.mock.lastCall?.[0] as IssueDetailsProps).revision
+    currentIssue = { ...issue, title: 'Release documentation saved', version: issue.version + 1 }
+    fireEvent.click(screen.getByTestId('issue-details-save-leaf'))
+    await waitFor(() => expect(api.issues.get).toHaveBeenCalledTimes(initialReads + 1))
+    await waitFor(() =>
+      expect(issueDetailsProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ issue: currentIssue, project }),
+          active: true,
+          revision: initialRevision + 1,
+        })
+      )
+    )
+    expect(screen.getByTestId('issue-details-leaf')).toHaveTextContent(currentIssue.title)
+    expect(api.myWork?.page).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByTestId('issue-details-close-leaf'))
+    expect(screen.queryByTestId('issue-details-leaf')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-exp-timeline')).toBeInTheDocument()
+    const selected = new URLSearchParams(window.location.search)
+    expect(selected.has('inspector')).toBe(false)
+    expect(selected.get('issueId')).toBe(issue.id)
+    expect(selected.get('search')).toBe('Release')
+  })
+
+  test('returns both navigation entries to their home while retaining project scope and list filters', async () => {
+    const scope = JSON.stringify(['backend', project.id])
+    open({
+      projectStore: 'backend',
+      projectId: otherProject.id,
+      issueId: otherIssue.id,
+      inspector: 'details',
+      timelineFilter: 'attachments',
+      projectScope: scope,
+      search: 'Release',
+      status: 'pending',
+      future: 'keep',
+    })
+    await screen.findByTestId('issue-details-leaf')
+    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-tasks'))
+    expect(await screen.findByTestId('collaboration-exp-task-home')).toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-exp-timeline')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('issue-details-leaf')).not.toBeInTheDocument()
+    let selected = new URLSearchParams(window.location.search)
+    expect(selected.get('view')).toBe('tasks')
+    expect(selected.has('issueId')).toBe(false)
+    expect(selected.has('inspector')).toBe(false)
+    for (const [key, value] of Object.entries({
+      projectScope: scope,
+      search: 'Release',
+      status: 'pending',
+      future: 'keep',
+    }))
+      expect(selected.get(key)).toBe(value)
+    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-assistant'))
+    expect(await screen.findByTestId('assistant-leaf')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-toolbar-recent'))
+    expect(assistantProps).toHaveBeenLastCalledWith(expect.objectContaining({ panel: 'recent' }))
+    fireEvent.click(screen.getByTestId('open-ordinary-conversation'))
+    await screen.findByTestId('assistant-conversation-leaf')
+    fireEvent.click(screen.getByTestId('collaboration-exp-navigation-assistant'))
+    expect(screen.queryByTestId('assistant-conversation-leaf')).not.toBeInTheDocument()
+    expect(assistantProps).toHaveBeenLastCalledWith(expect.objectContaining({ panel: null }))
+    selected = new URLSearchParams(window.location.search)
+    expect(selected.get('view')).toBe('assistant')
+    expect(selected.has('assistantTaskId')).toBe(false)
+    expect(selected.has('assistantDeviceId')).toBe(false)
+    for (const [key, value] of Object.entries({
+      projectScope: scope,
+      search: 'Release',
+      status: 'pending',
+      future: 'keep',
+    }))
+      expect(selected.get(key)).toBe(value)
   })
 })

@@ -12,23 +12,21 @@ export function TimelineFilters({
 }) {
   const { t } = useTranslation('collaborationExp')
   return (
-    <div
-      className="flex shrink-0 flex-wrap gap-1 px-4 py-2"
-      role="group"
-      aria-label={t('timeline.filters')}
-    >
-      {(['all', 'attachments', 'conclusions'] as const).map(filter => (
-        <Button
-          key={filter}
-          variant={value === filter ? 'secondary' : 'ghost'}
-          aria-pressed={value === filter}
-          className="min-h-11 md:min-h-8"
-          data-testid={`collaboration-exp-timeline-filter-${filter}`}
-          onClick={() => onChange(filter)}
-        >
-          {t(`timeline.${filter}`)}
-        </Button>
-      ))}
+    <div className="experience-timeline-tools">
+      <strong>{t('timeline.progress')}</strong>
+      <div role="group" aria-label={t('timeline.filters')}>
+        {(['all', 'attachments', 'conclusions'] as const).map(filter => (
+          <Button
+            key={filter}
+            variant="ghost"
+            aria-pressed={value === filter}
+            data-testid={`collaboration-exp-timeline-filter-${filter}`}
+            onClick={() => onChange(filter)}
+          >
+            {t(`timeline.${filter === 'attachments' ? 'hasAttachments' : filter}`)}
+          </Button>
+        ))}
+      </div>
     </div>
   )
 }

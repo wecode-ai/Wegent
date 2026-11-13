@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { File } from 'lucide-react'
-import { IssueActivityMarkdown } from '@wegent/collaboration'
+import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
+import {
+  IssueActivityMarkdown,
+  issueNeedsUser,
+  pendingIssueHumanRequests,
+} from '@wegent/collaboration'
 import type { CollaborationAttachment, SharedWorkspaceApi } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -14,6 +18,8 @@ import type {
 } from '../model/types'
 import { TimelineFilters, type TimelineFilter } from './TimelineFilters'
 import { TimelineNode } from './TimelineNode'
+import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
+import './TimelineExperience.css'
 
 export interface TimelineAttachmentSelection {
   id: string
@@ -30,6 +36,8 @@ interface Props {
   selectedNodeId?: string | null
   focusRequest?: string | null
   anchorUnavailable?: boolean
+  filter?: TimelineFilter
+  onFilterChange?(value: TimelineFilter): void
   onDiscuss(node: ExperienceTimelineNode | null, conversation: ExperiencePrivateConversation): void
   onAttachment(attachment: TimelineAttachmentSelection): void
   onExecution(address: RuntimeTaskAddress): void
@@ -60,7 +68,7 @@ export function TaskTimeline(props: Props) {
     request: filterRequest,
     value: 'all' as TimelineFilter,
   })
-  const filter = filterState.request === filterRequest ? filterState.value : 'all'
+  const filter = props.filter ?? (filterState.request === filterRequest ? filterState.value : 'all')
   const [attachmentState, setAttachmentState] = useState<{
     items: CollaborationAttachment[]
     error: string | null
@@ -92,12 +100,42 @@ export function TaskTimeline(props: Props) {
   )
   const openAttachment = (attachment: ExperienceAttachmentReference) =>
     props.onAttachment(attachment)
+  const viewer = projectViewer(
+    props.data.project,
+    props.data.participationViewer ?? Number.NaN,
+    props.data.participationViewer
+  )
+  const needsUser = issueNeedsUser(issue, viewer)
+  const request = pendingIssueHumanRequests(issue).find(request =>
+    matchesExperienceViewer(
+      request.recipient_user_id ??
+        request.responsible_user_id ??
+        issue.assignee_user_id ??
+        issue.created_by_user_id,
+      viewer
+    )
+  )
+  const assignee =
+    issue.assignee_name ??
+    issue.assignee_group_name ??
+    issue.assignee_agent_name ??
+    issue.assignee_team_name ??
+    (issue.assignee_user_id == null ? null : t('tasks.unnamedUser', { id: issue.assignee_user_id }))
+  const security = issue.security_level ?? props.data.project.default_issue_security
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col" data-testid="collaboration-exp-timeline">
-      <TimelineFilters
-        value={filter}
-        onChange={value => setFilter({ request: filterRequest, value })}
-      />
+    <div className="experience-task-timeline" data-testid="collaboration-exp-timeline">
+      <div className="experience-matter-context">
+        <span>
+          {t(
+            security === 'related'
+              ? 'timeline.visibilityRelated'
+              : security === 'open'
+                ? 'timeline.visibilityOpen'
+                : 'timeline.visibilityUnknown'
+          )}
+        </span>
+        {assignee ? <span>{t('timeline.assignee', { name: assignee })}</span> : null}
+      </div>
       {props.anchorUnavailable ? (
         <p
           role="status"
@@ -107,108 +145,149 @@ export function TaskTimeline(props: Props) {
           {t('timeline.commentUnavailable')}
         </p>
       ) : null}
-      <div ref={contentRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        {filter === 'all' && issue.description ? (
-          <section className="px-4 py-4">
-            <h2 className="mb-2 text-sm font-medium">{t('timeline.background')}</h2>
-            <IssueActivityMarkdown
-              content={issue.description}
-              onOpenAttachment={(id, name) => props.onAttachment({ id, name, sourceNodeId: null })}
-            />
-          </section>
-        ) : null}
-        {conversations.items.length ? (
-          <div className="flex flex-wrap gap-1 px-4 pb-2">
-            {conversations.items.map(conversation => (
+      <div ref={contentRef} className="experience-matter-scroll">
+        <div className="experience-matter-document">
+          {filter === 'all' && issue.description ? (
+            <details
+              className="experience-matter-background"
+              data-testid="collaboration-exp-background"
+            >
+              <summary>{t('timeline.background')}</summary>
+              <IssueActivityMarkdown
+                content={issue.description}
+                onOpenAttachment={(id, name) =>
+                  props.onAttachment({ id, name, sourceNodeId: null })
+                }
+              />
+            </details>
+          ) : null}
+          <TimelineFilters
+            value={filter}
+            onChange={value => {
+              if (props.filter === undefined) setFilter({ request: filterRequest, value })
+              props.onFilterChange?.(value)
+            }}
+          />
+          {loading ? (
+            <p role="status" className="p-4 text-sm">
+              {t('loading')}
+            </p>
+          ) : null}
+          {error || !props.api.activity ? (
+            <div role="alert" className="p-4 text-sm">
+              <p>{t('timeline.unavailable')}</p>
+              {error ? <p className="break-words text-text-secondary">{error}</p> : null}
               <Button
-                key={conversation.key}
                 variant="ghost"
-                className="min-h-11 max-w-full md:min-h-8"
-                data-testid={`collaboration-exp-task-discussion-${conversation.address.taskId}`}
-                onClick={() => props.onDiscuss(null, conversation)}
+                data-testid="collaboration-exp-timeline-retry"
+                onClick={props.onRetry}
               >
-                {conversation.title ?? t('timeline.discuss')}
+                {t('retry')}
               </Button>
+            </div>
+          ) : null}
+          <div className="experience-matter-events">
+            {nodes.map(node => (
+              <TimelineNode
+                key={node.id}
+                node={node}
+                taskTitle={issue.title}
+                selected={props.selectedNodeId === node.id}
+                onDiscuss={props.onDiscuss}
+                onAttachment={openAttachment}
+                onExecution={props.onExecution}
+              />
             ))}
           </div>
-        ) : null}
-        {loading ? (
-          <p role="status" className="p-4 text-sm">
-            {t('loading')}
-          </p>
-        ) : null}
-        {error || !props.api.activity ? (
-          <div role="alert" className="p-4 text-sm">
-            <p>{t('timeline.unavailable')}</p>
-            {error ? <p className="break-words text-text-secondary">{error}</p> : null}
-            <Button
-              variant="ghost"
-              data-testid="collaboration-exp-timeline-retry"
-              onClick={props.onRetry}
+          {timeline.state === 'ready' && !nodes.length ? (
+            <p className="px-4 py-6 text-sm text-text-muted">{t('timeline.empty')}</p>
+          ) : null}
+          {filter !== 'conclusions' && attachmentState.items.length ? (
+            <section
+              className="experience-matter-attachment-index"
+              data-testid="collaboration-exp-attachment-index"
             >
-              {t('retry')}
-            </Button>
-          </div>
-        ) : null}
-        {nodes.map(node => (
-          <TimelineNode
-            key={node.id}
-            node={node}
-            taskTitle={issue.title}
-            selected={props.selectedNodeId === node.id}
-            onDiscuss={props.onDiscuss}
-            onAttachment={openAttachment}
-            onExecution={props.onExecution}
-          />
-        ))}
-        {timeline.state === 'ready' && !nodes.length ? (
-          <p className="px-4 py-6 text-sm text-text-muted">{t('timeline.empty')}</p>
-        ) : null}
-        {filter !== 'conclusions' && attachmentState.items.length ? (
-          <section className="px-4 py-4" data-testid="collaboration-exp-attachment-index">
-            <h2 className="mb-2 text-sm font-medium">{t('timeline.attachments')}</h2>
-            {attachmentState.items.map(attachment => {
-              const source = attachmentSources.get(attachment.id)
-              return (
-                <Button
-                  key={attachment.id}
-                  variant="ghost"
-                  className="min-h-11 w-full min-w-0 justify-start md:min-h-8"
-                  data-testid={`collaboration-exp-attachment-${attachment.id}`}
-                  onClick={() =>
-                    props.onAttachment(
-                      source ?? {
-                        id: attachment.id,
-                        name: attachment.display_name,
-                        sourceNodeId: null,
+              <h2>{t('timeline.attachments')}</h2>
+              <div className="experience-timeline-attachments">
+                {attachmentState.items.map(attachment => {
+                  const source = attachmentSources.get(attachment.id)
+                  return (
+                    <Button
+                      key={attachment.id}
+                      variant="ghost"
+                      data-testid={`collaboration-exp-attachment-${attachment.id}`}
+                      onClick={() =>
+                        props.onAttachment(
+                          source ?? {
+                            id: attachment.id,
+                            name: attachment.display_name,
+                            sourceNodeId: null,
+                          }
+                        )
                       }
-                    )
-                  }
-                >
-                  <File size={16} className="shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 truncate">{attachment.display_name}</span>
-                  {!source ? (
-                    <span className="ml-auto shrink-0 text-xs text-text-muted">
-                      {t('timeline.unknownSource')}
-                    </span>
-                  ) : null}
-                </Button>
-              )
-            })}
-          </section>
-        ) : null}
-        {attachmentState.error ? (
-          <div role="alert" className="p-4 text-sm">
-            <p>{t('timeline.attachmentsFailed')}</p>
-            <Button
-              variant="ghost"
-              data-testid="collaboration-exp-attachments-retry"
-              onClick={props.onRetry}
+                    >
+                      <FileText size={15} aria-hidden="true" />
+                      <span>{attachment.display_name}</span>
+                      {!source ? <small>{t('timeline.unknownSource')}</small> : null}
+                    </Button>
+                  )
+                })}
+              </div>
+            </section>
+          ) : null}
+          {attachmentState.error ? (
+            <div role="alert" className="p-4 text-sm">
+              <p>{t('timeline.attachmentsFailed')}</p>
+              <Button
+                variant="ghost"
+                data-testid="collaboration-exp-attachments-retry"
+                onClick={props.onRetry}
+              >
+                {t('retry')}
+              </Button>
+            </div>
+          ) : null}
+          {needsUser || conversations.items.length ? (
+            <section
+              className="experience-matter-turn"
+              data-testid="collaboration-exp-current-turn"
             >
-              {t('retry')}
-            </Button>
-          </div>
-        ) : null}
+              {needsUser ? (
+                <>
+                  <div className="experience-matter-turn-label">
+                    <Circle size={14} aria-hidden="true" />
+                    {t('timeline.yourTurn')}
+                  </div>
+                  <h2>{request?.question ?? issue.title}</h2>
+                </>
+              ) : null}
+              <div className="experience-matter-turn-actions">
+                {conversations.items.map(conversation => (
+                  <Button
+                    key={conversation.key}
+                    className="experience-matter-process"
+                    data-testid={`collaboration-exp-task-discussion-${conversation.address.taskId}`}
+                    onClick={() => props.onDiscuss(null, conversation)}
+                  >
+                    <Sparkles size={16} aria-hidden="true" />
+                    <span>
+                      {conversations.items.length === 1
+                        ? t('timeline.processWithAssistant')
+                        : (conversation.title ?? t('timeline.processWithAssistant'))}
+                    </span>
+                    <ArrowRight size={16} aria-hidden="true" />
+                  </Button>
+                ))}
+              </div>
+              <small>
+                <Lock size={12} aria-hidden="true" />
+                {t(
+                  conversations.items.length ? 'timeline.privateHint' : 'timeline.discussionUnknown'
+                )}
+              </small>
+            </section>
+          ) : null}
+        </div>
       </div>
     </div>
   )

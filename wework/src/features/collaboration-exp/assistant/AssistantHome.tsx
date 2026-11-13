@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowUpRight, CircleHelp, LoaderCircle } from 'lucide-react'
+import { ArrowRight, Check, Circle, CircleHelp, LoaderCircle } from 'lucide-react'
 import { issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import type { StandInRole } from '@/api/personalStandIn'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -7,6 +7,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { StandInProposalCard } from '@/features/todo/StandInProposalCard'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { formatNotificationTime } from '@/features/notifications/notificationTime'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import {
   selectAssistantSummary,
@@ -20,10 +21,13 @@ import { useExperienceTeamState } from './useExperienceTeamState'
 import { TeamRelay } from './TeamRelay'
 import { AssistantWorkSnapshot } from './AssistantWorkSnapshot'
 import { selectAssistantConversations } from './assistantConversationIdentity'
-import type { AssistantHomeProps } from './types'
+import type { AssistantHomePanel, AssistantHomeProps } from './types'
+import './AssistantExperience.css'
 
 export function AssistantHome({
   active,
+  panel,
+  onPanelChange,
   projects = [],
   conversations = [],
   onOpenIssue,
@@ -40,7 +44,15 @@ export function AssistantHome({
     error: sourceError,
     refresh,
   } = useExperienceTeamState(active, projects)
-  const [teamOpen, setTeamOpen] = useState(false)
+  const [localPanel, setLocalPanel] = useState<AssistantHomePanel>(null)
+  const currentPanel = panel === undefined ? localPanel : panel
+  const setPanel = (next: AssistantHomePanel) => {
+    setLocalPanel(next)
+    onPanelChange?.(next)
+  }
+  const teamOpen = currentPanel === 'team'
+  const [allDecisions, setAllDecisions] = useState(false)
+  const [allProgress, setAllProgress] = useState(false)
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -183,199 +195,272 @@ export function AssistantHome({
 
   return (
     <div
-      className="experience-assistant-home flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+      className="experience-assistant-home assistant-home"
       data-testid="collaboration-exp-assistant-home"
     >
       <div
-        className="scrollbar-soft min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-4"
+        className="assistant-dashboard-scroll scrollbar-soft"
         data-testid="collaboration-exp-assistant-summary"
       >
-        <p className="experience-assistant-introduction px-4 pt-4 text-sm text-text-secondary">
-          {t('assistant.introduction')}
-        </p>
-        <TeamRelay
-          nodes={snapshot.team}
-          ready={ready}
-          managementAvailable={Boolean(active && source.settings && source.deviceId)}
-          onManage={() => setTeamOpen(value => !value)}
-          manageTestId="collaboration-exp-assistant-team-toggle"
-          expanded={teamOpen}
-        />
-        {(source.settings || work.length > 0) && (
-          <AssistantWorkSnapshot
-            snapshot={snapshot}
-            ready={ready}
-            onOpen={item => {
-              if (item.address) openWork(item.address, item.title)
-            }}
-          />
-        )}
-        {source.loading && (
-          <p role="status" className="px-4 py-3 text-sm text-text-muted">
-            {t('assistant.loading')}
-          </p>
-        )}
-        {(sourceError || error) && (
-          <div role="alert" className="px-4 py-3 text-sm text-error">
-            {error ?? sourceError}
-            <button
-              type="button"
-              data-testid="collaboration-exp-assistant-retry"
-              onClick={() => {
-                setError(null)
-                refresh()
-              }}
-              className="ml-2 min-h-11 underline md:min-h-8"
-            >
-              {t('assistant.retry')}
-            </button>
-          </div>
-        )}
-        {teamOpen && active && source.settings && (
-          <AssistantTeam
-            settings={source.settings}
-            projects={projects}
-            onConfigure={configure}
-            onDelete={deleteRole}
-          />
-        )}
-        <section data-testid="collaboration-exp-assistant-decisions" className="py-2">
-          <h2 className="px-4 py-2 text-sm font-medium text-text-secondary">
-            {t('assistant.needsDecision')}
-          </h2>
-          {summary.pendingDecisions.map(decision => (
-            <button
-              type="button"
-              key={decision.id}
-              data-testid={`collaboration-exp-assistant-proposal-${decision.id}`}
-              onClick={() => {
-                const proposal = source.proposals?.find(proposal => proposal.id === decision.id)
-                if (proposal && proposal.settings.executionDeviceId !== source.deviceId)
-                  configure(proposal.roleId ?? undefined, proposal.settings.executionDeviceId)
-                else setSelectedProposalId(decision.id)
-              }}
-              className="experience-assistant-decision"
-              data-state="waiting"
-            >
-              <CircleHelp
-                aria-hidden="true"
-                className="experience-assistant-decision-icon size-4 shrink-0"
+        <div className="assistant-dashboard-body">
+          <section
+            className="assistant-dashboard-intro"
+            data-live={ready && snapshot.counts.running > 0}
+          >
+            <div className="assistant-dashboard-copy">
+              <span className="private-eyebrow text-xs">{t('assistant.eyebrow')}</span>
+              <h2 className="heading-lg">{t('assistant.headline')}</h2>
+              <p className="text-sm">
+                {ready
+                  ? t('assistant.liveSummary', { ...snapshot.counts })
+                  : t('assistant.introduction')}
+              </p>
+            </div>
+            {(source.settings || work.length > 0) && (
+              <AssistantWorkSnapshot
+                snapshot={snapshot}
+                ready={ready}
+                onOpen={item => {
+                  if (item.address) openWork(item.address, item.title)
+                }}
               />
-              <span className="min-w-0 flex-1">
-                <span className="experience-assistant-decision-title block break-words">
-                  {decision.summary}
-                </span>
-                <span className="mt-1 block text-xs text-text-muted">
-                  {t('assistant.reviewProposal')}
-                </span>
-              </span>
-              <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
-            </button>
-          ))}
-          {pendingTasks.map(task => {
-            const projectSource = projects.find(
-              row =>
-                row.project.id === task.project.id &&
-                row.project.project_store === task.project.store
-            )
-            const issue = projectSource?.issues.find(issue => issue.id === task.id)
-            const question = issue
-              ? pendingIssueHumanRequests(issue).find(request =>
-                  issueNeedsUser(
-                    { ...issue, human_requests: [request] },
-                    projectSource?.project.current_user_id ?? [source.userId, ownerId]
-                  )
-                )?.question
-              : null
-            return (
-              <button
-                type="button"
-                key={task.key}
-                data-testid={`collaboration-exp-assistant-pending-${task.key}`}
-                onClick={() => onOpenIssue?.(task.project, task.id)}
-                disabled={!onOpenIssue}
-                className="experience-assistant-decision"
-                data-state="waiting"
-              >
-                <CircleHelp
-                  aria-hidden="true"
-                  className="experience-assistant-decision-icon size-4 shrink-0"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{task.title}</span>
-                  {question && (
-                    <span className="experience-assistant-decision-title mt-1 block text-sm text-text-secondary">
-                      {question}
-                    </span>
-                  )}
-                  <span className="mt-1 block text-xs text-text-muted">
-                    {task.project.name} · {t('assistant.openTask')}
-                  </span>
-                </span>
-                <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
-              </button>
-            )
-          })}
-          {!summary.pendingDecisions.length && !pendingTasks.length && source.proposalsReady && (
-            <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noDecisions')}</p>
-          )}
-          {selectedProposal && source.settings && (
-            <div className="px-4">
-              <StandInProposalCard
-                proposal={selectedProposal}
-                current={source.settings}
-                busy={resolving}
-                projects={projects.map(row => row.project)}
-                onResolve={resolveProposal}
+            )}
+          </section>
+          {currentPanel === 'recent' && (
+            <div className="assistant-recent-panel">
+              <RecentDiscussions
+                conversations={summary.recentDiscussions}
+                onOpen={openConversation}
               />
             </div>
           )}
-        </section>
-        <RecentDiscussions conversations={summary.recentDiscussions} onOpen={openConversation} />
-        <section data-testid="collaboration-exp-assistant-progress" className="py-2">
-          <h2 className="px-4 py-2 text-sm font-medium text-text-secondary">
-            {t('assistant.recentProgress')}
-          </h2>
-          {work.slice(0, 6).map(item => {
-            const status =
-              snapshot.items.find(
-                row => row.key === JSON.stringify([item.address.deviceId, item.address.taskId])
-              )?.state ?? 'unknown'
-            return (
+          <TeamRelay
+            nodes={snapshot.team}
+            ready={ready}
+            managementAvailable={Boolean(active && source.settings && source.deviceId)}
+            onManage={() => setPanel(teamOpen ? null : 'team')}
+            manageTestId="collaboration-exp-assistant-team-toggle"
+            expanded={teamOpen}
+          />
+          {source.loading && (
+            <p role="status" className="px-4 py-3 text-sm text-text-muted">
+              {t('assistant.loading')}
+            </p>
+          )}
+          {(sourceError || error) && (
+            <div role="alert" className="px-4 py-3 text-sm text-error">
+              {error ?? sourceError}
               <button
                 type="button"
-                key={item.key}
-                data-testid={`collaboration-exp-assistant-work-${item.task.taskId}`}
-                className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left hover:bg-text-primary/[0.025]"
-                onClick={() => openWork(item.address, item.task.title)}
+                data-testid="collaboration-exp-assistant-retry"
+                onClick={() => {
+                  setError(null)
+                  refresh()
+                }}
+                className="ml-2 min-h-11 underline md:min-h-8"
               >
-                {status === 'running' ? (
-                  <LoaderCircle
-                    aria-hidden="true"
-                    className="size-4 shrink-0 motion-safe:animate-spin"
-                  />
-                ) : (
-                  <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{item.task.title}</span>
-                  <span className="mt-1 block text-xs text-text-muted">
-                    {t(`assistant.status.${status}`)}
-                    {item.projectName ? ` · ${item.projectName}` : ''}
-                  </span>
-                </span>
+                {t('assistant.retry')}
               </button>
-            )
-          })}
-          {!work.length && source.inboxReady && (
-            <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noProgress')}</p>
+            </div>
           )}
-        </section>
+          {teamOpen && active && source.settings && (
+            <AssistantTeam
+              settings={source.settings}
+              projects={projects}
+              onConfigure={configure}
+              onDelete={deleteRole}
+            />
+          )}
+          <section
+            data-testid="collaboration-exp-assistant-decisions"
+            className="assistant-dashboard-section assistant-decision-section"
+          >
+            <div className="assistant-section-heading">
+              <h3 className="text-sm font-semibold">
+                {t('assistant.needsDecision')}
+                <span>{summary.pendingDecisions.length + pendingTasks.length}</span>
+              </h3>
+              {summary.pendingDecisions.length + pendingTasks.length > 2 && (
+                <button
+                  type="button"
+                  className="assistant-text-button text-xs"
+                  data-testid="collaboration-exp-assistant-all-decisions"
+                  aria-expanded={allDecisions}
+                  onClick={() => setAllDecisions(!allDecisions)}
+                >
+                  {t(allDecisions ? 'assistant.showLess' : 'assistant.allDecisions')}
+                  <ArrowRight size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <div className="assistant-decision-grid">
+              {summary.pendingDecisions.slice(0, allDecisions ? undefined : 2).map(decision => (
+                <button
+                  type="button"
+                  key={decision.id}
+                  data-testid={`collaboration-exp-assistant-proposal-${decision.id}`}
+                  onClick={() => {
+                    const proposal = source.proposals?.find(proposal => proposal.id === decision.id)
+                    if (proposal && proposal.settings.executionDeviceId !== source.deviceId)
+                      configure(proposal.roleId ?? undefined, proposal.settings.executionDeviceId)
+                    else setSelectedProposalId(decision.id)
+                  }}
+                  className="experience-assistant-decision assistant-decision-card"
+                  data-state="waiting"
+                >
+                  <span className="assistant-decision-kicker text-xs">
+                    <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
+                    <span>{t('assistant.reviewProposal')}</span>
+                  </span>
+                  <strong className="text-lg">{decision.summary}</strong>
+                  <span className="assistant-decision-footer text-xs">
+                    <small>{t('assistant.reviewProposal')}</small>
+                    <span className="assistant-action-arrow">
+                      <ArrowRight size={15} aria-hidden="true" />
+                    </span>
+                  </span>
+                </button>
+              ))}
+              {pendingTasks
+                .slice(
+                  0,
+                  allDecisions ? undefined : Math.max(0, 2 - summary.pendingDecisions.length)
+                )
+                .map(task => {
+                  const projectSource = projects.find(
+                    row =>
+                      row.project.id === task.project.id &&
+                      row.project.project_store === task.project.store
+                  )
+                  const issue = projectSource?.issues.find(issue => issue.id === task.id)
+                  const question = issue
+                    ? pendingIssueHumanRequests(issue).find(request =>
+                        issueNeedsUser(
+                          { ...issue, human_requests: [request] },
+                          projectSource?.project.current_user_id ?? [source.userId, ownerId]
+                        )
+                      )?.question
+                    : null
+                  return (
+                    <button
+                      type="button"
+                      key={task.key}
+                      data-testid={`collaboration-exp-assistant-pending-${task.key}`}
+                      onClick={() => onOpenIssue?.(task.project, task.id)}
+                      disabled={!onOpenIssue}
+                      className="experience-assistant-decision assistant-decision-card"
+                      data-state="waiting"
+                    >
+                      <span className="assistant-decision-kicker text-xs">
+                        <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
+                        <span>{task.title}</span>
+                      </span>
+                      <strong className="text-lg">{question ?? task.title}</strong>
+                      <p className="text-xs">{task.project.name}</p>
+                      <span className="assistant-decision-footer text-xs">
+                        <small>{t('assistant.openTask')}</small>
+                        <span className="assistant-action-arrow">
+                          <ArrowRight size={15} aria-hidden="true" />
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+            </div>
+            {!summary.pendingDecisions.length && !pendingTasks.length && source.proposalsReady && (
+              <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noDecisions')}</p>
+            )}
+            {selectedProposal && source.settings && (
+              <div className="px-4">
+                <StandInProposalCard
+                  proposal={selectedProposal}
+                  current={source.settings}
+                  busy={resolving}
+                  projects={projects.map(row => row.project)}
+                  onResolve={resolveProposal}
+                />
+              </div>
+            )}
+          </section>
+          <section
+            data-testid="collaboration-exp-assistant-progress"
+            className="assistant-dashboard-section assistant-progress-section"
+          >
+            <div className="assistant-section-heading">
+              <h3 className="text-sm font-semibold">{t('assistant.recentProgress')}</h3>
+              {work.length > 6 && (
+                <button
+                  type="button"
+                  className="assistant-text-button text-xs"
+                  data-testid="collaboration-exp-assistant-all-progress"
+                  aria-expanded={allProgress}
+                  onClick={() => setAllProgress(!allProgress)}
+                >
+                  {t(allProgress ? 'assistant.showLess' : 'assistant.allProgress')}
+                  <ArrowRight size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <div className="assistant-recent-progress">
+              {work.slice(0, allProgress ? undefined : 6).map(item => {
+                const status =
+                  snapshot.items.find(
+                    row => row.key === JSON.stringify([item.address.deviceId, item.address.taskId])
+                  )?.state ?? 'unknown'
+                const StatusIcon =
+                  status === 'running'
+                    ? LoaderCircle
+                    : status === 'completed'
+                      ? Check
+                      : status === 'waiting'
+                        ? CircleHelp
+                        : Circle
+                const rawTime =
+                  item.task.recencyAt ??
+                  item.task.updatedAt ??
+                  item.task.completedAt ??
+                  item.task.createdAt
+                const time = rawTime == null ? null : new Date(rawTime)
+                const validTime =
+                  time && Number.isFinite(time.getTime()) && time.getTime() > 0 ? time : null
+                return (
+                  <button
+                    type="button"
+                    key={item.key}
+                    data-testid={`collaboration-exp-assistant-work-${item.task.taskId}`}
+                    data-state={status}
+                    onClick={() => openWork(item.address, item.task.title)}
+                  >
+                    <StatusIcon
+                      aria-hidden="true"
+                      className={`size-4 shrink-0 text-text-muted ${status === 'running' ? 'motion-safe:animate-spin' : ''}`}
+                    />
+                    <span className="assistant-progress-copy">
+                      <strong className="text-sm">{item.task.title}</strong>
+                      <small className="text-xs">
+                        {t(`assistant.status.${status}`)}
+                        {item.projectName ? ` · ${item.projectName}` : ''}
+                      </small>
+                    </span>
+                    {validTime && (
+                      <time dateTime={validTime.toISOString()} title={validTime.toLocaleString()}>
+                        {formatNotificationTime(validTime.getTime())}
+                      </time>
+                    )}
+                    <span className="assistant-progress-arrow">
+                      <ArrowRight size={14} aria-hidden="true" />
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            {!work.length && source.inboxReady && (
+              <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noProgress')}</p>
+            )}
+          </section>
+        </div>
       </div>
-      <div
-        className="shrink-0 border-t border-border px-4 pb-3 pt-3"
-        data-testid="collaboration-exp-assistant-composer"
-      >
+      <div className="assistant-chat-input-dock" data-testid="collaboration-exp-assistant-composer">
         {source.settings && (
           <AssistantComposer
             active={active}

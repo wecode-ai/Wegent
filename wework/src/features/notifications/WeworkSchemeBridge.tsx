@@ -162,6 +162,11 @@ export function WeworkSchemeBridge() {
           issueId: destination.itemId ?? null,
           nodeId: null,
           discussion: null,
+          inspector: null,
+          timelineFilter: null,
+          projectView: null,
+          assistantDeviceId: null,
+          assistantTaskId: null,
           commentId: destination.commentId ?? null,
           focusRequest: destination.itemId ? `${Date.now()}-${++focusRequestRef.current}` : null,
         })

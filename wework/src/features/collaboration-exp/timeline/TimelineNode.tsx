@@ -1,4 +1,13 @@
-import { File, MessageSquare, Play } from 'lucide-react'
+import {
+  ArrowRight,
+  Check,
+  Circle,
+  CircleAlert,
+  FileText,
+  LoaderCircle,
+  Lock,
+  Play,
+} from 'lucide-react'
 import { IssueActivityMarkdown } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -28,30 +37,56 @@ export function TimelineNode({
 }: TimelineNodeProps) {
   const { t, i18n } = useTranslation('collaborationExp')
   const time = node.at
-    ? new Intl.DateTimeFormat(i18n.language, { dateStyle: 'medium', timeStyle: 'short' }).format(
-        new Date(node.at)
-      )
+    ? new Intl.DateTimeFormat(i18n.language, {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(new Date(node.at))
     : t('timeline.unknownTime')
   const userName = node.author
     ? (node.author.name ?? t('tasks.unnamedUser', { id: node.author.id }))
     : t('timeline.system')
+  const execution = node.kind === 'execution'
+  const completed = execution && node.status === 'completed'
+  const running = execution && node.status === 'streaming'
+  const failed = execution && node.status === 'failed'
+  const Icon = completed ? Check : failed ? CircleAlert : running ? LoaderCircle : Circle
+  const hasDiscussion = node.conversation.items.length > 0
+  const status = completed
+    ? t('assistant.status.completed')
+    : failed
+      ? t('assistant.status.failed')
+      : running
+        ? t('assistant.status.running')
+        : node.status
   return (
     <article
       tabIndex={-1}
-      className={`min-w-0 px-4 py-4 ${selected ? 'bg-muted' : ''}`}
+      className="experience-timeline-node"
+      data-state={completed ? 'completed' : failed ? 'failed' : running ? 'running' : 'recorded'}
+      data-linked={selected || undefined}
+      data-self={hasDiscussion || undefined}
       data-testid={`collaboration-exp-timeline-node-${node.id}`}
     >
-      <div className="mb-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        <span className="font-medium">{userName}</span>
-        <span className="text-text-muted">{time}</span>
-      </div>
+      <span className="experience-timeline-rail" aria-hidden="true">
+        <Icon />
+      </span>
+      <header>
+        <strong>{userName}</strong>
+        <span className="experience-timeline-node-state">
+          {execution ? status : t(hasDiscussion ? 'timeline.sent' : 'timeline.recorded')}
+        </span>
+        <time dateTime={node.at ?? undefined}>{time}</time>
+      </header>
       {node.kind === 'status' && node.transition ? (
-        <p className="text-sm text-text-secondary">
+        <p className="experience-timeline-summary">
           {t('timeline.statusChanged', node.transition)}
         </p>
       ) : null}
       {node.kind === 'handoff' && node.handoff ? (
-        <p className="text-sm text-text-secondary">
+        <p className="experience-timeline-summary">
           {t('timeline.handoff', {
             action: t(
               `timeline.handoffActions.${['assign', 'reassign', 'unassign'].includes(node.handoff.action) ? node.handoff.action : 'unknown'}`
@@ -61,63 +96,78 @@ export function TimelineNode({
         </p>
       ) : null}
       {node.body ? (
-        <IssueActivityMarkdown
-          content={node.body}
-          onOpenAttachment={(id, name) => onAttachment({ id, name, sourceNodeId: node.id })}
-        />
+        <div className="experience-timeline-summary">
+          <IssueActivityMarkdown
+            content={node.body}
+            onOpenAttachment={(id, name) => onAttachment({ id, name, sourceNodeId: node.id })}
+          />
+        </div>
       ) : null}
       {node.kind === 'execution' ? (
-        <div className="flex min-w-0 items-center gap-2 text-sm text-text-secondary">
-          <span className="min-w-0 flex-1 truncate">{taskTitle}</span>
-          <span>{node.status}</span>
+        <div className="experience-timeline-execution">
           {node.executionAddress ? (
             <Button
               variant="ghost"
               data-testid={`collaboration-exp-execution-${node.id}`}
               onClick={() => onExecution(node.executionAddress!)}
-              className="min-h-11 shrink-0 md:min-h-8"
+              className="experience-timeline-execution-link"
+              aria-label={t('timeline.openExecution')}
             >
               <Play size={16} aria-hidden="true" />
-              {t('timeline.openExecution')}
+              <span>{taskTitle}</span>
+              <small>{status}</small>
+              <ArrowRight size={13} aria-hidden="true" />
             </Button>
           ) : (
-            <span>{t('timeline.unknownSource')}</span>
+            <>
+              <span>{taskTitle}</span>
+              <span>{t('timeline.unknownSource')}</span>
+            </>
           )}
         </div>
       ) : null}
       {node.attachments.length ? (
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="experience-timeline-attachments">
           {node.attachments.map(attachment => (
             <Button
               key={attachment.id}
-              variant="secondary"
-              className="min-h-11 max-w-full md:min-h-8"
+              variant="ghost"
               data-testid={`collaboration-exp-node-attachment-${node.id}-${attachment.id}`}
               onClick={() => onAttachment(attachment)}
             >
-              <File size={16} className="shrink-0" aria-hidden="true" />
-              <span className="truncate">{attachment.name}</span>
+              <FileText size={15} aria-hidden="true" />
+              <span>{attachment.name}</span>
             </Button>
           ))}
         </div>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-1">
+      <div className="experience-timeline-discussions">
         {node.conversation.items.map(conversation => (
           <Button
             key={conversation.key}
             variant="ghost"
-            className="min-h-11 max-w-full md:min-h-8"
+            className="experience-timeline-private-link"
             data-testid={`collaboration-exp-node-discussion-${node.id}-${conversation.address.taskId}`}
             onClick={() => onDiscuss(node, conversation)}
           >
-            <MessageSquare size={16} className="shrink-0" aria-hidden="true" />
-            <span className="truncate">{conversation.title ?? t('timeline.discuss')}</span>
+            <Lock size={12} aria-hidden="true" />
+            <span>{t('timeline.reviewDiscussion')}</span>
+            <ArrowRight size={13} aria-hidden="true" />
           </Button>
         ))}
         {node.conversation.state === 'unknown' &&
         node.kind !== 'status' &&
         node.kind !== 'handoff' ? (
-          <span className="py-2 text-xs text-text-muted">{t('timeline.discussionUnknown')}</span>
+          <span className="experience-timeline-source-note">
+            <Lock size={12} aria-hidden="true" />
+            {t('timeline.discussionUnknown')}
+          </span>
+        ) : null}
+        {node.conversation.state === 'hidden' && node.kind === 'comment' ? (
+          <span className="experience-timeline-source-note">
+            <Lock size={12} aria-hidden="true" />
+            {t('timeline.discussionOther')}
+          </span>
         ) : null}
       </div>
     </article>

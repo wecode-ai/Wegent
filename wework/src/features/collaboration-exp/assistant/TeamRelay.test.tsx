@@ -65,20 +65,51 @@ it('names each real team state without relying on color or motion', () => {
     '3'
   )
   expect(screen.queryByText(/online/i)).not.toBeInTheDocument()
+  for (const [id, state] of [
+    ['@primary', 'waiting'],
+    ['reviewer', 'running'],
+    ['archivist', 'idle'],
+  ]) {
+    expect(screen.getByTestId(`collaboration-exp-team-relay-status-${id}`)).toHaveAttribute(
+      'data-state',
+      state
+    )
+  }
   expect(screen.getByTestId('collaboration-exp-team-relay-node-@primary')).toHaveAttribute(
     'title',
     'Default assistant · Awaiting confirmation · 2'
   )
 })
 
+it('keeps an unknown status marker and semantic label while native work is not ready', () => {
+  render(<TeamRelay nodes={nodes} ready={false} onManage={vi.fn()} />)
+  for (const id of ['@primary', 'reviewer', 'archivist']) {
+    expect(screen.getByTestId(`collaboration-exp-team-relay-status-${id}`)).toHaveAttribute(
+      'data-state',
+      'unknown'
+    )
+    expect(screen.getByTestId(`collaboration-exp-team-relay-node-${id}`)).toHaveAccessibleName(
+      /Status not confirmed/
+    )
+    expect(screen.getByTestId(`collaboration-exp-team-relay-node-${id}`)).not.toHaveAttribute(
+      'data-running-count'
+    )
+  }
+})
+
 it('opens existing management with the exact role identity and exposes all compacted members', () => {
   const manage = vi.fn()
-  render(<TeamRelay nodes={nodes} onManage={manage} />)
+  render(
+    <TeamRelay
+      nodes={[...nodes, { ...nodes[2], id: 'extra-one' }, { ...nodes[2], id: 'extra-two' }]}
+      onManage={manage}
+    />
+  )
   fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-node-reviewer'))
   expect(manage).toHaveBeenLastCalledWith('reviewer')
   fireEvent.click(screen.getByTestId('collaboration-exp-team-relay-node-@primary'))
   expect(manage).toHaveBeenLastCalledWith(undefined)
-  fireEvent.click(screen.getByRole('button', { name: 'View all 3 assistants' }))
+  fireEvent.click(screen.getByRole('button', { name: 'View all 5 assistants' }))
   expect(manage).toHaveBeenLastCalledWith()
 })
 

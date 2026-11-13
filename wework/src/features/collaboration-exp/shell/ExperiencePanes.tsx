@@ -21,6 +21,16 @@ import './ExperienceApp.css'
 
 const NAVIGATION_PANE_ID = 'collaboration-exp-navigation'
 
+function ExperiencePaneContent({
+  content,
+  onBack,
+}: {
+  content: ExperiencePane['content']
+  onBack: () => void
+}) {
+  return typeof content === 'function' ? content(onBack) : content
+}
+
 export function ExperiencePanes({
   panes,
   navigation,
@@ -36,17 +46,23 @@ export function ExperiencePanes({
   const group = useRef<GroupImperativeHandle>(null)
   const width = useExperiencePaneWidth(container)
   const mobile = width <= EXPERIENCE_MOBILE_MAX_WIDTH
-  const newestPane = panes[panes.length - 1]
+  const availablePanes = mobile ? panes.filter(pane => !pane.desktopOnly) : panes
+  const newestPane = availablePanes[availablePanes.length - 1]
   const showNavigation = Boolean(
     navigation &&
     !mobile &&
     (!newestPane ||
       width >= navigationWidth + EXPERIENCE_SEPARATOR_WIDTH + paneMinimumWidth(newestPane))
   )
-  const visibleIds = selectVisiblePaneIds(panes, width, showNavigation ? navigationWidth : null)
+  const visibleIds = selectVisiblePaneIds(
+    availablePanes,
+    width,
+    showNavigation ? navigationWidth : null
+  )
   const navigationPane: ExperiencePane = {
     id: NAVIGATION_PANE_ID,
     title: navigationTitle ?? t('shell.navigation'),
+    header: null,
     actions: navigationActions,
     content: navigation,
     minWidth: navigationWidth,
@@ -115,14 +131,6 @@ export function ExperiencePanes({
         if (event.target instanceof HTMLElement) lastInteraction.current = event.target
       }}
     >
-      {mobileNavigation && !showNavigation ? (
-        <div
-          className="experience-mobile-navigation"
-          data-testid="collaboration-exp-mobile-navigation"
-        >
-          {mobileNavigation}
-        </div>
-      ) : null}
       {visiblePanes.length ? (
         <Group
           key={visibleSignature}
@@ -163,6 +171,14 @@ export function ExperiencePanes({
           ))}
         </Group>
       ) : null}
+      {mobileNavigation && mobile && availablePanes.length === 1 ? (
+        <div
+          className="experience-mobile-navigation"
+          data-testid="collaboration-exp-mobile-navigation"
+        >
+          {mobileNavigation}
+        </div>
+      ) : null}
       <div hidden aria-hidden="true">
         {allPanes
           .filter(pane => !visiblePanes.some(visible => visible.id === pane.id))
@@ -175,25 +191,35 @@ export function ExperiencePanes({
       {allPanes.map(pane => {
         const host = hosts.get(pane.id)
         if (!host) return null
+        const parent = availablePanes[availablePanes.findIndex(item => item.id === pane.id) - 1]
+        const backVisible =
+          pane.backVisibility !== 'collapsed-parent' ||
+          Boolean(parent && !visibleIds.includes(parent.id))
         const canGoBack =
-          pane.onBack || (panes.findIndex(item => item.id === pane.id) > 0 && onBack)
+          backVisible &&
+          Boolean(pane.onBack || (panes.findIndex(item => item.id === pane.id) > 0 && onBack))
+        const goBack = () => back(pane)
         return createPortal(
           <section
             className="experience-pane"
             tabIndex={-1}
             data-testid={`collaboration-exp-pane-${pane.id}`}
           >
-            <ExperienceHeader
-              title={pane.title}
-              actions={pane.actions}
-              onBack={canGoBack ? () => back(pane) : undefined}
-              testId={`collaboration-exp-pane-header-${pane.id}`}
-            />
+            {pane.header !== undefined ? (
+              pane.header
+            ) : (
+              <ExperienceHeader
+                title={pane.title}
+                actions={pane.actions}
+                onBack={canGoBack ? goBack : undefined}
+                testId={`collaboration-exp-pane-header-${pane.id}`}
+              />
+            )}
             <div
               className={cn('experience-pane-body', pane.scroll === false ? '' : 'scrollbar-soft')}
               data-scroll={pane.scroll !== false}
             >
-              {pane.content}
+              <ExperiencePaneContent content={pane.content} onBack={goBack} />
             </div>
           </section>,
           host,

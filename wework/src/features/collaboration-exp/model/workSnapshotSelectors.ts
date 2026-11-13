@@ -84,7 +84,7 @@ export function selectExperienceTaskState(row: ExperienceTaskRow): ExperienceWor
     ['queued', 'starting', 'waiting_runtime', 'running', 'cancelling'].includes(execution)
   )
     return 'running'
-  return !execution && row.status === 'in_progress' ? 'running' : 'idle'
+  return 'idle'
 }
 
 function taskItems(rows: readonly ExperienceTaskRow[]): ExperienceWorkSnapshotItem[] {

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ExperienceProjectScope } from '../model/types'
+import './ProjectExperience.css'
 
 export type ProjectDrilldownView = 'overview' | 'plan' | 'settings'
 
@@ -24,10 +25,7 @@ export function ProjectDrilldown({
       className="flex h-full min-h-0 min-w-0 flex-col"
       data-testid="collaboration-exp-project"
     >
-      <nav
-        aria-label={t('tasks.projectViews')}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-2"
-      >
+      <nav aria-label={t('tasks.projectViews')} className="experience-project-tabs">
         {(['overview', 'plan', 'settings'] as const)
           .filter(option => option !== 'settings' || canConfigure)
           .map(option => (

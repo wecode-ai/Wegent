@@ -1,22 +1,35 @@
-import { Circle, Check, LoaderCircle } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Circle, Check, LoaderCircle, MessageSquare } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import type { ExperienceProjectScope, ExperienceTaskRow } from '../model/types'
+import {
+  formatRelativeSidebarTime,
+  useSidebarRelativeTimeRefresh,
+} from '@/components/layout/runtimeSidebarTime'
+import type {
+  ExperienceProjectData,
+  ExperienceProjectScope,
+  ExperienceTaskRow,
+} from '../model/types'
 import { selectExperienceTaskState } from '../model'
-import { TaskFilters, type TaskFilterValue } from './TaskFilters'
-import { TaskRhythm } from './TaskRhythm'
+import { TaskFilters, type TaskFilterValue, type TaskListMode } from './TaskFilters'
+import { useTaskDescription } from './taskPresentation'
+import { ProjectList } from './ProjectList'
+import './TasksExperience.css'
 
 interface Props {
   rows: readonly ExperienceTaskRow[]
   projects: readonly ExperienceProjectScope[]
+  projectData?: readonly ExperienceProjectData[]
   statuses: readonly { value: string; label: string }[]
   filters: TaskFilterValue
   selectedKey?: string | null
+  mode?: TaskListMode
   loading: boolean
-  team?: ReactNode
   error?: string | null
   hasMore?: boolean
+  onModeChange?(mode: TaskListMode): void
+  onCreate?(): void
+  onCreateProject?(): void
   onFiltersChange(value: TaskFilterValue): void
   onSelect(row: ExperienceTaskRow): void
   onOpenProject(project: ExperienceProjectScope): void
@@ -26,20 +39,21 @@ interface Props {
 
 export function TaskListView(props: Props) {
   const { t } = useTranslation('collaborationExp')
+  useSidebarRelativeTimeRefresh(props.rows.length > 0)
   const groups = [...new Set(props.rows.map(row => row.status))]
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-col" data-testid="collaboration-exp-tasks">
+    <section className="experience-task-list" data-testid="collaboration-exp-tasks">
       <TaskFilters
         value={props.filters}
         projects={props.projects}
         statuses={props.statuses}
+        mode={props.mode}
+        onModeChange={props.onModeChange}
+        onCreate={props.onCreate}
+        onCreateProject={props.onCreateProject}
         onChange={props.onFiltersChange}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" aria-busy={props.loading}>
-        {props.team}
-        {(props.rows.length > 0 || (!props.loading && !props.error)) && (
-          <TaskRhythm rows={props.rows} onSelect={props.onSelect} />
-        )}
+      <div className="experience-task-scroll" aria-busy={props.loading}>
         {props.error && (
           <div role="alert" className="px-4 py-3 text-sm text-error">
             <p>{props.error}</p>
@@ -57,34 +71,47 @@ export function TaskListView(props: Props) {
             {t('loading')}
           </p>
         )}
-        {!props.loading && !props.error && !props.rows.length && (
-          <p
-            className="p-4 text-sm text-text-secondary"
-            data-testid="collaboration-exp-tasks-empty"
-          >
-            {t('tasks.empty')}
-          </p>
+        {!props.loading &&
+          !props.error &&
+          !(props.mode === 'projects' ? props.projects.length : props.rows.length) && (
+            <p
+              className="p-4 text-sm text-text-secondary"
+              data-testid="collaboration-exp-tasks-empty"
+            >
+              {t('tasks.empty')}
+            </p>
+          )}
+        {props.mode === 'projects' ? (
+          <ProjectList
+            projects={props.projects.filter(
+              project => !props.filters.projectKey || project.key === props.filters.projectKey
+            )}
+            rows={props.rows}
+            projectData={props.projectData}
+            onOpenProject={props.onOpenProject}
+          />
+        ) : (
+          groups.map(status => {
+            const rows = props.rows.filter(row => row.status === status)
+            return (
+              <section key={status} data-testid={`collaboration-exp-task-group-${status}`}>
+                <h2 className="experience-task-group-title">
+                  <span>{rows[0].statusName}</span>
+                  <span>{rows.length}</span>
+                </h2>
+                {rows.map(row => (
+                  <TaskRow
+                    key={row.key}
+                    row={row}
+                    selected={props.selectedKey === row.key}
+                    onSelect={props.onSelect}
+                    onOpenProject={props.onOpenProject}
+                  />
+                ))}
+              </section>
+            )
+          })
         )}
-        {groups.map(status => {
-          const rows = props.rows.filter(row => row.status === status)
-          return (
-            <section key={status} data-testid={`collaboration-exp-task-group-${status}`}>
-              <h2 className="flex items-center justify-between px-4 pb-2 pt-5 text-sm text-text-secondary">
-                <span>{rows[0].statusName}</span>
-                <span>{rows.length}</span>
-              </h2>
-              {rows.map(row => (
-                <TaskRow
-                  key={row.key}
-                  row={row}
-                  selected={props.selectedKey === row.key}
-                  onSelect={props.onSelect}
-                  onOpenProject={props.onOpenProject}
-                />
-              ))}
-            </section>
-          )
-        })}
         {props.hasMore && props.onLoadMore && (
           <Button
             variant="ghost"
@@ -115,46 +142,51 @@ function TaskRow({
   const { t } = useTranslation('collaborationExp')
   const state = selectExperienceTaskState(row)
   const Icon = state === 'completed' ? Check : state === 'running' ? LoaderCircle : Circle
+  const description = useTaskDescription(row)
   return (
     <article
-      className={selected ? 'bg-muted' : 'hover:bg-muted/50'}
+      className="experience-task-row"
+      data-selected={selected || undefined}
       data-testid={`collaboration-exp-task-row-${row.id}`}
     >
       <button
         type="button"
-        className="flex min-h-11 w-full items-start gap-3 px-4 pb-2 pt-3 text-left keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-focus"
+        className="experience-task-row-main"
         data-testid={`collaboration-exp-task-${row.id}`}
         aria-current={selected ? 'true' : undefined}
         onClick={() => onSelect(row)}
       >
-        <div className="min-w-0 flex-1">
-          <span className="block break-words font-medium">{row.title}</span>
-          {row.waitingFor.length > 0 && (
-            <span className="mt-1 block break-words text-sm text-text-secondary">
-              {t('tasks.waitingFor', {
-                names: row.waitingFor.map(person => person.name).join('、'),
-              })}
+        <span className="experience-task-row-title">
+          <strong>{row.title}</strong>
+          <Icon
+            aria-hidden="true"
+            data-state={state}
+            className={state === 'running' ? 'animate-spin motion-reduce:animate-none' : undefined}
+          />
+        </span>
+        <span className="experience-task-row-description">{description}</span>
+      </button>
+      <div className="experience-task-row-meta">
+        <button
+          type="button"
+          className="experience-task-row-project"
+          data-testid={`collaboration-exp-task-project-${row.id}`}
+          onClick={() => onOpenProject(row.project)}
+        >
+          {row.project.name}
+        </button>
+        <span className="experience-task-row-signals">
+          {row.conversations.state === 'ready' && row.conversations.items.length > 0 && (
+            <span title={t('private.title')} className="experience-task-row-conversations">
+              <MessageSquare size={13} aria-hidden="true" />
+              {row.conversations.items.length}
             </span>
           )}
-          {row.assignee && (
-            <span className="mt-1 block text-sm text-text-secondary">
-              {row.assignee.name ?? t('tasks.unnamedUser', { id: row.assignee.id })}
-            </span>
-          )}
-        </div>
-        <Icon
-          aria-hidden="true"
-          className={`mt-1 h-4 w-4 shrink-0 text-text-muted ${state === 'running' ? 'animate-spin motion-reduce:animate-none' : ''}`}
-        />
-      </button>
-      <button
-        type="button"
-        className="min-h-11 max-w-full truncate px-4 pb-3 text-left text-sm text-text-secondary hover:underline md:min-h-8"
-        data-testid={`collaboration-exp-task-project-${row.id}`}
-        onClick={() => onOpenProject(row.project)}
-      >
-        {row.project.name}
-      </button>
+          <time dateTime={row.updatedAt} title={row.updatedAt}>
+            {formatRelativeSidebarTime(row.updatedAt)}
+          </time>
+        </span>
+      </div>
     </article>
   )
 }

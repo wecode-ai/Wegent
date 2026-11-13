@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { X } from 'lucide-react'
+import { ChevronRight, Lock, X } from 'lucide-react'
 import {
   canStartWorkOnCollaborationIssue,
   type CollaborationIssue,
@@ -16,6 +16,7 @@ import type { ExperiencePrivateConversation } from '../model'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useConclusionPublication } from './useConclusionPublication'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import './PrivateExperience.css'
 
 export interface PrivateDiscussionPaneProps {
   api: SharedWorkspaceApi
@@ -117,42 +118,61 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   return (
     <section
       data-testid="collaboration-exp-private-pane"
-      className="flex h-full min-h-0 flex-col bg-background"
+      className="experience-private-discussion"
       aria-label={t('private.title')}
     >
-      <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
-        <div className="min-w-0 flex-1">
-          {!props.embedded && (
-            <h2 className="truncate text-heading-sm font-medium">{t('private.title')}</h2>
+      {!props.embedded && (
+        <header className="experience-private-standalone-heading">
+          <h2>{t('private.title')}</h2>
+          {onClose && (
+            <button
+              type="button"
+              data-testid="collaboration-exp-private-close"
+              aria-label={t('private.close')}
+              onClick={onClose}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
           )}
-          <p className="text-xs text-text-muted">{t('private.visibility')}</p>
-        </div>
-        {onClose && (
-          <button
-            type="button"
-            data-testid="collaboration-exp-private-close"
-            className="flex size-7 items-center justify-center rounded-md text-text-muted hover:bg-surface-hover max-md:size-11"
-            aria-label={t('private.close')}
-            onClick={onClose}
-          >
-            <X size={16} />
-          </button>
-        )}
-      </header>
+        </header>
+      )}
+      <div className="experience-private-context">
+        <span title={issue.title}>{issue.title}</span>
+        <small>
+          {props.embedded && onClose ? (
+            <button
+              type="button"
+              className="experience-private-context-back"
+              data-testid="collaboration-exp-private-close"
+              onClick={onClose}
+            >
+              {t('private.taskProgress')}
+            </button>
+          ) : (
+            <span>{t('private.taskProgress')}</span>
+          )}
+          <ChevronRight size={11} aria-hidden="true" />
+          <Lock size={10} aria-hidden="true" />
+          {t('private.title')}
+        </small>
+      </div>
       {!owned || !sourceKnown ? (
         <p
           data-testid="collaboration-exp-private-unavailable"
           role="status"
-          className="p-4 text-sm text-text-muted"
+          className="experience-private-unavailable"
         >
           {t('private.sourceUnavailable')}
         </p>
       ) : (
         <>
           {sourceScope === 'source' && (
-            <p className="px-4 pt-3 text-xs text-text-muted">{t('private.sourceScope')}</p>
+            <div className="experience-private-history-notice">
+              <Lock size={13} aria-hidden="true" />
+              <span>{t('private.sourceScope')}</span>
+            </div>
           )}
-          <div className="min-h-0 flex-1">
+          <div className="experience-private-native">
             <TemporaryChatPanel
               key={identity}
               currentProject={null}
@@ -186,47 +206,45 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
           </div>
           {historyAvailable && (
             <form
-              className="shrink-0 space-y-2 border-t border-border p-4"
+              className="experience-private-conclusion"
               data-testid="collaboration-exp-conclusion-form"
               onSubmit={event => {
                 event.preventDefault()
                 void publication.publish()
               }}
             >
-              <label
-                className="block text-sm font-medium"
-                htmlFor={`conclusion-${encodeURIComponent(conclusionKey)}`}
-              >
+              <label htmlFor={`conclusion-${encodeURIComponent(conclusionKey)}`}>
                 {t('private.conclusion')}
               </label>
               <textarea
                 id={`conclusion-${encodeURIComponent(conclusionKey)}`}
                 data-testid="collaboration-exp-conclusion-text"
-                className="min-h-24 w-full resize-y rounded-md border border-border bg-background p-2 text-sm outline-none focus:ring-1 focus:ring-primary"
                 value={draft.value}
                 onChange={event => draft.onChange(event.target.value)}
               />
-              <p className="text-xs text-text-muted">{t('private.publishHint')}</p>
+              <p className="experience-private-publish-hint">
+                <Lock size={12} aria-hidden="true" />
+                {t('private.publishHint')}
+              </p>
               {conclusionDraft.persistenceError || discussionDraft.persistenceError ? (
-                <p role="alert" className="text-xs text-error">
-                  {t('private.errors.draftStorage')}
-                </p>
+                <p role="alert">{t('private.errors.draftStorage')}</p>
               ) : null}
-              {publication.error && (
-                <p role="alert" className="text-xs text-error">
-                  {t(`private.errors.${publication.error}`)}
-                </p>
-              )}
-              <button
-                type="submit"
-                data-testid="collaboration-exp-conclusion-publish"
-                className="min-h-7 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-50 max-md:min-h-11"
-                disabled={
-                  !active || !historyAvailable || !draft.value.trim() || publication.publishing
-                }
-              >
-                {t(publication.publishing ? 'private.publishing' : 'private.publish')}
-              </button>
+              {publication.error && <p role="alert">{t(`private.errors.${publication.error}`)}</p>}
+              <div className="experience-private-conclusion-actions">
+                <span className="experience-private-visibility">
+                  <Lock size={11} aria-hidden="true" />
+                  {t('private.visibility')}
+                </span>
+                <button
+                  type="submit"
+                  data-testid="collaboration-exp-conclusion-publish"
+                  disabled={
+                    !active || !historyAvailable || !draft.value.trim() || publication.publishing
+                  }
+                >
+                  {t(publication.publishing ? 'private.publishing' : 'private.publish')}
+                </button>
+              </div>
             </form>
           )}
         </>

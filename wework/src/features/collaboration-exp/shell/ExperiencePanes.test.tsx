@@ -116,7 +116,19 @@ function LayerFixture() {
         </button>
       ),
     },
-    { id: 'discussion', title: 'Private discussion', minWidth: 320, content: <Draft /> },
+    {
+      id: 'discussion',
+      title: 'Private discussion',
+      minWidth: 320,
+      content: onBack => (
+        <>
+          <button data-testid="context-back-discussion" onClick={onBack}>
+            Task progress
+          </button>
+          <Draft />
+        </>
+      ),
+    },
   ]
   return (
     <ExperiencePanes
@@ -128,6 +140,23 @@ function LayerFixture() {
 }
 
 describe('ExperiencePanes', () => {
+  it('keeps the empty task dashboard mounted on desktop while mobile starts at the list', () => {
+    const panes: ExperiencePane[] = [
+      { id: 'tasks', title: 'Tasks', header: null, content: <header>Task toolbar</header> },
+      { id: 'home', title: 'Home', header: null, desktopOnly: true, content: <Draft /> },
+    ]
+    render(<ExperiencePanes panes={panes} mobileNavigation={<nav>Mobile navigation</nav>} />)
+    expect(visiblePaneIds()).toEqual(['tasks', 'home'])
+    expect(screen.queryByTestId('collaboration-exp-pane-header-tasks')).not.toBeInTheDocument()
+    const draft = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(draft, { target: { value: 'Keep the home draft' } })
+    resize(390)
+    expect(visiblePaneIds()).toEqual(['tasks'])
+    expect(screen.getByTestId('collaboration-exp-mobile-navigation')).toBeVisible()
+    resize(1440)
+    expect(screen.getByRole('textbox', { name: 'Private draft' })).toBe(draft)
+    expect(draft).toHaveValue('Keep the home draft')
+  })
   it('shows navigation and all layers when minima fit and progressively hides the oldest layers', () => {
     render(<LayerFixture />)
     fireEvent.click(screen.getByTestId('open-task'))
@@ -185,6 +214,83 @@ describe('ExperiencePanes', () => {
     resize(1440)
     expect(screen.getByRole('textbox', { name: 'Private draft' })).toBe(input)
     expect(input).toHaveValue('Keep my unsent text')
+  })
+
+  it('restores the source control when mobile content uses the same shell-owned back action', () => {
+    availableWidth = 390
+    render(<LayerFixture />)
+    const task = screen.getByTestId('open-task')
+    task.focus()
+    fireEvent.click(task)
+    const discussion = screen.getByTestId('open-discussion')
+    discussion.focus()
+    fireEvent.click(discussion)
+    const back = screen.getByTestId('context-back-discussion')
+    back.focus()
+    fireEvent.click(back)
+    expect(visiblePaneIds()).toEqual(['timeline'])
+    expect(discussion).toHaveFocus()
+  })
+
+  it('returns to a collapsed project at 800px with the exact mounted plan, scroll and source focus', () => {
+    function ProjectLayers() {
+      const [opened, setOpened] = useState(false)
+      return (
+        <ExperiencePanes
+          navigation={<nav>Navigation</nav>}
+          panes={[
+            { id: 'tasks', title: 'Tasks', minWidth: 240, content: null },
+            {
+              id: 'project',
+              title: 'Project plan',
+              minWidth: 320,
+              content: (
+                <div data-testid="project-plan" data-plan-view="gantt">
+                  <button data-testid="open-project-task" onClick={() => setOpened(true)}>
+                    Open task from plan
+                  </button>
+                  <Draft />
+                </div>
+              ),
+            },
+            ...(opened
+              ? [
+                  {
+                    id: 'timeline',
+                    title: 'Task',
+                    minWidth: 360,
+                    content: null,
+                    backVisibility: 'collapsed-parent' as const,
+                    onBack: () => setOpened(false),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )
+    }
+    render(<ProjectLayers />)
+    const project = screen.getByTestId('project-plan')
+    const draft = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(draft, { target: { value: 'Retain native plan state' } })
+    project.scrollTop = 240
+    const task = screen.getByTestId('open-project-task')
+    task.focus()
+    fireEvent.click(task)
+    expect(
+      screen.queryByTestId('collaboration-exp-pane-header-timeline-back')
+    ).not.toBeInTheDocument()
+    resize(800)
+    expect(visiblePaneIds()).toEqual(['collaboration-exp-navigation', 'timeline'])
+    const back = screen.getByTestId('collaboration-exp-pane-header-timeline-back')
+    back.focus()
+    fireEvent.click(back)
+    expect(visiblePaneIds()).toEqual(['collaboration-exp-navigation', 'tasks', 'project'])
+    expect(screen.getByTestId('project-plan')).toBe(project)
+    expect(project).toHaveAttribute('data-plan-view', 'gantt')
+    expect(project.scrollTop).toBe(240)
+    expect(draft).toHaveValue('Retain native plan state')
+    expect(task).toHaveFocus()
   })
 
   it('uses the shared separator keyboard resize, preserves total width and restores defaults on double click', () => {

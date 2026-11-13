@@ -9,7 +9,9 @@
     "resize": "调整相邻分栏宽度",
     "assistant": "助理",
     "tasks": "任务",
-    "projects": "项目"
+    "projects": "项目",
+    "account": "用户菜单",
+    "settings": "设置"
   },
   "tasks": {
     "rhythm": {
@@ -45,15 +47,44 @@
     "noProjectDescription": "暂无项目说明。",
     "members": "成员",
     "membersFailed": "项目成员加载失败。",
-    "loadFailed": "部分任务加载失败，请重试以刷新对应来源。"
+    "loadFailed": "部分任务加载失败，请重试以刷新对应来源。",
+    "byProject": "按项目看",
+    "viewMode": "任务查看方式",
+    "create": "创建任务",
+    "projectAttention": "需要关注",
+    "projectOther": "其他项目",
+    "projectTaskCount": "{{count}} 项任务",
+    "projectWaitingCount": "{{count}} 项待确认",
+    "projectHome": {
+      "eyebrow": "项目成员共享目标、计划和进展",
+      "title": "掌握整体进展",
+      "description": "看目标完成了多少、哪里需要判断、下一步需要谁支持。",
+      "create": "创建项目",
+      "count": "个项目",
+      "attention": "需要关注",
+      "highlights": "值得关注的项目",
+      "empty": "当前可见任务中没有等待你判断的项目。"
+    },
+    "home": {
+      "console": "协作控制台",
+      "sync": "任务与助理同步推进",
+      "title": "看看任务推进到哪了",
+      "description": "默认只看与你有关的任务。切换到“按项目看”，了解整体目标与进展。",
+      "next": "下一件需要你判断的事",
+      "viewProgress": "查看进展",
+      "progress": "任务正在推进",
+      "idle": "任务当前节奏",
+      "attention": "当前可见 {{count}} 件任务",
+      "emptyRhythm": "当前没有正在执行的任务。"
+    }
   },
   "timeline": {
     "title": "任务时间线",
     "filters": "时间线筛选",
     "all": "全部",
     "attachments": "附件",
-    "conclusions": "结论与评论",
-    "background": "背景",
+    "conclusions": "结论",
+    "background": "背景与目标",
     "unknownTime": "时间不可用",
     "unknownSource": "来源未知",
     "system": "系统",
@@ -71,7 +102,22 @@
     "unavailable": "共享时间线暂不可用，请重试连接。",
     "empty": "暂无符合条件的动态。",
     "attachmentsFailed": "附件索引加载失败。",
-    "commentUnavailable": "无法在此任务的共享时间线中定位该评论。"
+    "commentUnavailable": "无法在此任务的共享时间线中定位该评论。",
+    "progress": "进展",
+    "hasAttachments": "有附件",
+    "visibilityOpen": "项目成员可见",
+    "visibilityRelated": "相关参与者可见",
+    "visibilityUnknown": "可见范围未确认",
+    "assignee": "{{name}} 负责",
+    "recorded": "已记录",
+    "sent": "已发送",
+    "reviewDiscussion": "我的讨论 · 回看",
+    "discussionOther": "对方的私人讨论，仅本人可见",
+    "yourTurn": "轮到你了",
+    "processWithAssistant": "和助理一起处理",
+    "privateHint": "讨论仅你可见，确认后只提交结论",
+    "details": "任务详情",
+    "openProject": "打开项目：{{name}}"
   },
   "private": {
     "title": "私人讨论",
@@ -92,7 +138,9 @@
       "failed": "结论发布失败，草稿已保留，可稍后手动重试。",
       "refresh": "结论已发布，但时间线刷新失败，请重新打开任务查看。",
       "draftStorage": "草稿无法保存到此设备，请保持面板打开以保留正文。"
-    }
+    },
+    "taskProgress": "任务进展",
+    "sourceTitle": "当时的私人讨论"
   },
   "assistant": {
     "runtimeWorkUnavailable": "工作目录加载失败，请重试以确认助理团当前状态。",
@@ -139,10 +187,21 @@
       "completed": "已完成",
       "failed": "失败",
       "cancelled": "已取消"
-    }
+    },
+    "manageTeam": "管理助理团",
+    "eyebrow": "与你一起推进",
+    "headline": "助理已经准备好了，等你看看",
+    "liveSummary": "{{waiting}} 件事等待确认，{{running}} 件正在推进。你可以直接接手，也可以在下方交代新想法。",
+    "allDecisions": "查看全部",
+    "allProgress": "全部活动",
+    "showLess": "收起",
+    "automatic": "自动分工",
+    "chooseRole": "发给哪位助理",
+    "privateScope": "私人讨论 · 仅你可见",
+    "pageTitle": "我的助理团"
   },
   "teamRelay": {
-    "title": "团队接力",
+    "title": "助理正在接力",
     "memberLabel": "{{name}} · {{state}} · 管理助理",
     "allMembers": "查看全部 {{count}} 位助理",
     "paused": "已暂停",
@@ -153,6 +212,33 @@
       "running": "推进中",
       "idle": "待命",
       "unknown": "状态尚未确认"
-    }
+    },
+    "runningCount": "{{count}} 件正在推进"
+  },
+  "create": {
+    "kicker": "明确目标与下一步",
+    "title": "创建任务",
+    "description": "任务可以独立推进，也可以加入项目，与成员共享目标和进展。",
+    "close": "关闭创建任务",
+    "goal": "这次要交付什么？",
+    "goalPlaceholder": "描述这次要完成的交付",
+    "project": "项目",
+    "standalone": "暂不归属项目",
+    "assignee": "负责人",
+    "me": "我",
+    "storage": "保存位置",
+    "local": "本地",
+    "backend": "云端",
+    "dueDate": "截止日期",
+    "summary": "交付摘要",
+    "summaryPlaceholder": "一句话说明要解决什么、交付什么。",
+    "defaults": "项目、负责人和日期都有默认值；创建后随时能在任务详情中修改。",
+    "cancel": "取消",
+    "submit": "创建并打开任务",
+    "search": "搜索选项",
+    "loading": "正在读取项目与成员…",
+    "sourceUnavailable": "此保存位置暂不可用，请检查连接和账号后重试。",
+    "permissionDenied": "当前项目为只读，无法创建任务。请检查权限或选择其他项目。",
+    "assigneeUnavailable": "此负责人当前不可分配，请重新选择。"
   }
 }

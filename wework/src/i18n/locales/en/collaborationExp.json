@@ -9,7 +9,9 @@
     "resize": "Resize adjacent panes",
     "assistant": "Assistant",
     "tasks": "Tasks",
-    "projects": "Projects"
+    "projects": "Projects",
+    "account": "User menu",
+    "settings": "Settings"
   },
   "tasks": {
     "rhythm": {
@@ -45,15 +47,46 @@
     "noProjectDescription": "No project description yet.",
     "members": "Members",
     "membersFailed": "Could not load project members.",
-    "loadFailed": "Some tasks could not be loaded. Retry to refresh the affected source."
+    "loadFailed": "Some tasks could not be loaded. Retry to refresh the affected source.",
+    "byProject": "By project",
+    "viewMode": "Task view",
+    "create": "Create task",
+    "projectAttention": "Needs attention",
+    "projectOther": "Other projects",
+    "projectTaskCount_one": "{{count}} task",
+    "projectTaskCount_other": "{{count}} tasks",
+    "projectWaitingCount_one": "{{count}} awaiting confirmation",
+    "projectWaitingCount_other": "{{count}} awaiting confirmation",
+    "projectHome": {
+      "eyebrow": "Project members share goals, plans and progress",
+      "title": "See the bigger picture",
+      "description": "See progress toward goals, decisions that need attention and who can help next.",
+      "create": "Create project",
+      "count": "projects",
+      "attention": "need attention",
+      "highlights": "Projects to watch",
+      "empty": "No visible project tasks are waiting for your decision."
+    },
+    "home": {
+      "console": "Collaboration console",
+      "sync": "Tasks and assistants move together",
+      "title": "See how your work is progressing",
+      "description": "Tasks related to you are shown by default. Switch to “By project” to see shared goals and progress.",
+      "next": "The next decision for you",
+      "viewProgress": "View progress",
+      "progress": "Work is progressing",
+      "idle": "Current work rhythm",
+      "attention": "{{count}} visible tasks",
+      "emptyRhythm": "No tasks are currently running."
+    }
   },
   "timeline": {
     "title": "Task timeline",
     "filters": "Timeline filters",
     "all": "All",
     "attachments": "Files",
-    "conclusions": "Conclusions and comments",
-    "background": "Background",
+    "conclusions": "Conclusions",
+    "background": "Background and goals",
     "unknownTime": "Time unavailable",
     "unknownSource": "Source unknown",
     "system": "System",
@@ -71,7 +104,22 @@
     "unavailable": "The shared timeline is unavailable. Retry to reconnect.",
     "empty": "No matching activity yet.",
     "attachmentsFailed": "Could not load the file index.",
-    "commentUnavailable": "The linked comment is unavailable in this task’s shared timeline."
+    "commentUnavailable": "The linked comment is unavailable in this task’s shared timeline.",
+    "progress": "Progress",
+    "hasAttachments": "With attachments",
+    "visibilityOpen": "Visible to project members",
+    "visibilityRelated": "Visible to related participants",
+    "visibilityUnknown": "Visibility unconfirmed",
+    "assignee": "Assigned to {{name}}",
+    "recorded": "Recorded",
+    "sent": "Sent",
+    "reviewDiscussion": "My discussion · Review",
+    "discussionOther": "Their private discussion is visible only to them",
+    "yourTurn": "Your turn",
+    "processWithAssistant": "Work with your assistant",
+    "privateHint": "Only you can see this discussion; only confirmed conclusions are shared",
+    "details": "Task details",
+    "openProject": "Open project: {{name}}"
   },
   "private": {
     "title": "Private discussion",
@@ -92,7 +140,9 @@
       "failed": "The conclusion could not be published. Your draft is preserved; retry when ready.",
       "refresh": "The conclusion was published, but the timeline could not refresh. Reopen the task to view it.",
       "draftStorage": "The draft could not be saved on this device. Keep this pane open to preserve your text."
-    }
+    },
+    "taskProgress": "Task progress",
+    "sourceTitle": "The original private discussion"
   },
   "assistant": {
     "runtimeWorkUnavailable": "The work list could not be loaded. Retry to confirm the team's current status.",
@@ -139,10 +189,21 @@
       "completed": "Completed",
       "failed": "Failed",
       "cancelled": "Cancelled"
-    }
+    },
+    "manageTeam": "Manage assistants",
+    "eyebrow": "Moving work forward with you",
+    "headline": "Your assistants are ready for you",
+    "liveSummary": "{{waiting}} items need your decision and {{running}} are in progress. Pick up a task or share a new idea below.",
+    "allDecisions": "View all",
+    "allProgress": "All activity",
+    "showLess": "Show less",
+    "automatic": "Automatic delegation",
+    "chooseRole": "Choose an assistant",
+    "privateScope": "Private discussion · Only you",
+    "pageTitle": "My assistants"
   },
   "teamRelay": {
-    "title": "Team relay",
+    "title": "Your assistants are working together",
     "memberLabel": "{{name}} · {{state}} · Configure assistant",
     "allMembers": "View all {{count}} assistants",
     "paused": "Paused",
@@ -153,6 +214,33 @@
       "running": "In progress",
       "idle": "Standing by",
       "unknown": "Status not confirmed"
-    }
+    },
+    "runningCount": "{{count}} in progress"
+  },
+  "create": {
+    "kicker": "Define the goal and next step",
+    "title": "Create task",
+    "description": "Tasks can move independently or join a project to share goals and progress with members.",
+    "close": "Close task creation",
+    "goal": "What will you deliver?",
+    "goalPlaceholder": "Describe the outcome to deliver",
+    "project": "Project",
+    "standalone": "No project yet",
+    "assignee": "Assignee",
+    "me": "Me",
+    "storage": "Save to",
+    "local": "Local",
+    "backend": "Cloud",
+    "dueDate": "Due date",
+    "summary": "Delivery summary",
+    "summaryPlaceholder": "Briefly describe the problem and the deliverable.",
+    "defaults": "Project, assignee and date have defaults. You can change them in the task details after creation.",
+    "cancel": "Cancel",
+    "submit": "Create and open task",
+    "search": "Search options",
+    "loading": "Loading project and members…",
+    "sourceUnavailable": "This destination is unavailable. Check the connection and account, then try again.",
+    "permissionDenied": "This project is read-only. Check your permissions or choose another project.",
+    "assigneeUnavailable": "This assignee is no longer available. Choose an assignee again."
   }
 }

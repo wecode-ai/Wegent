@@ -4,7 +4,9 @@ import {
   issueNeedsUser,
   issueParticipation,
   issueWaitingSince,
+  standInProcessingActor,
 } from '@wegent/collaboration'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import type {
   CollaborationIssue,
   IssueParticipationViewer,
@@ -12,9 +14,11 @@ import type {
   WorkspaceTaskBinding,
 } from '@wegent/collaboration'
 import { selectPrivateConversations } from './conversationSelectors'
+import { runtimeTaskSummaryTrackingExecutionStatus } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { matchesExperienceViewer, projectScopeOf, projectViewer } from './sourceIdentity'
 import type {
   ExperienceIssueSource,
+  ExperienceConversationSelection,
   ExperienceProjectData,
   ExperienceProjectSummary,
   ExperienceReadModelInput,
@@ -87,6 +91,12 @@ function taskRow(
 ): ExperienceTaskRow {
   const { project, issue } = source
   const viewer = projectViewer(project, input.viewer, source.participationViewer)
+  const conversations = selectPrivateConversations({
+    ...source,
+    viewer,
+    runtimeWork: input.runtimeWork,
+  })
+  const participationIssue = issueWithRuntimeExecution(source, input, conversations)
   return {
     key,
     id: issue.id,
@@ -101,24 +111,59 @@ function taskRow(
       issue.assignee_user_id == null
         ? null
         : { id: issue.assignee_user_id, name: issue.assignee_name ?? null },
-    needsUser: issueNeedsUser(issue, viewer),
-    waitingSince: issueWaitingSince(issue, viewer),
+    needsUser: issueNeedsUser(participationIssue, viewer),
+    waitingSince: issueWaitingSince(participationIssue, viewer),
     waitingFor:
-      issueParticipation(issue) === 'human'
-        ? issueHumanAssignees(issue).filter(
+      issueParticipation(participationIssue) === 'human'
+        ? issueHumanAssignees(participationIssue).filter(
             (person, index, people) =>
               people.findIndex(candidate => candidate.id === person.id) === index
           )
         : [],
-    executionState: issue.execution_state ?? issue.ai_state?.status ?? null,
+    executionState:
+      participationIssue.execution_state ?? participationIssue.ai_state?.status ?? null,
     completedAt: issue.completed_at,
     updatedAt: issue.updated_at,
-    conversations: selectPrivateConversations({
-      ...source,
-      viewer,
-      runtimeWork: input.runtimeWork,
-    }),
+    conversations,
   }
+}
+
+function issueWithRuntimeExecution(
+  { project, issue }: TaskSource,
+  input: ExperienceReadModelInput,
+  conversations: ExperienceConversationSelection
+): CollaborationIssue {
+  if (issue.completed_at || ['completed', 'cancelled', 'archived'].includes(issue.status))
+    return issue
+  const runtimeOwner = typeof input.viewer === 'object' ? project.current_user_id : input.viewer
+  if (runtimeOwner == null) return issue
+  let queued: CollaborationIssue | undefined
+  for (const conversation of conversations.items) {
+    const task = findRuntimeTask(input.runtimeWork, conversation.address)
+    const origin = task?.runtimeHandle?.origin as Record<string, unknown> | undefined
+    const originStore = origin?.projectStore === 'cloud' ? 'backend' : origin?.projectStore
+    if (
+      !task ||
+      origin?.initiatedBy !== 'stand_in' ||
+      originStore !== project.project_store ||
+      origin.cloudProjectId !== project.id ||
+      origin.loopItemId !== issue.id ||
+      String(origin.userId) !== String(runtimeOwner) ||
+      (project.project_store !== 'local' &&
+        String(conversation.ownerUserId) !== String(runtimeOwner))
+    )
+      continue
+    const execution = runtimeTaskSummaryTrackingExecutionStatus(task)
+    if (execution !== 'running' && execution !== 'queued') continue
+    const projected = {
+      ...issue,
+      execution_state: execution,
+      processing_actor: standInProcessingActor(task.runtimeHandle, true) ?? issue.processing_actor,
+    }
+    if (execution === 'running') return projected
+    queued ??= projected
+  }
+  return queued ?? issue
 }
 
 export function selectTaskRows(

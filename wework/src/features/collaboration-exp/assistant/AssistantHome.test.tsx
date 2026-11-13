@@ -1,11 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ComponentProps } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { newStandInRole } from '@/api/personalStandIn'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimeWorkLoadState } from '@/types/workbench'
 import { collectRuntimeTaskReminderItems } from '@/features/workbench/runtimeTaskReminders'
 import { AssistantHome } from './AssistantHome'
+import { AssistantHomeToolbar } from './AssistantHomeToolbar'
 import { AssistantComposer } from './AssistantComposer'
 import { AssistantTeam } from './AssistantTeam'
 import { AssistantTeamRelay } from './AssistantTeamRelay'
@@ -16,6 +17,7 @@ import {
   experienceStandInFixture,
 } from '../model/fixtures'
 import type { ExperiencePrivateConversation } from '../model'
+import type { AssistantHomePanel } from './types'
 import type { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import type { useAssistantSources } from './useAssistantSources'
 
@@ -59,6 +61,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
         Send
       </button>
       {props.error && <p role="alert">{props.error}</p>}
+      {props.toolbarLeadingContext}
     </>
   ),
 }))
@@ -197,6 +200,36 @@ afterEach(() => {
 })
 
 describe('AssistantHome', () => {
+  it('opens recent discussions and team management only through the shared header actions', () => {
+    const { api, createIssue } = setupWorkbench()
+    const openConversation = vi.fn()
+    function Surface() {
+      const [panel, setPanel] = useState<AssistantHomePanel>(null)
+      return (
+        <>
+          <AssistantHomeToolbar panel={panel} onPanelChange={setPanel} />
+          <AssistantHome
+            active
+            panel={panel}
+            onPanelChange={setPanel}
+            conversations={[conversation]}
+            onOpenConversation={openConversation}
+          />
+        </>
+      )
+    }
+    render(<Surface />)
+    expect(screen.queryByTestId('collaboration-exp-recent-discussions')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('collaboration-exp-assistant-team')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-toolbar-recent'))
+    fireEvent.click(screen.getByText('Original private discussion'))
+    expect(openConversation).toHaveBeenCalledWith(conversation)
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-toolbar-team'))
+    expect(screen.queryByTestId('collaboration-exp-recent-discussions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-exp-assistant-team')).toBeInTheDocument()
+    expect(api.conversation).not.toHaveBeenCalled()
+    expect(createIssue).not.toHaveBeenCalled()
+  })
   it.each(['loading', 'error'] as const)(
     'does not infer an idle team from an initially %s native catalog and retries all sources',
     async phase => {
@@ -212,6 +245,7 @@ describe('AssistantHome', () => {
         <>
           <AssistantHome
             active
+            panel="recent"
             conversations={[conversation]}
             onOpenConversation={openConversation}
           />
@@ -238,6 +272,7 @@ describe('AssistantHome', () => {
         <>
           <AssistantHome
             active
+            panel="recent"
             conversations={[conversation]}
             onOpenConversation={openConversation}
           />
@@ -408,7 +443,14 @@ describe('AssistantHome', () => {
     }
     mocks.source.settings = undefined
     mocks.source.error = 'Assistant settings unavailable'
-    render(<AssistantHome active conversations={[proven]} onOpenConversation={openConversation} />)
+    render(
+      <AssistantHome
+        active
+        panel="recent"
+        conversations={[proven]}
+        onOpenConversation={openConversation}
+      />
+    )
     expect(screen.getByRole('alert')).toHaveTextContent('Assistant settings unavailable')
     fireEvent.click(screen.getByText('Original private discussion'))
     expect(openConversation).toHaveBeenCalledWith(proven)
@@ -453,6 +495,7 @@ describe('AssistantHome', () => {
     render(
       <AssistantHome
         active
+        panel="recent"
         conversations={[conversation]}
         projects={[
           {
@@ -496,7 +539,29 @@ describe('AssistantHome', () => {
         /assistant.status.running/
       )
     ).toBeInTheDocument()
+    expect(
+      screen.getByTestId('collaboration-exp-assistant-work-running-task').querySelector('time')
+    ).toHaveAttribute('datetime', '2026-11-03T00:00:00.000Z')
     expect(screen.queryByRole('banner')).not.toBeInTheDocument()
+  })
+
+  it('uses the same native work item recency for progress and omits unavailable timestamps', () => {
+    const { state, reminders } = setupWorkbench()
+    state.runtimeWork = runningCatalog()
+    state.runtimeWork.chats![0].tasks[0].recencyAt = '2026-11-04T08:15:00Z'
+    state.runtimeWork.chats![0].tasks[0].updatedAt = '2026-11-01T00:00:00Z'
+    reminders.items = collectRuntimeTaskReminderItems(state.runtimeWork)
+    const view = render(<AssistantHome active />)
+    const row = screen.getByTestId('collaboration-exp-assistant-work-native-running')
+    expect(row.querySelector('time')).toHaveAttribute('datetime', '2026-11-04T08:15:00.000Z')
+    expect(row.querySelector('time')).not.toBeEmptyDOMElement()
+    state.runtimeWork.chats![0].tasks[0].recencyAt = null
+    state.runtimeWork.chats![0].tasks[0].updatedAt = null
+    reminders.items = collectRuntimeTaskReminderItems(state.runtimeWork)
+    view.rerender(<AssistantHome active />)
+    expect(
+      screen.getByTestId('collaboration-exp-assistant-work-native-running').querySelector('time')
+    ).toBeNull()
   })
 
   it('keeps an unsent draft across inactive view switches without creating a private task or shared Issue', () => {
@@ -540,6 +605,73 @@ describe('AssistantHome', () => {
       expect.objectContaining({ attachments: [], clientUserMessageId: expect.any(String) })
     )
     expect(createIssue).not.toHaveBeenCalled()
+  })
+
+  it('routes a selected specialist to its exact device and restores independent role drafts', async () => {
+    const { api, createIssue } = setupWorkbench()
+    const scopedSettings = {
+      ...settings,
+      roles: [{ ...newStandInRole('specialist-device', 'reviewer'), name: 'Reviewer' }],
+    }
+    const onCreated = vi.fn()
+    api.conversation.mockResolvedValue({ deviceId: 'specialist-device', taskId: 'reviewer-task' })
+    render(<AssistantComposer active settings={scopedSettings} onCreated={onCreated} />)
+    const changeRole = (name: string) => {
+      fireEvent.click(screen.getByTestId('collaboration-exp-assistant-role-select'))
+      fireEvent.click(screen.getByRole('option', { name }))
+    }
+    fireEvent.change(screen.getByTestId('collaboration-exp-assistant-input'), {
+      target: { value: 'Primary private draft' },
+    })
+    changeRole('Reviewer')
+    expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue('')
+    fireEvent.change(screen.getByTestId('collaboration-exp-assistant-input'), {
+      target: { value: 'Review this plan' },
+    })
+    changeRole('assistant.automatic')
+    expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue(
+      'Primary private draft'
+    )
+    changeRole('Reviewer')
+    expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue('Review this plan')
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-send'))
+    await waitFor(() =>
+      expect(onCreated).toHaveBeenCalledWith(
+        { deviceId: 'specialist-device', taskId: 'reviewer-task' },
+        'Review this plan'
+      )
+    )
+    expect(api.conversation).toHaveBeenCalledWith(
+      7,
+      'specialist-device',
+      'Review this plan',
+      'reviewer',
+      expect.objectContaining({ clientUserMessageId: expect.any(String) })
+    )
+    expect(createIssue).not.toHaveBeenCalled()
+  })
+
+  it('resets the selected role and hides its draft when the owner account changes', () => {
+    const { api, state } = setupWorkbench()
+    const scopedSettings = {
+      ...settings,
+      roles: [{ ...newStandInRole('specialist-device', 'reviewer'), name: 'Reviewer' }],
+    }
+    const view = render(<AssistantComposer active settings={scopedSettings} onCreated={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-role-select'))
+    fireEvent.click(screen.getByRole('option', { name: 'Reviewer' }))
+    fireEvent.change(screen.getByTestId('collaboration-exp-assistant-input'), {
+      target: { value: 'First account private draft' },
+    })
+    state.user.id = 8
+    view.rerender(
+      <AssistantComposer active settings={{ ...scopedSettings, userId: 8 }} onCreated={vi.fn()} />
+    )
+    expect(screen.getByTestId('collaboration-exp-assistant-role-select')).toHaveTextContent(
+      'assistant.automatic'
+    )
+    expect(screen.getByTestId('collaboration-exp-assistant-input')).toHaveValue('')
+    expect(api.conversation).not.toHaveBeenCalled()
   })
 
   it('preserves the draft when the private runtime fails to send', async () => {

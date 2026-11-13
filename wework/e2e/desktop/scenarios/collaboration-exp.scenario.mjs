@@ -48,6 +48,8 @@ export const COLLABORATION_EXP_USER_STORIES = [
   'assistant-tasks-project-timeline-private-discussion-work-in-three-viewports',
   'reduced-motion-keeps-real-team-and-task-rhythm-states-readable-without-layout-shifts',
   'ordinary-assistant-question-creates-no-project-issue',
+  'demo-create-cancels-without-writes-and-persists-native-standalone-and-cloud-project-issues',
+  'native-issue-details-edit-the-same-canonical-issue-and-refresh-the-timeline',
   'source-discussion-shows-only-the-proven-owned-native-turn',
   'edited-conclusion-publishes-exactly-once-and-rechecks-current-permission',
   'private-unsent-draft-and-query-survive-reload-and-native-restart',
@@ -112,6 +114,9 @@ export function createDesktopScenario({
     control.command('clickWhenEnabled', selector, { visible: true })
   async function assertSingleton(control, project, issue, store, expectedScope) {
     await control.command('waitFor', APP, { timeoutMs: workbenchReadyTimeoutMs })
+    await control.command('waitFor', testId('collaboration-exp-pane-header-timeline'), {
+      text: issue.title,
+    })
     await control.command('waitFor', testId('collaboration-exp-timeline'))
     const snapshot = JSON.parse(await control.command('snapshot', APP))
     const params = new URL(snapshot.location).searchParams
@@ -455,9 +460,12 @@ export function createDesktopScenario({
         await ensureExperimentalFeaturesEnabled(control)
         await control.command('navigate', 'body', { value: '/settings' })
         const toggle = '[data-testid="general-collaboration-experience-toggle"]'
+        await control.command('waitFor', toggle)
+        await control.command('scrollIntoView', toggle)
         await control.command('waitFor', toggle, { visible: true })
         await click(control, toggle)
         await control.command('waitFor', `${toggle}[aria-checked="true"]`)
+        await control.command('scrollIntoView', '[data-testid="general-fixed-tab-add"]')
         await control.command('select', '[data-testid="general-fixed-tab-add"]', {
           value: 'fixed-collaboration-exp',
         })
@@ -566,7 +574,7 @@ export function createDesktopScenario({
             'getText',
             `${testId('collaboration-exp-conclusion-form')} [role="alert"]`
           ),
-          /permission|权限/i
+          /permission|权限|无权发表评论/i
         )
         assert.equal(
           await control.command('getValue', testId('collaboration-exp-conclusion-text')),
@@ -586,6 +594,106 @@ export function createDesktopScenario({
         assert.equal(
           (await rpc('todos.get', { project_id: localProject.id, task_id: localIssue.id })).title,
           localIssue.title
+        )
+
+        const createLogPath = join(resultDir, 'app.log')
+        const createLogOffset = (await readFile(createLogPath, 'utf8')).length
+        for (const [store, project] of [
+          ['local', localProject],
+          ['backend', cloudProject],
+        ]) {
+          await control.command('navigate', 'body', {
+            value: `/collaboration-exp?view=tasks&relevance=all&projectStore=${store}&projectId=${project.id}&future=keep`,
+          })
+          const targetProjectId = store === 'local' ? 'default-work-items' : project.id
+          const listIssues = () =>
+            store === 'local'
+              ? rpc('todos.list', { project_id: targetProjectId })
+              : request(`/api/v1/cloud-projects/${targetProjectId}/loop-items`)
+          const beforeCreate = await listIssues()
+          await click(control, testId('collaboration-exp-task-create'))
+          await control.command('waitFor', testId('collaboration-exp-create-dialog'), {
+            visible: true,
+          })
+          await control.command('fill', testId('collaboration-exp-create-goal'), {
+            value: `COLLABORATION_EXP_CANCELLED_${store}`,
+          })
+          await click(control, testId('collaboration-exp-create-cancel'))
+          await control.command('waitFor', testId('collaboration-exp-create-dialog'), {
+            visible: false,
+          })
+          assert.deepEqual(await listIssues(), beforeCreate, 'Cancel must perform no Issue write')
+
+          const title = `COLLABORATION_EXP_CREATED_${store}_${process.pid}`
+          await click(control, testId('collaboration-exp-task-create'))
+          if (store === 'backend') {
+            await click(control, testId('collaboration-exp-create-project'))
+            await click(
+              control,
+              `[data-testid=${JSON.stringify(`collaboration-exp-create-project-option-${JSON.stringify([store, project.id])}`)}]`
+            )
+          }
+          await control.command('fill', testId('collaboration-exp-create-goal'), { value: title })
+          await control.command('fill', testId('collaboration-exp-create-summary'), {
+            value: `Persisted through the real ${store} source`,
+          })
+          await click(control, testId('collaboration-exp-create-submit'))
+          await control.command('waitFor', testId('collaboration-exp-create-dialog'), {
+            visible: false,
+          })
+          const created = await waitForValue(
+            listIssues,
+            issues => issues.find(issue => issue.title === title),
+            'The Demo create action must persist through its exact real source',
+            uiTimeoutMs
+          )
+          assert.equal(created.cloud_project_id, targetProjectId)
+          assert.equal(created.assignee_user_id, store === 'local' ? 0 : cloudUser.id)
+          assert.equal(created.description, `Persisted through the real ${store} source`)
+          assert.equal((await listIssues()).filter(issue => issue.title === title).length, 1)
+          await control.command('waitFor', testId('collaboration-exp-pane-header-timeline'), {
+            text: title,
+          })
+          const params = new URL(JSON.parse(await control.command('snapshot', APP)).location)
+            .searchParams
+          assert.equal(params.get('projectStore'), store)
+          assert.equal(params.get('projectId'), created.cloud_project_id)
+          assert.equal(params.get('issueId'), created.id)
+          await click(control, testId('collaboration-exp-header-details'))
+          const detailTitle = testId('cloud-todo-detail-title')
+          await control.command('waitFor', detailTitle, { visible: true })
+          assert.equal(await control.command('getValue', detailTitle), title)
+          await control.command('fill', detailTitle, { value: `${title}_EDITED` })
+          await control.command('press', detailTitle, { key: 'Enter' })
+          const edited = await waitForValue(
+            listIssues,
+            issues =>
+              issues.find(issue => issue.id === created.id && issue.title === `${title}_EDITED`),
+            'The existing native editor must save the same canonical Issue',
+            uiTimeoutMs
+          )
+          assert.equal(edited.id, created.id)
+          assert.ok(edited.version > created.version)
+          await control.command('waitFor', testId('collaboration-exp-pane-header-timeline'), {
+            text: edited.title,
+          })
+          await click(control, testId('collaboration-exp-pane-header-issue-details-back'))
+          await control.command('waitFor', testId('collaboration-exp-issue-details'), {
+            visible: false,
+          })
+          assert.equal((await listIssues()).filter(issue => issue.id === created.id).length, 1)
+          if (store === 'backend') {
+            await request(`/api/v1/loop-items/${created.id}`, undefined, { method: 'DELETE' })
+            assert.equal(
+              (await listIssues()).some(issue => issue.id === created.id),
+              false
+            )
+          }
+        }
+        assert.doesNotMatch(
+          (await readFile(createLogPath, 'utf8')).slice(createLogOffset),
+          /\[renderer-(?:warning|error)\]/,
+          'Real create, cancel and native Issue detail operations must emit no renderer warnings or errors'
         )
 
         await control.command('navigate', 'body', { value: '/collaboration-exp?view=assistant' })

@@ -9,6 +9,19 @@ const panes: ExperiencePane[] = [
 ]
 
 describe('experience pane width policy', () => {
+  it('matches the prototype navigation, list and home geometry at 817px', () => {
+    const layout = createDefaultPaneLayout(
+      [
+        { id: 'navigation', title: '', content: null, minWidth: 164, defaultWidth: 164 },
+        { id: 'list', title: '', content: null, minWidth: 240, defaultWidth: 300 },
+        { id: 'home', title: '', content: null, minWidth: 360, defaultWidth: 360 },
+      ],
+      817
+    )
+    expect((layout.navigation * 801) / 100).toBeCloseTo(164)
+    expect((layout.list * 801) / 100).toBeCloseTo(277)
+    expect((layout.home * 801) / 100).toBeCloseTo(360)
+  })
   it('shows exactly the newest layer through the 767px mobile boundary', () => {
     expect(selectVisiblePaneIds(panes, 390, null)).toEqual(['discussion'])
     expect(selectVisiblePaneIds(panes, 767, null)).toEqual(['discussion'])

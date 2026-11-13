@@ -4,7 +4,7 @@ export const EXPERIENCE_HEADER_HEIGHT = 60
 export const EXPERIENCE_SEPARATOR_WIDTH = 8
 export const EXPERIENCE_MOBILE_MAX_WIDTH = 767
 export const EXPERIENCE_DEFAULT_PANE_MIN_WIDTH = 280
-export const EXPERIENCE_DEFAULT_NAVIGATION_WIDTH = 160
+export const EXPERIENCE_DEFAULT_NAVIGATION_WIDTH = 164
 
 export function paneMinimumWidth(pane: ExperiencePane): number {
   return Math.max(1, pane.minWidth ?? EXPERIENCE_DEFAULT_PANE_MIN_WIDTH)

@@ -90,6 +90,23 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('private discussion pane', () => {
+  it('uses task context and the original source history without a second embedded pane heading', () => {
+    const onClose = vi.fn()
+    const { props } = fixture({ embedded: true, onClose })
+    render(<PrivateDiscussionPane {...props} />)
+    expect(screen.getByText(props.issue.title)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'private.title' })).toBeNull()
+    expect(screen.getByText('private.sourceScope')).toBeInTheDocument()
+    expect(mocks.panel).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        historySource: { turnId: 'turn-1', userMessageIds: ['native-user-1'] },
+        controlledAddress: { deviceId: 'device-1', taskId: 'task-1' },
+      })
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-private-close'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('does not reuse local reader identities after the current profile changes', () => {
     const { props } = fixture({
       project: project({ project_store: 'local', current_user_id: 7 }),

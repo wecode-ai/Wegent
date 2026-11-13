@@ -141,7 +141,80 @@ it('keeps a completed task static when its last execution projection still says 
       onRetry={vi.fn()}
     />
   )
-  expect(view.getByTestId('collaboration-exp-task-rhythm-completed').textContent).toBe('1')
-  expect(view.queryByTestId('collaboration-exp-task-rhythm-current')).toBeNull()
+  expect(view.queryByTestId('collaboration-exp-task-rhythm')).toBeNull()
   expect(view.getByTestId('collaboration-exp-task-EXP-1').querySelector('.animate-spin')).toBeNull()
+})
+
+it('keeps filters collapsed by default and exposes a real creation callback in its toolbar', () => {
+  const onCreate = vi.fn()
+  const onModeChange = vi.fn()
+  const view = render(
+    <TaskFilters
+      value={{ relevance: 'related', search: '', status: '', projectKey: '' }}
+      projects={projects}
+      statuses={[]}
+      onChange={vi.fn()}
+      onModeChange={onModeChange}
+      onCreate={onCreate}
+    />
+  )
+  expect(view.getByTestId('collaboration-exp-search-toggle').getAttribute('aria-expanded')).toBe(
+    'false'
+  )
+  expect(view.queryByTestId('collaboration-exp-filter-relevance')).toBeNull()
+  expect(view.queryByTestId('collaboration-exp-task-search')).toBeNull()
+  fireEvent.click(view.getByTestId('collaboration-exp-task-create'))
+  expect(onCreate).toHaveBeenCalledTimes(1)
+  fireEvent.click(view.getByTestId('collaboration-exp-task-view-mode'))
+  fireEvent.keyDown(view.getByTestId('collaboration-exp-task-view-mode-tasks'), {
+    key: 'ArrowDown',
+  })
+  expect(document.activeElement).toBe(view.getByTestId('collaboration-exp-task-view-mode-projects'))
+  fireEvent.click(view.getByTestId('collaboration-exp-task-view-mode-projects'))
+  expect(onModeChange).toHaveBeenCalledWith('projects')
+  fireEvent.click(view.getByTestId('collaboration-exp-search-toggle'))
+  expect(view.getByTestId('collaboration-exp-filter-relevance')).toBeTruthy()
+})
+
+it('opens an authorized project from the project mode using only visible task counts', () => {
+  const onOpenProject = vi.fn()
+  const view = render(
+    <TaskListView
+      rows={selectTaskRows(input)}
+      projects={projects}
+      statuses={[]}
+      filters={{ ...filters, projectKey: '', status: '' }}
+      mode="projects"
+      loading={false}
+      onFiltersChange={vi.fn()}
+      onSelect={vi.fn()}
+      onOpenProject={onOpenProject}
+      onRetry={vi.fn()}
+    />
+  )
+  const projectRow = view.getByTestId(`collaboration-exp-task-project-scope-${project.id}`)
+  expect(projectRow.textContent).toContain('1')
+  expect(view.queryByText('Secret title')).toBeNull()
+  expect(view.queryByTestId('collaboration-exp-task-row-EXP-1')).toBeNull()
+  fireEvent.click(projectRow)
+  expect(onOpenProject).toHaveBeenCalledWith(projects[0])
+})
+
+it('routes the project toolbar creation action to project creation', () => {
+  const onCreate = vi.fn()
+  const onCreateProject = vi.fn()
+  const view = render(
+    <TaskFilters
+      value={{ relevance: 'related', search: '', status: '', projectKey: '' }}
+      projects={projects}
+      statuses={[]}
+      mode="projects"
+      onChange={vi.fn()}
+      onCreate={onCreate}
+      onCreateProject={onCreateProject}
+    />
+  )
+  fireEvent.click(view.getByTestId('collaboration-exp-task-create'))
+  expect(onCreateProject).toHaveBeenCalledTimes(1)
+  expect(onCreate).not.toHaveBeenCalled()
 })

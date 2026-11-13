@@ -1,13 +1,15 @@
 import type { ReactNode } from 'react'
-import { ListTodo, Sparkles } from 'lucide-react'
+import { ListTodo, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import weworkLogo from '../../../../resources/icons/icon.png'
 
 export interface ExperienceNavigationProps {
   activeView: 'assistant' | 'tasks'
   onViewChange: (view: 'assistant' | 'tasks') => void
   projectNavigation?: ReactNode
   footer?: ReactNode
+  mobile?: boolean
 }
 
 export function ExperienceNavigation({
@@ -15,15 +17,22 @@ export function ExperienceNavigation({
   onViewChange,
   projectNavigation,
   footer,
+  mobile = false,
 }: ExperienceNavigationProps) {
   const { t } = useTranslation('collaborationExp')
   const items = [
-    { id: 'assistant', icon: Sparkles, label: t('shell.assistant') },
+    { id: 'assistant', icon: MessageSquare, label: t('shell.assistant') },
     { id: 'tasks', icon: ListTodo, label: t('shell.tasks') },
   ] as const
 
   return (
-    <nav className="experience-navigation" aria-label={t('shell.navigation')}>
+    <nav className="experience-navigation" data-mobile={mobile} aria-label={t('shell.navigation')}>
+      {!mobile ? (
+        <div className="experience-brand">
+          <img src={weworkLogo} alt="" />
+          <strong>Wework</strong>
+        </div>
+      ) : null}
       <div className="experience-navigation-primary">
         {items.map(({ id, icon: Icon, label }) => (
           <Button
@@ -35,7 +44,7 @@ export function ExperienceNavigation({
             data-testid={`collaboration-exp-navigation-${id}`}
             onClick={() => onViewChange(id)}
           >
-            <Icon size={16} aria-hidden="true" />
+            <Icon size={20} aria-hidden="true" />
             <span className="min-w-0 truncate">{label}</span>
           </Button>
         ))}

@@ -1,6 +1,8 @@
-import { ArrowUpRight, CirclePlay } from 'lucide-react'
+import { ArrowRight, Circle, LoaderCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { selectExperienceWorkSnapshot, type ExperienceTaskRow } from '../model'
+import { useTaskDescription } from './taskPresentation'
+import './TasksExperience.css'
 
 export function TaskRhythm({
   rows,
@@ -12,42 +14,51 @@ export function TaskRhythm({
   const { t } = useTranslation('collaborationExp')
   const snapshot = selectExperienceWorkSnapshot({ roles: [], work: [], rows })
   const current = snapshot.current?.taskRow
+  const description = useTaskDescription(current)
+  const Icon = current ? LoaderCircle : Circle
   return (
-    <section
+    <aside
       aria-label={t('tasks.rhythm.title')}
       data-testid="collaboration-exp-task-rhythm"
-      className="space-y-3 px-4 pb-3 pt-4"
+      data-live={Boolean(current)}
+      className="experience-task-home-pulse"
     >
-      <dl className="grid grid-cols-3 gap-3">
-        {(['waiting', 'running', 'completed'] as const).map(status => (
-          <div key={status} className="min-w-0">
-            <dt className="break-words text-sm text-text-secondary">
-              {t(`tasks.rhythm.${status}`)}
-            </dt>
-            <dd
-              className="heading-small mt-1 tabular-nums"
-              data-testid={`collaboration-exp-task-rhythm-${status}`}
-            >
-              {snapshot.counts[status]}
-            </dd>
-          </div>
-        ))}
-      </dl>
-      {current && (
+      <div className="experience-task-home-pulse-head">
+        <Icon
+          size={14}
+          aria-hidden="true"
+          className={current ? 'animate-spin motion-reduce:animate-none' : undefined}
+        />
+        <span>
+          <strong>{t(current ? 'tasks.home.progress' : 'tasks.home.idle')}</strong>
+          <small>{t('tasks.home.attention', { count: rows.length })}</small>
+        </span>
+      </div>
+      {current ? (
         <button
           type="button"
           data-testid="collaboration-exp-task-rhythm-current"
-          className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-muted keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-focus"
+          className="experience-task-home-live-work"
           onClick={() => onSelect(current)}
         >
-          <CirclePlay aria-hidden="true" className="size-4 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs text-text-muted">{t('tasks.rhythm.current')}</span>
-            <span className="block truncate text-sm font-medium">{current.title}</span>
-          </span>
-          <ArrowUpRight aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
+          <span>{t('tasks.rhythm.current')}</span>
+          <strong>{current.title}</strong>
+          <small>{description}</small>
+          <ArrowRight size={16} aria-hidden="true" />
         </button>
+      ) : (
+        <p>{t('tasks.home.emptyRhythm')}</p>
       )}
-    </section>
+      <dl className="experience-task-home-metrics">
+        {(['waiting', 'running', 'completed'] as const).map(status => (
+          <div key={status} data-tone={status}>
+            <dd data-testid={`collaboration-exp-task-rhythm-${status}`}>
+              {snapshot.counts[status]}
+            </dd>
+            <dt>{t(`tasks.rhythm.${status}`)}</dt>
+          </div>
+        ))}
+      </dl>
+    </aside>
   )
 }

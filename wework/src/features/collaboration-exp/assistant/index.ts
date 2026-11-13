@@ -1,4 +1,6 @@
 export { AssistantHome } from './AssistantHome'
+export { AssistantHomeToolbar } from './AssistantHomeToolbar'
+export type { AssistantHomePanel } from './types'
 export {
   AssistantConversationPane,
   type AssistantConversationPaneProps,

@@ -7,10 +7,11 @@ import { useExperienceTeamState } from './useExperienceTeamState'
 export interface AssistantTeamRelayProps {
   active: boolean
   projects: readonly ExperienceProjectData[]
+  compact?: boolean
 }
 
 /** The tasks surface uses the same data source as the assistant home. */
-export function AssistantTeamRelay({ active, projects }: AssistantTeamRelayProps) {
+export function AssistantTeamRelay({ active, projects, compact }: AssistantTeamRelayProps) {
   const { t } = useTranslation('collaborationExp')
   const { source, ownerId, snapshot, ready, error, refresh } = useExperienceTeamState(
     active,
@@ -19,6 +20,7 @@ export function AssistantTeamRelay({ active, projects }: AssistantTeamRelayProps
   return (
     <div data-testid="collaboration-exp-connected-team-relay">
       <TeamRelay
+        compact={compact}
         nodes={snapshot.team}
         ready={ready}
         managementAvailable={Boolean(active && source.settings && source.deviceId)}

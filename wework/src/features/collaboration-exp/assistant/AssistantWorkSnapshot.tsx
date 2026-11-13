@@ -1,4 +1,4 @@
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowRight, LoaderCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ExperienceWorkSnapshot, ExperienceWorkSnapshotItem } from '../model'
 
@@ -15,40 +15,56 @@ export function AssistantWorkSnapshot({
   const current = snapshot.current
   return (
     <section
-      className="experience-assistant-snapshot"
+      className="assistant-live-snapshot"
       data-testid="collaboration-exp-assistant-snapshot"
       aria-label={t('assistant.snapshot.title')}
       aria-busy={!ready}
+      data-live={ready && snapshot.counts.running > 0}
     >
-      <h2 className="text-sm font-medium text-text-secondary">{t('assistant.snapshot.title')}</h2>
-      <dl className="experience-work-counts">
-        {(['waiting', 'running', 'completed'] as const).map(state => (
-          <div key={state} data-state={state}>
-            <dt className="text-xs text-text-muted">{t(`assistant.snapshot.${state}`)}</dt>
-            <dd
-              className="text-lg font-medium tabular-nums"
-              data-testid={`collaboration-exp-assistant-count-${state}`}
-              aria-label={ready ? undefined : t('teamRelay.state.unknown')}
-            >
-              {ready ? snapshot.counts[state] : '—'}
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <div className="assistant-live-snapshot-head">
+        <span className="assistant-live-signal" aria-hidden="true" />
+        <span>
+          <strong className="text-sm">{t('assistant.snapshot.title')}</strong>
+          <small className="text-xs">
+            {t(
+              ready && current
+                ? 'assistant.snapshot.current'
+                : ready
+                  ? 'assistant.status.idle'
+                  : 'assistant.status.unknown'
+            )}
+          </small>
+        </span>
+      </div>
       {ready && current?.address && (
         <button
           type="button"
           data-testid="collaboration-exp-assistant-current"
           onClick={() => onOpen(current)}
-          className="experience-assistant-current"
+          className="assistant-live-work"
         >
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs text-text-muted">{t('assistant.snapshot.current')}</span>
-            <span className="block truncate text-sm">{current.title}</span>
+          <span className="assistant-live-work-label text-xs">
+            <LoaderCircle aria-hidden="true" className="size-4 shrink-0 motion-safe:animate-spin" />
+            <span>{t('assistant.snapshot.current')}</span>
           </span>
-          <ArrowUpRight aria-hidden="true" className="size-4 shrink-0" />
+          <strong className="text-sm">{current.title}</strong>
+          <ArrowRight size={16} aria-hidden="true" />
         </button>
       )}
+      <dl className="assistant-live-metrics">
+        {(['waiting', 'running', 'completed'] as const).map(state => (
+          <div key={state} data-state={state}>
+            <dd
+              className="text-lg font-semibold tabular-nums"
+              data-testid={`collaboration-exp-assistant-count-${state}`}
+              aria-label={ready ? undefined : t('teamRelay.state.unknown')}
+            >
+              {ready ? snapshot.counts[state] : '—'}
+            </dd>
+            <dt className="text-xs">{t(`assistant.snapshot.${state}`)}</dt>
+          </div>
+        ))}
+      </dl>
     </section>
   )
 }
