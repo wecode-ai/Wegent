@@ -1158,34 +1158,15 @@ class RealCloudEnvironment {
   }
 
   async startDuplicateAppDeviceIdentity() {
-    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
     const appDevice = await this.waitForConnectedAppDevice()
-    const home = join(resultDir, `duplicate-app-executor-home-${process.pid}`)
-    const codexHome = join(home, 'codex')
-    const logPath = join(resultDir, `duplicate-app-executor-${process.pid}.log`)
-    await writeCodexConfig(codexHome, this.modelServerUrl)
-    const env = this.executorEnv({
-      deviceId: appDevice.device_id,
-      deviceName: 'Wework E2E Duplicate App Device',
-      deviceType: 'app',
-      home,
-      codexHome,
-      logFile: `duplicate-app-executor-${process.pid}-runtime.log`,
-    })
     assert.ok(appDevice.app_device_id, 'The real App registration must expose its IPC address')
-    env.WEGENT_APP_IPC_DEVICE_ID = appDevice.app_device_id
-    const executor = spawn(this.executorBinary, [], {
-      cwd: weworkDir,
-      env,
-      // App mode owns a real IPC stdio connection and exits when its input closes.
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
-    ])
+    const { logPath } = await this.startAppDeviceContender(
+      appDevice.device_id,
+      'duplicate-app-executor',
+      {
+        appDeviceId: appDevice.app_device_id,
+      }
+    )
     const startedAt = Date.now()
     let matching = []
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
@@ -1201,7 +1182,7 @@ class RealCloudEnvironment {
     assert.equal(
       matching.length,
       2,
-      `The second real app Executor did not register; see ${logPath}`
+      `The second real App Executor did not register; see ${logPath}`
     )
     assert.equal(
       new Set(matching.map(device => device.execution_target_id)).size,
@@ -1211,6 +1192,38 @@ class RealCloudEnvironment {
     assert.equal(new Set(matching.map(device => device.runtime_instance_id)).size, 2)
     assert.ok(matching.every(device => device.app_device_id === appDevice.app_device_id))
     return appDevice
+  }
+
+  async startAppDeviceContender(deviceId, label, { appDeviceId, runtimeInstanceId }) {
+    assert.ok(this.executorBinary, 'The real Executor binary is not ready')
+    const name = `${label}-${process.pid}`
+    const home = join(resultDir, `${name}-home`)
+    const codexHome = join(home, 'codex')
+    const logPath = join(resultDir, `${name}.log`)
+    await writeCodexConfig(codexHome, this.modelServerUrl)
+    const env = this.executorEnv({
+      deviceId,
+      deviceName: 'Wework E2E Duplicate App Device',
+      deviceType: 'app',
+      home,
+      codexHome,
+      logFile: `${name}-runtime.log`,
+    })
+    env.WEGENT_APP_IPC_DEVICE_ID = appDeviceId
+    if (runtimeInstanceId) env.WEGENT_RUNTIME_INSTANCE_ID = runtimeInstanceId
+    const executor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env,
+      // App mode owns a real IPC stdio connection and exits when its input closes.
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    this.generatedRemoteExecutors.push(executor)
+    await Promise.all([
+      appendProcessOutput(executor.stdout, logPath),
+      appendProcessOutput(executor.stderr, logPath),
+    ])
+    return { executor, logPath }
   }
 
   async waitForDeviceType(deviceId, expectedType) {

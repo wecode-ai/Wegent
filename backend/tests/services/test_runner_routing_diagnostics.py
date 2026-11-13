@@ -92,9 +92,11 @@ def test_routing_context_does_not_reveal_an_unshared_device_name(
 
 @pytest.mark.parametrize("missing_scope", [None, "workspace", "project"])
 def test_issue_runner_denial_explains_exact_policy_or_grant_and_recovers(
-    test_db, routing_setup, missing_scope
+    test_db, test_admin_user, routing_setup, missing_scope
 ):
     user, devices, issue = routing_setup
+    # Shared authorization remains mandatory for another user's device.
+    devices[0].user_id = test_admin_user.id
     issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
     grant = None
     if missing_scope:
@@ -178,6 +180,7 @@ def test_denial_records_raw_grant_failure(test_db, routing_setup, caplog, scope,
             issue.cloud_project_id,
             user.id,
             "failing-agent",
+            automatic=True,
         )
 
     assert error.value.status_code == 422
@@ -290,6 +293,7 @@ def test_group_denial_identifies_member_or_disjoint_devices(
             issue_id=issue.id,
             user_id=user.id,
             selection=None,
+            automatic=True,
         )
 
     events = diagnostic_events(caplog)

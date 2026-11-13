@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -342,7 +342,9 @@ def _resolve_routing(
         policy, source = _user_policy(db, user_id, selected, bound_id, automatic)
     elif selected.execution_policy and selected.execution_policy != policy:
         raise routing_error("RUNNER_POLICY_FIXED", "The agent's runner policy is fixed")
-    candidates = _candidates(db, policy, project_id, user_id, agent_id)
+    candidates = _candidates(
+        db, policy, project_id, user_id, agent_id, automatic=automatic
+    )
     if bound_id:
         candidates = [item for item in candidates if str(item.id) == bound_id]
         if not candidates:
@@ -422,6 +424,8 @@ def _candidates(
     project_id: str,
     user_id: int,
     agent_id: str | None = None,
+    *,
+    automatic: bool = False,
 ) -> list[Kind]:
     """Filter authorized devices by policy and retain evidence when none match."""
     try:
@@ -432,18 +436,8 @@ def _candidates(
             "The triggering user no longer has permission to execute in the project",
         ) from error
     authorized_ids = execution_environment_ids(db, project_id, agent_id)
-    ids = authorized_ids.copy()
-    if policy.mode == "fixed":
-        ids &= {int(policy.environment_id)}
-    devices = (
-        db.query(Kind)
-        .filter(
-            Kind.id.in_(ids),
-            Kind.kind == "Device",
-            Kind.namespace == "default",
-            Kind.is_active.is_(True),
-        )
-        .all()
+    devices = _device_candidates(
+        db, authorized_ids, policy, user_id, allow_personal=not automatic
     )
     if not devices:
         log_environment_denial(
@@ -459,6 +453,79 @@ def _candidates(
             "No execution environment is authorized for this selection",
         )
     return devices
+
+
+def _device_candidates(
+    db: Session,
+    authorized_ids: set[int],
+    policy: ExecutionPolicy,
+    user_id: int,
+    *,
+    allow_personal: bool,
+) -> list[Kind]:
+    authority = Kind.id.in_(authorized_ids)
+    if allow_personal and policy.mode == "fixed":
+        authority = or_(
+            authority,
+            and_(Kind.id == int(policy.environment_id), Kind.user_id == user_id),
+        )
+    query = db.query(Kind).filter(
+        authority,
+        Kind.kind == "Device",
+        Kind.namespace == "default",
+        Kind.is_active.is_(True),
+    )
+    if policy.mode == "fixed":
+        query = query.filter(Kind.id == int(policy.environment_id))
+    return [
+        device
+        for device in query.all()
+        if device.id in authorized_ids or _personal_device_owner(device) == user_id
+    ]
+
+
+def _personal_device_owner(device: Kind) -> int | None:
+    payload = device.json if isinstance(device.json, dict) else {}
+    spec = payload.get("spec")
+    if isinstance(spec, dict) and spec.get("workspaceOwnerId"):
+        return None
+    return device.user_id
+
+
+def automatic_execution(execution: Any) -> bool:
+    return bool(
+        getattr(execution, "automation_run_id", None)
+        or (execution.runtime_origin_context or {}).get("run_id")
+    )
+
+
+def personal_execution_device(execution: Any, device: Kind) -> bool:
+    """Owner consent covers only manual, exact-device use, never a pool."""
+    if (
+        automatic_execution(execution)
+        or execution.assigner_user_id <= 0
+        or _personal_device_owner(device) != execution.assigner_user_id
+        or device.kind != "Device"
+        or device.namespace != "default"
+        or not device.is_active
+    ):
+        return False
+    selection = execution.runtime_selection
+    route = selection.get("runner_routing")
+    if not isinstance(route, dict):
+        return False
+    routes = [route, *selection.get("group_runner_requirements", {}).values()]
+    return all(
+        item.get("execution_policy", {}).get("mode") == "fixed"
+        and str(item["execution_policy"].get("environment_id")) == str(device.id)
+        for item in routes
+    )
+
+
+def execution_device_authorized(db: Session, execution: Any, device: Kind) -> bool:
+    return personal_execution_device(execution, device) or device.id in (
+        execution_environment_ids(db, execution.cloud_project_id, execution.agent_id)
+    )
 
 
 def _resolve_model(
@@ -530,6 +597,7 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
                 execution.cloud_project_id,
                 execution.assigner_user_id,
                 agent_id,
+                automatic=automatic_execution(execution),
             )
             model = ModelIdentity.model_validate(route["model"])
             if model.source == "cloud":
@@ -703,20 +771,8 @@ def validate_agent_policies(
         if project_id
         else visible_environment_ids(db, user_id)
     )
-    ids = authorized_ids.copy()
-    if policy.mode == "fixed":
-        ids &= {int(policy.environment_id)}
-    elif policy.mode == "project_pool" and project_id:
-        ids &= explicit_project_environment_ids(db, project_id)
-    candidates = (
-        db.query(Kind)
-        .filter(
-            Kind.id.in_(ids),
-            Kind.kind == "Device",
-            Kind.namespace == "default",
-            Kind.is_active.is_(True),
-        )
-        .all()
+    candidates = _device_candidates(
+        db, authorized_ids, policy, user_id, allow_personal=True
     )
     if policy.mode == "fixed" and not candidates:
         if project_id:

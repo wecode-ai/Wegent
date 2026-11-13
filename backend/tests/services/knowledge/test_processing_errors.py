@@ -61,3 +61,20 @@ def test_map_indexing_collection_dimension_mismatch_stays_sanitized() -> None:
     )
     for leaked in ("milvus", "localhost", "http", "secret", "0.5"):
         assert leaked not in payload
+
+
+def test_map_oversized_row_retains_error_code_without_exposing_content() -> None:
+    error = RemoteRagGatewayError(
+        "private body",
+        code="milvus_row_too_large",
+        retryable=False,
+        status_code=400,
+        details={"node_id": "node-1", "serialized_bytes": 12000},
+    )
+    result = map_indexing_exception(error, generation=2)
+    assert result.code == "milvus_row_too_large"
+    assert result.retryable is False
+    assert result.stage == DocumentProcessingStage.INDEXING
+    assert result.generation == 2
+    assert "not truncated" in result.message
+    assert "private body" not in result.message

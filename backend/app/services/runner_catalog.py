@@ -113,7 +113,11 @@ async def annotate_queue(db: Session, rows: list[dict]) -> None:
 
     from app.models.loop_item_execution import LoopItemExecution
     from app.schemas.runner_routing import ExecutionPolicy
-    from app.services.runner_routing import _candidates, eligible_runner
+    from app.services.runner_routing import (
+        _candidates,
+        automatic_execution,
+        eligible_runner,
+    )
 
     pending = {}
     devices_by_id = {}
@@ -131,6 +135,8 @@ async def annotate_queue(db: Session, rows: list[dict]) -> None:
                 ExecutionPolicy.model_validate(snapshot["execution_policy"]),
                 execution.cloud_project_id,
                 execution.assigner_user_id,
+                execution.agent_id,
+                automatic=automatic_execution(execution),
             )
             candidates = [
                 device
