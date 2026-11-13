@@ -398,22 +398,24 @@ async def test_dispatch_websocket_uses_git_credentials_configured_on_device() ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("online", "fail_first_write", "initial_status", "terminal_status"),
+    ("online", "failing_write", "initial_status", "terminal_status"),
     [
-        (False, False, "PENDING", "FAILED"),
-        (True, False, "PENDING", "FAILED"),
-        (False, True, "PENDING", "FAILED"),
-        (False, True, "CANCELLED", "CANCELLED"),
+        (False, None, "PENDING", "FAILED"),
+        (True, None, "PENDING", "FAILED"),
+        (False, "subtask", "PENDING", "FAILED"),
+        (False, "task", "PENDING", "FAILED"),
+        (False, None, "CANCELLED", "CANCELLED"),
     ],
 )
 async def test_device_dispatch_failure_persists_terminal_state(
-    test_db, online, fail_first_write, initial_status, terminal_status
+    test_db, online, failing_write, initial_status, terminal_status
 ):
     from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
 
     from app.models.subtask import Subtask, SubtaskStatus
     from app.models.task import TaskResource
-    from app.stores.tasks import subtask_store
+    from app.stores.tasks import subtask_store, task_store
 
     task = TaskResource(
         user_id=9,
@@ -447,6 +449,7 @@ async def test_device_dispatch_failure_persists_terminal_state(
     test_db.add(subtask)
     test_db.commit()
     subtask_id = subtask.id
+    task_id = task.id
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(
         task_id=task.id,
@@ -473,17 +476,32 @@ async def test_device_dispatch_failure_persists_terminal_state(
         )
 
     update = subtask_store.update_fields_if_status
+    update_task = task_store.update_json
+    connection = test_db.get_bind()
+
+    def session():
+        return Session(bind=connection, join_transaction_mode="create_savepoint")
+
     failed_once = False
 
     def persist(db, **kwargs):
         nonlocal failed_once
-        if fail_first_write and not failed_once:
+        if failing_write == "subtask" and not failed_once:
             failed_once = True
             raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
         return update(db, **kwargs)
 
+    def persist_task(db, **kwargs):
+        nonlocal failed_once
+        if failing_write == "task" and not failed_once:
+            failed_once = True
+            assert db.get(Subtask, subtask_id).status == SubtaskStatus.FAILED
+            raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
+        return update_task(db, **kwargs)
+
     with (
         patch.object(subtask_store, "update_fields_if_status", side_effect=persist),
+        patch.object(task_store, "update_json", side_effect=persist_task),
         patch(
             "app.services.device_chat_task_service.collect_completed_result",
             AsyncMock(return_value={}),
@@ -492,8 +510,8 @@ async def test_device_dispatch_failure_persists_terminal_state(
             "app.services.device_chat_task_service.trigger_ai_response_unified",
             side_effect=dispatch_turn,
         ),
-        patch("app.services.execution.dispatcher.SessionLocal", return_value=test_db),
-        patch("app.db.session.SessionLocal", return_value=test_db),
+        patch("app.services.execution.dispatcher.SessionLocal", side_effect=session),
+        patch("app.db.session.SessionLocal", side_effect=session),
         patch(
             "app.services.chat.storage.session_manager.cleanup_streaming_state",
             AsyncMock(),
@@ -525,13 +543,13 @@ async def test_device_dispatch_failure_persists_terminal_state(
             auth_token="",
         )
 
+    test_db.expire_all()
     subtask = test_db.get(Subtask, subtask_id)
     assert subtask is not None
-    assert failed_once == fail_first_write
+    assert failed_once == (failing_write is not None)
     assert subtask.status == SubtaskStatus(terminal_status)
     assert (
-        test_db.get(TaskResource, subtask.task_id).json["status"]["status"]
-        == terminal_status
+        test_db.get(TaskResource, task_id).json["status"]["status"] == terminal_status
     )
     if online:
         delivery.assert_awaited_once()

@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { expect } from '@playwright/test'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
-import { checked, expect, test } from '../../fixtures/recent-team-history'
+import { checked, test } from '../../fixtures/recent-team-history'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 

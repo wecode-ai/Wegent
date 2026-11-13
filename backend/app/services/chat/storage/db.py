@@ -142,6 +142,21 @@ class DatabaseHandler:
                 if not subtask:
                     return None
 
+                task_for_failure = None
+                if status == "FAILED" and expected_status is not None:
+                    task_for_failure = task_stores.task_store.get_by_id_for_update(
+                        db, task_id=subtask.task_id
+                    )
+                    if (
+                        task_for_failure is None
+                        or task_for_failure.kind != "Task"
+                        or task_for_failure.is_active
+                        not in TaskResource.is_active_query()
+                        or (task_for_failure.json.get("status") or {}).get("status")
+                        in {"CANCELLING", "CANCELLED", "DELETE"}
+                    ):
+                        return None
+
                 fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 
                 if result is not None:
@@ -233,6 +248,10 @@ class DatabaseHandler:
                         db, subtask=subtask, **fields
                     )
                 task_id = subtask.task_id
+                if task_for_failure is not None:
+                    # The conditional bulk update does not synchronize the identity map.
+                    db.refresh(subtask)
+                    return self._derive_task_status(db, task_for_failure, subtask_id)
             # Context manager commits here, then update task status
             return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception:
@@ -245,84 +264,80 @@ class DatabaseHandler:
         self, task_id: int, changed_subtask_id: int | None = None
     ) -> TaskStatusUpdateResult:
         """Update task status based on subtask status using collaboration strategy."""
-        from app.schemas.kind import Task
-        from app.services.adapters.collaboration_strategy import (
-            CollaborationStrategy,
-            CollaborationStrategyFactory,
-        )
-
-        update_result = TaskStatusUpdateResult()
         try:
             with _db_session() as db:
                 task = task_stores.task_store.get_task_by_states(
-                    db,
-                    task_id=task_id,
-                    states=TaskResource.is_active_query(),
+                    db, task_id=task_id, states=TaskResource.is_active_query()
                 )
-                if not task:
-                    return update_result
-
-                subtasks = task_stores.subtask_store.list_assistant_by_task(
-                    db,
-                    task_id=task_id,
-                    owner_user_id=task.user_id,
-                )
-                if not subtasks:
-                    return update_result
-
-                task_crd = Task.model_validate(task.json)
-                last_subtask = subtasks[-1]
-                changed_subtask = None
-                if changed_subtask_id is not None:
-                    changed_subtask = next(
-                        (
-                            subtask
-                            for subtask in subtasks
-                            if subtask.id == changed_subtask_id
-                        ),
-                        None,
-                    )
-                    if changed_subtask is None:
-                        changed_subtask = task_stores.subtask_store.get_by_id(
-                            db, subtask_id=changed_subtask_id
-                        )
-
-                if task_crd.status:
-                    # Use collaboration strategy to determine task status
-                    strategy: CollaborationStrategy = (
-                        CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
-                    )
-                    self._apply_status_update(
-                        db, task_id, task_crd.status, last_subtask, strategy
-                    )
-                    task_crd.status.updatedAt = datetime.now()
-
-                    # Check if pipeline should auto-advance to next stage
-                    advance_subtask = changed_subtask or last_subtask
-                    advance_info = strategy.get_auto_advance_info(
-                        db,
-                        task_id,
-                        advance_subtask.id,
-                        advance_subtask.status.value,
-                    )
-                    if advance_info:
-                        task_crd.status.status = "PENDING"
-                        task_crd.status.progress = 0
-                        update_result.auto_advance = PipelineAutoAdvanceIntent(
-                            task_id=task.id,
-                            user_id=task.user_id,
-                            completed_subtask_id=advance_subtask.id,
-                            advance_info=advance_info,
-                        )
-
-                task_stores.task_store.update_json(
-                    db, task=task, payload=task_crd.model_dump(mode="json")
-                )
-
+                if task is None:
+                    return TaskStatusUpdateResult()
+                return self._derive_task_status(db, task, changed_subtask_id)
         except Exception:
             logger.exception("Error updating task %s status", task_id)
             return TaskStatusUpdateResult()
 
+    def _derive_task_status(
+        self, db: Session, task: TaskResource, changed_subtask_id: int | None
+    ) -> TaskStatusUpdateResult:
+        from app.schemas.kind import Task
+        from app.services.adapters.collaboration_strategy import (
+            CollaborationStrategyFactory,
+        )
+
+        task_id = task.id
+        update_result = TaskStatusUpdateResult()
+        subtasks = task_stores.subtask_store.list_assistant_by_task(
+            db,
+            task_id=task_id,
+            owner_user_id=task.user_id,
+        )
+        if not subtasks:
+            return update_result
+
+        task_crd = Task.model_validate(task.json)
+        last_subtask = subtasks[-1]
+        changed_subtask = None
+        if changed_subtask_id is not None:
+            changed_subtask = next(
+                (subtask for subtask in subtasks if subtask.id == changed_subtask_id),
+                None,
+            )
+            if changed_subtask is None:
+                changed_subtask = task_stores.subtask_store.get_by_id(
+                    db, subtask_id=changed_subtask_id
+                )
+
+        if task_crd.status:
+            # Use collaboration strategy to determine task status
+            strategy: CollaborationStrategy = (
+                CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
+            )
+            self._apply_status_update(
+                db, task_id, task_crd.status, last_subtask, strategy
+            )
+            task_crd.status.updatedAt = datetime.now()
+
+            # Check if pipeline should auto-advance to next stage
+            advance_subtask = changed_subtask or last_subtask
+            advance_info = strategy.get_auto_advance_info(
+                db,
+                task_id,
+                advance_subtask.id,
+                advance_subtask.status.value,
+            )
+            if advance_info:
+                task_crd.status.status = "PENDING"
+                task_crd.status.progress = 0
+                update_result.auto_advance = PipelineAutoAdvanceIntent(
+                    task_id=task.id,
+                    user_id=task.user_id,
+                    completed_subtask_id=advance_subtask.id,
+                    advance_info=advance_info,
+                )
+
+        task_stores.task_store.update_json(
+            db, task=task, payload=task_crd.model_dump(mode="json")
+        )
         return update_result
 
     def _apply_status_update(
