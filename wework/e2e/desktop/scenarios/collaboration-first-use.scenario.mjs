@@ -63,8 +63,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await capture(control, 'collaboration-first-use-01-welcome.png')
 
-      await control.command('click', scoped('[data-testid="collaboration-first-project-create"]'))
-      await control.command('click', '[data-testid="collaboration-first-project-create-folder"]')
+      const projectMenuTrigger = scoped(
+        '[data-testid="collaboration-first-project-create"][aria-haspopup="menu"]'
+      )
+      await control.command('waitFor', projectMenuTrigger, { timeoutMs: uiTimeoutMs })
+      await control.command('click', projectMenuTrigger)
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="collaboration-first-project-create-folder"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await capture(control, 'collaboration-first-use-02-workspace.png')
       await completeLocalCollaborationFolderImport(control, PROJECT_NAME)
       await control.command('waitFor', scoped('[data-testid="collaboration-empty-project"]'), {

@@ -148,7 +148,14 @@ for await (const line of readline.createInterface({ input: process.stdin, crlfDe
       if (request.params.name === 'change_count') heartbeats++
       result = {
         content: [{ type: 'text', text: 'Counter ready' }],
-        structuredContent: { count: request.params.name === 'change_count' ? heartbeats : count },
+        structuredContent: {
+          count:
+            request.params.name === 'model_only'
+              ? 0
+              : request.params.name === 'change_count'
+                ? heartbeats
+                : count,
+        },
         _meta: {
           privateMarker: 'ui-only-marker',
           integrity: { manifest, sha256: manifestDigest },
