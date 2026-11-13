@@ -151,7 +151,16 @@ export function createDesktopScenario(options) {
           true,
           'The parent remains active while waiting on its native child'
         )
-        await send(NEXT)
+        // Busy ordinary sends queue; explicitly steer the still-active parent.
+        await control.command(
+          'fill',
+          `${CHAT} [data-testid="chat-message-input"][contenteditable="true"]`,
+          {
+            value: NEXT,
+          }
+        )
+        await control.command('clickWhenEnabled', `${CHAT} [data-testid="send-mode-menu-button"]`)
+        await control.command('clickWhenEnabled', '[data-testid="guide-current-turn-option"]')
         await control.command('waitFor', `${CHAT} [data-testid="message-assistant"]`, {
           text: '第二句话已收到',
           timeoutMs: options.modelResponseTimeoutMs,

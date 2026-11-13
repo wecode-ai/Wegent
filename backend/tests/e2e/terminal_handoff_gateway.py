@@ -29,6 +29,10 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from tests.e2e.terminal_handoff_frames import (
+    assert_intermediate_frames,
+    assert_recovered_terminal_frames,
+)
 
 T = TypeVar("T")
 
@@ -491,7 +495,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertIn(intent, inflight["metadata"]["labels"])
             self.assertEqual(inflight["status"]["status"], "RUNNING")
             if rust:
-                self._assert_intermediate_frames(socket_messages, task_id, subtask_id)
+                assert_intermediate_frames(self, socket_messages, task_id, subtask_id)
             self.assertTrue(self.redis.exists(lease_key))
             release = self._json(
                 self.model.post("/stream-rules/release", json={"matchText": answer})
@@ -763,37 +767,9 @@ class TerminalHandoffGateway(unittest.TestCase):
         finally:
             self.redis.execute_command("ACL", "SETUSER", "default", "+publish")
 
-        frames: dict[str, list[dict]] = {"done": [], "chat:done": [], "task:status": []}
-
-        def recovered() -> bool:
-            message = subscription.get_message(timeout=0.1)
-            if message and message["type"] == "message":
-                data = json.loads(message["data"])
-                if data.get("type") == "done":
-                    frames["done"].append(data)
-                elif data.get("event") in {"chat:done", "task:status"}:
-                    frame = data["data"][0]
-                    if frame.get("subtask_id") == assistant_id or (
-                        frame.get("task_id") == task_id
-                        and frame.get("status") == "COMPLETED"
-                    ):
-                        frames[data["event"]].append(frame)
-            return (
-                all(frames.values())
-                and marker not in self._snapshot(task_id)[0]["metadata"]["labels"]
-            )
-
-        self._wait_for(recovered)
-        self.assertEqual(
-            {name: len(events) for name, events in frames.items()},
-            {
-                "done": 1,
-                "chat:done": 1,
-                "task:status": 1,
-            },
+        assert_recovered_terminal_frames(
+            self, subscription, task_id, assistant_id, marker, second
         )
-        self.assertEqual(frames["done"][0]["result"]["value"], second)
-        self.assertEqual(len(self._model_requests()), 1)
 
     @contextmanager
     def _reject_terminal_write(self, task_id: int, subtask_id: int) -> Iterator[None]:
@@ -819,34 +795,6 @@ class TerminalHandoffGateway(unittest.TestCase):
             with SessionLocal() as db:
                 db.execute(text(f"DROP TRIGGER {name}"))
                 db.commit()
-
-    def _assert_intermediate_frames(
-        self, subscription: Any, task_id: int, subtask_id: int
-    ) -> None:
-        statuses: list[str] = []
-        stage_done: list[int] = []
-
-        def received() -> bool:
-            message = subscription.get_message(timeout=0.1)
-            if message and message["type"] == "message":
-                frame = json.loads(message["data"])
-                data = frame["data"][0]
-                if data.get("task_id") == task_id:
-                    if (
-                        frame["event"] == "task:status"
-                        and frame["room"] == f"user:{self.user_id}"
-                    ):
-                        statuses.append(data["status"])
-                    elif (
-                        frame["event"] == "chat:done"
-                        and frame["room"] == f"task:{task_id}"
-                    ):
-                        stage_done.append(data["subtask_id"])
-            return bool(stage_done and statuses and statuses[-1] == "RUNNING")
-
-        self._wait_for(received)
-        self.assertEqual(statuses, ["PENDING", "RUNNING"])
-        self.assertEqual(stage_done, [subtask_id])
 
     def test_cancel_endpoint_settles_active_sse_with_partial_content(self) -> None:
         self._cancel_active_stream(terminal_arrives_first=False)
