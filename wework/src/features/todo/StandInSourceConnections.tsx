@@ -60,6 +60,8 @@ export function StandInSourceConnections({
   const [error, setError] = useState<{ message: string; code?: unknown } | null>(null)
   const [searched, setSearched] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
+  const authorizationRequired =
+    provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
   const latest = useRef({ role, onChange })
   useEffect(() => {
     latest.current = { role, onChange }
@@ -126,6 +128,15 @@ export function StandInSourceConnections({
     }
   }
   const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
+  const closeExclusionEditor = () => {
+    searchSequence.current += 1
+    setExcluding(null)
+    setSelection([])
+    setResults([])
+    setNextCursor(undefined)
+    setSearched(false)
+    setError(null)
+  }
   const isConnected = (row: Connection) =>
     excluding
       ? rows
@@ -137,6 +148,17 @@ export function StandInSourceConnections({
   const add = (items: Connection[]) => {
     const current = latest.current
     if (excluding) {
+      if (
+        !current.role.connections?.some(
+          row =>
+            row.providerId === provider.id &&
+            row.scope === 'all' &&
+            identity(row) === identity(excluding)
+        )
+      ) {
+        closeExclusionEditor()
+        return
+      }
       current.onChange({
         ...current.role,
         connections: current.role.connections?.map(row => {
@@ -153,11 +175,7 @@ export function StandInSourceConnections({
           return { ...row, excludedResources }
         }),
       })
-      setExcluding(null)
-      setSelection([])
-      setResults([])
-      setNextCursor(undefined)
-      setSearched(false)
+      closeExclusionEditor()
       return
     }
     let connections = [...(current.role.connections ?? [])]
@@ -295,7 +313,10 @@ export function StandInSourceConnections({
             data-testid={`${prefix}-remove-${row.id}`}
             aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
             disabled={disabled}
-            onClick={() => updateRows(rows.filter(value => value !== row))}
+            onClick={() => {
+              if (excluding && identity(excluding) === identity(row)) closeExclusionEditor()
+              updateRows(rows.filter(value => value !== row))
+            }}
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
@@ -334,7 +355,7 @@ export function StandInSourceConnections({
               <button
                 type="button"
                 data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
-                disabled={disabled || busy}
+                disabled={disabled || busy || authorizationRequired}
                 onClick={() => {
                   searchSequence.current += 1
                   setAdding(false)
@@ -358,7 +379,7 @@ export function StandInSourceConnections({
       ))}
     </div>
   )
-  if (provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required')
+  if (authorizationRequired)
     return (
       <section className="space-y-4" data-testid={`${prefix}-authorization`}>
         <StandInConnectionHeader
@@ -427,14 +448,7 @@ export function StandInSourceConnections({
               <button
                 type="button"
                 data-testid={`${prefix}-blacklist-cancel`}
-                onClick={() => {
-                  searchSequence.current += 1
-                  setExcluding(null)
-                  setSelection([])
-                  setResults([])
-                  setNextCursor(undefined)
-                  setSearched(false)
-                }}
+                onClick={closeExclusionEditor}
                 className="min-h-11 text-sm underline md:min-h-8"
               >
                 {t('standIn.workspace.blacklist_cancel')}

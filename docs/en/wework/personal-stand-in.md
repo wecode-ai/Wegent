@@ -170,7 +170,7 @@ Select DingTalk in the profile's connection sources. By default, intake includes
 
 <a id="dingtalk-blacklist"></a>
 
-In these DingTalk source settings, both all-group mentions and all-contact direct messages offer **Blacklist → Add to blacklist**. Search for groups or contacts, select them, click **Add selected**, then **Save** in settings to apply; cancelling settings discards changes. Remove an entry and save to resume receiving future messages without importing messages from the excluded period. Each blacklist applies only to the current identity, account and source kind, including dispatch of messages that have not been handled. It does not delete existing work or change conversation read or operation permissions.
+In these DingTalk source settings, both all-group mentions and all-contact direct messages offer **Blacklist → Add to blacklist**. Search for groups or contacts, select them, click **Add selected**, then **Save** in settings to apply; cancelling settings discards changes. Remove an entry and save to resume intake. Messages collected while the blacklist is active are filtered and the collection checkpoint advances. If the device is offline or collection fails during that period, messages not yet collected may still be received after the entry is removed. Each blacklist applies only to the current identity, account and source kind, including dispatch of messages that have not been handled. It does not delete existing work or change conversation read or operation permissions.
 
 <a id="dingtalk-group-message-scope"></a>
 

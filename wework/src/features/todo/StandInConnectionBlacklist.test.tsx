@@ -83,3 +83,97 @@ it.each(['group', 'direct'])(
     expect(onChange).toHaveBeenCalledTimes(2)
   }
 )
+
+function renderAllGroup({
+  status = 'ready',
+  search = vi.fn(),
+}: { status?: string; search?: ReturnType<typeof vi.fn> } = {}) {
+  const source = {
+    providerId: provider.id,
+    profile: 'corp',
+    kind: 'group',
+    id: '*',
+    scope: 'all' as const,
+    name: 'All groups',
+    policy: { automatic: true, askBeforeAct: true },
+    excludedResources: [{ id: 'saved', name: 'Saved exclusion' }],
+  }
+  const onChange = vi.fn()
+  function Fixture() {
+    const [role, setRole] = useState<StandInRole>({
+      ...newStandInRole('device'),
+      connections: [source],
+    })
+    return (
+      <StandInSourceConnections
+        role={role}
+        provider={{ ...provider, availability: { status } }}
+        api={{ searchConnectionResources: search } as unknown as StandInExecutorApi}
+        deviceId="device"
+        localDeviceId="device"
+        disabled={false}
+        onChange={next => {
+          onChange(next)
+          setRole(next)
+        }}
+      />
+    )
+  }
+  render(<Fixture />)
+  return { onChange }
+}
+
+it('closes the blacklist editor and ignores its pending search when its connection is removed', async () => {
+  type Result = Awaited<ReturnType<StandInExecutorApi['searchConnectionResources']>>
+  let resolve!: (value: Result) => void
+  const search = vi.fn().mockReturnValue(
+    new Promise<Result>(done => {
+      resolve = done
+    })
+  )
+  const { onChange } = renderAllGroup({ search })
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('stand-in-dingtalk-blacklist-add-group-corp'))
+  await user.type(screen.getByTestId('stand-in-dingtalk-query'), 'pending')
+  await user.click(screen.getByTestId('stand-in-dingtalk-search'))
+  await user.click(screen.getByTestId('stand-in-dingtalk-remove-*'))
+  expect(screen.queryByTestId('stand-in-dingtalk-blacklist-cancel')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-dingtalk-kind')).toBeInTheDocument()
+  expect(onChange).toHaveBeenCalledOnce()
+  expect(onChange.mock.calls[0][0].connections).toEqual([])
+  const { act } = await import('@testing-library/react')
+  await act(async () =>
+    resolve({
+      items: [
+        {
+          id: 'late',
+          name: 'Late result',
+          profile: 'corp',
+          kind: 'group',
+          providerId: provider.id,
+        },
+      ],
+    })
+  )
+  expect(screen.queryByTestId('stand-in-dingtalk-result-late')).not.toBeInTheDocument()
+  expect(onChange).toHaveBeenCalledOnce()
+})
+
+it.each(['provider', 'search'])(
+  'disables blacklist search during %s authorization recovery while retaining removal',
+  async origin => {
+    renderAllGroup({
+      status: origin === 'provider' ? 'auth_required' : 'ready',
+      search: vi.fn().mockRejectedValue({ code: 'connector_auth_required' }),
+    })
+    const user = userEvent.setup()
+    if (origin === 'search') {
+      await user.click(screen.getByTestId('stand-in-dingtalk-blacklist-add-group-corp'))
+      await user.type(screen.getByTestId('stand-in-dingtalk-query'), 'group')
+      await user.click(screen.getByTestId('stand-in-dingtalk-search'))
+    }
+    expect(await screen.findByTestId('stand-in-dingtalk-authorization')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-dingtalk-blacklist-add-group-corp')).toBeDisabled()
+    expect(screen.getByTestId('stand-in-dingtalk-blacklist-remove-group-corp-saved')).toBeEnabled()
+  }
+)
