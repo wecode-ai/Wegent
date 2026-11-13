@@ -61,7 +61,8 @@ const confirmationSubmit = document.querySelector('#startup-confirmation-submit'
 const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
 const brandAnimation = window.createStartupBrandAnimation(
   document.querySelector('#startup-brand-canvas'),
-  document.querySelector('#startup-status')
+  document.querySelector('#startup-status'),
+  [[slowElement], [timeoutElement, timeoutActionsElement]]
 )
 const isChinese = navigator.language.toLowerCase().startsWith('zh')
 
@@ -77,6 +78,7 @@ let pendingResetMode = null
 let actionPending = false
 let confirmationTrigger = null
 let toastTimer = 0
+let toastSequence = 0
 let progressTimer = 0
 let progressFrame = null
 let displayedProgress = 0
@@ -173,6 +175,7 @@ function showToast(message) {
   if (!toastElement) return
   if (toastTimer) window.clearTimeout?.(toastTimer)
   toastElement.textContent = message
+  toastElement.dataset.sequence = String(++toastSequence)
   toastElement.hidden = false
   toastTimer = window.setTimeout(() => {
     toastElement.hidden = true
@@ -558,6 +561,7 @@ async function runRecoveryAction(action, ...args) {
 
 setLocalizedActionCopy()
 renderLocalizedStaticCopy()
+brandAnimation.refresh()
 disablePluginButton.addEventListener('click', () => {
   if (failedPluginName) void runRecoveryAction('disablePlugin', failedPluginName)
 })

@@ -23,6 +23,7 @@ mod stand_in_dispatches;
 pub use human_requests::IssueHumanRequestScope;
 mod issue_badges;
 pub mod milestones;
+mod my_work;
 mod ordering;
 #[path = "project_coordination.rs"]
 mod project_coordination;
@@ -227,7 +228,8 @@ const TASK_BINDING_COLUMNS: &str = "
             json_extract(metadata, '$.human_assignment_id'),
             json_extract(metadata, '$.dispatch_id'),
             json_extract(metadata, '$.dispatch_round_id'),
-            json_extract(metadata, '$.assignment_id')
+            json_extract(metadata, '$.assignment_id'),
+            json_extract(metadata, '$.stand_in_pending')
 ";
 
 struct RuntimeProjectionTask {

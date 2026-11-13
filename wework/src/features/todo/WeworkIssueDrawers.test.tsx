@@ -350,7 +350,10 @@ function Project({
       services={
         {
           teamApi: { listTeams: vi.fn(async () => []) },
-          standInApi: { readTask: vi.fn(async () => ({ success: true })) },
+          standInApi: {
+            deviceIdentity: vi.fn(async () => ({ backendDeviceId: 'device' })),
+            readTask: vi.fn(async () => ({ success: true })),
+          },
         } as never
       }
       runtimeWork={runtimeWork}
@@ -362,7 +365,7 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
-  it('settles the Issue start before execution and never writes it after creation', async () => {
+  it('binds before execution and advances the Issue only after task creation is accepted', async () => {
     const source = { ...issue, tags: [], version: 3 }
     let finishUpdate!: (value: typeof source) => void
     const update = new Promise<typeof source>(resolve => {
@@ -384,18 +387,23 @@ describe('Wework Issue conversation drawers', () => {
         return rollback
       }
     )
+    await act(async () => {
+      await preparation
+    })
+    expect(runtimePort.bindTask).toHaveBeenCalledOnce()
+    expect(prepared).toBe(true)
+    expect(issues.get).not.toHaveBeenCalled()
+    expect(issues.update).not.toHaveBeenCalled()
+    const completion = chatCompletions.get('new')!(address, null, null)
     await waitFor(() =>
       expect(issues.update).toHaveBeenCalledWith(issue.id, {
         version: 3,
         status: 'in_progress',
       })
     )
-    expect(runtimePort.bindTask).toHaveBeenCalledOnce()
-    expect(prepared).toBe(false)
     await act(async () => {
       finishUpdate({ ...source, status: 'in_progress', version: 4 })
-      await preparation
-      await chatCompletions.get('new')!(address, null, null)
+      await completion
     })
     expect(prepared).toBe(true)
     expect(issues.get).toHaveBeenCalledOnce()
@@ -405,6 +413,25 @@ describe('Wework Issue conversation drawers', () => {
       if (rollback) await rollback()
     })
     expect(runtimePort.unbindTask).toHaveBeenCalledOnce()
+  })
+
+  it('leaves the Issue untouched when a prepared execution is rolled back without acceptance', async () => {
+    const issues = { get: vi.fn(), update: vi.fn() }
+    const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
+    render(<Project issues={issues} runtimePort={runtimePort} />)
+    await userEvent.click(screen.getByText('Open Issue'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    await act(async () => {
+      const rollback = await chatPreparations.get('new')!(
+        { deviceId: 'device', taskId: 'rejected-task' },
+        null
+      )
+      await rollback?.()
+    })
+    expect(runtimePort.bindTask).toHaveBeenCalledOnce()
+    expect(runtimePort.unbindTask).toHaveBeenCalledOnce()
+    expect(issues.get).not.toHaveBeenCalled()
+    expect(issues.update).not.toHaveBeenCalled()
   })
 
   it('does not update the Issue when binding the task is denied', async () => {
