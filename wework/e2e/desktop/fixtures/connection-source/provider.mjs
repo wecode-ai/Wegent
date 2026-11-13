@@ -49,6 +49,20 @@ export async function apply(ctx) {
         return { cursor: '0' }
       },
       async collect(context, { source, checkpoint }) {
+        if (source.id === 'archive-record') {
+          const result = await context.mcp.callTool('source', {
+            server: source.server,
+            tool: 'read_record',
+            arguments: { query: source.id },
+          })
+          if (result.isError) throw new Error('Archive source record read failed')
+          const events = JSON.parse(result.structuredContent.value)
+          return {
+            events: events.slice(Number(checkpoint.cursor)),
+            nextCheckpoint: { cursor: String(events.length) },
+            hasMore: false,
+          }
+        }
         if (source.id === 'versioned-record') {
           const result = await context.mcp.callTool('source', {
             server: source.server,
