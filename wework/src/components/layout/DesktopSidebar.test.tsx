@@ -2731,6 +2731,7 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('project-menu-7'))
+    expect(screen.getByTestId('archive-project-conversations-7')).toHaveTextContent('归档所有聊天')
     await user.click(screen.getByTestId('archive-project-conversations-7'))
 
     const dialog = screen.getByTestId('archive-project-conversations-dialog-7')
