@@ -12,6 +12,7 @@ import {
   responseCompleted,
   responseCreated,
   selectTool,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
   CLOUD_DEVICE_ID,
@@ -92,21 +93,6 @@ async function enableTaskSystemNotifications(control) {
   await control.command('click', '[data-testid="wework-notifications-button"]')
 }
 
-function answerWithQuestion(response, body, responseId, callId, question) {
-  const selection = selectTool(body, 'request_user_input_async', {
-    questions: [{ title: question }],
-  })
-  response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-  response.end(
-    createSse([
-      responseCreated(responseId),
-      assistantMessage('The review is waiting for the required policy decision.'),
-      ...selectedToolCall(callId, selection, 1),
-      responseCompleted(responseId),
-    ])
-  )
-}
-
 function questionForPrompt(prompt) {
   return {
     [REMOTE_FIRST_PROMPT]: REMOTE_FIRST_QUESTION,
@@ -130,6 +116,26 @@ export function createDesktopScenario({
   let cloud
   let remoteSequence = 0
   let localSequence = 0
+  const heldQuestions = new Map()
+
+  async function releaseHeldQuestion(prompt) {
+    const held = await waitForValue(
+      async () => heldQuestions.get(prompt) ?? null,
+      Boolean,
+      `The real Codex run never requested the ${prompt} question`,
+      uiTimeoutMs * 3
+    )
+    held.response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+    held.response.end(
+      createSse([
+        responseCreated(held.responseId),
+        assistantMessage('The review is waiting for the required policy decision.'),
+        ...selectedToolCall(held.callId, held.selection, 1),
+        responseCompleted(held.responseId),
+      ])
+    )
+    heldQuestions.delete(prompt)
+  }
 
   async function createRemoteQuestion(prompt, title) {
     remoteSequence += 1
@@ -168,6 +174,7 @@ export function createDesktopScenario({
       workspacePath: task.workspacePath,
     }
     assert.equal(address.deviceId, CLOUD_DEVICE_ID)
+    await releaseHeldQuestion(prompt)
     await waitForValue(
       async () => {
         const work = await fetchJson(
@@ -225,6 +232,7 @@ export function createDesktopScenario({
       uiTimeoutMs
     )
     assert.equal(created.accepted, true, 'The local interaction fixture was rejected')
+    await releaseHeldQuestion(prompt)
     return { deviceId: created.deviceId, taskId, workspacePath }
   }
 
@@ -287,13 +295,32 @@ export function createDesktopScenario({
         LOCAL_SYSTEM_PROMPT,
       ].find(candidate => serialized.includes(candidate))
       if (!prompt) return false
-      answerWithQuestion(
-        response,
-        body,
-        `interaction-reminder-${prompt}`,
-        `interaction-reminder-call-${prompt}`,
-        questionForPrompt(prompt)
+      const callId = `interaction-reminder-call-${prompt}`
+      const output = toolOutputText(body, callId)
+      if (output !== null) {
+        response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          createSse([
+            responseCreated(`interaction-reminder-${prompt}`),
+            assistantMessage('The policy decision was accepted.'),
+            responseCompleted(`interaction-reminder-${prompt}`),
+          ])
+        )
+        return true
+      }
+      assert.equal(
+        heldQuestions.has(prompt),
+        false,
+        `The same ${prompt} question was emitted twice`
       )
+      heldQuestions.set(prompt, {
+        callId,
+        response,
+        responseId: `interaction-reminder-${prompt}`,
+        selection: selectTool(body, 'request_user_input_async', {
+          questions: [{ title: questionForPrompt(prompt) }],
+        }),
+      })
       return true
     },
     async verify(control) {
