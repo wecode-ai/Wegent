@@ -69,6 +69,7 @@ pub(crate) use access::{
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
 mod update;
+pub(crate) use update::metadata_board_statuses;
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]

@@ -74,3 +74,19 @@ it('blocks pagination while reactivation is replacing the first page', async () 
   expect(page).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'fresh-cursor' }))
   expect(result.current.items.map(item => item.id)).toEqual(['fresh', 'next'])
 })
+
+it('queries created scope on every page and isolates it from participating scope', async () => {
+  const page = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [{ id: 'mine' }], nextCursor: 'created-next' })
+    .mockResolvedValueOnce({ items: [{ id: 'mine-older' }], nextCursor: null })
+  const sources = [{ myWork: { page } } as unknown as SharedWorkspaceApi]
+  const { result } = renderHook(() =>
+    usePersonalHomeIssues(sources, true, false, false, [7], 'activity', 'created')
+  )
+  await waitFor(() => expect(result.current.items).toHaveLength(1))
+  await act(async () => result.current.loadMore())
+  expect(page.mock.calls.every(([input]) => input.scope === 'created')).toBe(true)
+  expect(page.mock.calls[1][0].cursor).toBe('created-next')
+  expect(result.current.items.map(item => item.id)).toEqual(['mine', 'mine-older'])
+})

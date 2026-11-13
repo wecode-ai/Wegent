@@ -30,7 +30,7 @@ import {
   hasAdvancedKnowledgeBases,
   useAdvancedKnowledgeMode,
 } from '../hooks/useAdvancedKnowledgeMode'
-import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
+import { useNamespaceRoleState } from '../hooks/useNamespaceRoleMap'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
@@ -169,7 +169,8 @@ function KnowledgeDocumentSession({
     setCodeWikiView('wiki')
   }, [selectedKbId])
   const sourceViews = useKnowledgeSourceViews()
-  const namespaceRoleMap = useNamespaceRoleMap()
+  const namespaceRoles = useNamespaceRoleState()
+  const namespaceRoleMap = namespaceRoles.roleMap
   const selectedSpace = sidebar.groups.find(group => group.id === sidebar.selectedGroupId)
   const canCreateInSelectedSpace =
     selectedSpace &&
@@ -309,22 +310,35 @@ function KnowledgeDocumentSession({
   }, [sidebar, updateUrlParams])
 
   const availableGroupsForCreate = useMemo((): AvailableGroup[] => {
-    return sidebar.groups
-      .filter(g => g.id !== 'shared')
-      .map(g => ({
-        id: g.id,
-        name: g.name,
-        displayName: g.displayName,
-        type: g.type,
-        canCreate:
-          g.type === 'personal'
-            ? true
-            : canCreateKnowledgeBaseInNamespace({
-                namespace: g.name,
-                namespaceRole: namespaceRoleMap.get(g.name),
-              }),
-      }))
-  }, [sidebar.groups, namespaceRoleMap])
+    const spaces = new Map(sidebar.groups.filter(g => g.id !== 'shared').map(g => [g.id, g]))
+    for (const group of namespaceRoles.groups) {
+      if (!group.is_active) continue
+      const existing = [...spaces.values()].find(
+        space => space.type !== 'personal' && space.name === group.name
+      )
+      const id = existing?.id ?? 'group-' + group.name
+      spaces.set(id, {
+        id,
+        name: group.name,
+        displayName: group.display_name || group.name,
+        type: group.level === 'organization' ? 'organization' : 'group',
+        kbCount: 0,
+      })
+    }
+    return [...spaces.values()].map(g => ({
+      id: g.id,
+      name: g.name,
+      displayName: g.displayName,
+      type: g.type,
+      canCreate:
+        g.type === 'personal' ||
+        canCreateKnowledgeBaseInNamespace({
+          namespace: g.name,
+          namespaceRole: namespaceRoleMap.get(g.name),
+        }),
+    }))
+  }, [sidebar.groups, namespaceRoleMap, namespaceRoles.groups])
+  const refreshCreationGroups = namespaceRoles.refresh
 
   // Dialog management
   const dialogs = useKnowledgeBaseDialogs({
@@ -787,6 +801,9 @@ function KnowledgeDocumentSession({
         showGroupSelector={dialogs.showGroupSelector}
         availableGroups={availableGroupsForCreate}
         defaultGroupId={dialogs.defaultCreateGroupId}
+        onRefreshGroups={refreshCreationGroups}
+        groupsLoading={namespaceRoles.loading}
+        groupsFailed={namespaceRoles.failed}
       />
       <EditKnowledgeBaseDialog
         open={!!dialogs.editingKb}

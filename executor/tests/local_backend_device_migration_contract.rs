@@ -1077,7 +1077,6 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         ),
     )
     .unwrap();
-    make_executable(&script);
 
     let tracker = LocalRunningTaskTracker::default();
     let sink = RecordingEventSink::default();
@@ -1101,7 +1100,8 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
     );
     let runner = ManagedLocalTaskRunner::new(
         StreamProcessEngine::new(
-            CommandSpec::new(script.display().to_string()),
+            // Execute the installed interpreter so macOS does not scan a fresh executable.
+            CommandSpec::new("/bin/sh").arg(script.display().to_string()),
             TEST_PROCESS_TIMEOUT_SECONDS,
             std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
             env!("CARGO_PKG_VERSION"),

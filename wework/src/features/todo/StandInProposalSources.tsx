@@ -32,6 +32,15 @@ export function StandInProposalSources({
       : t('standIn.workspace.inherited_policy')
   const sourceKey = (row: NonNullable<Sources['connections']>[number]) =>
     JSON.stringify([row.providerId, row.profile, row.kind, row.id])
+  const configuration = (row?: NonNullable<Sources['connections']>[number]) =>
+    [
+      row?.configurationSummary ?? t('standIn.workspace.connection_default_configuration'),
+      ...(row?.excludedResources?.length
+        ? [
+            `${t('standIn.workspace.connection_blacklist')}: ${row.excludedResources.map(item => item.name).join(', ')}`,
+          ]
+        : []),
+    ].join(' · ')
   const before = previous?.connections ?? []
   const after = identity.connections ?? []
   const changed = after.filter(
@@ -87,13 +96,11 @@ export function StandInProposalSources({
             {before.some(old => sourceKey(old) === sourceKey(row)) && (
               <>
                 {t('standIn.workspace.before_change')}：
-                {before.find(old => sourceKey(old) === sourceKey(row))?.configurationSummary ??
-                  t('standIn.workspace.connection_default_configuration')}
+                {configuration(before.find(old => sourceKey(old) === sourceKey(row)))}
                 {' → '}
               </>
             )}
-            {t('standIn.workspace.after_change')}：
-            {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
+            {t('standIn.workspace.after_change')}：{configuration(row)}
           </p>
         </div>
       ))}

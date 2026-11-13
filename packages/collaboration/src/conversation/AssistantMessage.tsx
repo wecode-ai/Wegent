@@ -465,7 +465,7 @@ export function AssistantMessage({
           {displayBlocks.map((block) =>
             block.type === "tool" && block.mcpServer ? (
               <Fragment key={`mcp-app:${block.id}`}>
-                {interactions.renderMcpApp?.(block)}
+                {interactions.renderMcpApp?.(block, message.turnId)}
               </Fragment>
             ) : null,
           )}
