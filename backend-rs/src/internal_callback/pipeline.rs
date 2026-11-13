@@ -7,7 +7,7 @@ use brz_mysql::{Json, MysqlRow, MysqlTransaction};
 use serde_json::{Value, json};
 
 use crate::http_compat::FastApiError;
-use crate::responses::create::{dispatch, executor_client, request, routing, seam};
+use crate::responses::create::{executor_client, request, routing, seam};
 use crate::responses::dispatch::DefaultDispatchJob;
 use crate::state::AppState;
 use crate::task_store::PipelineStageAdvance;
@@ -145,7 +145,7 @@ async fn prepare_dispatch(
             task_project_id: advance.project_id,
             executor_name: &advance.pair.executor.name,
             executor_namespace: &advance.pair.executor.namespace,
-            executor_deleted: false,
+            executor_deleted: advance.pair.executor.deleted_at != 0,
             new_session: false,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
@@ -203,8 +203,9 @@ async fn prepare_dispatch(
             user_id: execution.user_id,
             message_id: execution.message_id,
             url: executor_client::executor_responses_url(url),
-            body: serde_json::to_value(dispatch::assemble(&execution, false, true))
-                .map_err(|_| FastApiError::internal())?,
+            body: crate::responses::dispatch::ExecutorDispatchBody::Recover(Box::new(
+                execution.clone(),
+            )),
             start: state
                 .redis
                 .clone()
@@ -241,6 +242,7 @@ async fn claim_and_dispatch(
         let Some(Json(mut current)) = task.as_ref().and_then(|row| super::completion::task_column::<Json<Value>>(row, "json")) else { return Ok(false); };
         if current.pointer("/spec/currentStage") != advance.task_json.pointer("/spec/currentStage")
             || current.pointer(PIPELINE_HANDOFF_PATH) != advance.task_json.pointer(PIPELINE_HANDOFF_PATH)
+            || !matches!(current.pointer("/status/status").and_then(Value::as_str), Some("PENDING" | "RUNNING"))
         {
             return Ok(false);
         }

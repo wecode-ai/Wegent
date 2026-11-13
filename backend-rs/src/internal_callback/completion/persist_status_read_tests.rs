@@ -172,7 +172,7 @@ async fn the_task_status_read_locks_the_active_task() {
     };
     let mut transaction = CapturedTransaction::default();
     assert!(
-        update_task_status_on(&ctx, &mut transaction, 426335633820493, 7)
+        update_task_status_on(ctx.tables, &mut transaction, 426335633820493, 7)
             .await
             .unwrap()
             .is_none()
@@ -221,7 +221,7 @@ async fn a_failed_task_status_read_aborts_the_transaction() {
         ..CapturedTransaction::default()
     };
     assert!(matches!(
-        update_task_status_on(&ctx, &mut transaction, 426335633820493, 7).await,
+        update_task_status_on(ctx.tables, &mut transaction, 426335633820493, 7).await,
         Err(brz_mysql::MysqlError::RowNotFound)
     ));
 

@@ -277,7 +277,7 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
             }
         }
         let Some((row, metrics_message)) = update_subtask_status_on(
-            ctx,
+            ctx.tables,
             transaction,
             row,
             subtask_id,
@@ -292,10 +292,18 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
         else {
             return Ok(None);
         };
-        let task_status =
-            update_locked_task_status(ctx, transaction, task, task_id, subtask_id, delivery, true)
-                .await?
-                .ok_or(MysqlError::RowNotFound)?;
+        let task_status = update_locked_task_status(
+            ctx.tables,
+            transaction,
+            task,
+            task_id,
+            subtask_id,
+            delivery,
+            true,
+            None,
+        )
+        .await?
+        .ok_or(MysqlError::RowNotFound)?;
         ready_to_commit.store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(Some(PendingTransition::Written(
             row,
@@ -372,11 +380,78 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
         .await
 }
 
+pub(super) async fn persist_executor_failure<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    task_id: i64,
+    subtask_id: i64,
+    result: &Value,
+    message: &str,
+) -> MysqlResult<Option<(MysqlRow, Option<String>)>> {
+    mysql
+        .route(crate::task_routing::ByTaskId(task_id as u64))
+        .with_transaction(async |transaction| {
+            let Some(task) = lock_task(transaction, tables.tasks, task_id).await? else {
+                return Ok(None);
+            };
+            let document = task_column::<Json<Value>>(&task, "json");
+            if !document.as_ref().is_some_and(|json| {
+                matches!(
+                    json.0.pointer("/status/status").and_then(Value::as_str),
+                    Some("PENDING" | "RUNNING")
+                )
+            }) {
+                return Ok(None);
+            }
+            let Some(row) = lock_subtask(transaction, tables, subtask_id).await? else {
+                return Ok(None);
+            };
+            if subtask_column::<i64>(&row, "task_id") != Some(task_id)
+                || !matches!(
+                    subtask_column::<String>(&row, "status").as_deref(),
+                    Some("PENDING" | "RUNNING")
+                )
+            {
+                return Ok(None);
+            }
+            let Some(settled) = update_subtask_status_on(
+                tables,
+                transaction,
+                row,
+                subtask_id,
+                "FAILED",
+                Some(result),
+                Some(message),
+                None,
+                None,
+                None,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            update_locked_task_status(
+                tables,
+                transaction,
+                task,
+                task_id,
+                subtask_id,
+                None,
+                true,
+                Some("FAILED"),
+            )
+            .await?
+            .ok_or(MysqlError::RowNotFound)?;
+            Ok(Some(settled))
+        })
+        .await
+}
+
 /// `TaskRunMetricHooks._after_commit` (`app/services/task_run_metric_hooks.py:157-175`):
 /// a committed assistant-subtask mutation publishes the task-run metrics. The
 /// hook logs and swallows a store failure, so a Redis error leaves the caller's
 /// committed result intact.
-async fn publish_task_run_metrics<M: Mysql, R: Redis>(
+pub(super) async fn publish_task_run_metrics<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     row: &MysqlRow,
     subtask_id: i64,
@@ -443,6 +518,22 @@ pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] 
     ]
 }
 
+/// Claim a queued turn only while its task and subtask can still run.
+pub(crate) async fn claim_running_subtask<M: Mysql>(
+    mysql: &M,
+    tables: sql::Tables,
+    subtask_id: i64,
+) -> brz_mysql::MysqlResult<bool> {
+    mysql
+        .route(crate::task_routing::ByTaskId(subtask_id as u64))
+        .execute(
+            sql::claim_running_subtask(tables),
+            ("RUNNING", local_datetime(), subtask_id),
+        )
+        .await
+        .map(|result| result.rows_affected != 0)
+}
+
 /// `ExecutionDispatcher._update_subtask_to_running`
 /// (`app/services/execution/dispatcher.py:335-355`, called before the mode
 /// branch at `:166`): `db_handler.update_subtask_status(subtask_id, "RUNNING")`
@@ -452,7 +543,8 @@ pub(crate) fn running_transition_statements(tables: sql::Tables) -> [String; 3] 
 pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
     subtask_id: i64,
-) {
+    claim: bool,
+) -> bool {
     let [read_subtask, read_contexts, update_running] = running_transition_statements(ctx.tables);
     let mysql = ctx
         .mysql
@@ -465,7 +557,7 @@ pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
     // `_update_subtask_sync`'s `if not subtask: return None`: a vanished row
     // ends the transition without an error, a write, or after-commit metrics.
     let Some(row) = row else {
-        return;
+        return false;
     };
     // `SubtaskStore.get_by_id` eager-loads `Subtask.contexts`.
     let _contexts: Vec<MysqlRow> = mysql
@@ -473,21 +565,28 @@ pub(crate) async fn mark_subtask_running<M: Mysql, R: Redis>(
         .await
         .unwrap_or_default();
     let task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
-    let now = local_datetime();
-    // A single statement runs on the pooled connection's autocommit; no
-    // explicit transaction or COMMIT is needed.
-    if let Err(failure) = mysql
-        .execute(update_running, ("RUNNING", now.as_str(), subtask_id))
-        .await
-    {
-        tracing::warn!(%failure, "subtask running update failed");
-        return;
+    let updated = if claim {
+        claim_running_subtask(ctx.mysql, ctx.tables, subtask_id).await
+    } else {
+        mysql
+            .execute(update_running, ("RUNNING", local_datetime(), subtask_id))
+            .await
+            .map(|_| true)
+    };
+    match updated {
+        Ok(true) => {}
+        Ok(false) => return false,
+        Err(error) => {
+            tracing::warn!(subtask_id, %error, "subtask running update failed");
+            return false;
+        }
     }
     // `_before_flush` tracks the status change (`record_total=False`,
     // `sync_failure=True`) and `_after_commit` publishes it. A RUNNING subtask
     // carries no error message, so the failure reason is empty.
     publish_task_run_metrics(ctx, &row, subtask_id, "RUNNING", None).await;
     update_task_status(ctx, task_id, subtask_id).await;
+    true
 }
 
 /// `_update_task_status_sync`: re-derive the task's status from its assistant
@@ -504,7 +603,7 @@ pub(crate) async fn update_task_status<M: Mysql, R: Redis>(
         .route(crate::task_routing::ByTaskId(task_id as u64));
     match mysql
         .with_transaction(async |transaction| {
-            update_task_status_on(ctx, transaction, task_id, changed_subtask_id).await
+            update_task_status_on(ctx.tables, transaction, task_id, changed_subtask_id).await
         })
         .await
     {

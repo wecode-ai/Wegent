@@ -167,6 +167,7 @@ class WorkspaceResponse(BaseModel):
         default_factory=ExecutionEnvironmentConfig
     )
     is_default: bool
+    is_system_default: bool = False
     status: Literal["active", "archived"]
     version: int
     created_at: datetime

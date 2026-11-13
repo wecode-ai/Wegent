@@ -595,7 +595,7 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             &http,
             DispatchJob::Executor {
                 url,
-                body: json!({}),
+                body: ExecutorDispatchBody::Prepared(json!({})),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
                 consumer: Box::new(consumer(mysql.clone(), redis.clone())),
                 task_id: TASK_ID,
@@ -632,6 +632,11 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             .unwrap_or_else(|| panic!("missing task:status in {:?}", redis.calls()));
         assert_eq!(status["room"], format!("user:{TASK_OWNER_ID}"));
         assert_eq!(status["data"][0]["status"], "FAILED");
+        let callback = frames
+            .iter()
+            .find(|frame| frame["type"] == "error" && frame["subtask_id"] == SUBTASK_ID)
+            .expect("the Responses stream also receives the terminal error");
+        assert_eq!(callback["error_code"], "EXECUTOR_DISPATCH_FAILED");
         assert!(!frames.iter().any(|frame| frame["event"] == "chat:start"));
     }
 }
@@ -649,4 +654,53 @@ fn assert_terminal_commit(mysql: &RecordingMysql) {
         matches!((subtask, task, commit), (Some(subtask), Some(task), Some(commit)) if subtask < task && task < commit),
         "both terminal writes must precede COMMIT: {statements:?}"
     );
+}
+
+#[tokio::test]
+async fn executor_failure_reaches_mysql_without_redis() {
+    let mysql = RecordingMysql::default().with_terminal_rows("FAILED").await;
+    let mut consumer = consumer(mysql.clone(), RecordingRedis::default());
+    consumer.redis = None;
+    finalize_executor_failure(
+        &consumer,
+        TASK_ID,
+        SUBTASK_ID,
+        TASK_OWNER_ID,
+        Some(2),
+        ("Executor preparation failed", "container_error"),
+    )
+    .await;
+    assert_terminal_commit(&mysql);
+}
+
+#[tokio::test]
+async fn executor_failure_does_not_write_or_publish_after_cancellation() {
+    for status in ["CANCELLING", "CANCELLED"] {
+        let mysql = RecordingMysql::default()
+            .with_task_status("FAILED", status)
+            .await;
+        let redis = RecordingRedis::default();
+        finalize_executor_failure(
+            &consumer(mysql.clone(), redis.clone()),
+            TASK_ID,
+            SUBTASK_ID,
+            TASK_OWNER_ID,
+            Some(2),
+            ("Executor preparation failed", "container_error"),
+        )
+        .await;
+        assert!(
+            mysql
+                .statements()
+                .iter()
+                .any(|sql| sql.ends_with("FOR UPDATE"))
+        );
+        assert!(
+            !mysql
+                .statements()
+                .iter()
+                .any(|sql| sql.starts_with("UPDATE"))
+        );
+        assert_eq!(redis.count("PUBLISH "), 0);
+    }
 }

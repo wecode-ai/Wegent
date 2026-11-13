@@ -429,26 +429,29 @@ def _get_attachment_context(db: Session, attachment_id: int, current_user: User)
 
 
 def _validate_share_token_access(
-    db: Session, attachment_id: int, share_token: str
+    db: Session,
+    attachment_id: int,
+    share_token: str,
+    viewer_id: Optional[int] = None,
 ) -> bool:
     """
     Validate that a share_token has access to a specific attachment.
 
     This validates that:
-    1. The share_token is valid and decrypts to user_id#task_id
+    1. The token resolves an active persisted link and passes its access policy
     2. The attachment belongs to a subtask of the task in the token
     3. The task owner matches the user_id in the token
 
     Args:
         db: Database session
         attachment_id: The attachment ID to check access for
-        share_token: The encrypted share token
+        share_token: The persisted share token
 
     Returns:
         True if access is granted, False otherwise
     """
     # Decode share token to get task info
-    share_info = shared_task_service.decode_share_token(share_token, db)
+    share_info = shared_task_service.decode_share_token(share_token, db, viewer_id)
     if not share_info:
         return False
 
@@ -466,16 +469,8 @@ def _validate_share_token_access(
 
     # Get the subtask that this attachment belongs to
     if context.subtask_id <= 0:
-        # Attachment not linked to a subtask
-        # For unlinked attachments, verify the attachment owner matches the task owner
-        if context.user_id == share_info.user_id:
-            return True
-        else:
-            logger.warning(
-                f"[_validate_share_token_access] Ownership mismatch: context.user_id={context.user_id}, "
-                f"share_info.user_id={share_info.user_id}"
-            )
-            return False
+        # Matching the owner alone cannot place a private upload in this share.
+        return False
 
     subtask = subtask_store.get_by_id(db, subtask_id=context.subtask_id)
     if not subtask:
@@ -529,7 +524,12 @@ async def get_attachment_playback(
 ) -> AttachmentPlaybackResponse:
     """Return a fresh direct or proxied URL for browser media playback."""
     if share_token:
-        if not _validate_share_token_access(db, attachment_id, share_token):
+        if not _validate_share_token_access(
+            db,
+            attachment_id,
+            share_token,
+            current_user.id if current_user else None,
+        ):
             raise HTTPException(status_code=403, detail="Share token access denied")
         context = context_service.get_context_optional(
             db=db,
@@ -592,7 +592,12 @@ async def get_attachment_preview(
 
     # Method 1: Share token authentication (no login required)
     if share_token:
-        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        has_access = _validate_share_token_access(
+            db,
+            attachment_id,
+            share_token,
+            current_user.id if current_user else None,
+        )
         if has_access:
             # Get context for share token access
             context = context_service.get_context_optional(

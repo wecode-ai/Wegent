@@ -128,6 +128,9 @@ function runtimeLiveActivityFromTurn(
 
   for (let index = turn.items.length - 1; index >= start; index -= 1) {
     const item = turn.items[index];
+    if (!processText && item?.type === "assistant_text") {
+      processText = item.content.trim();
+    }
     if (item?.type !== "block") continue;
     const block = item.block;
     if (!processText && block.type === "text" && block.content.trim()) {

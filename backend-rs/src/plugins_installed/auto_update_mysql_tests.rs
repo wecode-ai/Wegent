@@ -17,10 +17,6 @@ use tokio::sync::oneshot;
 #[path = "auto_update_replica_mysql_tests.rs"]
 mod replica;
 
-fn redis_fixture_options() -> RedisServiceOptions {
-    RedisServiceOptions::default().with_timeout(Duration::from_secs(5))
-}
-
 const SCHEMA: &[&str] = &[
     r#"CREATE TABLE kinds (`id` BIGINT NOT NULL AUTO_INCREMENT, `user_id` BIGINT NOT NULL DEFAULT 0, `kind` VARCHAR(1000) NOT NULL DEFAULT '', `name` VARCHAR(1000) NOT NULL DEFAULT '', `namespace` VARCHAR(1000) NOT NULL DEFAULT '', `json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `is_active` BOOLEAN NOT NULL DEFAULT 0, `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
     r#"CREATE TABLE plugins (`id` BIGINT NOT NULL DEFAULT 0, `catalog_namespace` VARCHAR(1000) NOT NULL DEFAULT '', `slug` VARCHAR(1000) NOT NULL DEFAULT '', `name` VARCHAR(1000) NOT NULL DEFAULT '', `display_name` VARCHAR(1000) NOT NULL DEFAULT '', `summary` VARCHAR(1000) NOT NULL DEFAULT '', `description_md` VARCHAR(1000) NOT NULL DEFAULT '', `listing_type` VARCHAR(1000) NOT NULL DEFAULT '', `source_type` VARCHAR(1000) NOT NULL DEFAULT '', `source_provider` VARCHAR(1000) NOT NULL DEFAULT '', `owner_user_id` BIGINT NOT NULL DEFAULT 0, `origin_plugin_id` BIGINT NOT NULL DEFAULT 0, `category` VARCHAR(1000) NOT NULL DEFAULT '', `keywords_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `interface_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `visibility` VARCHAR(1000) NOT NULL DEFAULT '', `allow_copy` BOOLEAN NOT NULL DEFAULT 0, `status` VARCHAR(1000) NOT NULL DEFAULT '', `latest_release_id` BIGINT NOT NULL DEFAULT 0, `featured_rank` BIGINT NOT NULL DEFAULT 0, `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `published_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
@@ -31,6 +27,10 @@ const SCHEMA: &[&str] = &[
 
 fn registry() -> EntityResolvers<brz_redis::RedisService> {
     EntityResolvers::public(MysqlService::connect_lazy("mysql://unused@127.0.0.1/unused").unwrap())
+}
+
+fn fixture_redis_options() -> RedisServiceOptions {
+    RedisServiceOptions::default().with_timeout(Duration::from_secs(5))
 }
 
 #[tokio::test]
@@ -51,7 +51,7 @@ async fn writer_batch_preserves_rollback_and_rejects_stale_updates() {
     let redis = RedisService::noshard_with_options(
         redis_address.clone(),
         [redis_address],
-        redis_fixture_options(),
+        fixture_redis_options(),
     )
     .await
     .unwrap();

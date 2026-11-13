@@ -64,7 +64,15 @@ pub(super) struct RecordingMysql {
 
 impl RecordingMysql {
     pub(super) async fn with_terminal_rows(self, terminal_status: &'static str) -> Self {
-        let rows = TerminalRows::load(terminal_status).await;
+        self.with_task_status(terminal_status, "RUNNING").await
+    }
+
+    pub(super) async fn with_task_status(
+        self,
+        terminal_status: &'static str,
+        task_status: &'static str,
+    ) -> Self {
+        let rows = TerminalRows::load(terminal_status, task_status).await;
         self.rows.lock().unwrap().push(rows);
         self
     }
@@ -193,7 +201,7 @@ struct TerminalRows {
 }
 
 impl TerminalRows {
-    async fn load(terminal_status: &'static str) -> Self {
+    async fn load(terminal_status: &'static str, task_status: &'static str) -> Self {
         use crate::sql_test_support::mysql_rows::{MysqlRows, Value};
         let fixture = MysqlRows::start(move |sql| {
             if sql.ends_with("fixture_task") {
@@ -205,7 +213,7 @@ impl TerminalRows {
                     ("namespace", Value::Text("default".into())),
                     (
                         "json",
-                        Value::Text(json!({"status": {"status": "RUNNING"}}).to_string()),
+                        Value::Text(json!({"status": {"status": task_status}}).to_string()),
                     ),
                 ];
             }
