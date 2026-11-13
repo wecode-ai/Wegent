@@ -882,7 +882,7 @@ pub(crate) async fn dispatch_chat_turn(
             task_id: request.task_id,
             subtask_id: request.subtask_id,
             consumer: crate::responses::dispatch::ConsumerState::from_app(state),
-            target_url: url.to_string(),
+            target_url: chat_turn_stream_url(request, url),
             request: request.clone(),
             request_id: request_id.to_string(),
             forward: true,
@@ -900,9 +900,34 @@ pub(crate) async fn dispatch_chat_turn(
     Ok(())
 }
 
+fn chat_turn_stream_url(request: &ExecutionRequest, chat_shell_url: &str) -> String {
+    if request.model_config["modelType"] == "image" {
+        super::package_runtime::image_url()
+    } else {
+        chat_shell_url.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_turn_routes_images_to_python_and_chat_to_the_configured_shell() {
+        let chat_shell = "http://chat-shell:8100";
+        let mut request = ExecutionRequest::default();
+        assert_eq!(chat_turn_stream_url(&request, chat_shell), chat_shell);
+
+        request.model_config = serde_json::json!({
+            "modelType": "image",
+            "protocol": "gpt-image",
+            "model_id": "image-model"
+        });
+        assert_eq!(
+            chat_turn_stream_url(&request, chat_shell),
+            super::super::package_runtime::image_url()
+        );
+    }
 
     #[test]
     fn chat_shell_and_executor_defaults_match_the_source() {
