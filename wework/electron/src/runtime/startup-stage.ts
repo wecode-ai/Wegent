@@ -29,7 +29,13 @@ export async function runStartupStage<Result>(
   emit('started')
   try {
     const result = await run()
-    emit('completed', details?.(result))
+    let resultDetails: Record<string, unknown> | undefined
+    try {
+      resultDetails = details?.(result)
+    } catch {
+      // Diagnostics must never turn a completed startup stage into a failure.
+    }
+    emit('completed', resultDetails)
     return result
   } catch (error) {
     emit('failed')
