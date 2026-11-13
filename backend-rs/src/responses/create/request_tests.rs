@@ -178,7 +178,7 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
         let fixture =
             MysqlRows::start_results(move |sql| skill_fixture(sql, automatic, preload)).await;
         let state = crate::app_test_support::app(fixture.mysql.clone());
-        let request = build_chat_execution_request(&state, &input, &[], None, None)
+        let request = build_chat_execution_request(&state, &input, false, &[], None, None)
             .await
             .unwrap_or_else(|error| {
                 panic!(

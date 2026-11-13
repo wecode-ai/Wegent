@@ -9,6 +9,7 @@ from sqlalchemy import event
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
+from app.services.chat.interactive_forms import get_pending_interactive_form
 from app.services.chat.subtask_history import list_subtask_summaries
 from app.services.context.context_service import ContextService
 from app.stores.tasks import subtask_store
@@ -119,6 +120,125 @@ def test_attachments_keep_old_files_without_reading_any_subtask_payload(
     assert {row.id for row in attachments} == {9001, 9002}
     assert not any(
         type(row).__name__ == "Subtask" for row in test_db.identity_map.values()
+    )
+
+
+@pytest.mark.parametrize("subscription", [False, True])
+@pytest.mark.parametrize("limit", [None, 0, -1, 20, 10000])
+def test_subscription_history_pages_cap_without_changing_ordinary_limits(
+    test_db, monkeypatch, subscription, limit
+):
+    seed(test_db)
+    store = SqlAlchemySubtaskStore()
+    monkeypatch.setattr(
+        subtask_store, "list_visible_history_page", store.list_visible_history_page
+    )
+    result = list_subtask_summaries(
+        test_db,
+        task_id=701,
+        user_id=7,
+        limit=limit,
+        offset=100,
+        is_subscription=subscription,
+    )
+    count = 150 if limit is None else max(0, min(150, limit))
+    if subscription:
+        count = min(50, count)
+    assert result["total"] == 250
+    assert [row["id"] for row in result["subtasks"]] == list(range(7101, 7101 + count))
+    assert result["has_more"] == (100 + count < 250)
+
+
+def _pending_form_blocks(*, valid=True):
+    return [
+        {
+            "tool_name": "interactive_form_question",
+            "tool_use_id": "pending-old-form",
+            "render_payload": {
+                "type": "interactive_form_question",
+                "questions": [{"id": "q"}] if valid else [],
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize("answered", [False, True])
+def test_subscription_form_reads_skip_large_history_and_keep_old_pending_forms(
+    test_db, monkeypatch, answered
+):
+    seed(test_db)
+    old_form = test_db.get(Subtask, 7001)
+    old_form.result = {
+        "value": "x" * 10000,
+        "blocks": _pending_form_blocks(),
+    }
+    if answered:
+        test_db.get(Subtask, 7100).role = SubtaskRole.USER
+    test_db.commit()
+    test_db.expunge_all()
+    store = SqlAlchemySubtaskStore()
+    monkeypatch.setattr(
+        subtask_store,
+        "iter_pending_form_candidates",
+        store.iter_pending_form_candidates,
+    )
+    statements = []
+
+    def record(_conn, _cursor, sql, *_args):
+        if sql.lstrip().upper().startswith("SELECT"):
+            statements.append(sql)
+
+    event.listen(test_db.bind, "before_cursor_execute", record)
+    try:
+        pending = get_pending_interactive_form(
+            test_db, task_id=701, subscription_owner_user_id=7
+        )
+    finally:
+        event.remove(test_db.bind, "before_cursor_execute", record)
+    assert (pending is None) == answered
+    if not answered:
+        assert pending.assistant_subtask_id == 7001
+    assert not any(isinstance(row, Subtask) for row in test_db.identity_map.values())
+    assert all("LIMIT" in sql for sql in statements)
+    assert all(
+        "subtasks.result AS" not in sql and "subtasks.prompt" not in sql
+        for sql in statements
+    )
+    assert (
+        list(store.iter_pending_form_candidates(test_db, task_id=701, owner_user_id=8))
+        == []
+    )
+
+
+def test_form_candidate_pages_preserve_invalid_blocks_and_equal_message_order(
+    test_db, monkeypatch
+):
+    seed(test_db)
+    for row in test_db.query(Subtask).filter(Subtask.id <= 7120):
+        row.message_id = 1
+        row.result = {"blocks": _pending_form_blocks(valid=row.id == 7001)}
+    test_db.commit()
+    test_db.expunge_all()
+    store = SqlAlchemySubtaskStore()
+    monkeypatch.setattr(
+        subtask_store,
+        "iter_pending_form_candidates",
+        store.iter_pending_form_candidates,
+    )
+    candidates = list(
+        store.iter_pending_form_candidates(test_db, task_id=701, owner_user_id=7)
+    )
+    assert [row.id for row in candidates] == list(range(7120, 7000, -1))
+    pending = get_pending_interactive_form(
+        test_db, task_id=701, subscription_owner_user_id=7
+    )
+    assert pending is not None and pending.assistant_subtask_id == 7001
+    user = test_db.get(Subtask, 7060)
+    user.role = SubtaskRole.USER
+    test_db.commit()
+    assert (
+        get_pending_interactive_form(test_db, task_id=701, subscription_owner_user_id=7)
+        is None
     )
 
 

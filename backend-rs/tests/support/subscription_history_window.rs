@@ -147,6 +147,154 @@ pub(super) async fn assert_store_windows(
         assert_eq!(rows[1].get_required::<String>("status").unwrap(), "PENDING");
     }
     assert_session_identifiers(mysql, task_id, table).await;
+    assert_pending_form_pages(mysql, task_id, table, user_id).await;
+}
+
+async fn assert_pending_form_pages(mysql: &MysqlService, task_id: i64, table: &str, user_id: i32) {
+    use brz_mysql::{Json, MysqlRow};
+    use wegent_backend_rs::task_store_runtime_reads::pending_form_candidates_statement;
+
+    // Existing user turns resolve old forms even if many assistants follow.
+    mysql.execute(format!("UPDATE {table} SET result=? WHERE task_id=? AND message_id=1"), (
+        Json(json!({"value": "x".repeat(64 * 1024), "blocks": [{
+            "tool_name": "interactive_form_question", "tool_use_id": "old-form",
+            "render_payload": {"type": "interactive_form_question", "questions": [{"id": "q"}]},
+        }]})), task_id,
+    )).await.unwrap();
+    let rows: Vec<MysqlRow> = mysql
+        .fetch_all(
+            pending_form_candidates_statement(table, None),
+            (task_id, task_id),
+        )
+        .await
+        .unwrap();
+    assert!(rows.is_empty());
+
+    mysql
+        .execute(
+            format!("UPDATE {table} SET role='ASSISTANT' WHERE task_id=?"),
+            (task_id,),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute(
+            format!("UPDATE {table} SET message_id=NULL WHERE id=1001"),
+            (),
+        )
+        .await
+        .unwrap();
+    for index in 1..=55_i64 {
+        mysql
+            .execute(
+                format!(
+                    "INSERT INTO {table} (id,user_id,task_id,message_id,role,result) \
+             VALUES (?, ?, ?, ?, 'ASSISTANT', ?)"
+                ),
+                (
+                    5000 + index,
+                    user_id,
+                    task_id,
+                    100 + index,
+                    Json(json!({
+                        "value": "x".repeat(64 * 1024),
+                        "blocks": [{"tool_name": "interactive_form_question"}],
+                    })),
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    let start = super::history_window::bytes_sent(mysql).await;
+    let first: Vec<MysqlRow> = mysql
+        .fetch_all(
+            pending_form_candidates_statement(table, None),
+            (task_id, task_id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 50);
+    let second: Vec<MysqlRow> = mysql
+        .fetch_all(
+            pending_form_candidates_statement(table, Some(Some(106))),
+            (task_id, task_id, 106_i64, 106_i64, 5006_i64),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 6);
+    assert!(
+        second
+            .iter()
+            .any(|row| row.get_required::<i64>("id").unwrap() == 1001)
+    );
+    let transferred = super::history_window::bytes_sent(mysql).await - start;
+    assert!(
+        transferred < 64 * 1024,
+        "form state transferred {transferred} bytes"
+    );
+    mysql.execute(format!(
+        "INSERT INTO {table} (id,user_id,task_id,message_id,role) VALUES (10000, ?, ?, NULL, 'USER')"
+    ), (user_id, task_id)).await.unwrap();
+    let null_candidates: Vec<MysqlRow> = mysql
+        .fetch_all(
+            pending_form_candidates_statement(table, Some(None)),
+            (task_id, task_id, 1002_i64),
+        )
+        .await
+        .unwrap();
+    assert!(
+        null_candidates.is_empty(),
+        "the nullable user boundary must resolve the old form"
+    );
+    assert_pipeline_handoff_reads(mysql, task_id, table, user_id).await;
+}
+
+async fn assert_pipeline_handoff_reads(
+    mysql: &MysqlService,
+    task_id: i64,
+    table: &str,
+    user_id: i32,
+) {
+    use brz_mysql::{Json, MysqlRow};
+    use wegent_backend_rs::task_store_runtime_reads::{
+        pipeline_latest_completed_statement, pipeline_original_prompt_statement,
+    };
+
+    mysql
+        .execute(
+            format!(
+                "INSERT INTO {table} (id,user_id,task_id,message_id,role,prompt) \
+         VALUES (10001, ?, ?, 1, 'USER', 'earliest user request')"
+            ),
+            (user_id, task_id),
+        )
+        .await
+        .unwrap();
+    let output: MysqlRow = mysql
+        .fetch_optional(pipeline_latest_completed_statement(table), (task_id,))
+        .await
+        .unwrap()
+        .expect("latest completed output");
+    assert_eq!(output.get_required::<i64>("message_id").unwrap(), 155);
+    assert_eq!(
+        output.get_required::<Json<Value>>("result").unwrap().0["value"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64 * 1024
+    );
+    let prompt: MysqlRow = mysql
+        .fetch_optional(
+            pipeline_original_prompt_statement(table),
+            (task_id, 155_i64),
+        )
+        .await
+        .unwrap()
+        .expect("original user prompt");
+    assert_eq!(
+        prompt.get_required::<String>("prompt").unwrap(),
+        "earliest user request"
+    );
 }
 
 async fn assert_session_identifiers(mysql: &MysqlService, task_id: i64, table: &str) {

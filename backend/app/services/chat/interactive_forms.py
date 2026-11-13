@@ -98,8 +98,22 @@ def get_pending_interactive_form(
     db: Any,
     *,
     task_id: int,
+    subscription_owner_user_id: int | None = None,
 ) -> PendingInteractiveForm | None:
     """Return the latest unresolved interactive form for a task, if any."""
+    if subscription_owner_user_id is not None:
+        for candidate in subtask_store.iter_pending_form_candidates(
+            db, task_id=task_id, owner_user_id=subscription_owner_user_id
+        ):
+            pending = _extract_interactive_form_from_result(
+                {"blocks": candidate.blocks},
+                task_id=task_id,
+                assistant_subtask_id=candidate.id,
+                message_id=candidate.message_id,
+            )
+            if pending:
+                return pending
+        return None
     subtasks = subtask_store.list_by_task_desc(db, task_id=task_id)
 
     for subtask in subtasks:
@@ -126,9 +140,12 @@ def validate_interactive_form_answer(
     *,
     task_id: int,
     answer: Any,
+    subscription_owner_user_id: int | None = None,
 ) -> InteractiveFormValidationResult:
     """Validate chat sends against the task's pending interactive form state."""
-    pending_form = get_pending_interactive_form(db, task_id=task_id)
+    pending_form = get_pending_interactive_form(
+        db, task_id=task_id, subscription_owner_user_id=subscription_owner_user_id
+    )
 
     if pending_form is None:
         if answer:

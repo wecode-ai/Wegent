@@ -797,9 +797,14 @@ class SubtaskStore(Protocol):
         owner_user_id: int,
         limit: Optional[int],
         offset: int,
+        bounded_payload_sort: bool = False,
     ) -> tuple[list[Subtask], int]: ...
 
     def iter_runtime_cleanup_rows(
+        self, db: Session, *, task_id: int, owner_user_id: int
+    ) -> Any: ...
+
+    def iter_pending_form_candidates(
         self, db: Session, *, task_id: int, owner_user_id: int
     ) -> Any: ...
 

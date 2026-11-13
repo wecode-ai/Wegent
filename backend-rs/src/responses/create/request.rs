@@ -384,6 +384,7 @@ pub async fn build_execution_request(
 pub(crate) async fn build_chat_execution_request(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
+    is_subscription: bool,
     preload_skills: &[Value],
     generation: Option<&Value>,
     model_options: Option<&Value>,
@@ -392,7 +393,7 @@ pub(crate) async fn build_chat_execution_request(
     build_request_with_runtime(
         state,
         input,
-        false,
+        is_subscription,
         preload_skills,
         true,
         generation,
@@ -458,6 +459,7 @@ async fn build_request_with_runtime(
         input.task_json,
         input.user_id,
         None,
+        is_subscription,
     )
     .await
     .map_err(dependency)?;

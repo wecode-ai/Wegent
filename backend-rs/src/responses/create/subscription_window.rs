@@ -20,8 +20,9 @@ pub(crate) async fn resolve_on(
     task: &Value,
     user_id: i64,
     requested: Option<i64>,
+    retained_subscription: bool,
 ) -> MysqlResult<Option<i64>> {
-    if !is_subscription(task) {
+    if !retained_subscription && !is_subscription(task) {
         return Ok(requested);
     }
     if let Some(limit) = requested {
@@ -75,5 +76,39 @@ mod tests {
         }
         assert_eq!(spec_limit(&json!({"preserveHistory":true})), 10);
         assert!(!is_subscription(&json!({"metadata":{"labels":{}}})));
+    }
+
+    #[tokio::test]
+    async fn retained_subscription_flag_bounds_legacy_tasks_without_type_labels() {
+        use crate::sql_test_support::mysql_rows::MysqlRows;
+
+        let fixture = MysqlRows::start_results(|_| panic!("no configuration read expected")).await;
+        let task = json!({"metadata":{"labels":{}}});
+        let mut sql = &fixture.mysql;
+        assert_eq!(
+            resolve_on(&mut sql, &task, 7, None, false).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_on(&mut sql, &task, 7, Some(10000), false)
+                .await
+                .unwrap(),
+            Some(10000)
+        );
+        assert_eq!(
+            resolve_on(&mut sql, &task, 7, None, true).await.unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            resolve_on(&mut sql, &task, 7, Some(10000), true)
+                .await
+                .unwrap(),
+            Some(50)
+        );
+        assert_eq!(
+            resolve_on(&mut sql, &task, 7, Some(0), true).await.unwrap(),
+            Some(0)
+        );
+        assert!(fixture.queries().is_empty());
     }
 }

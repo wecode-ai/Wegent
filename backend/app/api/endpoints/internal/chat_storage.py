@@ -983,8 +983,15 @@ async def list_history_subtasks(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    from app.services.subscription.history_window import is_subscription_task
+
     result = list_subtask_summaries(
-        db, task_id=task_id, user_id=task.user_id, limit=limit, offset=offset
+        db,
+        task_id=task_id,
+        user_id=task.user_id,
+        limit=limit,
+        offset=offset,
+        is_subscription=is_subscription_task(task),
     )
     return SubtaskListResponse(
         session_id=session_id,

@@ -34,6 +34,24 @@ def _patch_get_by_id(monkeypatch, subtask):
     )
 
 
+def test_ordinary_history_pages_keep_the_existing_store_call_signature(monkeypatch):
+    calls = []
+
+    def page(db, *, task_id, owner_user_id, limit, offset):
+        calls.append((task_id, owner_user_id, limit, offset))
+        return [], 0
+
+    monkeypatch.setattr(
+        subtask_history.subtask_store, "list_visible_history_page", page
+    )
+    for limit in [None, 0, 20]:
+        result = subtask_history.list_subtask_summaries(
+            None, task_id=2, user_id=7, limit=limit, offset=5
+        )
+        assert result == {"subtasks": [], "total": 0, "has_more": False}
+    assert calls == [(2, 7, None, 5), (2, 7, 0, 5), (2, 7, 20, 5)]
+
+
 def test_list_summaries_pagination_and_delete_filter(monkeypatch):
     deleted = _subtask(3, SubtaskRole.ASSISTANT, result={"value": "gone"})
     deleted.status = SubtaskStatus.DELETE

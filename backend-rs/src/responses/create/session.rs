@@ -207,6 +207,7 @@ pub async fn setup_chat_session(
             task_json,
             project_id,
             raw_project_id,
+            task_column::<i64>(&row, "is_active") == Some(2),
         )
         .await;
     }
@@ -257,6 +258,7 @@ pub async fn setup_chat_session(
         task_json,
         input.project_id,
         (input.project_id != 0).then_some(input.project_id),
+        false,
     )
     .await
 }
@@ -297,6 +299,7 @@ async fn append_subtasks(
     task_json: serde_json::Value,
     workspace_project_id: i64,
     raw_project_id: Option<i64>,
+    retained_subscription: bool,
 ) -> Result<ChatSessionSetup, FastApiError> {
     // `task_fork_history_resolver.resolve_for_task` (`lifecycle.py:363-370`):
     // `subtask_store.list_by_task_ordered(task_id, owner_user_id)` reads the
@@ -307,6 +310,7 @@ async fn append_subtasks(
         &task_json,
         input.user_id,
         input.history_window,
+        retained_subscription,
     )
     .await
     .map_err(internal)?;

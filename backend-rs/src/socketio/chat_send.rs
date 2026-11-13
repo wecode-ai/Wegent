@@ -244,6 +244,7 @@ struct ResolvedScope {
     team: KindRow,
     task_json: Value,
     task_owner_user_id: i64,
+    is_subscription: bool,
 }
 
 /// `on_chat_send`'s task/team resolution on the caller's transaction.
@@ -285,6 +286,7 @@ async fn resolve_scope_on(
             team,
             task_json: Value::Object(Map::new()),
             task_owner_user_id: viewer_user_id,
+            is_subscription: false,
         }));
     };
     // qs150: `get_task_by_states(TaskResource.is_active_query())`. The source
@@ -308,6 +310,8 @@ async fn resolve_scope_on(
     }
     let task_json = task_column::<Json<Value>>(&task, "json").map_or(Value::Null, |json| json.0);
     let task_owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
+    let is_subscription = task_column::<i64>(&task, "is_active") == Some(2)
+        || crate::responses::create::subscription_window::is_subscription(&task_json);
     let team = match bound_team_on(
         sql,
         task_id,
@@ -325,6 +329,7 @@ async fn resolve_scope_on(
         team,
         task_json,
         task_owner_user_id,
+        is_subscription,
     }))
 }
 
@@ -503,7 +508,25 @@ async fn pipeline_handoff(
     task_id: i64,
     user_id: i64,
     mode: &str,
+    is_subscription: bool,
 ) -> brz_mysql::MysqlResult<String> {
+    if is_subscription {
+        if state
+            .task_store
+            .lineage_task_on(sql, task_id, user_id)
+            .await?
+            .is_none()
+        {
+            return Ok(String::new());
+        }
+        return super::subscription_handoff::load_message_on(
+            sql,
+            state.task_store.table_templates().subtasks,
+            task_id,
+            mode,
+        )
+        .await;
+    }
     fn column<T: brz_mysql::FromMysqlCol>(row: &brz_mysql::MysqlRow, name: &str) -> Option<T> {
         row.get_at(crate::task_store_statements::subtask_column_index(name)?)
             .ok()
@@ -560,12 +583,12 @@ pub fn should_trigger_ai_response(
 const INTERACTIVE_FORM_TOOL_MARKER: &str = "interactive_form_question";
 
 /// The pending form `get_pending_interactive_form` finds, if any.
-struct PendingInteractiveForm {
+pub(super) struct PendingInteractiveForm {
     tool_use_id: String,
 }
 
 /// `_extract_interactive_form_from_result`'s `reversed(blocks)` scan.
-fn pending_form_in_result(result: &Value) -> Option<PendingInteractiveForm> {
+pub(super) fn pending_form_in_result(result: &Value) -> Option<PendingInteractiveForm> {
     let blocks = result.get("blocks")?.as_array()?;
     for block in blocks.iter().rev() {
         let Some(block) = block.as_object() else {
@@ -627,20 +650,28 @@ async fn validate_interactive_form_answer_on(
     subtasks_table: &str,
     task_id: i64,
     answer: Option<&Map<String, Value>>,
+    is_subscription: bool,
 ) -> Result<Result<(), Value>, anyhow::Error> {
-    let rows = sql
-        .fetch_all_rows(
+    let mut pending = if is_subscription {
+        super::subscription_forms::pending_form_on(sql, subtasks_table, task_id).await?
+    } else {
+        None
+    };
+    let rows = if is_subscription {
+        Vec::new()
+    } else {
+        sql.fetch_all_rows(
             RouteKey::Task(task_id as u64),
             &crate::task_store_statements::subtasks_by_task_desc_statement(subtasks_table),
             vec![StatementArg::Int(task_id)],
         )
-        .await?;
+        .await?
+    };
     let column = |name: &str| {
         crate::task_store_statements::subtask_column_index(name)
             .expect("the subtask projection contains every mapped column")
     };
     let (role_index, result_index) = (column("role"), column("result"));
-    let mut pending = None;
     for row in &rows {
         let role: String = row
             .get_at::<Option<String>>(role_index)?
@@ -1049,7 +1080,7 @@ pub async fn handle(
                     let context_mode = members[stage]["contextPassing"].as_str().unwrap_or("none");
                     if payload.message.is_empty() && context_mode != "none" {
                         payload.message = pipeline_handoff(
-                            state, sql, task_id, user_id, context_mode,
+                            state, sql, task_id, user_id, context_mode, scope.is_subscription,
                         ).await.map_err(|error| {
                             tracing::error!(%error, task_id, "pipeline confirmation handoff read failed");
                             FastApiError::internal()
@@ -1093,6 +1124,7 @@ pub async fn handle(
                         state.task_store.table_templates().subtasks,
                         task_id,
                         payload.interactive_form_answer_map(),
+                        scope.is_subscription,
                     )
                     .await
                     {
@@ -1409,6 +1441,7 @@ pub async fn handle(
             // AI trigger run after the commit on the persisted turn.
             let turn = ChatTurn {
                 task_id: setup.task_id,
+                is_subscription: scope.is_subscription,
                 user_subtask_id: setup.user_subtask_id,
                 assistant_subtask_id: setup.assistant_subtask_id,
                 user_message_id: setup.user_message_id,
@@ -1953,6 +1986,44 @@ mod tests {
         // No flat column list and no unqualified predicate.
         assert!(!sql.contains("SELECT id, user_id"), "{sql}");
         assert!(!sql.contains("WHERE task_id = ?"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn only_subscription_sends_switch_to_the_bounded_form_projection() {
+        use crate::sql_test_support::mysql_rows::MysqlRows;
+
+        for subscription in [false, true] {
+            let fixture = MysqlRows::start_results(|_| {
+                (
+                    vec![("id", crate::sql_test_support::mysql_rows::Value::I64(1))],
+                    Vec::new(),
+                )
+            })
+            .await;
+            assert!(
+                validate_interactive_form_answer_on(
+                    &mut &fixture.mysql,
+                    "subtasks",
+                    42,
+                    None,
+                    subscription,
+                )
+                .await
+                .unwrap()
+                .is_ok()
+            );
+            let queries = fixture.queries();
+            assert_eq!(queries.len(), 1);
+            if subscription {
+                assert!(queries[0].contains("LIMIT 50)"));
+                assert!(!queries[0].contains("subtasks.result AS"));
+            } else {
+                assert_eq!(
+                    queries[0],
+                    crate::task_store_statements::subtasks_by_task_desc_statement("subtasks")
+                );
+            }
+        }
     }
 
     /// The recorded qs155: the session's existing-subtask read keeps the ORM
