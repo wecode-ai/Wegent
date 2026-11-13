@@ -7,6 +7,7 @@ runs:
     - name: Install missing native test tools
       shell: bash
       run: |
+        install -m 644 .github/ci/wework-native-test-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
         source .github/scripts/lib/apt-packages.sh
         install_missing_apt_packages gnome-keyring libsecret-tools xdotool
         for binary in dbus-run-session gnome-keyring-daemon gdbus secret-tool xdotool; do

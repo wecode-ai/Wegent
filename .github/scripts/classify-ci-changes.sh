@@ -59,6 +59,7 @@ classify_path() {
       return
       ;;
     .github/actions/build-wework-core-e2e/* | .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/setup-wework-native-test-dependencies/* | \
       .github/actions/build-wework-macos-e2e/* | .github/actions/build-minio-e2e/* | \
       .github/actions/setup-minio-e2e/* | .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | .github/scripts/macos-e2e-source-digest.mjs | \
@@ -135,6 +136,7 @@ classify_path() {
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
+      .github/ci/wework-native-test-ubuntu.sources | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/core-runner-slots.* | \

@@ -619,7 +619,8 @@ wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
 if ! ruby -ryaml - "$wework_workflow" "$wework_desktop_image" \
-  "$action_dir/setup-wework-native-test-dependencies/action.yml" <<'RUBY'
+  "$action_dir/setup-wework-native-test-dependencies/action.yml" \
+  "$script_dir/../ci/wework-native-test-ubuntu.sources" <<'RUBY'
 jobs = YAML.load_file(ARGV[0]).fetch('jobs')
 core = jobs.fetch('wework-desktop-core-e2e')
 commands = core.fetch('steps').map { |step| step.fetch('run', '') }.join("\n")
@@ -640,7 +641,23 @@ setup_commands = action.fetch('steps').map { |step| step.fetch('run', '') }.join
 abort 'Native setup must reuse the existing APT helper' unless setup_commands.include?('source .github/scripts/lib/apt-packages.sh')
 installations = setup_commands.lines.map(&:strip).grep(/^install_missing_apt_packages /)
 abort 'Native setup must install only the three missing tools' unless installations == ['install_missing_apt_packages gnome-keyring libsecret-tools xdotool']
-abort 'Native setup must preserve repository trust and installer failures' if setup_commands.match?(/apt-get|sources\.list|\|\|\s*true/)
+abort 'Native setup must preserve repository trust and installer failures' if setup_commands.match?(/apt-get|trusted=yes|allow-unauthenticated|AllowInsecureRepositories|Verify-Peer=false|\|\|\s*true/)
+source_setup = 'install -m 644 .github/ci/wework-native-test-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources'
+abort 'Native setup must use the signed Ubuntu archives before installing missing tools' unless setup_commands.include?(source_setup) && setup_commands.index(source_setup) < setup_commands.index(installations.first)
+abort 'Native Ubuntu archive suites must match the existing image' unless image.lines.first.strip == 'FROM ubuntu:24.04'
+archives = File.read(ARGV[3]).split(/\n\s*\n/).map do |stanza|
+  stanza.lines.map { |line| line.strip.split(/:\s*/, 2) }.to_h
+end
+archive_common = {
+  'Types' => 'deb',
+  'Components' => 'main universe restricted multiverse',
+  'Signed-By' => '/usr/share/keyrings/ubuntu-archive-keyring.gpg'
+}
+expected_archives = [
+  archive_common.merge('URIs' => 'https://archive.ubuntu.com/ubuntu/', 'Suites' => 'noble noble-updates noble-backports'),
+  archive_common.merge('URIs' => 'https://security.ubuntu.com/ubuntu/', 'Suites' => 'noble-security')
+]
+abort 'Native setup must preserve Ubuntu suites, components and the distribution signing keyring' unless archives == expected_archives
 %w[dbus-run-session gnome-keyring-daemon gdbus secret-tool xdotool].each do |binary|
   abort "Native setup must verify #{binary}" unless setup_commands.include?(binary)
 end
