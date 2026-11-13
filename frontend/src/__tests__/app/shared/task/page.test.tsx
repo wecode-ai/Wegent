@@ -43,6 +43,8 @@ jest.mock('@/apis/tasks', () => ({
 
 jest.mock('@/apis/user', () => ({
   getToken: () => mockSessionToken,
+  getSessionTokenSnapshot: () => mockSessionToken,
+  SESSION_TOKEN_CHANGED_EVENT: 'wegent:session-token-changed',
   userApis: {
     getCurrentUser: jest.fn().mockResolvedValue({ user_name: 'Viewer' }),
   },
@@ -216,4 +218,50 @@ describe('SharedTaskPage right panel', () => {
     await screen.findByRole('heading', { name: 'Shared task' })
     expect(screen.queryByTestId('shared-test-panel')).not.toBeInTheDocument()
   })
+
+  it.each(['account', 'logout', 'clear'])(
+    'clears private content when another tab changes the session (%s)',
+    async change => {
+      mockSessionToken = 'authorized-session'
+      mockGetPublicSharedTask.mockResolvedValueOnce({
+        task_title: 'Private task',
+        sharer_name: 'Owner',
+        sharer_id: 1,
+        subtasks: [
+          {
+            id: 1,
+            role: 'USER',
+            prompt: 'private-session-body',
+            status: 'COMPLETED',
+            created_at: '2026-08-31T00:00:00Z',
+          },
+        ],
+        created_at: '2026-08-31T00:00:00Z',
+      })
+      render(<SharedTaskPage />)
+      await screen.findByText('private-session-body')
+      act(() => {
+        openTaskRightPanel({ panelType: 'shared-test-panel', panelProps: {} })
+      })
+      expect(screen.getByTestId('shared-test-panel')).toBeInTheDocument()
+      mockMessageRenders.length = 0
+      mockGetPublicSharedTask.mockRejectedValueOnce(
+        Object.assign(new Error('denied'), { status: change === 'account' ? 403 : 401 })
+      )
+      act(() => {
+        mockSessionToken = change === 'account' ? 'another-session' : null
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key: change === 'clear' ? null : 'auth_token',
+            newValue: mockSessionToken,
+          })
+        )
+      })
+      expect(screen.queryByText('private-session-body')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('shared-test-panel')).not.toBeInTheDocument()
+      await screen.findByTestId('shared-task-access-action')
+      expect(mockMessageRenders).toEqual([])
+      expect(mockGetPublicSharedTask).toHaveBeenCalledTimes(2)
+    }
+  )
 })

@@ -18,6 +18,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import type { Message } from '@/features/tasks/components/message'
 import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useSessionToken } from '@/hooks/useSessionToken'
 import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
 import { detectInAppBrowser } from '@/utils/browserDetection'
@@ -466,7 +467,7 @@ function SharedTaskContent({
 
 function ScopedSharedTaskContent() {
   const token = useSearchParams().get('token')
-  const sessionToken = getToken()
+  const sessionToken = useSessionToken()
 
   // Reset messages, identity and attachment panels before rendering a new scope.
   return (

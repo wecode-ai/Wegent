@@ -29,7 +29,10 @@ jest.mock('@/apis/tasks', () => ({
     joinTaskAccessShare: (token: string) => mockJoin(token),
   },
 }))
-jest.mock('@/apis/user', () => ({ getToken: () => mockToken }))
+jest.mock('@/apis/user', () => ({
+  getSessionTokenSnapshot: () => mockToken,
+  SESSION_TOKEN_CHANGED_EVENT: 'wegent:session-token-changed',
+}))
 jest.mock('@/features/layout/TopNavigation', () => ({
   __esModule: true,
   default: () => <header />,
@@ -205,5 +208,27 @@ describe('Task access share page', () => {
       resolveJoin({ status: 'approved', resource_type: 'Task', resource_id: 42 })
     })
     expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it('ignores approval from the previous account after another tab logs out', async () => {
+    let resolveJoin!: (value: unknown) => void
+    mockJoin.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          resolveJoin = resolve
+        })
+    )
+    render(<TaskAccessPage />)
+    fireEvent.click(await screen.findByTestId('task-access-request'))
+    act(() => {
+      mockToken = null
+      window.dispatchEvent(new StorageEvent('storage', { key: 'auth_token', newValue: null }))
+    })
+    await act(async () => {
+      resolveJoin({ status: 'approved', resource_type: 'Task', resource_id: 42 })
+    })
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('task-access-request')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('task-access-login')).toBeInTheDocument()
   })
 })

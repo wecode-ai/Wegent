@@ -121,6 +121,35 @@ for (const requireApproval of [true, false]) {
       await expect(page).toHaveURL(new RegExp(`/chat\\?taskId=${fixture.task_id}$`))
       await page.goto(`/shared/task?token=${encodeURIComponent(fixture.tokens.Task)}`)
       await expect(page.getByText(fixture.body, { exact: true })).toBeVisible()
+      const sessionTab = await page.context().newPage()
+      try {
+        await sessionTab.goto(`/shared/task?token=${prefix}-unrecorded`)
+        const logoutFromOtherTab = async () => {
+          await page.context().clearCookies({ name: 'auth_token' })
+          await sessionTab.evaluate(() => {
+            localStorage.removeItem('auth_token')
+            localStorage.removeItem('auth_token_expire')
+          })
+        }
+        // A native cross-tab storage event must clear the already rendered body.
+        await logoutFromOtherTab()
+        await expect(page.getByTestId('shared-task-access-action')).toBeVisible()
+        await expect(page.getByText(fixture.body, { exact: true })).toHaveCount(0)
+        await page.getByTestId('shared-task-access-action').click()
+        await expect(page).toHaveURL(/\/login\?redirect=/)
+
+        await setBrowserSession(ownerLogin.data!.access_token)
+        await page.goto(target)
+        await expect(page.getByTestId('task-access-request')).toBeVisible()
+        await logoutFromOtherTab()
+        await expect(page.getByTestId('task-access-login')).toBeVisible()
+        await expect(page.getByTestId('task-access-request')).toHaveCount(0)
+      } finally {
+        await sessionTab.close()
+      }
+      await setBrowserSession(ownerLogin.data!.access_token)
+      await page.goto(`/shared/task?token=${encodeURIComponent(fixture.tokens.Task)}`)
+      await expect(page.getByText(fixture.body, { exact: true })).toBeVisible()
       // Exercise a client-side link change rather than resetting the page with goto.
       await page.evaluate(next => {
         window.history.pushState(null, '', next)

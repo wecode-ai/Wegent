@@ -7,18 +7,18 @@
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { taskApis, type TaskAccessShareInfo } from '@/apis/tasks'
-import { getToken } from '@/apis/user'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useSessionToken } from '@/hooks/useSessionToken'
 
 function TaskAccessContent() {
   const router = useRouter()
   const token = useSearchParams().get('token')
-  const sessionToken = getToken()
+  const sessionToken = useSessionToken()
   const [loadAttempt, setLoadAttempt] = useState(0)
   const scope = JSON.stringify([token, sessionToken, loadAttempt])
   const currentScope = useRef(scope)
