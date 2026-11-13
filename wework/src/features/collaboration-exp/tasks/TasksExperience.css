@@ -333,7 +333,6 @@
   display: grid;
   align-items: stretch;
   gap: 24px;
-  animation: experience-task-enter 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 
 .collaboration-exp-app .experience-task-home-copy {
@@ -436,7 +435,6 @@
 
 .collaboration-exp-app .experience-task-home-pulse[data-live='true']::after {
   opacity: 0.55;
-  animation: experience-task-live-trace 2.8s ease-in-out infinite;
 }
 
 .collaboration-exp-app .experience-task-home-pulse-head {
@@ -477,10 +475,6 @@
   background: rgb(var(--color-bg-base));
   color: rgb(var(--color-text-primary));
   text-align: left;
-  transition:
-    border-color 0.14s,
-    background-color 0.14s,
-    transform 0.14s;
 }
 
 .collaboration-exp-app .experience-task-home-live-work:hover {
@@ -519,9 +513,6 @@
   right: 14px;
   color: rgb(var(--color-text-muted));
   transform: translateY(-50%);
-  transition:
-    transform 0.14s,
-    color 0.14s;
 }
 
 .collaboration-exp-app .experience-task-home-live-work:hover > svg {
@@ -575,7 +566,6 @@
   margin-top: 28px;
   padding: 18px 0 0 20px;
   border-top: 1px solid rgb(var(--color-border));
-  animation: experience-task-enter 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) 0.12s both;
 }
 
 .collaboration-exp-app .experience-task-home-next::before {
@@ -694,16 +684,30 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .collaboration-exp-app .experience-task-home-hero,
-  .collaboration-exp-app .experience-task-home-next,
-  .collaboration-exp-app .experience-task-home-pulse::after {
-    animation: none;
+@media (prefers-reduced-motion: no-preference) {
+  .collaboration-exp-app .experience-task-home-hero {
+    animation: experience-task-enter 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) both;
   }
-  .collaboration-exp-app .experience-task-home-live-work,
+  .collaboration-exp-app .experience-task-home-pulse[data-live='true']::after {
+    animation: experience-task-live-trace 2.8s ease-in-out infinite;
+  }
+  .collaboration-exp-app .experience-task-home-next {
+    animation: experience-task-enter 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) 0.12s both;
+  }
+  .collaboration-exp-app .experience-task-home-live-work {
+    transition:
+      border-color 0.14s,
+      background-color 0.14s,
+      transform 0.14s;
+  }
   .collaboration-exp-app .experience-task-home-live-work > svg {
-    transition: none;
+    transition:
+      transform 0.14s,
+      color 0.14s;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .collaboration-exp-app .experience-task-home-live-work:hover {
     transform: none;
   }

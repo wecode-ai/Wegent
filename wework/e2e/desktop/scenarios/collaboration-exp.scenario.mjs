@@ -61,10 +61,13 @@ export function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
-  captureScreenshot,
+  captureScreenshot: captureSurface,
   restartDesktopApp,
   resultDir,
 }) {
+  // Full viewport evidence includes portalled dialogs as well as the native conversation composer.
+  const captureScreenshot = (control, name) =>
+    captureSurface(control, name, 'body', { surface: 'primary-view' })
   let cloud
   let cloudRuntime
   let cloudProject

@@ -51,7 +51,6 @@
   grid-template-columns: minmax(0px, 1.24fr) minmax(250px, 0.76fr);
   gap: 22px;
   padding: 20px 24px;
-  animation: 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) 0s 1 normal both running assistant-enter;
   display: grid;
   position: relative;
   overflow: hidden;
@@ -101,7 +100,6 @@
 }
 [data-testid='collaboration-exp-app'] .assistant-live-snapshot[data-live='true']::after {
   opacity: 0.5;
-  animation: 2.8s ease-in-out 0s infinite normal none running assistant-live-trace;
 }
 [data-testid='collaboration-exp-app'] .assistant-live-snapshot-head {
   align-items: center;
@@ -143,7 +141,6 @@
   content: '';
   border-radius: inherit;
   background: rgb(var(--color-focus));
-  animation: 1.8s ease-in-out 0s infinite normal none running assistant-signal-breathe;
   position: absolute;
   inset: 3px;
 }
@@ -156,10 +153,6 @@
   border-radius: 12px;
   gap: 4px;
   padding: 10px 36px 10px 12px;
-  transition:
-    border-color 0.14s,
-    background-color 0.14s,
-    transform 0.14s;
   display: grid;
   position: relative;
 }
@@ -195,9 +188,6 @@
 }
 [data-testid='collaboration-exp-app'] .assistant-live-work > svg {
   color: rgb(var(--color-text-muted));
-  transition:
-    color 0.14s,
-    transform 0.14s;
   position: absolute;
   top: 50%;
   right: 13px;
@@ -245,8 +235,6 @@
   color: rgb(var(--color-focus));
 }
 [data-testid='collaboration-exp-app'] .assistant-dashboard-section {
-  animation: assistant-enter 0.42s calc(var(--enter-index, 0) * 80ms + 0.12s)
-    cubic-bezier(0.2, 0.75, 0.25, 1) both;
   margin-top: 18px;
 }
 [data-testid='collaboration-exp-app'] .assistant-section-heading {
@@ -342,11 +330,6 @@
   border-radius: 50%;
   flex: 0 0 auto;
   place-items: center;
-  transition:
-    border-color 0.14s,
-    background-color 0.14s,
-    color 0.14s,
-    transform 0.14s;
   display: grid;
 }
 [data-testid='collaboration-exp-app'] .assistant-decision-card:hover .assistant-action-arrow {
@@ -377,7 +360,6 @@
   background: rgb(var(--color-focus));
   border-radius: 0px 2px 2px 0px;
   width: 2px;
-  animation: 2.2s ease-in-out 0s infinite normal none running assistant-active-rail;
   position: absolute;
   top: 12px;
   bottom: 12px;
@@ -399,9 +381,6 @@
   color: rgb(var(--color-text-muted));
   opacity: 0.45;
   place-items: center;
-  transition:
-    opacity 0.14s,
-    transform 0.14s;
   display: grid;
   transform: translate(-2px);
 }
@@ -488,15 +467,8 @@
   display: flex;
   min-width: 0px;
   min-height: 170px;
-  animation: assistant-card-enter 0.38s calc(var(--enter-index, 0) * 70ms + 0.18s)
-    cubic-bezier(0.2, 0.75, 0.25, 1) both;
   border-radius: 14px;
   padding: 17px 18px 15px 21px;
-  transition:
-    transform 0.16s,
-    border-color 0.16s,
-    background-color 0.16s,
-    box-shadow 0.16s;
   position: relative;
   overflow: hidden;
   width: 100%;
@@ -621,10 +593,7 @@
   gap: 12px;
   display: flex;
   border-bottom: 1px solid rgb(var(--color-border));
-  animation: assistant-row-enter 0.34s calc(var(--enter-index, 0) * 45ms + 0.15s)
-    cubic-bezier(0.2, 0.75, 0.25, 1) both;
   padding: 14px 16px;
-  transition: background-color 0.14s;
   position: relative;
   min-height: 44px;
 }
@@ -753,23 +722,66 @@
     transform: scaleY(1);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro,
-  [data-testid='collaboration-exp-app'] .assistant-dashboard-section,
-  [data-testid='collaboration-exp-app'] .assistant-decision-card,
-  [data-testid='collaboration-exp-app'] .assistant-recent-progress > button,
-  [data-testid='collaboration-exp-app'] .assistant-live-snapshot::after,
-  [data-testid='collaboration-exp-app'] .assistant-live-signal::after,
-  [data-testid='collaboration-exp-app'] .assistant-recent-progress > button::before {
-    animation-name: none;
-    animation-duration: 0s;
-    animation-delay: 0s;
+@media (prefers-reduced-motion: no-preference) {
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro {
+    animation: 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) 0s 1 normal both running assistant-enter;
   }
-  [data-testid='collaboration-exp-app'] .assistant-live-work,
-  [data-testid='collaboration-exp-app'] .assistant-decision-card,
-  [data-testid='collaboration-exp-app'] .assistant-action-arrow,
-  [data-testid='collaboration-exp-app'] .assistant-recent-progress > button,
-  [data-testid='collaboration-exp-app'] .assistant-progress-arrow,
+  [data-testid='collaboration-exp-app'] .assistant-live-snapshot[data-live='true']::after {
+    animation: 2.8s ease-in-out 0s infinite normal none running assistant-live-trace;
+  }
+  [data-testid='collaboration-exp-app']
+    .assistant-live-snapshot[data-live='true']
+    .assistant-live-signal::after {
+    animation: 1.8s ease-in-out 0s infinite normal none running assistant-signal-breathe;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-section {
+    animation: assistant-enter 0.42s calc(var(--enter-index, 0) * 80ms + 0.12s)
+      cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  }
+  [data-testid='collaboration-exp-app']
+    .assistant-recent-progress
+    > button[data-state='running']::before {
+    animation: 2.2s ease-in-out 0s infinite normal none running assistant-active-rail;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-decision-card {
+    animation: assistant-card-enter 0.38s calc(var(--enter-index, 0) * 70ms + 0.18s)
+      cubic-bezier(0.2, 0.75, 0.25, 1) both;
+    transition:
+      transform 0.16s,
+      border-color 0.16s,
+      background-color 0.16s,
+      box-shadow 0.16s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-recent-progress > button {
+    animation: assistant-row-enter 0.34s calc(var(--enter-index, 0) * 45ms + 0.15s)
+      cubic-bezier(0.2, 0.75, 0.25, 1) both;
+    transition: background-color 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-work {
+    transition:
+      border-color 0.14s,
+      background-color 0.14s,
+      transform 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-live-work > svg {
+    transition:
+      color 0.14s,
+      transform 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-action-arrow {
+    transition:
+      border-color 0.14s,
+      background-color 0.14s,
+      color 0.14s,
+      transform 0.14s;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-progress-arrow {
+    transition:
+      opacity 0.14s,
+      transform 0.14s;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
   [data-testid='collaboration-exp-app'] .workspace-shell[data-area='assistants'] .chat-input {
     transition: none;
   }
