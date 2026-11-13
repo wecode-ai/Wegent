@@ -22,7 +22,11 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
 // Database and Backend startup in these fixtures can delay the 200ms Python
 // descriptor request used by Python setup and plugin development. Keep these
 // fixtures separate from both checkpoints on Linux Core.
-const PYTHON_RUNTIME_STARTUP_PEERS = ['collaboration-shared-core', 'collaboration-templates']
+const PYTHON_RUNTIME_STARTUP_PEERS = [
+  'collaboration-shared-core',
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
+]
 
 export function linuxCoreCheckpointResources(checkpoint) {
   if (checkpoint === 'python-runtime' || checkpoint === 'plugin-development') {

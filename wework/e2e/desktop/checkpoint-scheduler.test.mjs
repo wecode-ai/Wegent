@@ -149,9 +149,32 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
   assert.deepEqual(overlaps, [])
 })
 
+const pythonStartupPeers = [
+  'collaboration-shared-core',
+  'collaboration-templates',
+  'collaboration-template-lifecycle',
+]
+
 for (const checkpoint of ['python-runtime', 'plugin-development']) {
+  for (const peer of pythonStartupPeers) {
+    test(`separates Linux Core ${checkpoint} from ${peer}`, async () => {
+      const active = new Set()
+      await runWithCheckpointResources({
+        checkpoints: [checkpoint, peer],
+        workerCount: 2,
+        resourceFor: linuxCoreCheckpointResources,
+        run: async id => {
+          active.add(id)
+          assert.equal(active.size, 1, `${checkpoint} overlapped ${peer}`)
+          await new Promise(resolve => setImmediate(resolve))
+          active.delete(id)
+        },
+      })
+    })
+  }
+
   test(`separates Linux Core ${checkpoint} from the competing cloud fixtures`, async () => {
-    const cloudCheckpoints = ['collaboration-shared-core', 'collaboration-templates']
+    const cloudCheckpoints = pythonStartupPeers
     const independent = 'stand-in-memory-timer'
     const active = new Set()
     let independentRanWithPython = false
