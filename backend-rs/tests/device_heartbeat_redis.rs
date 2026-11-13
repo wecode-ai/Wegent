@@ -44,7 +44,14 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         address.ip().is_loopback(),
         "only a disposable Redis is allowed"
     );
-    let redis = RedisService::single(address.to_string()).await.unwrap();
+    // Match the request budget used by the other Redis integration fixtures.
+    let redis = RedisService::noshard_with_options(
+        address.to_string(),
+        [address.to_string()],
+        brz_redis::RedisServiceOptions::default().with_timeout(Duration::from_secs(5)),
+    )
+    .await
+    .unwrap();
     let mut load = cmd("SCRIPT");
     load.arg("LOAD").arg(LOCK_RELEASE_SCRIPT);
     let digest: String = redis.command(load).await.unwrap();
