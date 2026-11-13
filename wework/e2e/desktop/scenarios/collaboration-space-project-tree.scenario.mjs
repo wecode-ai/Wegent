@@ -65,7 +65,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', 'POST')
-      business = await request('/api/v1/workspaces', 'POST', { name: `test-${process.pid}` })
+      business = await request('/api/v1/workspaces', 'POST', {
+        name: `test-${process.pid}`,
+        is_default: true,
+      })
       for (let index = 0; index < 20; index += 1) {
         const project = await request(`/api/v1/workspaces/${business.id}/projects`, 'POST', {
           name: `滚动验收-${index}-${process.pid}`,
