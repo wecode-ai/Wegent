@@ -50,6 +50,11 @@ from integration_checks.plugin_auth_fixtures import (
     sessions,
 )
 
+# Keep the HTTP identity checks in the existing MySQL/Redis CI suite.
+from integration_checks.plugin_install_identity_mysql import (
+    test_http_reinstall_uses_existing_identity_with_real_mysql_and_redis,
+)
+
 
 @pytest.mark.parametrize("same_slug", [False, True])
 def test_catalog_first_publish_does_not_lock_missing_identity_gaps(sessions, same_slug):

@@ -500,7 +500,7 @@ def test_coordination_failure_before_account_commit_is_fail_closed(
                 else (
                     installed_plugin_service._safe_kind_name(LEGACY_KEY)
                     if entry == "legacy"
-                    else marketplace_write_name(db, context.plugin_id)
+                    else marketplace_write_name(db, context.user_id, context.plugin_id)
                 )
             )
         with redis.mutex:

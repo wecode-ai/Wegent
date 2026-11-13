@@ -552,23 +552,21 @@ class PluginMarketplaceService:
                 db, user_id=user_id, plugin_id=plugin_id
             )
         # Catalog repair may have committed its own transaction.
-        from app.services.plugin_write_identity import marketplace_write_name
+        from app.services.plugin_write_identity import acquire_installation_write_lock
 
-        acquire_plugin_write_lock(
-            db, user_id, name=marketplace_write_name(db, plugin_id)
+        plugin = db.get(Plugin, plugin_id)
+        if plugin is None:
+            raise HTTPException(404, "Marketplace plugin not found")
+        kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
+        existing = acquire_installation_write_lock(
+            db,
+            user_id,
+            creation_name=kind_name,
+            find_existing=lambda: self._find_installation_for_plugin(
+                db, user_id=user_id, plugin=plugin
+            ),
         )
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
-        kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
-        existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
-        if existing is None:
-            # Catalog rebuilds can leave inactive installs whose pluginId no longer
-            # resolves. Their canonical Kind name is still the catalog identity.
-            existing = self._find_installed_kind_by_name(
-                db, user_id=user_id, kind_name=kind_name
-            )
-        if existing is not None:
-            acquire_plugin_write_lock(db, user_id, installed_id=existing.id)
-            db.refresh(existing)
         if release_id is not None:
             if not existing and release_id != plugin.latest_release_id:
                 raise HTTPException(
@@ -3045,6 +3043,19 @@ class PluginMarketplaceService:
     def _find_installed(self, db, *, user_id, plugin_id):
         return self._load_installed_kinds_by_plugin_id(db, user_id=user_id).get(
             plugin_id
+        )
+
+    def _find_installation_for_plugin(
+        self, db: Session, *, user_id: int, plugin: Plugin
+    ) -> Kind | None:
+        existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
+        if existing is not None:
+            return existing
+        # Reuse inactive canonical installs after a catalog rebuild as well.
+        return self._find_installed_kind_by_name(
+            db,
+            user_id=user_id,
+            kind_name=self._kind_name(plugin.catalog_namespace, plugin.slug),
         )
 
     def _find_installed_kind_by_name(
