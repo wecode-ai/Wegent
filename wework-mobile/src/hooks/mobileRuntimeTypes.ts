@@ -11,6 +11,8 @@ import type {
   RuntimeAttachment,
   RuntimeComposerApp,
   RuntimeUploadAsset,
+  RequestUserInputPayload,
+  RequestUserInputResponse,
 } from '@/types/runtime'
 
 export interface MobileRuntimeState {
@@ -24,6 +26,9 @@ export interface MobileRuntimeState {
   selectedDeviceId: string | null
   allDevicesSelected: boolean
   models: UnifiedModel[]
+  modelsLoading: boolean
+  modelsError: string | null
+  loadModels: (force?: boolean) => Promise<void>
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
   permissionMode: RuntimePermissionMode
@@ -48,6 +53,8 @@ export interface MobileRuntimeState {
   selectPermissionMode: (mode: RuntimePermissionMode) => void
   send: (message: string, options?: NewConversationOptions) => Promise<boolean>
   stop: () => Promise<boolean>
+  respondToUserInput: (response: RequestUserInputResponse) => Promise<boolean>
+  skipUserInput: (payload: RequestUserInputPayload) => Promise<boolean>
   uploadAttachment: (asset: RuntimeUploadAsset) => Promise<RuntimeAttachment>
   loadComposerApps: () => Promise<RuntimeComposerApp[]>
   createProject: (input: { deviceId: string; workspacePath: string; name: string }) => Promise<void>

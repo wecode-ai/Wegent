@@ -3,6 +3,7 @@ import { useCallback, useRef, useState, type RefObject } from 'react'
 import { chatReducer, type ChatAction } from '@/domain/chatReducer'
 import { runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
 import { hydrateRuntimeTranscript } from '@/domain/runtimeTranscriptHydration'
+import { requestUserInputResponseKey } from '../../../packages/chat-core/src/runtime-user-input'
 import type { RuntimeStream } from '@/services/runtimeStream'
 import type { ChatMessage, RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
 
@@ -18,6 +19,7 @@ interface ConversationSnapshot {
   touchedAt: number
   buffered: ChatAction[]
   paginationGeneration: number
+  settledInputs: Map<string, ChatAction>
   hydrationMessages?: ChatMessage[]
   pending?: Promise<RuntimeTranscriptResponse | null>
   older?: Promise<void>
@@ -47,6 +49,7 @@ export function useMobileTranscript(
         touchedAt: Date.now(),
         buffered: [],
         paginationGeneration: 0,
+        settledInputs: new Map(),
       }
       entries.current.set(key, entry)
       while (entries.current.size > MAX_CONVERSATIONS) {
@@ -135,21 +138,39 @@ export function useMobileTranscript(
     })
   }, [])
 
-  const dispatchMessages = useCallback(
-    (action: ChatAction) => {
-      const address = currentAddress.current
-      if (!address) {
-        messagesRef.current = chatReducer(messagesRef.current, action)
-        setMessages(messagesRef.current)
-        return
-      }
+  const dispatchToAddress = useCallback(
+    (address: RuntimeTaskAddress, action: ChatAction) => {
       const entry = entryFor(address)
+      const key =
+        action.type === 'user-input-response'
+          ? requestUserInputResponseKey(action.response)
+          : action.type === 'user-input-cancelled'
+            ? action.key
+            : null
+      if (key) entry.settledInputs.set(key, action)
       if (entry.pending) entry.buffered.push(action)
       entry.messages = chatReducer(entry.messages, action)
+      for (const settled of entry.settledInputs.values())
+        entry.messages = chatReducer(entry.messages, settled)
       entry.touchedAt = Date.now()
       publish(address, entry)
     },
-    [currentAddress, entryFor, publish]
+    [entryFor, publish]
+  )
+
+  const dispatchMessages = useCallback(
+    (action: ChatAction) => {
+      const address = currentAddress.current
+      if (address) return dispatchToAddress(address, action)
+      messagesRef.current = chatReducer(messagesRef.current, action)
+      setMessages(messagesRef.current)
+    },
+    [currentAddress, dispatchToAddress]
+  )
+
+  const readMessages = useCallback(
+    (address: RuntimeTaskAddress) => entryFor(address).messages,
+    [entryFor]
   )
 
   const reloadTranscript = useCallback(
@@ -171,6 +192,8 @@ export function useMobileTranscript(
             entry.loaded
           )
           entry.messages = hydrated.messages
+          for (const settled of entry.settledInputs.values())
+            entry.messages = chatReducer(entry.messages, settled)
           if (!entry.loaded || hydrated.resetPagination) {
             entry.beforeCursor = transcript.beforeCursor ?? null
             entry.paginationGeneration += 1
@@ -222,6 +245,8 @@ export function useMobileTranscript(
           type: 'prepend',
           messages: transcript.messages,
         })
+        for (const settled of entry.settledInputs.values())
+          entry.messages = chatReducer(entry.messages, settled)
         if (entry.hydrationMessages) {
           entry.hydrationMessages = chatReducer(entry.hydrationMessages, {
             type: 'prepend',
@@ -267,6 +292,8 @@ export function useMobileTranscript(
     fail,
     rename,
     dispatchMessages,
+    dispatchToAddress,
+    readMessages,
     reloadTranscript,
     loadMoreMessagesBefore,
     retainDevices,

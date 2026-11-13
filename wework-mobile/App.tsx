@@ -2,7 +2,7 @@ import type { GlassColorScheme } from 'expo-glass-effect'
 import { StatusBar } from 'expo-status-bar'
 import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { StyleSheet, useColorScheme } from 'react-native'
 import { Dialog, PaperProvider, Portal, Snackbar, Text, useTheme } from 'react-native-paper'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
@@ -75,6 +75,8 @@ function RuntimeApplication({
   const [settingsVisible, setSettingsVisible] = useState(false)
   const [search, setSearch] = useState('')
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
+  const [composerFocusRequest, setComposerFocusRequest] = useState(0)
+  const pendingComposerFocus = useRef(false)
 
   const workspaces = useMemo(
     () =>
@@ -103,21 +105,23 @@ function RuntimeApplication({
           <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
             {({ navigation }) => (
               <ConversationListScreen
+                userLabel={userLabel}
                 allDevicesSelected={runtime.allDevicesSelected}
                 conversations={runtime.conversations}
                 currentAddress={runtime.currentAddress}
                 devices={runtime.devices}
                 loading={runtime.loading}
                 onNewConversation={workspace => {
+                  pendingComposerFocus.current = true
                   runtime.startNewConversation(workspace)
                   navigation.navigate('conversation')
                 }}
                 onNewProject={() => setProjectVisible(true)}
-                onOpenCurrentConversation={() => navigation.navigate('conversation')}
                 onSearch={setSearch}
                 onRefresh={runtime.refresh}
                 onSelectAllDevices={runtime.selectAllDevices}
                 onSelectConversation={item => {
+                  pendingComposerFocus.current = false
                   setConversationEntryRevision(current => current + 1)
                   void runtime.openConversation(item)
                   navigation.navigate('conversation')
@@ -135,6 +139,13 @@ function RuntimeApplication({
           </RuntimeStack.Screen>
           <RuntimeStack.Screen
             name="conversation"
+            listeners={{
+              transitionEnd: event => {
+                if (event.data.closing || !pendingComposerFocus.current) return
+                pendingComposerFocus.current = false
+                setComposerFocusRequest(current => current + 1)
+              },
+            }}
             options={{
               animation: 'slide_from_right',
               animationMatchesGesture: true,
@@ -148,6 +159,7 @@ function RuntimeApplication({
                 style={[styles.app, { backgroundColor: theme.colors.background }]}
               >
                 <ConversationScreen
+                  composerFocusRequest={isNewConversation ? composerFocusRequest : 0}
                   currentAddress={runtime.currentAddress}
                   currentTitle={runtime.currentTitle}
                   devices={runtime.devices}
@@ -165,9 +177,10 @@ function RuntimeApplication({
                   onLoadApps={runtime.loadComposerApps}
                   onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
                   onMore={() => setSettingsVisible(true)}
-                  onNewConversation={() =>
+                  onNewConversation={() => {
                     runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
-                  }
+                    setComposerFocusRequest(current => current + 1)
+                  }}
                   onOpenAdvancedModel={() => navigation.navigate('modelPicker')}
                   onSelectDevice={runtime.selectDevice}
                   onSelectModel={runtime.selectModel}
@@ -175,6 +188,8 @@ function RuntimeApplication({
                   onSelectWorkspace={runtime.selectWorkspace}
                   onSend={runtime.send}
                   onStop={runtime.stop}
+                  onRequestUserInputSubmit={runtime.respondToUserInput}
+                  onRequestUserInputSkip={runtime.skipUserInput}
                   onUploadAttachment={runtime.uploadAttachment}
                   running={runtime.running}
                   selectedDeviceId={runtime.selectedDeviceId}
@@ -197,6 +212,9 @@ function RuntimeApplication({
           >
             {({ navigation }) => (
               <ModelPickerScreen
+                loading={runtime.modelsLoading}
+                error={runtime.modelsError}
+                onLoadModels={runtime.loadModels}
                 models={runtime.models}
                 onDismiss={navigation.goBack}
                 onSelect={runtime.selectModel}

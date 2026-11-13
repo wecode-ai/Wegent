@@ -5,7 +5,14 @@ import type {
   ChatProcessingBlock,
   ChatTextItem,
   RuntimeTranscriptMessage,
+  RequestUserInputResponse,
 } from '@/types/runtime'
+import {
+  applyMobileUserInputResponse,
+  preserveMobileUserInput,
+  resolveMobileUserInput,
+  settleMobileUserInput,
+} from './requestUserInput'
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
 
@@ -21,6 +28,9 @@ export type ChatAction =
   | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
+  | { type: 'user-delivered'; id: string }
+  | { type: 'user-input-response'; response: RequestUserInputResponse }
+  | { type: 'user-input-cancelled'; key: string }
 
 interface StreamIdentity {
   taskId?: string
@@ -41,19 +51,35 @@ interface BlockUpdates {
 }
 
 export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
+  return resolveMobileUserInput(preserveMobileUserInput(state, reduceChat(state, action)))
+}
+
+function reduceChat(state: ChatMessage[], action: ChatAction): ChatMessage[] {
   switch (action.type) {
     case 'replace':
       return uniqueMessages(transcriptMessages(action.messages))
     case 'prepend':
       return uniqueMessages([...transcriptMessages(action.messages), ...state])
     case 'merge-latest':
-      return uniqueMessages([...state, ...transcriptMessages(action.messages)])
+      return preserveMobileUserInput(
+        state,
+        uniqueMessages([...state, ...transcriptMessages(action.messages)])
+      )
+    case 'user-delivered':
+      return state.map(message =>
+        message.id === action.id ? { ...message, pendingDelivery: false } : message
+      )
+    case 'user-input-response':
+      return applyMobileUserInputResponse(state, action.response)
+    case 'user-input-cancelled':
+      return settleMobileUserInput(state, action.key)
     case 'optimistic-user':
       return upsertMessage(state, {
         id: action.id,
         role: 'user',
         content: visibleRuntimeUserMessage(action.content),
         status: 'completed',
+        pendingDelivery: true,
         createdAt: action.createdAt,
       })
     case 'fail':

@@ -6,6 +6,8 @@ sidebar_position: 2
 
 Use this page to find an entry point, then follow the linked usage guide. It describes the desktop main window; popup, narrow-window and operating-system layouts may differ. Paths below are click sequences, not commands to enter.
 
+For home, search, device filters, and conversation entry points on iPhone and Android, see [Wework Mobile](./mobile.md).
+
 ## Know the interface
 
 | Area                | Location                               | Purpose                                                                                                       |

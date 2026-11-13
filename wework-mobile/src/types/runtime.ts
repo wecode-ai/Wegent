@@ -1,23 +1,11 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
-export type ModelType = 'public' | 'user' | 'group' | 'runtime' | string
-export type ModelOptions = Record<string, string>
-
-export interface UnifiedModel {
-  name: string
-  type: ModelType
-  displayName?: string | null
-  provider?: string | null
-  modelId?: string | null
-  contextWindow?: number | null
-  maxOutputTokens?: number | null
-  namespace?: string
-  resourceUserId?: number
-  config?: Record<string, unknown>
-  runtime?: { family?: string | null; provider?: string | null } | null
-  isActive?: boolean
-  compatibilityDisabled?: boolean
-  compatibilityDisabledReason?: string
-}
+import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
+export type { ModelType, ModelOptions, UnifiedModel }
+export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
+export type {
+  RequestUserInputPayload,
+  RequestUserInputResponse,
+} from '../../../packages/chat-core/src/runtime'
 
 export interface UnifiedModelListResponse {
   data: UnifiedModel[]
@@ -287,14 +275,18 @@ export interface RuntimeWorktreePreflightResponse {
 
 export interface ConversationItem {
   address: RuntimeTaskAddress
+  sourceWorkspacePath: string
   title: string
   deviceName: string
   projectName: string | null
   updatedAt: number
   running: boolean
+  pinned?: boolean
+  pinnedOrder?: number | null
 }
 
 export interface ChatMessage {
+  pendingDelivery?: boolean
   id: string
   taskId?: string
   subtaskId?: string

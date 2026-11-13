@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   devices: vi.fn(),
   models: vi.fn(),
+  nativeModels: vi.fn(),
   listWork: vi.fn(),
   transcript: vi.fn(),
   preflight: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock('@/services/runtimeApi', () => ({
     clearPluginCatalogs() {}
     listDevices = mocks.devices
     listModels = mocks.models
+    listNativeModels = mocks.nativeModels
     preflightWorkspace = mocks.preflight
     createConversation = mocks.create
     getHomeDirectory = mocks.homeDirectory
@@ -147,6 +149,7 @@ describe('creating a conversation on the only computer', () => {
     mocks.models
       .mockReset()
       .mockResolvedValue({ data: [{ name: 'public-model', type: 'public', provider: 'cloud' }] })
+    mocks.nativeModels.mockReset().mockResolvedValue({ models: [] })
     mocks.listWork.mockReset().mockResolvedValue(emptyWork)
     mocks.transcript.mockReset().mockResolvedValue({ taskId: 'task', messages: [] })
     mocks.preflight.mockReset().mockResolvedValue({ gitRepository: true, gitRef: 'main' })
@@ -202,6 +205,64 @@ describe('creating a conversation on the only computer', () => {
     expect(mocks.devices).toHaveBeenCalledOnce()
     expect(mocks.listWork).toHaveBeenCalledOnce()
   })
+
+  it.each(['new', 'existing'] as const)(
+    'routes the selected computer model and reasoning through the existing %s contract',
+    async kind => {
+      mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+      mocks.nativeModels.mockResolvedValue({
+        models: [
+          {
+            runtime: 'codex',
+            provider: 'openai',
+            model_id: 'gpt-6.1-sol',
+            local_model_id: 'gpt-6.1-sol',
+            label: 'GPT-6.1 Sol',
+            account_label: 'ChatGPT',
+            is_default: true,
+            default_reasoning_effort: 'low',
+            supported_reasoning_efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          },
+        ],
+      })
+      await mount()
+      if (kind === 'existing') await act(() => state.openConversation(state.conversations[0]!))
+      await act(() => state.loadModels())
+      expect(mocks.nativeModels).toHaveBeenCalledExactlyOnceWith(11)
+      await act(() => state.selectModel(state.models[0], { reasoning: 'ultra' }))
+      await act(async () => {
+        expect(await state.send('本机模型验证')).toBe(true)
+      })
+      const identity = {
+        runnerModelProvider: 'openai',
+        codexProviderId: 'openai',
+        reasoning: 'ultra',
+        permissionMode: 'full-access',
+      }
+      if (kind === 'new') {
+        expect(mocks.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            deviceId: 'app-record-11',
+            modelId: 'gpt-6.1-sol',
+            modelType: 'runtime',
+            modelOptions: expect.objectContaining(identity),
+          })
+        )
+      } else {
+        expect(mocks.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ deviceId: 'app-record-11', taskId: 'task' }),
+          '本机模型验证',
+          'user-message-id',
+          expect.objectContaining({
+            modelName: 'gpt-6.1-sol',
+            modelType: 'runtime',
+            options: expect.objectContaining(identity),
+          }),
+          undefined
+        )
+      }
+    }
+  )
 
   it('restores full cached identities before refresh, including hidden installations', async () => {
     const optedOut: DeviceInfo = {

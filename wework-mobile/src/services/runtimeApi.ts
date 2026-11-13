@@ -1,4 +1,6 @@
 import type { RuntimeSessionConfig } from './backendConfig'
+import { requestUserInputResponseText } from '../../../packages/chat-core/src/runtime-user-input'
+import type { RuntimeGuidanceResponse } from '../../../packages/chat-core/src/runtime-task-api-types'
 import type {
   DeviceListResponse,
   RuntimeCreateRequest,
@@ -13,6 +15,8 @@ import type {
   RuntimeWorkspaceOpenResponse,
   ModelSelectionConfig,
   UnifiedModelListResponse,
+  RunnerModel,
+  RequestUserInputResponse,
 } from '@/types/runtime'
 
 export class RuntimeApiError extends Error {
@@ -73,6 +77,20 @@ export class RuntimeApi {
     return this.request(
       '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
     )
+  }
+
+  async listNativeModels(deviceRecordId: number): Promise<{
+    models: RunnerModel[]
+    catalog_error?: string | null
+  }> {
+    // APP catalogs use the same server-authorized read as PC Wework.
+    const rows = await this.request<
+      { id: string; models: RunnerModel[]; catalog_error?: string | null }[]
+    >('/v1/resources/execution-environments')
+    const row = rows.find(candidate => candidate.id === String(deviceRecordId))
+    if (!row) throw new Error('设备已不可用，请刷新设备列表')
+    if (!Array.isArray(row.models)) throw new Error('设备返回了无效的模型目录')
+    return { models: row.models, catalog_error: row.catalog_error }
   }
 
   preflightWorkspace(input: {
@@ -142,6 +160,31 @@ export class RuntimeApi {
     return this.request('/runtime-work/cancel', {
       method: 'POST',
       body: JSON.stringify(address),
+    })
+  }
+
+  respondToUserInput(
+    address: RuntimeTaskAddress,
+    response: RequestUserInputResponse
+  ): Promise<RuntimeSendResponse> {
+    return this.request('/runtime-work/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        address,
+        message: requestUserInputResponseText(response),
+        requestUserInputResponse: response,
+      }),
+    })
+  }
+
+  guideTask(
+    address: RuntimeTaskAddress,
+    message: string,
+    clientGuidanceId: string
+  ): Promise<RuntimeGuidanceResponse> {
+    return this.request('/runtime-work/guidance', {
+      method: 'POST',
+      body: JSON.stringify({ address, message, clientGuidanceId }),
     })
   }
 

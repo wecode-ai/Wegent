@@ -20,12 +20,14 @@ import {
   shouldLoadEarlierMessages,
 } from '@/domain/messageListScroll'
 import { buildThinkingPreview } from '@/domain/messagePresentation'
+import { pendingMobileUserInput } from '@/domain/requestUserInput'
 import type { ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { MessageContextMenu, type MessageMenuAnchor } from './MessageContextMenu'
 import { ProcessingTimeline } from './ProcessingTimeline'
+import type { RequestUserInputHandlers } from './RequestUserInputCard'
 
-interface MessageListProps {
+interface MessageListProps extends RequestUserInputHandlers {
   bottomInset: number
   conversationId: string
   entryRevision: number
@@ -53,9 +55,12 @@ export function MessageList({
   loadingMoreBefore,
   running,
   onLoadMoreBefore,
+  onRequestUserInputSubmit,
+  onRequestUserInputSkip,
   topInset,
 }: MessageListProps) {
   const listRef = useRef<FlatList<ChatMessage>>(null)
+  const pendingInputKeys = new Set(pendingMobileUserInput(messages).keys())
   const followsLatestRef = useRef(true)
   const userDraggingRef = useRef(false)
   const contentHeightRef = useRef(0)
@@ -209,7 +214,15 @@ export function MessageList({
         onScrollEndDrag={handleScrollEndDrag}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         ref={listRef}
-        renderItem={({ item }) => <Message message={item} onLongPress={openMessageMenu} />}
+        renderItem={({ item }) => (
+          <Message
+            message={item}
+            onLongPress={openMessageMenu}
+            pendingInputKeys={pendingInputKeys}
+            onRequestUserInputSubmit={onRequestUserInputSubmit}
+            onRequestUserInputSkip={onRequestUserInputSkip}
+          />
+        )}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
         testID="message-list"
@@ -230,10 +243,14 @@ function MessageSeparator() {
 const Message = memo(function Message({
   message,
   onLongPress,
+  pendingInputKeys,
+  onRequestUserInputSubmit,
+  onRequestUserInputSkip,
 }: {
   message: ChatMessage
   onLongPress: (message: ChatMessage, event: GestureResponderEvent) => void
-}) {
+  pendingInputKeys: ReadonlySet<string>
+} & RequestUserInputHandlers) {
   const theme = useTheme()
 
   if (message.role === 'user') {
@@ -263,13 +280,19 @@ const Message = memo(function Message({
 
   return (
     <Pressable
+      accessible={false}
       accessibilityHint={message.content.trim() ? '长按可复制消息' : undefined}
       delayLongPress={350}
       onLongPress={message.content.trim() ? event => onLongPress(message, event) : undefined}
       style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
       testID={`message-${message.id}`}
     >
-      <ProcessingTimeline message={message} />
+      <ProcessingTimeline
+        message={message}
+        pendingInputKeys={pendingInputKeys}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+        onRequestUserInputSkip={onRequestUserInputSkip}
+      />
       {message.content ? (
         <AssistantMarkdown streaming={message.status === 'streaming'}>
           {message.content}

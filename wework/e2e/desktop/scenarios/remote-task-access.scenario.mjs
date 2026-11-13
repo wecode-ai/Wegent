@@ -22,6 +22,7 @@ import {
   streamingTextEvents,
 } from '../modules/response-protocol.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
+import { createMobileRuntimeQuestions } from '../modules/mobile-runtime-questions.mjs'
 
 const TOGGLE = '[data-testid="remote-task-access-toggle"]'
 const LOCAL_PROMPT = 'WEWORK_LOCAL_TASK_REMOTE_ACCESS'
@@ -54,6 +55,7 @@ function deferred() {
 export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let cloud
   let socket
+  const mobileQuestions = createMobileRuntimeQuestions()
   const gates = new Map(
     [CREATE_PROMPT, REMOTE_PROMPT].map(prompt => [
       prompt,
@@ -70,6 +72,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
         return false
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
+      if (await mobileQuestions.handleModel(body, response)) return true
       const input = inputUserMessageTexts(body).join('\n')
       const prompt = [CREATE_PROMPT, REMOTE_PROMPT, LOCAL_PROMPT, PRIVATE_PROMPT].find(value =>
         input.includes(value)
@@ -189,6 +192,28 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
         'Local consent did not reach the real device inventory',
         workbenchReadyTimeoutMs
       )
+
+      // Mobile reads APP model metadata through the same authorized PC catalog.
+      const catalogResponse = await fetch(
+        `${cloud.backendUrl}/api/v1/resources/execution-environments`,
+        { headers: { Authorization: `Bearer ${cloud.authToken}` } }
+      )
+      assert.equal(catalogResponse.status, 200)
+      const catalogs = await catalogResponse.json()
+      const targetCatalog = catalogs.find(item => item.id === String(original.id))
+      assert.ok(targetCatalog, 'The selected computer is missing its authorized model catalog')
+      assert.equal(targetCatalog.device_key, route)
+      assert.ok(
+        targetCatalog.models.some(
+          model => model.runtime === 'codex' && model.provider && model.model_id
+        ),
+        'The selected computer did not expose its native Codex model identities'
+      )
+      for (const model of targetCatalog.models) {
+        for (const privateField of ['modelConfig', 'api_key', 'auth_token', 'responses_url']) {
+          assert.equal(Object.hasOwn(model, privateField), false)
+        }
+      }
 
       const listing = await rpc('runtime.tasks.list')
       assert.equal(listing.ok, true, JSON.stringify(listing.error))
@@ -321,6 +346,15 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       const continued = await rpc('runtime.tasks.transcript', address)
       assert.ok(JSON.stringify(decode(continued.result)).includes(COMPLETE))
 
+      await mobileQuestions.verify({
+        cloud,
+        control,
+        rpc,
+        route,
+        models: targetCatalog.models,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+
       // Remount settings to prove consent persistence before revoking it locally.
       await control.command('navigate', 'body', { value: '/' })
       await control.command('navigate', 'body', { value: '/settings/connections' })
@@ -384,6 +418,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       )
     },
     async cleanup() {
+      mobileQuestions.cleanup()
       for (const gate of gates.values()) {
         gate.first.resolve()
         gate.finish.resolve()

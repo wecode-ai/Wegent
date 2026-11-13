@@ -130,6 +130,54 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     expect(state.messages.map(message => message.content)).toEqual(['fresh'])
   })
 
+  it('keeps accepted question answers across omitted and then stale history snapshots', async () => {
+    const response = {
+      requestId: 0,
+      interactionScope: 'turn',
+      answers: { choice: { answers: ['One'] } },
+    }
+    const questionPage: RuntimeTranscriptResponse = {
+      ...page(''),
+      messages: [
+        {
+          id: 'assistant',
+          subtaskId: 'turn',
+          role: 'assistant',
+          content: '',
+          blocks: [
+            {
+              id: 'question',
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'pending',
+              renderPayload: {
+                kind: 'request_user_input',
+                requestId: 0,
+                interactionScope: 'turn',
+                questions: [{ id: 'choice', question: 'Choose' }],
+              },
+            },
+          ],
+        },
+      ],
+    }
+    getTranscript.mockResolvedValue(questionPage)
+    await load()
+    await act(() => state.dispatchToAddress(first, { type: 'user-input-response', response }))
+    getTranscript.mockResolvedValue({
+      ...questionPage,
+      messages: [{ id: 'assistant', subtaskId: 'turn', role: 'assistant', content: 'Done' }],
+    })
+    await act(async () => {
+      await state.reloadTranscript(first)
+    })
+    getTranscript.mockResolvedValue(questionPage)
+    await act(async () => {
+      await state.reloadTranscript(first)
+    })
+    expect(state.messages[0]?.blocks?.[0]).toHaveProperty('renderPayload.response', response)
+  })
+
   it('isolates devices with the same task ID and ignores a different page finishing late', async () => {
     const pending = deferred<RuntimeTranscriptResponse>()
     getTranscript.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(page('second'))

@@ -9,12 +9,7 @@ import {
   mobileOperableDevices,
   selectedOnlineDeviceId,
 } from '@/domain/deviceOrdering'
-import {
-  continuationSelection,
-  defaultModel,
-  defaultModelOptions,
-  executionFields,
-} from '@/domain/modelSelection'
+import { continuationSelection, executionFields } from '@/domain/modelSelection'
 import {
   isRunningRuntimeEvent,
   isTerminalRuntimeEvent,
@@ -44,6 +39,8 @@ import { RuntimeStream } from '@/services/runtimeStream'
 import { RuntimeWorkInvalidator } from '@/services/runtimeWorkInvalidator'
 import { useMobileTranscript } from './useMobileTranscript'
 import { useWorkspaceGitRef } from './useWorkspaceGitRef'
+import { useDeviceModels } from './useDeviceModels'
+import { useMobileUserInput } from './useMobileUserInput'
 import type { MobileRuntimeState, NewConversationOptions } from './mobileRuntimeTypes'
 export type { MobileRuntimeState, NewConversationOptions } from './mobileRuntimeTypes'
 import type {
@@ -53,7 +50,6 @@ import type {
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
   UnifiedModel,
-  ModelOptions,
   RuntimeUploadAsset,
   RuntimeTranscriptResponse,
 } from '@/types/runtime'
@@ -92,9 +88,13 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   const [selectedWorkspace, setSelectedWorkspace] = useState<RuntimeDeviceWorkspace | null>(null)
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [allDevicesSelected, setAllDevicesSelected] = useState(false)
-  const [models, setModels] = useState<UnifiedModel[]>([])
-  const [selectedModel, setSelectedModel] = useState<UnifiedModel | null>(null)
-  const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>({})
+  const [cloudModels, setCloudModels] = useState<UnifiedModel[]>([])
+  const deviceModels = useDeviceModels(
+    api,
+    devices.find(device => device.device_id === (currentAddress?.deviceId ?? selectedDeviceId)),
+    cloudModels
+  )
+  const { models, selectedModel, selectedModelOptions } = deviceModels
   const [permissionMode, setPermissionMode] = useState<RuntimePermissionMode>(
     DEFAULT_RUNTIME_PERMISSION_MODE
   )
@@ -183,10 +183,29 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     fail: failTranscript,
     rename: renameTranscript,
     dispatchMessages,
+    dispatchToAddress,
+    readMessages,
     reloadTranscript,
     loadMoreMessagesBefore,
     retainDevices: retainTranscriptDevices,
   } = useMobileTranscript(stream, currentAddressRef, setError, observeTranscript)
+
+  const userInput = useMobileUserInput({
+    api,
+    currentAddress: currentAddressRef,
+    readMessages,
+    dispatch: dispatchToAddress,
+    isRunning: address => runtimeTaskRunning(address, workRef.current, lifecycle.snapshot()),
+    modelSelection: selectedModel
+      ? continuationSelection(
+          executionFields(selectedModel, { ...selectedModelOptions, permissionMode })
+        )
+      : null,
+    onTurnStarted: address => {
+      lifecycle.executorStarted(address)
+      publishTaskLifecycle()
+    },
+  })
 
   const persistCache = useCallback(() => {
     const snapshot: RuntimeCacheSnapshot = {
@@ -324,16 +343,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
 
   const applyModels = useCallback((nextModels: UnifiedModel[]) => {
     modelsRef.current = nextModels
-    setModels(nextModels)
-    setSelectedModel(current => {
-      const next =
-        nextModels.find(model => model.name === current?.name && model.type === current.type) ??
-        defaultModel(nextModels)
-      if (next && (!current || next.name !== current.name || next.type !== current.type)) {
-        setSelectedModelOptions(defaultModelOptions(next))
-      }
-      return next
-    })
+    setCloudModels(nextModels)
   }, [])
 
   const refreshDevices = useCallback(async (): Promise<string | null> => {
@@ -652,6 +662,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
             options?.attachmentIds
           )
           if (!response.accepted) throw new Error(response.error || '发送未被执行器接受')
+          dispatchToAddress(address, { type: 'user-delivered', id: userMessageId })
           return true
         }
 
@@ -748,6 +759,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
           }
         }
         void reloadWork(resolvedAddress.deviceId).catch(cause => setError(messageFrom(cause)))
+        dispatchToAddress(resolvedAddress, { type: 'user-delivered', id: userMessageId })
         return true
       } catch (cause) {
         if (sendTransition && lifecycle.sendRejected(sendTransition)) publishTaskLifecycle()
@@ -798,6 +810,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       stream,
       currentTaskRunning,
       dispatchMessages,
+      dispatchToAddress,
     ]
   )
 
@@ -925,13 +938,15 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     selectDevice,
     selectAllDevices,
     selectWorkspace: setSelectedWorkspace,
-    selectModel: (model, options) => {
-      setSelectedModel(model)
-      setSelectedModelOptions(options ?? defaultModelOptions(model))
-    },
+    selectModel: deviceModels.selectModel,
+    loadModels: deviceModels.loadModels,
+    modelsLoading: deviceModels.modelsLoading,
+    modelsError: deviceModels.modelsError,
     selectPermissionMode,
     send,
     stop,
+    respondToUserInput: userInput.respondToUserInput,
+    skipUserInput: userInput.skipUserInput,
     uploadAttachment,
     loadComposerApps,
     createProject,

@@ -22,6 +22,39 @@ describe('RuntimeApi', () => {
     vi.restoreAllMocks()
   })
 
+  it('sends blocking answers through the PC structured-response endpoint with scoped identity', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"accepted":true,"taskId":"task"}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    const address = { deviceId: 'device', taskId: 'task' }
+    const response = {
+      requestId: 0,
+      itemId: 'item',
+      interactionScope: 'turn',
+      answers: { choice: { answers: ['One'] } },
+    }
+    await api.respondToUserInput(address, response)
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/send`)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      address,
+      message: 'One',
+      requestUserInputResponse: response,
+    })
+  })
+
+  it('guides an active async question without sending a blocking response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"accepted":true}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const address = { deviceId: 'device', taskId: 'task' }
+    await new RuntimeApi(config).guideTask(address, 'One', 'guidance')
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/guidance`)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      address,
+      message: 'One',
+      clientGuidanceId: 'guidance',
+    })
+  })
+
   it('uses the latest access token without rebuilding its data scope', async () => {
     let token = 'before'
     const fetchMock = vi.fn().mockImplementation(async () => new Response('{"items":[]}'))
@@ -121,6 +154,33 @@ describe('RuntimeApi', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
       })
     )
+  })
+
+  it('loads only the selected APP catalog through the existing authorized PC endpoint', async () => {
+    const native = { runtime: 'codex', provider: 'openai', model_id: 'gpt-6.1-sol' }
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: '11', models: [native], catalog_error: null },
+            { id: '12', models: [{ ...native, model_id: 'other-device' }] },
+          ])
+        )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi({ ...config, apiBaseUrl: 'https://wegent.example/api' })
+
+    await expect(api.listNativeModels(11)).resolves.toEqual({
+      models: [native],
+      catalog_error: null,
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://wegent.example/api/v1/resources/execution-environments',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
+      })
+    )
+    await expect(api.listNativeModels(13)).rejects.toThrow('设备已不可用')
   })
 
   it('creates a standalone chat through the existing create endpoint without preparing a directory', async () => {

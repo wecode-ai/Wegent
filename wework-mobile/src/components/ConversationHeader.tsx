@@ -40,7 +40,6 @@ export function ConversationHeader({
   style,
 }: ConversationHeaderProps) {
   const theme = useTheme()
-  const subtitle = [projectName ?? '聊天', deviceName].filter(Boolean).join(' · ')
 
   return (
     <LiquidGlassGroup
@@ -66,13 +65,41 @@ export function ConversationHeader({
             >
               {title}
             </Text>
-            <Text
-              ellipsizeMode="tail"
-              numberOfLines={1}
-              style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}
-            >
-              {subtitle}
-            </Text>
+            <View style={styles.subtitleRow}>
+              {deviceName ? (
+                <Text
+                  ellipsizeMode="tail"
+                  numberOfLines={1}
+                  style={[
+                    styles.subtitle,
+                    styles.deviceName,
+                    { color: theme.colors.onSurfaceVariant },
+                  ]}
+                  testID="conversation-header-device"
+                >
+                  {deviceName}
+                </Text>
+              ) : null}
+              {deviceName && projectName ? (
+                <Text style={[styles.subtitle, { color: theme.colors.onSurfaceVariant }]}>
+                  {' · '}
+                </Text>
+              ) : null}
+              {projectName ? (
+                <Text
+                  ellipsizeMode="tail"
+                  numberOfLines={1}
+                  style={[
+                    styles.subtitle,
+                    styles.projectName,
+                    { color: theme.colors.onSurfaceVariant },
+                  ]}
+                  testID="conversation-header-project"
+                >
+                  {projectName}
+                </Text>
+              ) : null}
+            </View>
           </View>
 
           <LiquidGlassSurface
@@ -176,7 +203,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
   },
   backButton: {
     width: 44,
@@ -186,10 +213,13 @@ const styles = StyleSheet.create({
   },
   glassButtonContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   titleBlock: { flex: 1, minWidth: 0, justifyContent: 'center' },
-  title: { fontSize: 17, lineHeight: 22, fontWeight: '600' },
-  subtitle: { fontSize: 13, lineHeight: 18, fontWeight: '400' },
+  title: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+  subtitle: { fontSize: 12, lineHeight: 17, fontWeight: '400' },
+  deviceName: { flexShrink: 1 },
+  projectName: { maxWidth: '50%' },
   actionCapsule: {
-    width: 100,
+    width: 108,
     height: 44,
     borderRadius: 22,
     overflow: 'hidden',
