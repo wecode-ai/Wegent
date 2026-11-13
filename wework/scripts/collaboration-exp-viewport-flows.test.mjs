@@ -80,6 +80,7 @@ test('desktop verification owns the actual task toolbar and preserves all resize
 
 function planControl(change = {}) {
   const calls = []
+  let scrolled = false
   const state = {
     ...box,
     testId: 'cloud-todo-card-status-running-issue',
@@ -95,6 +96,13 @@ function planControl(change = {}) {
         !selector.includes('assistant'),
         'Project plans must verify their own real Issue states'
       )
+      if (action === 'scrollIntoView') scrolled = true
+      if (
+        action === 'waitFor' &&
+        options?.visible &&
+        ((change.offscreen && !scrolled) || change.obscured)
+      )
+        throw new Error('The canonical Issue status remains outside the visible board viewport')
       if (action === 'getElementMetrics')
         return JSON.stringify(change.absent ? [] : [{ ...state, ...(change.state ?? {}) }])
       if (action === 'getComputedStyleValue')
@@ -130,4 +138,19 @@ test('project-plan motion verifies canonical status text, visible geometry and a
     { liveAnimation: true },
   ])
     await assert.rejects(() => assertReducedPlanMotion(planControl(change), 'project-plan'))
+})
+
+test('project-plan motion scrolls an offscreen Kanban status into view and still rejects an obscured target', async () => {
+  const control = planControl({ offscreen: true })
+  await assertReducedPlanMotion(control, 'project-plan')
+  const selector = 'project-plan [data-testid^="cloud-todo-card-status-"]'
+  assert.deepEqual(control.calls.slice(0, 3), [
+    { action: 'waitFor', selector, options: undefined },
+    { action: 'scrollIntoView', selector, options: undefined },
+    { action: 'waitFor', selector, options: { visible: true } },
+  ])
+  await assert.rejects(
+    () => assertReducedPlanMotion(planControl({ offscreen: true, obscured: true }), 'project-plan'),
+    /remains outside the visible board viewport/
+  )
 })

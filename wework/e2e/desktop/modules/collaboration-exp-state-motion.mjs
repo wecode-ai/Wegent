@@ -103,6 +103,8 @@ export async function assertStableStateGeometry(
 /** Project plans own canonical Issue statuses rather than assistant team nodes. */
 export async function assertReducedPlanMotion(control, scope) {
   const selector = `${scope} [data-testid^="cloud-todo-card-status-"]`
+  await control.command('waitFor', selector)
+  await control.command('scrollIntoView', selector)
   await control.command('waitFor', selector, { visible: true })
   const states = await metrics(control, selector)
   assert.ok(states.length > 0, 'The real project plan must expose canonical Issue statuses')
