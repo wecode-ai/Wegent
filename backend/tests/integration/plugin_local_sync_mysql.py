@@ -19,7 +19,9 @@ from app.models.user import User
 from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
 from app.services.plugin_local_sync import _guard_intent_order
 from app.services.plugin_local_sync import _lookup_operation as lookup_operation
+from app.services.plugin_state_store import ensure_plugin_state
 from app.services.plugin_write_coordination import configure_plugin_session
+from app.services.plugin_write_errors import PluginWriteError
 
 PARENT = "f3a7c9e1b2d4"
 
@@ -123,28 +125,33 @@ def verify(engine, url):
             db.execute(
                 Kind.__table__.update().where(Kind.id == 18).values(name="plugin-17 ")
             )
-        try:
-            command.upgrade(config, "head")
-        except RuntimeError as error:
-            assert "repair duplicate source records" in str(error)
-        else:
-            raise AssertionError(
-                "MySQL-equivalent identities were not rejected before DDL"
-            )
-        assert "plugin_states" not in inspect(engine).get_table_names()
+        command.upgrade(config, "head")
+        assert set(inspect(engine).get_table_names()) == before | {"plugin_states"}
+        with Session(engine) as db:
+            assert db.query(PluginState).count() == 0
+            configure_plugin_session(db)
+            try:
+                ensure_plugin_state(db, 1, "plugin-17", installed_kind_id=17)
+            except PluginWriteError as error:
+                assert str(error) == "plugin_write_conflict"
+                db.rollback()
+            else:
+                raise AssertionError(
+                    "MySQL-equivalent identities were not rejected on first use"
+                )
+            assert db.query(PluginState).count() == 0
         with engine.begin() as db:
             db.execute(
                 Kind.__table__.update().where(Kind.id == 18).values(name="plugin-18")
             )
-        command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == before | {"plugin_states"}
         with Session(engine) as db:
             assert lookup_operation(db, 1, "native", "uncertain-operation") == original
             assert lookup_operation(db, 2, "native", "uncertain-operation") is None
             assert (
                 lookup_operation(db, 1, "other-native", "uncertain-operation") is None
             )
-            assert db.query(Kind).filter_by(kind="PluginSyncState").count() == 0
+            assert db.query(Kind).filter_by(kind="PluginSyncState").count() == 1
+            assert db.query(PluginState).count() == 0
         verify_ordering(engine)
         command.downgrade(config, PARENT)
         assert set(inspect(engine).get_table_names()) == before

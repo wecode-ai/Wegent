@@ -25,13 +25,6 @@ use super::write_coordination::coordination_error;
 /// `PLUGIN_SYNC_VERSION`.
 pub(crate) const PLUGIN_SYNC_VERSION: i64 = 2;
 pub(super) const SNAPSHOT_WRITE_ATTEMPTS: usize = 8;
-/// `PLUGIN_SYNC_STATE_KIND`.
-const PLUGIN_SYNC_STATE_KIND: &str = "PluginSyncState";
-/// `PLUGIN_SYNC_STATE_NAMESPACE`.
-const PLUGIN_SYNC_STATE_NAMESPACE: &str = "plugin-sync";
-/// `PLUGIN_SYNC_STATE_NAME`.
-const PLUGIN_SYNC_STATE_NAME: &str = "account";
-
 pub(super) async fn with_sync_write_budget<T, E>(
     write: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, E>
@@ -73,8 +66,6 @@ fn sync_state_statement() -> String {
     "SELECT id,json FROM plugin_states WHERE user_id=? AND plugin_key='@legacy-v2'".into()
 }
 
-const INSERT_SYNC_STATE_QUERY: &str =
-    "INSERT INTO plugin_states (user_id,plugin_key,json) VALUES (?,'@legacy-v2',?)";
 const UPDATE_SYNC_STATE_QUERY: &str = "UPDATE plugin_states SET json=?,updated_at=NOW() WHERE id=? AND user_id=? AND plugin_key='@legacy-v2' AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)=?";
 
 #[derive(FromMysqlRow)]
@@ -118,53 +109,25 @@ pub(crate) fn supports_snapshot(features: Option<&Value>, payload: &Value) -> bo
     }
 }
 
-/// One account `PluginSyncState` row (`_sync_state`).
+/// The legacy V2 stream in `plugin_states`, initialized before publication.
 pub(crate) struct PluginSyncState {
-    /// The row id; absent when the account has no state row yet.
-    pub id: Option<i64>,
-    /// The stored Kind document.
+    pub id: i64,
+    /// The stored synchronization document.
     pub json: Value,
 }
 
 pub(crate) async fn ensure_sync_state<M: Mysql>(mysql: &M, user_id: i64) -> MysqlResult<()> {
-    mysql.with_transaction(async |tx| {
-        let mut query = &mut *tx;
-        query.execute(
-            "INSERT INTO plugin_states (user_id,plugin_key,json) VALUES (?,'@legacy-v2',?) ON DUPLICATE KEY UPDATE plugin_key=plugin_states.plugin_key",
-            (user_id,crate::json_compat::python_json_value(&PluginSyncState::default_document())),
-        ).await?;
-        Ok(())
-    }).await
-}
-
-impl PluginSyncState {
-    /// `_sync_state`'s default document, used when the row is created.
-    fn default_document() -> Value {
-        let mut metadata = Map::new();
-        metadata.insert(
-            "name".to_string(),
-            Value::String(PLUGIN_SYNC_STATE_NAME.to_string()),
-        );
-        metadata.insert(
-            "namespace".to_string(),
-            Value::String(PLUGIN_SYNC_STATE_NAMESPACE.to_string()),
-        );
-        let mut spec = Map::new();
-        spec.insert("generation".to_string(), Value::from(0));
-        spec.insert("revision".to_string(), Value::from(0));
-        let mut document = Map::new();
-        document.insert(
-            "apiVersion".to_string(),
-            Value::String("agent.wecode.io/v1".to_string()),
-        );
-        document.insert(
-            "kind".to_string(),
-            Value::String(PLUGIN_SYNC_STATE_KIND.to_string()),
-        );
-        document.insert("metadata".to_string(), Value::Object(metadata));
-        document.insert("spec".to_string(), Value::Object(spec));
-        Value::Object(document)
-    }
+    mysql
+        .with_transaction_options(
+            MysqlTransactionOptions::default()
+                .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+            async |tx| {
+                let mut query = &mut *tx;
+                super::state_store::ensure(&mut query, user_id, "@legacy-v2", 0).await?;
+                Ok(())
+            },
+        )
+        .await
 }
 
 /// `lock_plugin_sync_state`'s state read.
@@ -179,14 +142,17 @@ pub(crate) async fn lock_plugin_sync_state<Q: PluginQuery>(
     let rows: Vec<StoredSyncState> = query.fetch_all(sync_state_statement(), (user_id,)).await?;
     let mut rows = rows;
     match rows.len() {
-        0 => Ok(PluginSyncState {
-            id: None,
-            json: PluginSyncState::default_document(),
-        }),
+        0 => {
+            let row = super::state_store::ensure(query, user_id, "@legacy-v2", 0).await?;
+            Ok(PluginSyncState {
+                id: row.id,
+                json: row.json,
+            })
+        }
         1 => {
             let row = rows.swap_remove(0);
             Ok(PluginSyncState {
-                id: Some(row.id),
+                id: row.id,
                 json: row.json,
             })
         }
@@ -295,8 +261,7 @@ pub(crate) fn advance_plugin_snapshot_watermark(
     }
 }
 
-/// Store one state document: update the existing row, or insert the missing
-/// one. SQLAlchemy flushes nothing when the document did not change.
+/// Update an initialized state; an unchanged document emits no write.
 pub(crate) async fn write_sync_state<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
@@ -320,7 +285,7 @@ pub(crate) async fn write_sync_state<Q: PluginQuery>(
 /// source's `before_flush` lease check but emits no UPDATE.
 pub(crate) async fn write_sync_state_document<Q: PluginQuery>(
     query: &mut Q,
-    state_id: Option<i64>,
+    state_id: i64,
     user_id: i64,
     document: &str,
     changed: bool,
@@ -330,23 +295,17 @@ pub(crate) async fn write_sync_state_document<Q: PluginQuery>(
     let revision = super::write_coordination::business_revision(&payload)?;
     payload["spec"]["revision"] = Value::from(revision + 1);
     let serialized = python_json_value(&payload);
-    match state_id {
-        Some(id) => {
-            if !changed {
-                return Ok(());
-            }
-            let updated = query
-                .execute(UPDATE_SYNC_STATE_QUERY, (serialized, id, user_id, revision))
-                .await?;
-            if updated.rows_affected != 1 {
-                return Err(coordination_error("plugin_write_conflict"));
-            }
-        }
-        None => {
-            query
-                .execute(INSERT_SYNC_STATE_QUERY, (user_id, serialized))
-                .await?;
-        }
+    if !changed {
+        return Ok(());
+    }
+    let updated = query
+        .execute(
+            UPDATE_SYNC_STATE_QUERY,
+            (serialized, state_id, user_id, revision),
+        )
+        .await?;
+    if updated.rows_affected != 1 {
+        return Err(coordination_error("plugin_write_conflict"));
     }
     Ok(())
 }

@@ -18,7 +18,7 @@ async fn http_without_device_reuses_account_state_without_ledgers() -> anyhow::R
 
 async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     crate::migrations::upgrade(mysql).await?;
-    for id in [81001, 81002, 81003] {
+    for id in [81001, 81002, 81003, 81004, 81005, 81006] {
         mysql.execute("INSERT INTO users (id,user_name,password_hash,email,is_active,role,auth_source,preferences,git_info,created_at,updated_at) VALUES (?,?,'unused','',1,'user','password','{}','{}',NOW(),NOW())",(id,format!("local-sync-{id}"))).await?;
     }
     let mut state = crate::build_app_state().await?;
@@ -179,6 +179,20 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     .await?;
     assert_eq!(unknown["payload"]["plugin_sync"]["version"], 3);
     mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (81003,'InstalledPlugin','scoped-only','default',?,0,NOW(),NOW())",(json!({"spec":{"revision":2,"source":{"pluginKey":"scoped-only"}}}),)).await?;
+    let cold: StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81003 AND kind='InstalledPlugin' AND namespace='default' AND name='scoped-only'",()).await?;
+    let old_slot = json!({"operationId":"historical-uninstall","requestHash":"old-hash","installedId":cold.id,"installedRevision":2,"intentOrder":7,"action":"uninstall"});
+    let frozen = json!({"spec":{"generation":7677,"devices":{"desktop":{"complete_generation":7000,"plugins":{cold.id.to_string():7677}}},"localIntents":{"scoped-only":{cold.id.to_string():old_slot}},"localIntentOrders":{"scoped-only":{cold.id.to_string():7}}}});
+    mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (81003,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())",(frozen.clone(),)).await?;
+    let recovered=post(81003,"/api/plugins/local-sync",json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"scoped-only","operationId":"historical-uninstall","targeted":true})).await.json::<Value>().await?;
+    assert_eq!(recovered["operation"]["state"], "intent_saved");
+    assert!(
+        recovered["payload"]["plugin_sync"]["revisions"][cold.id.to_string()]
+            .as_i64()
+            .unwrap()
+            > 7677
+    );
+    let retained: StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81003 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
+    assert_eq!(retained.json, frozen);
     let fresh = post(
         81003,
         "/api/plugins/local-sync",
@@ -221,6 +235,53 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             .unwrap()
             > old_generation
     );
+    mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (81004,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())",(json!({"spec":{"generation":40}}),)).await?;
+    let (first, second) = tokio::join!(
+        post(
+            81004,
+            "/api/plugins/local-sync",
+            json!({"protocolVersion":1,"instanceId":"legacy-cold"})
+        ),
+        post(
+            81004,
+            "/api/plugins/local-sync",
+            json!({"protocolVersion":1,"instanceId":"legacy-cold"})
+        )
+    );
+    let mut generations = [
+        first.json::<Value>().await?["generation"].as_i64(),
+        second.json::<Value>().await?["generation"].as_i64(),
+    ];
+    generations.sort();
+    assert_eq!(generations, [Some(41), Some(42)]);
+    let frozen: StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81004 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
+    assert_eq!(frozen.json["spec"]["generation"], 40);
+    for (owner, documents) in [
+        (81005, vec![json!({"spec":{"generation":"invalid"}})]),
+        (81006, vec![json!({"spec":{"generation":12}}); 2]),
+    ] {
+        for document in &documents {
+            mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (?,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())", (owner,document.clone())).await?;
+        }
+        let rejected = post(owner,"/api/plugins/local-sync",json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"invalid-history","operationId":"unknown"})).await;
+        assert_eq!(rejected.status(), brz_http::StatusCode::CONFLICT);
+        assert_eq!(
+            rejected.json::<Value>().await?["detail"],
+            "plugin_write_conflict"
+        );
+        let count: Count = mysql
+            .fetch_one(
+                "SELECT COUNT(*) AS n FROM plugin_states WHERE user_id=?",
+                (owner,),
+            )
+            .await?;
+        assert_eq!(count.n, 0);
+        let retained: Vec<StoredKind>=mysql.fetch_all("SELECT id,json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' ORDER BY id",(owner,)).await?;
+        assert_eq!(
+            retained.into_iter().map(|row| row.json).collect::<Vec<_>>(),
+            documents
+        );
+    }
     stop.send(()).unwrap();
     task.await??;
     Ok(())

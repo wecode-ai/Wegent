@@ -31,7 +31,8 @@ mod record_sync_result;
 mod registration_sync;
 pub(crate) mod removal_sync;
 mod report;
-mod state_store;
+pub(crate) mod state_history;
+pub(crate) mod state_store;
 mod sync_device;
 // Shared with `plugin_account_auth`, which drives the same owner lease and
 // policy-revision CAS for plugin-auth exchanges.

@@ -75,10 +75,27 @@ Socket 认证复用当前事务查询插件作用域并初始化策略，避免�
 
 ## 迁移、部署与验证
 
-迁移 `a5b6c7d8e9f0` 将旧活动同步 Kind 拆为插件状态并保留水位和最新回执。
-建表前检查歧义和非法计数；回滚合并最大水位和最新回执，再恢复旧 Kind、删除新表。
-后端切换前需排空旧进程的插件写事务，Python 与 Rust 同步切换；旧后端不能在迁移后继续写原 Kind。
-旧桌面由新后端的 V2 协议服务。生产迁移和部署不属于本地验证。
+迁移 `a5b6c7d8e9f0` 只创建空表，不扫描、搬运或删除历史 `kinds` 数据。
+插件首次操作或同步时，读取旧账号状态并一次性插入该插件的完整 generation、设备水位、创建计数和请求标记。
+已有新状态直接使用，不重新继承；唯一键竞争的后到插入也不覆盖先到状态。
+旧活动 `PluginSyncState/plugin-sync/account` 保留为只读基线；未投影的历史请求仍可恢复，已初始化插件以新状态为准。
+首次使用遇到重复身份或非法计数时明确失败，不任取一条或重置水位。
+
+可在上线后执行 `backend/scripts/backfill_plugin_states.py`，与按需初始化长期并存。
+脚本复用前台初始化，默认只读预览，可按用户、批量和游标执行；已有记录跳过，重复执行不覆盖增量。
+从 `backend/` 运行：
+
+```bash
+uv run python scripts/backfill_plugin_states.py --user-id 151
+uv run python scripts/backfill_plugin_states.py --apply --user-id 151
+uv run python scripts/backfill_plugin_states.py --apply --batch-size 100 --pause-ms 100
+uv run python scripts/backfill_plugin_states.py --apply --after-id <resume_after_id>
+```
+
+中断后沿用相同的用户过滤和输出的 `resume_after_id` 续跑。若提交结果未知，游标停在该行之前，重跑由唯一键保护。
+回滚先将新状态最大水位和最新回执合入保留的旧 Kind，缺失时才创建，再删除新表；回滚期间必须停止插件写入。
+后端切换前排空旧进程插件写事务，Python 与 Rust 同步切换，禁止旧后端继续修改只读基线。
+旧桌面由新后端 V2 协议服务。生产迁移、回填和部署不属于本地验证。
 
 回归覆盖真实 MySQL COMMIT 跨 Redis 租约到期、同插件防重、不同插件独立提交、失效事务 CAS、
 安装/更新/卸载、认证和迟到回执。复用既有 Backend MySQL CI 与桌面

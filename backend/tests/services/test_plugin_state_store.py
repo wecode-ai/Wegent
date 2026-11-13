@@ -7,6 +7,7 @@ from threading import Barrier
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.plugin_state import PluginState
 from app.services.plugin_state_store import ensure_plugin_state
 
@@ -33,6 +34,7 @@ def test_simultaneous_first_materialization_has_one_durable_identity(tmp_path):
         connect_args={"check_same_thread": False, "timeout": 10},
     )
     PluginState.__table__.create(engine)
+    Kind.__table__.create(engine)
     ready = Barrier(4)
 
     def create():

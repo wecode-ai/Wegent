@@ -217,7 +217,7 @@ def mutate_local_plugin(
 def _lookup_operation(
     db: Session, user_id: int, instance_id: str, operation_id: str
 ) -> dict[str, Any] | None:
-    from app.services.plugin_state_store import LEGACY_SYNC_KEY
+    from app.services.plugin_state_history import historical_slots
 
     with db.no_autoflush:
         states = (
@@ -227,18 +227,26 @@ def _lookup_operation(
             )
             .all()
         )
-    found, historical = [], []
+    found = []
     for state in states:
+        if state.plugin_key == "@legacy-v2":
+            continue
         slots = state.json.get("spec", {}).get("localIntents", {}).get(instance_id, {})
         if not isinstance(slots, dict):
             raise HTTPException(409, "plugin_write_conflict")
-        target = historical if state.plugin_key == LEGACY_SYNC_KEY else found
-        target.extend(
+        found.extend(
             slot for slot in slots.values() if slot.get("operationId") == operation_id
         )
     # Migration keeps orphan receipts whose old installation was removed by
     # catalog repair. A projected plugin receipt takes precedence.
-    found = found or historical
+    if not found:
+        found = [
+            slot
+            for slot in historical_slots(
+                db, user_id, instance_id, "localIntents", states
+            ).values()
+            if slot.get("operationId") == operation_id
+        ]
     if len(found) > 1:
         raise HTTPException(409, "plugin_write_conflict")
     return found[0] if found else None
@@ -369,7 +377,14 @@ def _rejection_context(
             with db.no_autoflush:
                 states = db.query(PluginState).filter_by(user_id=user_id).all()
             orders = {}
+            from app.services.plugin_state_history import historical_slots
+
+            orders.update(
+                historical_slots(db, user_id, instance, "localIntentOrders", states)
+            )
             for state in states:
+                if state.plugin_key == "@legacy-v2":
+                    continue
                 orders.update(
                     state.json.get("spec", {})
                     .get("localIntentOrders", {})

@@ -332,8 +332,59 @@ fn a_removed_rejection_message_is_still_flushed() {
 /// flush. The outer policy read and the commit check belong to the caller.
 #[tokio::test]
 async fn a_versioned_record_checks_the_lease_at_each_source_boundary() {
-    let capture = crate::sql_test_support::KindQueryCapture::writing();
-    let mut session = &capture;
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+    use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult};
+
+    // A versioned acknowledgement follows an already published snapshot, so
+    // its state row exists. An always-empty capture cannot represent that flow.
+    struct AcknowledgementQuery(brz_mysql::MysqlService);
+    impl crate::plugins_marketplace::query::PluginQuery for AcknowledgementQuery {
+        async fn fetch_all<S: AsRef<str> + Send, A: MysqlArgs + Send, T: FromMysqlRow + Send>(
+            &mut self,
+            sql: S,
+            args: A,
+        ) -> MysqlResult<Vec<T>> {
+            self.0.fetch_all(sql, args).await
+        }
+        async fn fetch_optional<
+            S: AsRef<str> + Send,
+            A: MysqlArgs + Send,
+            T: FromMysqlRow + Send,
+        >(
+            &mut self,
+            sql: S,
+            args: A,
+        ) -> MysqlResult<Option<T>> {
+            self.0.fetch_optional(sql, args).await
+        }
+        async fn execute<S: AsRef<str> + Send, A: MysqlArgs + Send>(
+            &mut self,
+            _: S,
+            _: A,
+        ) -> MysqlResult<MysqlExecution> {
+            Ok(MysqlExecution {
+                rows_affected: 1,
+                last_insert_id: 0,
+            })
+        }
+    }
+    let fixture = MysqlRows::start_results(|sql| {
+        let row = vec![
+            ("id", SqlValue::I64(17)),
+            (
+                "json",
+                SqlValue::Text(json!({"spec":{"revision":1,"generation":163}}).to_string()),
+            ),
+        ];
+        let results = if sql.contains("FROM plugin_states") {
+            vec![row.clone()]
+        } else {
+            vec![]
+        };
+        (row, results)
+    })
+    .await;
+    let mut session = AcknowledgementQuery(fixture.mysql.clone());
     let guard = FailingGuard::new(usize::MAX);
     let snapshot = json!({
         "mode": "replace",
@@ -359,15 +410,15 @@ async fn a_versioned_record_checks_the_lease_at_each_source_boundary() {
         .await
         .expect("the recording completes");
     assert_eq!(guard.calls(), 3, "reconcile, second lock, before-flush");
-    let queries = capture.queries();
+    let queries = fixture.queries();
     assert!(
-        queries[0].sql.contains("plugin_states"),
+        queries[0].contains("plugin_states"),
         "the first state read precedes reconciliation: {queries:#?}"
     );
     assert!(
         queries
             .iter()
-            .any(|query| query.sql.contains("plugin_device_installations")),
+            .any(|query| query.contains("plugin_device_installations")),
         "the reconciliation rows are read: {queries:#?}"
     );
 }

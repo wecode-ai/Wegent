@@ -569,7 +569,7 @@ struct PendingFlush {
 
 /// One dirty `PluginSyncState.json` assignment.
 struct StateAssignment {
-    id: Option<i64>,
+    id: i64,
     user_id: i64,
     document: String,
     changed: bool,
@@ -685,7 +685,7 @@ impl PendingFlush {
     /// Assign the protocol state document. SQLAlchemy dirties the row on the
     /// assignment itself, so `before_flush` runs even when the document is
     /// equal and no UPDATE is emitted.
-    fn assign_state(&mut self, id: Option<i64>, user_id: i64, document: &Value, changed: bool) {
+    fn assign_state(&mut self, id: i64, user_id: i64, document: &Value, changed: bool) {
         self.assigned = true;
         self.state = Some(StateAssignment {
             id,

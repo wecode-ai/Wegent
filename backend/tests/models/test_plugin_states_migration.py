@@ -6,10 +6,13 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.orm import Session
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.models.kind import Kind
+from app.services.plugin_state_store import ensure_plugin_state
+from app.services.plugin_write_errors import PluginWriteError
 
 
 def migration(connection):
@@ -86,6 +89,18 @@ def test_upgrade_and_downgrade_preserve_watermarks_and_latest_receipts():
         change = migration(connection)
         change.upgrade()
         states = sa.Table("plugin_states", sa.MetaData(), autoload_with=connection)
+        assert connection.scalar(sa.select(sa.func.count()).select_from(states)) == 0
+        assert (
+            connection.execute(
+                sa.select(Kind.json).where(Kind.kind == "PluginSyncState")
+            ).scalar_one()
+            == document
+        )
+        with Session(connection, join_transaction_mode="create_savepoint") as db:
+            ensure_plugin_state(db, 151, "plugin-a", installed_kind_id=11)
+            ensure_plugin_state(db, 151, "plugin-b", installed_kind_id=12)
+            ensure_plugin_state(db, 151, "@legacy-v2")
+            db.commit()
         rows = {
             row["plugin_key"]: row
             for row in connection.execute(sa.select(states)).mappings()
@@ -107,7 +122,7 @@ def test_upgrade_and_downgrade_preserve_watermarks_and_latest_receipts():
                 .select_from(Kind.__table__)
                 .where(Kind.kind == "PluginSyncState")
             )
-            == 0
+            == 1
         )
 
         changed = deepcopy(rows["plugin-a"]["json"])
@@ -140,14 +155,18 @@ def test_upgrade_and_downgrade_preserve_watermarks_and_latest_receipts():
     engine.dispose()
 
 
-def test_ambiguous_legacy_state_stops_before_creating_the_table():
+def test_schema_only_upgrade_preserves_ambiguous_history_until_first_use():
     engine = sa.create_engine("sqlite://")
     Kind.__table__.create(engine)
     with engine.begin() as connection:
         seed(connection, duplicate=True)
-        with pytest.raises(RuntimeError, match="repair duplicate source records"):
-            migration(connection).upgrade()
-        assert not sa.inspect(connection).has_table("plugin_states")
+        migration(connection).upgrade()
+        assert sa.inspect(connection).has_table("plugin_states")
+        with (
+            Session(connection, join_transaction_mode="create_savepoint") as db,
+            pytest.raises(PluginWriteError),
+        ):
+            ensure_plugin_state(db, 151, "plugin-a", installed_kind_id=11)
         assert (
             connection.scalar(sa.select(sa.func.count()).select_from(Kind.__table__))
             == 4
@@ -155,8 +174,22 @@ def test_ambiguous_legacy_state_stops_before_creating_the_table():
     engine.dispose()
 
 
+def test_rollback_without_initialized_state_does_not_touch_ambiguous_history():
+    engine = sa.create_engine("sqlite://")
+    Kind.__table__.create(engine)
+    with engine.begin() as connection:
+        seed(connection, duplicate=True)
+        before = connection.execute(sa.select(Kind.__table__)).mappings().all()
+        change = migration(connection)
+        change.upgrade()
+        change.downgrade()
+        assert not sa.inspect(connection).has_table("plugin_states")
+        assert connection.execute(sa.select(Kind.__table__)).mappings().all() == before
+    engine.dispose()
+
+
 @pytest.mark.parametrize("value", [None, True, -1, "10", 2**63 - 1])
-def test_invalid_counter_stops_before_ddl_instead_of_resetting_it(value):
+def test_invalid_counter_is_preserved_by_upgrade_and_refused_on_first_use(value):
     engine = sa.create_engine("sqlite://")
     Kind.__table__.create(engine)
     with engine.begin() as connection:
@@ -167,9 +200,11 @@ def test_invalid_counter_stops_before_ddl_instead_of_resetting_it(value):
             .where(Kind.kind == "PluginSyncState")
             .values(json=document)
         )
-        with pytest.raises(
-            RuntimeError, match="Invalid plugin synchronization counter"
+        migration(connection).upgrade()
+        assert sa.inspect(connection).has_table("plugin_states")
+        with (
+            Session(connection, join_transaction_mode="create_savepoint") as db,
+            pytest.raises(PluginWriteError),
         ):
-            migration(connection).upgrade()
-        assert not sa.inspect(connection).has_table("plugin_states")
+            ensure_plugin_state(db, 151, "plugin-a", installed_kind_id=11)
     engine.dispose()

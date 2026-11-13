@@ -51,6 +51,7 @@ use super::*;
 #[derive(Clone, Default)]
 struct RecordingTransaction {
     statements: Arc<Mutex<Vec<String>>>,
+    reader: Option<brz_mysql::MysqlService>,
 }
 
 impl RecordingTransaction {
@@ -112,20 +113,43 @@ impl MysqlTransaction for RecordingTransaction {
         futures_util::stream::empty()
     }
 
-    async fn fetch_all<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Vec<T>>
+    async fn fetch_all<S, A, T>(&mut self, sql: S, args: A) -> MysqlResult<Vec<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
         self.record(sql.as_ref());
+        if sql.as_ref().contains("FROM plugin_states")
+            && let Some(reader) = &self.reader
+        {
+            return reader.fetch_all(sql, args).await;
+        }
         Ok(Vec::new())
     }
 }
 
 #[tokio::test]
 async fn the_versioned_build_reads_plugin_sync_state_before_the_installed_skill() {
-    let mut transaction = RecordingTransaction::default();
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+    let fixture = MysqlRows::start_results(|_sql| {
+        let row = vec![
+            ("id", SqlValue::I64(17)),
+            ("user_id", SqlValue::I64(203)),
+            ("plugin_key", SqlValue::Text("@legacy-v2".into())),
+            ("installed_kind_id", SqlValue::I64(0)),
+            (
+                "json",
+                SqlValue::Text(json!({"spec":{"revision":0,"generation":0}}).to_string()),
+            ),
+        ];
+        (row.clone(), vec![row])
+    })
+    .await;
+    let mut transaction = RecordingTransaction {
+        reader: Some(fixture.mysql.clone()),
+        ..Default::default()
+    };
     let mut query = &mut transaction;
     let snapshot = build_versioned_snapshot(&mut query, 203, "app-record-273921", true, None)
         .await
@@ -151,7 +175,7 @@ async fn the_versioned_build_reads_plugin_sync_state_before_the_installed_skill(
         "{statements:#?}"
     );
     assert!(
-        statements[7].starts_with("INSERT INTO plugin_states"),
+        statements[7].starts_with("UPDATE plugin_states") && statements[7].contains("revision"),
         "{statements:#?}"
     );
 }

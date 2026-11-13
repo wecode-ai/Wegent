@@ -959,3 +959,110 @@ def test_first_plugin_state_commit_outlives_redis_without_duplicate_or_cross_plu
     finally:
         release.set()
         event.remove(bootstrap, "commit", pause)
+
+
+@pytest.mark.parametrize("rename", [False, True])
+def test_delayed_backfill_never_overwrites_foreground_state_or_revives_an_old_name(
+    context, rename
+):
+    """Pause after projection; let a real foreground transaction commit first."""
+    from app.models.plugin_state import PluginState
+    from app.services.device.plugin_sync_protocol import lock_installed_plugin_state
+    from app.services.plugin_write_resources import policy_engine
+    from scripts.backfill_plugin_states import backfill_one
+
+    old_name = "mysql-auth-fixture"
+    legacy = {
+        "spec": {
+            "generation": 7677,
+            "devices": {"desktop": {"plugins": {str(context.plugin_id): 7000}}},
+            "localIntentOrders": {"native": {str(context.plugin_id): 7}},
+        }
+    }
+    with context.sessions.begin() as db:
+        db.add(
+            Kind(
+                user_id=context.user_id,
+                kind="PluginSyncState",
+                namespace="plugin-sync",
+                name="account",
+                json=legacy,
+                is_active=True,
+            )
+        )
+    projected, release = threading.Event(), threading.Event()
+    worker_id = None
+
+    def pause(_connection, _cursor, statement, _parameters, _execution, _many):
+        if threading.get_ident() == worker_id and statement.startswith(
+            "INSERT INTO plugin_states"
+        ):
+            projected.set()
+            assert release.wait(10), "Backfill insert was not released"
+
+    def fill():
+        nonlocal worker_id
+        worker_id = threading.get_ident()
+        with context.sessions() as db:
+            return backfill_one(
+                db, context.plugin_id, context.user_id, "InstalledPlugin", True
+            )
+
+    bootstrap = policy_engine(context.sessions.kw["bind"])
+    event.listen(bootstrap, "before_cursor_execute", pause)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(fill)
+            try:
+                assert projected.wait(5), "Backfill did not reach its real INSERT"
+                with context.sessions() as db:
+                    acquire_plugin_write_lock(
+                        db, context.user_id, installed_id=context.plugin_id
+                    )
+                    if rename:
+                        parent = db.get(Kind, context.plugin_id)
+                        replace_installed_kind(
+                            db, parent, parent.json, name="renamed-plugin"
+                        )
+                    state = lock_installed_plugin_state(
+                        db, context.user_id, context.plugin_id
+                    )
+                    document = deepcopy(state.json)
+                    document["spec"]["generation"] = 9000
+                    document["spec"]["localIntentOrders"]["native"][
+                        str(context.plugin_id)
+                    ] = 99
+                    state.json = document
+                    db.commit()
+                    expected = deepcopy(state.json)
+            finally:
+                release.set()
+            if rename:
+                with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+                    pending.result(timeout=5)
+            else:
+                assert pending.result(timeout=5) == "initialized_or_concurrent"
+        with context.sessions() as db:
+            states = (
+                db.query(PluginState)
+                .filter_by(user_id=context.user_id, installed_kind_id=context.plugin_id)
+                .all()
+            )
+            assert len(states) == 1
+            assert states[0].plugin_key == ("renamed-plugin" if rename else old_name)
+            assert states[0].json == expected
+            assert (
+                db.query(Kind)
+                .filter_by(
+                    user_id=context.user_id,
+                    kind="PluginSyncState",
+                    namespace="plugin-sync",
+                    name="account",
+                )
+                .one()
+                .json
+                == legacy
+            )
+    finally:
+        release.set()
+        event.remove(bootstrap, "before_cursor_execute", pause)

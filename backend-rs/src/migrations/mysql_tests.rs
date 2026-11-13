@@ -212,6 +212,38 @@ async fn verify_plugin_state_round_trip(mysql: &MysqlService) -> Result<()> {
     mysql.execute("INSERT INTO kinds (id,user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (70001,70001,'InstalledPlugin','migration-plugin','default',?,0,NOW(),NOW()),(70002,70001,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())", (serde_json::json!({"spec":{"revision":3}}),document)).await?;
     upgrade(mysql).await?;
     #[derive(FromMysqlRow)]
+    struct Rows {
+        n: i64,
+    }
+    assert_eq!(
+        mysql
+            .fetch_one::<_, _, Rows>(
+                "SELECT COUNT(*) AS n FROM plugin_states WHERE user_id=70001",
+                ()
+            )
+            .await?
+            .n,
+        0
+    );
+    assert_eq!(mysql.fetch_one::<_,_,Rows>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=70001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
+    mysql
+        .with_transaction_options(
+            brz_mysql::MysqlTransactionOptions::default()
+                .with_isolation_level(brz_mysql::MysqlIsolationLevel::ReadCommitted),
+            async |tx| {
+                let mut query = &mut *tx;
+                crate::plugins_installed::state_store::ensure(
+                    &mut query,
+                    70001,
+                    "migration-plugin",
+                    70001,
+                )
+                .await?;
+                Ok(())
+            },
+        )
+        .await?;
+    #[derive(FromMysqlRow)]
     struct Document {
         document: serde_json::Value,
     }

@@ -11,7 +11,7 @@ use crate::plugins_marketplace::query::PluginQuery;
 use super::write_coordination::{business_revision, coordination_error};
 
 #[derive(FromMysqlRow)]
-pub(super) struct PluginState {
+pub(crate) struct PluginState {
     pub id: i64,
     pub user_id: i64,
     pub plugin_key: String,
@@ -31,7 +31,7 @@ pub(super) async fn read<Q: PluginQuery>(
     query.fetch_optional("SELECT id,user_id,plugin_key,installed_kind_id,json FROM plugin_states WHERE user_id=? AND plugin_key=?", (user_id,key)).await
 }
 
-pub(super) async fn ensure<Q: PluginQuery>(
+pub(crate) async fn ensure<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
     key: &str,
@@ -54,11 +54,10 @@ pub(super) async fn ensure<Q: PluginQuery>(
     let mut row = match existing {
         Some(row) => row,
         None => {
-            let mut document = initial_document(key);
-            if let Some(legacy) = read(query, user_id, "@legacy-v2").await? {
-                document["spec"]["generation"] = json!(generation(&legacy.json)?);
-            }
+            let (installed_id, document) =
+                super::state_history::initialize(query, user_id, key, installed_id).await?;
             query.execute("INSERT INTO plugin_states (user_id,plugin_key,installed_kind_id,json) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE plugin_key=plugin_states.plugin_key", (user_id,key,installed_id,document)).await?;
+            super::state_history::validate_binding(query, user_id, key, installed_id).await?;
             read(query, user_id, key)
                 .await?
                 .ok_or_else(|| coordination_error("plugin_write_conflict"))?

@@ -99,15 +99,33 @@ transaction instead of waiting for a second connection from the same pool.
 
 ## Migration, deployment and evidence
 
-`a5b6c7d8e9f0` projects the active legacy synchronization Kind into plugin state,
-preserving ordering and receipts. Ambiguous identities and invalid counters stop
-before DDL. Downgrade merges maximum watermarks and latest receipts, restores the
-old Kind and drops the new table.
+`a5b6c7d8e9f0` creates an empty table without scanning, moving or deleting historical
+`kinds` data. First use atomically inserts the plugin's complete inherited generation,
+device watermarks, creation counters and request markers. Existing state is authoritative;
+losing unique-key inserts never overwrite it. The old active
+`PluginSyncState/plugin-sync/account` remains a read-only baseline. Unprojected historical
+requests remain recoverable, while initialized plugins use their new state. Ambiguous
+identities and invalid counters fail on first use without selecting or resetting data.
 
-Drain old plugin writers before switching Python and Rust together. Old backend
-binaries cannot continue writing the removed Kind after migration. New backends
-continue serving old desktops through V2. Production migration and deployment are
-separate from local validation.
+Optional `backend/scripts/backfill_plugin_states.py` shares the foreground initializer
+and can coexist with lazy initialization. It defaults to read-only preview, supports
+user filters, batches and resume cursors, and skips existing state on every run.
+Run from `backend/`:
+
+```bash
+uv run python scripts/backfill_plugin_states.py --user-id 151
+uv run python scripts/backfill_plugin_states.py --apply --user-id 151
+uv run python scripts/backfill_plugin_states.py --apply --batch-size 100 --pause-ms 100
+uv run python scripts/backfill_plugin_states.py --apply --after-id <resume_after_id>
+```
+
+Resume with the same user filter and the reported `resume_after_id`. An uncertain
+commit leaves the cursor before that row; the unique key protects replay. Downgrade
+merges maximum watermarks and latest receipts into retained legacy Kinds, creates
+missing Kinds only, then drops the table. Stop plugin writes during rollback.
+Drain old plugin transactions before switching Python and Rust together; old binaries
+must not keep modifying the frozen baseline. New backends serve old desktops through
+V2. Production migration, backfill and deployment are separate from local validation.
 
 Real MySQL regressions cover COMMIT crossing Redis expiry, same-plugin uniqueness,
 independent plugin progress, stale transactions, lifecycle operations,

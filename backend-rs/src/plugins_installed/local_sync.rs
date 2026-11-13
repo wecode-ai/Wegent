@@ -35,6 +35,7 @@ struct SyncRequest {
 #[derive(FromMysqlRow)]
 struct StateRow {
     plugin_key: String,
+    installed_kind_id: i64,
     json: Value,
 }
 
@@ -290,22 +291,39 @@ async fn read_operation(
     };
     let rows: Vec<StateRow> = tx
         .fetch_all(
-            "SELECT plugin_key,json FROM plugin_states WHERE user_id=?",
+            "SELECT plugin_key,installed_kind_id,json FROM plugin_states WHERE user_id=?",
             (user,),
         )
         .await?;
     let mut found = Vec::new();
-    for historical in [false, true] {
+    found.extend(
+        rows.iter()
+            .filter(|row| row.plugin_key != "@legacy-v2")
+            .filter_map(|row| row.json["spec"]["localIntents"][instance].as_object())
+            .flat_map(|slots| slots.values())
+            .filter(|slot| slot["operationId"] == operation),
+    );
+    let historical = if found.is_empty() {
+        let mut query = &mut *tx;
+        Some(super::state_history::legacy(&mut query, user).await?)
+    } else {
+        None
+    };
+    if let Some(document) = &historical {
+        let initialized: std::collections::BTreeSet<_> = rows
+            .iter()
+            .filter(|row| row.installed_kind_id > 0)
+            .map(|row| row.installed_kind_id.to_string())
+            .collect();
         found.extend(
-            rows.iter()
-                .filter(|row| (row.plugin_key == "@legacy-v2") == historical)
-                .filter_map(|row| row.json["spec"]["localIntents"][instance].as_object())
-                .flat_map(|slots| slots.values())
+            document["spec"]["localIntents"][instance]
+                .as_object()
+                .into_iter()
+                .flat_map(|slots| slots.iter())
+                .filter(|(id, _)| !initialized.contains(*id))
+                .map(|(_, slot)| slot)
                 .filter(|slot| slot["operationId"] == operation),
         );
-        if !found.is_empty() {
-            break;
-        }
     }
     if found.len() > 1 {
         return Err(coordination_error("plugin_write_conflict"));

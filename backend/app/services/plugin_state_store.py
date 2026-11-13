@@ -5,20 +5,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.plugin_state import PluginState
+from app.services.plugin_state_documents import initial_document, plugin_document
+from app.services.plugin_state_history import LEGACY_SYNC_KEY, legacy_document
 from app.services.plugin_write_errors import PluginWriteError
-
-LEGACY_SYNC_KEY = "@legacy-v2"
-
-
-def initial_document(plugin_key: str) -> dict:
-    document = {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "PluginState",
-        "metadata": {"name": plugin_key, "namespace": "plugin-sync"},
-        "spec": {"revision": 0, "generation": 0},
-    }
-    return document
 
 
 def find_plugin_state(db: Session, user_id: int, plugin_key: str) -> PluginState | None:
@@ -86,7 +77,12 @@ def _materialize(
     from app.services.plugin_write_resources import policy_engine
 
     engine = bind.engine if isinstance(bind, Connection) else bind
-    with Session(policy_engine(engine)) as initial, initial.begin():
+    with (
+        Session(
+            policy_engine(engine).execution_options(isolation_level="READ COMMITTED")
+        ) as initial,
+        initial.begin(),
+    ):
         claim_plugin_identity(initial, user_id, plugin_key, installed_kind_id)
 
 
@@ -94,20 +90,11 @@ def claim_plugin_identity(
     db: Session, user_id: int, plugin_key: str, installed_kind_id: int = 0
 ) -> None:
     """Serialize one first insertion through the unique key until SQL COMMIT."""
-    document = initial_document(plugin_key)
-    if plugin_key != LEGACY_SYNC_KEY:
-        legacy = find_plugin_state(db, user_id, LEGACY_SYNC_KEY)
-        if legacy is not None:
-            floor = legacy.json.get("spec", {}).get("generation", 0)
-            if type(floor) is not int or not 0 <= floor < 2**63 - 1:
-                raise PluginWriteError("plugin_write_conflict")
-            document["spec"]["generation"] = floor
-    values = dict(
-        user_id=user_id,
-        plugin_key=plugin_key,
-        installed_kind_id=installed_kind_id,
-        json=document,
-    )
+    # Existing rows are authoritative, including zero-bound creation fences.
+    if find_plugin_state(db, user_id, plugin_key) is not None:
+        return
+    values = prepare_plugin_identity(db, user_id, plugin_key, installed_kind_id)
+    installed_kind_id = values["installed_kind_id"]
     if db.get_bind().dialect.name != "mysql":
         statement = sqlite_insert(PluginState).values(**values)
         statement = statement.on_conflict_do_nothing(
@@ -115,8 +102,92 @@ def claim_plugin_identity(
         )
         with db.no_autoflush:
             db.execute(statement)
+        _validate_binding(db, user_id, plugin_key, installed_kind_id)
         return
 
     statement = mysql_insert(PluginState).values(**values)
     with db.no_autoflush:
         db.execute(statement.on_duplicate_key_update(plugin_key=PluginState.plugin_key))
+    _validate_binding(db, user_id, plugin_key, installed_kind_id)
+
+
+def _validate_binding(db: Session, user_id: int, key: str, installed_id: int) -> None:
+    """A rename that won the insert race must not leave a second old alias."""
+    if not installed_id:
+        return
+    with db.no_autoflush:
+        parent = (
+            db.query(Kind.id)
+            .filter_by(
+                id=installed_id,
+                user_id=user_id,
+                kind="InstalledPlugin",
+                namespace="default",
+                name=key,
+            )
+            .one_or_none()
+        )
+        bindings = (
+            db.query(PluginState.id)
+            .filter_by(
+                user_id=user_id,
+                installed_kind_id=installed_id,
+            )
+            .limit(2)
+            .all()
+        )
+    if parent is None or len(bindings) != 1:
+        raise PluginWriteError("plugin_write_conflict")
+
+
+def prepare_plugin_identity(
+    db: Session, user_id: int, plugin_key: str, installed_kind_id: int = 0
+) -> dict:
+    """Prepare the complete insert for both a read-only preview and the writer."""
+    document = initial_document(plugin_key)
+    if plugin_key != "@account-policy":
+        baseline = legacy_document(db, user_id)
+        if plugin_key == LEGACY_SYNC_KEY and baseline:
+            document = baseline
+        else:
+            with db.no_autoflush:
+                installed = (
+                    db.query(Kind)
+                    .filter_by(
+                        user_id=user_id,
+                        kind="InstalledPlugin",
+                        namespace="default",
+                        name=plugin_key,
+                    )
+                    .limit(2)
+                    .all()
+                    if not plugin_key.startswith("@")
+                    else []
+                )
+            if len(installed) > 1:
+                raise PluginWriteError("plugin_write_conflict")
+            if installed_kind_id and not installed:
+                raise PluginWriteError("plugin_write_conflict")
+            if installed:
+                parent = installed[0]
+                if installed_kind_id and parent.id != installed_kind_id:
+                    raise PluginWriteError("plugin_write_conflict")
+                installed_kind_id = parent.id
+                document = plugin_document(
+                    baseline,
+                    {
+                        "id": parent.id,
+                        "name": parent.name,
+                        "json": parent.json,
+                    },
+                )
+            else:
+                document["spec"]["generation"] = baseline.get("spec", {}).get(
+                    "generation", 0
+                )
+    return dict(
+        user_id=user_id,
+        plugin_key=plugin_key,
+        installed_kind_id=installed_kind_id,
+        json=document,
+    )
