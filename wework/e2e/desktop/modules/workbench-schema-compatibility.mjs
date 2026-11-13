@@ -2,19 +2,17 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { verifyWindowsDesktopDataStartup } from './workbench-desktop-startup.mjs'
 import { verifyWindowsComponentPublication } from './workbench-component-publication.mjs'
 import { verifyMacosLogStartup } from './workbench-log-startup.mjs'
 import { verifyMissingDesktopUserData } from './workbench-missing-user-data.mjs'
+import { verifyDefaultLayoutInstalledPreparation } from './installed-preparation-default-layout.mjs'
+import { packagedResourcesRoot } from './packaged-resources.mjs'
 
-export function packagedResourcesRoot(appBinary) {
-  return process.platform === 'darwin'
-    ? resolve(appBinary, '..', '..', 'Resources')
-    : resolve(appBinary, '..', 'resources')
-}
+export { packagedResourcesRoot } from './packaged-resources.mjs'
 
 // Execute the packaged production gates, with real binaries and isolated updater state.
 // Codex is deliberately an incompatible executor candidate, not a simulated old executor.
@@ -52,6 +50,14 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
           executor: input.executor,
           environment: appEnvironment,
           root: join(root, 'windows-desktop-startup'),
+        })
+      : undefined
+  const windowsInstalledPreparation =
+    process.platform === 'win32'
+      ? await verifyDefaultLayoutInstalledPreparation({
+          appBinary,
+          appEnvironment,
+          resultDir: join(root, 'installed-preparation'),
         })
       : undefined
   const windowsComponentPublication =
@@ -354,6 +360,8 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   if (macosLogStartup) evidence.macosLogStartup = macosLogStartup
   evidence.missingDesktopUserData = missingDesktopUserData
   if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup
+  if (windowsInstalledPreparation)
+    evidence.windowsInstalledPreparation = windowsInstalledPreparation
   if (windowsComponentPublication)
     evidence.windowsComponentPublication = windowsComponentPublication
   assert.equal(evidence.selectedComponentStateUnchanged, true)

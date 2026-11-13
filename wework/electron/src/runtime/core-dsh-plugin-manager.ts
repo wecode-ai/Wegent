@@ -133,10 +133,12 @@ export class CoreDshPluginManager {
   enabledStates(names: readonly string[]): Promise<Map<string, boolean>> {
     return this.serial(async () => {
       const manifest = await this.readManifest()
+      const dependencies = manifest.dependencies ?? {}
       const active = new Set(manifest.dsh?.profile?.bundles ?? [])
       const states = new Map<string, boolean>()
       await Promise.all(
         names.map(async name => {
+          if (!Object.hasOwn(dependencies, name)) return
           const installed = await this.readPackage(name)
           if (!installed?.dsh?.bundle?.patch) return
           states.set(name, active.has(name))

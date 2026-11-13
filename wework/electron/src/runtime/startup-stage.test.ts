@@ -38,3 +38,23 @@ test('reports a failed startup stage and preserves the error', async () => {
     expect.objectContaining({ stage: 'profile-copy', phase: 'failed' })
   )
 })
+
+test('preserves a successful stage when detail collection fails', async () => {
+  const report = vi.fn()
+
+  await expect(
+    runStartupStage(
+      report,
+      'profile-copy',
+      async () => 3,
+      () => {
+        throw new Error('detail inspection failed')
+      }
+    )
+  ).resolves.toBe(3)
+
+  expect(report.mock.calls.map(([event]) => event.phase)).toEqual(['started', 'completed'])
+  expect(report).toHaveBeenLastCalledWith(
+    expect.objectContaining({ stage: 'profile-copy', phase: 'completed' })
+  )
+})
