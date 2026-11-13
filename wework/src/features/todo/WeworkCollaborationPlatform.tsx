@@ -68,6 +68,7 @@ import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import {
   DesktopSidebarAccount,
@@ -1172,6 +1173,7 @@ export function WeworkSharedProject({
           showProjectBack={false}
           refreshProjectRequestKey={refreshProjectRequestKey}
           issueArchiveEnabled
+          normalizePastedFiles={normalizeClipboardImageFiles}
           onPrepareIssueArchive={
             project.project_store === 'local' ? prepareIssueArchive : undefined
           }
@@ -1718,6 +1720,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         navigationApis={navigationApis}
         locale={locale}
         onReady={handleReady}
+        normalizePastedFiles={normalizeClipboardImageFiles}
         host={{
           accountScope: templateScope,
           templateStore,

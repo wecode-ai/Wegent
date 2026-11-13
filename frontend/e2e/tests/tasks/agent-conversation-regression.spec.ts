@@ -902,6 +902,69 @@ test.describe('Agent conversation regression', () => {
     await assertOversizedDeviceCompletionFailure(request, taskId)
   })
 
+  test('device ClaudeCode preserves streamed text order after completion and reload', async ({
+    page,
+    request,
+  }) => {
+    const prompt = `Return the ordered device response for ${makeContextToken('device_order')}`
+    // Each model delta spans several of the real Executor's 256-character
+    // frames. Distinct text in every frame exposes even a single swap.
+    const reply = ['first', 'second', 'third', 'last']
+      .map((label, index) =>
+        [0, 1, 2].map(part => `${label}-${part}-${String(index * 3 + part).repeat(245)}`).join('')
+      )
+      .join(' ')
+
+    await waitForWeworkDeviceOnline(request)
+    await configureStreamRule(request, prompt, reply)
+    const sent = await request.post(`${API_BASE_URL}/api/device-chat/tasks`, {
+      headers: authHeaders(),
+      data: {
+        teamId: deviceTeam.id,
+        deviceId: DEVICE_ID,
+        message: prompt,
+        taskType: 'task',
+        clientOrigin: 'frontend',
+      },
+    })
+    expect(sent.status()).toBe(200)
+    const { taskId, assistantSubtaskId, deviceId, aiTriggered } = (await sent.json()) as {
+      taskId: number
+      assistantSubtaskId: number
+      deviceId: string
+      aiTriggered: boolean
+    }
+    expect(taskId).toBeGreaterThan(0)
+    createdTaskIds.add(taskId)
+    expect(assistantSubtaskId).toBeGreaterThan(0)
+    expect(deviceId).toBeTruthy()
+    expect(aiTriggered).toBe(true)
+    await waitForBackendTerminal(request, taskId)
+
+    const detail = await request.get(`${API_BASE_URL}/api/tasks/${taskId}`, {
+      headers: authHeaders(),
+    })
+    expect(detail.status()).toBe(200)
+    const { subtasks } = (await detail.json()) as {
+      subtasks: Array<{
+        id: number
+        status: string
+        result?: { value?: string; blocks?: Array<{ type: string; content?: string }> }
+      }>
+    }
+    const assistant = subtasks.find(subtask => subtask.id === assistantSubtaskId)
+    expect(assistant?.status).toBe('COMPLETED')
+    expect(assistant?.result?.value).toBe(reply)
+    const textBlocks = assistant?.result?.blocks?.filter(block => block.type === 'text') ?? []
+    expect(textBlocks.map(block => block.content).join('')).toBe(reply)
+
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    await page.goto(`/devices/chat?${new URLSearchParams({ deviceId, taskId: String(taskId) })}`)
+    await expect(page.getByTestId('messages-container')).toContainText(reply)
+    await page.reload()
+    await expect(page.getByTestId('messages-container')).toContainText(reply)
+  })
+
   test('device Git project runs without server AES keys on the executor', async ({ request }) => {
     const gitFixture = await createGitHttpFixture()
     const gitAccountId = `${TEST_PREFIX}-device-git-account`

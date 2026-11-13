@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "minSourceVersion": "0.6.8",
+  "minSourceVersion": "0.6.8-beta.5",
   "requiredDirectUpgrades": {
     "0.6.4-beta.2": ["0.6.2", "0.6.3", "0.6.4-beta.1"]
   }

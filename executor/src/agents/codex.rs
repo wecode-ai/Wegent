@@ -308,6 +308,7 @@ mod interaction;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
+pub(crate) use mcp_apps::CodexAppToolError;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;

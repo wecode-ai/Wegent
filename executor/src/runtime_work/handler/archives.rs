@@ -257,6 +257,14 @@ impl RuntimeWorkRpcHandler {
         link.continuable = true;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        emit_response_event(
+            &self.event_tx,
+            &self.device_id,
+            "runtime.work.changed",
+            &link.local_task_id,
+            &runtime_event_request_from_link(&link),
+            json!({"taskId":link.local_task_id,"archived":false}),
+        );
         Ok(task_action_success(&link))
     }
 

@@ -59,6 +59,7 @@ import { BACKGROUND_TIMER_THROTTLING_SWITCH } from './window-background-policy.j
 import { sendE2EKey, sendE2EText, type E2EKeyPhase } from './e2e-keyboard.js'
 import { inspectWorkspacePaths } from './workspace-path-inspector.js'
 import { readClipboardWorkspacePaths } from './workspace-path-clipboard.js'
+import { clipboardImageToPngDataUrl } from './clipboard-image-conversion.js'
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
@@ -642,6 +643,13 @@ export function createElectronCapabilityRouter(
   router.register('clipboard.readWorkspacePaths', params =>
     readClipboardWorkspacePaths(stringArrayParam(params, 'fallbackPaths') ?? [])
   )
+  router.register('clipboard.convertImageToPng', params =>
+    clipboardImageToPngDataUrl(
+      rawStringParam(params, 'dataBase64'),
+      stringParam(params, 'fileName'),
+      optionalStringParam(params, 'mimeType') ?? ''
+    )
+  )
   router.register('clipboard.writeText', params =>
     clipboard.writeText(rawStringParam(params, 'text'))
   )
@@ -1059,22 +1067,7 @@ export function createElectronCapabilityRouter(
       return mcpAppDocuments.respond(new Request(url)).status
     }
     if (!mcpAppDocuments.owns(url)) throw new Error('Unknown MCP App document')
-    const contents = e2eHost.captureTarget('main')
-    const frame = contents?.mainFrame.framesInSubtree.find(frame => frame.url === url)
-    if (!frame) throw new Error('MCP App frame is not loaded')
-    const action = stringParam(params, 'action')
-    if (!['text', 'click', 'fill', 'attribute', 'value'].includes(action))
-      throw new Error('Unsupported MCP App test action')
-    return frame.executeJavaScript(`(() => {
-      const element = document.querySelector(${JSON.stringify(stringParam(params, 'selector'))});
-      if (!element) throw new Error('MCP App target not found');
-      const action = ${JSON.stringify(action)};
-      if (action === 'click') element.click();
-      if (action === 'fill') { element.value = ${JSON.stringify(optionalStringParam(params, 'value') ?? '')}; element.dispatchEvent(new Event('input', { bubbles: true })); }
-      if (action === 'attribute') return element.getAttribute(${JSON.stringify(optionalStringParam(params, 'value') ?? '')});
-      if (action === 'value') return element.value;
-      return element.textContent;
-    })()`)
+    return controlInlineVisualizationFrame(e2eHost.captureTarget('main'), params)
   })
   router.register('filesystem.stat', async params => {
     const path = stringParam(params, 'path')
