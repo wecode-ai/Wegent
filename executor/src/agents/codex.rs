@@ -308,6 +308,7 @@ mod interaction;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
+pub(crate) use mcp_apps::CodexAppToolError;
 
 #[path = "codex/connection_mcp.rs"]
 mod connection_mcp;
@@ -315,6 +316,7 @@ mod connection_mcp;
 #[path = "codex/mcp_config.rs"]
 mod mcp_config;
 
+mod mcp_recovery;
 #[path = "codex/mcp_reload.rs"]
 mod mcp_reload;
 #[cfg(test)]
@@ -1641,6 +1643,7 @@ struct CodexNotificationHub {
     runtime: RuntimeNotificationSubscribers,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
+    mcp_recovery: Arc<mcp_recovery::McpRecovery>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
@@ -1665,6 +1668,7 @@ impl CodexNotificationHub {
             runtime,
             threads: Arc::new(StdMutex::new(HashMap::new())),
             native_activity: Arc::new(StdMutex::new(CodexNativeActivity::default())),
+            mcp_recovery: Arc::new(mcp_recovery::McpRecovery::default()),
             thread_activity_changed,
         }
     }
@@ -1699,6 +1703,7 @@ impl CodexNotificationHub {
     }
 
     async fn send(&self, message: Value) {
+        self.mcp_recovery.observe(&message);
         self.update_native_activity(|activity| activity.observe(&message));
         let message =
             CodexNotification::from(message).with_process_generation(self.process_generation);
@@ -2063,7 +2068,7 @@ async fn read_persistent_codex_app_server_stdout(
             }
         }
 
-        log_codex_mcp_startup_status(&message);
+        log_codex_mcp_startup_status(&message, notifications.process_generation);
 
         notifications
             .send(external_work::project_review_notification(message))
@@ -2071,7 +2076,7 @@ async fn read_persistent_codex_app_server_stdout(
     }
 }
 
-fn log_codex_mcp_startup_status(message: &Value) {
+fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
     if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
         return;
     }
@@ -2079,6 +2084,7 @@ fn log_codex_mcp_startup_status(message: &Value) {
     log_executor_event(
         "codex MCP startup status",
         &[
+            ("process_generation", process_generation.to_string()),
             (
                 "thread_id",
                 params
@@ -2116,6 +2122,17 @@ fn log_codex_mcp_startup_status(message: &Value) {
                     .get("failureReason")
                     .is_some_and(|value| !value.is_null())
                     .to_string(),
+            ),
+            (
+                "failure_reason",
+                params["failureReason"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            (
+                "error",
+                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
             ),
         ],
     );
@@ -2378,6 +2395,10 @@ async fn run_codex_app_server_turn_on_shared_client(
                     .await?,
                 thread_resume_params(thread_id, request, &launch_config),
             ));
+            // Background reads and prediction also resume threads. Reconcile
+            // only admitted work, after applying configuration changes and
+            // establishing its notification route and activity cleanup.
+            client.reconcile_mcp_connections(thread_id, Some(&launch_config)).await?;
         }
         let requested_thread_configuration = match &thread_plan.start {
             CodexThreadStart::Request { params, .. } => {

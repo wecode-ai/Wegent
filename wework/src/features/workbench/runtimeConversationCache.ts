@@ -894,7 +894,9 @@ export function archiveRuntimeConversation(address: RuntimeTaskAddress) {
 }
 
 export function unmarkRuntimeConversationArchived(address: RuntimeTaskAddress) {
-  unmarkArchivedConversationKey(runtimeConversationKey(address))
+  const key = runtimeConversationKey(address)
+  unmarkArchivedConversationKey(key)
+  notifyRuntimeConversation(key)
 }
 
 export function clearRuntimeConversationCacheForTests() {

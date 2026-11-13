@@ -6698,6 +6698,8 @@ fn all_task_launches_surface_business_decisions_through_structured_input() {
         thread_fork_params("thread-1", None, &request, &launch),
     ] {
         let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("raise a structured question using request_user_input_async"));
+        assert!(instructions.contains("the user may not have this conversation open"));
         assert!(instructions
             .contains("request_user_input_async when available, otherwise request_user_input"));
         assert!(instructions.contains("Continue independent authorized work"));

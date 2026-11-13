@@ -176,6 +176,15 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs"
 
+assert_desktop_case "Clipboard history image conversion selects core and macOS coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"clipboard-history-image"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=true' \
+  "wework/src/lib/clipboard-images.ts"
+
 for preview_path in \
   "backend/app/api/endpoints/adapter/attachments.py" \
   "backend/tests/api/endpoints/adapter/test_attachment_download_policy_routes.py" \

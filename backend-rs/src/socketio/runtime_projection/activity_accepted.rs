@@ -143,8 +143,37 @@ pub(in crate::socketio) async fn open_accepted_activity<T: MysqlTransaction>(
         let admits_completed = crate::json_compat::python_truthy(&origin["run_id"])
             && origin["event"]["type"] == "task.status_changed"
             && origin["event"]["payload"]["status"] == "completed";
-        if issue.is_none_or(|issue| issue.status == "completed" && !admits_completed) {
+        if issue
+            .as_ref()
+            .is_none_or(|issue| issue.status == "completed" && !admits_completed)
+        {
             return Ok(None);
+        }
+        if !metadata.contains_key("run_id") {
+            let active_ai_run_id = origin
+                .get("run_id")
+                .and_then(Value::as_str)
+                .filter(|run_id| !run_id.is_empty())
+                .or_else(|| {
+                    issue
+                        .as_ref()
+                        .and_then(|issue| issue.metadata.0.get("ai_state"))
+                        .filter(|state| {
+                            matches!(
+                                state.get("status").and_then(Value::as_str),
+                                Some("running" | "pending" | "queued")
+                            ) && state
+                                .get("runtime_task_id")
+                                .and_then(Value::as_str)
+                                .is_none_or(|task_id| task_id.is_empty() || task_id == conversation)
+                        })
+                        .and_then(|state| state.get("run_id"))
+                        .and_then(Value::as_str)
+                        .filter(|run_id| !run_id.is_empty())
+                });
+            if let Some(run_id) = active_ai_run_id {
+                metadata.insert("run_id".into(), json!(run_id));
+            }
         }
         let id = notifications::uuid();
         let agent = execution.agent_id.as_deref().unwrap_or_default();
