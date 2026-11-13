@@ -291,8 +291,7 @@ export async function verifyConcurrentMcpUserInput(control) {
     {
       slugs: [DEFAULT_MODEL_ID],
     },
-    DEFAULT_STEP_TIMEOUT_MS,
-    { retryOnTransport: true }
+    DEFAULT_STEP_TIMEOUT_MS
   )
   const model = models.find(model => model.slug === DEFAULT_MODEL_ID)
   assert.ok(model)
@@ -303,8 +302,7 @@ export async function verifyConcurrentMcpUserInput(control) {
       slug: DEFAULT_MODEL_ID,
       entry: { ...model.effective, tool_mode: 'code_mode' },
     },
-    DEFAULT_STEP_TIMEOUT_MS,
-    { retryOnTransport: true }
+    DEFAULT_STEP_TIMEOUT_MS
   )
   try {
     await restartCodexWhenIdle(control)
@@ -317,8 +315,7 @@ export async function verifyConcurrentMcpUserInput(control) {
         slug: DEFAULT_MODEL_ID,
         entry: model.effective,
       },
-      DEFAULT_STEP_TIMEOUT_MS,
-      { retryOnTransport: true }
+      DEFAULT_STEP_TIMEOUT_MS
     )
     await restartCodexWhenIdle(control)
   }

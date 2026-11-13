@@ -1261,7 +1261,12 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const { expectClientReplacement = false, exitProcessId, ...commandOptions } = options
+    const {
+      expectClientReplacement = false,
+      exitProcessId,
+      preserveResultAcrossClientReplacement = false,
+      ...commandOptions
+    } = options
     assert.ok(
       !expectClientReplacement || action === 'click',
       'Only clicks may expect client replacement'
@@ -1307,6 +1312,8 @@ class DesktopE2EServer {
         resolveDelivery,
         started: false,
         expectClientReplacement,
+        preserveResultAcrossClientReplacement,
+        windowLabel: this.controlWindowsByClient.get(clientId),
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -2107,6 +2114,10 @@ class DesktopE2EServer {
         })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
+          if (pending.preserveResultAcrossClientReplacement && pending.started) {
+            pending.clientReplacedAt = new Date().toISOString()
+            continue
+          }
           this.commandResults.delete(id)
           // A started refresh click may replace its renderer before reporting its result.
           if (pending.expectClientReplacement && pending.started) pending.resolve('')
@@ -2208,10 +2219,16 @@ class DesktopE2EServer {
         return true
       }
       const resultWindowLabel = this.controlWindowsByClient.get(result.clientId)
+      const acceptsRetiredClientResult =
+        pending.preserveResultAcrossClientReplacement &&
+        pending.started &&
+        result.clientId === pending.clientId &&
+        !resultWindowLabel
       if (
         result.clientId !== pending.clientId ||
-        !resultWindowLabel ||
-        this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId
+        (!acceptsRetiredClientResult &&
+          (!resultWindowLabel ||
+            this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId))
       ) {
         json(response, 409, {
           error: `Command ${result.id} belongs to a different desktop control client`,
@@ -2227,8 +2244,10 @@ class DesktopE2EServer {
       // Observations may check readiness during an input cooldown, but must
       // neither extend nor shorten the interval between state-changing actions.
       if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        const cooldownClientId =
+          this.controlClientsByWindow.get(pending.windowLabel) ?? result.clientId
         this.controlCommandAvailableAt.set(
-          result.clientId,
+          cooldownClientId,
           Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
         )
       }
