@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
+import { waitForStartupAttempt } from '../modules/cold-package-startup.mjs'
+import { resolveElectronLaunchArguments } from '../modules/electron-launch-arguments.mjs'
+import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
 const NATIVE_CONSUMER = '@wework-e2e/native-dsh-consumer'
+const INSTALL_PREPARATION_TIMEOUT_MS = 600_000
 
 async function writePlugin(profileRoot, name, manifest, files) {
   const pluginRoot = join(profileRoot, 'node_modules', name)
@@ -323,7 +327,6 @@ export async function createDesktopScenario({
       `${JSON.stringify(hostUpdateCompression, null, 2)}\n`
     )
   }
-  await seedNativeDshProfile(electronUserDataDirectory)
   const profileManifest = join(
     electronUserDataDirectory,
     'dsh-core',
@@ -331,14 +334,67 @@ export async function createDesktopScenario({
     PROFILE_NAME,
     'package.json'
   )
+  const appLogPath = join(resultDir, 'app.log')
+  const startupScenarios = {}
+  let restartDesktopApp
+  let startupAttempt = 0
+
+  const waitForShell = async control => {
+    await control.command('waitFor', '[data-testid="app-shell"]', {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+  }
+  const captureStartup = async name => {
+    const metrics = await waitForStartupAttempt(appLogPath, ++startupAttempt, {
+      timeoutMs: workbenchReadyTimeoutMs,
+    })
+    startupScenarios[name] = metrics
+    await writeFile(
+      join(resultDir, 'release-startup-scenarios.json'),
+      `${JSON.stringify({ scenarios: startupScenarios }, null, 2)}\n`
+    )
+    return metrics
+  }
 
   return {
     usesReleasePackageRuntimeAssets: true,
 
+    async prepareApp({ appBinary, appEnvironment }) {
+      const preparation = spawnSync(
+        appBinary,
+        [INSTALLED_PREPARATION_ARGUMENT, ...resolveElectronLaunchArguments()],
+        {
+          env: appEnvironment,
+          encoding: 'utf8',
+          timeout: INSTALL_PREPARATION_TIMEOUT_MS,
+          windowsHide: true,
+        }
+      )
+      await writeFile(
+        join(resultDir, 'install-preparation.log'),
+        `${preparation.stdout}${preparation.stderr}`
+      )
+      assert.equal(
+        preparation.status,
+        0,
+        `Installed package preparation failed:\n${preparation.stderr}`
+      )
+      const status = JSON.parse(
+        await readFile(join(electronUserDataDirectory, 'logs', 'install-preparation.json'), 'utf8')
+      )
+      assert.equal(status.version, packagedComponents.appVersion)
+      assert.equal(status.runtimeRoot, join(electronUserDataDirectory, 'managed-runtimes', 'dsh'))
+      assert.ok(status.durationMs >= 0)
+    },
+
+    setRestartDesktopApp(value) {
+      restartDesktopApp = value
+    },
+
     async verify(control) {
-      await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      assert.equal(typeof restartDesktopApp, 'function', 'Startup diagnostics require restarts')
+      await waitForShell(control)
+      await captureStartup('cleanInstall')
       await control.command('navigate', 'body', { value: '/settings/about' })
       await control.command('waitFor', '[data-testid="about-commit-id"]', {
         timeoutMs: uiTimeoutMs,
@@ -370,6 +426,32 @@ export async function createDesktopScenario({
           2
         )}\n`
       )
+
+      await restartDesktopApp()
+      await waitForShell(control)
+      await captureStartup('warmRestart')
+
+      await restartDesktopApp({
+        afterStop: () => seedNativeDshProfile(electronUserDataDirectory),
+      })
+      await waitForShell(control)
+      await captureStartup('modifiedProfileRecovery')
+
+      for (const name of ['cleanInstall', 'warmRestart']) {
+        const metrics = startupScenarios[name]
+        const corePluginResolution =
+          metrics.phaseDurationsMs['component-weworkCorePlugins-verify'] ??
+          metrics.phaseDurationsMs['component-weworkCorePlugins-materialize']
+        assert.equal(typeof corePluginResolution, 'number')
+        assert.equal(typeof metrics.phaseDurationsMs['core-dsh-profile-reuse'], 'number')
+      }
+      assert.equal(
+        typeof startupScenarios.modifiedProfileRecovery.phaseDurationsMs[
+          'core-dsh-profile-rebuild'
+        ],
+        'number'
+      )
+
       await verifyWindowsProfileOwnedAssets(electronUserDataDirectory)
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
@@ -402,14 +484,29 @@ export async function createDesktopScenario({
       )
 
       const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
+      assert.doesNotMatch(
+        appLog,
+        /step: 'core-runtime-archive-extract'/,
+        'Release startup extracted a Core runtime that installation preparation should have materialized'
+      )
       assert.doesNotMatch(appLog, /pending \(waiting for service: nativeExtensionHost\)/)
       assert.doesNotMatch(appLog, /Failed to load plugins/)
     },
 
     diagnostics() {
+      const startupScenarioTimings = Object.fromEntries(
+        Object.entries(startupScenarios).map(([name, metrics]) => [
+          name,
+          {
+            mainWindowShowElapsedMs: metrics.mainWindowShowElapsedMs,
+            phaseDurationsMs: metrics.phaseDurationsMs,
+          },
+        ])
+      )
       return {
         nativeDshPluginCompatibility: true,
         seededNativeDshProfile: true,
+        startupScenarioTimings,
         hostUpdateCompression,
       }
     },

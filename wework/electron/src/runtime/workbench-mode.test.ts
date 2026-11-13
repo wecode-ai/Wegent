@@ -13,21 +13,6 @@ import {
   probeDevelopmentCommand,
 } from './workbench-mode.js'
 
-const gitPlugin = {
-  name: MODE_MANAGED_GIT_PLUGIN,
-  enabled: true,
-}
-
-const focusHomePlugin = {
-  name: MODE_MANAGED_FOCUS_HOME_PLUGIN,
-  enabled: false,
-}
-
-const developerHomePlugin = {
-  name: MODE_MANAGED_DEVELOPER_HOME_PLUGIN,
-  enabled: true,
-}
-
 describe('workbench mode runtime policy', () => {
   test('uses the detected mode even when settings cannot be written', async () => {
     const preferences = {
@@ -69,8 +54,37 @@ describe('workbench mode runtime policy', () => {
       'git',
       expect.objectContaining({
         PATH: expect.stringContaining('/custom/bin'),
-      })
+      }),
+      expect.any(AbortSignal)
     )
+  })
+
+  test('cancels remaining probes after one development command is found', async () => {
+    const preferences = {
+      read: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockImplementation(async patch => patch),
+    }
+    const signals: AbortSignal[] = []
+    const probeCommand = vi.fn(
+      async (command: string, _environment: NodeJS.ProcessEnv, signal?: AbortSignal) => {
+        if (signal) signals.push(signal)
+        if (command === 'git') return true
+        return await new Promise<boolean>(resolve => {
+          signal?.addEventListener('abort', () => resolve(false), { once: true })
+        })
+      }
+    )
+
+    await expect(
+      initializeWorkbenchModePreference(preferences, {
+        environment: {},
+        homeDirectory: '/home/alice',
+        probeCommand,
+      })
+    ).resolves.toBe('developer')
+
+    expect(signals.length).toBeGreaterThan(1)
+    expect(signals.every(signal => signal.aborted)).toBe(true)
   })
 
   test('selects and persists focus mode when no development command is available', async () => {
@@ -193,7 +207,13 @@ describe('workbench mode runtime policy', () => {
 
   test('disables the Git plugin in focus mode', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([gitPlugin, focusHomePlugin, developerHomePlugin]),
+      enabledStates: vi.fn().mockResolvedValue(
+        new Map([
+          [MODE_MANAGED_GIT_PLUGIN, true],
+          [MODE_MANAGED_FOCUS_HOME_PLUGIN, false],
+          [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, true],
+        ])
+      ),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 
@@ -208,11 +228,13 @@ describe('workbench mode runtime policy', () => {
 
   test('enables the Git plugin in developer mode', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([
-        { ...gitPlugin, enabled: false },
-        { ...focusHomePlugin, enabled: true },
-        { ...developerHomePlugin, enabled: false },
-      ]),
+      enabledStates: vi.fn().mockResolvedValue(
+        new Map([
+          [MODE_MANAGED_GIT_PLUGIN, false],
+          [MODE_MANAGED_FOCUS_HOME_PLUGIN, true],
+          [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, false],
+        ])
+      ),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 
@@ -227,7 +249,13 @@ describe('workbench mode runtime policy', () => {
 
   test('does not rewrite matching plugin state', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([gitPlugin]),
+      enabledStates: vi.fn().mockResolvedValue(
+        new Map([
+          [MODE_MANAGED_GIT_PLUGIN, true],
+          [MODE_MANAGED_FOCUS_HOME_PLUGIN, false],
+          [MODE_MANAGED_DEVELOPER_HOME_PLUGIN, true],
+        ])
+      ),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 
@@ -238,7 +266,7 @@ describe('workbench mode runtime policy', () => {
 
   test('allows intentionally empty UI plugin profiles', async () => {
     const plugins = {
-      list: vi.fn().mockResolvedValue([]),
+      enabledStates: vi.fn().mockResolvedValue(new Map()),
       setEnabled: vi.fn().mockResolvedValue([]),
     }
 

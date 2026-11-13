@@ -13,6 +13,7 @@ export function executorMigrationLock(
   options: { wait?: boolean } = {}
 ): WorkbenchMigrationLockAdapter {
   return async resources => {
+    const startedAt = performance.now()
     const files = [
       ...new Set(
         resources.map(path => join(dirname(path), `.wework-home-migration-${basename(path)}.lock`))
@@ -67,6 +68,10 @@ export function executorMigrationLock(
           try {
             const response = JSON.parse(output.trim())
             if (response?.protocol_version !== 1 || response?.locked !== true) return fail()
+            console.info('[migration-lock] acquired', {
+              resources: files.length,
+              elapsedMs: Math.round(performance.now() - startedAt),
+            })
             accept()
           } catch {
             fail()

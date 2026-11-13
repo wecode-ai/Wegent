@@ -1,20 +1,18 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { verifyWindowsDesktopDataStartup } from './workbench-desktop-startup.mjs'
 import { verifyWindowsComponentPublication } from './workbench-component-publication.mjs'
 import { verifyMacosLogStartup } from './workbench-log-startup.mjs'
 import { verifyMissingDesktopUserData } from './workbench-missing-user-data.mjs'
+import { verifyDefaultLayoutInstalledPreparation } from './installed-preparation-default-layout.mjs'
+import { packagedResourcesRoot } from './packaged-resources.mjs'
 
-export function packagedResourcesRoot(appBinary) {
-  return process.platform === 'darwin'
-    ? resolve(appBinary, '..', '..', 'Resources')
-    : resolve(appBinary, '..', 'resources')
-}
+export { packagedResourcesRoot } from './packaged-resources.mjs'
 
 // Execute the packaged production gates, with real binaries and isolated updater state.
 // Codex is deliberately an incompatible executor candidate, not a simulated old executor.
@@ -54,6 +52,11 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
           root: join(root, 'windows-desktop-startup'),
         })
       : undefined
+  const installedPreparation = await verifyDefaultLayoutInstalledPreparation({
+    appBinary,
+    appEnvironment,
+    resultDir: join(root, 'installed-preparation'),
+  })
   const windowsComponentPublication =
     process.platform === 'win32'
       ? await verifyWindowsComponentPublication({
@@ -317,7 +320,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       assert.equal(await fallbackManager.rollbackStartup(), false);
       assert.equal(await fs.readFile(statePath, 'utf8'), sharedState);
       await assert.rejects(fs.lstat(home), { code: 'ENOENT' });
-      process.stdout.write(JSON.stringify({
+      await fs.writeFile(path.join(input.root, 'compatibility-evidence.json'), JSON.stringify({
         compatibleExecutorAccepted: true,
         nativeFileLockMutualExclusion: true,
         incompatibleExecutorRejectedBeforeHomeWrites: true,
@@ -340,7 +343,8 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   // Packaged executables always launch their own app; use the matching Electron toolchain
   // to import the packaged modules with real Electron APIs available.
   const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
-  const { stdout } = await promisify(execFile)(
+  const evidencePath = join(root, 'compatibility-evidence.json')
+  await promisify(execFile)(
     require('electron'),
     [scriptPath, JSON.stringify(input), ...resolveElectronLaunchArguments()],
     {
@@ -349,10 +353,11 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
       maxBuffer: 1024 * 1024,
     }
   )
-  const evidence = JSON.parse(stdout)
+  const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
   if (macosLogStartup) evidence.macosLogStartup = macosLogStartup
   evidence.missingDesktopUserData = missingDesktopUserData
   if (windowsDesktopDataStartup) evidence.windowsDesktopDataStartup = windowsDesktopDataStartup
+  evidence.installedPreparation = installedPreparation
   if (windowsComponentPublication)
     evidence.windowsComponentPublication = windowsComponentPublication
   assert.equal(evidence.selectedComponentStateUnchanged, true)

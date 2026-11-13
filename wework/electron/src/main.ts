@@ -118,6 +118,7 @@ import {
 import { handlePopoutWindowInput } from './host/popout-window-shortcuts.js'
 import { createWeworkProcessExplorerService } from './host/process-explorer-service.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
+import { resolveDesktopDeviceId } from './runtime/desktop-device-id.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { startStartupMaintenance } from './host/startup-tasks.js'
 import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
@@ -189,7 +190,7 @@ import {
 import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.js'
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
-import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
+import { ExecutorCompatibilityGate } from './runtime/workbench-executor-schema.js'
 import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import {
   applyWorkbenchBackgroundPolicy,
@@ -271,6 +272,7 @@ const applicationId =
   'io.wecode.wework'
 const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
 const startupStartedAt = performance.now()
+const executorCompatibility = new ExecutorCompatibilityGate()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
 const pythonRuntimeEnabled = process.env.WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP !== '1'
 const pluginDevelopmentCommand = commandLineValue(
@@ -373,6 +375,29 @@ let startupSplashWindow: BrowserWindow | null = null
 await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch(error => {
   console.warn('[logs] failed to open main process log', error)
 })
+let desktopDeviceIdPromise: Promise<string> | null = null
+function desktopDeviceIdentity(): Promise<string> {
+  if (desktopDeviceIdPromise) return desktopDeviceIdPromise
+  logStartupStep('device-id-resolve', 'started')
+  desktopDeviceIdPromise = resolveDesktopDeviceId({
+    applicationId,
+    dataDirectory: userDataPath,
+    environment: process.env,
+  })
+    .then(deviceId => {
+      logStartupStep('device-id-resolve', 'completed')
+      return deviceId
+    })
+    .catch(error => {
+      desktopDeviceIdPromise = null
+      logStartupStep('device-id-resolve', 'failed', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      throw error
+    })
+  return desktopDeviceIdPromise
+}
+if (hasSingleInstanceLock) void desktopDeviceIdentity().catch(() => undefined)
 const workspaceWindows = new Map<string, BrowserWindow>()
 const mcpAppCleanups = new Set<() => Promise<void>>()
 let mcpAppRuntime: McpAppRuntime | null = null
@@ -2340,15 +2365,22 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
   logStartupStep('workbench-mode-initialize', 'started')
-  await initializeWorkbenchModePreference(requiredPreferences(), {
+  const workbenchModeInitialization = initializeWorkbenchModePreference(requiredPreferences(), {
     environment: process.env,
     homeDirectory: app.getPath('home'),
-  })
-  logStartupStep('workbench-mode-initialize', 'completed')
+  }).then(
+    () => logStartupStep('workbench-mode-initialize', 'completed'),
+    error => {
+      logStartupStep('workbench-mode-initialize', 'failed')
+      throw error
+    }
+  )
+  void workbenchModeInitialization.catch(() => {})
   logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
   startupRuntimeEnvironment = environment
   logStartupStep('desktop-environment', 'completed')
+  await workbenchModeInitialization
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
       ...currentElectronLaunch(),
@@ -2531,6 +2563,8 @@ async function configureDesktopRuntime(): Promise<void> {
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
     onStartupStep: logStartupStep,
+    assertExecutorCompatibility: environment => executorCompatibility.assert(environment),
+    resolveDeviceId: desktopDeviceIdentity,
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     createWorkbenchHostPipe: tabId => {
@@ -3132,11 +3166,16 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
     isPackaged: packagedApplication,
     managerOptions: {
       validateExecutor: path =>
-        assertExecutorWorkbenchCompatibility({
+        executorCompatibility.assert({
           ...process.env,
           WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
         }),
       log: event => appUpdateLogger.info(event),
+      onStage: event =>
+        logStartupStep(event.stage, event.phase, {
+          phaseElapsedMs: event.elapsedMs,
+          ...event.details,
+        }),
       resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
       updateBaseUrl,
@@ -3279,10 +3318,11 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     },
     metadata: packageMetadata,
     homeDirectory: app.getPath('home'),
+    validateExecutor: environment => executorCompatibility.assert(environment),
   })
   logStartupStep('workbench-environment', 'completed')
   if (environment.WEWORK_DEVELOPMENT_ISOLATED === '1') {
-    await assertExecutorWorkbenchCompatibility(environment)
+    await executorCompatibility.assert(environment)
     logStartupStep('development-history', 'started')
     await prepareDevelopmentHistory(
       environment,

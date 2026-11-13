@@ -63,7 +63,6 @@ vi.mock('./runtime/release-diagnostics.js', () => ({ recordReleaseDiagnostic: vi
 vi.mock('./runtime/release-handoff.js', () => ({
   releaseBridgeUserData: startup.bridgeHandoff,
 }))
-
 vi.mock('node:fs/promises', () => ({
   readFile: async () => JSON.stringify(startup.metadata),
   realpath: async (path: string) =>

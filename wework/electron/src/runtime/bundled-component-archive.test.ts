@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as tar from 'tar'
 import { afterEach, expect, test } from 'vitest'
-import { materializeBundledComponentArchive } from './bundled-component-archive.js'
+import {
+  materializeBundledComponentArchive,
+  type BundledComponentArchiveMaterializationOptions,
+} from './bundled-component-archive.js'
 import { hashComponentPath, sha256 } from './component-content-hash.js'
 import { ComponentUpdateManager, MANAGED_COMPONENT_IDS } from './component-update-manager.js'
 
@@ -29,16 +32,41 @@ async function fixture() {
     bytes: (await stat(archivePath)).size,
   }
   const content = await hashComponentPath(source)
-  const materialize = () => materializeBundledComponentArchive(resources, cache, archive, content)
+  const materialize = (options?: BundledComponentArchiveMaterializationOptions) =>
+    materializeBundledComponentArchive(resources, cache, archive, content, options)
   return { root, resources, archivePath, archive, content, cache, materialize }
 }
 
 test('extracts exact delivered component bytes and reuses the verified physical program', async () => {
   const f = await fixture()
-  const first = await f.materialize()
+  const stages: Array<{ stage: string; phase: string }> = []
+  const first = await f.materialize({
+    stagePrefix: 'test-component',
+    onStage: event => stages.push(event),
+  })
   const physical = await realpath(first)
   expect(await readFile(join(first, 'plugin.js'), 'utf8')).toBe('export const delivered = true\n')
-  expect(await realpath(await f.materialize())).toBe(physical)
+  const warmStages: Array<{ stage: string; phase: string }> = []
+  expect(
+    await realpath(
+      await f.materialize({
+        stagePrefix: 'test-component',
+        onStage: event => warmStages.push(event),
+      })
+    )
+  ).toBe(physical)
+  expect(stages).toContainEqual(
+    expect.objectContaining({ stage: 'test-component-source-verify', phase: 'completed' })
+  )
+  expect(stages).toContainEqual(
+    expect.objectContaining({ stage: 'test-component-extract', phase: 'completed' })
+  )
+  expect(warmStages).toContainEqual(
+    expect.objectContaining({ stage: 'test-component-source-verify', phase: 'completed' })
+  )
+  expect(warmStages).toContainEqual(
+    expect.objectContaining({ stage: 'test-component-content-verify', phase: 'completed' })
+  )
   await rm(f.cache, { recursive: true, force: true })
   expect(await stat(f.archivePath)).toMatchObject({ size: f.archive.bytes })
 })

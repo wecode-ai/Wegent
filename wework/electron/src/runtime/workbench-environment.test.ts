@@ -12,6 +12,11 @@ import {
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { assertCodexHomeCanMove } from './workbench-codex-migration.js'
 
+const migrationLockState = vi.hoisted(() => ({
+  acquired: [] as string[][],
+  releases: 0,
+}))
+
 vi.mock('./workbench-codex-migration.js', () => ({ assertCodexHomeCanMove: vi.fn() }))
 
 // Keep environment/path cases focused; the worker has separate real-thread coverage.
@@ -31,12 +36,22 @@ vi.mock('./workbench-executor-schema.js', () => ({
 }))
 
 vi.mock('./workbench-migration-lock.js', () => ({
-  executorMigrationLock: () => async () => ({ assertHeld() {}, async release() {} }),
+  executorMigrationLock: () => async (resources: string[]) => {
+    migrationLockState.acquired.push([...resources])
+    return {
+      assertHeld() {},
+      async release() {
+        migrationLockState.releases += 1
+      },
+    }
+  },
 }))
 
 beforeEach(() => {
   vi.mocked(assertExecutorWorkbenchCompatibility).mockReset().mockResolvedValue(undefined)
   vi.mocked(assertCodexHomeCanMove).mockReset().mockResolvedValue(undefined)
+  migrationLockState.acquired.length = 0
+  migrationLockState.releases = 0
 })
 
 const temporaryDirectories: string[] = []
@@ -133,6 +148,47 @@ test('activates the default layout on first installation without moving workspac
   expect((await lstat(paths.codexHome)).isDirectory()).toBe(true)
   expect((await lstat(join(executorHome, 'codex'))).isSymbolicLink()).toBe(true)
   expect(await prepareWorkbenchEnvironment(options)).toEqual(result)
+})
+
+test('holds one native migration lock across every Home and data migration', async () => {
+  const { homeDirectory, executorHome } = await fixture()
+  const options = { environment: {}, metadata, homeDirectory }
+  const paths = resolveWorkbenchPaths(options)
+
+  await prepareWorkbenchEnvironment(options)
+
+  expect(migrationLockState.acquired).toHaveLength(1)
+  expect(migrationLockState.releases).toBe(1)
+  expect(new Set(migrationLockState.acquired[0])).toEqual(
+    new Set([
+      executorHome,
+      paths.desktop,
+      join(executorHome, 'codex'),
+      paths.codexHome,
+      join(paths.migrations, 'codex-home-v1'),
+      join(executorHome, 'capabilities'),
+      paths.capabilities,
+      join(paths.migrations, 'capabilities-v1'),
+      join(executorHome, 'claude'),
+      paths.claudeHome,
+      join(paths.migrations, 'claude-home-v1'),
+    ])
+  )
+})
+
+test('uses the startup compatibility gate instead of probing the Executor again', async () => {
+  const { homeDirectory } = await fixture()
+  const validateExecutor = vi.fn(async () => undefined)
+
+  await prepareWorkbenchEnvironment({
+    environment: {},
+    metadata,
+    homeDirectory,
+    validateExecutor,
+  })
+
+  expect(validateExecutor).toHaveBeenCalledOnce()
+  expect(assertExecutorWorkbenchCompatibility).not.toHaveBeenCalled()
 })
 
 test('new workspace default preserves historical files and explicit roots', async () => {

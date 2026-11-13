@@ -1,10 +1,14 @@
 import { execFile } from 'node:child_process'
+import { stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
+// Shared Homes plus source, target, and state for each of the three default migrations.
+const REQUIRED_WORKBENCH_LOCK_RESOURCES = 11
 // macOS can validate a newly installed native binary before its first execution.
 export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 30_000
 
@@ -20,10 +24,13 @@ export function assertWorkbenchSchema(response: unknown): void {
   if (
     schema.protocol_version !== PROTOCOL_VERSION ||
     !supports(schema.workbench_layout_versions, LAYOUT_VERSION) ||
-    !supports(schema.capability_manifest_versions, MANIFEST_VERSION)
+    !supports(schema.capability_manifest_versions, MANIFEST_VERSION) ||
+    typeof schema.workbench_lock_resources !== 'number' ||
+    !Number.isSafeInteger(schema.workbench_lock_resources) ||
+    schema.workbench_lock_resources < REQUIRED_WORKBENCH_LOCK_RESOURCES
   ) {
     throw new Error(
-      'Executor cannot read and write Workbench layout v1 with capability manifest v2'
+      'Executor cannot read and write Workbench layout v1 with capability manifest v2 and the required migration lock protocol'
     )
   }
 }
@@ -88,4 +95,65 @@ export async function assertExecutorWorkbenchCompatibility(
     throw executorSchemaQueryFailure(error, Date.now() - startedAt)
   }
   assertWorkbenchSchema(response)
+}
+
+type ExecutorCompatibilityVerifier = (environment: NodeJS.ProcessEnv) => Promise<void>
+
+/** Reuses one successful schema probe for the selected executable during startup. */
+export class ExecutorCompatibilityGate {
+  private readonly pending = new Map<string, Promise<void>>()
+  private readonly verified = new Set<string>()
+
+  constructor(
+    private readonly verify: ExecutorCompatibilityVerifier = assertExecutorWorkbenchCompatibility
+  ) {}
+
+  async assert(environment: NodeJS.ProcessEnv): Promise<void> {
+    const key = await executorIdentity(environment)
+    if (!key) return this.verify(environment)
+    const existing = this.pending.get(key)
+    if (existing) return existing
+    if (this.verified.has(key)) {
+      console.info('[executor-schema] compatibility cached')
+      return
+    }
+
+    const startedAt = performance.now()
+    const check = this.verify(environment)
+      .then(() => {
+        this.verified.add(key)
+        console.info('[executor-schema] compatibility verified', {
+          elapsedMs: Math.round(performance.now() - startedAt),
+        })
+      })
+      .catch(error => {
+        this.pending.delete(key)
+        throw error
+      })
+      .finally(() => {
+        this.pending.delete(key)
+      })
+    this.pending.set(key, check)
+    return check
+  }
+}
+
+async function executorIdentity(environment: NodeJS.ProcessEnv): Promise<string | null> {
+  const command = environment.WEWORK_EXECUTOR_PATH?.trim()
+  if (!command) return null
+  const args = environment.WEWORK_EXECUTOR_ARGS_JSON || '[]'
+  try {
+    // Follow symbolic links so replacing the target binary invalidates the probe.
+    const metadata = await stat(command, { bigint: true })
+    return JSON.stringify([
+      resolve(command),
+      metadata.dev.toString(),
+      metadata.ino.toString(),
+      metadata.size.toString(),
+      metadata.mtimeNs.toString(),
+      args,
+    ])
+  } catch {
+    return JSON.stringify([resolve(command), args])
+  }
 }
