@@ -19,6 +19,10 @@ pub struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_max_connections(1).await
+    }
+
+    pub async fn with_max_connections(max_connections: u32) -> Self {
         let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")
             .expect("set WEGENT_TEST_MYSQL_ADDRESS to the disposable MySQL 8 fixture");
         let address: std::net::SocketAddr = address.parse().expect("numeric loopback address");
@@ -39,11 +43,10 @@ impl Fixture {
             .execute(format!("CREATE DATABASE {database}"), ())
             .await
             .unwrap();
-        // One connection keeps the session sort buffer deterministic for every read.
         let mysql = MysqlService::connect_lazy_with_options(
             &format!("mysql://root@{address}/{database}?ssl-mode=disabled"),
             MysqlServiceOptions::default()
-                .with_max_connections(1)
+                .with_max_connections(max_connections)
                 .with_query_timeout(Duration::from_secs(10)),
         )
         .unwrap();
@@ -56,16 +59,6 @@ impl Fixture {
             mysql,
             database,
         }
-    }
-
-    pub async fn additional_client(&self) -> MysqlService {
-        let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
-        MysqlService::connect(&format!(
-            "mysql://root@{address}/{}?ssl-mode=disabled",
-            self.database,
-        ))
-        .await
-        .unwrap()
     }
 
     async fn create_subtasks_table(&self, table: &str) {

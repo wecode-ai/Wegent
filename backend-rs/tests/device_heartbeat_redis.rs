@@ -203,7 +203,7 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     );
     let redis = RedisService::single(address.to_string()).await.unwrap();
 
-    let fixture = fixture::Fixture::new().await;
+    let fixture = fixture::Fixture::with_max_connections(4).await;
     migrations::upgrade(&fixture.mysql).await.unwrap();
     fixture.mysql.execute(
         "CREATE UNIQUE INDEX uniq_user_kind_name_namespace ON kinds (user_id, kind, name, namespace)",
@@ -246,7 +246,6 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         registration.last_insert_id
     );
     let http = RebindServer::start(state.clone(), &path).await;
-    let mysql = fixture.additional_client().await;
     let server = socketio::handlers::build(state).await.unwrap();
     let room_probe = server.emitter(NAMESPACE, "device-e2e-probe").unwrap();
     let transport = server.io().clone();
@@ -258,7 +257,7 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     }));
 
     let outcome = tokio::spawn({
-        let mysql = mysql.clone();
+        let mysql = fixture.mysql.clone();
         let redis = redis.clone();
         let key = key.clone();
         let rebind_url = format!("http://{}{path}", http.address);
@@ -290,7 +289,6 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
     let _ = stop.send(());
     let stopped = server.await;
     http.stop().await;
-    mysql.close().await;
     redis.del(key).await.unwrap();
     fixture.close().await;
     stopped.unwrap().unwrap();
