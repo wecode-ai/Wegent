@@ -157,10 +157,7 @@ function recoveryWindowAssertion(evidencePath) {
         }
         clearInterval(timer)
         fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
-        // Close native windows before quitting so Chromium can drain renderer/GPU teardown.
-        await new Promise(resolve => { window.once('closed', resolve); window.close() })
-        companion.destroy()
-        companion = null
+        // Let Chromium close both windows before shutting down the in-process compositor.
         app.quit()
       } catch (error) {
         clearInterval(timer)
