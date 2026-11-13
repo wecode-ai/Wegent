@@ -72,12 +72,23 @@ impl RuntimeWorkRpcHandler {
         if !response.status().is_success() {
             let status = response.status();
             let reason = response.json::<Value>().await.ok();
+            let version_conflict = method == reqwest::Method::PATCH
+                && status == reqwest::StatusCode::CONFLICT
+                && reason
+                    .as_ref()
+                    .and_then(|body| body.pointer("/detail/code"))
+                    .and_then(Value::as_str)
+                    == Some("version_conflict");
             // Only known server messages are safe to include in diagnostics.
-            let reason = match reason.as_ref().and_then(|body| body["detail"].as_str()) {
-                Some("Stand-in conversations require an active owned device") => {
+            let reason = match (
+                version_conflict,
+                reason.as_ref().and_then(|body| body["detail"].as_str()),
+            ) {
+                (true, _) => "version_conflict",
+                (_, Some("Stand-in conversations require an active owned device")) => {
                     "active_owned_device_required"
                 }
-                Some("Insufficient permission") => "insufficient_permission",
+                (_, Some("Insufficient permission")) => "insufficient_permission",
                 _ => "unknown",
             };
             log_executor_event(
@@ -93,7 +104,11 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
             return Err(AppIpcError::new(
-                "cloud_request_failed",
+                if version_conflict {
+                    "version_conflict"
+                } else {
+                    "cloud_request_failed"
+                },
                 format!(
                     "Cloud request {method} {} returned {status} ({reason})",
                     path.split('?').next().unwrap_or_default()

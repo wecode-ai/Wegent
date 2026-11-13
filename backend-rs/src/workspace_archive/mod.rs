@@ -11,5 +11,5 @@
 mod handler;
 pub(crate) use wegent_storage::s3_presign;
 pub(crate) mod save;
-mod service;
+pub(crate) mod service;
 mod storage;

@@ -100,6 +100,7 @@ export interface McpProviderOAuthPoll {
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
+export const SESSION_TOKEN_CHANGED_EVENT = 'wegent:session-token-changed'
 
 function getJwtExp(token: string): number | null {
   try {
@@ -150,12 +151,17 @@ export function setToken(token: string) {
     }
     // Also set cookie for Nginx routing
     setTokenCookie(token, exp)
+    window.dispatchEvent(new Event(SESSION_TOKEN_CHANGED_EVENT))
   }
+}
+
+export function getSessionTokenSnapshot(): string | null {
+  return typeof window === 'undefined' ? null : localStorage.getItem(TOKEN_KEY)
 }
 
 export function getToken(): string | null {
   if (typeof window !== 'undefined') {
-    const token = localStorage.getItem(TOKEN_KEY)
+    const token = getSessionTokenSnapshot()
 
     // Native media requests cannot add the Authorization header used by
     // apiClient, so restore the cookie for sessions created before cookie sync.
@@ -183,6 +189,7 @@ export function removeToken() {
     localStorage.removeItem(TOKEN_EXPIRE_KEY)
     // Also remove cookie for Nginx routing
     removeTokenCookie()
+    window.dispatchEvent(new Event(SESSION_TOKEN_CHANGED_EVENT))
   }
 }
 
