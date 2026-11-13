@@ -22,7 +22,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/claudecode-compaction.spec.ts': 4,
   'tasks/pipeline-session-archive.spec.ts': 5,
-  'tasks/claude-background-lifecycle.spec.ts': 4,
+  'tasks/claude-background-lifecycle.spec.ts': 5,
   'tasks/provider-native-claudecode.spec.ts': 2,
   'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 1,
@@ -126,6 +126,11 @@ describe('Executor scheduling boundaries', () => {
     expect(
       identities.has(
         'tasks/claude-background-lifecycle.spec.ts:cloud Claude registers downloadable artifacts before new and reused turns finish'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/claude-background-lifecycle.spec.ts:Web coordinate chat runs a configured team member as a Claude subagent'
       )
     ).toBe(true)
     expect(

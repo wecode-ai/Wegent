@@ -5,6 +5,7 @@
 """Authenticated project TODO and delivery endpoints."""
 
 import logging
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -191,11 +192,23 @@ def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
 def list_my_work(
     limit: int = Query(default=MY_WORK_ITEM_LIMIT, ge=1, le=MY_WORK_ITEM_LIMIT),
     cursor: str | None = Query(default=None, max_length=2048),
+    scope: Literal["assigned", "participating"] = Query(default="participating"),
+    include_completed: bool = Query(default=True),
+    order: Literal["recent", "attention", "activity", "assignment", "priority"] = Query(
+        default="recent"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MyWorkListResponse:
     items, next_cursor = loop_item_service.list_my_work_page(
-        db, current_user.id, limit=limit, cursor=cursor
+        db,
+        current_user.id,
+        limit=limit,
+        cursor=cursor,
+        assigned_only=scope == "assigned",
+        include_completed=include_completed,
+        attention=order == "attention",
+        order=order,
     )
     return MyWorkListResponse(
         items=[MyWorkItemResponse.model_validate(item) for item in items],

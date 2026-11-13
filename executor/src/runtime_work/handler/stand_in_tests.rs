@@ -115,6 +115,69 @@ async fn round_work_validates_the_issue_event_without_replacing_member_identity(
 }
 
 #[tokio::test]
+async fn cloud_assignment_checks_eligible_general_role_before_later_enabled_tagged_role() {
+    let bindings = Arc::new(AtomicUsize::new(0));
+    let calls = bindings.clone();
+    let router = Router::new()
+        .route("/api/users/me", get(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }))
+        .route("/api/v1/loop-items/issue/assignments", get(|| async {
+            Json(json!({"items":[{"id":"event","status":"active","created_at":"2026-11-12T10:01:00Z"}]}))
+        }))
+        .route("/api/v1/loop-items/issue/tasks", get(move || {
+            let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+            async move { Json(if first { json!([{"human_assignment_id":"human","task_id":"stand-in-human"}]) } else { json!([]) }) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url: url,
+        auth_token: "test".into(),
+        ..Default::default()
+    })));
+    let configs = [
+        json!({"id":"general","projectId":"project","projectStore":"cloud","userId":7,"enabledAfter":"2026-11-12T10:00:00Z"}),
+        json!({"id":"review","projectId":"project","projectStore":"cloud","userId":7,"tags":["review"],"enabledAfter":"2026-11-12T10:02:00Z"}),
+    ];
+    let issue = json!({"id":"issue","assignee_user_id":7,"tags":["review"],"human_task_binding":{
+        "humanAssignmentId":"human","assignmentId":"member","dispatchRoundId":"round","issueAssignmentId":"event"
+    }});
+    handler
+        .start_cloud_stand_in_with_roles(&configs, &issue)
+        .await
+        .unwrap();
+    assert_eq!(
+        bindings.load(Ordering::SeqCst),
+        1,
+        "The eligible general role must reach the existing-binding check"
+    );
+    assert!(
+        handler.local_task_links(true).is_empty(),
+        "The existing binding must prevent a second execution"
+    );
+    let error = handler
+        .start_cloud_stand_in_with_roles(&configs, &issue)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "cloud_request_failed");
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    assert!(
+        store
+            .pending_stand_in_dispatches()
+            .unwrap()
+            .iter()
+            .any(|(_, intent)| intent["roleId"] == "general"),
+        "A transient failure must retain the actually selected eligible role for recovery"
+    );
+    assert!(handler.local_task_links(true).is_empty());
+    server.abort();
+}
+
+#[tokio::test]
 async fn stand_in_entry_futures_leave_room_on_windows_worker_stacks() {
     let handler = RuntimeWorkRpcHandler::new("measurement", "unused");
     fn future_size<F: Future>(_: impl FnOnce() -> F) -> usize {
@@ -277,6 +340,51 @@ async fn prior_assignment_binding_blocks_new_local_role_executions() {
 }
 
 #[tokio::test]
+async fn personal_task_creation_prevents_roles_from_reserving_additional_tasks() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Personal work"})).unwrap())
+        .unwrap();
+    let issue = store
+        .create_task_with_schedule(
+            &project.id,
+            serde_json::from_value(json!({"title":"My work","assignee_user_id":0})).unwrap(),
+            None,
+            None,
+            true,
+        )
+        .unwrap();
+    let issue_value = serde_json::to_value(&issue).unwrap();
+    assert!(super::stand_in::personal_task_claimed(&issue_value));
+    let configs = ["review", "docs"].map(|id| json!({"id":id,"userId":0,"projectId":project.id,"projectStore":"local","enabledAfter":"2000-01-01T00:00:00Z"}));
+    // Polling between Issue creation and task binding must not create reservations.
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert!(store.list_task_bindings(&issue.id).unwrap().is_empty());
+    store
+        .bind_task(
+            &project.id,
+            Some(&issue.id),
+            None,
+            serde_json::from_value(json!({"deviceId":"mac","taskId":"my-task"})).unwrap(),
+            None,
+        )
+        .unwrap();
+    handler.poll_local_stand_in(&configs).await.unwrap();
+    assert_eq!(store.list_task_bindings(&issue.id).unwrap().len(), 1);
+    assert!(handler.local_task_links(true).is_empty());
+    let projected_cloud =
+        json!({"personal_task_assignment_at":"first","assignment_history":[{"at":"first"}]});
+    assert!(super::stand_in::personal_task_claimed(&projected_cloud));
+    assert!(!super::stand_in::personal_task_claimed(
+        &json!({"personal_task_assignment_at":"first","assignment_history":[{"at":"first"},{"at":"reassigned"}]})
+    ));
+}
+
+#[tokio::test]
 async fn prior_assignment_binding_blocks_new_cloud_role_executions() {
     let router = Router::new()
         .route("/api/v1/loop-items/issue/assignments", get(|| async { Json(json!({"items":[{"id":"assignment","status":"active","created_at":"2026-10-25T00:00:00Z"}]})) }))
@@ -425,7 +533,7 @@ async fn manual_cloud_conversations_ignore_status_and_assignment_but_keep_projec
 }
 
 #[tokio::test]
-async fn cloud_fanout_attempts_all_matching_roles_and_continues_after_preparation_failure() {
+async fn cloud_assignment_selects_one_role_and_continues_to_later_issues_after_failure() {
     let started = Arc::new(AtomicUsize::new(0));
     let calls = started.clone();
     let router = Router::new()
@@ -458,8 +566,8 @@ async fn cloud_fanout_attempts_all_matching_roles_and_continues_after_preparatio
     }
     assert_eq!(
         started.load(Ordering::SeqCst),
-        3,
-        "Both review roles and the later docs role must reach preparation"
+        2,
+        "One review role and the later docs role must reach preparation"
     );
     server.abort();
 }

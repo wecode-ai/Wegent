@@ -125,7 +125,7 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
     return false
   }
 
-  if (props.item.assignee_user_id !== null) {
+  if (props.item.assignee_user_id != null) {
     return String(props.item.assignee_user_id) === String(props.currentUserId)
   }
   if (props.item.assignee_agent_id || props.item.assignee_group_id || props.item.assignee_team_id) {

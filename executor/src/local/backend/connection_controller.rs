@@ -6,7 +6,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
     },
     time::Duration,
@@ -35,6 +35,8 @@ pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     runtime_event_hub: Option<ExecutorEventHub>,
+    // The journal outlives individual connections; its delivery cursor must too.
+    runtime_event_cursor: Arc<AtomicU64>,
     state: Arc<Mutex<LocalBackendConnectionState>>,
     /// Lightweight snapshot of the current connection shared with the
     /// runtime-work handler so App-IPC task runs can resolve backend
@@ -126,6 +128,7 @@ impl LocalBackendConnectionController {
             base_config: config,
             runtime_work_handler,
             runtime_event_hub,
+            runtime_event_cursor: Arc::new(AtomicU64::new(0)),
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext::new(Arc::clone(
                 &connection_snapshot,
@@ -224,6 +227,7 @@ impl LocalBackendConnectionController {
                     handler.clone(),
                     event_hub.clone(),
                 )
+                .with_runtime_event_cursor(Arc::clone(&self.runtime_event_cursor))
             } else {
                 LocalBackendRunner::new_for_app_sidecar(
                     LocalBackendConfig::from_device_config(config),

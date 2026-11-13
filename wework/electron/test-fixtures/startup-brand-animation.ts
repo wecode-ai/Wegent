@@ -7,6 +7,7 @@ interface BrandAnimation {
   setPaused: (paused: boolean) => void
   complete: (durationMs?: number) => Promise<void>
   destroy: () => void
+  refresh: () => void
 }
 
 class FakePath2D {
@@ -96,7 +97,13 @@ function createClassList() {
 export async function createAnimationFixture(
   reducedMotion = false,
   dimensions = { width: 1200, height: 680 },
-  options: { footerTop?: number; pixelRatio?: number; theme?: 'light' | 'dark' } = {}
+  options: {
+    footerTop?: number
+    pixelRatio?: number
+    slowFooterGrowth?: number
+    theme?: 'light' | 'dark'
+    timeoutFooterGrowth?: number
+  } = {}
 ) {
   const electronRoot =
     basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
@@ -143,8 +150,22 @@ export async function createAnimationFixture(
     }
   }
   const canvas = createCanvas()
-  let footerTop = options.footerTop
-  const footer = { getBoundingClientRect: () => ({ top: footerTop ?? canvas.clientHeight }) }
+  let baseFooterTop = options.footerTop
+  const slowCard = { hidden: true }
+  const timeoutNote = { hidden: true }
+  const timeoutActions = { hidden: true }
+  const footer = {
+    getBoundingClientRect: () => ({
+      top:
+        (baseFooterTop ?? canvas.clientHeight) -
+        (!slowCard.hidden
+          ? (options.slowFooterGrowth ?? 72)
+          : !timeoutNote.hidden
+            ? (options.timeoutFooterGrowth ?? 110)
+            : 0),
+    }),
+  }
+  const footerGrowthStates = [[slowCard], [timeoutNote, timeoutActions]]
   let now = 0
   let frameId = 0
   const frames = new Map<number, FrameRequestCallback>()
@@ -214,14 +235,18 @@ export async function createAnimationFixture(
   }
   runInNewContext(`${markScript}\n${animationScript}`, environment)
   const runtime = window as typeof window & {
-    createStartupBrandAnimation: (target: typeof canvas, status: typeof footer) => BrandAnimation
+    createStartupBrandAnimation: (
+      target: typeof canvas,
+      status: typeof footer,
+      growthStates: typeof footerGrowthStates
+    ) => BrandAnimation
     WEWORK_STARTUP_BRAND_CONTOURS: Array<{
       name: string
       hole: boolean
       curves: Array<Array<[number, number]>>
     }>
   }
-  const animation = runtime.createStartupBrandAnimation(canvas, footer)
+  const animation = runtime.createStartupBrandAnimation(canvas, footer, footerGrowthStates)
   const step = (timestamp: number) => {
     now = timestamp
     const pending = [...frames.values()]
@@ -242,6 +267,9 @@ export async function createAnimationFixture(
     brand,
     canvas,
     footer,
+    slowCard,
+    timeoutActions,
+    timeoutNote,
     contours: runtime.WEWORK_STARTUP_BRAND_CONTOURS,
     markScript,
     logoStyle,
@@ -257,7 +285,19 @@ export async function createAnimationFixture(
     setHidden,
     resize: () => resizeCallback(),
     setFooterTop: (top: number) => {
-      footerTop = top
+      baseFooterTop = top
+      resizeCallback()
+    },
+    setSlowVisible: (visible: boolean) => {
+      slowCard.hidden = !visible
+      timeoutNote.hidden = true
+      timeoutActions.hidden = true
+      resizeCallback()
+    },
+    setTimeoutVisible: (visible: boolean) => {
+      slowCard.hidden = true
+      timeoutNote.hidden = !visible
+      timeoutActions.hidden = !visible
       resizeCallback()
     },
     setPixelRatio: (ratio: number) => {

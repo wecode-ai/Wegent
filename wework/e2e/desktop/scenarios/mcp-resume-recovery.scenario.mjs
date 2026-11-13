@@ -61,6 +61,21 @@ export function createDesktopScenario({
     retainedProcesses.set(name, identity)
   }
 
+  async function retainReadyClient(name) {
+    const identity = await waitForValue(
+      async () => {
+        const identities = await Promise.all(
+          (await starts(name)).map(pid => collectProcessInstanceIdentity(Number(pid)))
+        )
+        return identities.filter(Boolean)
+      },
+      live => live.length === 1 && live[0],
+      `The original ${name} MCP client did not remain uniquely identifiable after prediction forks exited`,
+      uiTimeoutMs
+    )
+    retainedProcesses.set(name, identity)
+  }
+
   async function assertRetained(names) {
     for (const name of names) {
       const expected = retainedProcesses.get(name)
@@ -112,16 +127,17 @@ export function createDesktopScenario({
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      // Reply prediction forks can start short-lived clients with the same MCP configuration.
+      await control.command('ensureLocalModelCatalogReady', 'body', {
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
+      // Prediction forks can start these same MCP binaries before the parent
+      // thread recovers. Only the parent should populate the lifecycle logs.
       const preferences = JSON.parse(
         await control.command('setAppPreferences', 'body', {
           value: JSON.stringify({ replyPredictionsEnabled: false }),
         })
       )
       assert.equal(preferences.replyPredictionsEnabled, false)
-      await control.command('ensureLocalModelCatalogReady', 'body', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
       await waitForValue(
         async () => JSON.parse(await control.command('getBundledPluginUpdates', 'body')),
         value => {
@@ -171,11 +187,13 @@ export function createDesktopScenario({
       }
       await run(control, 'recovered')
       assert.equal(await processId(), pid, 'MCP recovery restarted the shared Codex process')
+      // Prediction forks may start independent clients. Verify the original
+      // connection's OS creation identity rather than counting all processes.
       await assertRetained([NAMES[0]])
       for (const name of NAMES.slice(1, 3)) {
         const pids = await starts(name)
         assert.ok(pids.length >= 1, `The real ${name} MCP did not start after recovery`)
-        await retain(name, pids[0])
+        await retainReadyClient(name)
       }
       await run(control, 'stable')
       const recoveredLog = await readFile(log, 'utf8')
@@ -210,7 +228,9 @@ export function createDesktopScenario({
         'The disconnected MCP did not start a replacement process'
       )
       // The model-visible catalog proves the replacement connection is ready.
-      // Verify the unaffected clients and bound recovery by native reloads.
+      // Startup records also contain short-lived prediction clients, whose PID
+      // cannot identify the recovered parent connection. Keep identity checks
+      // scoped to the unaffected clients and bound recovery by native reloads.
       await run(control, 'transport-stable')
       await assertRetained([NAMES[0], NAMES[2]])
       assert.equal(

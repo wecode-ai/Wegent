@@ -94,7 +94,7 @@ impl LocalTaskStore {
         project_id: &str,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        self.create_task_with_schedule(project_id, input, None, None)
+        self.create_task_with_schedule(project_id, input, None, None, false)
     }
 
     pub fn create_task_with_schedule(
@@ -103,6 +103,7 @@ impl LocalTaskStore {
         input: TaskCreate,
         start_at: Option<String>,
         due_at: Option<String>,
+        personal_task: bool,
     ) -> Result<LoopItem, TaskRuntimeError> {
         validate_name(&input.title, "task title")?;
         validate_priority(&input.priority)?;
@@ -198,6 +199,18 @@ impl LocalTaskStore {
                 Some(&user_id),
                 None,
             );
+        }
+        if personal_task {
+            if input.assignee_user_id != Some(project.created_by_user_id) {
+                return Err(TaskRuntimeError::Invalid(
+                    "Personal work must belong to its creator".into(),
+                ));
+            }
+            metadata["personal_task_assignment_at"] = metadata["assignment_history"]
+                .as_array()
+                .and_then(|rows| rows.last())
+                .map(|row| row["at"].clone())
+                .unwrap_or(Value::Null);
         }
         // Allocating an Issue number does not change editable project configuration.
         transaction.execute(

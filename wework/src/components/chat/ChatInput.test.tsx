@@ -304,6 +304,22 @@ describe('ChatInput', () => {
     }
   )
 
+  test('honors hidden attachment and submit actions in the compact composer', () => {
+    render(
+      <ChatInput
+        value="Configuration draft"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="compact"
+        showSubmitButton={false}
+        showAttachmentActions={false}
+      />
+    )
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('add-context-button')).not.toBeInTheDocument()
+  })
+
   test('keeps model recovery visible in the fullscreen compact editor', async () => {
     render(
       <ChatInput
