@@ -100,6 +100,8 @@ async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_tota
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
+        read_user_id=7,
+        task_id=None,
     )
 
     assert result["records"] == []
@@ -155,6 +157,8 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
+        read_user_id=7,
+        task_id=None,
     )
 
     assert result["total"] == 1
@@ -205,6 +209,8 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         resolved_document_ids=[],
         runtime_context=None,
         restricted_mode=False,
+        read_user_id=7,
+        task_id=None,
     )
 
     assert result["total"] == 0

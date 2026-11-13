@@ -489,6 +489,7 @@ def mark_document_index_succeeded(
         )
     _finalize_external_source_on_success(document)
 
+    event_kb_id = document.__dict__.get("kind_id")
     db.commit()
     if cleanup_attachment_ids:
         _cleanup_external_refresh_attachments(
@@ -501,6 +502,16 @@ def mark_document_index_succeeded(
         document_id=document_id,
         generation=generation,
         reason="finalized",
+    )
+    from shared.event_reporting.catalogs.knowledge import emit_index_event
+
+    emit_index_event(
+        "knowledge.index.generation.terminal",
+        kb_id=event_kb_id,
+        document_id=document_id,
+        status="success",
+        operation_id=generation,
+        data={"generation": generation, "preservation_reason": "none"},
     )
     return True
 
@@ -681,6 +692,7 @@ def mark_document_index_failed(
             updates["sync"] = sync
         document.update_external_source_config(**updates)
 
+    event_kb_id = document.__dict__.get("kind_id")
     db.commit()
     if cleanup_attachment_ids:
         _cleanup_external_refresh_attachments(
@@ -701,6 +713,21 @@ def mark_document_index_failed(
         document_id=document_id,
         generation=generation,
         reason=reason,
+    )
+    from shared.event_reporting.catalogs.knowledge import emit_index_event
+
+    emit_index_event(
+        "knowledge.index.generation.terminal",
+        kb_id=event_kb_id,
+        document_id=document_id,
+        status="failure",
+        operation_id=generation,
+        data={
+            "generation": generation,
+            "preservation_reason": reason,
+            "retry_scheduled": False,
+        },
+        error_code=persisted_error.code,
     )
     return True
 
