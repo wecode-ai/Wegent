@@ -116,6 +116,9 @@ export async function verifyProjectAgentRoutingRecovery(control, cloud, historic
   })
   const assign = async (id, kind = 'agent') => {
     await control.command('click', selector('cloud-todo-detail-assignee'))
+    await control.command('fill', '[data-testid="cloud-todo-detail-assignee-search"]', {
+      value: kind === 'group' ? group.name : id === agent.id ? agent.name : conflict.name,
+    })
     await control.command(
       'clickWhenEnabled',
       `[data-testid="cloud-todo-detail-assignee-option-${kind}:${id}"]`
@@ -175,13 +178,17 @@ export async function verifyProjectAgentRoutingRecovery(control, cloud, historic
     'clickWhenEnabled',
     `[data-testid="cloud-project-chat-agent-environment-option-${originalEnvironmentId}"]`
   )
+  const repairedModel = JSON.stringify([
+    modelPolicy.model.runtime,
+    modelPolicy.model.provider,
+    modelPolicy.model.model_id,
+  ])
+  await control.command('select', '[data-testid="cloud-project-chat-agent-model"]', {
+    value: repairedModel,
+  })
   await waitForBoardValue(
     () => control.command('getValue', '[data-testid="cloud-project-chat-agent-model"]'),
-    JSON.stringify([
-      modelPolicy.model.runtime,
-      modelPolicy.model.provider,
-      modelPolicy.model.model_id,
-    ]),
+    repairedModel,
     'The repaired environment must select its valid native model',
     options.uiTimeoutMs
   )
