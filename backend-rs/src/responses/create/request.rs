@@ -119,6 +119,19 @@ pub struct BuildExecutionRequestInput<'a> {
 const WEB_RUNTIME_GUIDANCE_MARKER: &str = "<wegent_runtime_guidance>";
 const WEB_RUNTIME_GUIDANCE_CLOSE: &str = "</wegent_runtime_guidance>";
 
+fn execution_device_id<'a>(task: &'a Value, workspace: &'a Value) -> Option<&'a str> {
+    task.pointer("/spec/device_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .or_else(|| {
+            workspace
+                .pointer("/project/device_id")
+                .and_then(Value::as_str)
+                .filter(|device| !device.is_empty())
+        })
+}
+
 /// `_append_web_runtime_guidance` (`request_builder.py:1023-1082`): inject the
 /// Wegent web UI runtime guidance into the system prompt.
 async fn with_web_runtime_guidance(
@@ -133,21 +146,8 @@ async fn with_web_runtime_guidance(
     }
     let project_workspace = workspace.get("project").cloned().unwrap_or(Value::Null);
     // `_extract_task_device_id(task) or project_workspace.get("device_id")`.
-    let task_device_id = input
-        .task_json
-        .pointer("/spec/device_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            project_workspace
-                .get("device_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        });
-    let device_type = match task_device_id.as_deref() {
+    let task_device_id = execution_device_id(input.task_json, workspace);
+    let device_type = match task_device_id {
         Some(device_id) => web_runtime_device_type(state, input.user_id, device_id).await,
         None => None,
     };
@@ -892,10 +892,6 @@ async fn build_request_with_runtime(
     // (`background::finalize`) and asks this single-Bot build to skip it.
     // `ExecutionRequest.mcp_servers` (the `tools` list) comes from the separate
     // `_build_mcp_servers` and keeps the Ghost/deployment servers.
-    let mut bot_mcp_servers = bot_mcp_servers;
-    if compile_coding_mcp && super::skills::is_coding_shell(&shell_type) {
-        super::skills::append_coding_mcp(&mut bot_mcp_servers, &skills, &shell_type);
-    }
     let bot_entry = build_bot_config(&BotConfigInput {
         id: input.bot.id,
         name: &input.bot.name,
@@ -1090,6 +1086,26 @@ async fn build_request_with_runtime(
         &input.team.namespace,
     )
     .await?;
+    let has_local_device = execution_device_id(input.task_json, &request.workspace).is_some();
+    super::connectors::attach(&state.mysql, &mut request, has_local_device).await?;
+    // Compile only after late Skill resolution and connector authorization
+    // have established the final tool surface. Otherwise stale personal MCP
+    // servers can survive in the Bot even after a connector supersedes them.
+    if compile_coding_mcp && super::skills::is_coding_shell(&shell_type) {
+        let mut servers = request.bot[0]["mcp_servers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        super::skills::append_coding_mcp(
+            &mut servers,
+            &super::skills::BotSkills {
+                skills: request.skill_configs.clone(),
+                ..Default::default()
+            },
+            &shell_type,
+        );
+        request.bot[0]["mcp_servers"] = Value::Array(servers);
+    }
     if !resolved_api_key.is_empty() {
         // Let the deployment resolve its placeholders in both request sections.
         state

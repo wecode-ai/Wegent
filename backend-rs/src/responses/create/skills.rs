@@ -935,7 +935,13 @@ fn build_skill_data(
             }
             None => None,
         };
-        if configured_server.is_none() {
+        if let Some(slug) = service.connector_slug {
+            data["connector_slug"] = Value::String(slug.into());
+            data["connector_available"] = Value::Bool(false);
+            if configured_server.is_none() {
+                data.as_object_mut().unwrap().remove("mcpServers");
+            }
+        } else if configured_server.is_none() {
             if let Some(object) = data.as_object_mut() {
                 object.remove("mcpServers");
             }

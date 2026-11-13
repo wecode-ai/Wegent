@@ -479,11 +479,6 @@ pub(crate) async fn resolve_request_preload_skills<
         }
     }
     leader["skills"] = Value::Array(names);
-    let shell = leader
-        .get("shell_type")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
 
     // `request_builder.py:940` -> `_sync_skill_refs_to_bot_configs`
     // (`:2312-2333`): every bot config syncs its own string skill names from
@@ -492,33 +487,8 @@ pub(crate) async fn resolve_request_preload_skills<
         sync_bot_skill_refs(bot, &skills.skill_refs);
     }
 
-    // `request_builder.py:946-955`: a coding leader prepares the newly resolved
-    // skills' MCP servers onto its config through the shared compiler.
-    if is_coding_shell(&shell) {
-        let new_skills = BotSkills {
-            skills: skills
-                .skills
-                .iter()
-                .filter(|skill| {
-                    skill
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .is_some_and(|name| missing.iter().any(|missing| missing == name))
-                })
-                .cloned()
-                .collect(),
-            ..BotSkills::default()
-        };
-        if let Some(leader) = bots.first_mut() {
-            let mut servers: Vec<Value> = leader
-                .get("mcp_servers")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            super::append_coding_mcp(&mut servers, &new_skills, &shell);
-            leader["mcp_servers"] = Value::Array(servers);
-        }
-    }
+    // The execution builder compiles the complete final Skill set after
+    // connector availability has replaced any superseded personal servers.
     Ok(())
 }
 

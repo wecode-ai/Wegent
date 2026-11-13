@@ -26,7 +26,7 @@ import {
   startConnectorOAuthProvider,
 } from '../modules/connector-oauth-provider.mjs'
 import { verifyConnectorAccountSwitch } from '../modules/connector-account-switch.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   openPlugin,
   requestPluginExecutor,
@@ -40,6 +40,7 @@ import {
   mcpToolRequestEvents,
   readRequestBody,
   requestContainsToolOutput,
+  requestAdvertisesProgrammaticExec,
   requestToolSearchResults,
   responseCompleted,
   responseCreated,
@@ -128,6 +129,7 @@ export function createDesktopScenario({
   let connectorAppId = 0
   const modelRequests = []
   const toolRequestDiagnostics = []
+  const lazyToolDiagnostics = []
   let replySequence = 0
   let catalogAtResume = null
   let localSyncHold = null
@@ -184,6 +186,16 @@ export function createDesktopScenario({
       const text = lastInputText(body)
       replySequence += 1
       if (JSON.stringify(body).includes(LAZY_PROMPT)) {
+        const discoveryOutput = toolOutputText(body, `${LAZY_DISCOVERY_ID}-search`) ?? ''
+        const availableNames = discoveryOutput.match(/"availableNames"\s*:\s*(\[[^\]]*\])/)
+        lazyToolDiagnostics.push({
+          sequence: replySequence,
+          discoveryOutputPresent: Boolean(discoveryOutput),
+          availableNames: availableNames ? JSON.parse(availableNames[1]) : [],
+          declarations: wireDeclarations({ tools: body.tools, input: body.input }, 'responses').map(
+            tool => ({ name: tool.name, namespace: tool.namespace ?? null })
+          ),
+        })
         if (requestContainsToolOutput(body, LAZY_CALL_ID)) {
           assert.ok(toolOutputText(body, LAZY_CALL_ID)?.includes('CONNECTOR-OAUTH-ECHO-OK'))
           writeReply(response, `connector-lazy-${replySequence}`, LAZY_COMPLETION)
@@ -200,11 +212,19 @@ export function createDesktopScenario({
             0
           )
         }
-        const toolName = `${discovered ? '_wegent_call__' : '_wegent_discover__'}${CONNECTOR_OAUTH_SLUG.replaceAll('-', '_')}`
+        const slug = CONNECTOR_OAUTH_SLUG.replaceAll('-', '_')
+        const operation = discovered ? 'call' : 'discover'
+        const codeMode = requestAdvertisesProgrammaticExec(body)
+        // Native Code Mode folds the leading-underscore MCP name into its
+        // server namespace; match the exact identity from ALL_TOOLS.
+        const toolName = codeMode ? slug : `_wegent_${operation}__${slug}`
+        const directToolName = codeMode
+          ? `mcp__wegent_apps_wegent_${operation}__${slug}`
+          : `mcp__wegent_apps__${toolName}`
         const selection = mcpToolRequestEvents(body, {
           toolName,
           argumentsValue: discovered ? { name: 'echo', arguments: { value: LAZY_PROMPT } } : {},
-          directToolName: `mcp__wegent_apps__${toolName}`,
+          directToolName,
           searchCallId: `${discovered ? LAZY_CALL_ID : LAZY_DISCOVERY_ID}-search`,
           toolCallId: discovered ? LAZY_CALL_ID : LAZY_DISCOVERY_ID,
         })
@@ -320,6 +340,16 @@ export function createDesktopScenario({
       )
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
 
+      // The first turn starts Codex and its MCP clients before it reaches the
+      // model. Executor logs show this cold-start phase can exceed the UI step
+      // budget. Observe the actual request under the runtime readiness budget,
+      // then retain the normal ten-second deadline for rendering the card.
+      await until(
+        () => modelRequests.some(body => JSON.stringify(body).includes(PROMPT)),
+        Boolean,
+        'The initial connector turn never reached the model after runtime startup',
+        workbenchReadyTimeoutMs
+      )
       await control.command('waitFor', '[data-testid="cloud-connector-auth-card"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -543,6 +573,9 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.deepEqual(provider.toolCalls, [{ name: 'echo', arguments: { value: TOOL_PROMPT } }])
+      const completedTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const taskId = completedTask.pane?.currentRuntimeTask?.taskId
+      assert.ok(taskId, 'The real static tool call must belong to a runtime task')
 
       const synchronizeMode = async mode => {
         const authorizationRequests = provider.authorizeRequests
@@ -575,6 +608,24 @@ export function createDesktopScenario({
       }
       await synchronizeMode('lazy')
       await control.command('navigate', 'body', { value: '/' })
+      // A mounted blank composer can precede restoration of the task tab.
+      // Wait for its owner and transcript before filling the follow-up.
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.pane?.currentRuntimeTask?.taskId === taskId &&
+          snapshot.pane?.transcript?.loading === false &&
+          snapshot.pane?.status?.taskExecution?.continuable === true,
+        'The completed connector task did not restore after the mode change'
+      )
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        {
+          text: TOOL_COMPLETION,
+        }
+      )
+      await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: LAZY_PROMPT })
       await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
@@ -605,6 +656,7 @@ export function createDesktopScenario({
     diagnostics() {
       return {
         modelRequests: modelRequests.length,
+        lazyToolDiagnostics,
         toolRequestDiagnostics:
           toolRequestDiagnostics.length <= 16
             ? toolRequestDiagnostics

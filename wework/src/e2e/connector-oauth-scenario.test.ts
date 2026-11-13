@@ -76,8 +76,39 @@ test('lazy discovery takes priority over a static call in conversation history',
   ).toBe(true)
   const discovery = itemWithType(events(modelResponse), 'custom_tool_call')
   expect(discovery).toMatchObject({ call_id: 'connector-lazy-discover-search', name: 'exec' })
-  expect(discovery?.input).toContain('_wegent_discover__desktop_connector_oauth')
+  expect(discovery?.input).toContain('wegent_apps_wegent_discover__desktop_connector_oauth')
   expect(events(modelResponse).some(event => event.item?.call_id === callId)).toBe(false)
+})
+
+test('lazy native discovery matches the real folded namespace and invokes only that identity', async () => {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })
+  const initial = response()
+  const lazyPrompt = 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_CALL'
+  await scenario.handleHttp(
+    request({ tools: [execDeclaration], input: [{ role: 'user', content: lazyPrompt }] }),
+    initial,
+    url
+  )
+  const discovery = itemWithType(events(initial), 'custom_tool_call')
+  const target = {
+    name: 'wegent_apps_wegent_discover__desktop_connector_oauth',
+    description: 'exec tool declaration:\ndiscover(args: {}): Promise<unknown>',
+  }
+  const other = { ...target, name: 'another_apps_wegent_discover__desktop_connector_oauth' }
+  const output: unknown[] = []
+  const run = new Function('ALL_TOOLS', 'text', `return (async () => { ${discovery?.input} })()`)
+  await run([other, target], (value: unknown) => output.push(value))
+  expect(output).toEqual([{ tools: [target] }])
+  await expect(run([other], () => undefined)).rejects.toThrow('one exact capability')
+
+  const body = codeModeBody('unused', JSON.stringify(output[0]), 'connector-lazy-discover-search')
+  body.input[0].content = lazyPrompt
+  const next = response()
+  await scenario.handleHttp(request(body), next, url)
+  const invocation = itemWithType(events(next), 'custom_tool_call')
+  expect(invocation?.call_id).toBe('connector-lazy-discover')
+  expect(invocation?.input).toContain(target.name)
+  expect(invocation?.input).not.toContain(other.name)
 })
 
 test.each([

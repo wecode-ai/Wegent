@@ -303,7 +303,7 @@ def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> No
     servers = bot_config["mcp_servers"]
     assert [server["name"] for server in servers] == ["wegent-connector-dingding_log"]
     assert servers[0]["type"] == "http"
-    assert servers[0]["url"] == "${{backend_url}}/mcp/connectors/sse"
+    assert servers[0]["url"] == "${{backend_url}}/api/mcp/connectors/sse"
     assert servers[0]["headers"] == {
         "Authorization": "Bearer ${{task_token}}",
         "X-Connector-App": "dingding_log",

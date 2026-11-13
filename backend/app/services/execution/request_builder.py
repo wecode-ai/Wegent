@@ -2954,7 +2954,9 @@ class TaskRequestBuilder:
         the backend URL and task token for its own network position.
         """
         headers = {"Authorization": "Bearer ${{task_token}}"}
-        connector_url = "${{backend_url}}/mcp/connectors/sse"
+        # Compact lazy discovery belongs to the Rust-owned public MCP route,
+        # not the Python internal alias, which exposes direct tools only.
+        connector_url = "${{backend_url}}/api/mcp/connectors/sse"
         servers: list[dict] = []
         if self._user_has_callable_connectors(user):
             servers.append(
