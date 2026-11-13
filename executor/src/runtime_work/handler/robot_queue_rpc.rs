@@ -287,12 +287,16 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         task_title: String,
         description: String,
-    ) {
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let link = self.local_task_link(&local_task_id)?;
+        if link.ephemeral || super::super::conversation_sessions::is_identity_conversation(&link) {
+            return None;
+        }
         let handler = self.clone();
         let device_id = self.device_id.clone();
         let task_store_path = self.task_store_path.clone();
         let worker_task_id = local_task_id.clone();
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let binding_result = tokio::task::spawn_blocking(move || {
                 let store = LocalTaskStore::open(task_store_path.as_ref())?;
                 store.ensure_default_work_item_binding(
@@ -334,7 +338,7 @@ impl RuntimeWorkRpcHandler {
                     ],
                 ),
             }
-        });
+        }))
     }
 
     pub(crate) async fn reconcile_bound_task_statuses(&self) {
