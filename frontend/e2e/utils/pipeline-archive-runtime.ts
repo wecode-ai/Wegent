@@ -1,4 +1,5 @@
 import { APIRequestContext, expect } from '@playwright/test'
+import { createBackendRequestHeaders } from './api-client'
 
 export type Runtime = { base_url: string; container_name: string; executor_namespace: string }
 export type Roots = { workspace_path: string; workbench_home: string; executor_home: string }
@@ -96,8 +97,11 @@ export async function resolveRuntime(
   headers: Record<string, string>,
   mode: 'executor' | 'sandbox'
 ): Promise<Runtime> {
+  const managerHeaders = createBackendRequestHeaders()
   if (mode === 'sandbox') {
-    const sandbox = await request.get(`${manager}/sandboxes/${taskId}`)
+    const sandbox = await request.get(`${manager}/sandboxes/${taskId}`, {
+      headers: managerHeaders,
+    })
     expect(sandbox.ok(), await sandbox.text()).toBe(true)
     const runtime = await sandbox.json()
     expect(runtime.status).toBe('running')
@@ -115,6 +119,7 @@ export async function resolveRuntime(
   const executor = subtasks.find(subtask => subtask.executor_name)
   expect(executor?.executor_name).toBeTruthy()
   const address = await request.get(`${manager}/executor/address`, {
+    headers: managerHeaders,
     params: {
       executor_name: executor!.executor_name!,
       executor_namespace: executor!.executor_namespace || '',

@@ -114,7 +114,9 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
                     let parameters = (0..parameters).map(|_| ("?", Value::Null)).collect();
                     definitions(&mut stream, &mut sequence, &parameters).await;
                 }
-                definitions(&mut stream, &mut sequence, &row).await;
+                if !row.is_empty() {
+                    definitions(&mut stream, &mut sequence, &row).await;
+                }
                 statements.insert(id, query);
             }
             0x17 => {
@@ -122,7 +124,11 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
                 let query = &statements[&id];
                 queries.lock().unwrap().push(query.clone());
                 let (columns, results) = rows(query);
-                result(&mut stream, columns, results, status).await;
+                if columns.is_empty() && query.starts_with("UPDATE ") {
+                    packet(&mut stream, 1, &[0, 1, 0, status, 0, 0, 0]).await;
+                } else {
+                    result(&mut stream, columns, results, status).await;
+                }
             }
             0x19 => {}
             0x03 => {
