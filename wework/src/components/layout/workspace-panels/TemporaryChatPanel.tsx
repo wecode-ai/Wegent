@@ -1,5 +1,9 @@
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
+import {
+  selectPrivateHistory,
+  type PrivateHistorySource,
+} from '@/features/collaboration-exp/private/privateConversationHistory'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { deliverNativeConversationMessage } from './nativeConversationDelivery'
@@ -111,7 +115,15 @@ interface TemporaryChatPanelProps {
   autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
   controlledAddress?: RuntimeTaskAddress | null
-  draft?: { value: string; onChange(value: string): void }
+  draft?: {
+    value: string
+    onChange(value: string): void
+    beginSubmission?(value: string): {
+      clientMessageId: string
+      clearIfUnchanged(): void
+      release(): void
+    }
+  }
   createTask?: (
     message: string,
     options: RuntimeTaskComposerCreateOptions
@@ -147,6 +159,9 @@ interface TemporaryChatPanelProps {
   coordinateUserInput?: boolean
   focusedRequest?: RequestUserInputPayload | null
   sourceMessageIds?: string[]
+  historySource?: PrivateHistorySource
+  historySourceUnavailableText?: string
+  onHistorySourceAvailabilityChange?(available: boolean): void
   focusRequestKey?: string
 }
 
@@ -193,6 +208,9 @@ export function TemporaryChatPanel({
   coordinateUserInput = false,
   focusedRequest,
   sourceMessageIds,
+  historySource,
+  historySourceUnavailableText,
+  onHistorySourceAvailabilityChange,
   focusRequestKey,
   active = true,
 }: TemporaryChatPanelProps) {
@@ -402,9 +420,23 @@ export function TemporaryChatPanel({
   const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
     initialAddress ? getRuntimeConversationTurns(initialAddress) : []
   )
+  const [acceptedSourceMessageIds, setAcceptedSourceMessageIds] = useState<string[]>([])
+  const scopedHistory = useMemo(
+    () =>
+      historySource
+        ? selectPrivateHistory(turns, historySource, acceptedSourceMessageIds)
+        : { available: true, messages, turns },
+    [historySource, turns, messages, acceptedSourceMessageIds]
+  )
+  useEffect(() => {
+    onHistorySourceAvailabilityChange?.(scopedHistory.available)
+  }, [onHistorySourceAvailabilityChange, scopedHistory.available])
   const presentation = useMemo(
-    () => (hideProcessing ? conversationOutcomePresentation(messages, turns) : { messages, turns }),
-    [hideProcessing, messages, turns]
+    () =>
+      hideProcessing
+        ? conversationOutcomePresentation(scopedHistory.messages, scopedHistory.turns)
+        : scopedHistory,
+    [hideProcessing, scopedHistory]
   )
   const draftScopeKey = `pane:${instanceId}`
   const [initialDraftScope] = useState(draftScopeKey)
@@ -818,12 +850,15 @@ export function TemporaryChatPanel({
 
   const send = useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
-      const message = (valueOverride ?? input).trim()
+      const draftValue = valueOverride ?? input
+      const message = draftValue.trim()
       if (!message) return false
+      if (historySource && !scopedHistory.available) return false
       if (nativeConversation && nativeSubmission.current) return false
       if (!canSendWithCurrentModel()) return false
       setError(null)
-      setInput('')
+      const transactionalDraft = nativeConversation && address ? draft?.beginSubmission : undefined
+      if (!transactionalDraft) setInput('')
       setTrialGuide(null)
 
       const currentAttachments = sideChatProjectChat.attachments
@@ -846,7 +881,12 @@ export function TemporaryChatPanel({
       if (nativeConversation && address) {
         nativeSubmission.current = true
         setSending(true)
+        let submission: ReturnType<NonNullable<typeof transactionalDraft>> | undefined
         try {
+          if (transactionalDraft) {
+            submission = transactionalDraft(draftValue)
+            queuedMessage.id = submission.clientMessageId
+          }
           const result = await deliverNativeConversationMessage({
             busy: !queuedMessage.startNewSession && paneStatus.isBusy,
             send: () => queuePort.send(queuedMessage),
@@ -862,7 +902,7 @@ export function TemporaryChatPanel({
           })
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
-            setInput(current => current || message)
+            if (!transactionalDraft) setInput(current => current || message)
             return false
           }
           if (
@@ -874,13 +914,16 @@ export function TemporaryChatPanel({
               appendOptimisticRuntimeConversationGuidance(address, result.turnId, queuedMessage)
             )
           }
+          submission?.clearIfUnchanged()
           sideChatProjectChat.resetAttachments()
+          if (historySource) setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
           return true
         } catch (cause) {
           setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
-          setInput(current => current || message)
+          if (!transactionalDraft) setInput(current => current || message)
           return false
         } finally {
+          submission?.release()
           nativeSubmission.current = false
           setSending(false)
         }
@@ -1038,6 +1081,9 @@ export function TemporaryChatPanel({
     [
       address,
       nativeConversation,
+      draft,
+      historySource,
+      scopedHistory.available,
       paneStatus.isBusy,
       queuePort,
       sendRuntimePaneGuidance,
@@ -1276,7 +1322,9 @@ export function TemporaryChatPanel({
     [address, cancelRuntimePaneTask]
   )
 
-  const sourceMessageId = messages.find(message => sourceMessageIds?.includes(message.id))?.id
+  const sourceMessageId = presentation.messages.find(message =>
+    sourceMessageIds?.includes(message.id)
+  )?.id
   const messageTarget = useMemo(
     () =>
       sourceMessageId && focusRequestKey
@@ -1287,9 +1335,8 @@ export function TemporaryChatPanel({
   useEffect(() => {
     if (
       active &&
-      focusRequestKey &&
-      sourceMessageIds?.length &&
-      !sourceMessageId &&
+      ((historySource && !scopedHistory.available) ||
+        (focusRequestKey && sourceMessageIds?.length && !sourceMessageId)) &&
       !historyLoading &&
       !historyLoadingMoreBefore &&
       historyBeforeCursor &&
@@ -1303,6 +1350,8 @@ export function TemporaryChatPanel({
     }
   }, [
     active,
+    historySource,
+    scopedHistory.available,
     focusRequestKey,
     sourceMessageIds,
     sourceMessageId,
@@ -1314,7 +1363,7 @@ export function TemporaryChatPanel({
   ])
   const pendingRequest =
     focusedRequest === undefined
-      ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
+      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
       : focusedRequest &&
           !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
         ? focusedRequest
@@ -1326,14 +1375,18 @@ export function TemporaryChatPanel({
       loadError={historyError}
       onRetry={retryHistory}
       testId={testId}
-      emptyStateText={emptyStateText}
+      emptyStateText={
+        historySource && !scopedHistory.available
+          ? (historySourceUnavailableText ?? emptyStateText)
+          : emptyStateText
+      }
       expanded={expanded}
       wideComposer={wideComposer}
       showWorkbenchBackground={showWorkbenchBackground}
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
-        readOnly || !active ? null : (
+        readOnly || !active || !scopedHistory.available ? null : (
           <>
             {nativeConversation && !pendingRequest && (
               <StandInNotificationPrompt scopeKey={lifecycleStore.notificationScope} />
@@ -1359,7 +1412,7 @@ export function TemporaryChatPanel({
                     source={address}
                     disabled={requestUserInputHost?.isDisabled(pendingRequest)}
                     error={requestUserInputHost?.getError(pendingRequest)}
-                    messages={messages}
+                    messages={presentation.messages}
                     draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
                     onDraftAnswersChange={answers =>
                       requestUserInputHost?.setDraft(pendingRequest, answers)
@@ -1402,7 +1455,13 @@ export function TemporaryChatPanel({
                   showProjectWorkBar={showProjectWorkBar}
                   projectWorkBarMiddleContext={projectWorkBarMiddleContext}
                   projectWorkBarTrailingContext={projectWorkBarTrailingContext}
-                  queuedMessages={queuedMessages}
+                  queuedMessages={
+                    historySource
+                      ? queuedMessages.filter(message =>
+                          acceptedSourceMessageIds.includes(message.id)
+                        )
+                      : queuedMessages
+                  }
                   onCancelQueuedMessage={cancelQueuedMessage}
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
@@ -1433,10 +1492,10 @@ export function TemporaryChatPanel({
         messages={presentation.messages}
         turns={presentation.turns}
         loading={historyLoading || historyLoadingMoreBefore}
-        hasMoreBefore={Boolean(historyBeforeCursor)}
+        hasMoreBefore={!historySource && Boolean(historyBeforeCursor)}
         beforeCursor={historyBeforeCursor}
         loadingMoreBefore={historyLoadingMoreBefore}
-        onLoadMoreBefore={loadMoreHistory}
+        onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
         isWaitingForAssistant={nativeConversation ? sending : busy}
@@ -1459,13 +1518,13 @@ export function TemporaryChatPanel({
         onLoadFileChangesDiff={
           address
             ? (subtaskId, fileChanges) =>
-                loadTurnFileChangesDiff(subtaskId, messages, fileChanges, address)
+                loadTurnFileChangesDiff(subtaskId, presentation.messages, fileChanges, address)
             : undefined
         }
         onRevertFileChanges={
           address && !readOnly
             ? (subtaskId, fileChanges) =>
-                revertTurnFileChanges(subtaskId, messages, fileChanges, address)
+                revertTurnFileChanges(subtaskId, presentation.messages, fileChanges, address)
             : undefined
         }
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}

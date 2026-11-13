@@ -108,6 +108,8 @@ sidebar_position: 2
 
 ### 空间与辅助功能定位
 
+协作 exp 的开启、顶部标签栏 **+ → 协作 exp** 入口和关闭回退：[协作体验预览](./collaboration-experience.md)。
+
 模板导入中的模型选择：[协作模板与配置共享](./projects.md#collaboration-template-models)。
 
 | 功能关键词                                           | 具体操作说明                                                    |

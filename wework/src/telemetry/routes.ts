@@ -2,6 +2,7 @@ import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
 export function telemetryFeatureForLocation(pathname: string, search: string) {
   const searchParams = new URLSearchParams(search)
+  if (pathname === '/collaboration-exp') return 'collaboration_exp' as const
   if (pathname === '/sites' && searchParams.get('app_type') === 'smart_app') {
     return 'sites' as const
   }

@@ -38,6 +38,7 @@ import {
   consumeWorkbenchWorkspaceLaunch,
 } from '@/features/workbench/workspaceLaunchRequest'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { useExperienceDraftInput } from '@/features/collaboration-exp/useExperienceDraftInput'
 
 const attachment: Attachment = {
   id: -1,
@@ -53,6 +54,36 @@ const address: RuntimeTaskAddress = {
   deviceId: 'device-1',
   taskId: 'task-1',
   workspacePath: '/tmp/workspace',
+}
+
+function TransactionalDraftPanel({ scope }: { scope: string }) {
+  const draft = useExperienceDraftInput({
+    accountKey: scope,
+    scopeKey: 'private-native-draft',
+  })
+  return (
+    <>
+      <button data-testid="write-new-draft" onClick={() => draft.setValue('newer draft')}>
+        Edit a new private message
+      </button>
+      <button data-testid="restore-original-draft" onClick={() => draft.setValue('发送附件')}>
+        Edit back to original
+      </button>
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId={scope}
+        sendEphemeral={false}
+        nativeConversation
+        draft={{
+          value: draft.value,
+          onChange: draft.setValue,
+          beginSubmission: draft.beginSubmission,
+        }}
+      />
+    </>
+  )
 }
 
 const mocks = vi.hoisted(() => ({
@@ -585,6 +616,95 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  it.each(['rejected', 'failed'] as const)(
+    'keeps a new private draft after remount when the old native send %s',
+    async failure => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      let resolve!: (sent: boolean) => void
+      let reject!: (cause: Error) => void
+      mocks.sendRuntimePaneMessage.mockReturnValueOnce(
+        new Promise<boolean>((done, fail) => {
+          resolve = done
+          reject = fail
+        })
+      )
+      const scope = `transactional-failure-${failure}`
+      const first = render(<TransactionalDraftPanel scope={scope} />)
+      await userEvent.click(screen.getByTestId('restore-original-draft'))
+      await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+      await userEvent.click(screen.getByTestId('mock-send'))
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '发送附件')
+      first.unmount()
+      const second = render(<TransactionalDraftPanel scope={scope} />)
+      await userEvent.click(screen.getByTestId('write-new-draft'))
+      await act(async () => {
+        if (failure === 'rejected') reject(new Error('Native connection lost'))
+        else resolve(false)
+      })
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', 'newer draft')
+      second.unmount()
+      render(<TransactionalDraftPanel scope={scope} />)
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', 'newer draft')
+    }
+  )
+
+  it.each(['unchanged', 'edited', 'edited-back'] as const)(
+    'consumes only the submitted native draft revision after remount: %s',
+    async change => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      let resolve!: (sent: boolean) => void
+      mocks.sendRuntimePaneMessage.mockReturnValueOnce(
+        new Promise<boolean>(done => {
+          resolve = done
+        })
+      )
+      const scope = `transactional-success-${change}`
+      const first = render(<TransactionalDraftPanel scope={scope} />)
+      await userEvent.click(screen.getByTestId('restore-original-draft'))
+      await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+      await userEvent.click(screen.getByTestId('mock-send'))
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ clientUserMessageId: expect.any(String), message: '发送附件' }),
+        expect.any(Object)
+      )
+      first.unmount()
+      const second = render(<TransactionalDraftPanel scope={scope} />)
+      if (change !== 'unchanged') await userEvent.click(screen.getByTestId('write-new-draft'))
+      if (change === 'edited-back')
+        await userEvent.click(screen.getByTestId('restore-original-draft'))
+      await act(async () => resolve(true))
+      const expected =
+        change === 'unchanged' ? '' : change === 'edited' ? 'newer draft' : '发送附件'
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', expected)
+      second.unmount()
+      render(<TransactionalDraftPanel scope={scope} />)
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', expected)
+    }
+  )
+
+  it('reuses the persisted native message identity on an explicit retry after remount', async () => {
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.sendRuntimePaneMessage.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const scope = 'transactional-private-retry'
+    const first = render(<TransactionalDraftPanel scope={scope} />)
+    await userEvent.click(screen.getByTestId('restore-original-draft'))
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '发送附件')
+    const firstId = mocks.sendRuntimePaneMessage.mock.calls[0][0].clientUserMessageId
+    first.unmount()
+    render(<TransactionalDraftPanel scope={scope} />)
+    await waitFor(() => expect(screen.getByTestId('mock-send')).toBeEnabled())
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+    expect(mocks.sendRuntimePaneMessage.mock.calls[1][0].clientUserMessageId).toBe(firstId)
+    await waitFor(() =>
+      expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-draft-value', '')
+    )
+  })
+
   it('keeps the stand-in usable and steers new messages while native subagents are running', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
@@ -709,6 +829,192 @@ describe('TemporaryChatPanel', () => {
     mocks.setInputForScope.mockImplementation((scope: string, value: string) => {
       if (value) mocks.inputByScope[scope] = value
       else delete mocks.inputByScope[scope]
+    })
+  })
+
+  it('limits a historical pane to the proven native turn instead of showing the entire task', async () => {
+    mocks.conversationTurns = ['source-turn', 'other-turn'].map(id => ({
+      id,
+      clientUserMessageId: `${id}-user`,
+      status: 'done',
+      items: [
+        {
+          id: `${id}-user`,
+          type: 'user_message',
+          message: { id: `${id}-user`, role: 'user', content: `${id} user`, status: 'done' },
+        },
+        {
+          id: `${id}-answer`,
+          type: 'assistant_text',
+          content: `${id} response`,
+          createdAt: '2026-11-03T00:00:00Z',
+        },
+      ],
+    }))
+    mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+    const onAvailable = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="historical-source"
+        historySource={{ turnId: 'source-turn', userMessageIds: ['source-turn-user'] }}
+        onHistorySourceAvailabilityChange={onAvailable}
+      />
+    )
+    expect(screen.getByText('source-turn response')).toBeInTheDocument()
+    expect(screen.queryByText('other-turn response')).not.toBeInTheDocument()
+    expect(screen.queryByText('other-turn user')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-composer')).toBeInTheDocument()
+    await waitFor(() => expect(onAvailable).toHaveBeenCalledWith(true))
+  })
+
+  it('does not expose unrelated queued task messages inside a historical pane', async () => {
+    mocks.busy = true
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.conversationTurns = [
+      {
+        id: 'source-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'source-user',
+            type: 'user_message',
+            message: {
+              id: 'source-user',
+              role: 'user',
+              content: 'Original source',
+              status: 'done',
+            },
+          },
+        ],
+      },
+    ]
+    mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+    const original = render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="queue-outside-history"
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    expect(screen.getByTestId('mock-queue-row')).toBeInTheDocument()
+    original.unmount()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="history-with-other-queue"
+        nativeConversation
+        historySource={{ turnId: 'source-turn', userMessageIds: ['source-user'] }}
+      />
+    )
+    expect(screen.queryByTestId('mock-queue-row')).not.toBeInTheDocument()
+    expect(screen.getByText('Original source')).toBeInTheDocument()
+  })
+
+  it('hides all transcript messages and the composer when a historical source cannot be proven', async () => {
+    mocks.conversationMessages = [
+      { id: 'newest-user', role: 'user', content: 'PRIVATE NEWEST CONTENT', status: 'done' },
+    ]
+    const onAvailable = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="missing-historical-source"
+        historySource={{ turnId: 'missing-native-turn', userMessageIds: ['missing-user'] }}
+        historySourceUnavailableText="Historical source unavailable"
+        onHistorySourceAvailabilityChange={onAvailable}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByText('Historical source unavailable')).toBeInTheDocument()
+    )
+    expect(screen.queryByText('PRIVATE NEWEST CONTENT')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-composer')).not.toBeInTheDocument()
+    expect(onAvailable).toHaveBeenCalledWith(false)
+  })
+
+  it('loads earlier native pages to prove a source without exposing intervening conversations', async () => {
+    mocks.conversationTurns = [
+      {
+        id: 'newest-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'newest-user',
+            type: 'user_message',
+            message: {
+              id: 'newest-user',
+              role: 'user',
+              content: 'UNRELATED NEWEST TEXT',
+              status: 'done',
+            },
+          },
+        ],
+      },
+    ]
+    mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+    mocks.loadRuntimeTranscriptForPane.mockImplementation(
+      async (_address: RuntimeTaskAddress, options?: { beforeCursor?: string }) => {
+        if (options?.beforeCursor) {
+          mocks.conversationTurns = [
+            {
+              id: 'older-source',
+              status: 'done',
+              items: [
+                {
+                  id: 'older-user',
+                  type: 'user_message',
+                  message: {
+                    id: 'older-user',
+                    role: 'user',
+                    content: 'Proven historical request',
+                    status: 'done',
+                  },
+                },
+              ],
+            },
+            ...mocks.conversationTurns,
+          ]
+          mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+          return {
+            messages: mocks.conversationMessages,
+            turns: mocks.conversationTurns,
+            hasMoreBefore: false,
+            beforeCursor: null,
+          }
+        }
+        return {
+          messages: mocks.conversationMessages,
+          turns: mocks.conversationTurns,
+          hasMoreBefore: true,
+          beforeCursor: 'older-page',
+        }
+      }
+    )
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="paged-historical-source"
+        sendEphemeral={false}
+        historySource={{ turnId: 'older-source', userMessageIds: ['older-user'] }}
+        historySourceUnavailableText="Historical source unavailable"
+      />
+    )
+    await waitFor(() => expect(screen.getByText('Proven historical request')).toBeInTheDocument())
+    expect(screen.queryByText('UNRELATED NEWEST TEXT')).not.toBeInTheDocument()
+    expect(mocks.loadRuntimeTranscriptForPane).toHaveBeenCalledWith(address, {
+      beforeCursor: 'older-page',
+      limit: 5,
     })
   })
 

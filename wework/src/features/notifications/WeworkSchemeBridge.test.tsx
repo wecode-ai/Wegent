@@ -10,6 +10,11 @@ import { openWeworkScheme } from './schemeEvents'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
+const experimentFeature = vi.hoisted(() => ({ enabled: false, loaded: true }))
+vi.mock('@/features/experimental-features/useAppPreferenceFeatureState', () => ({
+  useAppPreferenceFeatureState: () => experimentFeature,
+}))
+
 const {
   openTab,
   openHarnessAppTab,
@@ -58,10 +63,141 @@ beforeEach(() => {
   workspaceTabs.tabs = []
   workspaceTabs.activeTabId = ''
   workspaceTabs.openTab = openTab
+  experimentFeature.enabled = false
+  experimentFeature.loaded = true
 })
 afterEach(cleanup)
 
 describe('Wework scheme bridge', () => {
+  it('keeps existing project notifications on the original board when the experiment is disabled', () => {
+    workspaceTabs.tabs = [
+      {
+        id: 'fixed-collaboration-exp',
+        kind: 'auxiliary',
+        title: '协作 exp',
+        contentRoute: '/collaboration-exp?projectId=old',
+        fixed: true,
+      },
+    ]
+    render(<WeworkSchemeBridge />)
+    act(() => openWeworkScheme('wework://boards/local/local-project/issues/OFF-1'))
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
+      contentRoute: expect.stringMatching(
+        /^\/todo\?projectStore=local&projectId=local-project&itemId=OFF-1&focusRequest=/
+      ),
+    })
+    expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+  })
+
+  it('reuses an already open experiment for existing project notifications and retains its view scope', () => {
+    experimentFeature.enabled = true
+    workspaceTabs.tabs = [
+      {
+        id: 'fixed-collaboration-exp',
+        kind: 'auxiliary',
+        title: '协作 exp',
+        contentRoute:
+          '/collaboration-exp?view=tasks&projectStore=local&projectId=old&issueId=old&nodeId=old&discussion=private&search=release&status=in_progress&relevance=all&future=keep',
+        fixed: true,
+      },
+    ]
+    render(<WeworkSchemeBridge />)
+    act(() => {
+      openWeworkScheme('wework://boards/local/local-project/issues/OFF-1/comments/comment-1')
+      openWeworkScheme('wework://boards/local/other-project/issues/OFF-2')
+    })
+    expect(openTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.selectTab).toHaveBeenCalledTimes(2)
+    for (const [index, projectId, issueId] of [
+      [0, 'local-project', 'OFF-1'],
+      [1, 'other-project', 'OFF-2'],
+    ] as const) {
+      const [tabId, updates] = workspaceTabs.selectTab.mock.calls[index]
+      expect(tabId).toBe('fixed-collaboration-exp')
+      const params = new URL(updates.contentRoute, 'https://local').searchParams
+      expect(Object.fromEntries(params)).toMatchObject({
+        view: 'tasks',
+        projectStore: 'local',
+        projectId,
+        issueId,
+        search: 'release',
+        status: 'in_progress',
+        relevance: 'all',
+        future: 'keep',
+      })
+      expect(params.has('nodeId')).toBe(false)
+      expect(params.has('discussion')).toBe(false)
+    }
+  })
+
+  it('leaves legacy notifications on /todo until an experiment tab has been opened', () => {
+    experimentFeature.enabled = true
+    render(<WeworkSchemeBridge />)
+    act(() => openWeworkScheme('wework://boards/local/local-project/issues/OFF-1'))
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
+      contentRoute: expect.stringMatching(/^\/todo\?/),
+    })
+  })
+
+  it('ignores explicit experiment schemes while disabled and reuses the experiment after enabling', () => {
+    const { rerender } = render(<WeworkSchemeBridge />)
+    act(() =>
+      openWeworkScheme('wework://collaboration-exp?projectStore=local&projectId=one&issueId=first')
+    )
+    expect(openTab).not.toHaveBeenCalled()
+    experimentFeature.enabled = true
+    workspaceTabs.tabs = [
+      {
+        id: 'fixed-collaboration-exp',
+        kind: 'auxiliary',
+        title: '协作 exp',
+        contentRoute: '/collaboration-exp?projectId=old',
+        fixed: true,
+      },
+    ]
+    rerender(<WeworkSchemeBridge />)
+    act(() =>
+      openWeworkScheme('wework://collaboration-exp?projectStore=local&projectId=two&issueId=second')
+    )
+    expect(workspaceTabs.selectTab).toHaveBeenCalledExactlyOnceWith('fixed-collaboration-exp', {
+      title: expect.any(String),
+      contentRoute: expect.stringMatching(
+        /^\/collaboration-exp\?projectStore=local&projectId=two&issueId=second&focusRequest=\d+-1$/
+      ),
+    })
+    expect(openTab).not.toHaveBeenCalled()
+  })
+
+  it('gives repeated explicit experiment targets a new focus request while preserving their query', () => {
+    experimentFeature.enabled = true
+    render(<WeworkSchemeBridge />)
+    const params = new URLSearchParams({
+      projectStore: 'local',
+      projectId: 'one',
+      issueId: 'first',
+      nodeId: 'canonical-node',
+      projectScope: JSON.stringify(['local', 'other']),
+      search: 'release',
+      future: 'keep',
+      focusRequest: 'old-token',
+    })
+    act(() => {
+      openWeworkScheme(`wework://collaboration-exp?${params}`)
+      openWeworkScheme(`wework://collaboration-exp?${params}`)
+    })
+    expect(openTab).toHaveBeenCalledTimes(2)
+    const tokens = new Set<string>()
+    for (const [, updates] of openTab.mock.calls) {
+      const actual = new URL(updates.contentRoute, 'https://local').searchParams
+      tokens.add(actual.get('focusRequest')!)
+      actual.delete('focusRequest')
+      const expected = new URLSearchParams(params)
+      expected.delete('focusRequest')
+      expect(Object.fromEntries(actual)).toEqual(Object.fromEntries(expected))
+    }
+    expect(tokens.size).toBe(2)
+    expect(tokens.has('old-token')).toBe(false)
+  })
   it('opens a local assignment even when cloud authentication is unavailable', () => {
     render(<WeworkSchemeBridge />)
     act(() => {
