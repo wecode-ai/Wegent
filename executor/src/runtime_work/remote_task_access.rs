@@ -24,6 +24,7 @@ pub(crate) const TASK_METHODS: &[&str] = &[
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
     "runtime.tasks.send",
+    "runtime.tasks.guidance",
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
     "runtime.tasks.goal.set",
@@ -173,19 +174,20 @@ mod tests {
     }
 
     #[test]
-    fn task_creation_requires_current_consent_on_the_target_installation() {
+    fn task_creation_and_guidance_require_current_consent_on_the_target_installation() {
         let root = tempfile::tempdir().unwrap();
         let access = RemoteTaskAccess::new(root.path().join("a/settings.json"));
         let peer = RemoteTaskAccess::new(root.path().join("b/settings.json"));
         let reader = access.clone();
-        let method = "runtime.tasks.create";
-        assert!(reader.authorize(method, None).is_err());
-        assert!(reader.authorize(method, Some("project-session")).is_err());
-        access.update(json!({"enabled": true})).unwrap();
-        assert!(reader.authorize(method, None).is_ok());
-        assert!(peer.authorize(method, None).is_err());
-        access.update(json!({"enabled": false})).unwrap();
-        assert!(reader.authorize(method, None).is_err());
+        for method in ["runtime.tasks.create", "runtime.tasks.guidance"] {
+            assert!(reader.authorize(method, None).is_err());
+            assert!(reader.authorize(method, Some("project-session")).is_err());
+            access.update(json!({"enabled": true})).unwrap();
+            assert!(reader.authorize(method, None).is_ok());
+            assert!(peer.authorize(method, None).is_err());
+            access.update(json!({"enabled": false})).unwrap();
+            assert!(reader.authorize(method, None).is_err());
+        }
     }
 
     #[test]

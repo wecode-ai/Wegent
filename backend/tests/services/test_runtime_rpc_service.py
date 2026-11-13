@@ -466,6 +466,7 @@ async def test_runtime_rpc_service_keeps_other_app_device_methods_disabled(
         "runtime.tasks.transcript",
         "runtime.tasks.transcript.search",
         "runtime.tasks.send",
+        "runtime.tasks.guidance",
         "runtime.capacity.get",
         "runtime.files.read",
     ],

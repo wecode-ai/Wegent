@@ -10,13 +10,14 @@ use crate::runtime_work::remote_control_is_enabled;
 
 use super::runtime_rpc::Route;
 
-const PERSONAL_TASK_METHODS: [&str; 9] = [
+const PERSONAL_TASK_METHODS: [&str; 10] = [
     "runtime.tasks.create",
     "runtime.tasks.list",
     "runtime.tasks.search",
     "runtime.tasks.transcript",
     "runtime.tasks.transcript.search",
     "runtime.tasks.send",
+    "runtime.tasks.guidance",
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
     "runtime.tasks.goal.set",
@@ -97,8 +98,13 @@ mod tests {
         for method in PERSONAL_TASK_METHODS {
             assert_eq!(authorize(&target, method, false), Some(TaskGrant::Unscoped));
         }
+        assert_eq!(
+            authorize(&target, "runtime.tasks.guidance", false),
+            Some(TaskGrant::Unscoped)
+        );
         target.online["runtime_features"]["remoteTaskAccess"]["enabled"] = json!(false);
         assert!(authorize(&target, "runtime.tasks.send", false).is_none());
+        assert!(authorize(&target, "runtime.tasks.guidance", false).is_none());
     }
 
     #[test]
@@ -126,6 +132,7 @@ mod tests {
             assert!(authorize(&target, method, false).is_none());
         }
         assert!(authorize(&target, "runtime.tasks.send", true).is_none());
+        assert!(authorize(&target, "runtime.tasks.guidance", true).is_none());
     }
 
     #[test]

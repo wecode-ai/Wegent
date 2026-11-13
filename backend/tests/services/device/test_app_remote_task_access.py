@@ -8,7 +8,6 @@ import pytest
 from app.schemas.device import DeviceType, RuntimeFeatures
 from app.services.device import runtime_rpc_service as rpc
 from app.services.device.remote_control_policy import (
-    APP_REMOTE_TASK_METHODS,
     app_remote_task_access_enabled,
 )
 from app.services.device.runtime_route import RuntimeRoute
@@ -85,7 +84,21 @@ def test_device_schema_preserves_task_creation_capability():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", sorted(APP_REMOTE_TASK_METHODS))
+@pytest.mark.parametrize(
+    "method",
+    [
+        "runtime.tasks.create",
+        "runtime.tasks.list",
+        "runtime.tasks.search",
+        "runtime.tasks.transcript",
+        "runtime.tasks.transcript.search",
+        "runtime.tasks.send",
+        "runtime.tasks.guidance",
+        "runtime.tasks.cancel",
+        "runtime.tasks.goal.get",
+        "runtime.tasks.goal.set",
+    ],
+)
 async def test_consent_is_checked_on_each_target_and_request(monkeypatch, method):
     enabled = {"app-record-11": True, "app-record-22": False}
 

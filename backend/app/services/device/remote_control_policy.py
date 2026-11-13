@@ -18,6 +18,7 @@ APP_REMOTE_TASK_METHODS = frozenset(
         "runtime.tasks.transcript",
         "runtime.tasks.transcript.search",
         "runtime.tasks.send",
+        "runtime.tasks.guidance",
         "runtime.tasks.cancel",
         "runtime.tasks.goal.get",
         "runtime.tasks.goal.set",
