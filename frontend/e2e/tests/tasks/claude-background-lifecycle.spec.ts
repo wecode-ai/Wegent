@@ -10,7 +10,11 @@ const EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const INHERITED_CEILING_MS = 500
 
-type Capture = { kind: string; timestamp: number; body: { messages: unknown[] } }
+type Capture = {
+  kind: string
+  timestamp: number
+  body: { messages: unknown[]; system?: unknown }
+}
 type TaskDetail = {
   status: string
   model_id?: string
@@ -27,15 +31,18 @@ type TaskDetail = {
 test.describe('Real Claude background subagent lifecycle', () => {
   test.describe.configure({ timeout: 180_000 })
 
-  for (const mode of ['complete', 'stop'] as const) {
-    test(`background subagent ${mode === 'complete' ? 'outlives the inherited ceiling and completes' : 'stopped by the parent cannot complete the task'}`, async ({
-      page,
-      request,
-    }, testInfo) => {
-      const model = `e2e-claude-bg-${mode}-${Date.now()}`
+  for (const scenarioName of ['complete', 'stop', 'coordinate'] as const) {
+    const mode = scenarioName === 'stop' ? 'stop' : 'complete'
+    const title =
+      scenarioName === 'coordinate'
+        ? 'Web coordinate chat runs a configured team member as a Claude subagent'
+        : `background subagent ${mode === 'complete' ? 'outlives the inherited ceiling and completes' : 'stopped by the parent cannot complete the task'}`
+    test(title, async ({ page, request }, testInfo) => {
+      const model = `e2e-claude-bg-${scenarioName}-${Date.now()}`
       const shellName = `${model}-shell`
       const botName = `${model}-bot`
       const teamName = `${model}-team`
+      const workerName = scenarioName === 'coordinate' ? `${model}-worker` : undefined
       const login = await createApiClient(request).login(
         EXECUTOR_USER.username,
         EXECUTOR_USER.password,
@@ -45,11 +52,19 @@ test.describe('Real Claude background subagent lifecycle', () => {
       const headers = createBackendRequestHeaders(login.data!.access_token)
       let taskId: number | undefined
       try {
+        const { teamId, subagentType } = await createAgent(
+          request,
+          headers,
+          model,
+          shellName,
+          botName,
+          teamName,
+          workerName
+        )
         const configured = await request.post(`${MOCK_URL}/claude-background-scenarios`, {
-          data: { model, mode },
+          data: { model, mode, subagentType },
         })
         expect(configured.ok(), await configured.text()).toBe(true)
-        const teamId = await createAgent(request, headers, model, shellName, botName, teamName)
         await page.addInitScript(id => {
           localStorage.setItem('user_onboarding_completed', 'true')
           localStorage.setItem('wegent_last_team_id', String(id))
@@ -110,6 +125,10 @@ test.describe('Real Claude background subagent lifecycle', () => {
           expect(scenario.childFinished).toBe(true)
           const parentWaiting = scenario.requests.find(capture => capture.kind === 'parent-1')!
           const childDone = scenario.requests.find(capture => capture.kind === 'child-1')!
+          if (workerName) {
+            expect(subagentType).toBeTruthy()
+            expect(JSON.stringify(childDone.body.system)).toContain(`TEAM_MEMBER_${workerName}`)
+          }
           expect(childDone.timestamp - parentWaiting.timestamp).toBeGreaterThan(
             INHERITED_CEILING_MS
           )
@@ -135,6 +154,7 @@ test.describe('Real Claude background subagent lifecycle', () => {
         for (const [kind, name] of [
           ['teams', teamName],
           ['bots', botName],
+          ...(workerName ? [['bots', workerName]] : []),
           ['models', model],
         ]) {
           const removed = await request.delete(
@@ -176,7 +196,7 @@ test.describe('Real Claude background subagent lifecycle', () => {
         data: { model, mode: 'large-output' },
       })
       expect(configured.ok(), await configured.text()).toBe(true)
-      const teamId = await createAgent(request, headers, model, shellName, botName, teamName)
+      const { teamId } = await createAgent(request, headers, model, shellName, botName, teamName)
       await page.addInitScript(id => {
         localStorage.setItem('user_onboarding_completed', 'true')
         localStorage.setItem('wegent_last_team_id', String(id))
@@ -300,8 +320,9 @@ async function createAgent(
   model: string,
   shellName: string,
   botName: string,
-  teamName: string
-): Promise<number> {
+  teamName: string,
+  workerName?: string
+): Promise<{ teamId: number; subagentType?: string }> {
   const created = await request.post(`${API_URL}/api/v1/namespaces/default/models`, {
     headers,
     data: {
@@ -336,10 +357,44 @@ async function createAgent(
     data: { name: shellName, baseShellRef: 'ClaudeCode', baseImage: EXECUTOR_IMAGE },
   })
   expect(shell.ok(), await shell.text()).toBe(true)
+  const botId = await createBot(request, headers, model, shellName, botName)
+  const workerId = workerName
+    ? await createBot(request, headers, model, shellName, workerName)
+    : undefined
+  const team = await request.post(`${API_URL}/api/teams`, {
+    headers,
+    data: {
+      name: teamName,
+      bots: workerId
+        ? [
+            { bot_id: botId, bot_prompt: '', role: 'leader' },
+            { bot_id: workerId, bot_prompt: `TEAM_MEMBER_${workerName}`, role: 'worker' },
+          ]
+        : [{ bot_id: botId, bot_prompt: '', role: 'worker' }],
+      ...(workerId ? { workflow: { mode: 'coordinate' } } : {}),
+      bind_mode: ['chat'],
+      namespace: 'default',
+      is_active: true,
+      requires_workspace: false,
+    },
+  })
+  expect(team.ok(), await team.text()).toBe(true)
+  const teamId = (await team.json()).id
+  expect(teamId).toBeTruthy()
+  return { teamId, subagentType: workerId ? `${workerName}-${workerId}` : undefined }
+}
+
+async function createBot(
+  request: APIRequestContext,
+  headers: Record<string, string>,
+  model: string,
+  shellName: string,
+  name: string
+): Promise<number> {
   const bot = await request.post(`${API_URL}/api/bots`, {
     headers,
     data: {
-      name: botName,
+      name,
       shell_name: shellName,
       agent_config: { bind_model: model, bind_model_type: 'user' },
       inherit_base_capabilities: false,
@@ -351,19 +406,5 @@ async function createAgent(
   expect(bot.ok(), await bot.text()).toBe(true)
   const botId = (await bot.json()).id
   expect(botId).toBeTruthy()
-  const team = await request.post(`${API_URL}/api/teams`, {
-    headers,
-    data: {
-      name: teamName,
-      bots: [{ bot_id: botId, bot_prompt: '', role: 'worker' }],
-      bind_mode: ['chat'],
-      namespace: 'default',
-      is_active: true,
-      requires_workspace: false,
-    },
-  })
-  expect(team.ok(), await team.text()).toBe(true)
-  const teamId = (await team.json()).id
-  expect(teamId).toBeTruthy()
-  return teamId
+  return botId
 }

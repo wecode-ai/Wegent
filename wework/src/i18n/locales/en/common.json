@@ -3417,7 +3417,6 @@
     "archived_chats_empty_title": "No archived chats",
     "archived_chats_empty_desc": "Archived conversations will appear here so you can restore or clean them up later.",
     "change_connection_color": "Change connection color",
-    "archive_project_conversations": "Archive conversations",
     "archiving_conversations": "Archiving...",
     "archive_project_confirm": "Archive all conversations in this project?",
     "archive_project_dialog_title": "Archive {{count}} conversations?",
