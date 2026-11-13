@@ -738,7 +738,14 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
           currentAddressRef.current = resolvedAddress
           setCurrentAddress(resolvedAddress)
           activateTranscript(resolvedAddress)
-          if (response.taskId !== taskId) await subscribe(resolvedAddress)
+          if (response.taskId !== taskId) {
+            try {
+              await subscribe(resolvedAddress)
+              await reloadTranscript(resolvedAddress)
+            } catch (cause) {
+              failTranscript(resolvedAddress, messageFrom(cause))
+            }
+          }
         }
         void reloadWork(resolvedAddress.deviceId).catch(cause => setError(messageFrom(cause)))
         return true
@@ -777,6 +784,8 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
       activateTranscript,
       lifecycle,
       publishTaskLifecycle,
+      failTranscript,
+      reloadTranscript,
       reloadWork,
       renameTranscript,
       selectedDeviceId,

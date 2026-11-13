@@ -7,7 +7,6 @@ import type { MobileRuntimeState } from './useMobileRuntime'
 import { useMobileRuntime } from './useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => ({
@@ -477,6 +476,42 @@ describe('creating a conversation on the only computer', () => {
     )
     expect(state.messages.map(message => message.content)).toEqual(['你好', 'Live'])
     expect(state.currentAddress?.taskId).toBe('canonical')
+  })
+
+  it('keeps an accepted task when its canonical subscription fails', async () => {
+    await mount()
+    mocks.create.mockResolvedValue({ accepted: true, taskId: 'canonical', workspacePath: '/work' })
+    mocks.subscribeReady
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Realtime unavailable'))
+    await act(async () => {
+      expect(await state.send('你好')).toBe(true)
+    })
+    expect(mocks.create).toHaveBeenCalledOnce()
+    expect(state.currentAddress?.taskId).toBe('canonical')
+    expect(state.error).toBe('Realtime unavailable')
+    expect(state.messages[0]?.content).toBe('你好')
+    expect(state.messages.every(message => message.status !== 'failed')).toBe(true)
+  })
+
+  it('hydrates a canonical task completed before its subscription was installed', async () => {
+    await mount()
+    mocks.create.mockResolvedValue({ accepted: true, taskId: 'canonical', workspacePath: '/work' })
+    mocks.transcript.mockImplementation(async address => {
+      expect(mocks.conversationSubscribe.mock.calls.at(-1)?.[0].taskId).toBe('canonical')
+      expect(address.taskId).toBe('canonical')
+      return {
+        taskId: 'canonical',
+        running: false,
+        messages: [{ id: 'reply', role: 'assistant', content: 'Fast reply', status: 'completed' }],
+      }
+    })
+    await act(async () => {
+      expect(await state.send('你好')).toBe(true)
+    })
+    expect(mocks.transcript).toHaveBeenCalledOnce()
+    expect(state.messages.some(message => message.content === 'Fast reply')).toBe(true)
+    expect(state.running).toBe(false)
   })
 
   it('does not navigate back when task creation finishes after leaving the conversation', async () => {
