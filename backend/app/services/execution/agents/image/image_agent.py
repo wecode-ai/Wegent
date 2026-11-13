@@ -51,7 +51,7 @@ class ImageAgent(PollingAgent):
     @trace_async(
         "image_agent.execute",
         "backend.execution.image",
-        extract_attributes=lambda self, request, emitter: {
+        extract_attributes=lambda self, request, emitter, **kwargs: {
             "task.id": str(request.task_id),
             "subtask.id": str(request.subtask_id),
             "attachment.count": len(request.attachments or []),
@@ -61,6 +61,8 @@ class ImageAgent(PollingAgent):
         self,
         request: ExecutionRequest,
         emitter: ResultEmitter,
+        *,
+        owns_cancel_flag: bool = True,
     ) -> None:
         """
         Execute image generation task.
@@ -74,7 +76,11 @@ class ImageAgent(PollingAgent):
         """
         from app.services.chat.storage.session import session_manager
 
-        cancel_event = await session_manager.register_stream(request.subtask_id)
+        cancel_event = (
+            await session_manager.register_stream(request.subtask_id)
+            if owns_cancel_flag
+            else None
+        )
         await shutdown_manager.register_stream(request.subtask_id)
 
         task_id = request.task_id
@@ -109,7 +115,9 @@ class ImageAgent(PollingAgent):
             )
 
             # Check cancellation
-            if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
+            if (cancel_event and cancel_event.is_set()) or (
+                await session_manager.is_cancelled(subtask_id)
+            ):
                 logger.info(f"[{self.name}] Cancelled: task_id={task_id}")
                 await self._emit_image_block(
                     emitter=emitter,
@@ -309,7 +317,8 @@ class ImageAgent(PollingAgent):
             )
 
         finally:
-            await session_manager.unregister_stream(subtask_id)
+            if owns_cancel_flag:
+                await session_manager.unregister_stream(subtask_id)
             await shutdown_manager.unregister_stream(subtask_id)
 
     def _extract_reference_images(self, request: ExecutionRequest) -> List[str]:

@@ -272,7 +272,8 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="pause-response-button"]`)
       await waitUntil(
         () => requests.length === 3,
-        uiTimeoutMs,
+        // Native recovery now deliberately waits 10 seconds before its first retry.
+        10_000 + uiTimeoutMs,
         'The direct-provider overload did not automatically continue the saved conversation'
       )
       const log = await readFile(join(resultDir, 'executor.log'), 'utf8')
@@ -405,7 +406,8 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'Cancellation did not stop overload backoff'
       )
-      await new Promise(resolve => setTimeout(resolve, 5500))
+      // Observe beyond the real ten-second retry deadline, including scheduling margin.
+      await new Promise(resolve => setTimeout(resolve, 10_500))
       assert.equal(cancelRequests.length, 1, 'A cancelled overload task sent another model request')
       assert.equal(requests.length, 3, 'The completed tool work was replayed')
       active = false

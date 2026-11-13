@@ -80,7 +80,7 @@ fn project_preparation_failure_keeps_snapshot_and_retry_succeeds() {
         );
         store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
         handler.upsert_local_task(link);
-        handler.reserve_worktree_preparation(&turn);
+        handler.reserve_turn_preparation(&turn);
         let error = handler
             .prepare_and_start_reserved_turn(turn.clone())
             .await
@@ -241,7 +241,7 @@ fn project_preparation_accepts_without_blocking_and_can_be_cancelled() {
             }
         }).await.unwrap();
         assert!(handler.is_busy_local_task("cancel-preparation"));
-        assert!(handler.cancel_preparing_worktree_turn("cancel-preparation"));
+        assert!(handler.cancel_preparing_turn("cancel-preparation"));
         assert!(handler.wait_for_worktree_preparation_to_finish("cancel-preparation").await);
         tokio::time::timeout(Duration::from_secs(5), async {
             while handler.local_task_link("cancel-preparation").unwrap().status != "cancelled" {
@@ -291,7 +291,7 @@ fn project_preparation_runs_for_restored_and_force_started_turns() {
                 turn.request
                     .extra
                     .insert(RESTORED_TURN_MARKER.into(), json!(true));
-                handler.reserve_worktree_preparation(&turn);
+                handler.reserve_turn_preparation(&turn);
                 handler.start_queued_turn(turn);
             } else {
                 handler.turn_scheduler.lock().unwrap().enqueue_queued(turn);
