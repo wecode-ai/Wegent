@@ -23,9 +23,7 @@ use serde_json::{Value, json};
 
 use crate::device_running_tasks::list_running_tasks;
 use crate::socketio::device::{self, RuntimeTransfer};
-use crate::socketio::device_lifecycle::{
-    identity_lock_unavailable, publish_chat_event, with_device_identity_lock,
-};
+use crate::socketio::device_lifecycle::{identity_lock_unavailable, with_device_identity_lock};
 use crate::socketio::runtime::SocketRuntime;
 use crate::socketio::session::{DeviceSession, SessionSnapshot};
 use crate::state::AppState;
@@ -262,7 +260,9 @@ pub async fn heartbeat(
         .await;
     }
     let runtime_auth_missing = runtime_auth_missing(payload.runtime_auth_files.as_ref());
-    broadcast_slot_update(state, runtime, user_id, &route_id).await;
+    if let Err(error) = broadcast_slot_update(state, runtime, user_id, &route_id).await {
+        tracing::warn!(%error, user_id, "device:slot_update heartbeat delivery failed");
+    }
     // `_schedule_background_task(sync_pending_plugin_removals(user, device))`:
     // fire-and-forget, after the heartbeat has been persisted.
     runtime.enqueue_plugin_removal(user_id, &route_id);
@@ -523,7 +523,7 @@ pub(crate) async fn broadcast_slot_update(
     runtime: &SocketRuntime,
     user_id: i64,
     device_id: &str,
-) {
+) -> Result<(), String> {
     let online = device::get_online(state, user_id, device_id).await;
     let running_task_ids = online
         .as_ref()
@@ -532,31 +532,33 @@ pub(crate) async fn broadcast_slot_update(
         .map(|ids| ids.iter().filter_map(Value::as_i64).collect::<Vec<_>>())
         .unwrap_or_default();
     let (slot_used, slot_max) = slot_values(online.as_ref());
-    let running_tasks =
-        match list_running_tasks(&*state.task_store, user_id, running_task_ids).await {
-            Ok(tasks) => tasks,
-            Err(error) => {
-                tracing::error!(%error, user_id, "device slot update task read failed");
-                return;
-            }
-        };
-    let data = match serde_json::to_value(SlotUpdate {
+    let running_tasks = list_running_tasks(&*state.task_store, user_id, running_task_ids)
+        .await
+        .map_err(|error| error.to_string())?;
+    let data = serde_json::to_value(SlotUpdate {
         device_id,
         slot_used,
         slot_max,
         running_tasks,
-    }) {
-        Ok(data) => data,
-        Err(error) => {
-            tracing::error!(%error, user_id, "device slot update serialization failed");
-            return;
+    })
+    .map_err(|error| error.to_string())?;
+    runtime
+        .emitters()
+        .device_slot_update(user_id, &data)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(redis) = state.redis.as_ref() {
+        let payload = crate::json_compat::python_json_value(&json!([data]));
+        for room in [format!("user:{user_id}"), format!("wework:user:{user_id}")] {
+            let message =
+                crate::socketio_emit::emit_message("device:slot_update", &payload, "/chat", &room);
+            brz_redis::Redis::publish(redis, crate::socketio_emit::SOCKETIO_CHANNEL, message)
+                .await
+                .map_err(|error| error.to_string())?;
         }
-    };
-    if let Err(error) = runtime.emitters().device_slot_update(user_id, &data).await {
-        tracing::warn!(%error, user_id, "device:slot_update local delivery failed");
     }
-    publish_chat_event(state, "device:slot_update", &data, user_id).await;
     tracing::debug!(slot_used, slot_max, "device slot update broadcast");
+    Ok(())
 }
 
 /// `runtime_capacity_slot_values`.

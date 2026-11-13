@@ -470,10 +470,17 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         tables: crate::internal_callback::tables(state),
         executor_manager: &state.executor_manager,
     };
-    let result =
-        completion::collect_completed_result(&ctx, subtask_id, "FAILED", None, Some(message), None)
-            .await;
-    if let Err(error) = completion::persist_completed_result(
+    let result = completion::collect_completed_result(
+        &ctx,
+        task_id,
+        subtask_id,
+        "FAILED",
+        None,
+        Some(message),
+        None,
+    )
+    .await;
+    let persisted = completion::persist_completed_result(
         &ctx,
         task_id,
         subtask_id,
@@ -484,9 +491,9 @@ async fn persist_build_failure(state: &AppState, task_id: i64, subtask_id: i64, 
         None,
         None,
     )
-    .await
-    {
-        tracing::error!(%error, task_id, subtask_id, "dispatch failure persistence failed");
+    .await;
+    if let Err(error) = persisted {
+        tracing::error!(%error, task_id, subtask_id, "request failure could not be saved");
     }
 }
 
@@ -768,12 +775,13 @@ pub(crate) async fn recover_before_dispatch(
     request: &mut ExecutionRequest,
     device_id: Option<&str>,
 ) -> Result<bool, FastApiError> {
-    let error = match super::recover_executor::recover_executor_if_needed(state, request, device_id)
-        .await
-    {
-        Ok(recovered) => return Ok(recovered),
-        Err(error) => error,
-    };
+    let error =
+        match super::recover_executor::recover_executor_if_needed(state, request, device_id, false)
+            .await
+        {
+            Ok(recovered) => return Ok(recovered),
+            Err(error) => error,
+        };
     let message = error.to_string();
     tracing::warn!(
         task_id = request.task_id,

@@ -98,6 +98,24 @@ pub(crate) async fn publish_emit_in_room<R: Redis>(
     publish_emit_in_room_skipping(redis, event, room, payload, None).await
 }
 
+/// Deliver one terminal frame to the adapter with a stable step identity.
+pub(crate) async fn publish_terminal_emit<R: Redis>(
+    redis: &R,
+    key: &str,
+    event: &str,
+    room: &str,
+    payload: Value,
+) -> RedisResult<()> {
+    let data = python_dumps(&Value::Array(vec![payload]));
+    // Let every worker, including the publisher, consume the same adapter
+    // message. A lost Redis reply cannot suppress local delivery on retry.
+    let message = emit_message_skipping(event, &data, "/chat", room, None);
+    let mut envelope: Value = serde_json::from_str(&message).expect("Socket.IO adapter envelope");
+    envelope["host_id"] = json!("terminal-delivery");
+    super::completion::publish_once(redis, key, SOCKETIO_CHANNEL, &python_dumps(&envelope)).await?;
+    Ok(())
+}
+
 /// `publish_emit_in_room` with `skip_sid` (the sender's own socket).
 ///
 /// `ChatNamespace._broadcast_user_message` emits `chat:message` with
