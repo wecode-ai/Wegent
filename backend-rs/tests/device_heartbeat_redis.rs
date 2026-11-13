@@ -57,7 +57,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
     let digest: String = redis.command(load).await.unwrap();
     assert_eq!(digest, "c3f8721cbb97f72bc19e972846bd7aaf91901658");
     let fixture = fixture::Fixture::new().await;
-    migrations::upgrade(&fixture.mysql).await.unwrap();
+    initialize_schema(&fixture.mysql).await;
     fixture
         .mysql
         .execute(
@@ -109,6 +109,26 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
     fixture.close().await;
     stopped.unwrap().unwrap();
     outcome.unwrap();
+}
+
+async fn initialize_schema(mysql: &brz_mysql::MysqlService) {
+    let row: brz_mysql::MysqlRow = mysql
+        .fetch_one("SELECT DATABASE() AS name", ())
+        .await
+        .unwrap();
+    let database: String = row.get_required("name").unwrap();
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
+    // Schema DDL needs the migration callback budget, not the fixture's ordinary
+    // 10-second query budget. Keep heartbeat queries on the original client.
+    let migration = migrations::connect(&format!(
+        "mysql://root@{address}/{database}?ssl-mode=disabled"
+    ))
+    .unwrap();
+    let result = timeout(Duration::from_secs(60), migrations::upgrade(&migration)).await;
+    migration.close().await;
+    result
+        .expect("heartbeat schema preparation timed out")
+        .unwrap();
 }
 
 async fn assert_heartbeats(
