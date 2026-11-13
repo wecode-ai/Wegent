@@ -51,14 +51,14 @@
           ],
           "versionedEventTypes": [],
           "resourceLabels": {
-            "group": "群聊中 @我",
+            "group": "群聊消息",
             "direct": "私聊消息"
           },
           "locales": {
             "en": {
               "displayName": "DingTalk",
               "resourceLabels": {
-                "group": "Group mentions",
+                "group": "Group messages",
                 "direct": "Direct messages"
               },
               "allResourceLabels": {
@@ -126,6 +126,7 @@
                     "search-advanced"
                   ],
                   "parameters": {
+                    "conversationIds": "--conversation-ids",
                     "senderIds": "--sender-ids",
                     "start": "--start",
                     "end": "--end",
@@ -190,7 +191,7 @@
           "allResourceLabel": "全部消息",
           "assistance": {
             "observe": [
-              "New mentions of the user or direct messages within the selected chats; use the actual sender, quoted message and topic to understand the request."
+              "Receive mentions by default, all messages from explicitly configured groups, or direct messages within the selected chats. All-message intake does not make every message an instruction or require a reply: apply the role's responsibilities and handling policy, and check actual replies and resolution evidence."
             ],
             "prepare": [
               "For an identity conversation or verified connection work, prefer read_source on its exact connected DingTalk source. It reads recent conversation messages directly through the native SDK, newest first, including the user’s own replies. Start with the relevant recent window rather than automatically scanning seven days. Follow nextCursor without changing the window until you have read the follow-up evidence needed for the actual request; read the whole requested window for a comprehensive inventory. Check replies and resolution evidence before deciding a request still needs an answer. Do not present unfinished retrieval or a hasMore disclaimer as the deliverable. Prepare a grounded useful answer for unresolved work or explain what has already been handled. Independent delegated workers have no new source-read permission. Never borrow another role’s connection, substitute a chat, or send without the required native approval.",

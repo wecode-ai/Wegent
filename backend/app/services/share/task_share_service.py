@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 import app.stores.tasks as task_stores
 from app.core.config import settings
 from app.models.resource_member import ResourceMember
-from app.models.share_link import ResourceType
+from app.models.share_link import ResourceType, ShareLink
 from app.models.task import TaskResource
 from app.services.share.base_service import UnifiedShareService
 
@@ -35,6 +35,11 @@ class TaskShareService(UnifiedShareService):
 
     def __init__(self):
         super().__init__(ResourceType.TASK)
+
+    @property
+    def _revocable_resource_type_variants(self) -> list[str]:
+        """Revoking task sharing also revokes read-only links, never invitations."""
+        return [*self._resource_type_variants, ResourceType.TASK_SHARE.value]
 
     def _get_resource(
         self, db: Session, resource_id: int, user_id: int
@@ -67,6 +72,12 @@ class TaskShareService(UnifiedShareService):
         # Use TASK_SHARE_BASE_URL from settings
         base_url = getattr(settings, "TASK_SHARE_BASE_URL", "http://localhost:3000")
         return f"{base_url}/shared/task"
+
+    def _generate_share_url(self, share_link: ShareLink) -> str:
+        """Route approval bearers separately while preserving legacy URLs."""
+        if share_link.token_version == ShareLink.OPAQUE_TOKEN_VERSION:
+            return f"{self._get_share_url_base()}/access?token={share_link.share_token}"
+        return super()._generate_share_url(share_link)
 
     def _on_member_approved(
         self, db: Session, member: ResourceMember, resource: TaskResource

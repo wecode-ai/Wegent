@@ -6,10 +6,10 @@
 //! (`app.api.endpoints.adapter.teams.get_share_info` ->
 //! `SharedTeamService.get_share_info`, `app/services/shared_team.py`).
 //!
-//! The source route declares no authentication dependency: the share token is
-//! the credential. Flow, in source order:
-//! 1. `decode_share_token`: `urllib.parse.unquote` + AES-CBC/PKCS#7 decrypt of
-//!    `"{user_id}#{team_id}"`, then the active `users` row (`User.id`,
+//! Opaque tokens grant anonymous preview. Legacy locators require a valid
+//! session with existing Team configuration-read access. Flow:
+//! 1. Resolve the SHA-256 hash of the opaque share token to an active
+//!    `share_links` row, then read the active `users` row (`User.id`,
 //!    `is_active`) and the active Team `kinds` row (`Kind.id`, `kind`,
 //!    `is_active`, no owner predicate), rendering `user_name` and the Team
 //!    `name`/`spec.bind_mode`.
@@ -28,7 +28,6 @@ use chrono::NaiveDateTime;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::attachments::share_token::decode_id_pair;
 use crate::http_compat::FastApiError;
 use crate::state::AppState;
 use crate::teams::teams_repository::{KIND_COLUMNS, USER_COLUMNS};
@@ -106,28 +105,82 @@ struct TeamKindRow {
     kinds_updated_at: NaiveDateTime,
 }
 
-/// GET /api/teams/share/info: the source declares no authentication
-/// dependency, so the route is public.
-#[brz_http_server::get("/api/teams/share/info", access = public)]
+#[derive(Debug, FromMysqlRow)]
+struct TeamShareLinkRow {
+    resource_id: i64,
+    created_by_user_id: i64,
+    token_version: i32,
+}
+
+/// GET /api/teams/share/info: optional session for version-aware authorization.
+#[brz_http_server::get("/api/teams/share/info", access = optional)]
 async fn get_team_share_info(
     #[inject(state)] state: &AppState,
     query: brz_http_server::Query<ShareInfoQuery>,
+    #[auth] current_user: Option<crate::auth::OptionalSessionUser>,
 ) -> Result<TeamShareInfo, FastApiError> {
     let Some(share_token) = query.share_token.as_deref() else {
         return Err(missing_share_token());
     };
-    team_share_info(state, share_token).await
+    team_share_info(
+        state,
+        share_token,
+        current_user.as_ref().map(|user| i64::from(user.id)),
+    )
+    .await
 }
 
 /// The endpoint flow after route dispatch.
 async fn team_share_info(
     state: &AppState,
     share_token: &str,
+    viewer_id: Option<i64>,
 ) -> Result<TeamShareInfo, FastApiError> {
-    // `decode_share_token`: `_aes_decrypt` + the `"{user_id}#{team_id}"` parse.
-    let Some((user_id, team_id)) = decode_id_pair(share_token) else {
+    let share_link: Option<TeamShareLinkRow> = state
+        .mysql
+        .fetch_optional(
+            "SELECT share_links.resource_id AS resource_id, \
+             share_links.created_by_user_id AS created_by_user_id, \
+             share_links.token_version AS token_version \
+             FROM share_links WHERE (share_links.token_hash = ? OR \
+             (share_links.token_hash IS NULL AND share_links.token_version = 1 \
+              AND SHA2(REPLACE(REPLACE(share_links.share_token, '%2B', '+'), '%3D', '='), 256) = ?)) \
+             AND share_links.resource_type = 'Team' \
+             AND share_links.is_active = true \
+             AND share_links.expires_at > UTC_TIMESTAMP() LIMIT 1",
+            (
+                crate::share_access::token_hash(share_token),
+                crate::share_access::token_hash(share_token),
+            ),
+        )
+        .await
+        .map_err(unhandled)?;
+    let Some(link) = share_link else {
         return Err(bad_request(INVALID_SHARE_TOKEN));
     };
+    let user_id = link.created_by_user_id;
+    let team_id = link.resource_id;
+    if let Some(viewer) = crate::share_access::legacy_viewer(link.token_version, viewer_id)? {
+        let owned = owned_active_team(&state.mysql, team_id, viewer)
+            .await
+            .map_err(unhandled)?;
+        let store = crate::task_skills::kinds::KindCacheStore {
+            mysql: &state.mysql,
+            redis: state.redis.as_ref(),
+            erp: Some(state.erp.as_ref()),
+            resolvers: Some(&state.entity_resolvers),
+        };
+        if owned.is_none()
+            && !store
+                .team_share_permission(team_id, viewer)
+                .await
+                .map_err(unhandled)?
+        {
+            return Err(FastApiError::forbidden(
+                "Legacy share link requires resource access",
+            ));
+        }
+    }
 
     // The source runs both reads unconditionally (`user = ...; team = ...;
     // if not user or not team: return None`), so neither may short-circuit the

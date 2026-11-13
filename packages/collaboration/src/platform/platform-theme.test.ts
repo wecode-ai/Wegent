@@ -67,6 +67,20 @@ function rgb(triplet: string) {
 }
 
 describe("collaboration surface theme", () => {
+  it("scrolls the whole sidebar without shrinking project groups or nesting tree scroll", () => {
+    installTheme("light");
+    document.body.innerHTML = `<aside class="collaboration-platform-sidebar">
+      <section class="collaboration-workspace-project-list"></section>
+      <div class="collaboration-workspace-tree"></div>
+    </aside>`;
+    const sidebar = document.querySelector("aside")!;
+    expect(getComputedStyle(sidebar).overflowY).toBe("auto");
+    expect(getComputedStyle(sidebar.firstElementChild!).flexShrink).toBe("0");
+    expect(getComputedStyle(sidebar.lastElementChild!).flexShrink).toBe("0");
+    expect(getComputedStyle(sidebar.lastElementChild!).overflowY).not.toBe(
+      "auto",
+    );
+  });
   it.each(["light", "dark"] as const)(
     "keeps workspace and group surfaces readable in %s mode",
     (mode) => {
