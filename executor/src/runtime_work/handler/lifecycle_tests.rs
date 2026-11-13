@@ -597,6 +597,48 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
 }
 
 #[tokio::test]
+async fn continuation_admission_observes_a_turn_that_settled_during_preparation() {
+    let (handler, root, request) = setup("continuation-admission-after-drain");
+    handler
+        .store
+        .update_task("task-1", |link| link.goal_status = None);
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task-1".into(), RuntimeTaskKind::Personal);
+    let execution = start_test_execution(&handler, "task-1");
+    assert!(handler.is_busy_local_task("task-1"));
+
+    handler.route_codex_notification(notification("turn/started", "turn-1"));
+    let mut terminal = notification("turn/completed", "turn-1");
+    terminal["params"]["turn"]["status"] = json!("failed");
+    handler.route_codex_notification(terminal);
+    assert!(handler.finish_local_task_execution("task-1", execution));
+    handler.finish_scheduled_turn("task-1").await;
+    assert!(!handler.is_busy_local_task("task-1"));
+
+    handler
+        .submit_continuation(SpawnTurnRequest {
+            task_kind: None,
+            local_task_id: "task-1".into(),
+            runtime: "codex".into(),
+            request,
+            send_payload: None,
+            direct_thread_id: None,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id: Some("thread-1".into()),
+            initial_thread_goal: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(handler.queued_local_task_position("task-1"), None);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn native_goal_continuation_and_failed_turn_do_not_admit_unrequested_sends() {
     for goal_active in [false, true] {
         let (handler, root, request) = setup("native-send-still-owned");

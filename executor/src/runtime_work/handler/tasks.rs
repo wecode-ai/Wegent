@@ -1448,7 +1448,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.queue_turn(turn).await?;
+            self.submit_continuation(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
         }

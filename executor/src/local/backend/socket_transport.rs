@@ -291,6 +291,7 @@ impl LocalBackendTransport for SocketIoTransport {
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             let connected = self.connected_socket().await?;
+            let (event, payload) = completed_event_budget::fit_completed_event(event, payload)?;
             let (sender, receiver) = oneshot::channel();
             let sender = Arc::new(Mutex::new(Some(sender)));
             let ack_sender = Arc::clone(&sender);
