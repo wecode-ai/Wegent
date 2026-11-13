@@ -29,6 +29,8 @@ fn input() -> Input {
         priority: medium(),
         assignee_id: None,
         participants: vec![8],
+        resource_participants: Vec::new(),
+        assignee_resource: None,
         archived: false,
         due_at: None,
         version: Some(3),
@@ -105,7 +107,75 @@ fn active_route_inventory_selects_all_independent_issue_operations() {
         (http::Method::GET, "/api/v1/personal-issues/one/comments"),
         (http::Method::POST, "/api/v1/personal-issues/one/comments"),
         (http::Method::POST, "/api/v1/personal-issues/one/project"),
+        (
+            http::Method::GET,
+            "/api/v1/personal-issues/one/resources/agent/12",
+        ),
     ] {
         assert!(routes.matches(&method, path), "{method} {path}");
     }
+}
+
+#[test]
+fn resource_invitations_are_explicit_and_do_not_grant_human_access() {
+    let mut row = issue();
+    row.metadata
+        .0
+        .resource_participants
+        .push(ResourceParticipant {
+            kind: "agent".into(),
+            id: 12,
+            name: "Agent".into(),
+            team_id: Some(12),
+            ..Default::default()
+        });
+    let mut body = input();
+    body.resource_participants = participants::references(&row.metadata.0.resource_participants);
+    assert_eq!(admission(&row, 8, &body), Admission::Allowed);
+    body.resource_participants.clear();
+    assert_eq!(admission(&row, 8, &body), Admission::OwnerRequired);
+    assert_eq!(admission(&row, 7, &body), Admission::Allowed);
+    assert!(!row.can_read(12));
+}
+
+#[test]
+fn resource_assignment_requires_an_invitation_and_never_accepts_credentials() {
+    let mut body = input();
+    body.assignee_resource = Some(ResourceInvitation {
+        kind: "agent".into(),
+        id: 12,
+    });
+    assert!(body.validate().is_err());
+    body.resource_participants
+        .push(body.assignee_resource.clone().unwrap());
+    assert!(body.validate().is_ok());
+    body.assignee_id = Some(8);
+    assert!(body.validate().is_err());
+    assert!(serde_json::from_value::<Input>(json!({"title":"Work","resource_participants":[{"kind":"agent","id":12,"credentials":"private"}]})).is_err());
+}
+
+#[test]
+fn issue_serialization_does_not_disclose_resource_configuration() {
+    let mut row = issue();
+    row.metadata
+        .0
+        .resource_participants
+        .push(ResourceParticipant {
+            kind: "group".into(),
+            id: 12,
+            name: "Invited group".into(),
+            instructions: "private instructions".into(),
+            group_snapshot: Some(json!({"private":"configuration"})),
+            ..Default::default()
+        });
+    let stored = serde_json::to_value(&row.metadata.0).unwrap();
+    assert_eq!(
+        stored["resource_participants"][0]["instructions"],
+        "private instructions"
+    );
+    let public = serde_json::to_value(&row).unwrap();
+    let descriptor = &public["metadata"]["resource_participants"][0];
+    assert_eq!(descriptor["name"], "Invited group");
+    assert!(descriptor.get("instructions").is_none());
+    assert!(descriptor.get("group_snapshot").is_none());
 }

@@ -97,7 +97,7 @@ async fn seed(mysql: &MysqlService) {
         .unwrap();
     mysql.execute("INSERT INTO users VALUES (7,'Owner',true),(8,'Participant',true),(9,'Outsider',true),(10,'Inactive',false)",()).await.unwrap();
     mysql.execute("CREATE TABLE kinds (id BIGINT PRIMARY KEY,user_id INT,name TEXT,kind VARCHAR(50),namespace VARCHAR(100),is_active BOOL,json JSON)",()).await.unwrap();
-    mysql.execute("CREATE TABLE resource_members (id BIGINT PRIMARY KEY AUTO_INCREMENT,resource_type VARCHAR(50),resource_id BIGINT,entity_type VARCHAR(50),entity_id VARCHAR(100),status VARCHAR(50),role VARCHAR(50))",()).await.unwrap();
+    mysql.execute("CREATE TABLE resource_members (id BIGINT PRIMARY KEY AUTO_INCREMENT,resource_type VARCHAR(50),resource_id BIGINT,entity_type VARCHAR(50),entity_id VARCHAR(100),status VARCHAR(50),role VARCHAR(50)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",()).await.unwrap();
     mysql.execute("INSERT INTO kinds VALUES (2001,7,'Project space','CollaborationWorkspace','default',true,JSON_OBJECT())",()).await.unwrap();
     mysql.execute("INSERT INTO loop_items (id,resource_type,status,name,title,description,metadata,version,next_item_number,created_by_user_id) VALUES ('1001','project','active','Project','Project','',JSON_OBJECT('membership_mode','inherit','task_provider','backend'),1,1,7)",()).await.unwrap();
     mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES ('CloudProject',1001,'workspace','2001','approved','Owner')",()).await.unwrap();
@@ -397,6 +397,7 @@ async fn verify(mysql: MysqlService) {
             assert_eq!(first["items"][0]["priority"], "urgent");
         }
     }
+    verify_resource_invitations(&state).await;
 }
 
 #[tokio::test]
@@ -429,4 +430,88 @@ async fn cp13_cp14_independent_issues_preserve_owner_invitation_and_transaction_
         .await
         .unwrap();
     outcome.unwrap();
+}
+
+async fn verify_resource_invitations(state: &AppState) {
+    state.mysql.execute("INSERT INTO kinds VALUES (3001,7,'Coding Agent','Team','default',true,JSON_OBJECT()),(3002,9,'Private Agent','Team','default',true,JSON_OBJECT()),(4001,7,'Team','CollaborationGroup','workspaces/2001',true,JSON_OBJECT('spec',JSON_OBJECT('leader',JSON_OBJECT('kind','human','id','8'),'members',JSON_ARRAY())))",()).await.unwrap();
+    state.mysql.execute("INSERT INTO resource_members(resource_type,resource_id,entity_type,entity_id,status,role) VALUES ('CollaborationGroup',4001,'workspace','2001','approved','Developer')",()).await.unwrap();
+    let mut body = input("Typed invitation", None, vec![]);
+    body.resource_participants = vec![
+        ResourceInvitation {
+            kind: "agent".into(),
+            id: 3001,
+        },
+        ResourceInvitation {
+            kind: "group".into(),
+            id: 4001,
+        },
+    ];
+    body.assignee_resource = Some(body.resource_participants[0].clone());
+    let row = create_issue(state, user(7), body).await.unwrap();
+    assert_eq!(row.metadata.0.resource_participants.len(), 2);
+    assert_eq!(row.metadata.0.participants, vec![8]);
+    assert_eq!(row.metadata.0.resource_participants[0].team_id, Some(3001));
+    assert!(get_issue(state, user(8), &row.id).await.is_ok());
+    assert!(
+        processing_resource(state, user(7), &row.id, "agent", "3001")
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        processing_resource(state, user(8), &row.id, "agent", "3001")
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    state
+        .mysql
+        .execute("UPDATE kinds SET is_active=false WHERE id=3001", ())
+        .await
+        .unwrap();
+    assert_eq!(
+        processing_resource(state, user(7), &row.id, "agent", "3001")
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    state
+        .mysql
+        .execute("UPDATE kinds SET is_active=true WHERE id=3001", ())
+        .await
+        .unwrap();
+    assert_eq!(
+        get_issue(state, user(9), &row.id)
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let mut forbidden = input("Unowned Agent", None, vec![]);
+    forbidden.resource_participants = vec![ResourceInvitation {
+        kind: "agent".into(),
+        id: 3002,
+    }];
+    assert_eq!(
+        create_issue(state, user(7), forbidden)
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let mut remove = input("Typed invitation", Some(row.version), vec![]);
+    remove.resource_participants = vec![ResourceInvitation {
+        kind: "agent".into(),
+        id: 3001,
+    }];
+    let updated = update_issue(state, user(7), &row.id, remove).await.unwrap();
+    assert!(updated.metadata.0.participants.is_empty());
+    assert_eq!(
+        get_issue(state, user(8), &row.id)
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
 }

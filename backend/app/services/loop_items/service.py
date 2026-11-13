@@ -297,6 +297,9 @@ class LoopItemService:
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         values["badges"] = issue_badges(metadata) if can_view_detail else []
+        values["resource_participants"] = (
+            metadata.get("resource_participants", []) if can_view_detail else []
+        )
         group = metadata.get("collaboration_group")
         if item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id:
             group = None
@@ -597,6 +600,7 @@ class LoopItemService:
         db.delete(collaborator)
         db.commit()
 
+    @trace_sync("loop_items.create", tracer_name="backend")
     def create(
         self,
         db: Session,
@@ -616,8 +620,10 @@ class LoopItemService:
             user_id,
             BaseRole.Developer,
         )
+        parent = None
         if values.parent_id is not None:
-            self._require_parent(db, values.parent_id, cloud_project_id)
+            parent = self._require_parent(db, values.parent_id, cloud_project_id)
+            self._require_item_access(db, parent, user_id)
         project = (
             db.query(CloudProject)
             .filter(CloudProject.id == cloud_project_id)
@@ -625,10 +631,34 @@ class LoopItemService:
             .populate_existing()
             .one()
         )
+        if values.request_id:
+            existing = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == cloud_project_id,
+                    LoopItem.created_by_user_id == user_id,
+                    LoopItem.metadata_json["creation_request_id"].as_string()
+                    == values.request_id,
+                )
+                .with_for_update()
+                .first()
+            )
+            if existing is not None:
+                self._require_item_access(db, existing, user_id)
+                if not loop_datetime_value_is_unset(existing.deleted_at):
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "Created TODO has been archived"
+                    )
+                return existing
         sequence = project.next_item_number
         project.next_item_number += 1
         payload = values.model_dump(
-            exclude={"notify_assignee", "runner_selection", "personal_task"}
+            exclude={
+                "notify_assignee",
+                "runner_selection",
+                "personal_task",
+                "request_id",
+            }
         )
         runner_selection = (
             values.runner_selection.model_dump(exclude_none=True)
@@ -649,9 +679,15 @@ class LoopItemService:
         collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict[str, Any] = {}
+        if values.request_id:
+            task_metadata["creation_request_id"] = values.request_id
         if milestone_id is not None:
             task_metadata["milestone_id"] = milestone_id
-        task_metadata["security_level"] = default_issue_security(project)
+        task_metadata["security_level"] = (
+            "related"
+            if parent is not None and item_security(parent, project) == "related"
+            else default_issue_security(project)
+        )
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
         elif values.parent_id is None and apply_project_workflow:

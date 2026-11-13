@@ -4,6 +4,9 @@ import { fillTemplateRoleBindings } from '../../e2e/desktop/scenarios/collaborat
 
 const role = (index: number) =>
   `[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-role-main-role-${index}"]`
+const humanOption = role(0) + ' option[value^="human:"]'
+const agentOption = (index: number) =>
+  `${role(index)} option[value="agent:template-agent:main-role-${index}"]`
 
 test('waits for the first role catalog before reading or selecting its human coordinator', async () => {
   let ready = false
@@ -16,7 +19,7 @@ test('waits for the first role catalog before reading or selecting its human coo
     reachedWait = resolve
   })
   const command = vi.fn(async (action: string, selector: string) => {
-    if (action === 'waitFor' && selector === role(0)) {
+    if (action === 'waitFor' && selector === humanOption) {
       reachedWait()
       await catalog
     }
@@ -39,7 +42,7 @@ test('waits for the first role catalog before reading or selecting its human coo
   expect(command).toHaveBeenCalledWith('select', role(0), { value: 'human:1' })
 })
 
-test('waits for the current-device Agent catalog before binding every non-human template role', async () => {
+test('waits for the embedded Agent catalog before binding every non-human template role', async () => {
   let catalogReady = false
   let releaseCatalog!: () => void
   let reachedWait!: () => void
@@ -51,7 +54,7 @@ test('waits for the current-device Agent catalog before binding every non-human 
   })
   const command = vi.fn(async (action: string, selector: string) => {
     if (action === 'getAttribute') return 'human:1'
-    if (action === 'waitFor' && selector === role(1)) {
+    if (action === 'waitFor' && selector === agentOption(1)) {
       reachedWait()
       await catalog
     }
@@ -75,10 +78,9 @@ test('waits for the current-device Agent catalog before binding every non-human 
   expect((await result).error).toBeNull()
   expect(command).toHaveBeenCalledWith('select', role(0), { value: 'human:1' })
   for (const index of [1, 2]) {
-    expect(command).toHaveBeenCalledWith('waitFor', role(index), { text: '当前设备智能体' })
+    expect(command).toHaveBeenCalledWith('waitFor', agentOption(index))
     expect(command).toHaveBeenCalledWith('select', role(index), {
-      by: 'label',
-      value: '当前设备智能体',
+      value: `agent:template-agent:main-role-${index}`,
     })
   }
 })
@@ -113,7 +115,6 @@ test('opens collapsed template customization before reading its role catalog', a
   )
   expect(command).toHaveBeenCalledWith('select', role(0), { value: 'human:1' })
   expect(command).toHaveBeenCalledWith('select', role(2), {
-    by: 'label',
-    value: '当前设备智能体',
+    value: 'agent:template-agent:main-role-2',
   })
 })

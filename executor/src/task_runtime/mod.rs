@@ -24,7 +24,8 @@ pub use model::{
     DeliveryUpdate, IssueComment, LocalComment, LocalCommentCreate, LocalExecution,
     LocalExecutionClaim, LocalRuntimeCommentStart, LoopItem, ProjectCreate, ProjectDescriptor,
     ProjectFile, ProjectStoreKind, ProjectTagChange, ProjectUpdate, RuntimeTaskAddress,
-    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskSearch, TaskUpdate,
+    TaskAttachment, TaskBinding, TaskCreate, TaskCreateOptions, TaskProviderKind, TaskReorder,
+    TaskSearch, TaskUpdate,
 };
 pub use router::TaskRuntime;
 pub(crate) use store::milestones::MilestoneInput;

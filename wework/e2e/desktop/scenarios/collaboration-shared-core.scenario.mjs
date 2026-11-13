@@ -1,3 +1,5 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { verifyCommentAssignmentTargets } from '../modules/comment-assignment-targets.mjs'
 import assert from 'node:assert/strict'
 import {
@@ -334,6 +336,10 @@ export function createDesktopScenario({
         await projectOnlyNavigation.verify(control, scoped)
         await capture(control, 'collaboration-shared-core-project-only-navigation.png')
 
+        await revealCollaborationSidebarElement(
+          control,
+          scoped('[data-testid="collaboration-primary-devices"]')
+        )
         await control.command('click', scoped('[data-testid="collaboration-primary-devices"]'))
         const deviceRow = scoped(`[data-testid="collaboration-devices-row-${remoteDevice.id}"]`)
         await control.command('waitFor', deviceRow, { visible: true, timeoutMs: uiTimeoutMs })
@@ -653,6 +659,7 @@ export function createDesktopScenario({
         await selectCollaborationProjectView(control, scoped('').trim(), 'board', uiTimeoutMs)
         const maintainerProject = await request(`/api/v1/cloud-projects/${project.id}`)
         assert.equal(maintainerProject.access_role, 'Maintainer')
+        await showAllCollaborationIssues(control, scoped('').trim())
         await verifyPersonalBoardGrouping(control, {
           scoped,
           request,
@@ -660,6 +667,7 @@ export function createDesktopScenario({
           groupBy: 'priority',
         })
         await selectProjectBoardGrouping(control, scoped, 'status')
+        await showAllCollaborationIssues(control, scoped('').trim())
         await capture(control, 'collaboration-shared-core-personal-board-views.png')
         await verifyMultiTagBoardDrag(control, { scoped, request, project, uiTimeoutMs })
         await control.command('waitFor', scoped('[data-testid="collaboration-issue-create"]'), {

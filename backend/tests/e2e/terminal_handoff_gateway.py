@@ -425,6 +425,24 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.addCleanup(socket_messages.close)
         socket_messages.subscribe("socketio")
         self._wait_for(lambda: socket_messages.get_message(timeout=0.1))
+        if rust:
+            # The shared channel also carries ACK probes unrelated to this task.
+            self.assertGreater(
+                self.redis.publish(
+                    "socketio",
+                    json.dumps(
+                        {
+                            "method": "callback",
+                            "host_id": self.marker,
+                            "sid": self.marker,
+                            "namespace": "/",
+                            "id": 1,
+                            "args": [],
+                        }
+                    ),
+                ),
+                0,
+            )
 
         with self._reject_handoff_write(task_id):
             self._callback(task_id, subtask_id, answer, rust=rust, fail=True)

@@ -19,8 +19,8 @@ export async function verifyCollaborationIssueHome(
   const projectRow = inCollaborationSidebar(
     `[data-testid="collaboration-workspace-project-${project.id}"]`
   )
-  const newConversation = inCollaborationSidebar(
-    `[data-testid="collaboration-project-new-conversation-${project.id}"]`
+  const projectMenu = inCollaborationSidebar(
+    `[data-testid="collaboration-project-menu-${project.id}"]`
   )
   const input = scoped(
     '[data-testid="collaboration-issue-workspace"] [data-testid="collaboration-home-issue-content"]'
@@ -37,7 +37,7 @@ export async function verifyCollaborationIssueHome(
       { text: project.name }
     )
   }
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
   assert.equal(
     Number(await control.command('getElementCount', `${projectRow} svg:not(.stand-in-icon)`)),
     0,
@@ -52,7 +52,19 @@ export async function verifyCollaborationIssueHome(
   )
   await control.command('hover', projectRow)
   assert.equal(
-    await control.command('getComputedStyleValue', `${newConversation}`, { value: 'height' }),
+    Number(
+      await control.command(
+        'getElementCount',
+        inCollaborationSidebar(
+          `[data-testid="collaboration-project-new-conversation-${project.id}"]`
+        )
+      )
+    ),
+    0,
+    'Project conversations must not add a trailing sidebar action'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', projectMenu, { value: 'height' }),
     '28px'
   )
   const rowHeight = await control.command(
@@ -147,7 +159,8 @@ export async function verifyCollaborationIssueHome(
     assert.ok(created, 'Issue creation did not persist the composer content')
     assert.equal(String(created[target.field]), target.id, `${target.kind} owner was not persisted`)
     assert.match(created.description, /wework-issue:\/\//)
-    await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
+    await control.command('waitFor', scoped(`[data-testid="cloud-task-activity-${created.id}"]`))
+    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-detail-close"]'))
   }
 
   await openComposer()

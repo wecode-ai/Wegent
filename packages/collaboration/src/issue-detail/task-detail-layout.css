@@ -2665,6 +2665,7 @@
 }
 
 .task-detail-new-comment-actions {
+  flex-wrap: wrap;
   margin-top: 4px;
 }
 

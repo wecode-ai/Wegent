@@ -1,3 +1,4 @@
+import { disconnectDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
@@ -12,17 +13,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let projectTestId
   return {
     async verify(control) {
+      await disconnectDesktopCloud(control)
+      await control.command('navigate', 'body', { value: '/' })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      for (const location of ['local', 'cloud']) {
-        await control.command('waitFor', sidebar(`collaboration-project-group-${location}`), {
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        })
-      }
+      await control.command('waitFor', sidebar('collaboration-project-tree'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(
           await control.command(
@@ -32,25 +33,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         ),
         0
       )
-      await control.command(
-        'waitFor',
-        sidebar('collaboration-workspace-tree-wework-local-workspace'),
-        { visible: true, timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', sidebar('collaboration-project-tree'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            sidebar('collaboration-workspace-tree-wework-local-workspace')
-          )
-        ),
+        Number(await control.command('getElementCount', sidebar('collaboration-project-tree'))),
         1
       )
       await captureScreenshot(control, 'project-first-01-default.png', active)
 
-      await control.command('clickWhenEnabled', sidebar('collaboration-project-create-local'), {
-        timeoutMs: uiTimeoutMs,
-      })
+      // Project creation belongs to the personal-group menu; this story explicitly exercises offline creation.
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="collaboration-workspace-nav-create-project"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('waitFor', '[data-testid="collaboration-project-name-input"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -66,12 +69,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         '[data-testid="collaboration-project-create-confirm"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('waitFor', sidebar('collaboration-project-group-local'), {
+      await control.command('waitFor', sidebar('collaboration-project-tree'), {
         text: projectName,
         timeoutMs: uiTimeoutMs,
       })
       const snapshot = JSON.parse(
-        await control.command('snapshot', sidebar('collaboration-project-group-local'))
+        await control.command('snapshot', sidebar('collaboration-project-tree'))
       )
       for (const testId of snapshot.testIds.filter(id =>
         id.startsWith('collaboration-workspace-project-')
@@ -101,10 +104,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
             sidebar('collaboration-workspace-toggle-wework-local-workspace')
           )
         ),
-        0
+        1
       )
       assert.equal(
-        (await control.command('getText', sidebar('collaboration-project-group-local'))).includes(
+        (await control.command('getText', sidebar('collaboration-project-tree'))).includes(
           '本地空间'
         ),
         false

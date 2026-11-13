@@ -26,6 +26,8 @@ export function PersonalIssueList({
   showCompleted,
   assignedOnly,
   onOpenIssue,
+  onOpenProject,
+  selectedIssue,
   active,
   onOpenTask,
   recentIssue,
@@ -44,6 +46,8 @@ export function PersonalIssueList({
   showCompleted: boolean
   assignedOnly: boolean
   onOpenIssue(issue: WorkspaceMyWorkItem): void
+  onOpenProject?(project: CollaborationProject): void
+  selectedIssue?: Pick<WorkspaceMyWorkItem, 'id' | 'cloud_project_id'>
 }) {
   const { t, i18n } = useTranslation('common')
   useSidebarRelativeTimeRefresh(active)
@@ -138,12 +142,23 @@ export function PersonalIssueList({
       {groups.map(({ project, items }) => (
         <section
           key={project.id}
-          className="mb-6"
+          className="mb-4"
           data-testid={`personal-home-project-${project.id}`}
         >
           <h3 className="mb-1 flex items-center gap-2 text-base font-medium text-text-secondary">
             <FolderOpen aria-hidden="true" className="h-4 w-4 text-text-muted" />
-            {project.name}
+            {onOpenProject ? (
+              <button
+                type="button"
+                data-testid={`personal-issues-project-${project.id}`}
+                className="min-h-11 min-w-11 truncate text-left hover:underline md:min-h-0 md:min-w-0"
+                onClick={() => onOpenProject(project)}
+              >
+                {project.name}
+              </button>
+            ) : (
+              project.name
+            )}
             <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
               {items.length}
             </span>
@@ -187,40 +202,49 @@ export function PersonalIssueList({
                 }}
                 display={{
                   showAssignee: true,
-                  showDate: false,
+                  showDate: true,
                   showPriority: true,
                   showTags: true,
                 }}
                 detailButtonTestId={`personal-home-issue-${item.id}`}
-                cardClassName="cursor-pointer focus-within:bg-text-primary/[0.025]"
+                articleProps={{
+                  'aria-current':
+                    selectedIssue?.id === item.id &&
+                    selectedIssue.cloud_project_id === item.cloud_project_id
+                      ? 'true'
+                      : undefined,
+                }}
+                cardClassName="cursor-pointer focus-within:bg-text-primary/[0.025] aria-[current=true]:bg-muted"
                 detailButtonClassName="cursor-pointer keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
                 onOpen={() => onOpenIssue(item)}
                 titleTrailing={
-                  waiting ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-xs font-normal text-amber-700 dark:text-amber-400">
-                      <Bell aria-hidden="true" className="h-3.5 w-3.5" />
-                      {status}
-                    </span>
-                  ) : undefined
+                  <>
+                    {waiting ? (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-xs font-normal text-amber-700 dark:text-amber-400">
+                        <Bell aria-hidden="true" className="h-3.5 w-3.5" />
+                        {status}
+                      </span>
+                    ) : null}
+                    {assignedAt && (
+                      <span
+                        data-testid={`personal-home-assignment-age-${item.id}`}
+                        title={new Date(assignedAt).toLocaleString(i18n.language)}
+                        className="shrink-0 text-xs font-normal text-text-muted"
+                      >
+                        {t('personalHome.assignedFor', {
+                          duration: personalHomeAssignmentDuration(assignedAt, i18n.language),
+                        })}
+                      </span>
+                    )}
+                  </>
                 }
                 summary={
                   <>
                     <PersonalHomeIssueActivity
                       summary={
                         <>
-                          {assignedAt && (
-                            <p
-                              data-testid={`personal-home-assignment-age-${item.id}`}
-                              title={new Date(assignedAt).toLocaleString(i18n.language)}
-                              className="mb-1 text-xs text-text-muted"
-                            >
-                              {t('personalHome.assignedFor', {
-                                duration: personalHomeAssignmentDuration(assignedAt, i18n.language),
-                              })}
-                            </p>
-                          )}
                           {item.description ? (
-                            <p className="line-clamp-2 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
+                            <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
                               {item.description}
                             </p>
                           ) : undefined}

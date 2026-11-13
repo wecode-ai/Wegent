@@ -94,6 +94,7 @@ export interface CollaborationPlatformHostAdapter {
     onClose(): void;
   }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
+  convertLocalProjectToCloud?(project: CollaborationProject): void;
   openProjectConversation?(project: CollaborationProject): void;
   currentUser?: {
     id: number;

@@ -322,7 +322,9 @@ mod archive_tests;
 #[path = "store/tests/mod.rs"]
 mod tests;
 
+mod project_migration;
 mod project_records;
+pub use project_migration::ProjectMigrationSnapshot;
 
 mod task_records;
 
