@@ -1,7 +1,10 @@
+from collections.abc import Generator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from app.services.knowledge.document_read_service import DocumentReadService
 from app.services.knowledge.orchestrator import KnowledgeOrchestrator
@@ -9,14 +12,17 @@ from shared.event_reporting import register_event_receiver
 
 
 @pytest.fixture
-def read_events():
-    events = []
+def read_events() -> Generator[list[dict[str, Any]], None, None]:
+    events: list[dict[str, Any]] = []
 
     class Receiver:
-        def accepts(self, event_type):
+        def accepts(self, event_type: str) -> bool:
             return event_type == "knowledge.document.read.finished"
 
-        def receive(self, event):
+        def observation_limit(self, event_type: str) -> int:
+            return 0
+
+        def receive(self, event: dict[str, Any]) -> None:
             events.append(event)
 
     register_event_receiver(Receiver())
@@ -24,7 +30,9 @@ def read_events():
     register_event_receiver(None)
 
 
-def test_batch_read_reports_every_result(mocker, read_events):
+def test_batch_read_reports_every_result(
+    mocker: MockerFixture, read_events: list[dict[str, Any]]
+) -> None:
     service = DocumentReadService()
     documents = {
         i: SimpleNamespace(id=i, kind_id=1, attachment_id=i, name="doc")
@@ -51,8 +59,12 @@ def test_batch_read_reports_every_result(mocker, read_events):
     ],
 )
 def test_single_read_records_final_outcome_and_actor(
-    mocker, read_events, source_type, text, expected_status
-):
+    mocker: MockerFixture,
+    read_events: list[dict[str, Any]],
+    source_type: str,
+    text: str,
+    expected_status: str,
+) -> None:
     document = SimpleNamespace(
         id=9,
         kind_id=1,
@@ -93,7 +105,7 @@ def test_single_read_records_final_outcome_and_actor(
     assert event["data"]["entrypoint"] == "openapi"
 
 
-def test_openapi_document_read_passes_its_entrypoint(mocker):
+def test_openapi_document_read_passes_its_entrypoint(mocker: MockerFixture) -> None:
     from app.api.endpoints.knowledge_open import get_document_content_open
 
     read = mocker.patch(
@@ -109,7 +121,9 @@ def test_openapi_document_read_passes_its_entrypoint(mocker):
     assert read.call_args.kwargs["entrypoint"] == "openapi"
 
 
-def test_external_mcp_document_read_reports_caller(mocker, read_events):
+def test_external_mcp_document_read_reports_caller(
+    mocker: MockerFixture, read_events: list[dict[str, Any]]
+) -> None:
     from app.mcp_server.tools.knowledge_external import _get_document_content_sync
 
     document = SimpleNamespace(
@@ -139,8 +153,8 @@ def test_external_mcp_document_read_reports_caller(mocker, read_events):
 
 
 def test_external_mcp_serialization_failure_is_not_reported_as_success(
-    mocker, read_events
-):
+    mocker: MockerFixture, read_events: list[dict[str, Any]]
+) -> None:
     from app.mcp_server.tools.knowledge_external import _get_document_content_sync
 
     document = SimpleNamespace(

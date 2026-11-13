@@ -3,21 +3,31 @@
 from contextvars import ContextVar
 from functools import wraps
 from inspect import signature
-from typing import Any
+from typing import Any, Callable, ParamSpec, Protocol, TypeVar
 
 from shared.event_reporting.catalogs.knowledge import observe
 
 suppressed_read_events: ContextVar[bool] = ContextVar(
     "suppressed_read_events", default=False
 )
+P = ParamSpec("P")
 
 
-def report_single_read(function):
+class _DocumentReadResult(Protocol):
+    document_id: int
+
+    def model_dump(self) -> dict[str, Any]: ...
+
+
+R = TypeVar("R", bound=_DocumentReadResult)
+
+
+def report_single_read(function: Callable[P, R]) -> Callable[P, R]:
     """Report a single read after its complete response has been validated."""
     call_signature = signature(function)
 
     @wraps(function)
-    def wrapped(*args, **kwargs):
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
         arguments = call_signature.bind(*args, **kwargs).arguments
         try:
             user_id = getattr(arguments["user"], "id", None)
