@@ -1094,6 +1094,7 @@ describe('Wework collaboration workspace API', () => {
     'archived',
     'foreign',
     'unlinked',
+    'ambiguous-alias',
     'local',
     'superseded',
     'superseded-error',
@@ -1150,7 +1151,15 @@ describe('Wework collaboration workspace API', () => {
           },
           project: project as never,
           runtimePort: { bindTask: vi.fn(), unbindTask: vi.fn() },
-          services: { standInApi: { readTask } } as never,
+          services: {
+            standInApi: {
+              readTask,
+              deviceIdentity: vi.fn(async (deviceId: string) => ({
+                deviceId,
+                backendDeviceId: status === 'ambiguous-alias' ? 'app-record-42' : deviceId,
+              })),
+            },
+          } as never,
           setLocation: vi.fn(),
           userId: 1,
           workspace: { id: 'workspace', name: 'Workspace' } as never,

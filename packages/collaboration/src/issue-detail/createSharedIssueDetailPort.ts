@@ -22,6 +22,7 @@ import {
 } from "./issueAssigneeResources";
 
 export interface SharedIssueDetailTaskBinding {
+  stand_in_pending?: boolean | null;
   id: string;
   cloud_project_id: string;
   loop_item_id: string | null;
@@ -248,6 +249,7 @@ export function toSharedIssueDetailTaskBinding(
     executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     human_assignment_id: binding.humanAssignmentId,
+    stand_in_pending: binding.standInPending,
     dispatch_id: binding.dispatchId,
     linked_at: binding.linkedAt,
   };

@@ -44,11 +44,11 @@ The checked-in default route table is the inventory of active Rust-owned APIs,
 including migrated and newly added routes; every other request is forwarded to
 Python. Use the following ownership rules for every API change:
 
-| Change | Where to implement it |
-| --- | --- |
-| New Backend API | `backend-rs/`; add the handler, active route entry, and focused tests together. |
-| Existing API not selected for Rust | `backend/` |
-| Existing API already selected for and implemented by Rust | `backend-rs/` |
+| Change                                                    | Where to implement it                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| New Backend API                                           | `backend-rs/`; add the handler, active route entry, and focused tests together. |
+| Existing API not selected for Rust                        | `backend/`                                                                      |
+| Existing API already selected for and implemented by Rust | `backend-rs/`                                                                   |
 
 ### Finding Rust-owned APIs
 
@@ -116,7 +116,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them, except for changes to desktop updating, rollback, upgrade data migration, or their packaging and release gates: those changes require focused real packaged-Electron upgrade and rollback E2E verification. This execution policy overrides other automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
 
-Desktop update eligibility must come from exact, CI-verified source-to-target package pairs. A target's minimum source version is a constraint, never proof of compatibility. Preserve required intermediate packages, and never promote an upgrade edge without successful upgrade and rollback evidence bound to the delivered package hashes. See `wework/AGENTS.md` for the maintenance contract.
+Desktop update eligibility uses interval compatibility: a CI-verified A-to-D package pair permits published sources B with A <= B < D to upgrade directly to D in the same platform, architecture, and channel catalog. Intermediate direct pairs are accepted without separate verification; never fabricate evidence for them. A target's minimum source version remains a constraint, never proof by itself. Preserve revocations and required intermediate packages, and only publish evidence records backed by successful upgrade and rollback verification of the delivered package hashes. See `wework/AGENTS.md` for the maintenance contract.
 
 The explicit release-gate exception is macOS x64: it adopts successful arm64 version paths with matching source revisions and declared architecture-equivalence evidence, while retaining x64 package hashes. See the scoped maintenance contract for this exception; Windows x64 remains independently verified.
 

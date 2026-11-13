@@ -843,7 +843,11 @@ export function createDesktopScenario({
         // The comment deep link scrolls the original context into view first.
         // Verify the heading through a real scroll after checking that landing.
         const originalTitle = `${ORIGINAL} [data-testid="cloud-todo-detail-title"]`
-        await control.command('scrollIntoView', originalTitle)
+        await control.command(
+          'scrollToRatioAsUser',
+          `${ORIGINAL} [data-testid="cloud-todo-detail-scroll"]`,
+          { value: '0' }
+        )
         await control.command('waitFor', originalTitle, {
           text: '判断旧客户订单兼容策略',
           visible: true,

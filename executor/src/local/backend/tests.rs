@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+
+#[path = "tests/runtime_event_replay.rs"]
+mod runtime_event_replay;
 use crate::config::device::UpdateConfig;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -555,7 +558,15 @@ impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
     }
 }
 
-async fn acknowledge_route_registration(mut socket: WebSocket, registered: Arc<Notify>) {
+async fn acknowledge_route_registration(socket: WebSocket, registered: Arc<Notify>) {
+    acknowledge_route_registration_with_events(socket, registered, None).await;
+}
+
+async fn acknowledge_route_registration_with_events(
+    mut socket: WebSocket,
+    registered: Arc<Notify>,
+    events: Option<tokio::sync::mpsc::UnboundedSender<Value>>,
+) {
     socket
         .send(Message::Text(
             r#"0{"sid":"route-test","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}"#
@@ -574,6 +585,11 @@ async fn acknowledge_route_registration(mut socket: WebSocket, registered: Arc<N
         } else if let Some(event) = packet.strip_prefix("42/local-executor,") {
             let (ack_id, payload) = event.split_once('[').unwrap();
             let payload: Value = serde_json::from_str(&format!("[{payload}")).unwrap();
+            if payload[0] == "runtime:event" {
+                if let Some(events) = &events {
+                    let _ = events.send(payload[1].clone());
+                }
+            }
             if payload[0] == "device:heartbeat" {
                 registered.notify_one();
             }

@@ -1,5 +1,6 @@
 import { open } from 'node:fs/promises'
 import { waitForElementWidth, waitForSnapshot } from './conversation-layout.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
 import { waitForTerminalOutput } from './terminal-compatibility-flows.mjs'
 
 import {
@@ -442,32 +443,48 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
   assert.equal(await control.command('getValue', composerSelector), '')
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')
-  await control.command('pasteFile', composerSelector, {
-    filename: 'test-large-generated.bin',
-    mimeType: 'application/octet-stream',
-    fileSize: 100 * 1024 * 1024 + 1,
-    value: 'YQ==',
+  const transportGates = runtimeTransportGates(control)
+  const finishGateId = 'attachment-finish-response-drop'
+  await transportGates.arm({
+    id: finishGateId,
+    kind: 'response',
+    name: 'attachment.finish',
+    drop: true,
   })
-  await control.command(
-    'waitFor',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="attachment-badge"]`,
-    {
-      text: 'test-large-generated.bin',
-      visible: true,
-      // Staging this file requires over 260 sequential renderer-to-host chunks.
-      timeoutMs: 75_000,
-    }
-  )
-  assert.equal(
-    Number(
-      await control.command(
-        'getElementCount',
-        `${ACTIVE_WORKBENCH_SELECTOR} :is([data-testid="uploading-attachment-badge"], [data-testid="attachment-error-badge"])`
-      )
-    ),
-    0,
-    'The generated attachment must finish staging without an error'
-  )
+  try {
+    await control.command('pasteFile', composerSelector, {
+      filename: 'test-large-generated.bin',
+      mimeType: 'application/octet-stream',
+      fileSize: 100 * 1024 * 1024 + 1,
+      value: 'YQ==',
+    })
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes('test-large-generated.bin') &&
+        snapshot.testIds.includes('attachment-badge') &&
+        !snapshot.testIds.includes('uploading-attachment-badge') &&
+        !snapshot.testIds.includes('attachment-error-badge'),
+      'A generated local attachment above 100 MiB did not recover after its finish response was dropped',
+      120_000,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
+    const droppedFinish = await transportGates.wait(finishGateId)
+    assert.equal(droppedFinish.dropped, true, 'The real attachment finish response was not dropped')
+    assert.equal(
+      droppedFinish.deliveries,
+      0,
+      'The dropped attachment finish response was delivered'
+    )
+    assert.match(
+      droppedFinish.value.result,
+      /test-large-generated\.bin$/,
+      'The dropped response did not contain the completed host attachment path'
+    )
+    await transportGates.save(resultDir, 'attachment-finish-response-recovery.json', [finishGateId])
+  } finally {
+    await transportGates.reset()
+  }
   await control.command('hover', '[data-testid="attachment-badge"]')
   await control.command('click', '[data-testid="remove-attachment-button"]')
   await control.command('pastePaths', composerSelector, {

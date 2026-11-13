@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import { createCatalogAutoCompactionVerification } from './catalog-auto-compaction.mjs'
+import { createLoadedCompactionProfileVerification } from './loaded-compaction-profile.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -161,6 +162,7 @@ export function createDesktopScenario(options) {
   } = options
   const interrupted = createInterruptedCompactionScenario({ uiTimeoutMs, modelResponseTimeoutMs })
   const catalogAuto = createCatalogAutoCompactionVerification(options)
+  const loadedProfile = createLoadedCompactionProfileVerification(options)
   let active = false
   let compactionRequests = 0
   let rejectedCompactionRequests = 0
@@ -179,8 +181,12 @@ export function createDesktopScenario(options) {
   })
 
   return {
-    prepareApp: catalogAuto.prepareApp,
+    async prepareApp(context) {
+      await catalogAuto.prepareApp(context)
+      loadedProfile.prepareApp(context)
+    },
     async handleHttp(request, response, url) {
+      if (await loadedProfile.handleHttp(request, response, url)) return true
       if (await catalogAuto.handleHttp(request, response, url)) return true
       if (await interrupted.handleHttp(request, response, url)) return true
       if (
@@ -413,6 +419,7 @@ export function createDesktopScenario(options) {
         await captureScreenshot(control, 'context-compaction-06-rejected.png', 'body')
         rejectCompaction = false
         await catalogAuto.verify(control)
+        await loadedProfile.verify(control)
       } finally {
         releaseCompaction()
       }

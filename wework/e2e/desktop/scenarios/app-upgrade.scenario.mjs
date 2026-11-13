@@ -27,6 +27,7 @@ import { waitForUpdatePreparation } from '../modules/update-preparation-progress
 import { unavailableUpdatePolicy } from '../modules/app-update-retry.mjs'
 import { startRefreshedAppUpdate } from '../modules/app-update-refresh.mjs'
 import { finishFailedUpgradeRetry } from '../modules/failed-upgrade-retry.mjs'
+import { createIntervalUpgradeProbe } from '../modules/interval-upgrade-policy.mjs'
 import { prepareReleaseProcess } from '../../../electron/src/runtime/release-preparation-progress.mjs'
 import { stopProcessGroup, waitForOwnedProcessExit } from '../process-lifecycle.mjs'
 import { seedUnstartedActivation } from '../modules/unstarted-activation-fixture.mjs'
@@ -143,6 +144,7 @@ export async function createDesktopScenario(options) {
   const goalContinuity = createUpgradeGoalContinuity(pair, () => control, workbenchReadyTimeoutMs)
   const auxiliaryHistory = createUpgradeAuxiliaryHistory(pair, () => control, options)
   const requests = []
+  const intervalProbe = createIntervalUpgradeProbe(pair, () => origin, requests)
   // Observe asynchronous acceptance before releasing real package bytes. A fixed
   // six-second server delay charged every checkpoint without establishing state.
   let releaseHostDownload
@@ -157,6 +159,7 @@ export async function createDesktopScenario(options) {
       range: request.headers.range ?? null,
     })
     if (url.pathname.startsWith('/components-')) {
+      if (intervalProbe.handleManifest(response)) return
       if (offer === 'refresh-failed') {
         response.writeHead(503)
         response.end()
@@ -770,6 +773,10 @@ export async function createDesktopScenario(options) {
           value: JSON.stringify({ key: STORAGE_KEY, value: 'after-update' }),
         })
         await about()
+        if (checkpoint === 'app-rollback') {
+          await routeRunningUpgradeRequests(inspectorPort, control, origin)
+          await intervalProbe.verify(control, resultDir)
+        }
         await control.command('clickWhenEnabled', '[data-testid="about-rollback-button"]')
         await control.command('waitFor', '[data-testid="app-update-rollback-confirm"]')
         const beforeRollback = control.readyCount
