@@ -1,7 +1,6 @@
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
-import { redisCliBinary } from './desktop-cloud-login.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -33,6 +32,7 @@ import {
   mkdir,
   pathExists,
   readFile,
+  redisCliBinary,
   repoDir,
   reservePort,
   resultDir,

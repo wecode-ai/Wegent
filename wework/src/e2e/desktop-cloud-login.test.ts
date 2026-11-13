@@ -1,11 +1,8 @@
 // @vitest-environment node
 import { afterEach, expect, test, vi } from 'vitest'
 import { join } from 'node:path'
-import {
-  redisCliBinary,
-  signInDesktopCloud,
-} from '../../e2e/desktop/modules/desktop-cloud-login.mjs'
-import { commandOutputAsync } from '../../e2e/desktop/modules/shared.mjs'
+import { signInDesktopCloud } from '../../e2e/desktop/modules/desktop-cloud-login.mjs'
+import { commandOutputAsync, redisCliBinary } from '../../e2e/desktop/modules/shared.mjs'
 import { pluginApi } from '../../e2e/desktop/modules/plugin-regression-fixture.mjs'
 
 vi.mock('../../e2e/desktop/modules/shared.mjs', async original => ({

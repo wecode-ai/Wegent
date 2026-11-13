@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Arrival-order serialisation for `/local-executor` `runtime:event` frames.
+//! Arrival-order serialisation for `/local-executor` event streams.
 //!
 //! Source: `app/api/ws/device_namespace.py::_get_runtime_event_lock`. Python
 //! dispatches every inbound event on the same event loop and awaits
@@ -22,7 +22,7 @@
 //!
 //! [`RuntimeEventOrder::enter`] therefore takes this frame's position
 //! synchronously at that receive point, before the future is spawned. Each
-//! session has one FIFO: the frame at its head forwards immediately, and every
+//! stream has one FIFO: the frame at its head forwards immediately, and every
 //! later frame waits for its turn. The FIFO position *is* the sequence; no
 //! number is assigned and no payload field is read or sorted.
 //!
@@ -34,13 +34,11 @@
 //! finished) hands the turn to the next frame while unwinding. Only the frame
 //! that holds the turn ever advances the queue.
 //!
-//! Bounds: the map holds one queue per session with a frame in flight and
-//! removes it when the session drains, so it is bounded by active sessions. The
-//! number of tickets equals the number of frames the transport spawned but has
-//! not finished, exactly the population the removed per-session async mutex
-//! queued.
+//! The map holds one queue per stream with a frame in flight and removes it
+//! when the stream drains. Only frames waiting for their turn allocate tickets.
 
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -53,15 +51,17 @@ const GRANTED: u8 = 1;
 /// The frame was cancelled while waiting; its release skips it.
 const CANCELLED: u8 = 2;
 
-/// Per-session FIFO positions for `runtime:event`.
-#[derive(Default)]
-pub struct RuntimeEventOrder {
-    sessions: Arc<Mutex<HashMap<Arc<str>, SessionQueue>>>,
+type Queues<K> = Arc<Mutex<HashMap<K, StreamQueue>>>;
+
+/// Receive-order positions keyed by session for Runtime events and by subtask
+/// for Responses API events.
+pub struct RuntimeEventOrder<K = Arc<str>> {
+    queues: Queues<K>,
 }
 
 #[derive(Default)]
-struct SessionQueue {
-    /// One frame of this session is forwarding (or was granted the turn).
+struct StreamQueue {
+    /// One frame of this stream is forwarding (or was granted the turn).
     held: bool,
     /// Arrival-ordered frames waiting for the turn.
     waiting: VecDeque<Arc<Ticket>>,
@@ -81,26 +81,34 @@ impl Ticket {
     }
 }
 
-/// This frame's position in its session's arrival order.
+/// This frame's position in its stream's arrival order.
 ///
 /// Obtained from [`RuntimeEventOrder::enter`] at the receive point. Await
 /// [`Turn::wait`] once before forwarding. The turn is released when this value
 /// is dropped, on every path: normal completion, cancellation, or panic.
 #[must_use = "the frame must wait for its arrival position before forwarding"]
-pub struct Turn {
-    session: Arc<str>,
+pub struct Turn<K: Eq + Hash = Arc<str>> {
+    key: K,
     /// `None` when this frame took the turn synchronously.
     ticket: Option<Arc<Ticket>>,
-    sessions: Arc<Mutex<HashMap<Arc<str>, SessionQueue>>>,
+    queues: Queues<K>,
 }
 
-impl RuntimeEventOrder {
+impl<K> Default for RuntimeEventOrder<K> {
+    fn default() -> Self {
+        Self {
+            queues: Arc::default(),
+        }
+    }
+}
+
+impl<K: Clone + Eq + Hash> RuntimeEventOrder<K> {
     /// Takes this frame's position synchronously at the connection's receive
     /// point. Must run in the handler closure's synchronous section, before
     /// the transport spawns this frame's future.
-    pub fn enter(&self, session: &Arc<str>) -> Turn {
-        let mut sessions = self.sessions.lock().expect("runtime event order");
-        let queue = sessions.entry(Arc::clone(session)).or_default();
+    pub fn enter(&self, key: &K) -> Turn<K> {
+        let mut queues = self.queues.lock().expect("runtime event order");
+        let queue = queues.entry(key.clone()).or_default();
         let ticket = if queue.held {
             let ticket = Arc::new(Ticket::waiting());
             queue.waiting.push_back(Arc::clone(&ticket));
@@ -110,22 +118,22 @@ impl RuntimeEventOrder {
             None
         };
         Turn {
-            session: Arc::clone(session),
+            key: key.clone(),
             ticket,
-            sessions: Arc::clone(&self.sessions),
+            queues: Arc::clone(&self.queues),
         }
     }
 
-    /// Sessions that still have frames in flight. Test-only observability for
+    /// Streams that still have frames in flight. Test-only observability for
     /// the map bound.
     #[cfg(test)]
     fn tracked_sessions(&self) -> usize {
-        self.sessions.lock().expect("runtime event order").len()
+        self.queues.lock().expect("runtime event order").len()
     }
 }
 
-impl Turn {
-    /// Waits until this frame is granted the session's turn. Immediate when
+impl<K: Eq + Hash> Turn<K> {
+    /// Waits until this frame is granted the stream's turn. Immediate when
     /// this frame took the turn synchronously.
     ///
     /// Call once: each call waits for another grant.
@@ -135,14 +143,14 @@ impl Turn {
         }
     }
 
-    /// Hands the turn to the next live waiting frame, or frees the session.
+    /// Hands the turn to the next live waiting frame, or frees the stream.
     ///
     /// Only the frame that owns the turn calls this. Cancelled tickets are
     /// skipped, so a cancelled waiter can never be the frame that advances the
     /// queue.
     fn release(&self) {
-        let mut sessions = self.sessions.lock().expect("runtime event order");
-        let Some(queue) = sessions.get_mut(&self.session) else {
+        let mut queues = self.queues.lock().expect("runtime event order");
+        let Some(queue) = queues.get_mut(&self.key) else {
             return;
         };
         loop {
@@ -161,12 +169,12 @@ impl Turn {
                 return;
             }
         }
-        // The queue drained: drop the session so the map stays bounded.
-        sessions.remove(&self.session);
+        // The queue drained: drop the stream so the map stays bounded.
+        queues.remove(&self.key);
     }
 }
 
-impl Drop for Turn {
+impl<K: Eq + Hash> Drop for Turn<K> {
     fn drop(&mut self) {
         if let Some(ticket) = &self.ticket
             && ticket

@@ -467,6 +467,9 @@ jobs:
       - name: Install executor Rust system dependencies
         run: .github/scripts/install-executor-rust-system-dependencies.sh
 
+      - name: Verify Cargo worktree build isolation
+        run: bash scripts/tests/cargo-cache.test.sh
+
       - name: Run executor Rust format check
         working-directory: ./executor
         run: cargo fmt --all --check
@@ -793,7 +796,7 @@ jobs:
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1
-        run: node --test wework/scripts/startup-theme-evidence.test.mjs
+        run: node --test wework/scripts/startup-theme-evidence.test.mjs wework/scripts/windows-native-runtime.test.mjs
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
