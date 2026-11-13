@@ -66,12 +66,12 @@ export function createProjectSpacePickerRegression({
       address.taskId,
       'The project picker task did not finish restoring after navigation'
     )
-    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
     await control.command('waitFor', CHANGE, {
       visible: true,
       timeoutMs: workbenchReadyTimeoutMs,
     })
+    const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    assert.equal(state.workbench?.currentRuntimeTask?.taskId, address.taskId)
   }
 
   return {
@@ -94,7 +94,7 @@ export function createProjectSpacePickerRegression({
     async verify(control, address) {
       const { taskId } = address
       await openTask(control, address)
-      await control.command('clickWhenEnabled', CHANGE)
+      await control.command('clickWhenEnabled', CHANGE, { timeoutMs: uiTimeoutMs })
       for (const project of projects) {
         await control.command('waitFor', optionSelector(project), { timeoutMs: uiTimeoutMs })
       }
@@ -205,7 +205,12 @@ export function createProjectSpacePickerRegression({
       await reloadMainWindow(control, 'The picker regression could not reconnect after reload')
       await openTask(control, address)
       await control.command('waitFor', boundContext, { timeoutMs: uiTimeoutMs })
-      await control.command('clickWhenEnabled', CHANGE)
+      const boundChange = `${boundContext} [data-testid="work-item-change-board"]`
+      await control.command('waitFor', boundChange, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', boundChange, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', `${optionSelector(sharedB)}[aria-selected="true"]`)
       assert.equal(
         await control.command('getAttribute', optionSelector(sharedA), { value: 'aria-selected' }),
