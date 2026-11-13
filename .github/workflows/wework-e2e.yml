@@ -1216,8 +1216,26 @@ jobs:
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           # Native arm64 cold starts can exceed the default 3-minute packaged startup window.
           WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS: "600000"
+          # The Backend/MySQL helper runs as emulated x64 Python on arm64; every
+          # IPC round trip is materially slower, so step waits get a larger
+          # bounded budget. Assertions are unchanged.
+          WEWORK_E2E_STEP_TIMEOUT_MS: "30000"
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
+          # local-harness drives the real opencode CLI, whose bundled Bun
+          # OpenTUI renderer cannot load on Windows arm64 (bun:ffi requires
+          # TinyCC, which upstream's win-arm64 build disables). The CLI exits
+          # before making any request, so the checkpoint can never pass here.
+          # Coverage stays intact on Linux and Windows x64.
+          $segments = @(
+            $env:WEWORK_E2E_SEGMENTS -split ',' |
+              Where-Object { $_ -and $_ -ne 'local-harness' }
+          )
+          if ($segments.Count -eq 0) {
+            Write-Host "All segments in this shard are unsupported on Windows arm64; nothing to run."
+            exit 0
+          }
+          $env:WEWORK_E2E_SEGMENTS = $segments -join ','
           foreach ($path in @(
             $env:WEWORK_E2E_APP_BIN,
             $env:WEWORK_E2E_EXECUTOR_BIN,
