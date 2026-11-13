@@ -21,6 +21,7 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
+import { isSameModelSelection } from '@/lib/model-ui'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
@@ -377,10 +378,33 @@ export function useWorkbenchRuntimeMessaging({
     [reportError]
   )
 
+  // Sends without explicit model fields (for example todo continuations)
+  // otherwise fall back to the saved task selection from runtime work, which
+  // may be a model the user already replaced in the pane. Prefer the pane's
+  // ready selection before the continuation resolves the saved one.
+  const applyReadyRuntimeTaskModel = useCallback(
+    (request: RuntimeSendRequest): RuntimeSendRequest => {
+      const userInputResponse =
+        request.requestUserInputResponse ?? request.request_user_input_response
+      if (userInputResponse || request.modelId || request.modelSelection?.modelName) {
+        return request
+      }
+      const selection = resolveRuntimeTaskModelSelection(request.address)
+      if (!selection.selectionReady || !selection.selectedModel) return request
+      return {
+        ...request,
+        ...selectedModelExecutionFields(selection.selectedModel, selection.selectedModelOptions),
+      }
+    },
+    [resolveRuntimeTaskModelSelection]
+  )
+
   const prepareRuntimeSendRequest = useCallback(
     async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
-      const request = await prepareRuntimeContinuationModel(input, state.runtimeWork, () =>
-        executorClient.runtime.listRuntimeWork()
+      const request = await prepareRuntimeContinuationModel(
+        applyReadyRuntimeTaskModel(input),
+        state.runtimeWork,
+        () => executorClient.runtime.listRuntimeWork()
       )
       if (!request.attachments?.length) return request
       const prepared = await prepareRuntimeAttachmentsForDevice(
@@ -396,7 +420,13 @@ export function useWorkbenchRuntimeMessaging({
         attachments: prepared.attachments,
       }
     },
-    [executorClient, services.attachmentApi, state.devices, state.runtimeWork]
+    [
+      applyReadyRuntimeTaskModel,
+      executorClient,
+      services.attachmentApi,
+      state.devices,
+      state.runtimeWork,
+    ]
   )
 
   const blockRuntimeSendForUnavailableModel = useCallback(
@@ -416,10 +446,18 @@ export function useWorkbenchRuntimeMessaging({
       if (taskSelection.selectionReady) return false
       const isCurrentTask =
         state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+      if (!isCurrentTask) return false
+      // Catalog-confirmed compatibility-disabled models are unusable even when
+      // the active-scope selection state does not track compatibility. Other
+      // not-ready states (catalog loading, stale catalogs) stay sendable.
+      const resolvedModel = taskSelection.selectedModel
+      const resolvedCatalogModel = resolvedModel
+        ? modelSelection.models.find(model => isSameModelSelection(model, resolvedModel))
+        : null
       if (
-        !isCurrentTask ||
-        (modelSelection.isSelectionReady !== false &&
-          modelSelection.isConfiguredModelUnavailable !== true)
+        !resolvedCatalogModel?.compatibilityDisabled &&
+        modelSelection.isSelectionReady !== false &&
+        modelSelection.isConfiguredModelUnavailable !== true
       ) {
         return false
       }
@@ -438,6 +476,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       modelSelection.isConfiguredModelUnavailable,
       modelSelection.isSelectionReady,
+      modelSelection.models,
       reportSendBlocked,
       resolveRuntimeTaskModelSelection,
       state.currentRuntimeTask,

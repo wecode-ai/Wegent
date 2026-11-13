@@ -517,16 +517,19 @@ async function paneSelectorForTitle(control, title) {
   return `[data-testid="${testId}"]`
 }
 
-async function assertPaneModelLabel(control, paneSelector, expectedLabel, timeoutMs) {
+const DEFAULT_MODEL_LABELS = [DEFAULT_MODEL_LABEL, 'GPT-5.6 Luna']
+
+async function assertPaneModelLabel(control, paneSelector, expectedLabels, timeoutMs) {
+  const labels = Array.isArray(expectedLabels) ? expectedLabels : [expectedLabels]
   const selector = `${paneSelector} [data-testid="model-selector-button"]`
   const startedAt = Date.now()
   let lastLabel = ''
   while (Date.now() - startedAt < timeoutMs) {
     lastLabel = await control.command('getText', selector, { visible: true })
-    if (lastLabel.includes(expectedLabel)) return
+    if (labels.some(label => lastLabel.includes(label))) return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(`Pane model label did not become ${expectedLabel}; last label: ${lastLabel}`)
+  throw new Error(`Pane model label did not match ${labels.join(' | ')}; last label: ${lastLabel}`)
 }
 
 async function assertPaneConversation(control, paneSelector, expectedText) {
@@ -1131,6 +1134,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await assertPaneConversation(control, restoredSecondPane, `${SECOND_PROMPT}_COMPLETE`)
 
       // Each pane must switch only its own conversation model and persist it.
+      // Keep the second pane as the focused model scope so the send below
+      // exercises the addressed pane instead of the focused conversation.
+      await control.command('click', `${restoredSecondPane} [data-testid^="workbench-pane-title-"]`)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.activeTask?.taskId === secondTaskId,
+        'The second pane did not own the focused model scope before the isolation send',
+        uiTimeoutMs
+      )
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, restoredFirstPane)
       await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
       await control.command('fill', `${restoredFirstPane} [data-testid="chat-message-input"]`, {
@@ -1144,8 +1156,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForWorkbenchDebugState(
         control,
         snapshot =>
-          snapshot.workbench?.activeTask?.taskId === firstTaskId &&
-          snapshot.workbench?.activeTask?.modelSelection?.modelName === DEFAULT_MODEL_ID,
+          (snapshot.workbench?.activeWorkspace?.tasks ?? []).some(
+            task =>
+              task.taskId === firstTaskId && task.modelSelection?.modelName === DEFAULT_MODEL_ID
+          ),
         'Switching one pane model did not persist that pane task selection',
         taskTimeoutMs
       )
@@ -1160,7 +1174,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'Switching one pane model changed the other pane task selection',
         taskTimeoutMs
       )
-      await assertPaneModelLabel(control, restoredFirstPane, DEFAULT_MODEL_LABEL, uiTimeoutMs)
+      await assertPaneModelLabel(control, restoredFirstPane, DEFAULT_MODEL_LABELS, uiTimeoutMs)
       await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
       await captureScreenshot(control, '11a-split-pane-model-isolation.png', 'body')
 

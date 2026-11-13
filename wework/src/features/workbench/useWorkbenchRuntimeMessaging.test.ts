@@ -1,7 +1,8 @@
 import i18n from '@/i18n'
-import type { Attachment, DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, DeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
+import type { RuntimeTaskModelSelectionControls } from './workbenchContextTypes'
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
@@ -25,8 +26,12 @@ import {
 import { initialWorkbenchState } from './workbenchReducer'
 
 function messagingFixture(
-  modelState: { isSelectionReady?: boolean; isConfiguredModelUnavailable?: boolean } = {},
-  taskSelectionState: { selectionResolved?: boolean; selectionReady?: boolean } = {}
+  modelState: {
+    models?: UnifiedModel[]
+    isSelectionReady?: boolean
+    isConfiguredModelUnavailable?: boolean
+  } = {},
+  taskSelectionState: Partial<RuntimeTaskModelSelectionControls> = {}
 ) {
   const address = { deviceId: 'cancel-device', taskId: 'cancel-task' }
   const store = new RuntimeTaskLifecycleStore('messaging-cancellation-test')
@@ -352,6 +357,98 @@ describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true
     })
   }
 )
+
+test('prepares a model-less send with the ready pane selection', async () => {
+  const replacement = {
+    name: 'replacement-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { isSelectionReady: false, isConfiguredModelUnavailable: true },
+    {
+      selectionResolved: true,
+      selectionReady: true,
+      selectedModel: replacement,
+      activeModel: replacement,
+      selectedModelOptions: { collaborationMode: 'plan' },
+    }
+  )
+  const onError = vi.fn()
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage({ address, message: 'Continue' }, { onError })
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0]).toMatchObject({
+      modelId: 'replacement-model',
+      modelType: 'runtime',
+      modelOptions: expect.objectContaining({ collaborationMode: 'plan' }),
+    })
+    expect(onError).not.toHaveBeenCalled()
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('blocks a current-task send whose resolved model is compatibility-disabled', async () => {
+  const disabled = {
+    name: 'disabled-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+    compatibilityDisabled: true,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { models: [disabled] },
+    {
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: disabled,
+      activeModel: disabled,
+    }
+  )
+  const onError = vi.fn()
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelId: 'disabled-model' },
+        { onError }
+      )
+    ).resolves.toBe(false)
+    expect(send).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith(i18n.t('workbench.harness_model_required'))
+  } finally {
+    store.remove(address)
+  }
+})
+
+test('keeps a current-task send with a stale catalog model sendable', async () => {
+  const missing = {
+    name: 'missing-model',
+    type: 'runtime' as const,
+    provider: 'local' as const,
+  }
+  const { address, store, send, messaging } = messagingFixture(
+    { models: [] },
+    {
+      selectionResolved: true,
+      selectionReady: false,
+      selectedModel: missing,
+      activeModel: missing,
+    }
+  )
+  try {
+    await expect(
+      messaging.sendRuntimePaneMessage(
+        { address, message: 'Continue', modelId: 'missing-model' },
+        { onError: vi.fn() }
+      )
+    ).resolves.toBe(true)
+    expect(send).toHaveBeenCalledOnce()
+  } finally {
+    store.remove(address)
+  }
+})
 
 describe('runtimeSendError', () => {
   test('localizes an unsupported remote Team backend', () => {
