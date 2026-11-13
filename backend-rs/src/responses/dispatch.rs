@@ -658,10 +658,9 @@ pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
 
 /// Run the real chat-shell SSE consumer for one admitted job.
 ///
-/// `sse_sync::collect` owns the Source lifecycle: it clears
-/// `chat:cancel:{subtask}` before sending the request (the early DEL), polls
-/// the key while the stream runs, persists each event, and deletes the key in
-/// its finally (the late, strategy-ending DEL). A 500, a mid-stream error and a
+/// `sse_sync::collect` registers without erasing admitted cancel intents, polls
+/// the flag while the stream runs, persists each event, and atomically clears
+/// the intent and flag in its finally. A 500, a mid-stream error and a
 /// stream without a terminal frame all surface as an error here and are logged
 /// with the job identity; they are never reported as completion.
 async fn run_chat_shell<M, R>(

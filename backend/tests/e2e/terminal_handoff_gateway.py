@@ -29,6 +29,11 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+from tests.e2e.terminal_handoff_cancel_protocol import (
+    assert_cancel_intent_protocol,
+    cancel_is_waiting,
+    terminal_is_waiting,
+)
 from tests.e2e.terminal_handoff_frames import (
     assert_intermediate_frames,
     assert_recovered_terminal_frames,
@@ -951,37 +956,13 @@ class TerminalHandoffGateway(unittest.TestCase):
                 ddl.commit()
 
     def _cancel_is_waiting(self, lock_name: str) -> bool:
-        with SessionLocal() as db:
-            return bool(
-                db.scalar(
-                    text(
-                        """
-                SELECT COUNT(*) FROM performance_schema.metadata_locks
-                WHERE OBJECT_TYPE = 'USER LEVEL LOCK' AND LOCK_STATUS = 'PENDING'
-                  AND OBJECT_NAME = :name
-            """
-                    ),
-                    {"name": lock_name},
-                )
-            )
+        return cancel_is_waiting(lock_name)
 
     def _terminal_is_waiting(self, task_id: int) -> bool:
-        with SessionLocal() as db:
-            return bool(
-                db.scalar(
-                    text(
-                        """
-                SELECT COUNT(*)
-                FROM performance_schema.data_lock_waits AS waiting
-                JOIN performance_schema.data_locks AS requested
-                  ON requested.ENGINE_LOCK_ID = waiting.REQUESTING_ENGINE_LOCK_ID
-                WHERE requested.OBJECT_NAME = 'tasks'
-                  AND requested.LOCK_DATA = :task_id
-            """
-                    ),
-                    {"task_id": str(task_id)},
-                )
-            )
+        return terminal_is_waiting(task_id)
+
+    def test_cancel_intent_protocol_uses_atomic_redis_lifecycle(self) -> None:
+        assert_cancel_intent_protocol(self)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,7 @@ use crate::internal_callback::emitter::StatusUpdatingEmitter;
 use crate::internal_callback::event::{EventType, ExecutionEvent};
 use crate::internal_callback::is_cancelled;
 use crate::internal_callback::parser;
+use crate::responses::stream_state::{register_stream, unregister_stream};
 use crate::state::AppState;
 
 use super::dispatch::{self, ExecutionRequest};
@@ -190,7 +191,7 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     // Clearing its flag here could erase a cancellation admitted while queued.
     let image_stream = super::package_runtime::is_image_target(target_url);
     if !ctx.package_mode && !image_stream && ctx.acceptance.is_none() {
-        let _ = redis.del(cancel_key.as_str()).await;
+        register_stream(Some(redis), request.subtask_id).await;
     }
 
     let result = read_stream(
@@ -208,7 +209,7 @@ pub(crate) async fn collect<M: Mysql, R: Redis + Clone>(
     // `dispatch`'s finally: `wrapped_emitter.close()` flushes buffered content.
     emitter.close().await;
     // `_dispatch_chat_shell_sse`'s finally: `unregister_stream`.
-    let _ = redis.del(cancel_key.as_str()).await;
+    unregister_stream(Some(redis), request.subtask_id).await;
 
     match result {
         Ok((collected, terminal)) => {
