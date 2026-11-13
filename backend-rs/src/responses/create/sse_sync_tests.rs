@@ -17,10 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use brz_mysql::{
-    FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,
-    MysqlService, MysqlTransaction,
-};
 use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, SetOptions};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -31,8 +27,7 @@ use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
 
-const TASK_ID: i64 = 424_242;
-const SUBTASK_ID: i64 = 424_243;
+use crate::responses::test_mysql::{Gate, RecordingMysql, SUBTASK_ID, TASK_ID};
 
 const CREATED: &str = r#"{"type":"response.created","shell_type":"chat"}"#;
 const DELTA: &str = r#"{"type":"response.output_text.delta","delta":"hello","offset":0}"#;
@@ -58,241 +53,6 @@ fn execution_request() -> ExecutionRequest {
 
 fn executor_manager() -> ExecutorManager {
     ExecutorManager::new("http://127.0.0.1:1").expect("client")
-}
-
-/// Holds the first `fetch_optional` until released and signals that it was
-/// reached, so a test can stop persistence mid-step without a timer.
-#[derive(Default)]
-struct Gate {
-    first_call: AtomicBool,
-    reached: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
-    release: tokio::sync::Notify,
-}
-
-impl Gate {
-    fn new() -> (Arc<Self>, tokio::sync::oneshot::Receiver<()>) {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let gate = Arc::new(Self {
-            first_call: AtomicBool::new(true),
-            reached: Mutex::new(Some(sender)),
-            release: tokio::sync::Notify::new(),
-        });
-        (gate, receiver)
-    }
-
-    async fn hold(&self) {
-        if !self.first_call.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        if let Some(sender) = self.reached.lock().unwrap().take() {
-            let _ = sender.send(());
-        }
-        self.release.notified().await;
-    }
-
-    fn release(&self) {
-        self.release.notify_one();
-    }
-}
-
-/// Records every statement the completion path issues. Reads return no row, so
-/// the terminal update stops after its first read (the production code's own
-/// missing-row branch).
-#[derive(Clone, Default)]
-struct RecordingMysql {
-    statements: Arc<Mutex<Vec<String>>>,
-    gate: Option<Arc<Gate>>,
-    /// Fires once when the terminal completion path issues its first read.
-    terminal_signal: Option<Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>>,
-}
-
-impl RecordingMysql {
-    fn gated(gate: Arc<Gate>) -> Self {
-        Self {
-            statements: Arc::default(),
-            gate: Some(gate),
-            terminal_signal: None,
-        }
-    }
-
-    /// Signal once when the completion path reaches its first read.
-    fn signaling() -> (Self, tokio::sync::oneshot::Receiver<()>) {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        (
-            Self {
-                statements: Arc::default(),
-                gate: None,
-                terminal_signal: Some(Arc::new(Mutex::new(Some(sender)))),
-            },
-            receiver,
-        )
-    }
-
-    fn record(&self, sql: &str) {
-        self.statements
-            .lock()
-            .unwrap()
-            .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-    }
-
-    fn statements(&self) -> Vec<String> {
-        self.statements.lock().unwrap().clone()
-    }
-}
-
-impl Mysql for RecordingMysql {
-    type Transaction = RecordingTransaction;
-
-    fn with_route<R: MysqlRouting + 'static>(&self, _: R) -> MysqlService {
-        panic!("the consumer must reuse the configured handle")
-    }
-
-    fn route<K: MysqlRouteKey>(&self, _: K) -> Self {
-        self.clone()
-    }
-
-    async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        if let Some(signal) = &self.terminal_signal
-            && let Some(sender) = signal.lock().unwrap().take()
-        {
-            let _ = sender.send(());
-        }
-        if let Some(gate) = &self.gate {
-            gate.hold().await;
-        }
-        Ok(None)
-    }
-
-    async fn fetch_all<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Vec<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(Vec::new())
-    }
-
-    async fn execute<S, A>(&self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(MysqlExecution {
-            rows_affected: 1,
-            last_insert_id: 0,
-        })
-    }
-
-    async fn fetch_one<S, A, T>(&self, _: S, _: A) -> MysqlResult<T>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        Err(brz_mysql::MysqlError::RowNotFound)
-    }
-
-    fn fetch<'a, S, A, T>(
-        &'a self,
-        _: S,
-        _: A,
-    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-    where
-        S: AsRef<str> + Send + 'a,
-        A: MysqlArgs + Send + 'a,
-        T: FromMysqlRow + Send + 'a,
-    {
-        futures_util::stream::empty()
-    }
-
-    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
-    where
-        T: Send,
-        F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
-    {
-        let mut transaction = RecordingTransaction {
-            statements: Arc::clone(&self.statements),
-        };
-        operation(&mut transaction).await
-    }
-}
-
-/// The consumer transaction: records its reads and executes every write.
-struct RecordingTransaction {
-    statements: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingTransaction {
-    fn record(&self, sql: &str) {
-        self.statements
-            .lock()
-            .unwrap()
-            .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-    }
-}
-
-impl MysqlTransaction for RecordingTransaction {
-    async fn execute<S, A>(&mut self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(MysqlExecution {
-            rows_affected: 1,
-            last_insert_id: 0,
-        })
-    }
-
-    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(None)
-    }
-
-    async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<T>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        Err(brz_mysql::MysqlError::RowNotFound)
-    }
-
-    async fn fetch_all<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Vec<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(Vec::new())
-    }
-
-    fn fetch<'a, S, A, T>(
-        &'a mut self,
-        _: S,
-        _: A,
-    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-    where
-        S: AsRef<str> + Send + 'a,
-        A: MysqlArgs + Send + 'a,
-        T: FromMysqlRow + Send + 'a,
-    {
-        futures_util::stream::empty()
-    }
 }
 
 /// One-shot gate for the cancellation GET: `started` fires once the read is
@@ -603,7 +363,9 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
     let (url, _request_received) = spawn_header_stalled_server().await;
     let redis = RecordingRedis::default();
     redis.mark_cancelled();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -617,6 +379,8 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
     };
 
     let collected = tokio::time::timeout(
@@ -646,7 +410,9 @@ async fn an_already_set_cancel_resolves_on_the_initial_get() {
 async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried() {
     let redis = RecordingRedis::default();
     redis.mark_cancelled();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -660,6 +426,8 @@ async fn image_cancellation_releases_the_key_before_the_subtask_can_be_retried()
         start_data: Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
     };
 
     collect(
@@ -713,7 +481,9 @@ fn chat_shell_stream_request_has_no_total_timeout() {
 async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
     let (url, request_received) = spawn_header_stalled_server().await;
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("CANCELLED")
+        .await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -727,6 +497,8 @@ async fn cancel_is_observed_while_the_header_wait_is_outstanding() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
     };
 
     let dispatch = collect(&ctx, &url, &request, "req-test", Some(2));
@@ -766,7 +538,11 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
     let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
     let (gate, persistence_started) = Gate::new();
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::gated(gate);
+    let mysql = RecordingMysql::gated(gate)
+        .with_terminal_rows("CANCELLED")
+        .await
+        .with_terminal_rows("COMPLETED")
+        .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {
         package_mode: false,
@@ -779,6 +555,8 @@ async fn cancel_is_observed_during_a_slow_persistence_step() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
     };
 
     let request = execution_request();
@@ -831,7 +609,9 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
     let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
     let (gate, persistence_started) = Gate::new();
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::gated(gate.clone());
+    let mysql = RecordingMysql::gated(gate.clone())
+        .with_terminal_rows("COMPLETED")
+        .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {
         package_mode: false,
@@ -844,6 +624,8 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
     };
 
     let request = execution_request();
@@ -907,7 +689,7 @@ async fn terminal_received_with_delayed_eof_keeps_polling_during_the_drain() {
     let statements = mysql.statements();
     let result_reads = statements
         .iter()
-        .filter(|statement| statement.contains("subtasks_0424"))
+        .filter(|sql| sql.contains("FROM subtasks_0424") && sql.ends_with("FOR UPDATE"))
         .count();
     let parent_locks = statements
         .iter()
@@ -1009,6 +791,7 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
     let redis = RecordingRedis::default();
     let (mut started, release) = redis.arm_cancel_gate();
     let (mysql, mut terminal) = RecordingMysql::signaling();
+    let mysql = mysql.with_terminal_rows("COMPLETED").await;
     let executor = executor_manager();
     let request = execution_request();
     let ctx = ConsumerContext {
@@ -1022,6 +805,8 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
         start_data: serde_json::Value::Null,
         created_task: None,
         owner_user_id: None,
+        acceptance: None,
+        recover_terminal: false,
     };
 
     let mut collect_fut = Box::pin(collect(&ctx, &url, &request, "req-test", Some(2)));
@@ -1071,7 +856,9 @@ async fn unregister_del_waits_for_an_admitted_cancel_get() {
 async fn a_forwarded_dispatch_publishes_the_chat_frames() {
     let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("COMPLETED")
+        .await;
     let executor = executor_manager();
     let ctx = ConsumerContext {
         package_mode: false,
@@ -1091,6 +878,8 @@ async fn a_forwarded_dispatch_publishes_the_chat_frames() {
             project_id: 0,
         }),
         owner_user_id: Some(6501),
+        acceptance: None,
+        recover_terminal: false,
     };
     let request = execution_request();
     collect(&ctx, &url, &request, "req-test", Some(2))
@@ -1134,4 +923,62 @@ async fn a_forwarded_dispatch_publishes_the_chat_frames() {
                 && message.contains("\"room\": \"user:6501\"")),
         "the terminal publishes task:status to the owner room: {published:?}"
     );
+}
+
+#[tokio::test]
+async fn parent_status_write_failure_rolls_back_and_does_not_deliver_completion() {
+    let url = spawn_stream_server(vec![CREATED, DELTA, COMPLETED]).await;
+    let redis = RecordingRedis::default();
+    let mysql = RecordingMysql::failing_parent_update()
+        .with_terminal_rows("COMPLETED")
+        .await
+        .with_terminal_rows("COMPLETED")
+        .await;
+    let executor = executor_manager();
+    let ctx = ConsumerContext {
+        package_mode: false,
+        mysql: &mysql,
+        redis: Some(&redis),
+        tables: tables(),
+        executor_manager: &executor,
+        app: None,
+        forward: true,
+        start_data: serde_json::Value::Null,
+        created_task: None,
+        owner_user_id: Some(6501),
+        acceptance: None,
+        recover_terminal: false,
+    };
+
+    let result = collect(&ctx, &url, &execution_request(), "req-test", Some(2)).await;
+
+    assert_eq!(result.unwrap_err(), "Could not save the execution result");
+    let statements = mysql.statements();
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.starts_with("UPDATE subtasks_"))
+    );
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.starts_with("UPDATE tasks_"))
+    );
+    assert!(
+        !statements
+            .iter()
+            .any(|sql| sql.contains("subtask_contexts"))
+    );
+    assert_eq!(
+        statements.iter().filter(|sql| *sql == "ROLLBACK").count(),
+        2
+    );
+    assert!(!statements.iter().any(|sql| sql == "COMMIT"));
+    let calls = redis.calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call.contains("chat:done") || call.contains("task:status"))
+    );
+    assert_eq!(redis.count("DEL chat:task_streaming:"), 0);
 }

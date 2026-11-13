@@ -171,7 +171,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 contexts=contexts,
             )
             # Also emit task:status event to update task list
-            await self._emit_task_status(webpage_ws_emitter, "COMPLETED")
+            await self._emit_committed_task_status(webpage_ws_emitter)
 
         elif event.type == EventType.ERROR.value:
             await webpage_ws_emitter.emit_chat_error(
@@ -239,6 +239,28 @@ class WebSocketResultEmitter(BaseResultEmitter):
             f"[WebSocketResultEmitter] task:created emitted: "
             f"user_id={self.user_id}, task_id={self.task_id}"
         )
+
+    async def _emit_committed_task_status(
+        self, ws_emitter: WebPageSocketEmitter
+    ) -> None:
+        if not self.user_id:
+            return
+        status = await asyncio.to_thread(self._load_task_status)
+        if status is not None:
+            await ws_emitter.emit_task_status(
+                user_id=self.user_id,
+                task_id=self.task_id,
+                status=status["status"],
+                progress=status.get("progress"),
+            )
+
+    def _load_task_status(self) -> dict[str, Any] | None:
+        from app.db.session import SessionLocal
+        from app.stores.tasks import task_store
+
+        with SessionLocal() as db:
+            task = task_store.get_by_id(db, task_id=self.task_id)
+            return task.json.get("status") if task else None
 
     async def _emit_task_status(
         self, ws_emitter: WebPageSocketEmitter, status: str

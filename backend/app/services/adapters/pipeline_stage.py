@@ -550,7 +550,6 @@ class PipelineStageService:
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
         task.updated_at = datetime.now()
         flag_modified(task, "json")
-        db.commit()
 
         logger.info(
             "[Pipeline] auto_advance: Ready for next stage %s (bot=%s, bot_id=%s) for task %s",
@@ -612,7 +611,9 @@ class PipelineStageService:
                 return False
 
             # Get the subtask that just completed
-            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+            subtask = task_stores.subtask_store.get_basic_by_id(
+                db, subtask_id=subtask_id
+            )
             if not subtask or subtask.status != SubtaskStatus.COMPLETED:
                 return False
 

@@ -327,6 +327,14 @@ fn hook_user_id(value: &Value) -> Option<String> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TurnAdmission {
+    Normal,
+    Forced,
+    Queue,
+    Continuation,
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn persist_turn_queue(
         &self,
@@ -408,30 +416,50 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, false, false).await.map(|_| ())
+        self.schedule_turn(turn, TurnAdmission::Normal)
+            .await
+            .map(|_| ())
     }
 
     pub(super) async fn spawn_forced_turn(
         &self,
         turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, true, false).await.map(|_| ())
+        self.schedule_turn(turn, TurnAdmission::Forced)
+            .await
+            .map(|_| ())
     }
 
     pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, false, true).await.map(|_| ())
+        self.schedule_turn(turn, TurnAdmission::Queue)
+            .await
+            .map(|_| ())
+    }
+
+    pub(super) async fn submit_continuation(
+        &self,
+        turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        self.schedule_turn(turn, TurnAdmission::Continuation)
+            .await
+            .map(|_| ())
     }
 
     async fn schedule_turn(
         &self,
         mut turn: SpawnTurnRequest,
-        force_start: bool,
-        queue_only: bool,
+        admission: TurnAdmission,
     ) -> Result<bool, AppIpcError> {
         turn.bind_task_kind(&self.store);
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
+        // Request preparation can overlap the previous turn's queue drain.
+        // Use the live ownership state while holding the admission lock.
+        let queue_only = admission == TurnAdmission::Queue
+            || (admission == TurnAdmission::Continuation
+                && (self.is_busy_local_task(&local_task_id)
+                    || self.native_task_holds_capacity(&local_task_id)));
         if self.existing_command(&turn)?.is_some() {
             return Ok(false);
         }
@@ -549,7 +577,7 @@ impl RuntimeWorkRpcHandler {
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
-            } else if force_start {
+            } else if admission == TurnAdmission::Forced {
                 Some(scheduler.enqueue_forced(turn))
             } else {
                 scheduler.enqueue(turn)
@@ -802,7 +830,7 @@ impl RuntimeWorkRpcHandler {
             .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         // A native Goal mutation may update only disk state when its session
         // has unloaded. Resume it through the existing owner and admission flow.
-        self.schedule_turn(turn, false, false).await
+        self.schedule_turn(turn, TurnAdmission::Normal).await
     }
 
     pub(super) async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {

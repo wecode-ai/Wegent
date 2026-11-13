@@ -29,3 +29,6 @@ mod generation_output;
 mod handler;
 mod shell_output;
 pub(crate) mod stream_state;
+
+#[cfg(test)]
+mod test_mysql;

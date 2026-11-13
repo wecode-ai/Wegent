@@ -61,12 +61,7 @@ pub(crate) fn is_active_task(task: &brz_mysql::MysqlRow) -> bool {
         && super::task_column::<String>(task, "kind").as_deref() == Some("Task")
 }
 
-pub(crate) fn dispatchable_task_status(payload: &serde_json::Value) -> Option<&str> {
-    payload
-        .pointer("/status/status")
-        .and_then(serde_json::Value::as_str)
-        .filter(|status| matches!(*status, "PENDING" | "RUNNING"))
-}
+pub(crate) use wegent_task_store::dispatchable_task_status;
 
 pub(crate) async fn latest_assistant_id(
     tx: &mut impl brz_mysql::MysqlTransaction,
