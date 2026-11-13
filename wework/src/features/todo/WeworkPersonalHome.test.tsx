@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type {
+  CollaborationIssue,
   CollaborationProject,
   SharedWorkspaceApi,
   WorkspaceMyWorkItem,
@@ -15,6 +16,27 @@ import {
 import type { ReactNode } from 'react'
 
 afterEach(cleanup)
+
+it('derives related Issue summary fields from its own project without copying the previous Issue', async () => {
+  const original = { ...issue('original'), task_bindings: [] }
+  const { renderIssueDetail } = await setup([source(vi.fn().mockResolvedValue([original]))])
+  fireEvent.click(await screen.findByTestId('personal-home-issue-original'))
+  act(() =>
+    renderIssueDetail.mock.lastCall![0].onOpenIssue({
+      id: 'related',
+      cloud_project_id: 'p2',
+      title: 'Related work',
+    } as CollaborationIssue)
+  )
+  expect(renderIssueDetail.mock.lastCall![0].issue).toEqual(
+    expect.objectContaining({
+      id: 'related',
+      project_name: 'Platform',
+      has_active_task: false,
+    })
+  )
+  expect(renderIssueDetail.mock.lastCall![0].issue).not.toHaveProperty('task_bindings')
+})
 
 it.each([0, 7])(
   'identifies the current assignee when their display name is absent: %s',

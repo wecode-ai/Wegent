@@ -121,7 +121,7 @@ export type CollaborationProjectRendererWorkspaceContext =
 
 export interface CollaborationProjectRendererContext {
   project: CollaborationProject;
-  workspace: CollaborationProjectRendererWorkspaceContext;
+  workspace: CollaborationProjectRendererWorkspaceContext | null;
 }
 
 function navigateWithin(
@@ -790,13 +790,23 @@ function IssueHomeLauncher({
   useEffect(() => {
     if (!needsIssueReferences) return;
     let active = true;
-    void api.issues.list(selectedProjectId).then((issues) => {
-      if (active) setMentionIssues(issues);
-    }).catch(() => {
-      if (active) setMemberError(messages.issueHomeMembersFailed);
-    });
-    return () => { active = false; };
-  }, [api, selectedProjectId, needsIssueReferences, messages.issueHomeMembersFailed]);
+    void api.issues
+      .list(selectedProjectId)
+      .then((issues) => {
+        if (active) setMentionIssues(issues);
+      })
+      .catch(() => {
+        if (active) setMemberError(messages.issueHomeMembersFailed);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    api,
+    selectedProjectId,
+    needsIssueReferences,
+    messages.issueHomeMembersFailed,
+  ]);
   const guides = [
     {
       Icon: SquarePen,
@@ -2002,7 +2012,13 @@ function CollaborationPlatformAppContent({
     );
   } else if (
     host.location.projectId &&
-    (state.workspace || state.workspaceNavigationContext)
+    (state.workspace ||
+      state.workspaceNavigationContext ||
+      state.projects.some(
+        (project) =>
+          String(project.id) === host.location.projectId &&
+          !project.workspace_id,
+      ))
   ) {
     const workspaceContext =
       state.workspace ?? state.workspaceNavigationContext;
@@ -2011,7 +2027,7 @@ function CollaborationPlatformAppContent({
         (project) => String(project.id) === host.location.projectId,
       ) ?? null;
     content =
-      selectedProject && renderProject && workspaceContext ? (
+      selectedProject && renderProject ? (
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
@@ -2048,10 +2064,10 @@ function CollaborationPlatformAppContent({
             manageResource: host.manageResource,
             projectAgentConfiguration: host.projectAgentConfiguration,
             projectAgentResourceContext: {
-              name: workspaceContext!.name,
+              name: workspaceContext?.name ?? selectedProject?.name ?? "",
               namespace:
-                "namespace" in workspaceContext!
-                  ? workspaceContext!.namespace
+                workspaceContext && "namespace" in workspaceContext
+                  ? workspaceContext.namespace
                   : "default",
             },
             defaultAssistant: host.defaultAssistant,

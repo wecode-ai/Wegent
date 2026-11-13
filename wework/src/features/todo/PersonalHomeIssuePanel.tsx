@@ -137,13 +137,7 @@ export function PersonalHomeIssuePanel({
                 }
               : previous
           ),
-        onOpenRelatedIssue: related =>
-          onOpenIssue({
-            ...related,
-            project_name: project.name,
-            project_key: project.project_key,
-            has_active_task: false,
-          }),
+        onOpenRelatedIssue: onOpenIssue,
         onCreateTask: onCreateTask ? () => void onCreateTask(detail.issue) : undefined,
       })}
     </div>

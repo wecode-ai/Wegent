@@ -7,6 +7,7 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
 import {
   reloadMainWindow,
+  inCollaborationSidebar,
   selectCollaborationProjectView,
   selectCollaborationDomain,
   waitForWorkbenchDebugState,
@@ -314,6 +315,28 @@ export function createDesktopScenario({
       await runAssistance(control, other)
       await verifyCollaborationPersonalHome(control, { scoped, project: local.project, issue: local.issue })
       await verifyPersonalHomeStartWork(control, { scoped, project: local.project, viewerId: owner.id })
+      const standalone = await request('/api/v1/cloud-projects', { name: `${TITLE} standalone` })
+      assert.equal(standalone.workspace_id ?? null, null, 'Standalone projects must not acquire a synthetic workspace')
+      const standaloneIssue = await request(`/api/v1/cloud-projects/${standalone.id}/loop-items`, {
+        title: 'Standalone project personal work',
+        assignee_user_id: owner.id,
+        notify_assignee: false,
+      })
+      await reloadMainWindow(control, 'The standalone project catalog did not reload')
+      await control.command('click', inCollaborationSidebar('[data-testid="collaboration-primary-home"]'))
+      await control.command('waitFor', scoped(`[data-testid="personal-home-issue-${standaloneIssue.id}"]`))
+      await control.command('click', scoped(`[data-testid="personal-home-issue-${standaloneIssue.id}"]`))
+      await control.command('waitFor', scoped('[data-testid="personal-home-open-in-project"]'))
+      await control.command('click', scoped('[data-testid="personal-home-open-in-project"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'))
+      assert.equal(await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')), standaloneIssue.title)
+      assert.equal(Number(await control.command('getElementCount', scoped('[data-testid="personal-home"]'))), 0,
+        'Opening in a standalone project must leave the personal-home surface')
+      assert.equal(Number(await control.command('getElementCount', scoped('[data-testid="collaboration-platform-opening-project"]'))), 0,
+        'An authorized project without a workspace must finish opening')
+      assert.deepEqual(await request(`/api/v1/loop-items/${standaloneIssue.id}/tasks`), [],
+        'Recording a standalone Issue must not launch a task')
+      console.log(`[desktop-e2e] PASS standalone-project: personal Issue ${standaloneIssue.id} opened in project ${standalone.id} without a parent workspace or task`)
     },
     diagnostics() {
       return {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Bell, Circle, FolderOpen, UserRound } from 'lucide-react'
 import type {
+  CollaborationIssue,
   CollaborationProject,
   SharedWorkspaceApi,
   WorkspaceMyWorkItem,
@@ -28,7 +29,7 @@ export interface PersonalHomeIssueDetailContext {
   project: CollaborationProject
   active: boolean
   onUpdated(issue: WorkspaceMyWorkItem): void
-  onOpenIssue(issue: WorkspaceMyWorkItem): void
+  onOpenIssue(issue: CollaborationIssue): void
   onClose?(): void
   onExpandedChange?(expanded: boolean): void
   onOpenInProject?(): void
@@ -348,16 +349,22 @@ export function WeworkPersonalHome({
     order
   )
   const openIssue = (
-    issue: WorkspaceMyWorkItem,
+    issue: CollaborationIssue,
     taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
   ) => {
     const project = projects.find(project => project.id === issue.cloud_project_id)
     if (!project) return
-    const id = issueTabId(project, issue)
+    const summary: WorkspaceMyWorkItem = {
+      project_name: project.name,
+      project_key: project.project_key,
+      has_active_task: false,
+      ...issue,
+    }
+    const id = issueTabId(project, summary)
     setIssueTabs(tabs =>
       tabs.some(tab => tab.id === id)
         ? tabs.map(tab => (tab.id === id && taskRequest ? { ...tab, taskRequest } : tab))
-        : [{ id, issue, project, taskRequest }]
+        : [{ id, issue: summary, project, taskRequest }]
     )
     setExpandedTabs(current => (current.has(id) ? current : new Set()))
     setActiveTab(id)

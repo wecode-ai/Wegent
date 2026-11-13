@@ -421,7 +421,7 @@ export function WeworkSharedProject({
   services: WorkbenchServices
   setLocation: Dispatch<SetStateAction<CollaborationPlatformLocation>>
   userId: string | number
-  workspace: CollaborationProjectRendererWorkspaceContext
+  workspace: CollaborationProjectRendererWorkspaceContext | null
 }) {
   const { t } = useTranslation('common')
   const preferences = useAppPreferencesState()
@@ -494,7 +494,8 @@ export function WeworkSharedProject({
       latestProjectRef.current = project
     }
   }, [project])
-  const hasFullWorkspaceAccess = 'access_role' in workspace
+  const workspaceId = workspace?.id ?? null
+  const hasFullWorkspaceAccess = workspace !== null && 'access_role' in workspace
   const workspaceAccessRef = useRef(hasFullWorkspaceAccess)
   useLayoutEffect(() => {
     workspaceAccessRef.current = hasFullWorkspaceAccess
@@ -505,14 +506,14 @@ export function WeworkSharedProject({
       projects: {
         ...api.projects,
         list: async () => {
-          if (workspaceAccessRef.current) return api.projects.list(workspace.id)
+          if (workspaceAccessRef.current && workspaceId) return api.projects.list(workspaceId)
           const accessibleProjects = await api.projects.list()
           return accessibleProjects.filter(candidate => String(candidate.id) === String(project.id))
         },
         create: input =>
           api.projects.create({
             ...input,
-            workspaceId: workspace.id,
+            ...(workspaceId ? { workspaceId } : {}),
           }),
       },
       issues: {
@@ -535,7 +536,7 @@ export function WeworkSharedProject({
         },
       },
     }),
-    [api, project.id, project.project_store, workspace.id]
+    [api, project.id, project.project_store, workspaceId]
   )
   const standInWorkspaceApi = useMemo(
     () => ({
@@ -667,14 +668,14 @@ export function WeworkSharedProject({
           if (next.issueId && next.issueId !== personalIssue.issue.id)
             void scopedApi.issues
               .get(next.issueId)
-              .then(issue => personalIssue.onOpenIssue({ ...personalIssue.issue, ...issue }))
+              .then(issue => personalIssue.onOpenIssue(issue))
               .catch(cause => notify(String(cause), 'error'))
           return
         }
         setTaskComposer(current => (current?.issue.id === next.issueId ? current : null))
         setLocation(current => ({
           ...current,
-          workspaceId: workspace.id,
+          workspaceId,
           workspaceView: 'projects',
           projectId: next.projectId,
           projectView: next.view,
@@ -726,7 +727,7 @@ export function WeworkSharedProject({
       project.id,
       project.project_store,
       setLocation,
-      workspace.id,
+      workspaceId,
     ]
   )
   const editorProject = useMemo(

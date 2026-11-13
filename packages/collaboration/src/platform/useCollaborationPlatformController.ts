@@ -288,15 +288,6 @@ export function useCollaborationPlatformController({
         }));
         return;
       }
-      if (!api.workspaces) {
-        if (revision !== loadRevisionRef.current) return;
-        setState((current) => ({
-          ...current,
-          loading: false,
-          error: loadFailedMessage,
-        }));
-        return;
-      }
       // A location that names one project opens it directly. Resolving which
       // workspace the project belongs to here keeps the board from loading —
       // and painting — the whole workspace home on the way in.
@@ -314,6 +305,40 @@ export function useCollaborationPlatformController({
           workspaceId = null;
         }
         if (revision !== loadRevisionRef.current) return;
+      }
+      if (requestedProjectAuthorized && requestedProject && !workspaceId) {
+        const project = requestedProject;
+        navigationCacheRef.current.projects = mergeByKey(
+          [navigationCacheRef.current.projects, [project]],
+          (item) => item.id,
+        );
+        setState((current) => ({
+          ...current,
+          workspace: null,
+          workspaceNavigationContext: null,
+          projects: [project],
+          navigationProjects: mergeByKey(
+            [current.navigationProjects, [project]],
+            (item) => item.id,
+          ),
+          projectIssues: {},
+          members: [],
+          agents: [],
+          collaborationGroups: [],
+          executionEnvironments: [],
+          loading: false,
+          error: null,
+        }));
+        return;
+      }
+      if (!api.workspaces) {
+        if (revision !== loadRevisionRef.current) return;
+        setState((current) => ({
+          ...current,
+          loading: false,
+          error: loadFailedMessage,
+        }));
+        return;
       }
       setState((current) => ({
         ...current,

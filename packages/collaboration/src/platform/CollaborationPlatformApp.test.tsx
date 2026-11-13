@@ -966,6 +966,64 @@ afterEach(async () => {
 });
 
 describe("CollaborationPlatformApp real component flow", () => {
+  it("renders the shared board for a standalone project without a workspace API", async () => {
+    const standalone = {
+      ...project,
+      workspace_id: null,
+      workspace_context: null,
+    };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [standalone],
+    });
+    await render(
+      <PlatformHarness
+        api={{ ...api, workspaces: undefined }}
+        start={{ ...initialLocation, projectId: standalone.id }}
+      />,
+    );
+    expect(byTestId("collaboration-tab-board")).toBeTruthy();
+    expect(container.textContent).toContain(issue.title);
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-platform-opening-project"]',
+      ),
+    ).toBeNull();
+  });
+  it("opens an authorized standalone project without waiting for a parent workspace", async () => {
+    const standalone = {
+      ...project,
+      workspace_id: null,
+      workspace_context: null,
+    };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [standalone],
+    });
+    const renderProject = vi.fn(
+      (context: CollaborationProjectRendererContext) => (
+        <div data-testid="standalone-project">{context.project.name}</div>
+      ),
+    );
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, projectId: standalone.id }}
+        renderProject={renderProject}
+      />,
+    );
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-platform-opening-project"]',
+      ),
+    ).toBeNull();
+    expect(byTestId("standalone-project").textContent).toBe(standalone.name);
+    expect(renderProject).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: standalone, workspace: null }),
+    );
+    expect(api.workspaces!.get).not.toHaveBeenCalled();
+    expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
+  });
   it("lists accessible projects by storage without requiring access to their parent space", async () => {
     const restrictedProject = {
       ...project,
@@ -6802,8 +6860,12 @@ describe("Issue permission separation in the real shared editor", () => {
         '[data-testid="collaboration-assignment-target"]',
       ),
     ).toBeNull();
-    expect(container.querySelectorAll('[data-testid="cloud-todo-create-task"]')).toHaveLength(1);
-    expect(byTestId("cloud-todo-tasks").contains(byTestId("cloud-todo-create-task"))).toBe(true);
+    expect(
+      container.querySelectorAll('[data-testid="cloud-todo-create-task"]'),
+    ).toHaveLength(1);
+    expect(
+      byTestId("cloud-todo-tasks").contains(byTestId("cloud-todo-create-task")),
+    ).toBe(true);
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
     titleScrollHeight.mockRestore();
