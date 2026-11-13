@@ -293,8 +293,10 @@ test('expands collapsed collaboration management before revealing a resource des
     control,
     '[data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-primary-agents"]'
   )
-  assert.equal(calls[1].action, 'click')
-  assert.ok(calls[1].selector.endsWith('[data-testid="collaboration-management-toggle"]'))
+  assert.equal(calls[0].action, 'waitFor')
+  assert.equal(calls[1].action, 'getAttribute')
+  assert.equal(calls[2].action, 'click')
+  assert.ok(calls[2].selector.endsWith('[data-testid="collaboration-management-toggle"]'))
 })
 
 test('reveals a workspace identity independently of its section toggle position', async () => {
