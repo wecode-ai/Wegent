@@ -19,7 +19,9 @@ const COMPOSER =
 const VIEWER = '.wework-workspace-file-viewer'
 const FILE_TABS = '[role="tab"][data-testid^="right-workspace-file-tab"]'
 const EXCEL_STAGE = '.excel-wrapper .e-virt-table-stage'
+const EXCEL_CANVAS = '.excel-wrapper .e-virt-table-canvas'
 const EXCEL_LAYER = '.excel-wrapper .excel-image-layer'
+const SPREADSHEET_LAYOUT_STABILITY_MS = 800
 const TASK_PROMPT = 'OFFICE_PREVIEW_TASK_'
 
 async function waitForValue(read, predicate, description, timeoutMs) {
@@ -137,33 +139,77 @@ async function spreadsheetOffset(control) {
   return { x: -Number(match[1]), y: -Number(match[2]) }
 }
 
-async function scrollSpreadsheetUntil(control, delta, predicate, description, timeoutMs) {
+async function waitForSpreadsheetLayout(control, timeoutMs) {
   const deadline = Date.now() + timeoutMs
-  let offset
+  let stableSignature = null
+  let stableSince = null
+  let lastState = null
   while (Date.now() < deadline) {
-    await control.command('wheel', EXCEL_STAGE, { value: JSON.stringify(delta) })
-    offset = await spreadsheetOffset(control)
-    if (predicate(offset)) return offset
-    await new Promise(resolve => setTimeout(resolve, 100))
+    const [stage] = await metrics(control, EXCEL_STAGE)
+    const [canvas] = await metrics(control, EXCEL_CANVAS)
+    lastState = {
+      canvas: canvas && {
+        height: canvas.height,
+        width: canvas.width,
+      },
+      loadingClass: await control.command('getAttribute', '.excel-wrapper .loading', {
+        value: 'class',
+      }),
+      offset: await spreadsheetOffset(control),
+      stage: stage && {
+        height: stage.height,
+        width: stage.width,
+      },
+      streamingClass: await control.command('getAttribute', '.excel-wrapper .sheet-loading', {
+        value: 'class',
+      }),
+      summary: await control.command('getText', '.excel-wrapper .summary'),
+    }
+    const ready =
+      lastState.loadingClass.split(/\s+/).includes('hidden') &&
+      lastState.streamingClass.split(/\s+/).includes('hidden') &&
+      lastState.stage?.height > 0 &&
+      lastState.stage?.width > 0 &&
+      lastState.canvas?.height > 0 &&
+      lastState.canvas?.width > 0 &&
+      /\b120\b/.test(lastState.summary) &&
+      /\b24\b/.test(lastState.summary)
+    const signature = JSON.stringify(lastState)
+    if (ready && signature === stableSignature) {
+      stableSince ??= Date.now()
+      // The spreadsheet renderer schedules first-paint layout refreshes through
+      // 700 ms. Keep watching the loaded table through that complete window so a
+      // single wheel action cannot race the final table refresh.
+      if (Date.now() - stableSince >= SPREADSHEET_LAYOUT_STABILITY_MS) return
+    } else {
+      stableSignature = signature
+      stableSince = null
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
   }
-  assert.fail(`${description}: ${JSON.stringify(offset)}`)
+  assert.fail(`The spreadsheet did not reach a stable loaded layout: ${JSON.stringify(lastState)}`)
 }
 
 async function verifyWorkbook(control, captureScreenshot, timeoutMs) {
   await openFromTree(control, 'workbook.xlsx')
   await control.command('waitFor', '.excel-wrapper .sheet-tab[title="Data"][aria-pressed="true"]')
   await control.command('waitFor', EXCEL_LAYER)
-  await scrollSpreadsheetUntil(
-    control,
-    { deltaX: 800, deltaY: 100000 },
+  await waitForSpreadsheetLayout(control, timeoutMs)
+  await control.command('wheel', EXCEL_STAGE, {
+    value: JSON.stringify({ deltaX: 800, deltaY: 100000 }),
+  })
+  await waitForValue(
+    () => spreadsheetOffset(control),
     ({ x, y }) => x >= 800 && y > 1000,
     'Excel must handle both horizontal and vertical wheel input',
     timeoutMs
   )
   await captureScreenshot(control, 'office-preview-excel-scrolled.png')
-  await scrollSpreadsheetUntil(
-    control,
-    { deltaX: -100000, deltaY: -100000 },
+  await control.command('wheel', EXCEL_STAGE, {
+    value: JSON.stringify({ deltaX: -100000, deltaY: -100000 }),
+  })
+  await waitForValue(
+    () => spreadsheetOffset(control),
     ({ x, y }) => x === 0 && y === 0,
     'Excel must scroll back to the first row and column',
     timeoutMs
