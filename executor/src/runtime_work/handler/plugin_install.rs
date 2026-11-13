@@ -120,20 +120,51 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    async fn mutate_local_plugin_configuration<T, F>(
+        &self,
+        error_code: &'static str,
+        mutation: F,
+    ) -> Result<T, AppIpcError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, String> + Send + 'static,
+    {
+        // Native marketplace edits and complete config rewrites share this boundary.
+        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
+        // Prevent a turn from starting while the app-server configuration changes.
+        let _turn_admission = self.turn_queue_operation.lock().await;
+        self.codex_app_server
+            .mutate_configuration_if_idle(|| async move {
+                let value = tokio::task::spawn_blocking(mutation).await.map_err(|error| {
+                    format!("failed to join local plugin configuration mutation: {error}")
+                })??;
+                Ok((value, true))
+            })
+            .await
+            .map_err(|error| match error {
+                CodexIdleMutationError::Busy {
+                    active_turn_count,
+                    pending_request_count,
+                } => AppIpcError::new(
+                    error_code,
+                    format!(
+                        "cannot change local plugins while Codex work is active \
+                         ({active_turn_count} active turns, {pending_request_count} pending requests)"
+                    ),
+                ),
+                CodexIdleMutationError::Update(error) => AppIpcError::new(error_code, error),
+            })
+    }
+
     pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_install_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
-        tokio::task::spawn_blocking(move || install_local_plugin_files(&target))
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "local_plugin_install_failed",
-                    format!("failed to join local plugin installation: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new("local_plugin_install_failed", error))?;
+        self.mutate_local_plugin_configuration("local_plugin_install_failed", move || {
+            install_local_plugin_files(&target)
+        })
+        .await?;
         crate::services::capability_activation::notify_changed();
         log_executor_event(
             "local plugin install committed",
@@ -160,15 +191,10 @@ impl RuntimeWorkRpcHandler {
         ))?;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
-        tokio::task::spawn_blocking(move || uninstall_local_plugin_files(&target))
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "local_plugin_uninstall_failed",
-                    format!("failed to join local plugin uninstall: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new("local_plugin_uninstall_failed", error))?;
+        self.mutate_local_plugin_configuration("local_plugin_uninstall_failed", move || {
+            uninstall_local_plugin_files(&target)
+        })
+        .await?;
         log_executor_event(
             "local plugin uninstall committed",
             &[
@@ -446,6 +472,59 @@ fn plugin_config_enabled(codex_home: &Path, plugin_key: &str) -> Result<bool, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn local_install_waits_for_marketplace_configuration_transaction() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        fs::create_dir_all(&codex_home).unwrap();
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home: codex_home.clone(),
+        };
+        let mut handler = RuntimeWorkRpcHandler::new("local-plugin-config-gate", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        let transaction = handler
+            .bundled_plugin_marketplace_reconciliation
+            .lock()
+            .await;
+        let installing =
+            handler.mutate_local_plugin_configuration("local_plugin_install_failed", {
+                let target = target.clone();
+                move || install_local_plugin_files(&target)
+            });
+        tokio::pin!(installing);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(500), &mut installing)
+                .await
+                .is_err()
+        );
+        assert!(
+            !target.cache_root.exists(),
+            "Local plugin installation entered an active native config transaction"
+        );
+
+        fs::write(
+            codex_home.join("config.toml"),
+            "[marketplaces.wework-personal]\nsource_type = \"local\"\nsource = \"synthetic-source\"\n",
+        )
+        .unwrap();
+        drop(transaction);
+        installing.await.unwrap();
+
+        let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        assert!(config.contains("synthetic-source"));
+        assert!(plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
+        assert!(crate::local::plugin_cache::cache_matches_source(
+            &target.source_root,
+            &target.cache_root
+        )
+        .unwrap());
+    }
 
     #[tokio::test]
     async fn bundled_sync_waits_for_native_marketplace_configuration_transaction() {
