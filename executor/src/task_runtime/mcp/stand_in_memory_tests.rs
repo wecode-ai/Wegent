@@ -510,7 +510,7 @@ async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no
         .into_iter()
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(names, vec!["list_tasks", "read_task"]);
+    assert_eq!(names, vec!["list_tasks", "read_task", "search_context"]);
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let runtime = TaskRuntime::new(store).unwrap();

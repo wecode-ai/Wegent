@@ -299,7 +299,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let (request, model_proxy_token) = match prepare_claude_model_proxy(request) {
+        let (mut request, model_proxy_token) = match prepare_claude_model_proxy(request) {
             Ok(prepared) => prepared,
             Err(message) => {
                 self.fail_local_task_execution_start(
@@ -332,6 +332,7 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
+            handler.recall_stand_in_context(&mut request).await;
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));

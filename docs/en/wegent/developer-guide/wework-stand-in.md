@@ -4,6 +4,16 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+## Cross-conversation search and automatic recall
+
+`search_context` searches readable conversations on the current device using the existing `read_task` native history, pagination, long-message chunks and identity checks. This first stage adds no duplicate message database or external-history backfill. External messages absent from Wework conversations and history on other devices are outside its coverage.
+
+Search visits recent conversations first and matches case-normalized lexical terms and Chinese bigrams. Each call processes one bounded message page or content chunk and returns conversation/message identifiers, timestamps, roles, excerpts and `readArguments` for verification through `read_task`. Follow `nextCursor` with the same query even after an empty page. Incomplete source content remains explicitly marked. This is lexical retrieval, without synonym or cross-channel person resolution guarantees.
+
+Before each actual Codex or Claude model turn, recall searches with the current message, reads at most eight pages within 1.5 seconds and injects at most five evidence excerpts. Initial, continued, queued and restored turns use the same entry point. Previous recall is cleared first; unavailable sources or timeouts produce incomplete coverage, and the model can continue with `search_context`. Evidence is untrusted context, never authorization or proof of current state. Search and delivery revalidate reader authority and source connections; source-bound work retains its original source boundary. Project executions, coordinator batches and memory consolidation do not automatically recall history.
+
+Storage belongs to the execution device: local assistants use local history, while cloud assistants use their executor's history. Recalled evidence also has a 12KB total budget. Existing history snapshots use gzip compression and content-hash deduplication, expire after 24 hours, and are cleaned during writes and history transfers. There is currently no hard total snapshot disk quota. Original conversation retention is unchanged; recall does not automatically delete history, which continues to grow with usage.
+
 ## Persistent Issue collaboration conversations
 
 Project stand-ins reuse one native conversation per user, role, project store, project and Issue.
