@@ -132,7 +132,7 @@ Hover **left sidebar → Projects → project** and select …, or right-click t
 | Change project appearance | Use the appearance action to cycle project styling      | Not the global theme setting                                                                           |
 | Reveal in file manager    | Choose Finder/system file manager                       | Requires an accessible local path                                                                      |
 | Create permanent worktree | Select the action and complete its dialog               | Requires a supported Git source; differs from a temporary task worktree eligible for automatic cleanup |
-| Archive conversations     | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
+| Archive all chats         | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
 | Remove project            | Select Remove and review confirmation                   | Handle uncommitted work and linked worktrees first; removing a record is not a backup                  |
 
 For project-space Issues, open **top + → Collaboration → project**, then use the board view menu, Issue details or project settings. Role and visibility rules govern available actions. The following sections explain individual fields and workflows.

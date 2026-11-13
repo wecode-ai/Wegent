@@ -342,13 +342,28 @@ class SummaryService:
 
         if not document:
             logger.warning(f"[SummaryService] Document not found: {document_id}")
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "document_not_found"},
+                document_id=document_id,
+            )
             return None
+
+        document_kind_id = document.kind_id
 
         # 2. Check if document is active
         if not document.is_active:
             logger.info(
                 f"[SummaryService] Document not active yet: "
                 f"document_id={document_id}, name={document.name}"
+            )
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "document_not_active"},
+                kb_id=document_kind_id,
+                document_id=document_id,
             )
             return None
 
@@ -366,6 +381,13 @@ class SummaryService:
             logger.warning(
                 f"[SummaryService] Knowledge base not found for document: {document_id}"
             )
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "knowledge_base_not_found"},
+                kb_id=document_kind_id,
+                document_id=document_id,
+            )
             return None
 
         # 4. Get model configuration from knowledge base
@@ -373,6 +395,13 @@ class SummaryService:
         if not model_config:
             logger.warning(
                 f"[SummaryService] No model configured for summary generation in KB: {kb.id}"
+            )
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "summary_model_not_configured"},
+                kb_id=document_kind_id,
+                document_id=document_id,
             )
             return None
 
@@ -387,7 +416,6 @@ class SummaryService:
             model_config.get("model_namespace"),
             model_config.get("model_type"),
         )
-        document_kind_id = document.kind_id
         existing_summary = dict(document.summary or {})
 
         try:
@@ -396,6 +424,13 @@ class SummaryService:
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
             if not self._persist_document_summary(document_id, summary_data):
+                from .summary_reporting import report_summary_state
+
+                report_summary_state(
+                    {"status": "skipped", "reason": "document_deleted"},
+                    kb_id=document_kind_id,
+                    document_id=document_id,
+                )
                 return None
 
             logger.info(
@@ -465,12 +500,25 @@ class SummaryService:
                 )
 
             if not self._persist_document_summary(document_id, summary_data):
+                from .summary_reporting import report_summary_state
+
+                report_summary_state(
+                    {"status": "skipped", "reason": "document_deleted"},
+                    kb_id=document_kind_id,
+                    document_id=document_id,
+                )
                 logger.info(
                     "[SummaryService] Document deleted before summary completion: "
                     "document_id=%s",
                     document_id,
                 )
                 return result
+
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                summary_data, kb_id=document_kind_id, document_id=document_id
+            )
 
             # 10. Check if knowledge base summary needs to be triggered
             if result.success:
@@ -495,7 +543,12 @@ class SummaryService:
                     "error": str(e),
                     "updated_at": datetime.now().isoformat(),
                 }
-                self._persist_document_summary(document_id, summary_data)
+                if self._persist_document_summary(document_id, summary_data):
+                    from .summary_reporting import report_summary_state
+
+                    report_summary_state(
+                        summary_data, kb_id=document_kind_id, document_id=document_id
+                    )
             except Exception as commit_error:
                 logger.warning(
                     f"[SummaryService] Failed to save error status: {commit_error}"
@@ -657,6 +710,9 @@ class SummaryService:
             )
 
         self._persist_kb_summary(kb, summary_data)
+        from .summary_reporting import report_summary_state
+
+        report_summary_state(summary_data, kb_id=kb_id)
 
     def _write_kb_summary_failure(self, kb_id: int, error: str) -> None:
         kb = (
@@ -672,15 +728,16 @@ class SummaryService:
             return
 
         existing_summary = dict((kb.json or {}).get("spec", {}).get("summary") or {})
-        self._persist_kb_summary(
-            kb,
-            {
-                **existing_summary,
-                "status": "failed",
-                "error": error,
-                "updated_at": datetime.now().isoformat(),
-            },
-        )
+        summary_data = {
+            **existing_summary,
+            "status": "failed",
+            "error": error,
+            "updated_at": datetime.now().isoformat(),
+        }
+        self._persist_kb_summary(kb, summary_data)
+        from .summary_reporting import report_summary_state
+
+        report_summary_state(summary_data, kb_id=kb_id)
 
     async def _execute_kb_summary_model(
         self,
@@ -739,6 +796,11 @@ class SummaryService:
             clear_if_empty=clear_if_empty,
         )
         if not claim:
+            from .summary_reporting import report_summary_state
+
+            report_summary_state(
+                {"status": "skipped", "reason": "claim_not_acquired"}, kb_id=kb_id
+            )
             return None
 
         truncated_aggregation = self._truncate_prompt_if_needed(
