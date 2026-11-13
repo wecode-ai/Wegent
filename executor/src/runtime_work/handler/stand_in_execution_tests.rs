@@ -73,27 +73,23 @@ fn assignment_handled_by_another_role_preserves_scope_and_new_wakeups() {
     let issue = json!({"id":"issue"});
     let binding = json!({"humanAssignmentId":"accepted"});
     let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"review","userId":7,"projectStore":"local","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"accepted"});
+    let reservation = json!({"task_id":"original-task"});
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "original-task".into(),
         status: "done".into(),
         runtime_handle: json!({"origin":origin}),
         ..RuntimeTaskLink::default()
     });
-    assert!(handler.assignment_handled_by_another_role(&config, &issue, &binding, "original-task"));
+    assert!(handler.assignment_handled_by_another_role(&config, &issue, &binding, &reservation));
     assert!(!handler.assignment_handled_by_another_role(
         &config,
         &issue,
         &json!({"humanAssignmentId":"reassigned"}),
-        "original-task"
+        &reservation
     ));
     let mut manual = config.clone();
     manual["manual"] = json!(true);
-    assert!(!handler.assignment_handled_by_another_role(
-        &manual,
-        &issue,
-        &binding,
-        "original-task"
-    ));
+    assert!(!handler.assignment_handled_by_another_role(&manual, &issue, &binding, &reservation));
     for (field, value) in [
         ("userId", json!(8)),
         ("projectStore", json!("cloud")),
@@ -109,10 +105,103 @@ fn assignment_handled_by_another_role_preserves_scope_and_new_wakeups() {
             ..RuntimeTaskLink::default()
         });
         assert!(
-            !handler.assignment_handled_by_another_role(&config, &issue, &binding, "original-task"),
+            !handler.assignment_handled_by_another_role(&config, &issue, &binding, &reservation),
             "{field}"
         );
     }
+}
+
+#[tokio::test]
+async fn pending_reservation_blocks_another_role_before_any_runtime_task_exists() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime-index.json"));
+    handler.task_store_path = Arc::new(root.path().join("tasks.sqlite"));
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    let project = store
+        .create_project(serde_json::from_value(json!({"name":"Reserved"})).unwrap())
+        .unwrap();
+    let issue = serde_json::to_value(
+        store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Pending assignment","assignee_user_id":0}))
+                    .unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    let first = json!({"id":"review","userId":0,"projectStore":"local","projectId":project.id});
+    let receipt = store
+        .assignment_receipts(&project.id, issue["id"].as_str().unwrap())
+        .unwrap();
+    let binding = json!({"humanAssignmentId":receipt[0]["id"]});
+    handler
+        .accept_stand_in_assignment(&first, &issue, &binding)
+        .await
+        .unwrap();
+    let rows = store
+        .list_task_bindings(issue["id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].stand_in_pending, Some(true));
+    assert!(handler.store.get_task_summary(&rows[0].task_id).is_none());
+    let mut candidate = first.clone();
+    candidate["id"] = json!("docs");
+    let reservation = serde_json::to_value(&rows[0]).unwrap();
+    assert!(handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &reservation));
+    assert!(!handler.assignment_handled_by_another_role(&first, &issue, &binding, &reservation));
+    assert!(!handler.assignment_handled_by_another_role(
+        &candidate,
+        &issue,
+        &json!({"humanAssignmentId":"reassigned"}),
+        &reservation
+    ));
+    for (field, value) in [
+        ("userId", json!(7)),
+        ("projectStore", json!("cloud")),
+        ("cloudProjectId", json!("other-project")),
+        ("loopItemId", json!("other-issue")),
+        ("standInId", json!("docs")),
+        ("runtimeTaskId", json!("other-task")),
+        ("initiatedBy", json!("user")),
+    ] {
+        let mut foreign = reservation.clone();
+        foreign["executionContext"]["origin"][field] = value;
+        assert!(
+            !handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &foreign),
+            "{field}"
+        );
+    }
+    let mut settled = reservation.clone();
+    settled["stand_in_pending"] = json!(false);
+    assert!(!handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &settled));
+}
+
+#[test]
+fn pending_cloud_binding_keeps_role_and_assignment_ownership_without_a_runtime_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let handler = RuntimeWorkRpcHandler {
+        store: RuntimeWorkStore::new(root.path().join("runtime-index.json")),
+        ..RuntimeWorkRpcHandler::new("mac", "unused")
+    };
+    let first = json!({"id":"review","userId":7,"projectStore":"cloud","projectId":"project"});
+    let issue = json!({"id":"issue"});
+    let binding = json!({"humanAssignmentId":"assignment"});
+    let task_id = handler.stand_in_task_id(&first, &issue);
+    let row = json!({"task_id":task_id,"task_user_id":7,"stand_in_pending":true,
+        "human_assignment_id":"assignment","executionContext":{"origin":handler.stand_in_issue_origin(&first,&issue,&binding)}});
+    let mut candidate = first.clone();
+    candidate["id"] = json!("docs");
+    assert!(handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &row));
+    let mut foreign = row.clone();
+    foreign["task_user_id"] = json!(8);
+    assert!(!handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &foreign));
+    candidate["manual"] = json!(true);
+    assert!(!handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &row));
+    candidate["manual"] = json!(false);
+    candidate["triggerCommentId"] = json!("explicit-mention");
+    assert!(!handler.assignment_handled_by_another_role(&candidate, &issue, &binding, &row));
 }
 
 #[tokio::test]

@@ -134,6 +134,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       // Native collaboration uses user 0 independently of the signed-in account identity.
       await verifyPersonalHomeStartWork(control, { scoped, project: localProject, viewerId: 0 })
       await capture(control, 'collaboration-first-use-07-home-workflow.png')
+      await control.command('click', scoped(`[data-testid="personal-home-issue-${issueId}"]`))
+      await control.command('waitFor', scoped('[data-testid="personal-home-open-in-project"]'))
+      await control.command('click', scoped('[data-testid="personal-home-open-in-project"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'))
+      assert.equal(
+        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        ISSUE_NAME
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', scoped('[data-testid="personal-home"]'))),
+        0,
+        'A local project without a parent workspace must open its actual Issue detail'
+      )
+      await capture(control, 'collaboration-first-use-08-open-local-project.png')
     },
 
     diagnostics() {

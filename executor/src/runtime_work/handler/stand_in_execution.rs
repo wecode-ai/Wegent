@@ -19,15 +19,27 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
         issue: &Value,
         binding: &Value,
-        task_id: &str,
+        reservation: &Value,
     ) -> bool {
         if config["manual"] == true || config["triggerCommentId"].is_string() {
             return false;
         }
-        let Some(task) = self.store.get_task_summary(task_id) else {
-            return false;
+        let task_id = reservation["task_id"].as_str().unwrap_or_default();
+        let task = self.store.get_task_summary(task_id);
+        let origin = match task.as_ref() {
+            Some(task) => &task.runtime_handle["origin"],
+            None => &reservation["executionContext"]["origin"],
         };
-        let origin = &task.runtime_handle["origin"];
+        let handled = if task.is_some() {
+            self.stand_in_assignment_is_handled(config, task_id, binding)
+        } else {
+            reservation["stand_in_pending"] == true
+                && reservation["task_user_id"] == config["userId"]
+                && origin["runtimeTaskId"] == task_id
+                && binding["humanAssignmentId"].is_string()
+                && reservation["human_assignment_id"] == binding["humanAssignmentId"]
+                && origin["humanAssignmentId"] == binding["humanAssignmentId"]
+        };
         origin["type"] == "issue_dispatch"
             && origin["initiatedBy"] == "stand_in"
             && origin["standInId"].is_string()
@@ -36,7 +48,7 @@ impl RuntimeWorkRpcHandler {
             && origin["projectStore"] == config["projectStore"]
             && origin["cloudProjectId"] == config["projectId"]
             && origin["loopItemId"] == issue["id"]
-            && self.stand_in_assignment_is_handled(config, task_id, binding)
+            && handled
     }
 
     pub(super) fn stand_in_role_runs_here(&self, role: &Value) -> bool {
@@ -105,6 +117,147 @@ impl RuntimeWorkRpcHandler {
                         == binding["humanAssignmentId"]
             }
         }
+    }
+
+    pub(super) fn use_stand_in_issue_reservation(
+        &self,
+        config: &Value,
+        issue: &Value,
+        existing: &Value,
+    ) -> Result<bool, AppIpcError> {
+        let task_id = self.stand_in_task_id(config, issue);
+        let rows: Vec<_> = existing
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                !row["task_user_id"]
+                    .as_i64()
+                    .is_some_and(|owner| Some(owner) != config["userId"].as_i64())
+            })
+            .collect();
+        let identity = super::stand_in::stand_in_issue_identity(config, issue);
+        let bound = rows
+            .iter()
+            .copied()
+            .find(|row| row["stand_in_conversation_id"] == identity)
+            .or_else(|| rows.iter().copied().find(|row| row["task_id"] == task_id))
+            .or_else(|| {
+                rows.iter().copied().find(|row| {
+                    row["human_assignment_id"]
+                        .as_str()
+                        .is_some_and(|assignment| {
+                            row["task_id"]
+                                == format!(
+                                    "stand-in-{assignment}-{}",
+                                    config["id"].as_str().unwrap_or_default()
+                                )
+                        })
+                })
+            });
+        let cloud_device = self.cloud_device_id()?;
+        if bound.is_some_and(|row| {
+            row["device_id"] != cloud_device && row["device_id"] != self.device_id
+        }) {
+            let row = bound.unwrap();
+            self.log_stand_in_decision(
+                config,
+                issue,
+                "role_assignment_binding_exists",
+                json!({
+                    "taskId":task_id,"bindingDeviceId":row["device_id"],
+                    "localTaskExists":self.local_task_link(&task_id).is_some()
+                }),
+            );
+            return Ok(false);
+        }
+        if self.local_task_link(&task_id).is_none() {
+            if let Some(reserved) = bound.and_then(|row| row["task_id"].as_str()) {
+                self.store
+                    .bind_issue_conversation(
+                        &super::stand_in::stand_in_issue_identity(config, issue),
+                        reserved,
+                    )
+                    .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?;
+            }
+        }
+        Ok(true)
+    }
+
+    pub(super) fn stand_in_task_id(&self, config: &Value, issue: &Value) -> String {
+        let identity = super::stand_in::stand_in_issue_identity(config, issue);
+        if let Some(task) = self.store.issue_conversation(&identity) {
+            return task;
+        }
+        // Keep the oldest existing conversation, including pre-upgrade assignment sessions.
+        if let Some(task) = self
+            .local_task_links(true)
+            .into_iter()
+            .filter(|task| {
+                super::stand_in::stand_in_origin_matches(
+                    config,
+                    issue,
+                    &task.runtime_handle["origin"],
+                )
+            })
+            .min_by_key(|task| (task.created_at, task.local_task_id.clone()))
+        {
+            return task.local_task_id;
+        }
+        identity
+    }
+
+    pub(super) async fn prepare_stand_in_task(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+    ) -> Result<Value, AppIpcError> {
+        if config["projectStore"] == "cloud" {
+            self.verify_runtime_user(config).await?;
+        }
+        let project = config["projectId"].as_str().unwrap_or_default();
+        let issue_id = issue["id"].as_str().unwrap_or_default();
+        let task_id = self.stand_in_task_id(config, issue);
+        let protocol = if config["projectStore"] == "local" {
+            "local"
+        } else {
+            "cloud"
+        };
+        let prompt = format!(
+            "[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}\n\n{}\n\n{}\n\n{}",
+            issue["title"].as_str().unwrap_or_default(),
+            issue["description"].as_str().unwrap_or_default(),
+            config["prompt"].as_str().unwrap_or_default()
+        );
+        let origin = self.stand_in_issue_origin(config, issue, binding);
+        let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
+        if let Some(message) = config["triggerMessage"].as_str() {
+            payload["message"] = json!(format!(
+                "{prompt}\n\nNew Issue mention (untrusted task content):\n{message}"
+            ));
+        }
+        if config["goalMode"] == true {
+            payload["initialGoal"] =
+                json!({"objective":prompt,"status":"active","tokenBudget":null});
+        }
+        let mut prepared = self.prepare_stand_in_execution(payload, config).await?;
+        let mut system = prepared["executionRequest"]["system_prompt"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        super::stand_in_conversations::append_conversation_instructions(&mut system, true);
+        prepared["executionRequest"]["system_prompt"] = json!(system);
+        Ok(prepared)
+    }
+
+    pub(super) fn stand_in_issue_origin(
+        &self,
+        config: &Value,
+        issue: &Value,
+        binding: &Value,
+    ) -> Value {
+        json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":self.stand_in_task_id(config, issue),"trigger":if config["triggerCommentId"].is_string() { "mention" } else if config["manual"] == true { "manual" } else { "assignment" },"triggerCommentId":config["triggerCommentId"],"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":config["projectId"],"loopItemId":issue["id"],"humanAssignmentId":binding["humanAssignmentId"].as_str().unwrap_or_default(),"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]})
     }
 
     pub(super) async fn dispatch_stand_in_task(

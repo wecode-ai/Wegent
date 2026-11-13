@@ -100,6 +100,10 @@ impl RuntimeWorkRpcHandler {
             .is_none());
         binding["standInConversationId"] =
             json!(super::stand_in::stand_in_issue_identity(config, issue));
+        if !binding["executionContext"].is_object() {
+            binding["executionContext"] = json!({});
+        }
+        binding["executionContext"]["origin"] = self.stand_in_issue_origin(config, issue, &binding);
         let issue_id = issue["id"].as_str().unwrap_or_default();
         if binding["triggerCommentId"].is_string() {
             self.runtime_http(

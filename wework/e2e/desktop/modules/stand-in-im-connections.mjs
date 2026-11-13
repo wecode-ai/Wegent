@@ -67,6 +67,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       )
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const closeConnections = async () => {
+        await control.command('focusMainWindow')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-im-dialog-close"]')
         await control.command('waitFor', '[data-testid="stand-in-im-channel-telegram"]:focus')
         await control.command('clickWhenEnabled', '[data-testid="stand-in-details-open"]')
@@ -206,7 +207,6 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify(previousWindowSize),
       })
-      await control.command('focusMainWindow')
       await closeConnections()
       const chatMode = await fixture({
         operation: 'send',
