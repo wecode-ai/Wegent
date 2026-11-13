@@ -46,7 +46,12 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             })
             .await
     });
-    let client = brz_http::Client::new();
+    // Negative cases exhaust 1.4 seconds of existing CAS retry backoff. Use
+    // the protocol's operation budget instead of the 400ms socket default.
+    let client = brz_http::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?;
     let post = |id, path: &'static str, body: Value| {
         let client = client.clone();
         let token = jsonwebtoken::encode(
@@ -56,14 +61,25 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         )
         .unwrap();
         async move {
-            client
+            let started = std::time::Instant::now();
+            eprintln!(
+                "local-sync contract request user_id={id} path={path} instance={}",
+                body["instanceId"]
+            );
+            let response = client
                 .post(format!("http://{address}{path}"))
                 .unwrap()
                 .bearer_auth(token)
                 .json(&body)
                 .send()
                 .await
-                .unwrap()
+                .unwrap_or_else(|error| panic!("local-sync contract request failed user_id={id} path={path} instance={} elapsed={:?}: {error}",body["instanceId"],started.elapsed()));
+            eprintln!(
+                "local-sync contract response user_id={id} status={} elapsed={:?}",
+                response.status(),
+                started.elapsed()
+            );
+            response
         }
     };
     let probe = post(
@@ -183,6 +199,14 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     let old_slot = json!({"operationId":"historical-uninstall","requestHash":"old-hash","installedId":cold.id,"installedRevision":2,"intentOrder":7,"action":"uninstall"});
     let frozen = json!({"spec":{"generation":7677,"devices":{"desktop":{"complete_generation":7000,"plugins":{cold.id.to_string():7677}}},"localIntents":{"scoped-only":{cold.id.to_string():old_slot}},"localIntentOrders":{"scoped-only":{cold.id.to_string():7}}}});
     mysql.execute("INSERT INTO kinds (user_id,kind,name,namespace,json,is_active,created_at,updated_at) VALUES (81003,'PluginSyncState','account','plugin-sync',?,1,NOW(),NOW())",(frozen.clone(),)).await?;
+    mysql
+        .with_transaction(async |tx| {
+            assert!(has_instance(tx, 81003, "scoped-only").await?);
+            assert!(!has_instance(tx, 81003, "unknown-instance").await?);
+            assert!(!has_instance(tx, 81002, "scoped-only").await?);
+            Ok(())
+        })
+        .await?;
     let recovered=post(81003,"/api/plugins/local-sync",json!({"protocolVersion":1,"pluginSyncVersion":3,"instanceId":"scoped-only","operationId":"historical-uninstall","targeted":true})).await.json::<Value>().await?;
     assert_eq!(recovered["operation"]["state"], "intent_saved");
     assert!(
@@ -193,6 +217,12 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     );
     let retained: StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81003 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
     assert_eq!(retained.json, frozen);
+    mysql
+        .with_transaction(async |tx| {
+            assert!(has_instance(tx, 81003, "scoped-only").await?);
+            Ok(())
+        })
+        .await?;
     let fresh = post(
         81003,
         "/api/plugins/local-sync",

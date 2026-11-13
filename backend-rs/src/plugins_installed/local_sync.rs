@@ -365,13 +365,19 @@ async fn has_instance(
 ) -> MysqlResult<bool> {
     let rows: Vec<StateRow> = tx
         .fetch_all(
-            "SELECT plugin_key,json FROM plugin_states WHERE user_id=?",
+            "SELECT plugin_key,installed_kind_id,json FROM plugin_states WHERE user_id=?",
             (user,),
         )
         .await?;
-    Ok(rows
+    if rows
         .iter()
-        .any(|row| row.json["spec"]["localIntentOrders"][instance].is_object()))
+        .any(|row| row.json["spec"]["localIntentOrders"][instance].is_object())
+    {
+        return Ok(true);
+    }
+    let mut query = &mut *tx;
+    let baseline = super::state_history::legacy(&mut query, user).await?;
+    Ok(baseline["spec"]["localIntentOrders"][instance].is_object())
 }
 
 #[cfg(test)]

@@ -128,8 +128,8 @@ def verify(engine, url):
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names()) == before | {"plugin_states"}
         with Session(engine) as db:
-            assert db.query(PluginState).count() == 0
             configure_plugin_session(db)
+            assert db.query(PluginState).count() == 0
             try:
                 ensure_plugin_state(db, 1, "plugin-17", installed_kind_id=17)
             except PluginWriteError as error:
