@@ -293,6 +293,10 @@ export function createDesktopScenario({
         'remote'
       )
       assert.ok(remoteDevice?.id, 'The real remote Docker Executor device is unavailable')
+      const initialTaskAddress = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      ).workbench?.currentRuntimeTask
+      assert.ok(initialTaskAddress?.taskId, 'The standalone picker task is unavailable')
 
       try {
         await ensureExperimentalFeaturesEnabled(control)
@@ -1030,8 +1034,8 @@ export function createDesktopScenario({
           workbenchReadyTimeoutMs,
         })
         await projectSpacePicker.verify(control, {
-          deviceId: binding.deviceId ?? binding.device_id,
-          taskId: binding.taskId ?? binding.task_id,
+          deviceId: initialTaskAddress.deviceId,
+          taskId: initialTaskAddress.taskId,
         })
       } finally {
         linkedIssueTaskModel?.release()
