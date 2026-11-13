@@ -521,6 +521,9 @@ try {
     expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
       '- id: client-hmr\n  disabled: false'
     )
+    expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
+      '- id: hmr\n  disabled: false'
+    )
     expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
     await fixture.remove()
   })

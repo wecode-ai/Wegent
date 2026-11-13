@@ -45,6 +45,19 @@ impl TaskRow {
             created_at: row.get("created_at")?,
         })
     }
+
+    /// Transactional task-store reads alias columns with the physical table name.
+    fn from_labeled_row(row: &MysqlRow) -> MysqlResult<Self> {
+        let position = |column| {
+            crate::task_store::task_column_index(column).expect("column in the task projection")
+        };
+        Ok(Self {
+            id: row.get_at(position("id"))?,
+            user_id: row.get_at(position("user_id"))?,
+            json: row.get_at(position("json"))?,
+            created_at: row.get_at(position("created_at"))?,
+        })
+    }
 }
 
 /// One `subtasks`/`subtasks_{:04}` row projection used for output items.
@@ -330,7 +343,7 @@ pub async fn get_task_by_states_active_owned_on(
     let row = task_store
         .get_active_task_owned_on(sql, task_id, owner_user_id)
         .await?;
-    row.as_ref().map(TaskRow::from_row).transpose()
+    row.as_ref().map(TaskRow::from_labeled_row).transpose()
 }
 
 /// `resolve_task_ref_team` owner selector: an explicit `teamRef.user_id`
@@ -418,6 +431,42 @@ mod tests {
             Some(1001),
             "kinds.user_id must bind as an integer parameter"
         );
+    }
+
+    #[tokio::test]
+    async fn continuation_decodes_the_task_store_labeled_projection() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+        use crate::task_store_statements::{TASK_MAPPED_COLUMNS, task_column_index};
+
+        let fixture = MysqlRows::start(|sql| {
+            assert!(sql.contains("tasks.id AS tasks_id"), "{sql}");
+            let mut row = vec![("unused", SqlValue::Null); TASK_MAPPED_COLUMNS.len()];
+            for (column, alias, value) in [
+                ("id", "tasks_id", SqlValue::I64(42)),
+                ("user_id", "tasks_user_id", SqlValue::I32(7)),
+                (
+                    "json",
+                    "tasks_json",
+                    SqlValue::Text(r#"{"status":{"status":"COMPLETED"}}"#.into()),
+                ),
+            ] {
+                row[task_column_index(column).unwrap()] = (alias, value);
+            }
+            row
+        })
+        .await;
+        let store = crate::task_store::DefaultTaskStore::new(fixture.mysql.clone());
+        let task = fixture
+            .mysql
+            .with_transaction(async |transaction| {
+                get_task_by_states_active_owned_on(transaction, &store, 42, 7).await
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((task.id, task.user_id), (42, 7));
+        assert_eq!(task.json.0.to_value()["status"]["status"], "COMPLETED");
+        assert!(task.created_at.is_none());
     }
 }
 
