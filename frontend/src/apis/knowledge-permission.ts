@@ -99,9 +99,12 @@ export const knowledgePermissionApi = {
     options?: { includePendingRequests?: boolean }
   ): Promise<PermissionListResponse> => {
     // Fetch approved members
-    const membersResponse = await client.get<{ members: ResourceMemberResponse[]; total: number }>(
-      `/share/KnowledgeBase/${kbId}/members`
-    )
+    const membersResponse = await client.get<{
+      members: ResourceMemberResponse[]
+      total: number
+      creator?: PermissionListResponse['creator']
+      inherited_sources?: PermissionListResponse['inherited_sources']
+    }>(`/share/KnowledgeBase/${kbId}/members`)
 
     let pending: PermissionListResponse['pending'] = []
     if (options?.includePendingRequests) {
@@ -153,6 +156,7 @@ export const knowledgePermissionApi = {
             m.display_name || m.entity_display_name || (isEntity ? m.entity_id || '' : ''),
           email: isEntity ? '' : m.user_email || '',
           role: role,
+          invited_by_name: m.invited_by_user_name,
           requested_at: m.requested_at,
           reviewed_at: m.reviewed_at || undefined,
           reviewed_by: m.reviewed_by_user_id || undefined,
@@ -165,7 +169,12 @@ export const knowledgePermissionApi = {
       },
       { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] }
     )
-    return { pending, approved }
+    return {
+      pending,
+      approved,
+      creator: membersResponse.creator,
+      inherited_sources: membersResponse.inherited_sources,
+    }
   },
 
   /**

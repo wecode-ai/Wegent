@@ -657,8 +657,10 @@ it.each(
     await screen.findByText('Granted user')
     if (operation === 'delete') await user.click(screen.getByTitle('document.permission.remove'))
     else {
-      await user.click(screen.getByTestId('permission-edit-91'))
-      await user.click(screen.getByTestId('permission-save-91'))
+      await user.click(screen.getByTestId('permission-role-91'))
+      await user.click(
+        await screen.findByRole('option', { name: 'document.permission.role.Developer' })
+      )
     }
     await user.click(screen.getByTestId('close-knowledge-access'))
     if (mode === 'library' || mode === 'return') {
@@ -668,7 +670,7 @@ it.each(
         await user.click(screen.getByTestId('knowledge-detail-back-button'))
         await user.click(screen.getByTestId('more-kb-7'))
         await user.click(screen.getByTestId('permission-kb-7'))
-        await screen.findByTestId('perm-tab-user')
+        await screen.findByTestId('knowledge-authorization-objects')
       }
     }
     if (mode === 'unmount') unmount()
@@ -885,7 +887,9 @@ it.each(
           await click('knowledge-detail-back-button')
           await click('more-kb-7')
           await click('permission-kb-7')
-          await step('wait for original permissions', () => screen.findByTestId('perm-tab-user'))
+          await step('wait for original permissions', () =>
+            screen.findByTestId('knowledge-authorization-objects')
+          )
         }
       }
       phase = 'switch session: ' + mode

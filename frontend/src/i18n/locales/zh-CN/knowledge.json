@@ -1046,6 +1046,41 @@
       "selectTargets": "选择人员或团队，失败时只重试未成功项。",
       "retryFailed": "重试失败项",
       "noMatchingSpaces": "没有匹配的空间"
+    },
+    "authorizationObjects": {
+      "title": "授权对象",
+      "count": "{{count}} 个",
+      "description": "包括直接授权、创建人及归属空间的继承权限",
+      "object": "授权对象",
+      "permission": "权限",
+      "source": "授权方式",
+      "actions": "操作",
+      "objectPermission": "{{name}}的权限",
+      "groupRole": "按群组角色",
+      "organizationRole": "按公司规则",
+      "manageInGroups": "在组管理中修改",
+      "organizationPolicy": "由公司权限规则决定",
+      "notRemovable": "不可移除",
+      "empty": "暂无授权对象",
+      "membershipNote": "群组不展开成员；实际访问仍受知识库访问规则约束。",
+      "organizationNote": "公司知识默认允许用户查看，系统管理员可管理。",
+      "readOnlyNote": "你可以查看全部授权对象；调整授权需联系权限管理者。",
+      "types": {
+        "user": "用户",
+        "namespace": "群组",
+        "organization": "公司",
+        "other": "其他实体"
+      },
+      "sources": {
+        "creator": "创建人",
+        "inherited": "继承",
+        "direct": "直接授权"
+      },
+      "searchPlaceholder": "搜索授权对象",
+      "matchingCount": "{{count}} 个匹配的授权对象",
+      "identifier": "标识：{{id}}",
+      "grantIdentifier": "授权记录：{{id}}",
+      "removeObject": "移除 {{name}}"
     }
   },
   "add_repository": "添加仓库",

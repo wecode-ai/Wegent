@@ -52,12 +52,14 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
     canUpload,
     headerActions,
     groupInfo,
+    onGroupClick,
   }: {
     contentOrigin?: string
     readOnly?: boolean
     canUpload?: boolean
     headerActions?: ReactNode
-    groupInfo?: { groupId: string }
+    groupInfo?: { groupId: string; groupType?: string }
+    onGroupClick?: (groupId: string, groupType?: string) => void
   }) => (
     <>
       <div
@@ -68,12 +70,24 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
         data-group-id={groupInfo?.groupId}
       />
       {headerActions}
+      {groupInfo && onGroupClick && (
+        <button
+          data-testid="code-wiki-group-navigation"
+          onClick={() => onGroupClick(groupInfo.groupId, groupInfo.groupType)}
+        >
+          Group
+        </button>
+      )}
     </>
   ),
 }))
 
-jest.mock('@/features/knowledge/permission/components/PermissionManagementTab', () => ({
-  PermissionManagementTab: () => <div data-testid="mock-code-wiki-permissions" />,
+jest.mock('@/features/knowledge/document/components/KnowledgeAccessDialog', () => ({
+  KnowledgeAccessDialog: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="mock-code-wiki-permissions">
+      <button onClick={onClose}>Close permissions</button>
+    </div>
+  ),
 }))
 
 const wiki: KnowledgeBase = {
@@ -206,4 +220,17 @@ it('removes an open permission view immediately when the verified list role drop
     'data-read-only',
     'true'
   )
+})
+
+it('keeps the selected CodeWiki document root mounted while permissions are open', async () => {
+  mockCanManageKnowledgeBase.mockReturnValue(true)
+  mockCanManageKnowledgeBaseDocuments.mockReturnValue(true)
+  mockCanManageKnowledgeBasePermissions.mockReturnValue(true)
+  const user = userEvent.setup()
+  render(<CodeWikiWorkspace wiki={wiki} view="documents" verifiedRole="Owner" />)
+  await user.click(screen.getByTestId('code-wiki-content-user'))
+  const list = screen.getByTestId('mock-code-wiki-document-list')
+  await user.click(screen.getByTestId('code-wiki-content-permissions'))
+  expect(screen.getByTestId('mock-code-wiki-document-list')).toBe(list)
+  expect(list).toHaveAttribute('data-origin', 'user')
 })

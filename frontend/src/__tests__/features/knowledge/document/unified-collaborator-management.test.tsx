@@ -278,13 +278,12 @@ it('keeps approvals independent of member filtering and displays registered memb
   expect(screen.getByText('Pending user')).toBeInTheDocument()
   expect(screen.getByTestId('permission-approve-55')).toBeEnabled()
   expect(screen.getByTestId('permission-reject-55')).toBeEnabled()
-  await user.click(screen.getByTestId('permission-tab-ext-reg-test-display'))
   expect(screen.queryByText('Department A')).not.toBeInTheDocument()
   expect(screen.getByText('document.permission.noMatchingMembers')).toBeInTheDocument()
   await user.clear(screen.getByTestId('knowledge-member-search'))
   expect(screen.getByText('Department A')).toBeInTheDocument()
   expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('1')
-  expect(screen.getByTestId('permission-edit-91')).toBeEnabled()
+  expect(screen.getByTestId('permission-role-91')).toBeEnabled()
 })
 
 it.each(['document', 'created'])(

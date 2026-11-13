@@ -35,7 +35,8 @@ import { knowledgeCapableTeams } from '../utils/knowledgeTeams'
 import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
 import { ArtifactWorkspacePanel } from '@/features/knowledge/artifact/components/ArtifactWorkspacePanel'
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
-import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
+import { KnowledgeAccessDialog } from './KnowledgeAccessDialog'
+import { Button } from '@/components/ui/button'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import {
   canManageKnowledgeBase,
@@ -118,7 +119,9 @@ export function KnowledgeDetailPanel({
   const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
   // Tab state for documents/permissions (classic mode)
-  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
+  const [permissionKbId, setPermissionKbId] = useState<number | null>(null)
+  const permissionTrigger = useRef<HTMLButtonElement>(null)
+  const documentRegion = useRef<HTMLDivElement>(null)
 
   // State for selected document IDs (for notebook mode context injection)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
@@ -202,6 +205,13 @@ export function KnowledgeDetailPanel({
     })
   }, [selectedKb, user, myPermission, verifiedRole])
 
+  useEffect(() => {
+    setPermissionKbId(null)
+  }, [selectedKb?.id, currentView])
+  useEffect(() => {
+    if (!canManagePermissions) setPermissionKbId(null)
+  }, [canManagePermissions])
+
   // Get search params to check for taskId in URL
   // Support multiple parameter formats for compatibility
   const searchParams = useSearchParams()
@@ -240,7 +250,7 @@ export function KnowledgeDetailPanel({
     const isInitialKnowledgeBase = prevKbIdRef.current === null && selectedKb?.id != null
 
     if (isInitialKnowledgeBase || isKbSwitch) {
-      setActiveTab('documents')
+      setPermissionKbId(null)
       setSelectedDocumentIds([])
       setAvailableDocumentCount(null)
       setSourceDialogOpen(false)
@@ -409,73 +419,72 @@ export function KnowledgeDetailPanel({
   if (selectedKb) {
     // Build header actions (tabs) for permission management
     const headerActions = canManagePermissions ? (
-      <Tabs
-        value={activeTab}
-        onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
-        className="flex-shrink-0"
-      >
-        <TabsList className="h-11 md:h-8">
-          <TabsTrigger
-            value="documents"
-            data-testid="knowledge-detail-documents-tab"
-            className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            {t('chatPage.documents')}
-          </TabsTrigger>
-          <TabsTrigger
-            value="permissions"
-            data-testid="knowledge-detail-permissions-tab"
-            className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0"
-          >
-            <Shield className="w-3.5 h-3.5" />
-            {t('document.permission.management')}
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="flex shrink-0 items-center gap-2">
+        <Tabs value="documents">
+          <TabsList className="h-11 md:h-8">
+            <TabsTrigger
+              value="documents"
+              data-testid="knowledge-detail-documents-tab"
+              className="min-h-11 min-w-11 gap-1 px-2 text-xs md:h-7 md:min-h-0"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              {t('chatPage.documents')}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Button
+          ref={permissionTrigger}
+          variant="outline"
+          size="sm"
+          aria-haspopup="dialog"
+          aria-expanded={permissionKbId === selectedKb.id}
+          data-testid="knowledge-detail-permissions-tab"
+          className="h-11 min-h-11 min-w-11 gap-1 px-2 text-xs md:h-8 md:min-h-8"
+          onClick={() => setPermissionKbId(selectedKb.id)}
+        >
+          <Shield className="h-3.5 w-3.5" />
+          {t('document.permission.management')}
+        </Button>
+      </div>
     ) : null
 
     return (
       <div
         className="flex-1 flex flex-col bg-base overflow-hidden"
         data-testid="knowledge-detail-classic"
+        ref={documentRegion}
+        tabIndex={-1}
       >
         {/* Content area */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
-          {activeTab === 'documents' || !canManagePermissions ? (
-            <DocumentList
-              knowledgeBase={selectedKb}
-              canUpload={canUploadDocuments}
-              canManageAllDocuments={canManageKb}
-              paginationEnabled={true}
-              onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
-              headerActions={headerActions}
-              groupInfo={groupInfo}
-              onGroupClick={onGroupClick}
-              initialDocPath={initialDocPath}
-              initialDocumentId={initialDocumentId}
+          <DocumentList
+            knowledgeBase={selectedKb}
+            canUpload={canUploadDocuments}
+            canManageAllDocuments={canManageKb}
+            paginationEnabled={true}
+            onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
+            headerActions={headerActions}
+            groupInfo={groupInfo}
+            onGroupClick={onGroupClick}
+            initialDocPath={initialDocPath}
+            initialDocumentId={initialDocumentId}
+          />
+          {permissionKbId === selectedKb.id && canManagePermissions && (
+            <KnowledgeAccessDialog
+              kbId={selectedKb.id}
+              kbNamespace={selectedKb.namespace}
+              canManage={canManagePermissions}
+              restoreFocus={() => (permissionTrigger.current ?? documentRegion.current)?.focus()}
+              onClose={() => setPermissionKbId(null)}
+              onChanged={() => {
+                void fetchMyPermission()
+                onPermissionsChanged?.()
+              }}
+              onAccessLost={() => {
+                setPermissionKbId(null)
+                onAccessLost?.()
+              }}
             />
-          ) : (
-            <>
-              {/* Show header with tabs when on permissions tab */}
-              <div className="mb-4 flex flex-col items-stretch gap-3 md:flex-row md:items-center">
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-base font-medium text-text-primary truncate">
-                    {selectedKb.name}
-                  </h2>
-                </div>
-                {headerActions}
-              </div>
-              <PermissionManagementTab
-                kbId={selectedKb.id}
-                kbNamespace={selectedKb.namespace}
-                onChanged={onPermissionsChanged ?? (() => void fetchMyPermission())}
-                onAccessDenied={() => {
-                  void fetchMyPermission()
-                  onPermissionsChanged?.()
-                }}
-              />
-            </>
           )}
         </div>
       </div>

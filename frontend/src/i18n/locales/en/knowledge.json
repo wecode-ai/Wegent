@@ -1046,6 +1046,41 @@
       "selectTargets": "Select people or teams. Only failed authorizations will be retried.",
       "retryFailed": "Retry failed targets",
       "noMatchingSpaces": "No matching spaces"
+    },
+    "authorizationObjects": {
+      "title": "Authorized entities",
+      "count": "{{count}} entities",
+      "description": "Direct grants, the creator, and inherited access from the owning scope",
+      "object": "Entity",
+      "permission": "Permission",
+      "source": "Grant source",
+      "actions": "Actions",
+      "objectPermission": "Permission for {{name}}",
+      "groupRole": "By group role",
+      "organizationRole": "By organization rules",
+      "manageInGroups": "Change in group management",
+      "organizationPolicy": "Determined by organization permission rules",
+      "notRemovable": "Cannot remove",
+      "empty": "No authorized entities",
+      "membershipNote": "Group members are not expanded. Knowledge base access rules still apply.",
+      "organizationNote": "Organization knowledge allows users to view and system administrators to manage.",
+      "readOnlyNote": "You can view all authorized entities. Contact a permission manager to change access.",
+      "types": {
+        "user": "User",
+        "namespace": "Group",
+        "organization": "Organization",
+        "other": "Other entity"
+      },
+      "sources": {
+        "creator": "Creator",
+        "inherited": "Inherited",
+        "direct": "Direct grant"
+      },
+      "searchPlaceholder": "Search authorization objects",
+      "matchingCount": "{{count}} matching authorization objects",
+      "identifier": "ID: {{id}}",
+      "grantIdentifier": "Grant ID: {{id}}",
+      "removeObject": "Remove {{name}}"
     }
   },
   "add_repository": "Add Repository",

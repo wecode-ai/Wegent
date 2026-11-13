@@ -794,6 +794,7 @@ export interface BatchPermissionAddResponse {
 
 // Permission User Info types
 export interface PermissionUserInfo {
+  invited_by_name?: string | null
   id: number
   user_id?: number | null
   display_name: string
@@ -828,7 +829,22 @@ export interface ApprovedPermissionsByRole {
   RestrictedAnalyst: PermissionUserInfo[]
 }
 
+export interface AuthorizationCreator {
+  user_id: number
+  display_name: string
+}
+
+export interface InheritedAuthorizationSource {
+  source_type: string
+  entity_type: string
+  entity_id: string
+  display_name: string
+  role: MemberRole | null
+}
+
 export interface PermissionListResponse {
+  creator?: AuthorizationCreator
+  inherited_sources?: InheritedAuthorizationSource[]
   pending: PendingPermissionInfo[]
   approved: ApprovedPermissionsByRole
 }

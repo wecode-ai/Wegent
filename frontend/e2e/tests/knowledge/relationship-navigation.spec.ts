@@ -125,7 +125,7 @@ test('relationship navigation deduplicates libraries and filters by owning space
   }
 })
 
-test('read-only permissions stay scoped on mobile and desktop without exposing members', async ({
+test('approved authorization stays read-only on mobile and desktop without approvals or writes', async ({
   browser,
   request,
   baseURL,
@@ -163,14 +163,14 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
       ),
     })
     const page = await context.newPage()
-    const memberRequests: string[] = []
+    const memberRequests: Array<{ url: string; method: string }> = []
     page.on('request', request => {
       if (
         new RegExp('/share/KnowledgeBase/' + id + '/(members|requests)(?:[/?]|$)').test(
           new URL(request.url()).pathname
         )
       )
-        memberRequests.push(request.url())
+        memberRequests.push({ url: request.url(), method: request.method() })
     })
     for (const width of [375, 767, 1024]) {
       await page.setViewportSize({ width, height: 900 })
@@ -186,6 +186,11 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
       const bounds = await trigger.boundingBox()
       expect(bounds!.width).toBeGreaterThanOrEqual(mobile ? 44 : 32)
       expect(bounds!.height).toBeGreaterThanOrEqual(mobile ? 44 : 32)
+      const approvedRead = page.waitForResponse(
+        response =>
+          new URL(response.url()).pathname === `/api/share/KnowledgeBase/${id}/members` &&
+          response.request().method() === 'GET'
+      )
       await trigger.click()
       if (mobile) {
         const permission = page.getByRole('menuitem').and(page.getByTestId('permission-kb-' + id))
@@ -207,13 +212,33 @@ test('read-only permissions stay scoped on mobile and desktop without exposing m
         expect(menuBounds!.height).toBeGreaterThanOrEqual(44)
         await permission.click()
       }
+      expect((await approvedRead).status()).toBe(200)
       await expect(page.getByTestId('knowledge-permission-sources')).toBeVisible()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog.getByTestId('collaborator-item')).toHaveCount(2)
+      await expect(
+        dialog
+          .locator('[data-authorization-id="creator"]')
+          .getByText(ADMIN_USER.username, { exact: true })
+      ).toBeVisible()
+      const readerObject = dialog
+        .getByTestId('collaborator-item')
+        .filter({ has: page.getByText(REGULAR_USER.username, { exact: true }) })
+      await expect(readerObject.getByText(REGULAR_USER.username, { exact: true })).toBeVisible()
+      await expect(dialog.getByTestId('permission-add-collaborator')).toHaveCount(0)
+      await expect(dialog.getByTestId('knowledge-authorization-actions')).toHaveCount(0)
+      await expect(dialog.locator('[data-testid^="permission-approve-"]')).toHaveCount(0)
       await expect(page.getByTestId('perm-tab-user')).toHaveCount(0)
       await page.keyboard.press('Escape')
       await expect(page.getByRole('dialog')).toHaveCount(0)
       await expect(trigger).toBeFocused()
     }
-    expect(memberRequests).toEqual([])
+    expect(memberRequests.length).toBeGreaterThanOrEqual(3)
+    expect(
+      memberRequests.every(
+        request => request.method === 'GET' && new URL(request.url).pathname.endsWith('/members')
+      )
+    ).toBe(true)
   } finally {
     const errors: unknown[] = []
     if (context) {
@@ -436,7 +461,12 @@ creationTest(
     await page.keyboard.press('Escape')
     await page.setViewportSize({ width: 375, height: 480 })
     await page.goto(`/knowledge/default/${encodeURIComponent(name)}?type=document&view=documents`)
-    await page.getByTestId('knowledge-detail-permissions-tab').click()
+    const permissionTrigger = page.getByTestId('knowledge-detail-permissions-tab')
+    const documentAction = page.getByTestId('upload-documents-button')
+    await expect(documentAction).toBeVisible()
+    const mountedDocumentAction = await documentAction.elementHandle()
+    await permissionTrigger.click()
+    expect(await mountedDocumentAction!.evaluate(element => element.isConnected)).toBe(true)
     await page.getByTestId('knowledge-member-search').fill(REGULAR_USER.username)
     const detail = page.getByTestId('knowledge-detail-classic')
     await expect
@@ -454,6 +484,9 @@ creationTest(
     await expect(page.getByTestId('submit-created-permissions')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(permissionTrigger).toBeFocused()
+    expect(await mountedDocumentAction!.evaluate(element => element.isConnected)).toBe(true)
   }
 )
 
