@@ -173,9 +173,12 @@ export class RuntimeStream {
       idValue(data.deviceId) ??
       idValue(data.device_id)
     let deviceId = rawDeviceId
-    if (rawDeviceId) {
+    const devices = this.getDevices()
+    // Backend execution targets are routing addresses, not preferred aliases
+    // for a runtime that can have multiple persisted registrations.
+    if (rawDeviceId && !devices.some(device => device.execution_target_id === rawDeviceId)) {
       try {
-        const device = createWorkbenchDeviceResolver(this.getDevices()).resolve(rawDeviceId)
+        const device = createWorkbenchDeviceResolver(devices).resolve(rawDeviceId)
         deviceId =
           device?.device_type === 'app'
             ? (device.execution_target_id ?? device.device_id)

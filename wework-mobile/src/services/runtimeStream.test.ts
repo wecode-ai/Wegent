@@ -424,6 +424,49 @@ describe('RuntimeStream', () => {
     }
   )
 
+  it.each([false, true])(
+    'preserves record-specific execution targets when registrations share a runtime (reversed: %s)',
+    async reversed => {
+      const devices: DeviceInfo[] = [200, 201].map(id => ({
+        id,
+        device_id: `registration-${id}`,
+        execution_target_id: `app-record-${id}`,
+        socket_device_id: `app-record-${id}`,
+        runtime_instance_id: 'same-installation',
+        device_type: 'app',
+        name: 'Computer',
+        bind_shell: 'claudecode',
+        status: 'online',
+      }))
+      if (reversed) devices.reverse()
+      const listener = vi.fn()
+      const lifecycle = vi.fn()
+      const stream = await createStream(config, () => devices)
+      await stream.subscribe({ deviceId: 'app-record-201', taskId: 'task' }, listener, vi.fn())
+      stream.subscribeLifecycle(lifecycle, vi.fn())
+      const names = ['response.created', 'response.output_text.delta', 'response.completed']
+      for (const name of names) {
+        handlers.get('runtime:event')?.({
+          event: name,
+          payload: { deviceId: 'app-record-201', taskId: 'task', data: { delta: 'partial' } },
+        })
+      }
+      expect(listener.mock.calls.map(([event]) => event.name)).toEqual(names)
+      expect(lifecycle.mock.calls.map(([address]) => address)).toEqual(
+        names.map(() => ({ deviceId: 'app-record-201', taskId: 'task' }))
+      )
+      handlers.get('runtime:event')?.({
+        event: 'response.output_text.delta',
+        payload: { deviceId: 'app-record-200', taskId: 'task', data: { delta: 'other' } },
+      })
+      expect(listener).toHaveBeenCalledTimes(names.length)
+      expect(lifecycle).toHaveBeenLastCalledWith(
+        { deviceId: 'app-record-200', taskId: 'task' },
+        expect.objectContaining({ name: 'response.output_text.delta' })
+      )
+    }
+  )
+
   it.each([
     { device_id: 'other-computer' },
     { address: { deviceId: 'other-computer' } },
