@@ -1,5 +1,5 @@
 import '@/i18n'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
   CollaborationApp,
@@ -365,15 +365,11 @@ function Project({
 }
 
 describe('Wework Issue conversation drawers', () => {
-  it('binds before execution and advances the Issue only after task creation is accepted', async () => {
+  it('binds before execution and preserves a completed human round when task creation is accepted', async () => {
     const source = { ...issue, tags: [], version: 3 }
-    let finishUpdate!: (value: typeof source) => void
-    const update = new Promise<typeof source>(resolve => {
-      finishUpdate = resolve
-    })
     const issues = {
       get: vi.fn(async () => source),
-      update: vi.fn(() => update),
+      update: vi.fn(),
     }
     const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
     render(<Project issues={issues} runtimePort={runtimePort} />)
@@ -394,20 +390,16 @@ describe('Wework Issue conversation drawers', () => {
     expect(prepared).toBe(true)
     expect(issues.get).not.toHaveBeenCalled()
     expect(issues.update).not.toHaveBeenCalled()
-    const completion = chatCompletions.get('new')!(address, null, null)
-    await waitFor(() =>
-      expect(issues.update).toHaveBeenCalledWith(issue.id, {
-        version: 3,
-        status: 'in_progress',
-      })
-    )
+    // The executor may complete the human round before the UI receives task acceptance.
+    source.status = 'in_review'
+    source.version = 4
     await act(async () => {
-      finishUpdate({ ...source, status: 'in_progress', version: 4 })
-      await completion
+      await chatCompletions.get('new')!(address, null, null)
     })
     expect(prepared).toBe(true)
-    expect(issues.get).toHaveBeenCalledOnce()
-    expect(issues.update).toHaveBeenCalledOnce()
+    expect(source.status).toBe('in_review')
+    expect(issues.get).not.toHaveBeenCalled()
+    expect(issues.update).not.toHaveBeenCalled()
     const rollback = await preparation
     await act(async () => {
       if (rollback) await rollback()
