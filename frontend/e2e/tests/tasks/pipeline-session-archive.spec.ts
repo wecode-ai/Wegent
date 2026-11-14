@@ -26,11 +26,11 @@ test.describe('Pipeline native session archive and continuation', () => {
   for (const engine of ['ClaudeCode', 'Codex'] as const) {
     const variants =
       engine === 'ClaudeCode'
-        ? (['executor', 'sandbox', 'cancelled-executor'] as const)
+        ? (['executor', 'sandbox', 'cancelled-deleted-executor'] as const)
         : (['executor', 'sandbox'] as const)
     for (const variant of variants) {
       const mode = variant === 'sandbox' ? 'sandbox' : 'executor'
-      const cancelFirst = variant === 'cancelled-executor'
+      const cancelFirst = variant === 'cancelled-deleted-executor'
       test(`${engine}: ${variant} restores both bots and resumes the native conversation`, async ({
         request,
       }, testInfo) => {
@@ -53,6 +53,7 @@ test.describe('Pipeline native session archive and continuation', () => {
         let taskId: number | undefined
         let runtime: Runtime | undefined
         let sandboxCreated = false
+        let originalRuntimeName: string | undefined
         try {
           // Discard only this worker's captured requests from earlier cases.
           await postJson(request, `${MOCK}/clear-requests`, {})
@@ -183,6 +184,7 @@ test.describe('Pipeline native session archive and continuation', () => {
             .toBe(1)
           if (!cancelFirst) await completed(request, taskId!, headers)
           runtime = await resolveRuntime(request, MANAGER, taskId!, headers, 'executor')
+          originalRuntimeName = runtime.container_name
           const roots = (await postJson(request, `${runtime.base_url}/api/runtime/prepare`, {
             task_id: taskId,
           })) as Roots
@@ -324,6 +326,13 @@ test.describe('Pipeline native session archive and continuation', () => {
             await runtimeProcess(request, target, SESSION_FILES, { ...params, action: 'verify' })
           }
 
+          if (variant === 'cancelled-deleted-executor') {
+            await postJson(request, `${MANAGER}/executor/delete`, {
+              executor_name: originalRuntimeName,
+              executor_namespace: runtime.executor_namespace,
+            })
+          }
+
           // Keep the native request active until the running-archive assertion finishes.
           await postJson(request, `${MOCK}/stream-rules`, {
             matchText: followup,
@@ -342,6 +351,23 @@ test.describe('Pipeline native session archive and continuation', () => {
             },
             headers
           )
+          if (variant === 'cancelled-deleted-executor') {
+            await expect
+              .poll(
+                async () => {
+                  const detail = await getJson(request, `${API}/api/tasks/${taskId}`, headers)
+                  const assistants = detail.subtasks.filter(
+                    (subtask: { role: string; executor_name?: string }) =>
+                      subtask.role === 'ASSISTANT' && subtask.executor_name
+                  )
+                  return assistants.at(-1)?.executor_name !== originalRuntimeName
+                },
+                { timeout: TIMEOUT }
+              )
+              .toBe(true)
+            runtime = await resolveRuntime(request, MANAGER, taskId!, headers, 'executor')
+            expect(runtime.container_name).not.toBe(originalRuntimeName)
+          }
           await expect
             .poll(
               async () => {
@@ -375,6 +401,14 @@ test.describe('Pipeline native session archive and continuation', () => {
           })
           expect(released.released).toBeGreaterThan(0)
           await completed(request, taskId!, headers)
+          if (variant === 'cancelled-deleted-executor') {
+            const detail = await getJson(request, `${API}/api/tasks/${taskId}`, headers)
+            const assistants = detail.subtasks.filter(
+              (subtask: { role: string; executor_name?: string }) =>
+                subtask.role === 'ASSISTANT' && subtask.executor_name
+            )
+            expect(assistants.at(-1)?.executor_name).not.toBe(originalRuntimeName)
+          }
           const after = await snapshot()
           expect(after.markers).toEqual(before.markers)
           expect(before.transcripts.some(file => after.files[file] !== before.files[file])).toBe(

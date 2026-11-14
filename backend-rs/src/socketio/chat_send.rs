@@ -1486,6 +1486,7 @@ pub async fn handle(
                 created_git_repository,
                 executor_name: setup.assistant_executor_name.clone(),
                 executor_namespace: setup.assistant_executor_namespace.clone(),
+                executor_deleted: setup.assistant_executor_deleted,
                 assistant_created_at: setup.assistant_created_at,
                 existing_history,
                 existing_subtask_ids,

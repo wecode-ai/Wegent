@@ -218,6 +218,79 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
 }
 
 #[tokio::test]
+async fn a_deleted_executor_chat_inherits_persisted_native_sessions() {
+    let (team, bot) = chat_agent();
+    let mut input = chat_input(&team, &bot);
+    input.executor_deleted = true;
+    let persisted_session = json!({
+        "executor_session": {
+            "agent": "Chat",
+            "botId": 2,
+            "sessionId": "session-1"
+        }
+    });
+    let fixture = MysqlRows::start_results(move |sql| {
+        if sql.starts_with("SELECT id") && sql.contains("FROM tasks") {
+            let row = vec![("id", SqlValue::I64(3))];
+            return (row.clone(), vec![row]);
+        }
+        if sql.contains("FROM subtasks")
+            && sql.contains("`role` = 'ASSISTANT'")
+            && sql.contains("subtasks_result")
+        {
+            let mut row = Vec::new();
+            for (column, value) in [
+                ("subtasks_id", SqlValue::I64(5)),
+                ("subtasks_user_id", SqlValue::I64(7)),
+                ("subtasks_task_id", SqlValue::I64(3)),
+                ("subtasks_team_id", SqlValue::I64(1)),
+                ("subtasks_title", SqlValue::Text(String::new())),
+                ("subtasks_bot_ids", SqlValue::Text("[]".into())),
+                ("subtasks_role", SqlValue::Text("ASSISTANT".into())),
+                ("subtasks_executor_namespace", SqlValue::Text(String::new())),
+                ("subtasks_executor_name", SqlValue::Text(String::new())),
+                ("subtasks_executor_deleted_at", SqlValue::I8(1)),
+                ("subtasks_prompt", SqlValue::Text(String::new())),
+                ("subtasks_message_id", SqlValue::I64(2)),
+                ("subtasks_parent_id", SqlValue::I64(1)),
+                ("subtasks_status", SqlValue::Text("COMPLETED".into())),
+                ("subtasks_progress", SqlValue::I64(100)),
+                (
+                    "subtasks_result",
+                    SqlValue::Text(persisted_session.to_string()),
+                ),
+                ("subtasks_error_message", SqlValue::Null),
+                ("subtasks_created_at", SqlValue::DateTime),
+                ("subtasks_updated_at", SqlValue::DateTime),
+                ("subtasks_completed_at", SqlValue::DateTime),
+                ("subtasks_sender_type", SqlValue::Text(String::new())),
+                ("subtasks_sender_user_id", SqlValue::Null),
+                ("subtasks_reply_to_subtask_id", SqlValue::Null),
+            ] {
+                row.push((column, value));
+            }
+            return (row.clone(), vec![row]);
+        }
+        skill_fixture(sql, false, false)
+    })
+    .await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+    let request = build_chat_execution_request(&state, &input, &[], None, None, None)
+        .await
+        .expect("chat request builds");
+
+    assert_eq!(
+        request.inherited_sessions,
+        vec![json!({
+            "agent": "Chat",
+            "botId": 2,
+            "sessionId": "session-1"
+        })]
+    );
+    assert!(request.legacy_session_bindings.is_empty());
+}
+
+#[tokio::test]
 async fn web_chat_dispatches_coordinate_workers_and_keeps_pipeline_on_its_current_bot() {
     let leader = stored_kind(
         2,

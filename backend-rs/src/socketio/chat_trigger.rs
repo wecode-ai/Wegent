@@ -65,6 +65,9 @@ pub(crate) struct ChatTurn {
     pub created_git_repository: Option<Value>,
     pub executor_name: String,
     pub executor_namespace: String,
+    /// The assistant subtask's persisted `executor_deleted_at` state. The
+    /// request builder merges persisted native sessions when this is true.
+    pub executor_deleted: bool,
     /// The inserted assistant subtask's `created_at` captured inside the
     /// setup savepoint (`TaskRunMetricHooks._after_flush_postexec`).
     pub assistant_created_at: Option<chrono::NaiveDateTime>,
@@ -442,7 +445,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
             task_project_id: turn.project_id,
             executor_name: &turn.executor_name,
             executor_namespace: &turn.executor_namespace,
-            executor_deleted: false,
+            executor_deleted: turn.executor_deleted,
             new_session: turn.new_session,
             knowledge_base_refs: &[],
             knowledge_base_names: &[],
@@ -673,6 +676,7 @@ mod tests {
             created_git_repository: None,
             executor_name: String::new(),
             executor_namespace: String::new(),
+            executor_deleted: false,
             assistant_created_at: None,
             user_created_at: "2026-11-05T17:03:32".into(),
             existing_history: Vec::new(),

@@ -137,6 +137,8 @@ struct FailedSubtask {
     executor_name: Option<String>,
     #[mysql(rename = "executor_namespace")]
     executor_namespace: Option<String>,
+    #[mysql(rename = "executor_deleted_at")]
+    executor_deleted_at: Option<bool>,
     #[mysql(rename = "created_at")]
     created_at: Option<chrono::NaiveDateTime>,
 }
@@ -266,6 +268,7 @@ async fn prepare_retry(
             created_git_repository: None,
             executor_name: failed.executor_name.unwrap_or_default(),
             executor_namespace: failed.executor_namespace.unwrap_or_default(),
+            executor_deleted: failed.executor_deleted_at.unwrap_or(false),
             assistant_created_at: failed.created_at,
             user_created_at: String::new(),
             existing_history: Vec::new(),
@@ -283,7 +286,8 @@ async fn fetch_failed_subtask(
 ) -> Result<Option<FailedSubtask>, RetryFailure> {
     let statement = format!(
         "SELECT id, task_id, team_id, parent_id, status, message_id, executor_name, \
-         executor_namespace, created_at FROM `{table}` WHERE id = ? AND task_id = ? \
+         executor_namespace, executor_deleted_at, created_at FROM `{table}` \
+         WHERE id = ? AND task_id = ? \
          AND `role` = 'ASSISTANT' LIMIT 1"
     );
     let mut handle = &state.mysql;
@@ -569,6 +573,21 @@ fn local_isoformat() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_projection_keeps_the_executor_deleted_column() {
+        let table = "subtasks_0711";
+        let sql = format!(
+            "SELECT id, task_id, team_id, parent_id, status, message_id, executor_name, \
+             executor_namespace, executor_deleted_at, created_at FROM `{table}` \
+             WHERE id = ? AND task_id = ? AND `role` = 'ASSISTANT' LIMIT 1"
+        );
+
+        let expected = "SELECT id, task_id, team_id, parent_id, status, message_id, executor_name, \
+             executor_namespace, executor_deleted_at, created_at FROM `subtasks_0711` \
+             WHERE id = ? AND task_id = ? AND `role` = 'ASSISTANT' LIMIT 1";
+        assert_eq!(sql, expected);
+    }
 
     #[test]
     fn retry_restores_image_size_from_the_user_turn() {

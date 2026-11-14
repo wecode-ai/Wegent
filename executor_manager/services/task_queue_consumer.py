@@ -224,7 +224,10 @@ class TaskQueueConsumer:
                 if isinstance(task_result, dict)
                 else "Task processing returned unexpected result"
             )
-            self._handle_task_failure(task, error_msg)
+            error_code = (
+                task_result.get("error_code") if isinstance(task_result, dict) else None
+            )
+            self._handle_task_failure(task, error_msg, error_code)
 
         except ObsoleteExecutorDispatch:
             self.queue_service.clear_pending(task_id, subtask_id)
@@ -238,18 +241,32 @@ class TaskQueueConsumer:
             )
             self._handle_task_failure(task, str(e))
 
-    def _handle_task_failure(self, task: Dict[str, Any], error_msg: str) -> None:
+    def _handle_task_failure(
+        self,
+        task: Dict[str, Any],
+        error_msg: str,
+        error_code: Optional[str] = None,
+    ) -> None:
         """Handle a failed task - retry or mark as failed.
 
         Args:
             task: Failed task dictionary
             error_msg: Error message describing the failure
+            error_code: Stable executor failure code; `executor_deleted` is terminal
         """
         task_id = get_metadata_field(task, "task_id")
         subtask_id = get_metadata_field(task, "subtask_id")
 
-        # Try to requeue
-        should_retry, retry_count = self.queue_service.requeue_task(task)
+        non_retryable = error_code == "executor_deleted"
+        if non_retryable:
+            # A deleted executor cannot come back by retrying the same request.
+            # Report the terminal failure immediately so the backend can recover
+            # or surface the error without four guaranteed-to-fail attempts.
+            should_retry = False
+            retry_count = TaskQueueService.get_retry_count(task)
+        else:
+            # Try to requeue
+            should_retry, retry_count = self.queue_service.requeue_task(task)
 
         if should_retry:
             logger.info(
@@ -275,7 +292,11 @@ class TaskQueueConsumer:
 
         try:
             callback_client = get_callback_client()
-            error_message = f"Task failed after {retry_count} retries: {error_msg}"
+            error_message = (
+                error_msg
+                if non_retryable
+                else f"Task failed after {retry_count} retries: {error_msg}"
+            )
 
             # Run async callback in sync context
             loop = asyncio.new_event_loop()
@@ -285,7 +306,7 @@ class TaskQueueConsumer:
                         task_id=task_id,
                         subtask_id=subtask_id,
                         error_message=error_message,
-                        error_code="task_queue_failure",
+                        error_code=error_code or "task_queue_failure",
                     )
                 )
             finally:
