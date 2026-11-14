@@ -59,14 +59,19 @@ export function expectedChannelAssetNames(channel) {
     `${electronChannel}-mac.yml`,
     `components-${channel}-macos-arm64.json`,
     `components-${channel}-macos-x64.json`,
+    `components-${channel}-windows-arm64.json`,
     `components-${channel}-windows-x64.json`,
     `components-${channel}-linux-x64.json`,
   ]
 }
 
-export function hasCompleteChannelAssets(assetNames, channel) {
+export function missingChannelAssets(assetNames, channel) {
   const availableAssets = new Set(assetNames)
-  return expectedChannelAssetNames(channel).every(name => availableAssets.has(name))
+  return expectedChannelAssetNames(channel).filter(name => !availableAssets.has(name))
+}
+
+export function hasCompleteChannelAssets(assetNames, channel) {
+  return missingChannelAssets(assetNames, channel).length === 0
 }
 
 async function main() {
@@ -94,6 +99,23 @@ async function main() {
     }
     const assetNames = assets.map(asset => (typeof asset === 'string' ? asset : asset.name))
     process.exitCode = hasCompleteChannelAssets(assetNames, channel) ? 0 : 1
+    return
+  }
+
+  if (command === 'missing-channel-assets') {
+    const [assetsPath, channel] = args
+    if (!assetsPath || !channel) {
+      throw new Error(
+        'Usage: update-channel-manifests.mjs missing-channel-assets <assets-json> <stable|beta>'
+      )
+    }
+    const payload = JSON.parse(await readFile(assetsPath, 'utf8'))
+    const assets = Array.isArray(payload) ? payload : payload.assets
+    if (!Array.isArray(assets)) {
+      throw new Error(`Expected an asset list in ${assetsPath}`)
+    }
+    const assetNames = assets.map(asset => (typeof asset === 'string' ? asset : asset.name))
+    process.stdout.write(`${missingChannelAssets(assetNames, channel).join('\n')}\n`)
     return
   }
 

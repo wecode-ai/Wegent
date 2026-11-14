@@ -121,7 +121,9 @@ export async function readDesktopReleaseInstallation(root, release) {
   )
   const target =
     release.platform === 'windows'
-      ? 'x86_64-pc-windows-msvc'
+      ? release.arch === 'arm64'
+        ? 'aarch64-pc-windows-msvc'
+        : 'x86_64-pc-windows-msvc'
       : release.arch === 'arm64'
         ? 'aarch64-apple-darwin'
         : 'x86_64-apple-darwin'

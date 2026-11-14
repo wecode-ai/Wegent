@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { resolveElectronBinary } from './electron-binary.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 // Called by the CI-covered workbench-mode checkpoint on Windows, using real Electron locks.
@@ -71,7 +71,7 @@ export async function verifyWindowsDesktopDataStartup({ resources, executor, env
     } catch (error) { console.error(error.stack); app.exit(1); }
   `
   )
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const launchArguments = resolveElectronLaunchArguments()
   const childEnvironment = { ...environment }
   delete childEnvironment.ELECTRON_RUN_AS_NODE
@@ -88,7 +88,7 @@ export async function verifyWindowsDesktopDataStartup({ resources, executor, env
     const input = { resources, executor, root: fixtureRoot, seeded, scriptPath, launchArguments }
     const run = async () => {
       const { stdout } = await promisify(execFile)(
-        require('electron'),
+        electronBinary,
         [scriptPath, JSON.stringify(input), ...launchArguments],
         { env: childEnvironment, timeout: 30_000, maxBuffer: 1024 * 1024 }
       )

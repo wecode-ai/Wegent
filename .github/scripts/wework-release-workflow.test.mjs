@@ -149,7 +149,7 @@ test("input resolution pins its source once and its sparse checkout contains all
       "-e",
       `
     const resolver = await import('./.github/scripts/resolve-wework-upgrade-inputs.mjs');
-    if (resolver.upgradeVerificationMatrix('stable').include.length !== 4) throw new Error('Invalid matrix');
+    if (resolver.upgradeVerificationMatrix('stable').include.length !== 6) throw new Error('Invalid matrix');
     await import('./wework/scripts/lib/upgrade-verification-shards.mjs');
     await import('./wework/scripts/lib/published-upgrade-policies.mjs');
   `,
@@ -179,7 +179,7 @@ test("sparse aggregation loads its policy and rejects missing independent platfo
     (error) => {
       assert.match(
         error.stderr.toString(),
-        /Both independent package platforms require frozen upgrade plans/,
+        /Every independent package platform requires a frozen upgrade plan/,
       );
       return true;
     },
@@ -297,6 +297,7 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
       ["macos", "arm64"],
       ["macos", "x64"],
       ["windows", "x64"],
+      ["windows", "arm64"],
       ["linux", "x64"],
     ],
   );
@@ -325,7 +326,10 @@ test("all installers build while release upgrade E2E runs only on arm64 macOS an
     "${{ fromJSON(needs.prepare-upgrade-inputs.outputs.verification_matrix) }}",
   );
   assert.equal(jobs["verify-upgrades"].strategy["max-parallel"], 8);
-  assert.equal(jobs["verify-upgrades"]["timeout-minutes"], 15);
+  assert.equal(
+    jobs["verify-upgrades"]["timeout-minutes"],
+    "${{ matrix.platform == 'windows' && matrix.arch == 'arm64' && 30 || 15 }}",
+  );
   assert.equal(jobs.build["timeout-minutes"], 90);
   const step = jobs["verify-upgrades"].steps.find(
     (step) =>

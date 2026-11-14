@@ -216,7 +216,7 @@ test('an initial protocol release has explicit source-free shards and generates 
   )
 })
 
-test('the aggregation CLI requires both platforms and writes every channel policy', async t => {
+test('the aggregation CLI requires all three platforms and writes every channel policy', async t => {
   const root = await mkdtemp(join(tmpdir(), 'wework-upgrade-shards-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const plans = join(root, 'plans')
@@ -230,6 +230,7 @@ test('the aggregation CLI requires both platforms and writes every channel polic
   const f = fixture()
   for (const [platform, arch] of [
     ['windows', 'x64'],
+    ['windows', 'arm64'],
     ['macos', 'arm64'],
   ]) {
     const catalogs = Object.fromEntries(
@@ -239,7 +240,7 @@ test('the aggregation CLI requires both platforms and writes every channel polic
       ])
     )
     const frozen = planUpgradeShards({ ...f.options, catalogs, policy, platform, arch })
-    await writeFile(join(plans, `${platform}.json`), JSON.stringify(frozen))
+    await writeFile(join(plans, `${platform}-${arch}.json`), JSON.stringify(frozen))
     for (const [index, original] of f.shards.entries()) {
       const evidence = { ...JSON.parse(original.evidence), platform, arch }
       const shard = {
@@ -248,7 +249,7 @@ test('the aggregation CLI requires both platforms and writes every channel polic
         evidence: JSON.stringify(evidence),
       }
       await writeFile(
-        join(reports, `upgrade-shard-${platform}-${index}.json`),
+        join(reports, `upgrade-shard-${platform}-${arch}-${index}.json`),
         JSON.stringify(shard)
       )
     }
@@ -276,11 +277,13 @@ test('the aggregation CLI requires both platforms and writes every channel polic
   run()
   assert.deepEqual((await readdir(output)).sort(), [
     'upgrade-policy-beta-macos-arm64.json',
+    'upgrade-policy-beta-windows-arm64.json',
     'upgrade-policy-beta-windows-x64.json',
     'upgrade-policy-stable-macos-arm64.json',
+    'upgrade-policy-stable-windows-arm64.json',
     'upgrade-policy-stable-windows-x64.json',
   ])
-  const rejected = join(reports, 'upgrade-shard-macos-0.json')
+  const rejected = join(reports, 'upgrade-shard-macos-arm64-0.json')
   const shard = JSON.parse(await readFile(rejected, 'utf8'))
   await writeFile(rejected, JSON.stringify({ ...shard, status: 'failed', evidence: null }))
   assert.throws(run, /Baseline exclusion requires human confirmation/)
@@ -293,6 +296,6 @@ test('the aggregation CLI requires both platforms and writes every channel polic
     ['1.0.2']
   )
   assert.equal(stable.releases.at(-1).minSourceVersion, '1.0.2')
-  await rm(join(reports, 'upgrade-shard-macos-0.json'))
+  await rm(join(reports, 'upgrade-shard-macos-arm64-0.json'))
   assert.throws(run, /Missing upgrade source shard/)
 })

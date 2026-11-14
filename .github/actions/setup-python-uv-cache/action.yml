@@ -5,6 +5,10 @@ inputs:
   python-version:
     description: Python version to install
     required: true
+  architecture:
+    description: Optional Python architecture override (for example x64 on an arm64 runner)
+    required: false
+    default: ""
   save-cache:
     description: Whether this job may save the shared uv cache
     required: false
@@ -22,10 +26,17 @@ runs:
   using: composite
   steps:
     - name: Set up Python
-      if: inputs.setup-python == 'true'
+      if: inputs.setup-python == 'true' && inputs.architecture == ''
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
       with:
         python-version: ${{ inputs.python-version }}
+
+    - name: Set up Python (requested architecture)
+      if: inputs.setup-python == 'true' && inputs.architecture != ''
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: ${{ inputs.python-version }}
+        architecture: ${{ inputs.architecture }}
 
     - name: Set up uv
       if: inputs.setup-uv == 'true'
@@ -40,15 +51,15 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ~/.cache/uv
-        key: ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}-${{ hashFiles('backend/uv.lock', 'executor_manager/uv.lock', 'knowledge_engine/uv.lock', 'shared/uv.lock') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}${{ inputs.architecture != '' && format('-{0}', inputs.architecture) || '' }}-${{ hashFiles('backend/uv.lock', 'executor_manager/uv.lock', 'knowledge_engine/uv.lock', 'shared/uv.lock') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}-
+          ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}${{ inputs.architecture != '' && format('-{0}', inputs.architecture) || '' }}-
 
     - name: Restore shared uv cache
       if: inputs.save-cache != 'true'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ~/.cache/uv
-        key: ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}-${{ hashFiles('backend/uv.lock', 'executor_manager/uv.lock', 'knowledge_engine/uv.lock', 'shared/uv.lock') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}${{ inputs.architecture != '' && format('-{0}', inputs.architecture) || '' }}-${{ hashFiles('backend/uv.lock', 'executor_manager/uv.lock', 'knowledge_engine/uv.lock', 'shared/uv.lock') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}-
+          ${{ runner.os }}-${{ runner.arch }}-uv-v1-python-${{ inputs.python-version }}${{ inputs.architecture != '' && format('-{0}', inputs.architecture) || '' }}-

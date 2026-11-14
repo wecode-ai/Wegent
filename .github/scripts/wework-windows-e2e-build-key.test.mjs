@@ -21,7 +21,7 @@ test('PR builds and trusted main warmup share exact artifacts and complete nativ
   const steps = yaml('.github/actions/build-wework-windows-e2e/action.yml').runs.steps
   const restore = steps.find(step => step.id === 'build-cache')
   assert.equal(restore.with['restore-keys'], undefined)
-  assert.equal(restore.with.path, 'wework/electron/release/WeWork-win32-x64')
+  assert.equal(restore.with.path, 'wework/electron/release/WeWork-win32-${{ inputs.arch }}')
   const save = steps.find(step => step.name === 'Save exact Windows desktop package')
   assert.deepEqual(save.with, restore.with)
   for (const step of steps.filter(step => step.uses?.startsWith('actions/cache/save@'))) {
@@ -31,6 +31,8 @@ test('PR builds and trusted main warmup share exact artifacts and complete nativ
   const dependencies = steps.find(step => step.id === 'dependencies')
   assert.ok(dependencies.with.path.includes('${{ runner.temp }}/executor-target'))
   assert.ok(dependencies.with.path.includes('${{ runner.temp }}/backend-rs-target'))
+  const codex = steps.find(step => step.id === 'codex')
+  assert.ok(codex.with.key.includes('${{ runner.arch }}'), 'native Codex cache must be arch-specific')
   for (const name of [
     'Set up Node workspace',
     'Set up sccache',

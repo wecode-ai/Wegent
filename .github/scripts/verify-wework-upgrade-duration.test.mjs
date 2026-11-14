@@ -218,7 +218,7 @@ test("ordinary releases retain all producer gates without counting builds as upg
   const value = fixture();
   value.producerRunId = 20;
   value.jobs.push(
-    ...[0, 1, 2, 3].map((index) => ({
+    ...[0, 1, 2, 3, 4].map((index) => ({
       name: `Build platform ${index}`,
       conclusion: "success",
       completed_at: iso(100_000 + index * 10_000),
@@ -228,8 +228,34 @@ test("ordinary releases retain all producer gates without counting builds as upg
   value.jobs.pop();
   assert.throws(
     () => verifyUpgradeDuration(value),
-    /four completed producer builds/,
+    /five completed producer builds/,
   );
+});
+
+test("Windows arm64 shards and the fifth producer build satisfy the release gates", () => {
+  const value = fixture();
+  value.producerRunId = 20;
+  value.matrix.include.push({
+    platform: "windows",
+    arch: "arm64",
+    channel: "stable",
+    source_version: "0.6.3",
+  });
+  value.jobs.push(
+    {
+      name: "Verify release upgrades (windows/arm64/stable/0.6.3)",
+      status: "completed",
+      conclusion: "success",
+      steps: steps(200_000),
+      completed_at: iso(300_000),
+    },
+    ...[0, 1, 2, 3, 4].map((index) => ({
+      name: `Build platform ${index}`,
+      conclusion: "success",
+      completed_at: iso(100_000 + index * 10_000),
+    })),
+  );
+  assert.equal(verifyUpgradeDuration(value).elapsedMs, 210_000);
 });
 
 test("all four channel/platform shards contribute to the bounded parallel critical path", () => {

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { resolveElectronBinary } from './electron-binary.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 // Called by the CI-covered workbench-mode checkpoint with real macOS Electron APIs.
@@ -106,7 +106,7 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
     } catch (error) { console.error(error.stack); app.exit(1); }
   `
   )
-  const require = createRequire(new URL('../../../electron/package.json', import.meta.url))
+  const electronBinary = resolveElectronBinary()
   const launchArguments = resolveElectronLaunchArguments()
   const states = [
     'missing-bridge',
@@ -125,7 +125,7 @@ export async function verifyMacosLogStartup({ resources, executor, environment, 
     const childEnvironment = { ...environment, HOME: fixtureRoot }
     delete childEnvironment.ELECTRON_RUN_AS_NODE
     const { stdout } = await promisify(execFile)(
-      require('electron'),
+      electronBinary,
       [
         scriptPath,
         JSON.stringify({ resources, executor, root: fixtureRoot, state }),

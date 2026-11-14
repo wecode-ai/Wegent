@@ -25,6 +25,7 @@ const hostTargetByPlatform = {
   'darwin:x64': 'x86_64-apple-darwin',
   'linux:x64': 'x86_64-unknown-linux-gnu',
   'linux:arm64': 'aarch64-unknown-linux-gnu',
+  'win32:arm64': 'aarch64-pc-windows-msvc',
   'win32:x64': 'x86_64-pc-windows-msvc',
 }
 
@@ -67,6 +68,9 @@ function normalizeTarget(value) {
   if (trimmed === 'linux-arm64') return 'aarch64-unknown-linux-gnu'
   if (trimmed === 'windows-amd64' || trimmed === 'windows-x64' || trimmed === 'win32-x64') {
     return 'x86_64-pc-windows-msvc'
+  }
+  if (trimmed === 'windows-arm64' || trimmed === 'win32-arm64') {
+    return 'aarch64-pc-windows-msvc'
   }
   return trimmed
 }
@@ -316,7 +320,7 @@ async function prepareTarget(target, entry) {
   const binaryPath = join(targetRoot, entry.binaryPath)
   const codeModeHostPath = join(
     dirname(binaryPath),
-    target === 'x86_64-pc-windows-msvc' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+    target.includes('windows') ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
   )
 
   if (!(await pathExists(tarballPath))) {

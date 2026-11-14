@@ -276,6 +276,12 @@ jobs:
             arch: x64
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
+          - name: Windows arm64
+            runner: windows-11-arm
+            platform: windows
+            arch: arm64
+            cargo_target: aarch64-pc-windows-msvc
+            codex_target: aarch64-pc-windows-msvc
           - name: Linux x64
             runner: ubuntu-latest
             platform: linux
@@ -431,6 +437,10 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
+          # 7-Zip applies the ARM64 BCJ filter to ARM64 binaries, which the NSIS
+          # nsis7z plugin cannot decode, silently dropping every exe and dll at
+          # install time. Windows arm64 must use the universally supported BCJ filter.
+          ELECTRON_BUILDER_7Z_FILTER: ${{ matrix.platform == 'windows' && matrix.arch == 'arm64' && 'BCJ' || '' }}
           VITE_WEGENT_BACKEND_URL: https://your.wegent-backend.address
           VITE_WEWORK_POSTHOG_HOST: ${{ secrets.WEWORK_POSTHOG_HOST }}
           VITE_WEWORK_POSTHOG_KEY: ${{ secrets.WEWORK_POSTHOG_KEY }}
@@ -451,6 +461,14 @@ jobs:
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
+
+      - name: Smoke test native Windows executor
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          executor="$PWD/wework/electron/release-installer/${{ matrix.arch == 'arm64' && 'win-arm64-unpacked' || 'win-unpacked' }}/resources/bin/wegent-executor.exe"
+          test -f "$executor"
+          "$executor" --version
 
       - name: Retain release build stage diagnostics
         if: always()
@@ -511,6 +529,13 @@ jobs:
             "${{ matrix.arch }}" \
             "${{ needs.prepare-release.outputs.version }}" \
             "$RUNNER_TEMP/wework-release-assets"
+
+      - name: Verify Windows arm64 installer archive
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          node wework/scripts/verify-windows-installer-archive.mjs \
+            "${{ runner.temp }}/wework-release-assets"
 
       - name: Upload candidate release build
         uses: actions/upload-artifact@v4
@@ -619,7 +644,9 @@ jobs:
     needs: prepare-upgrade-inputs
     if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # Native Windows arm64 package startup and extraction are materially slower
+    # than x64; keep a bounded but larger deadline for that shard only.
+    timeout-minutes: ${{ matrix.platform == 'windows' && matrix.arch == 'arm64' && 30 || 15 }}
     defaults:
       run:
         shell: bash
@@ -1007,7 +1034,17 @@ jobs:
                 fi
                 if node wework/scripts/update-channel-manifests.mjs \
                   is-newer "$current_version" "$RELEASE_VERSION"; then
-                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets."
+                  missing_assets="$(
+                    node wework/scripts/update-channel-manifests.mjs \
+                      missing-channel-assets "$current_assets" "$channel"
+                  )"
+                  # Channels published before Windows arm64 existed legitimately
+                  # lack only the arm64 component manifest; keep them intact.
+                  if [[ "$missing_assets" == "components-${channel}-windows-arm64.json" ]]; then
+                    echo "Keeping newer ${channel} update manifests at ${current_version}; it predates Windows arm64 updater assets."
+                    return
+                  fi
+                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets: ${missing_assets}"
                   return 1
                 fi
                 echo "Repairing incomplete ${channel} updater assets at ${current_version}."
@@ -1017,6 +1054,7 @@ jobs:
             gh release upload wework-updater \
               "release-manifests/components-${channel}-macos-arm64.json" \
               "release-manifests/components-${channel}-macos-x64.json" \
+              "release-manifests/components-${channel}-windows-arm64.json" \
               "release-manifests/components-${channel}-windows-x64.json" \
               "release-manifests/components-${channel}-linux-x64.json" \
               --clobber
