@@ -249,6 +249,24 @@ pub struct RuntimeRemoteTaskAccessFeatures {
     pub task_creation: bool,
 }
 
+impl RuntimeRemoteTaskAccessFeatures {
+    /// Project only the explicitly typed consent advertised by the runtime.
+    pub fn from_value(value: &serde_json::Value) -> Option<Self> {
+        let version = value
+            .get("version")?
+            .as_i64()
+            .filter(|version| *version == 1)?;
+        Some(Self {
+            version,
+            enabled: value.get("enabled")?.as_bool()?,
+            task_creation: match value.get("taskCreation") {
+                Some(value) => value.as_bool()?,
+                None => false,
+            },
+        })
+    }
+}
+
 /// The configured cloud device store's contribution to one listing entry:
 /// `CloudDeviceProvider.list_devices` adds this member to its device dict.
 ///
@@ -809,21 +827,7 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .remote_task_access
             .as_ref()
             .filter(|_| valid_header)
-            .and_then(|value| {
-                let value = value.to_value();
-                let version = value
-                    .get("version")?
-                    .as_i64()
-                    .filter(|version| *version == 1)?;
-                Some(RuntimeRemoteTaskAccessFeatures {
-                    version,
-                    enabled: value.get("enabled")?.as_bool()?,
-                    task_creation: match value.get("taskCreation") {
-                        Some(value) => value.as_bool()?,
-                        None => false,
-                    },
-                })
-            }),
+            .and_then(|value| RuntimeRemoteTaskAccessFeatures::from_value(&value.to_value())),
     })
 }
 

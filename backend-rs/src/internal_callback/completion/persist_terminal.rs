@@ -70,16 +70,19 @@ fn sanitize_result_for_storage(result: &Value) -> Value {
 
 pub(super) async fn lock_subtask<T: MysqlTransaction>(
     mysql: &mut T,
-    tables: sql::Tables,
+    subtask_table: &str,
     subtask_id: i64,
 ) -> MysqlResult<Option<MysqlRow>> {
-    let sql = format!("{} FOR UPDATE", sql::subtask_by_id(tables));
+    let sql = format!(
+        "{} FOR UPDATE",
+        crate::task_store_statements::subtask_by_id_statement(subtask_table)
+    );
     mysql.fetch_optional(sql, (subtask_id,)).await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
-    tables: sql::Tables,
+    subtask_table: &str,
     mysql: &mut T,
     row: MysqlRow,
     subtask_id: i64,
@@ -135,7 +138,7 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
     let namespace = executor_namespace.unwrap_or_default();
     let name = executor_name.unwrap_or_default();
     let error = error.unwrap_or_default();
-    let sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
+    let sql = sql::update_subtask_terminal(subtask_table, with_result, with_error, with_executor);
 
     // Read and write on the same writer transaction; metrics publish after commit.
     let outcome = match (with_executor, with_error, with_result) {

@@ -144,17 +144,15 @@ async fn recover_locked(
     task_id: i64,
     subtask_id: i64,
 ) -> anyhow::Result<()> {
-    let tables = tables(state);
+    let (task_table, subtask_table) =
+        completion::resolve_tables(Some(state), tables(state), task_id).await?;
     let mysql = state
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
     let task: Option<(Json<Value>,)> = mysql
         .with_transaction(async |tx| {
             tx.fetch_optional(
-                format!(
-                    "SELECT json FROM {} WHERE id = ? AND is_active IN (1, 2)",
-                    tables.tasks
-                ),
+                format!("SELECT json FROM {task_table} WHERE id = ? AND is_active IN (1, 2)"),
                 (task_id,),
             )
             .await
@@ -190,7 +188,7 @@ async fn recover_locked(
                 retire(redis, task_id, subtask_id).await?;
                 return Ok(());
             };
-            if completion::read_terminal_result(&state.mysql, tables, task_id, subtask_id)
+            if completion::read_terminal_result(&state.mysql, &subtask_table, task_id, subtask_id)
                 .await?
                 .is_some()
             {

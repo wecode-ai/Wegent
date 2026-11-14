@@ -708,9 +708,16 @@ where
             &key,
             || "Pipeline execution is already owned or Redis is unavailable".to_owned(),
             async {
+                let (_, subtask_table) = crate::internal_callback::completion::resolve_tables(
+                    consumer.app,
+                    consumer.tables,
+                    job.task_id,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
                 match crate::internal_callback::completion::read_terminal_result(
                     consumer.mysql,
-                    consumer.tables,
+                    &subtask_table,
                     job.task_id,
                     job.subtask_id,
                 )
