@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { isCollaborationSubagentRequest } from './subagent-request.mjs'
+import {
+  isCollaborationSubagentRequest,
+  nativeSubagentCompletionPayload,
+} from './subagent-request.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import {
   assistantMessage,
@@ -23,7 +26,7 @@ export function createIssueDelegationModel({
   holdChild = false,
 }) {
   const state = { spawned: false, childRan: false, completed: false }
-  let waitId, childId
+  let waitId, childName
   let childResponse
   let sequence = 0
   const spawnId = `${marker}-spawn`
@@ -88,29 +91,25 @@ export function createIssueDelegationModel({
       } else {
         const output = waitId && toolOutputText(body, waitId)
         const waited = output && JSON.parse(output)
-        if (
-          waited &&
-          Object.values(waited.status).some(status => status.completed === privateEvidence)
-        ) {
+        childName ??= JSON.parse(toolOutputText(body, spawnId)).task_name
+        assert.ok(childName, 'Use the real native child task name')
+        const completion = nativeSubagentCompletionPayload(body, childName)
+        if (completion !== undefined) {
+          assert.equal(completion, privateEvidence, 'Verify the actual native completion envelope')
           assert.ok(state.childRan)
           state.completed = true
           reply(response, [assistantMessage(result)])
         } else {
           if (waited) {
-            assert.ok(
-              !Object.values(waited.status).some(status => status.errored || status === 'not_found')
-            )
-            assert.equal(waited.timed_out, true)
+            assert.equal(typeof waited.message, 'string')
+            assert.equal(typeof waited.timed_out, 'boolean')
           }
-          childId ??= JSON.parse(toolOutputText(body, spawnId)).agent_id
-          assert.ok(childId, 'Use the real native child identity')
           waitId = `${marker}-wait-${++sequence}`
           reply(
             response,
             selectedToolCall(
               waitId,
               selectTool(body, 'wait_agent', {
-                targets: [childId],
                 timeout_ms: 60000,
               })
             )

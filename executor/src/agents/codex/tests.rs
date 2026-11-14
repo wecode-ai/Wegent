@@ -4396,11 +4396,36 @@ fn issue_stand_in_delegation_survives_start_and_resume_without_a_user_spawn_requ
         }),
     );
     let config = CodexLaunchConfig {
-        config_overrides: codex_collaboration_config_overrides(&request),
+        config_overrides: [
+            codex_runtime_default_config_overrides(),
+            codex_collaboration_config_overrides(&request),
+        ]
+        .concat(),
         ..Default::default()
     };
     let start = thread_start_params(&request, &config);
     let resume = thread_resume_params("existing-issue", &request, &config);
+    let process = codex_app_server_command("codex", Path::new("/tmp"), &config);
+    assert!(
+        !process.as_std().get_args().any(|arg| arg
+            .to_string_lossy()
+            .contains("without requiring the user to request delegation")),
+        "Issue policy must not become a shared app-server startup default"
+    );
+    assert!(
+        !process
+            .as_std()
+            .get_args()
+            .any(|arg| arg == "features.multi_agent_v2=true"),
+        "Issue agent family must also remain thread-scoped"
+    );
+    let ordinary = thread_start_params(&ExecutionRequest::default(), &config);
+    assert!(ordinary["config"]
+        .get("features.multi_agent_v2.multi_agent_mode_hint_text")
+        .is_none());
+    assert!(ordinary["config"]
+        .get("features.multi_agent_v2.usage_hint_text")
+        .is_none());
     for params in [start, resume] {
         assert_eq!(params["config"]["agents.enabled"], true);
         assert_eq!(params["config"]["features.multi_agent_v2"], true);
@@ -4427,6 +4452,7 @@ fn issue_stand_in_delegation_survives_start_and_resume_without_a_user_spawn_requ
     ] {
         request.extra.insert("origin".into(), origin);
         assert!(codex_collaboration_config_overrides(&request).is_empty());
+        assert!(collaboration::thread_config(&request).is_empty());
     }
     request.extra.insert(
         "origin".into(),
@@ -4445,23 +4471,27 @@ fn issue_stand_in_delegation_survives_start_and_resume_without_a_user_spawn_requ
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE,
         ]
     );
+    assert!(collaboration::thread_config(&request).is_empty());
 }
 
 #[test]
 fn assigned_collaboration_agents_use_native_delegation_in_local_and_cloud_origins() {
-    for kind in ["issue_dispatch", "board_task", "board_comment"] {
+    for kind in [
+        "issue_dispatch",
+        "board_task",
+        "board_comment",
+        "project_automation",
+    ] {
         for role in ["executor", "member", "manager"] {
             let mut request = ExecutionRequest::default();
             request
                 .extra
                 .insert("origin".into(), json!({"type":kind,"dispatchRole":role}));
-            let overrides = codex_collaboration_config_overrides(&request);
-            assert!(overrides.contains(&"agents.enabled=true".to_owned()));
-            assert!(overrides.contains(&CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()));
-            assert!(overrides
-                .iter()
-                .any(|value| value
-                    .starts_with("features.multi_agent_v2.multi_agent_mode_hint_text=")));
+            let config = collaboration::thread_config(&request);
+            assert_eq!(config["agents.enabled"], true);
+            assert_eq!(config["features.multi_agent_v2"], true);
+            assert!(collaboration::thread_config(&request)
+                .contains_key("features.multi_agent_v2.multi_agent_mode_hint_text"));
         }
     }
 }
