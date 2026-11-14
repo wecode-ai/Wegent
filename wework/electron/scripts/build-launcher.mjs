@@ -13,7 +13,8 @@ export async function buildLauncher(
   source = join(root, '..', 'launcher', 'src', 'main.rs')
 ) {
   await mkdir(resources, { recursive: true })
-  const output = join(resources, `wework-launcher${target.includes('windows') ? '.exe' : ''}`)
+  const windowsTarget = target.includes('windows')
+  const output = join(resources, `wework-launcher${windowsTarget ? '.exe' : ''}`)
   // Cargo's target linker setting is not read by direct rustc invocations.
   const linker = process.env[`CARGO_TARGET_${target.toUpperCase().replaceAll('-', '_')}_LINKER`]
   await execute('rustc', [
@@ -22,6 +23,8 @@ export async function buildLauncher(
     '--target',
     target,
     ...(linker !== undefined ? ['-C', `linker=${linker}`] : []),
+    // The launcher starts before any redistributable could be installed.
+    ...(windowsTarget ? ['-C', 'target-feature=+crt-static'] : []),
     '-O',
     source,
     '-o',
