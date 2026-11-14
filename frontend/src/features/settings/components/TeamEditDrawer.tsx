@@ -41,6 +41,8 @@ interface TeamEditDrawerProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Team groups that authorize shared Skills when saving a member Bot */
+  targetGroupNames?: string[]
 }
 
 function PromptEdit({
@@ -370,6 +372,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               allowedAgents={props.allowedAgents}
               scope={scope}
               groupName={groupName}
+              targetGroupNames={props.targetGroupNames}
             />
           )}
           {mode === 'prompt' && (

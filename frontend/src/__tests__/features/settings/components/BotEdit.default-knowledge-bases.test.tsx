@@ -227,6 +227,7 @@ async function renderBotEdit(
   props: {
     scope?: 'personal' | 'group' | 'all' | 'public'
     groupName?: string
+    targetGroupNames?: string[]
     modelCategoryType?: 'llm' | 'image' | 'video'
     allowGenerationPrimaryModel?: boolean
     mode?: 'edit' | 'clone' | 'new'
@@ -267,6 +268,7 @@ async function renderBotEdit(
         toast={toast}
         scope={props.scope || 'personal'}
         groupName={props.groupName}
+        targetGroupNames={props.targetGroupNames}
         modelCategoryType={props.modelCategoryType}
         allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
       />
@@ -919,6 +921,27 @@ describe('BotEdit default knowledge bases', () => {
             { id: 101, name: 'Product Docs' },
             { id: 202, name: 'Runbooks' },
           ],
+        })
+      )
+    })
+  })
+
+  test('sends team groups when saving a member bot', async () => {
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering', 'research'],
+      }
+    )
+
+    fireEvent.click(await screen.findByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          target_group_names: ['engineering', 'research'],
         })
       )
     })
