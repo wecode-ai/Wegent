@@ -1,3 +1,4 @@
+import { mergeFileChangesSummaries } from './mobileFileChanges'
 import type {
   ChatBlockStatus,
   ChatFileChangesSummary,
@@ -16,6 +17,7 @@ import {
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
 import { runtimeAssistantViewId } from '../../../packages/chat-core/src/runtime-turn-projection'
+import { normalizeTurnFileChanges } from '../../../packages/chat-core/src/turn-file-changes'
 
 export interface RuntimeStreamEvent {
   name: string
@@ -26,7 +28,10 @@ export type ChatAction =
   | { type: 'replace'; messages: RuntimeTranscriptMessage[] }
   | { type: 'prepend'; messages: RuntimeTranscriptMessage[] }
   | { type: 'merge-latest'; messages: RuntimeTranscriptMessage[] }
-  | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
+  | ({ type: 'optimistic-user' } & Pick<
+      ChatMessage,
+      'id' | 'content' | 'createdAt' | 'attachments'
+    >)
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
   | { type: 'user-delivered'; id: string }
@@ -80,6 +85,7 @@ function reduceChat(state: ChatMessage[], action: ChatAction): ChatMessage[] {
         id: action.id,
         role: 'user',
         content: visibleRuntimeUserMessage(action.content),
+        ...(action.attachments && { attachments: action.attachments }),
         status: 'completed',
         pendingDelivery: true,
         createdAt: action.createdAt,
@@ -122,6 +128,7 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
     ...(turnId && { turnId }),
     content:
       role === 'user' ? visibleRuntimeUserMessage(message.content ?? '') : (message.content ?? ''),
+    ...(message.attachments && { attachments: message.attachments }),
     ...(message.runtimeItems && {
       textItems: message.runtimeItems.flatMap(item =>
         item.type === 'assistant_text' ? [{ id: item.id, content: item.content }] : []
@@ -812,30 +819,7 @@ function fileChangesFromBlocks(
   )
   if (!summaries.length) return undefined
 
-  const files = new Map<string, ChatFileChangesSummary['files'][number]>()
-  for (const summary of summaries) {
-    for (const file of summary.files) {
-      const key = `${file.oldPath ?? ''}\0${file.path}`
-      const current = files.get(key)
-      files.set(
-        key,
-        current
-          ? {
-              ...file,
-              additions: current.additions + file.additions,
-              deletions: current.deletions + file.deletions,
-              binary: current.binary || file.binary,
-            }
-          : file
-      )
-    }
-  }
-  return {
-    fileCount: files.size,
-    additions: summaries.reduce((sum, summary) => sum + summary.additions, 0),
-    deletions: summaries.reduce((sum, summary) => sum + summary.deletions, 0),
-    files: [...files.values()],
-  }
+  return mergeFileChangesSummaries(summaries)
 }
 
 function finalizeBlocks(
@@ -882,7 +866,12 @@ function upsertMessage(state: ChatMessage[], message: ChatMessage): ChatMessage[
 }
 
 function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
-  return [...new Map(messages.map(message => [message.id, message])).values()]
+  const unique = new Map<string, ChatMessage>()
+  for (const message of messages) {
+    const attachments = message.attachments ?? unique.get(message.id)?.attachments
+    unique.set(message.id, attachments ? { ...message, attachments } : message)
+  }
+  return [...unique.values()]
 }
 
 export function appendDelta(current: string, delta: string, offset?: number): string {
@@ -942,7 +931,7 @@ function normalizeFileChanges(value: unknown): ChatFileChangesSummary | undefine
   const additions = finiteNumber(summary.additions) ?? 0
   const deletions = finiteNumber(summary.deletions) ?? 0
   if (!fileCount && !additions && !deletions && !files.length) return undefined
-  return { fileCount, additions, deletions, files }
+  return { fileCount, additions, deletions, files, source: normalizeTurnFileChanges(value) }
 }
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {

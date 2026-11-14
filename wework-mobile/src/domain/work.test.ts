@@ -7,9 +7,22 @@ import {
   mergeRuntimeWorkForDevices,
   runtimeWorkContainsTask,
   runtimeWorkForDevices,
+  taskAddress,
 } from './work'
 
 describe('flattenConversations', () => {
+  it('preserves worktree identity from both task and workspace ownership', () => {
+    const workspace = projectWork('device', 'task').projects[0].deviceWorkspaces[0]
+    expect(
+      taskAddress({ ...workspace, worktreeId: 'group-tree' }, workspace.tasks[0]).worktreeId
+    ).toBe('group-tree')
+    expect(
+      taskAddress(
+        { ...workspace, worktreeId: 'group-tree' },
+        { ...workspace.tasks[0], worktreeId: 'task-tree' }
+      ).worktreeId
+    ).toBe('task-tree')
+  })
   it('combines project and standalone chats in update order', () => {
     const work: RuntimeWorkListResponse = {
       totalTasks: 2,

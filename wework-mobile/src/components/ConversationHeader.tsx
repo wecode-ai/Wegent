@@ -9,6 +9,7 @@ import {
 } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { LiquidGlassButton, LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
 interface ConversationHeaderProps {
   backAccessibilityLabel?: string
@@ -40,6 +41,7 @@ export function ConversationHeader({
   style,
 }: ConversationHeaderProps) {
   const theme = useTheme()
+  const filePreview = useMobileFilePreview()
 
   return (
     <LiquidGlassGroup
@@ -54,6 +56,19 @@ export function ConversationHeader({
         onPress={onBack}
         testID="open-drawer"
       />
+      {minimal && filePreview ? (
+        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          <View style={{ width: 44, height: 44 }}>
+            <HeaderAction
+              accessibilityLabel="浏览工作空间文件"
+              disabled={!filePreview.target}
+              icon="folder-outline"
+              onPress={filePreview.openBrowser}
+              testID="conversation-files"
+            />
+          </View>
+        </View>
+      ) : null}
 
       {minimal ? null : (
         <>
@@ -108,9 +123,18 @@ export function ConversationHeader({
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.outlineVariant,
             }}
-            style={styles.actionCapsule}
+            style={[styles.actionCapsule, filePreview && { width: 152 }]}
           >
             <View style={styles.actionRow}>
+              {filePreview ? (
+                <HeaderAction
+                  accessibilityLabel="浏览工作空间文件"
+                  disabled={!filePreview.target}
+                  icon="folder-outline"
+                  onPress={filePreview.openBrowser}
+                  testID="conversation-files"
+                />
+              ) : null}
               <HeaderAction
                 accessibilityLabel="新会话"
                 disabled={!canCreateConversation}

@@ -1,7 +1,12 @@
+import { fileChangesSourceKey, mergeFileChangesSummaries } from './mobileFileChanges'
+import {
+  getGeneratedImages,
+  type GeneratedImageArtifact,
+} from '../../../packages/chat-core/src/generated-images'
+export type { GeneratedImageArtifact } from '../../../packages/chat-core/src/generated-images'
 import type {
   ChatFileChangeItem,
   ChatFileChangesBlock,
-  ChatFileChangesSummary,
   ChatNarrativeBlock,
   ChatProcessingBlock,
   ChatToolBlock,
@@ -35,12 +40,6 @@ export interface ProcessingActivityStats {
   search: number
   edit: number
   other: number
-}
-
-export interface GeneratedImageArtifact {
-  id: string
-  uri: string
-  alt: string
 }
 
 const COMMAND_TOOLS = new Set([
@@ -114,6 +113,11 @@ export function buildMessageDisplayRows(
     if (hasFileChanges && block.type === 'tool' && isCompletedPatchTool(block)) continue
 
     if (block.type === 'file_changes') {
+      if (
+        fileChangesSourceKey(consecutiveFileChanges.at(-1)?.fileChanges) !==
+        fileChangesSourceKey(block.fileChanges)
+      )
+        flushFileChanges()
       flushCompletedTools()
       consecutiveFileChanges.push(block)
       continue
@@ -203,23 +207,7 @@ export function processingSegmentTitle(rows: MessageDisplayRow[]): string {
 export function generatedImagesFromBlocks(
   blocks: ChatProcessingBlock[] | undefined
 ): GeneratedImageArtifact[] {
-  return (blocks ?? []).flatMap(block => {
-    if (block.type !== 'tool' || normalizeToolName(block.toolName) !== 'image_generation') return []
-    const payload = asRecord(block.renderPayload)
-    const image = payload.imageBase64
-    if (typeof image !== 'string' || !image.trim()) return []
-    const revisedPrompt = payload.revisedPrompt
-    return [
-      {
-        id: block.id,
-        uri: image.startsWith('data:') ? image : `data:image/png;base64,${image}`,
-        alt:
-          typeof revisedPrompt === 'string' && revisedPrompt.trim()
-            ? revisedPrompt
-            : 'Generated image',
-      },
-    ]
-  })
+  return getGeneratedImages(blocks ?? [], 'Generated image')
 }
 
 export function getToolActivityKind(block: ChatToolBlock): ToolActivityKind {
@@ -409,33 +397,6 @@ function mergeFileChangesBlocks(blocks: ChatFileChangesBlock[]): ChatFileChanges
     id: `file-changes-${first.id}`,
     createdAt: Math.min(...blocks.map(block => block.createdAt)),
     fileChanges: summary,
-  }
-}
-
-function mergeFileChangesSummaries(summaries: ChatFileChangesSummary[]): ChatFileChangesSummary {
-  const files = new Map<string, ChatFileChangeItem>()
-  for (const summary of summaries) {
-    for (const file of summary.files) {
-      const key = `${file.oldPath ?? ''}\0${file.path}`
-      const existing = files.get(key)
-      files.set(
-        key,
-        existing
-          ? {
-              ...file,
-              additions: existing.additions + file.additions,
-              deletions: existing.deletions + file.deletions,
-              binary: existing.binary || file.binary,
-            }
-          : file
-      )
-    }
-  }
-  return {
-    fileCount: files.size,
-    additions: summaries.reduce((sum, summary) => sum + summary.additions, 0),
-    deletions: summaries.reduce((sum, summary) => sum + summary.deletions, 0),
-    files: [...files.values()],
   }
 }
 

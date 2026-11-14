@@ -1,6 +1,21 @@
 import type { RuntimeSessionConfig } from './backendConfig'
 import { requestUserInputResponseText } from '../../../packages/chat-core/src/runtime-user-input'
 import type { RuntimeGuidanceResponse } from '../../../packages/chat-core/src/runtime-task-api-types'
+import { loadRuntimeFileChangesDiff } from '../../../packages/chat-core/src/runtime-file-changes'
+import type { TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+import {
+  normalizeAbsoluteWorkspacePath,
+  normalizeWorkspaceFileChunk,
+  normalizeWorkspaceTextFile,
+  normalizeWorkspaceTree,
+  splitAbsoluteWorkspaceFilePath,
+} from '../../../packages/chat-core/src/workspace-file-contract'
+import type {
+  WorkspaceFileChunkResponse,
+  WorkspaceTextFileResponse,
+  WorkspaceTreeResponse,
+} from '../../../packages/chat-core/src/workspace-files'
+import type { RuntimeWorkspaceSearchResponse } from '../../../packages/chat-core/src/runtime-workspace-search'
 import type {
   DeviceListResponse,
   RuntimeCreateRequest,
@@ -33,6 +48,11 @@ export class RuntimeApiError extends Error {
 interface RuntimeFileUploadResult {
   body: string
   status: number
+}
+
+export interface RuntimeAttachmentDownload {
+  filename?: string
+  mimeType?: string
 }
 
 interface RuntimeDeviceCommandResponse {
@@ -135,6 +155,103 @@ export class RuntimeApi {
     if (!response.success) {
       throw new Error(response.error || response.stderr || '无法创建会话目录')
     }
+  }
+
+  async listWorkspaceDirectory(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+    const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
+    const response = await this.executeDeviceCommand(deviceId, {
+      commandKey: 'workspace_tree',
+      path: normalizedPath,
+      timeoutSeconds: 15,
+      maxOutputBytes: 512 * 1024,
+    })
+    assertDeviceCommandSucceeded(response, '无法读取设备目录')
+    return normalizeWorkspaceTree(response.stdout, normalizedPath)
+  }
+
+  async readWorkspaceTextFile(
+    deviceId: string,
+    filePath: string,
+    _workspaceRoot?: string
+  ): Promise<WorkspaceTextFileResponse> {
+    const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+    const response = await this.executeDeviceCommand(deviceId, {
+      commandKey: 'workspace_read_text_file',
+      path: parentPath,
+      args: [fileName],
+      timeoutSeconds: 15,
+      maxOutputBytes: 2 * 1024 * 1024,
+    })
+    assertDeviceCommandSucceeded(response, '无法读取设备文件')
+    return normalizeWorkspaceTextFile(response.stdout, filePath)
+  }
+
+  async readWorkspaceFileChunk(
+    deviceId: string,
+    filePath: string,
+    offset: number,
+    _workspaceRoot?: string
+  ): Promise<WorkspaceFileChunkResponse> {
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new Error('文件偏移量必须是非负整数')
+    }
+    const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+    const response = await this.executeDeviceCommand(deviceId, {
+      commandKey: 'workspace_read_file_chunk',
+      path: parentPath,
+      args: [fileName, String(offset)],
+      timeoutSeconds: 30,
+      maxOutputBytes: 2 * 1024 * 1024,
+    })
+    assertDeviceCommandSucceeded(response, '无法读取设备文件')
+    return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
+  }
+
+  async searchWorkspaceEntries(
+    deviceId: string,
+    root: string,
+    query: string,
+    cancellationToken?: string
+  ): Promise<RuntimeWorkspaceSearchResponse> {
+    const response = await this.request<RuntimeWorkspaceSearchResponse>(
+      '/runtime-work/workspace/search',
+      {
+        method: 'POST',
+        body: JSON.stringify({ deviceId, root, query, cancellationToken }),
+      }
+    )
+    if (!isWorkspaceSearchResponse(response)) throw new Error('设备返回了无效的文件搜索结果')
+    return response
+  }
+
+  readFileChangesDiff(summary: TurnFileChangesSummary | undefined): Promise<string> {
+    return loadRuntimeFileChangesDiff(
+      {
+        executeCommand: (deviceId, input) =>
+          this.executeDeviceCommand(deviceId, {
+            commandKey: input.command_key,
+            path: input.path,
+            args: input.args,
+            timeoutSeconds: input.timeout_seconds,
+            maxOutputBytes: input.max_output_bytes,
+          }),
+      },
+      summary
+    )
+  }
+
+  async downloadAttachment(
+    id: number,
+    destinationUri: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<RuntimeAttachmentDownload> {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('附件标识无效')
+    return downloadRuntimeAttachment(
+      `${this.config.apiBaseUrl}/attachments/${id}/download`,
+      destinationUri,
+      this.getAccessToken(),
+      options.signal
+    )
   }
 
   sendMessage(
@@ -309,20 +426,141 @@ export class RuntimeApi {
     return body as T
   }
 
-  private executeDeviceCommand(
+  private async executeDeviceCommand(
     deviceId: string,
-    input: { commandKey: string; args?: string[]; timeoutSeconds: number }
+    input: {
+      commandKey: string
+      path?: string
+      args?: string[]
+      timeoutSeconds: number
+      maxOutputBytes?: number
+    }
   ): Promise<RuntimeDeviceCommandResponse> {
-    return this.request(`/devices/${encodeURIComponent(deviceId)}/commands`, {
-      method: 'POST',
-      body: JSON.stringify({
-        command_key: input.commandKey,
-        ...(input.args ? { args: input.args } : {}),
-        timeout_seconds: input.timeoutSeconds,
-        max_output_bytes: 4096,
-      }),
-    })
+    const response = await this.request<RuntimeDeviceCommandResponse>(
+      `/devices/${encodeURIComponent(deviceId)}/commands`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          command_key: input.commandKey,
+          ...(input.path !== undefined ? { path: input.path } : {}),
+          ...(input.args ? { args: input.args } : {}),
+          timeout_seconds: input.timeoutSeconds,
+          max_output_bytes: input.maxOutputBytes ?? 4096,
+        }),
+      }
+    )
+    if (!response || typeof response.success !== 'boolean') {
+      throw new Error('设备返回了无效的命令响应')
+    }
+    return response
   }
+}
+
+function assertDeviceCommandSucceeded(response: RuntimeDeviceCommandResponse, message: string) {
+  const stdout =
+    response.stdout && typeof response.stdout === 'object' && !Array.isArray(response.stdout)
+      ? response.stdout
+      : null
+  if (!response.success || stdout?.success === false) {
+    throw new Error(
+      (typeof stdout?.error === 'string' && stdout.error) ||
+        response.error ||
+        response.stderr ||
+        message
+    )
+  }
+}
+
+function isWorkspaceSearchResponse(value: unknown): value is RuntimeWorkspaceSearchResponse {
+  if (!value || typeof value !== 'object' || !('files' in value) || !Array.isArray(value.files)) {
+    return false
+  }
+  return value.files.every(
+    item =>
+      item &&
+      typeof item === 'object' &&
+      typeof item.root === 'string' &&
+      typeof item.path === 'string' &&
+      typeof item.fileName === 'string' &&
+      (item.matchType === 'file' || item.matchType === 'directory') &&
+      Number.isFinite(item.score) &&
+      (item.indices == null ||
+        (Array.isArray(item.indices) &&
+          item.indices.every(
+            (index: unknown) => Number.isSafeInteger(index) && Number(index) >= 0
+          )))
+  )
+}
+
+async function downloadRuntimeAttachment(
+  url: string,
+  destinationUri: string,
+  token: string,
+  signal?: AbortSignal
+): Promise<RuntimeAttachmentDownload> {
+  const [{ File }, { createDownloadResumable, FileSystemSessionType }] = await Promise.all([
+    import('expo-file-system'),
+    import('expo-file-system/legacy'),
+  ])
+  if (signal?.aborted) throw new DOMException('附件下载已取消', 'AbortError')
+  const destination = new File(destinationUri)
+  if (destination.exists) throw new Error('附件下载目标已存在')
+  const download = createDownloadResumable(url, destinationUri, {
+    headers: { Authorization: `Bearer ${token}` },
+    sessionType: FileSystemSessionType.FOREGROUND,
+  })
+  let cancellation: Promise<unknown[]> | undefined
+  const cancel = () => {
+    cancellation ??= download.cancelAsync().then(
+      () => [],
+      error => [error]
+    )
+  }
+  signal?.addEventListener('abort', cancel, { once: true })
+  try {
+    const response = await download.downloadAsync()
+    const cancellationErrors = await cancellation
+    if (cancellationErrors?.length) throw cancellationErrors[0]
+    if (signal?.aborted || !response) throw new DOMException('附件下载已取消', 'AbortError')
+    if (response.status < 200 || response.status >= 300)
+      throw new RuntimeApiError(`附件下载失败（HTTP ${response.status}）`, response.status)
+    const headers = new Headers(response.headers)
+    return {
+      filename: attachmentDownloadName(headers.get('content-disposition')),
+      mimeType:
+        (headers.get('content-type') ?? response.mimeType)?.split(';')[0]?.trim().toLowerCase() ||
+        undefined,
+    }
+  } catch (cause) {
+    const errors = [cause, ...((await cancellation) ?? []).filter(error => error !== cause)]
+    // Wait for native cancellation before removing any partially written output.
+    if (destination.exists) {
+      try {
+        destination.delete()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length > 1) throw new AggregateError(errors, '附件下载失败，临时文件清理失败')
+    throw cause
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+  }
+}
+
+function attachmentDownloadName(disposition: string | null): string | undefined {
+  if (!disposition) return undefined
+  const extended = /(?:^|;)\s*filename\*=UTF-8'[^']*'([^;]*)/i.exec(disposition)
+  const ordinary = /(?:^|;)\s*filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]*))/i.exec(disposition)
+  const raw = extended
+    ? decodeURIComponent(extended[1]!.trim())
+    : (ordinary?.[1]?.replace(/\\(.)/g, '$1') ?? ordinary?.[2]?.trim())
+  const filename = raw
+    ?.split(/[\\/]/)
+    .at(-1)
+    ?.replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+  return filename && filename !== '.' && filename !== '..' ? filename : undefined
 }
 
 async function uploadRuntimeFile(input: {

@@ -27,6 +27,7 @@ import {
 } from './cloud-sidebar-project-flow.mjs'
 import { verifyGitCloneRecovery } from './git-clone-recovery-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
+import { verifyCloudFileChunkIntegrity } from './workspace-file-chunks-flow.mjs'
 import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
 import {
   createCloudAttachmentVerification,
@@ -992,6 +993,8 @@ async function verifyCloudCheckpoint({
       })
       setPhase('cloud-files-outside-workspace')
       await verifyCloudFileAccessOutsideWorkspace({ cloudEnvironment, workspacePath })
+      setPhase('cloud-file-chunk-integrity')
+      await verifyCloudFileChunkIntegrity({ cloudEnvironment, workspacePath })
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,

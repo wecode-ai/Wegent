@@ -1,5 +1,7 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
+import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+export type { Attachment }
 export type { ModelType, ModelOptions, UnifiedModel }
 export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
 export type {
@@ -53,6 +55,7 @@ export interface RuntimeTaskAddress {
   runtime?: string
   workspacePath?: string | null
   workspaceKind?: string | null
+  worktreeId?: string | null
 }
 
 export interface RuntimeTaskSummary {
@@ -113,6 +116,7 @@ export interface RuntimeTranscriptMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | string
   content: string
+  attachments?: Attachment[]
   clientUserMessageId?: string | null
   client_user_message_id?: string | null
   subtaskId?: string | number | null
@@ -293,6 +297,7 @@ export interface ChatMessage {
   turnId?: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  attachments?: Attachment[]
   textItems?: ChatTextItem[]
   blocks?: ChatProcessingBlock[]
   fileChanges?: ChatFileChangesSummary
@@ -351,13 +356,14 @@ export interface ChatFileChangeItem {
 }
 
 export interface ChatFileChangesSummary {
+  source?: TurnFileChangesSummary
   fileCount: number
   additions: number
   deletions: number
   files: ChatFileChangeItem[]
 }
 
-export interface RuntimeFileChangesSummary {
+export interface RuntimeFileChangesSummary extends Partial<Omit<TurnFileChangesSummary, 'files'>> {
   file_count?: number
   fileCount?: number
   additions?: number

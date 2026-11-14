@@ -10,6 +10,7 @@ import {
   selectedOnlineDeviceId,
 } from '@/domain/deviceOrdering'
 import { continuationSelection, executionFields } from '@/domain/modelSelection'
+import { resolveMobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import {
   isRunningRuntimeEvent,
   isTerminalRuntimeEvent,
@@ -634,6 +635,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
         type: 'optimistic-user',
         id: userMessageId,
         content: message,
+        attachments: options?.attachments,
         createdAt: Date.now(),
       })
       setSending(true)
@@ -694,7 +696,9 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
           taskId,
           runtime: 'codex',
           workspacePath,
-          workspaceKind: selectedWorkspace?.workspaceKind ?? 'chat',
+          workspaceKind: options?.worktreeBranch
+            ? 'worktree'
+            : (selectedWorkspace?.workspaceKind ?? 'chat'),
         }
         currentAddressRef.current = provisionalAddress
         setCurrentAddress(provisionalAddress)
@@ -908,6 +912,8 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   )
 
   return {
+    api,
+    fileTarget: resolveMobileWorkspaceFileTarget(currentAddress, work, selectedWorkspace),
     work,
     devices,
     conversations,

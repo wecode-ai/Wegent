@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "react": ["../../wework/node_modules/@types/react"],
+      "react/*": ["../../wework/node_modules/@types/react/*"],
+      "react-dom/*": ["../../wework/node_modules/@types/react-dom/*"],
+      "@file-viewer/*": ["../../wework/node_modules/@file-viewer/*"],
+      "@pierre/diffs": ["../../wework/node_modules/@pierre/diffs/dist/index.d.ts"],
+      "@pierre/diffs/react": ["../../wework/node_modules/@pierre/diffs/dist/react/index.d.ts"]
+    }
+  },
+  "include": ["./**/*.ts", "./**/*.tsx"]
+}

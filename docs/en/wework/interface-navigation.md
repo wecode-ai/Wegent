@@ -8,6 +8,10 @@ Use this page to find an entry point, then follow the linked usage guide. It des
 
 For home, search, device filters, and conversation entry points on iPhone and Android, see [Wework Mobile](./mobile.md).
 
+Mobile files: **Conversation → top-right folder icon (Browse workspace files / 浏览工作空间文件)**,
+available when an accessible workspace is selected. Reply file links, attachments, and expanded change
+paths also open previews. See [Mobile file previews](./mobile-file-preview.md) for controls and limits.
+
 ## Know the interface
 
 | Area                | Location                               | Purpose                                                                                                       |

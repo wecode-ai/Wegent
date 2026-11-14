@@ -220,6 +220,13 @@ classify_path() {
       changed[wework]=true
       changed[wework_e2e]=true
       ;;
+    # Mobile file browsing reuses the real cloud-device file protocol checkpoint.
+    wework-mobile/src/components/files/* | wework-mobile/src/domain/mobileFile* | \
+      wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
+      wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
+      wework-mobile/src/types/files.ts | wework-mobile/preview/*)
+      changed[wework_e2e]=true
+      ;;
     wework/*)
       changed[wework]=true
       changed[wework_e2e]=true

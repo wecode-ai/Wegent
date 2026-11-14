@@ -17,12 +17,19 @@ import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 
 import { composerLogoUrl, composerMessage } from '@/domain/composerApps'
 import { chatComposerPresentation } from '@/domain/chatComposerPresentation'
-import type { RuntimeAttachment, RuntimeComposerApp, RuntimeUploadAsset } from '@/types/runtime'
+import type {
+  Attachment,
+  RuntimeAttachment,
+  RuntimeComposerApp,
+  RuntimeUploadAsset,
+} from '@/types/runtime'
 import { ComposerContextMenu, type ComposerMenuAnchor } from './ComposerContextMenu'
 import { LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
 export interface ComposerSendOptions {
   attachmentIds: number[]
+  attachments: Attachment[]
   pursueGoal: boolean
 }
 
@@ -56,7 +63,7 @@ interface ChatComposerTestIDs {
   stop: string
 }
 
-interface ComposerAttachment extends RuntimeAttachment {
+interface ComposerAttachment extends Attachment {
   previewUri?: string
 }
 
@@ -114,6 +121,7 @@ export function ChatComposer({
     consumedFocusRequest.current = focusRequest
   }, [disabled, focusRequest])
   const theme = useTheme()
+  const filePreview = useMobileFilePreview()
   const outgoingMessage = composerMessage(message, selectedApps)
   const canSend = Boolean(outgoingMessage) && !disabled && !running && !sendDisabled && !uploading
   const hasStructuredSelection =
@@ -150,6 +158,7 @@ export function ChatComposer({
     if (!value || !canSend) return
     const sent = await onSend(value, {
       attachmentIds: attachments.map(attachment => attachment.id),
+      attachments: attachments.map(({ previewUri: _previewUri, ...attachment }) => attachment),
       pursueGoal: goalDraftActive,
     })
     if (!sent) return
@@ -172,9 +181,16 @@ export function ChatComposer({
     try {
       const uploaded = await Promise.all(assets.map(onUploadAttachment))
       const composerAttachments = uploaded.map<ComposerAttachment>((attachment, index) => ({
-        ...attachment,
+        id: attachment.id,
         filename: assets[index]?.name || attachment.filename,
-        ...(assets[index]?.mimeType.startsWith('image/') ? { previewUri: assets[index]?.uri } : {}),
+        file_size: attachment.fileSize,
+        mime_type: attachment.mimeType,
+        status: 'ready',
+        file_extension: /\.[^.]+$/.exec(assets[index]?.name || attachment.filename)?.[0] ?? '',
+        created_at: new Date().toISOString(),
+        ...(assets[index]?.mimeType.startsWith('image/')
+          ? { previewUri: assets[index]?.uri, local_preview_url: assets[index]?.uri }
+          : {}),
       }))
       setAttachments(current => [
         ...current,
@@ -344,23 +360,32 @@ export function ChatComposer({
             >
               {attachments.map(attachment => (
                 <View key={attachment.id} style={styles.attachmentChip}>
-                  {attachment.previewUri ? (
-                    <Image
-                      source={{ uri: attachment.previewUri }}
-                      style={styles.attachmentPreview}
-                    />
-                  ) : (
-                    <View style={styles.fileIcon}>
-                      <Ionicons
-                        color={theme.colors.onSurfaceVariant}
-                        name="document-outline"
-                        size={17}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`预览 ${attachment.filename}`}
+                    disabled={!filePreview}
+                    onPress={() => filePreview?.openAttachment(attachment)}
+                    style={styles.attachmentOpen}
+                    testID={`composer-attachment-preview-${attachment.id}`}
+                  >
+                    {attachment.previewUri ? (
+                      <Image
+                        source={{ uri: attachment.previewUri }}
+                        style={styles.attachmentPreview}
                       />
-                    </View>
-                  )}
-                  <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
-                    {attachment.filename}
-                  </Text>
+                    ) : (
+                      <View style={styles.fileIcon}>
+                        <Ionicons
+                          color={theme.colors.onSurfaceVariant}
+                          name="document-outline"
+                          size={17}
+                        />
+                      </View>
+                    )}
+                    <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
+                      {attachment.filename}
+                    </Text>
+                  </Pressable>
                   <Pressable
                     accessibilityLabel={`移除 ${attachment.filename}`}
                     hitSlop={6}
@@ -622,6 +647,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(128,128,128,0.16)',
   },
   attachmentPreview: { width: 30, height: 30, borderRadius: 9 },
+  attachmentOpen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+    flexShrink: 1,
+  },
   fileIcon: { width: 30, alignItems: 'center', justifyContent: 'center' },
   attachmentName: { minWidth: 0, flexShrink: 1 },
   selectedApps: { paddingHorizontal: 12, paddingTop: 8 },

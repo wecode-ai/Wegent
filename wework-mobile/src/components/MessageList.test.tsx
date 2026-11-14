@@ -9,8 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { requestUserInputPayloadKey } from '@/domain/requestUserInput'
 import type { ChatMessage } from '@/types/runtime'
 import { MessageList } from './MessageList'
+import type { MobileFilePreviewActions } from './files/FilePreviewContext'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const preview = vi.hoisted(() => ({ current: null as MobileFilePreviewActions | null }))
+vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => preview.current }))
 
 const boundary = vi.hoisted(() => ({
   list: vi.fn(),
@@ -101,6 +104,7 @@ describe('conversation waiting, streaming and native list integration (PC contra
   afterEach(async () => {
     if (renderer) await act(() => renderer!.unmount())
     renderer = null
+    preview.current = null
   })
 
   async function render(messages: ChatMessage[], options: RenderOptions = {}) {
@@ -127,6 +131,10 @@ describe('conversation waiting, streaming and native list integration (PC contra
   }
 
   const loadMoreBefore = async () => {}
+  const button = (testID: string) =>
+    renderer!.root.findAll(
+      node => node.type === ('Pressable' as never) && node.props.testID === testID
+    )[0]!
   const list = () => boundary.list.mock.lastCall![0]
   const listInstance = () => renderer!.root.findByType(KeyboardAwareLegendList)
   const indicators = () =>
@@ -134,6 +142,93 @@ describe('conversation waiting, streaming and native list integration (PC contra
       node =>
         node.type === ('Text' as React.ElementType) && node.props.testID === 'thinking-indicator'
     )
+
+  it.each(['user', 'assistant'] as const)(
+    'opens complete historical attachments for %s messages without requiring the current workspace',
+    async role => {
+      const attachment = {
+        id: 42,
+        filename: 'report.pdf',
+        file_size: 42,
+        mime_type: 'application/pdf',
+        status: 'ready' as const,
+        file_extension: '.pdf',
+        created_at: '',
+        workspace_file: {
+          device_id: 'original-device',
+          workspace_path: '/original',
+          path: 'report.pdf',
+        },
+      }
+      const openAttachment = vi.fn()
+      preview.current = { target: null, openAttachment } as unknown as MobileFilePreviewActions
+      await render([{ ...user, role, attachments: [attachment] }])
+      await act(() => button(`message-attachment-${user.id}-42`).props.onPress())
+      expect(openAttachment).toHaveBeenCalledWith(attachment)
+      preview.current = null
+      await render([{ ...user, role, attachments: [attachment] }])
+      expect(button(`message-attachment-${user.id}-42`).props.disabled).toBe(true)
+    }
+  )
+
+  it.each([true, false])(
+    'opens genuine change artifacts, and ordinary file summaries only when a workspace exists (source=%s)',
+    async hasSource => {
+      const source = {
+        version: 1 as const,
+        status: 'active' as const,
+        artifact_id: 'diff',
+        device_id: 'storage',
+        workspace_path: '/original',
+        file_count: 1,
+        additions: 1,
+        deletions: 0,
+        files: [
+          {
+            path: 'a.ts',
+            change_type: 'modified' as const,
+            additions: 1,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      }
+      const openChanges = vi.fn()
+      const openWorkspaceFile = vi.fn()
+      preview.current = {
+        target: { deviceId: 'current', path: '/work' },
+        openChanges,
+        openWorkspaceFile,
+      } as unknown as MobileFilePreviewActions
+      const message = {
+        ...assistant,
+        status: 'completed' as const,
+        fileChanges: {
+          fileCount: 1,
+          additions: 1,
+          deletions: 0,
+          files: [
+            {
+              path: 'a.ts',
+              changeType: 'modified' as const,
+              additions: 1,
+              deletions: 0,
+              binary: false,
+            },
+          ],
+          ...(hasSource ? { source } : {}),
+        },
+      }
+      await render([message])
+      await act(() => button('file-changes-toggle').props.onPress())
+      await act(() => button('message-file-preview-a.ts').props.onPress())
+      if (hasSource) expect(openChanges).toHaveBeenCalledWith(source, 'a.ts')
+      else expect(openWorkspaceFile).toHaveBeenCalledWith('a.ts')
+      preview.current = { ...preview.current, target: null }
+      await render([{ ...message }])
+      expect(button('message-file-preview-a.ts').props.disabled).toBe(!hasSource)
+    }
+  )
 
   it.each(['new', 'existing'])(
     'shows thinking before the first event in a %s conversation',

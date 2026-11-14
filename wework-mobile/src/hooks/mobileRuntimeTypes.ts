@@ -1,5 +1,8 @@
 import type { RuntimePermissionMode } from '@/services/runtimePermissionPreference'
+import type { RuntimeApi } from '@/services/runtimeApi'
+import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import type {
+  Attachment,
   ChatMessage,
   ConversationItem,
   DeviceInfo,
@@ -16,6 +19,8 @@ import type {
 } from '@/types/runtime'
 
 export interface MobileRuntimeState {
+  api: RuntimeApi
+  fileTarget: MobileWorkspaceFileTarget | null
   work: RuntimeWorkListResponse
   devices: DeviceInfo[]
   conversations: ConversationItem[]
@@ -64,5 +69,6 @@ export interface MobileRuntimeState {
 export interface NewConversationOptions {
   worktreeBranch?: string
   attachmentIds?: number[]
+  attachments?: Attachment[]
   pursueGoal?: boolean
 }

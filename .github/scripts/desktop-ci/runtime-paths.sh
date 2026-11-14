@@ -12,6 +12,15 @@ classify_path() {
   fi
 
   case "$path" in
+    # The existing cloud fixture verifies Mobile's file transport, not native UI.
+    wework-mobile/src/components/files/* | wework-mobile/src/domain/mobileFile* | \
+      wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
+      wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
+      wework-mobile/src/types/files.ts | wework-mobile/preview/* | \
+      wework/e2e/desktop/modules/workspace-file-chunks-flow.mjs)
+      select_target "cloud:workspace-attachments"
+      return
+      ;;
     executor/src/runtime_work/remote_task_access.rs)
       select_catalog_path_targets "$path"
       return

@@ -18,12 +18,13 @@ import type { SharedValue } from 'react-native-reanimated'
 import { hasAppendedUserMessage } from '@/domain/messageListScroll'
 import { buildThinkingPreview } from '@/domain/messagePresentation'
 import { pendingMobileUserInput } from '@/domain/requestUserInput'
-import type { ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
+import type { Attachment, ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { MessageContextMenu, type MessageMenuAnchor } from './MessageContextMenu'
 import { ProcessingTimeline } from './ProcessingTimeline'
 import type { RequestUserInputHandlers } from './RequestUserInputCard'
 import { useMessageListDiagnostics } from './useMessageListDiagnostics'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
 interface MessageListProps extends RequestUserInputHandlers {
   dataKey: string
@@ -277,6 +278,7 @@ const Message = memo(
           >
             <Text variant="bodyLarge">{message.content}</Text>
           </Pressable>
+          <MessageAttachments messageId={message.id} attachments={message.attachments} />
         </View>
       )
     }
@@ -306,6 +308,7 @@ const Message = memo(
             {message.content}
           </AssistantMarkdown>
         ) : null}
+        <MessageAttachments messageId={message.id} attachments={message.attachments} />
         {message.status === 'completed' && message.fileChanges ? (
           <FileChangesSummary summary={message.fileChanges} />
         ) : null}
@@ -333,6 +336,42 @@ const Message = memo(
     [...previous.pendingInputKeys].every(key => next.pendingInputKeys.has(key))
 )
 
+function MessageAttachments({
+  messageId,
+  attachments,
+}: {
+  messageId: string
+  attachments?: Attachment[]
+}) {
+  const preview = useMobileFilePreview()
+  const theme = useTheme()
+  if (!attachments?.length) return null
+  return (
+    <View style={{ gap: 8, paddingTop: 8 }}>
+      {attachments.map(attachment => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`预览 ${attachment.filename}`}
+          disabled={!preview}
+          key={`${attachment.id}:${attachment.filename}`}
+          onPress={() => preview?.openAttachment(attachment)}
+          style={[styles.fileChangesPill, { backgroundColor: theme.colors.surfaceVariant }]}
+          testID={`message-attachment-${messageId}-${attachment.id}`}
+        >
+          <Ionicons
+            color={theme.colors.onSurfaceVariant}
+            name={attachment.mime_type.startsWith('image/') ? 'image-outline' : 'document-outline'}
+            size={20}
+          />
+          <Text numberOfLines={2} style={{ flexShrink: 1 }}>
+            {attachment.filename}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  )
+}
+
 function ThinkingIndicator({ preview }: { preview: string }) {
   const theme = useTheme()
   return (
@@ -349,6 +388,7 @@ function ThinkingIndicator({ preview }: { preview: string }) {
 
 function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
   const [expanded, setExpanded] = useState(false)
   return (
     <View style={styles.fileChangesContainer}>
@@ -381,7 +421,19 @@ function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
           testID="file-changes-list"
         >
           {summary.files.map(file => (
-            <View style={styles.fileChangeRow} key={`${file.oldPath ?? ''}:${file.path}`}>
+            <Pressable
+              style={styles.fileChangeRow}
+              key={`${file.oldPath ?? ''}:${file.path}`}
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${file.path}`}
+              disabled={!preview || (!summary.source && !preview.target)}
+              onPress={() =>
+                summary.source
+                  ? preview?.openChanges(summary.source, file.path)
+                  : preview?.openWorkspaceFile(file.path)
+              }
+              testID={`message-file-preview-${file.path}`}
+            >
               <Text
                 numberOfLines={1}
                 style={[styles.filePath, { color: theme.colors.onSurface }]}
@@ -401,7 +453,7 @@ function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
                   </Text>
                 </View>
               ) : null}
-            </View>
+            </Pressable>
           ))}
         </View>
       ) : null}

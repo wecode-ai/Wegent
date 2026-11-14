@@ -15,6 +15,7 @@ import { ConversationScreen } from '@/components/ConversationScreen'
 import { LiquidGlassButton } from '@/components/LiquidGlass'
 import { ModelPickerScreen } from '@/components/ModelPickerDialog'
 import { ProjectDialog } from '@/components/ProjectDialog'
+import { FilePreviewProvider } from '@/components/files/FilePreviewProvider'
 import { useMobileRuntime } from '@/hooks/useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
@@ -111,134 +112,140 @@ function RuntimeApplication({
   )
   return (
     <>
-      <NavigationContainer>
-        <RuntimeStack.Navigator screenOptions={{ headerShown: false }}>
-          <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
-            {({ navigation }) => (
-              <ConversationListScreen
-                userLabel={userLabel}
-                allDevicesSelected={runtime.allDevicesSelected}
-                conversations={runtime.conversations}
-                currentAddress={runtime.currentAddress}
-                devices={runtime.devices}
-                loading={runtime.loading}
-                onNewConversation={workspace => {
-                  pendingComposerFocus.current = true
-                  runtime.startNewConversation(workspace)
-                  navigation.navigate('conversation')
-                }}
-                onNewProject={() => {
-                  Keyboard.dismiss()
-                  setProjectVisible(true)
-                }}
-                onSearch={setSearch}
-                onRefresh={runtime.refresh}
-                onSelectAllDevices={runtime.selectAllDevices}
-                onSelectConversation={item => {
-                  pendingComposerFocus.current = false
-                  setConversationEntryRevision(current => current + 1)
-                  void runtime.openConversation(item)
-                  navigation.navigate('conversation')
-                }}
-                onSelectDevice={deviceId => {
-                  runtime.selectDevice(deviceId)
-                }}
-                onSettings={openSettings}
-                search={search}
-                refreshing={runtime.refreshing}
-                selectedDeviceId={runtime.selectedDeviceId}
-                workspaces={workspaces}
-              />
-            )}
-          </RuntimeStack.Screen>
-          <RuntimeStack.Screen
-            name="conversation"
-            listeners={{
-              transitionEnd: event => {
-                if (event.data.closing || !pendingComposerFocus.current) return
-                pendingComposerFocus.current = false
-                setComposerFocusRequest(current => current + 1)
-              },
-            }}
-            options={{
-              animation: 'slide_from_right',
-              animationMatchesGesture: true,
-              gestureDirection: 'horizontal',
-              gestureEnabled: true,
-            }}
-          >
-            {({ navigation }) => (
-              <SafeAreaView
-                edges={['left', 'right']}
-                style={[styles.app, { backgroundColor: theme.colors.background }]}
-              >
-                <ConversationScreen
-                  composerFocusRequest={isNewConversation ? composerFocusRequest : 0}
+      <FilePreviewProvider
+        api={runtime.api}
+        apiBaseUrl={config.apiBaseUrl}
+        target={runtime.fileTarget}
+      >
+        <NavigationContainer>
+          <RuntimeStack.Navigator screenOptions={{ headerShown: false }}>
+            <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
+              {({ navigation }) => (
+                <ConversationListScreen
+                  userLabel={userLabel}
+                  allDevicesSelected={runtime.allDevicesSelected}
+                  conversations={runtime.conversations}
                   currentAddress={runtime.currentAddress}
-                  currentTitle={runtime.currentTitle}
                   devices={runtime.devices}
-                  entryRevision={conversationEntryRevision}
-                  gitRef={runtime.gitRef}
-                  isNew={isNewConversation}
-                  hasMoreMessagesBefore={runtime.hasMoreMessagesBefore}
-                  loading={runtime.conversationLoading}
-                  loadingMoreMessagesBefore={runtime.loadingMoreMessagesBefore}
-                  messages={runtime.messages}
-                  model={runtime.selectedModel}
-                  modelOptions={runtime.selectedModelOptions}
-                  permissionMode={runtime.permissionMode}
-                  onBack={navigation.goBack}
-                  onLoadApps={runtime.loadComposerApps}
-                  onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
-                  onMore={openSettings}
-                  onNewConversation={() => {
-                    runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
-                    setComposerFocusRequest(current => current + 1)
+                  loading={runtime.loading}
+                  onNewConversation={workspace => {
+                    pendingComposerFocus.current = true
+                    runtime.startNewConversation(workspace)
+                    navigation.navigate('conversation')
                   }}
-                  onOpenAdvancedModel={() => navigation.navigate('modelPicker')}
-                  onSelectDevice={runtime.selectDevice}
-                  onSelectModel={runtime.selectModel}
-                  onSelectPermissionMode={runtime.selectPermissionMode}
-                  onSelectWorkspace={runtime.selectWorkspace}
-                  onSend={runtime.send}
-                  onStop={runtime.stop}
-                  onRequestUserInputSubmit={runtime.respondToUserInput}
-                  onRequestUserInputSkip={runtime.skipUserInput}
-                  onUploadAttachment={runtime.uploadAttachment}
-                  running={runtime.running}
+                  onNewProject={() => {
+                    Keyboard.dismiss()
+                    setProjectVisible(true)
+                  }}
+                  onSearch={setSearch}
+                  onRefresh={runtime.refresh}
+                  onSelectAllDevices={runtime.selectAllDevices}
+                  onSelectConversation={item => {
+                    pendingComposerFocus.current = false
+                    setConversationEntryRevision(current => current + 1)
+                    void runtime.openConversation(item)
+                    navigation.navigate('conversation')
+                  }}
+                  onSelectDevice={deviceId => {
+                    runtime.selectDevice(deviceId)
+                  }}
+                  onSettings={openSettings}
+                  search={search}
+                  refreshing={runtime.refreshing}
                   selectedDeviceId={runtime.selectedDeviceId}
-                  selectedProjectName={selectedProjectName}
-                  selectedWorkspace={runtime.selectedWorkspace}
-                  sending={runtime.sending}
-                  stopping={runtime.stopping}
                   workspaces={workspaces}
                 />
-              </SafeAreaView>
-            )}
-          </RuntimeStack.Screen>
-          <RuntimeStack.Screen
-            name="modelPicker"
-            options={{
-              animation: 'fade',
-              contentStyle: styles.transparentScreen,
-              presentation: 'transparentModal',
-            }}
-          >
-            {({ navigation }) => (
-              <ModelPickerScreen
-                loading={runtime.modelsLoading}
-                error={runtime.modelsError}
-                onLoadModels={runtime.loadModels}
-                models={runtime.models}
-                onDismiss={navigation.goBack}
-                onSelect={runtime.selectModel}
-                selectedModel={runtime.selectedModel}
-                selectedOptions={runtime.selectedModelOptions}
-              />
-            )}
-          </RuntimeStack.Screen>
-        </RuntimeStack.Navigator>
-      </NavigationContainer>
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen
+              name="conversation"
+              listeners={{
+                transitionEnd: event => {
+                  if (event.data.closing || !pendingComposerFocus.current) return
+                  pendingComposerFocus.current = false
+                  setComposerFocusRequest(current => current + 1)
+                },
+              }}
+              options={{
+                animation: 'slide_from_right',
+                animationMatchesGesture: true,
+                gestureDirection: 'horizontal',
+                gestureEnabled: true,
+              }}
+            >
+              {({ navigation }) => (
+                <SafeAreaView
+                  edges={['left', 'right']}
+                  style={[styles.app, { backgroundColor: theme.colors.background }]}
+                >
+                  <ConversationScreen
+                    composerFocusRequest={isNewConversation ? composerFocusRequest : 0}
+                    currentAddress={runtime.currentAddress}
+                    currentTitle={runtime.currentTitle}
+                    devices={runtime.devices}
+                    entryRevision={conversationEntryRevision}
+                    gitRef={runtime.gitRef}
+                    isNew={isNewConversation}
+                    hasMoreMessagesBefore={runtime.hasMoreMessagesBefore}
+                    loading={runtime.conversationLoading}
+                    loadingMoreMessagesBefore={runtime.loadingMoreMessagesBefore}
+                    messages={runtime.messages}
+                    model={runtime.selectedModel}
+                    modelOptions={runtime.selectedModelOptions}
+                    permissionMode={runtime.permissionMode}
+                    onBack={navigation.goBack}
+                    onLoadApps={runtime.loadComposerApps}
+                    onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
+                    onMore={openSettings}
+                    onNewConversation={() => {
+                      runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
+                      setComposerFocusRequest(current => current + 1)
+                    }}
+                    onOpenAdvancedModel={() => navigation.navigate('modelPicker')}
+                    onSelectDevice={runtime.selectDevice}
+                    onSelectModel={runtime.selectModel}
+                    onSelectPermissionMode={runtime.selectPermissionMode}
+                    onSelectWorkspace={runtime.selectWorkspace}
+                    onSend={runtime.send}
+                    onStop={runtime.stop}
+                    onRequestUserInputSubmit={runtime.respondToUserInput}
+                    onRequestUserInputSkip={runtime.skipUserInput}
+                    onUploadAttachment={runtime.uploadAttachment}
+                    running={runtime.running}
+                    selectedDeviceId={runtime.selectedDeviceId}
+                    selectedProjectName={selectedProjectName}
+                    selectedWorkspace={runtime.selectedWorkspace}
+                    sending={runtime.sending}
+                    stopping={runtime.stopping}
+                    workspaces={workspaces}
+                  />
+                </SafeAreaView>
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen
+              name="modelPicker"
+              options={{
+                animation: 'fade',
+                contentStyle: styles.transparentScreen,
+                presentation: 'transparentModal',
+              }}
+            >
+              {({ navigation }) => (
+                <ModelPickerScreen
+                  loading={runtime.modelsLoading}
+                  error={runtime.modelsError}
+                  onLoadModels={runtime.loadModels}
+                  models={runtime.models}
+                  onDismiss={navigation.goBack}
+                  onSelect={runtime.selectModel}
+                  selectedModel={runtime.selectedModel}
+                  selectedOptions={runtime.selectedModelOptions}
+                />
+              )}
+            </RuntimeStack.Screen>
+          </RuntimeStack.Navigator>
+        </NavigationContainer>
+      </FilePreviewProvider>
 
       <ProjectDialog
         devices={runtime.devices}

@@ -1,0 +1,110 @@
+@import '../../packages/collaboration/src/markdown/styles.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-code: ui-monospace, Menlo, Consolas, monospace;
+  --font-weight-ui: 400;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 28px;
+  --text-4xl: 32px;
+  --text-heading-sm: 20px;
+  --text-heading-md: 24px;
+  --text-heading-lg: 28px;
+  --text-code: 13px;
+  --text-chat: 16px;
+  --color-bg-base: 255 255 255;
+  --color-bg-surface: 246 246 247;
+  --color-text-primary: 27 27 27;
+  --color-text-secondary: 88 88 92;
+  --color-text-muted: 120 120 125;
+  --color-border: 220 220 224;
+  --color-muted: 241 241 243;
+  --color-primary: 35 121 232;
+  --color-warning: 160 103 10;
+  --color-destructive: 196 48 48;
+}
+:root.dark {
+  color-scheme: dark;
+  --color-bg-base: 24 24 26;
+  --color-bg-surface: 32 32 35;
+  --color-text-primary: 236 236 239;
+  --color-text-secondary: 184 184 190;
+  --color-text-muted: 143 143 150;
+  --color-border: 65 65 70;
+  --color-muted: 42 42 46;
+  --color-primary: 112 169 244;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+body {
+  font-family: var(--font-ui);
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+}
+#root {
+  display: flex;
+  flex-direction: column;
+}
+.document-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.code-preview,
+.binary-preview,
+.file-viewer {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.binary-preview {
+  display: flex;
+  overflow: hidden;
+}
+.file-viewer {
+  overflow: auto;
+}
+.html-preview {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: white;
+}
+.media-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.empty {
+  padding: 24px;
+  color: rgb(var(--color-text-secondary));
+}
+.truncated {
+  padding: 8px 16px;
+  color: rgb(var(--color-warning));
+  border-top: 1px solid rgb(var(--color-border));
+  font-size: 12px;
+}
+::selection {
+  background: rgb(255 204 64 / 45%);
+}
