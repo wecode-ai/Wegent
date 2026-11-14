@@ -18,6 +18,7 @@
 //! [`StatusUpdatingEmitter`] the callback path uses, and queues the SSE frames
 //! for that step.
 mod events;
+mod terminal_result;
 mod tools;
 
 use std::collections::{HashMap, VecDeque};
@@ -619,64 +620,6 @@ impl Bridge {
         self.terminal = true;
     }
 
-    async fn finish_committed_winner(&mut self) {
-        let app = self.app.upgrade();
-        let (_, subtask_table) = match completion::resolve_tables(
-            app.as_deref(),
-            self.tables,
-            self.task_id,
-        )
-        .await
-        {
-            Ok(tables) => tables,
-            Err(error) => {
-                tracing::warn!(%error, task_id = self.task_id, "terminal result table read failed");
-                self.finish_persistence_error("Could not read the committed execution result")
-                    .await;
-                return;
-            }
-        };
-        match completion::read_terminal_result(
-            &self.mysql,
-            &subtask_table,
-            self.task_id,
-            self.subtask_id,
-        )
-        .await
-        {
-            Ok(Some(completion::StoredTerminal {
-                status,
-                result,
-                error,
-            })) => {
-                self.dispatch_exit_unregister().await;
-                self.cleanup().await;
-                self.state
-                    .use_committed_result(&mut self.queue, result.as_ref());
-                self.state.finish(
-                    &mut self.queue,
-                    if status == "FAILED" {
-                        "failed"
-                    } else {
-                        "completed"
-                    },
-                    error
-                        .filter(|_| status == "FAILED")
-                        .map(|message| json!({"code": "stream_error", "message": message})),
-                );
-                self.finished = true;
-            }
-            Ok(None) => {
-                self.finish_persistence_error("The execution was already settled")
-                    .await
-            }
-            Err(_) => {
-                self.finish_persistence_error("Could not read the committed execution result")
-                    .await
-            }
-        }
-    }
-
     async fn drain_and_finish(&mut self) {
         if let Some(response) = self.response.as_mut() {
             drain_terminal_stream(response).await;
@@ -803,18 +746,6 @@ impl Bridge {
             drain_terminal_stream(response).await;
         }
         self.cleanup().await;
-        self.state.finish(
-            &mut self.queue,
-            "failed",
-            Some(json!({"code": "stream_error", "message": message})),
-        );
-        self.finished = true;
-    }
-
-    async fn finish_persistence_error(&mut self, message: &str) {
-        self.dispatch_exit_unregister().await;
-        // Keep the streamed result available after a database failure.
-        self.registered = false;
         self.state.finish(
             &mut self.queue,
             "failed",
