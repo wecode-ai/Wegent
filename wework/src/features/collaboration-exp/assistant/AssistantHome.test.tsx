@@ -32,7 +32,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string, values?: Record<string, unknown>) =>
-      key === 'assistant.liveSummary' ? `${key}: ${values?.waiting}/${values?.running}` : key,
+      key === 'assistant.liveSummary'
+        ? `${key}: ${values?.waiting}/${values?.running}`
+        : key === 'teamRelay.statusSummary'
+          ? `${key}: ${values?.members}`
+          : key,
     i18n: { language: 'en' },
   }),
 }))
@@ -230,6 +234,9 @@ describe('AssistantHome', () => {
       )
       expect(screen.getByText('assistant.liveSummary: 1/0')).toBeInTheDocument()
       expect(
+        within(screen.getByTestId('collaboration-exp-team-relay')).getByRole('status')
+      ).toHaveTextContent('teamRelay.memberStatusSummary')
+      expect(
         within(screen.getByTestId('collaboration-exp-assistant-decisions')).getByRole('heading')
       ).toHaveTextContent('assistant.needsDecision1')
       expect(document.querySelectorAll('.assistant-decision-card')).toHaveLength(1)
@@ -367,6 +374,11 @@ describe('AssistantHome', () => {
         </>
       )
       const view = render(content)
+      const progress = within(screen.getByTestId('collaboration-exp-assistant-progress'))
+      expect(progress.queryByText('assistant.noProgress')).toBeNull()
+      if (phase === 'loading')
+        expect(progress.getByRole('status')).toHaveTextContent('assistant.progressLoading')
+      else expect(progress.queryByRole('status')).toBeNull()
       for (const node of screen.getAllByTestId('collaboration-exp-team-relay-node-@primary'))
         expect(node).toHaveAttribute('data-state', 'unknown')
       expect(screen.getByTestId('collaboration-exp-assistant-count-running')).toHaveTextContent('—')
@@ -400,6 +412,19 @@ describe('AssistantHome', () => {
       expect(createIssue).not.toHaveBeenCalled()
     }
   )
+
+  it('declares successfully empty progress independently of pending proposals', () => {
+    mocks.source.proposalsReady = false
+    const view = render(<AssistantHome active />)
+    expect(view.getByText('assistant.noProgress')).toBeInTheDocument()
+    mocks.source.inboxReady = false
+    view.rerender(<AssistantHome active />)
+    expect(view.queryByText('assistant.noProgress')).toBeNull()
+    expect(view.getByText('assistant.progressLoading')).toBeInTheDocument()
+    mocks.source.inboxReady = true
+    view.rerender(<AssistantHome active />)
+    expect(view.getByText('assistant.noProgress')).toBeInTheDocument()
+  })
 
   it('opens public Issue work through its original runtime address without a loaded Issue or discussion map', () => {
     const { state, reminders, api, createIssue } = setupWorkbench()

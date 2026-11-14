@@ -344,6 +344,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
                 : null
             }
             loading={tasks.loading}
+            loadMoreReady={tasks.loadMoreReady}
             error={
               tasks.errors.length || tasks.relatedError || tasks.subscriptionError
                 ? t('tasks.loadFailed')

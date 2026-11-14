@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
 import { canAccessCollaborationProjectView, IssueActivityMarkdown } from '@wegent/collaboration'
 import type {
   CollaborationMember,
@@ -8,10 +8,12 @@ import type {
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { WeworkSharedProject } from '@/features/todo/WeworkCollaborationPlatform'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { projectScopeOf } from '../model'
+import { invalidatesExperienceRead } from '../data/useExperienceSourceReads'
 import { ProjectDrilldown, type ProjectDrilldownView } from './ProjectDrilldown'
 
 interface Props {
@@ -94,26 +96,40 @@ function ProjectOverview({
   active: boolean
 }) {
   const { t } = useTranslation('collaborationExp')
+  const { state: workbench } = useWorkbench()
+  const cloud = useContext(CloudConnectionContext)
+  const backendUrl = cloud?.apiBaseUrl ?? ''
+  const userId = workbench.user?.id
+  const scope = JSON.stringify([backendUrl, userId, project.project_store, project.current_user_id])
   const [revision, setRevision] = useState(0)
-  const owner = useMemo(() => ({ api, projectId: project.id }), [api, project.id])
+  const owner = useMemo(() => ({ api, projectId: project.id, scope }), [api, project.id, scope])
+  const request = useMemo(() => ({ owner, active, revision }), [owner, active, revision])
   const [state, setSnapshot] = useState<{
     owner: typeof owner
-    members: CollaborationMember[]
+    request: typeof request | null
+    members: CollaborationMember[] | null
     error: string | null
-  }>({ owner, members: [], error: null })
-  const snapshot = state.owner === owner ? state : { members: [], error: null }
+  }>({ owner, request: null, members: null, error: null })
+  const snapshot = state.owner === owner ? state : { request: null, members: null, error: null }
+  const loading = active && snapshot.request !== request
+  const error = loading ? null : snapshot.error
   useEffect(() => {
-    if (!active) return
+    if (!request.active) return
     let cancelled = false
-    void api.members.list(project.id).then(
+    const { owner } = request
+    void owner.api.members.list(owner.projectId).then(
       members => {
-        if (!cancelled) setSnapshot({ owner, members, error: null })
+        if (!cancelled) setSnapshot({ owner, request, members, error: null })
       },
       cause => {
         if (!cancelled)
           setSnapshot(previous => ({
             owner,
-            members: previous.owner === owner ? previous.members : [],
+            request,
+            members:
+              previous.owner === owner && !invalidatesExperienceRead(cause)
+                ? previous.members
+                : null,
             error: String(cause),
           }))
       }
@@ -121,7 +137,7 @@ function ProjectOverview({
     return () => {
       cancelled = true
     }
-  }, [api, project.id, owner, active, revision])
+  }, [request])
   return (
     <section
       className="experience-project-overview"
@@ -136,10 +152,23 @@ function ProjectOverview({
       ) : (
         <p className="text-sm text-text-secondary">{t('tasks.noProjectDescription')}</p>
       )}
-      <div className="experience-project-members">
+      <div
+        className="experience-project-members"
+        data-testid="collaboration-exp-project-members"
+        aria-busy={loading}
+      >
         <h3>{t('tasks.members')}</h3>
+        {loading && snapshot.members === null ? (
+          <p
+            role="status"
+            data-testid="collaboration-exp-project-members-loading"
+            className="text-sm text-text-muted"
+          >
+            {t('tasks.membersLoading')}
+          </p>
+        ) : null}
         <div className="experience-project-member-list">
-          {snapshot.members.map(member => (
+          {snapshot.members?.map(member => (
             <span key={member.user_id}>
               <span className="experience-project-member-avatar" aria-hidden="true">
                 {member.user_name?.slice(0, 1)}
@@ -148,7 +177,16 @@ function ProjectOverview({
             </span>
           ))}
         </div>
-        {snapshot.error ? (
+        {snapshot.members?.length === 0 && !error ? (
+          <p
+            role="status"
+            data-testid="collaboration-exp-project-members-empty"
+            className="text-sm text-text-muted"
+          >
+            {t('tasks.membersEmpty')}
+          </p>
+        ) : null}
+        {error ? (
           <div role="alert" className="text-sm">
             <p>{t('tasks.membersFailed')}</p>
             <Button

@@ -25,9 +25,9 @@ function scopedMessages(input: ExperienceTimelineInput): ProjectChatMessage[] {
     if (message.projectId !== input.project.id || message.taskId !== input.issue?.id) continue
     const previous = messages.get(message.messageId)
     if (!previous) messages.set(message.messageId, message)
-    else if (message.updatedAt >= previous.updatedAt)
+    else
       messages.set(message.messageId, {
-        ...message,
+        ...(message.updatedAt >= previous.updatedAt ? message : previous),
         sequenceNumber: Math.min(previous.sequenceNumber, message.sequenceNumber),
       })
   }

@@ -436,6 +436,42 @@ describe('verified experimental task binding registration', () => {
 })
 
 describe('source-owned experience requests', () => {
+  it('keeps local pagination ready independently of pending cloud catalogs and pages', async () => {
+    const local = sourceFixture('local')
+    const cloud = sourceFixture('backend')
+    cloud.api.projects.list.mockImplementation(() => new Promise(() => {}))
+    cloud.api.myWork.page.mockImplementation(() => new Promise(() => {}))
+    let finishPage!: (page: { items: WorkspaceMyWorkItem[]; nextCursor: null }) => void
+    local.api.myWork.page
+      .mockResolvedValueOnce({ items: [local.myWork], nextCursor: 'local-next' })
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            finishPage = resolve
+          })
+      )
+    const sources = [local.source, cloud.source]
+    const { result } = renderHook(() => useExperienceTasks(sources, [7], true, 'related'))
+    await waitFor(() => expect(result.current.loadMoreReady).toBe(true))
+    expect(result.current.loading).toBe(true)
+    let page!: Promise<void>
+    act(() => {
+      page = result.current.loadMore()
+    })
+    await waitFor(() => expect(local.api.myWork.page).toHaveBeenCalledTimes(2))
+    expect(cloud.api.myWork.page).toHaveBeenCalledOnce()
+    expect(result.current.loadMoreReady).toBe(false)
+    await act(async () => {
+      finishPage({ items: [{ ...local.myWork, id: 'local-second' }], nextCursor: null })
+      await page
+    })
+    expect(result.current.projects.flatMap(row => row.issues).map(row => row.id)).toContain(
+      'local-second'
+    )
+    expect(result.current.loading).toBe(true)
+    expect(result.current.hasMore).toBe(false)
+  })
+
   it('carries authoritative local readers through related rows and direct Issue detail', async () => {
     const { source, api, myWork } = sourceFixture('local')
     const nativeBinding = experienceBindingFixture({ taskUserId: 0 })
@@ -630,6 +666,24 @@ describe('source-owned experience requests', () => {
     )
     await act(async () => finish({ ...old.project, name: 'SECRET old account project' }))
     expect(JSON.stringify(view.result.current.projects)).not.toContain('SECRET')
+  })
+
+  it('invalidates a previously hydrated project when its refreshed source identity does not match', async () => {
+    const { source, api, project } = sourceFixture('backend')
+    api.projects.list.mockResolvedValue([])
+    const sources = [source]
+    const { result } = renderHook(() => useExperienceTasks(sources, [7], true, 'related'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.projects.map(row => row.project.id)).toContain(project.id)
+    api.projects.get.mockResolvedValueOnce({ ...project, project_store: 'local' })
+    act(() => result.current.reload())
+    await waitFor(() =>
+      expect(result.current.errors).toContain('Project source does not match My work')
+    )
+    expect(result.current.projects).toEqual([])
+    act(() => result.current.reload())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.projects.map(row => row.project.id)).toContain(project.id)
   })
 
   it('proves direct sharing from manual collaborators only for bounded unproven My work candidates', async () => {

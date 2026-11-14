@@ -1,14 +1,16 @@
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import type { CollaborationMember, SharedWorkspaceApi } from '@wegent/collaboration'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import '@/i18n'
 import { experienceProjectFixture } from '../model/fixtures'
 import { ProjectExperience } from './ProjectExperience'
 
-const mock = vi.hoisted(() => ({ renderProject: vi.fn() }))
+const mock = vi.hoisted(() => ({ renderProject: vi.fn(), userId: 7 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    state: { user: { id: 7 }, projects: [], devices: [], runtimeWork: null },
+    state: { user: { id: mock.userId }, projects: [], devices: [], runtimeWork: null },
     services: {},
   }),
 }))
@@ -21,7 +23,122 @@ vi.mock('@/features/todo/WeworkCollaborationPlatform', () => ({
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  mock.userId = 7
 })
+
+function deferredMembers() {
+  let resolve!: (members: CollaborationMember[]) => void
+  let reject!: (cause: unknown) => void
+  const promise = new Promise<CollaborationMember[]>((success, failure) => {
+    resolve = success
+    reject = failure
+  })
+  return { promise, resolve, reject }
+}
+
+it('distinguishes initial member loading from a verified empty result', async () => {
+  const props = propsFixture()
+  const pending = deferredMembers()
+  props.members.mockReturnValueOnce(pending.promise)
+  const view = render(<ProjectExperience {...props} />)
+  expect(view.getByTestId('collaboration-exp-project-members-loading')).toBeTruthy()
+  expect(view.queryByTestId('collaboration-exp-project-members-empty')).toBeNull()
+  await act(async () => pending.resolve([]))
+  expect(view.queryByTestId('collaboration-exp-project-members-loading')).toBeNull()
+  expect(view.getByTestId('collaboration-exp-project-members-empty')).toBeTruthy()
+})
+
+it('keeps verified members during a transient refresh failure and recovers through existing retry', async () => {
+  const props = propsFixture()
+  props.members.mockResolvedValueOnce([{ user_id: 8, user_name: 'Verified member' }])
+  const view = render(<ProjectExperience {...props} />)
+  await view.findByText('Verified member')
+  const pending = deferredMembers()
+  props.members.mockReturnValueOnce(pending.promise)
+  view.rerender(<ProjectExperience {...props} active={false} />)
+  view.rerender(<ProjectExperience {...props} />)
+  expect(view.getByText('Verified member')).toBeTruthy()
+  expect(view.getByTestId('collaboration-exp-project-members')).toHaveAttribute('aria-busy', 'true')
+  await act(async () => pending.reject(new Error('Network unavailable')))
+  expect(view.getByText('Verified member')).toBeTruthy()
+  expect(view.getByRole('alert')).toBeTruthy()
+  expect(view.queryByTestId('collaboration-exp-project-members-empty')).toBeNull()
+  fireEvent.click(view.getByTestId('collaboration-exp-project-members-retry'))
+  await view.findByTestId('collaboration-exp-project-members-empty')
+  expect(view.queryByText('Verified member')).toBeNull()
+})
+
+it.each([{ status: 401 }, { status: 403 }, { status: 404 }, { code: 'permission_denied' }])(
+  'invalidates verified members after a structured access failure %j',
+  async cause => {
+    const props = propsFixture()
+    props.members.mockResolvedValueOnce([{ user_id: 8, user_name: 'Previously allowed member' }])
+    const view = render(<ProjectExperience {...props} />)
+    await view.findByText('Previously allowed member')
+    props.members.mockRejectedValueOnce(cause)
+    view.rerender(<ProjectExperience {...props} active={false} />)
+    view.rerender(<ProjectExperience {...props} />)
+    await view.findByRole('alert')
+    expect(view.queryByText('Previously allowed member')).toBeNull()
+    expect(view.queryByTestId('collaboration-exp-project-members-empty')).toBeNull()
+    expect(view.queryByTestId('collaboration-exp-project-members-loading')).toBeNull()
+    fireEvent.click(view.getByTestId('collaboration-exp-project-members-retry'))
+    await view.findByTestId('collaboration-exp-project-members-empty')
+  }
+)
+
+it('shows initial member failures with retry rather than an empty result', async () => {
+  const props = propsFixture()
+  props.members.mockRejectedValueOnce(new Error('Network unavailable'))
+  const view = render(<ProjectExperience {...props} />)
+  await view.findByRole('alert')
+  expect(view.queryByTestId('collaboration-exp-project-members-empty')).toBeNull()
+  expect(view.queryByTestId('collaboration-exp-project-members-loading')).toBeNull()
+  const recovery = deferredMembers()
+  props.members.mockReturnValueOnce(recovery.promise)
+  fireEvent.click(view.getByTestId('collaboration-exp-project-members-retry'))
+  expect(view.getByTestId('collaboration-exp-project-members-loading')).toBeTruthy()
+  await act(async () => recovery.resolve([]))
+  expect(view.getByTestId('collaboration-exp-project-members-empty')).toBeTruthy()
+})
+
+it.each(['account', 'backend', 'store', 'project-viewer'] as const)(
+  'invalidates members on %s changes and ignores a late previous-scope refresh',
+  async identity => {
+    const props = propsFixture()
+    props.members.mockResolvedValueOnce([{ user_id: 8, user_name: 'Previous scope member' }])
+    let backend = 'https://backend-a.example'
+    const content = (project = props.project, active = true) => (
+      <CloudConnectionContext.Provider
+        value={{ apiBaseUrl: backend } as CloudConnectionContextValue}
+      >
+        <ProjectExperience {...props} project={project} active={active} />
+      </CloudConnectionContext.Provider>
+    )
+    const view = render(content())
+    await view.findByText('Previous scope member')
+    const oldRefresh = deferredMembers()
+    const next = deferredMembers()
+    props.members.mockReturnValueOnce(oldRefresh.promise).mockReturnValueOnce(next.promise)
+    view.rerender(content(props.project, false))
+    view.rerender(content())
+    await waitFor(() => expect(props.members).toHaveBeenCalledTimes(2))
+    if (identity === 'account') mock.userId = 9
+    if (identity === 'backend') backend = 'https://backend-b.example'
+    const project = {
+      ...props.project,
+      ...(identity === 'store' ? { project_store: 'local' as const } : {}),
+      ...(identity === 'project-viewer' ? { current_user_id: 9 } : {}),
+    }
+    view.rerender(content(project))
+    expect(view.queryByText('Previous scope member')).toBeNull()
+    expect(view.getByTestId('collaboration-exp-project-members-loading')).toBeTruthy()
+    await act(async () => oldRefresh.resolve([{ user_id: 10, user_name: 'Late old member' }]))
+    expect(view.queryByText('Late old member')).toBeNull()
+    await act(async () => next.resolve([{ user_id: 11, user_name: 'Current scope member' }]))
+    expect(view.getByText('Current scope member')).toBeTruthy()
+  }
+)
 
 function propsFixture() {
   const members = vi.fn().mockResolvedValue([])

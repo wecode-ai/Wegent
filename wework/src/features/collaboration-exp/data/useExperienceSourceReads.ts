@@ -12,6 +12,53 @@ interface SourceRead<T> extends ExperienceReadOwner {
   scopeKey: string
 }
 
+/** Invalidation follows structured access/resource failures, never display copy. */
+export function invalidatesExperienceRead(error: unknown): boolean {
+  const visited = new Set<object>()
+  while (error && typeof error === 'object' && !visited.has(error)) {
+    visited.add(error)
+    const value = error as {
+      status?: unknown
+      statusCode?: unknown
+      code?: unknown
+      errorCode?: unknown
+      cause?: unknown
+    }
+    const statuses = [value.status, value.statusCode]
+    if (
+      statuses.some(status => status === 401 || status === 403 || status === 404 || status === 410)
+    )
+      return true
+    const deniedCodes = [
+      'http_401',
+      'http_403',
+      'http_404',
+      'http_410',
+      'authentication_required',
+      'unauthenticated',
+      'permission_denied',
+      'unauthorized',
+      'forbidden',
+      'not_found',
+      'scope_forbidden',
+      'scope_not_found',
+      'project_session_access_denied',
+      'source_removed',
+      'source_mismatch',
+      'identity_mismatch',
+      'wrong_device',
+    ]
+    if (
+      [value.code, value.errorCode].some(
+        code => typeof code === 'string' && deniedCodes.includes(code.toLowerCase())
+      )
+    )
+      return true
+    error = value.cause
+  }
+  return false
+}
+
 /** Requests belong to one source/account epoch and one explicit refresh revision. */
 export function useExperienceSourceReads<T>(
   sources: ExperienceSource[],
@@ -63,7 +110,11 @@ export function useExperienceSourceReads<T>(
                 ...previous.filter(row => row.source !== source || row.key !== key),
                 {
                   ...owner,
-                  value: null,
+                  value: invalidatesExperienceRead(cause)
+                    ? null
+                    : (previous.find(
+                        row => row.source === source && row.key === key && row.scopeKey === scopeKey
+                      )?.value ?? null),
                   error: cause instanceof Error ? cause.message : String(cause),
                   revision,
                   scopeKey,

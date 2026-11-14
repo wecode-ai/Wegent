@@ -8,6 +8,47 @@ import { TaskFilters, type TaskFilterValue } from './TaskFilters'
 
 afterEach(cleanup)
 
+it('loads an independently ready next page while unrelated page data is loading', () => {
+  const onLoadMore = vi.fn()
+  const view = render(
+    <TaskListView
+      rows={[]}
+      projects={[]}
+      statuses={[]}
+      filters={{ relevance: 'related', projectKey: '', status: '', search: '' }}
+      loading
+      loadMoreReady
+      hasMore
+      onFiltersChange={vi.fn()}
+      onSelect={vi.fn()}
+      onOpenProject={vi.fn()}
+      onRetry={vi.fn()}
+      onLoadMore={onLoadMore}
+    />
+  )
+  const more = view.getByTestId('collaboration-exp-tasks-more')
+  expect(more).toBeEnabled()
+  fireEvent.click(more)
+  expect(onLoadMore).toHaveBeenCalledOnce()
+  view.rerender(
+    <TaskListView
+      rows={[]}
+      projects={[]}
+      statuses={[]}
+      filters={{ relevance: 'related', projectKey: '', status: '', search: '' }}
+      loading
+      loadMoreReady={false}
+      hasMore
+      onFiltersChange={vi.fn()}
+      onSelect={vi.fn()}
+      onOpenProject={vi.fn()}
+      onRetry={vi.fn()}
+      onLoadMore={onLoadMore}
+    />
+  )
+  expect(more).toBeDisabled()
+})
+
 const project = experienceProjectFixture()
 const input = {
   projects: [
@@ -99,6 +140,7 @@ it('renders visible Issue rows once and lets the project action open independent
       statuses={[]}
       filters={filters}
       loading={false}
+      loadMoreReady={false}
       onFiltersChange={vi.fn()}
       onSelect={onSelect}
       onOpenProject={onOpenProject}
@@ -125,6 +167,7 @@ it('shows retry without presenting a failed load as an empty successful result',
       statuses={[]}
       filters={filters}
       loading={false}
+      loadMoreReady={false}
       error="Source offline"
       onFiltersChange={vi.fn()}
       onSelect={vi.fn()}
@@ -162,6 +205,7 @@ it('keeps a completed task static when its last execution projection still says 
       statuses={[]}
       filters={filters}
       loading={false}
+      loadMoreReady={false}
       onFiltersChange={vi.fn()}
       onSelect={vi.fn()}
       onOpenProject={vi.fn()}
@@ -213,6 +257,7 @@ it('opens an authorized project from the project mode using only visible task co
       filters={{ ...filters, projectKey: '', status: '' }}
       mode="projects"
       loading={false}
+      loadMoreReady={false}
       onFiltersChange={vi.fn()}
       onSelect={vi.fn()}
       onOpenProject={onOpenProject}

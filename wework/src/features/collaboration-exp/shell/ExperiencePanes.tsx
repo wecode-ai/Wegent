@@ -21,6 +21,18 @@ import './ExperienceApp.css'
 
 const NAVIGATION_PANE_ID = 'collaboration-exp-navigation'
 
+function pointerFocusTarget(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) return null
+  const pane = target.closest<HTMLElement>('.experience-pane')
+  if (!pane) return null
+  const control = target.closest<HTMLElement>(
+    'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex], [contenteditable]:not([contenteditable="false"])'
+  )
+  if (control && control !== pane && pane.contains(control)) return control
+  const active = pane.ownerDocument.activeElement
+  return active instanceof HTMLElement && pane.contains(active) ? active : null
+}
+
 function ExperiencePaneContent({
   content,
   onBack,
@@ -128,7 +140,7 @@ export function ExperiencePanes({
         if (event.target instanceof HTMLElement) lastInteraction.current = event.target
       }}
       onPointerDownCapture={event => {
-        if (event.target instanceof HTMLElement) lastInteraction.current = event.target
+        lastInteraction.current = pointerFocusTarget(event.target)
       }}
     >
       {visiblePanes.length ? (

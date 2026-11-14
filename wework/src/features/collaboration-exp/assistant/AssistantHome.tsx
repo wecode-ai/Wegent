@@ -57,6 +57,12 @@ export function AssistantHome({
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const progressReady =
+    state.runtimeWork != null &&
+    (state.runtimeWorkLoad.phase === 'ready' || state.runtimeWorkLoad.phase === 'refreshing') &&
+    source.inboxReady &&
+    !source.inbox.error &&
+    source.inbox.sourceErrors.length === 0
   const discussions = new Map(
     conversations.map(conversation => [
       JSON.stringify([conversation.address.deviceId, conversation.address.taskId]),
@@ -247,6 +253,7 @@ export function AssistantHome({
           )}
           <TeamRelay
             nodes={snapshot.team}
+            announceCounts={false}
             ready={ready}
             managementAvailable={Boolean(active && source.settings && source.deviceId)}
             onManage={() => setPanel(teamOpen ? null : 'team')}
@@ -427,6 +434,7 @@ export function AssistantHome({
           <section
             data-testid="collaboration-exp-assistant-progress"
             className="assistant-dashboard-section assistant-progress-section"
+            aria-busy={active && !progressReady && !sourceError}
           >
             <div className="assistant-section-heading">
               <h3 className="text-sm font-semibold">{t('assistant.recentProgress')}</h3>
@@ -496,8 +504,13 @@ export function AssistantHome({
                 )
               })}
             </div>
-            {!work.length && source.inboxReady && (
+            {!work.length && progressReady && (
               <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noProgress')}</p>
+            )}
+            {active && !work.length && !progressReady && !sourceError && (
+              <p role="status" className="px-4 py-3 text-sm text-text-muted">
+                {t('assistant.progressLoading')}
+              </p>
             )}
           </section>
         </div>

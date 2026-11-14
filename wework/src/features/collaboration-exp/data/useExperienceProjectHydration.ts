@@ -10,7 +10,9 @@ import { useExperienceSourceReads, type ExperienceReadOwner } from './useExperie
 async function readProject({ source, key }: ExperienceReadOwner) {
   const project = await source.api.projects.get(key)
   if (project.id !== key || project.project_store !== source.store)
-    throw new Error('Project source does not match My work')
+    throw Object.assign(new Error('Project source does not match My work'), {
+      code: 'source_mismatch',
+    })
   return project
 }
 

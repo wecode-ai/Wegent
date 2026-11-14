@@ -4,6 +4,7 @@ import type { RuntimeWorkListResponse } from '@/types/api'
 import { selectPrivateConversations, selectTaskTimeline } from '../model'
 import type { ExperienceConversationSelection, ExperienceTimeline } from '../model'
 import type { ExperienceIssueData } from './useExperienceIssue'
+import { invalidatesExperienceRead } from './useExperienceSourceReads'
 
 export interface ExperienceTimelineData {
   timeline: ExperienceTimeline
@@ -24,7 +25,8 @@ export function useExperienceTimeline(
     active && data ? api?.activity : undefined,
     data?.project.id ?? '',
     data?.issue.id ?? '',
-    revision
+    revision,
+    invalidatesExperienceRead
   )
   if (!data)
     return {
@@ -37,7 +39,7 @@ export function useExperienceTimeline(
     ...data,
     viewer,
     runtimeWork,
-    messages: chat.loading || chat.error || !api?.activity ? null : chat.messages,
+    messages: chat.ready && api?.activity ? chat.messages : null,
   }
   return {
     timeline: selectTaskTimeline(input),

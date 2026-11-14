@@ -506,27 +506,29 @@ describe('experience canonical timeline', () => {
     expect(embedded.nodes.filter(node => node.kind === 'handoff')).toEqual([])
   })
 
-  it('uses only current project+Issue ProjectChat messages, preserving canonical sequence and avoiding duplicate updates', () => {
-    const newer = message({ messageId: 'second', sequenceNumber: 2 })
-    const original = message({ status: 'pending' })
-    const updated = message({ sequenceNumber: 99, updatedAt: '2026-11-03T00:00:00Z' })
-    const result = selectTaskTimeline(
-      timelineInput({
-        messages: [
-          newer,
-          original,
-          message({ projectId: 'other' }),
-          message({ messageId: 'another-issue', taskId: 'other' }),
-          message({ messageId: 'project-chat', taskId: null }),
-          updated,
-        ],
-      })
-    )
-    expect(result.nodes.map(node => [node.id, node.sequenceNumber, node.status])).toEqual([
-      ['message-1', 1, 'completed'],
-      ['second', 2, 'completed'],
-    ])
-  })
+  it.each(['old-first', 'new-first'] as const)(
+    'preserves canonical sequence and newest content for %s duplicate arrivals',
+    order => {
+      const newer = message({ messageId: 'second', sequenceNumber: 2 })
+      const original = message({ status: 'pending' })
+      const updated = message({ sequenceNumber: 99, updatedAt: '2026-11-03T00:00:00Z' })
+      const result = selectTaskTimeline(
+        timelineInput({
+          messages: [
+            newer,
+            ...(order === 'old-first' ? [original, updated] : [updated, original]),
+            message({ projectId: 'other' }),
+            message({ messageId: 'another-issue', taskId: 'other' }),
+            message({ messageId: 'project-chat', taskId: null }),
+          ],
+        })
+      )
+      expect(result.nodes.map(node => [node.id, node.sequenceNumber, node.status])).toEqual([
+        ['message-1', 1, 'completed'],
+        ['second', 2, 'completed'],
+      ])
+    }
+  )
 
   it('keeps absent streams and denied Issues explicitly unavailable without leaking existing source data', () => {
     expect(selectTaskTimeline(timelineInput({ messages: null }))).toEqual({

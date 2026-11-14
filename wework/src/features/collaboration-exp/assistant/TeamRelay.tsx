@@ -12,6 +12,8 @@ export interface TeamRelayProps {
   ready?: boolean
   managementAvailable?: boolean
   compact?: boolean
+  /** The accompanying work snapshot already announces aggregate work counts. */
+  announceCounts?: boolean
 }
 
 /** A status projection only; choosing a member opens its existing configuration. */
@@ -24,8 +26,32 @@ export function TeamRelay({
   ready = true,
   managementAvailable = true,
   compact = false,
+  announceCounts = true,
 }: TeamRelayProps) {
   const { t } = useTranslation('collaborationExp')
+  const members = nodes.map(node => {
+    const name =
+      node.name || t(node.isDefault ? 'assistant.defaultAssistant' : 'assistant.specialist')
+    const status = [
+      t(`teamRelay.state.${ready ? node.state : 'unknown'}`),
+      ...(!node.enabled ? [t('teamRelay.paused')] : []),
+    ].join(' · ')
+    const statusDetail = [
+      status,
+      ...(ready && node.state !== 'idle' && node.counts[node.state] > 0
+        ? [node.counts[node.state]]
+        : []),
+    ].join(' · ')
+    return {
+      node,
+      name,
+      statusDetail,
+      announcement: t(
+        announceCounts ? 'teamRelay.memberCountSummary' : 'teamRelay.memberStatusSummary',
+        { name, state: status, ...node.counts }
+      ),
+    }
+  })
   return (
     <section
       className={`experience-team-relay assistant-team-rail${compact ? ' assistant-team-rail--compact' : ''}`}
@@ -33,6 +59,15 @@ export function TeamRelay({
       aria-label={t('teamRelay.title')}
       data-live={ready && nodes.some(node => node.state === 'running')}
     >
+      <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {!ready
+          ? t('teamRelay.state.unknown')
+          : members.length
+            ? t('teamRelay.statusSummary', {
+                members: members.map(member => member.announcement).join(' '),
+              })
+            : t('teamRelay.unavailable')}
+      </span>
       <div className="assistant-team-rail-head">
         <span className="assistant-team-rail-signal" aria-hidden="true" />
         <span className="assistant-team-rail-label">
@@ -60,17 +95,7 @@ export function TeamRelay({
       </div>
       {nodes.length ? (
         <ul className="assistant-team-members">
-          {nodes.map(node => {
-            const name =
-              node.name || t(node.isDefault ? 'assistant.defaultAssistant' : 'assistant.specialist')
-            const status = t(`teamRelay.state.${ready ? node.state : 'unknown'}`)
-            const statusDetail = [
-              status,
-              ...(!node.enabled ? [t('teamRelay.paused')] : []),
-              ...(ready && node.state !== 'idle' && node.counts[node.state] > 0
-                ? [node.counts[node.state]]
-                : []),
-            ].join(' · ')
+          {members.map(({ node, name, statusDetail }) => {
             return (
               <li key={node.id ?? '@primary'}>
                 <button

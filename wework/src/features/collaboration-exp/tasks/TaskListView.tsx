@@ -25,6 +25,7 @@ interface Props {
   selectedKey?: string | null
   mode?: TaskListMode
   loading: boolean
+  loadMoreReady: boolean
   error?: string | null
   hasMore?: boolean
   onModeChange?(mode: TaskListMode): void
@@ -115,7 +116,7 @@ export function TaskListView(props: Props) {
         {props.hasMore && props.onLoadMore && (
           <Button
             variant="ghost"
-            disabled={props.loading}
+            disabled={!props.loadMoreReady}
             data-testid="collaboration-exp-tasks-more"
             onClick={props.onLoadMore}
             className="m-3 min-h-11 md:min-h-8"

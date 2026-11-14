@@ -60,6 +60,7 @@ export function PaneResizeHandle({ id, getLayout, setLayout, resetLayout }: Pane
   return (
     <Separator
       id={`collaboration-exp-resize-${id}`}
+      data-testid={`collaboration-exp-resize-${id}`}
       disableDoubleClick
       aria-label={t('shell.resize')}
       className="experience-pane-separator"

@@ -438,6 +438,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     feature: [
       'workbench',
       'project_space',
+      'collaboration_exp',
       'plugins',
       'plugin_management',
       'plugin_create',

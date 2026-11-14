@@ -347,6 +347,7 @@ export function useExperienceTasks(
     errors,
     relatedError: related.error,
     hasMore: related.hasMore,
+    loadMoreReady: active && related.sourceSnapshots.some(row => row.nextCursor && !row.loading),
     loadMore: related.loadMore,
     reload,
     revision: revision + related.revision,

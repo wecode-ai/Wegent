@@ -217,6 +217,45 @@ describe('ExperiencePanes', () => {
     expect(input).toHaveValue('Keep my unsent text')
   })
 
+  it('restores an already focused control after opening a pane through its nested pointer target', () => {
+    function NestedTrigger() {
+      const [opened, setOpened] = useState(false)
+      return (
+        <ExperiencePanes
+          panes={[
+            {
+              id: 'list',
+              title: 'Tasks',
+              content: (
+                <button data-testid="nested-trigger" onClick={() => setOpened(true)}>
+                  <span data-testid="nested-trigger-label">Open task</span>
+                </button>
+              ),
+            },
+            ...(opened ? [{ id: 'timeline', title: 'Timeline', content: null }] : []),
+          ]}
+          onBack={() => setOpened(false)}
+        />
+      )
+    }
+    availableWidth = 390
+    render(<NestedTrigger />)
+    const trigger = screen.getByTestId('nested-trigger')
+    act(() => trigger.focus())
+    expect(trigger).toHaveFocus()
+    const label = screen.getByTestId('nested-trigger-label')
+    fireEvent.pointerDown(label, { button: 0, pointerId: 1 })
+    expect(trigger).toHaveFocus()
+    fireEvent.click(label)
+    expect(screen.getByTestId('collaboration-exp-pane-timeline')).toHaveFocus()
+
+    fireEvent.click(screen.getByTestId('collaboration-exp-pane-header-timeline-back'))
+
+    expect(visiblePaneIds()).toEqual(['list'])
+    expect(screen.getByTestId('nested-trigger')).toBe(trigger)
+    expect(trigger).toHaveFocus()
+  })
+
   it('restores the source control when mobile content uses the same shell-owned back action', () => {
     availableWidth = 390
     render(<LayerFixture />)
@@ -304,6 +343,8 @@ describe('ExperiencePanes', () => {
       />
     )
     const separator = screen.getByRole('separator')
+    expect(screen.getByTestId('collaboration-exp-resize-list-timeline')).toBe(separator)
+    expect(separator).toHaveAttribute('id', 'collaboration-exp-resize-list-timeline')
     const original = panelLayout()
     act(() => separator.focus())
     fireEvent.keyDown(separator, { key: 'ArrowRight' })

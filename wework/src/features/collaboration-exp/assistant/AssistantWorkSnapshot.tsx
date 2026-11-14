@@ -21,6 +21,9 @@ export function AssistantWorkSnapshot({
       aria-busy={!ready}
       data-live={ready && snapshot.counts.running > 0}
     >
+      <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {ready ? t('assistant.snapshot.countSummary', { ...snapshot.counts }) : null}
+      </span>
       <div className="assistant-live-snapshot-head">
         <span className="assistant-live-signal" aria-hidden="true" />
         <span>
