@@ -12,7 +12,9 @@
 use brz_http_server::StatusCode;
 
 use crate::http_compat::FastApiError;
-use crate::responses::auth::{CurrentUser, DeferredResponsesUser, ResponsesUser};
+use crate::responses::auth::{
+    CurrentUser, DeferredResponsesUser, ResponsesUser, UserLookup, resolve_authenticated_key_on,
+};
 use crate::responses::rate_limit::{self, RateLimit};
 use crate::state::AppState;
 use crate::task_creation::{TaskCrdInput, WorkspaceRepository};
@@ -149,13 +151,61 @@ async fn deferred_api_key_name_for(
 /// API-key principal resolves both here instead of on a pooled connection. A
 /// rejection ends the transaction before anything writes.
 pub(super) async fn resolve_principal_on(
+    state: &AppState,
     user_reader: &dyn crate::user_reader::UserByIdReader,
     sql: &mut dyn crate::request_sql::RequestSql,
     principal: DeferredResponsesUser,
 ) -> Result<(ResponsesUser, Option<String>), FastApiError> {
+    let principal = if let DeferredResponsesUser::Deferred {
+        key,
+        rate_limit_key,
+    } = principal
+    {
+        if let UserLookup::ByName(target_username) = &key.lookup {
+            // A service key provisions a missing target user through a short
+            // nested transaction so onboarding sees the committed row before
+            // this request transaction continues.
+            let user = crate::responses::service_user::provision(state, user_reader, sql, &key)
+                .await
+                .map_err(dependency)?;
+            let api_key_name = deferred_api_key_name_for(sql, Some(key.api_key_id))
+                .await
+                .map_err(dependency)??;
+            if !user.is_active {
+                return Err(crate::responses::auth::deferred_auth_error(
+                    crate::responses::auth_error::AuthError::UserInactive(target_username.clone()),
+                ));
+            }
+            return Ok((
+                ResponsesUser {
+                    api_key_id: Some(key.api_key_id),
+                    user: crate::responses::auth::CurrentUser {
+                        id: i32::try_from(user.id).map_err(|_| FastApiError::unhandled())?,
+                        user_name: user.user_name,
+                        api_key_name: key.api_key_name,
+                        api_key_id: Some(key.api_key_id),
+                        git_info: user.git_info,
+                        preferences: user.preferences,
+                    },
+                    rate_limit_key,
+                },
+                api_key_name,
+            ));
+        }
+        DeferredResponsesUser::Deferred {
+            key,
+            rate_limit_key,
+        }
+    } else {
+        principal
+    };
+    let api_key_id = match &principal {
+        DeferredResponsesUser::Resolved(user) => user.api_key_id,
+        DeferredResponsesUser::Deferred { key, .. } => Some(key.api_key_id),
+    };
     match principal {
         DeferredResponsesUser::Resolved(user) => {
-            let api_key_name = deferred_api_key_name_for(sql, user.api_key_id)
+            let api_key_name = deferred_api_key_name_for(sql, api_key_id)
                 .await
                 .map_err(dependency)??;
             Ok((user, api_key_name))
@@ -164,16 +214,15 @@ pub(super) async fn resolve_principal_on(
             key,
             rate_limit_key,
         } => {
-            let api_key_id = key.api_key_id;
-            let api_key_name = deferred_api_key_name_for(sql, Some(api_key_id))
+            let api_key_name = deferred_api_key_name_for(sql, api_key_id)
                 .await
                 .map_err(dependency)??;
-            let user = crate::responses::auth::resolve_authenticated_key_on(user_reader, sql, key)
+            let user = resolve_authenticated_key_on(user_reader, sql, key)
                 .await
                 .map_err(crate::responses::auth::deferred_auth_error)?;
             Ok((
                 ResponsesUser {
-                    api_key_id: Some(api_key_id),
+                    api_key_id,
                     user,
                     rate_limit_key,
                 },
@@ -415,7 +464,8 @@ async fn create_response_flow(
             // both belong to this transaction (`get_current_user` ran on the
             // request session), so they precede every business statement.
             let (user, api_key_name) =
-                resolve_principal_on(state.user_reader.as_ref(), &mut sql, principal).await?;
+                resolve_principal_on(state, state.user_reader.as_ref(), &mut sql, principal)
+                    .await?;
             let rate_limited =
                 !rate_limit::hit(state.redis.as_ref(), limit, limit_key, "/api/v1/responses").await;
             let auto_delete_executor =

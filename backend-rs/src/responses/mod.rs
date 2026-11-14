@@ -22,6 +22,7 @@ mod output_result;
 pub mod python_json;
 pub mod rate_limit;
 pub mod responses_repository;
+mod service_user;
 
 mod cancel;
 mod delete;

@@ -68,6 +68,53 @@ export function createDesktopScenario({
     )
   }
 
+  async function verifyServiceUserProvisioning() {
+    const username = `responses-service-user-${process.pid}`
+    const created = await request('/admin/service-keys', {
+      name: 'responses-e2e',
+      description: 'Responses gateway service-user regression',
+    })
+    const before = await cloud.queryDatabase(
+      'SELECT id, user_name, email, is_active, auth_source FROM users WHERE user_name = %s',
+      [username]
+    )
+    assert.deepEqual(before, [])
+
+    const response = await fetch(`${cloud.backendUrl}/api/v1/responses`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${created.key}`,
+        'wegent-username': username,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: `default#${TEAM}`, input: CHAT_PROMPT, background: true }),
+      signal: AbortSignal.timeout(modelResponseTimeoutMs),
+    })
+    const responseText = await response.text()
+    assert.ok(response.ok, `service-key create: ${response.status} ${responseText}`)
+    const createdResponse = JSON.parse(responseText)
+    assert.equal(createdResponse.status, 'queued')
+
+    const users = await cloud.queryDatabase(
+      'SELECT id, user_name, email, is_active, auth_source FROM users WHERE user_name = %s',
+      [username]
+    )
+    assert.equal(users.length, 1, JSON.stringify(users))
+    assert.equal(users[0].user_name, username)
+    assert.equal(users[0].email, `${username}@api.auto`)
+    assert.equal(users[0].is_active, 1)
+    assert.equal(users[0].auth_source, 'api:responses-e2e')
+
+    const tasks = await cloud.queryDatabase(
+      'SELECT id, user_id FROM tasks WHERE user_id = %s ORDER BY id DESC LIMIT 1',
+      [users[0].id]
+    )
+    assert.equal(tasks.length, 1, JSON.stringify(tasks))
+    assert.equal(tasks[0].user_id, users[0].id)
+    evidence.serviceUser = { username, userId: users[0].id, taskId: tasks[0].id }
+    return username
+  }
+
   async function verifyRejectedCreates(deviceId, model) {
     const before = await databaseCounts()
     const conversationsPath = `/v1/conversations?device_id=${encodeURIComponent(deviceId)}`
@@ -230,7 +277,7 @@ export function createDesktopScenario({
     }
   }
 
-  async function verifyRouting(responseId) {
+  async function verifyRouting(responseId, successfulRustPosts) {
     const pythonPosts = log =>
       log
         .split('\n')
@@ -252,7 +299,7 @@ export function createDesktopScenario({
       }),
       logs =>
         pythonPosts(logs.python) === 0 &&
-        rustPosts(logs.rust) === 2 &&
+        rustPosts(logs.rust) === successfulRustPosts &&
         logs.rust.includes(`[API] GET /api/v1/responses/${responseId} `),
       'The real Rust POST and GET ownership was not observed in process logs'
     )
@@ -262,7 +309,7 @@ export function createDesktopScenario({
       'The follow-up GET fell back to Python'
     )
     evidence.routing = {
-      successfulRustPosts: 2,
+      successfulRustPosts,
       successfulPythonPosts: 0,
       rustGet: responseId,
       pythonGet: false,
@@ -366,9 +413,10 @@ export function createDesktopScenario({
         const model = models.data.find(candidate => candidate.name === CLOUD_PUBLIC_MODEL_NAME)
         assert.ok(model, 'The real API model catalog did not expose the native model fixture')
         await verifyRejectedCreates(device.device_id, model.id)
+        await verifyServiceUserProvisioning()
         const responseId = await verifyChat()
         await verifyRuntime(device.device_id, model.id)
-        await verifyRouting(responseId)
+        await verifyRouting(responseId, 3)
       } finally {
         evidence.durationMs = Date.now() - started
         evidence.modelRequests = modelRequests

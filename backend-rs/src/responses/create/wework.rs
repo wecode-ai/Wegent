@@ -1115,6 +1115,7 @@ pub(crate) async fn create_response(
         async |transaction| {
             let mut sql: &mut brz_mysql::MysqlTransactionService = transaction;
             let (_principal, _api_key_name) = super::handler::resolve_principal_on(
+                state,
                 state.user_reader.as_ref(),
                 &mut sql,
                 principal,
