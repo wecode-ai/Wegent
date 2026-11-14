@@ -8,7 +8,7 @@ description = "Request-scoped SQL handles and task routing contracts"
 
 [dependencies]
 async-trait = "0.1"
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 wegent-backend-config = { path = "../config" }
 

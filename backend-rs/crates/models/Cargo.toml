@@ -15,7 +15,7 @@ wegent-access = { path = "../access" }
 wegent-resource-store = { path = "../resource-store" }
 anyhow = "1"
 brz-http-server = { version = "=0.0.33", features = ["macros"] }
-brz-mysql = { version = "=0.0.29", features = ["metrics", "slow-log"] }
+brz-mysql = { version = "=0.0.30", features = ["metrics", "slow-log"] }
 brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
 brz-json = "=0.0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
