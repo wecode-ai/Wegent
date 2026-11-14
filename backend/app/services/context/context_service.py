@@ -1624,16 +1624,9 @@ class ContextService:
         Returns:
             List of attachment SubtaskContext records for all subtasks of the task
         """
-        # Get all subtask IDs for this task
-        subtask_ids = [
-            subtask.id
-            for subtask in subtask_store.list_by_task_unfiltered(db, task_id=task_id)
-        ]
+        subtask_ids = subtask_store.ids_query_by_task(db, task_id=task_id)
 
-        if not subtask_ids:
-            return []
-
-        # Get all attachments for these subtasks
+        # Resolve membership in SQL without loading the task's messages.
         return (
             db.query(SubtaskContext)
             .filter(

@@ -14,17 +14,33 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
+from app.stores.tasks.executor_sessions import (
+    load_recent_executor_sessions,
+    session_evidence_predicate,
+)
+from app.stores.tasks.history_checkpoint import summary_checkpoint_predicate
+from app.stores.tasks.history_window import HistoryTaskWindow, load_history_window
 from app.stores.tasks.interfaces import (
     ExecutorReference,
     FailedSubtaskDetail,
     StalledRunningSubtask,
     TaskAccessStore,
 )
+from app.stores.tasks.runtime_reads import SubtaskRuntimeReads
 from shared.models.db.enums import ContextType
 
 
-class SqlAlchemySubtaskStore:
+class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
     """SQLAlchemy implementation for subtask message access."""
+
+    def _runtime_read_query(
+        self, db: Session, task_id: int, owner_user_id: Optional[int]
+    ) -> tuple[Any, Any]:
+        """Resolve ancillary reads with the same owner scope as history."""
+        return Subtask, self._filter_owner_user_id(
+            db.query(Subtask).filter(Subtask.task_id == task_id),
+            owner_user_id=owner_user_id,
+        )
 
     def _filter_owner_user_id(
         self,
@@ -799,6 +815,36 @@ class SqlAlchemySubtaskStore:
             db, [row[0] for row in rows], include_contexts=include_contexts
         )
 
+    def list_recent_executor_sessions_by_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int,
+        bot_ids: Optional[Sequence[int]] = None,
+    ) -> list[dict[str, Any]]:
+        query = self._filter_owner_user_id(
+            db.query(Subtask.id).filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+            ),
+            owner_user_id=owner_user_id,
+        )
+        return load_recent_executor_sessions(db, Subtask, query, bot_ids)
+
+    def has_executor_session_by_task(
+        self, db: Session, *, task_id: int, owner_user_id: int
+    ) -> bool:
+        query = self._filter_owner_user_id(
+            db.query(Subtask.id).filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                session_evidence_predicate(db, Subtask),
+            ),
+            owner_user_id=owner_user_id,
+        )
+        return query.first() is not None
+
     def list_after_message_id(
         self,
         db: Session,
@@ -835,9 +881,18 @@ class SqlAlchemySubtaskStore:
         exclude_deleted: bool = False,
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
+        recent_limit: Optional[int] = None,
+        statuses: Optional[Sequence[SubtaskStatus]] = None,
+        roles: Optional[Sequence[SubtaskRole]] = None,
+        before_message_id: Optional[int] = None,
+        summary_checkpoint_only: bool = False,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if summary_checkpoint_only:
+            query = query.filter(summary_checkpoint_predicate(db, Subtask))
+        if before_message_id is not None:
+            query = query.filter(Subtask.message_id < before_message_id)
         if message_ids is not None:
             if not message_ids:
                 return []
@@ -846,16 +901,76 @@ class SqlAlchemySubtaskStore:
             query = query.filter(Subtask.id.notin_(exclude_subtask_ids))
         if exclude_deleted:
             query = query.filter(Subtask.status != SubtaskStatus.DELETE)
-        if order_by == "id":
-            query = query.order_by(Subtask.id.asc())
-        elif order_by == "created_at":
-            query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
+        if statuses is not None:
+            if not statuses:
+                return []
+            query = query.filter(Subtask.status.in_(statuses))
+        if roles is not None:
+            if not roles:
+                return []
+            query = query.filter(Subtask.role.in_(roles))
+        order_columns = self._history_order_columns(Subtask, order_by)
+        if recent_limit is not None:
+            if recent_limit <= 0:
+                return []
+            rows = (
+                query.order_by(*(column.desc() for column in order_columns))
+                .limit(recent_limit)
+                .all()
+            )
+            subtask_ids = [row[0] for row in rows][::-1]
         else:
-            query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
-        rows = query.all()
-        subtasks = self._load_ordered(db, [row[0] for row in rows])
+            rows = query.order_by(*(column.asc() for column in order_columns)).all()
+            subtask_ids = [row[0] for row in rows]
+        subtasks = self._load_ordered(db, subtask_ids)
         self._attach_sender_user_names(db, subtasks)
         return subtasks
+
+    def list_history_window(
+        self,
+        db: Session,
+        *,
+        tasks: Sequence[HistoryTaskWindow],
+        limit: int,
+        statuses: Optional[Sequence[SubtaskStatus]] = None,
+        roles: Optional[Sequence[SubtaskRole]] = None,
+        after_message_id: Optional[int] = None,
+        summary_checkpoint_only: bool = False,
+    ) -> list[Subtask]:
+        if limit <= 0:
+            return []
+        queries = []
+        for task in tasks:
+            query = self._filter_owner_user_id(
+                db.query(Subtask.id).filter(Subtask.task_id == task.task_id),
+                owner_user_id=task.owner_user_id,
+            )
+            if task.before_message_id is not None:
+                query = query.filter(Subtask.message_id < task.before_message_id)
+            queries.append((Subtask, query))
+        subtasks = load_history_window(
+            db,
+            queries=queries,
+            limit=limit,
+            load_payloads=lambda session, model, ids: self._load_ordered(session, ids),
+            statuses=statuses,
+            roles=roles,
+            after_message_id=after_message_id,
+            summary_checkpoint_only=summary_checkpoint_only,
+        )
+        self._attach_sender_user_names(db, subtasks)
+        return subtasks
+
+    @staticmethod
+    def _history_order_columns(
+        model: Any, order_by: Literal["id", "message_id", "created_at"]
+    ) -> tuple[Any, ...]:
+        """Use the same deterministic ordering for full and bounded history."""
+        if order_by == "id":
+            return (model.id,)
+        if order_by == "created_at":
+            return (model.created_at, model.id)
+        return (model.message_id, model.created_at, model.id)
 
     def list_recent_by_task_ids(
         self,
@@ -933,6 +1048,7 @@ class SqlAlchemySubtaskStore:
         task_id: int,
         statuses: Sequence[SubtaskStatus],
         owner_user_id: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> list[Subtask]:
         if not statuses:
             return []
@@ -941,6 +1057,8 @@ class SqlAlchemySubtaskStore:
             Subtask.status.in_(statuses),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        if limit is not None:
+            query = query.limit(max(0, limit))
         return query.all()
 
     def list_not_executor_deleted_by_task(

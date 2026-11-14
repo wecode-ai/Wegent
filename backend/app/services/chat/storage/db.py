@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.models.kind import Kind
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
 from app.services.adapters.collaboration_strategy import CollaborationStrategy
@@ -412,12 +412,21 @@ class DatabaseHandler:
 
         task_id = task.id
         update_result = TaskStatusUpdateResult()
-        subtasks = task_stores.subtask_store.list_assistant_by_task(
-            db,
-            task_id=task_id,
-            owner_user_id=task.user_id,
-            include_contexts=False,
-        )
+        if getattr(task, "is_active", None) == TaskResource.STATE_SUBSCRIPTION:
+            subtasks = task_stores.subtask_store.list_by_task_ordered(
+                db,
+                task_id=task_id,
+                owner_user_id=task.user_id,
+                roles=[SubtaskRole.ASSISTANT],
+                recent_limit=1,
+            )
+        else:
+            subtasks = task_stores.subtask_store.list_assistant_by_task(
+                db,
+                task_id=task_id,
+                owner_user_id=task.user_id,
+                include_contexts=False,
+            )
         if not subtasks:
             return None
 
@@ -430,7 +439,7 @@ class DatabaseHandler:
                 None,
             )
             if changed_subtask is None:
-                changed_subtask = task_stores.subtask_store.get_basic_by_id(
+                changed_subtask = task_stores.subtask_store.get_by_id(
                     db, subtask_id=changed_subtask_id
                 )
 

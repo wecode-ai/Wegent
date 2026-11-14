@@ -16,6 +16,29 @@ from shared.models.execution import ExecutionRequest
 recovery_module = importlib.import_module("app.services.execution.recovery_service")
 
 
+@pytest.mark.parametrize("has_evidence", [False, True])
+@pytest.mark.parametrize("explicit_subscription", [False, True])
+def test_subscription_session_evidence_uses_scalar_query(
+    monkeypatch, has_evidence, explicit_subscription
+):
+    service = ExecutorRecoveryService()
+    db = MagicMock()
+    task = SimpleNamespace(id=22, json={}, is_active=1 if explicit_subscription else 2)
+    request = ExecutionRequest(user_id=7, is_subscription=explicit_subscription)
+    bounded = MagicMock(return_value=has_evidence)
+    monkeypatch.setattr(
+        recovery_module.subtask_store, "has_executor_session_by_task", bounded
+    )
+    monkeypatch.setattr(
+        recovery_module.subtask_store,
+        "list_assistant_by_task",
+        MagicMock(side_effect=AssertionError("Must not load all assistant payloads")),
+    )
+
+    assert service._has_prior_claude_session_evidence(db, task, request) is has_evidence
+    bounded.assert_called_once_with(db, task_id=22, owner_user_id=7)
+
+
 @pytest.mark.asyncio
 async def test_recover_raises_when_archive_is_expired():
     """Expired archives should hard-fail recovery."""

@@ -22,6 +22,7 @@ struct CapturedTransaction {
     statements: Vec<crate::sql_test_support::Query>,
     /// Return a store error from the task read when set.
     fail_reads: bool,
+    allow_assistant_read: bool,
 }
 
 impl CapturedTransaction {
@@ -84,13 +85,43 @@ impl MysqlTransaction for CapturedTransaction {
         futures_util::stream::once(async { panic!("the task status read does not stream") })
     }
 
-    async fn fetch_all<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<Vec<T>>
+    async fn fetch_all<S, A, T>(&mut self, sql: S, args: A) -> MysqlResult<Vec<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
         T: FromMysqlRow + Send,
     {
-        panic!("the task read is missing, so no listing follows")
+        assert!(
+            self.allow_assistant_read,
+            "a missing task must stop all listings"
+        );
+        self.record(sql, args);
+        Ok(Vec::new())
+    }
+}
+
+#[tokio::test]
+async fn status_assistant_read_is_bounded_only_for_subscriptions() {
+    for is_subscription in [false, true] {
+        let mut transaction = CapturedTransaction {
+            allow_assistant_read: true,
+            ..Default::default()
+        };
+        let rows = super::persist_status::read_assistants(
+            &mut transaction,
+            tables(),
+            123,
+            is_subscription,
+        )
+        .await
+        .unwrap();
+        assert!(rows.is_empty());
+        assert_eq!(transaction.statements.len(), 1);
+        let statement = &transaction.statements[0];
+        assert_eq!(statement.first_integer, Some(123));
+        assert_eq!(statement.sql.contains("LIMIT 1"), is_subscription);
+        assert_eq!(statement.sql.contains("JOIN (SELECT id"), is_subscription);
+        assert!(statement.sql.contains("FROM subtasks_0030"));
     }
 }
 

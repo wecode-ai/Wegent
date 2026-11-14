@@ -121,7 +121,7 @@ def setup_chat_session(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=session.existing_subtasks,
+                existing_subtasks=session.memory_history,
                 current_message=input_text,
                 current_user=user,
                 is_group_chat=is_group_chat,

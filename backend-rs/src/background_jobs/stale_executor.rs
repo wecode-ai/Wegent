@@ -42,31 +42,42 @@ pub async fn cleanup_stale_task_executor(
     let updated: NaiveDateTime = task(&row, "updated_at")?;
     let response = |reason: &str| json!({"task_id":task_id,"deleted":reason=="executor_deleted","skipped":reason!="executor_deleted","reason":reason,"inactive_hours":inactive,"max_inactive_hours":max_inactive,"dry_run":false});
     let mut groups: BTreeMap<(String, String), Executor> = BTreeMap::new();
-    for subtask in state.task_store.list_subtasks_by_task(task_id).await? {
-        if subtask.get::<bool>("executor_deleted_at")?.unwrap_or(false) {
-            continue;
+    let mut after_id = 0;
+    loop {
+        let rows = state
+            .task_store
+            .list_executor_reference_page_on(&mut &state.mysql, task_id, after_id)
+            .await?;
+        if rows.is_empty() {
+            break;
         }
-        let name = subtask.get::<String>("executor_name")?.unwrap_or_default();
-        if name.is_empty() {
-            continue;
+        after_id = rows.last().unwrap().get_required("id")?;
+        for subtask in rows {
+            if subtask.get::<bool>("executor_deleted_at")?.unwrap_or(false) {
+                continue;
+            }
+            let name = subtask.get::<String>("executor_name")?.unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            if name.starts_with("device-") {
+                return Ok(Some(response("device_executor")));
+            }
+            let namespace = subtask
+                .get::<String>("executor_namespace")?
+                .unwrap_or_default();
+            let at = subtask.get_required::<NaiveDateTime>("updated_at")?;
+            let group = groups
+                .entry((namespace.clone(), name.clone()))
+                .or_insert(Executor {
+                    namespace,
+                    name,
+                    ids: Vec::new(),
+                    updated: at,
+                });
+            group.updated = group.updated.max(at);
+            group.ids.push(subtask.get_required("id")?);
         }
-        if name.starts_with("device-") {
-            return Ok(Some(response("device_executor")));
-        }
-        let namespace = subtask
-            .get::<String>("executor_namespace")?
-            .unwrap_or_default();
-        let at = subtask.get_required::<NaiveDateTime>("updated_at")?;
-        let group = groups
-            .entry((namespace.clone(), name.clone()))
-            .or_insert(Executor {
-                namespace,
-                name,
-                ids: Vec::new(),
-                updated: at,
-            });
-        group.updated = group.updated.max(at);
-        group.ids.push(subtask.get_required("id")?);
     }
     if groups.is_empty() {
         return Ok(Some(response("executor_not_found")));

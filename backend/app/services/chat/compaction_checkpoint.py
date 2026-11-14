@@ -94,10 +94,29 @@ def resolve_history_subtasks(
     ``before_message_id``, ``limit``, and checkpoint semantics stay identical.
     """
     statuses = tuple(statuses) if statuses else _DEFAULT_STATUSES
+    if limit is not None and limit <= 0:
+        limit = None
+    checkpoint = None
+    if limit is not None and from_latest_compaction:
+        checkpoint = _resolve_checkpoint(
+            db, task_id, user_id, before_message_id, statuses
+        )
+        if checkpoint is not None and limit == 1:
+            return [checkpoint]
     items = task_fork_history_resolver.resolve_for_task(
-        db, task_id=task_id, user_id=user_id, before_message_id=before_message_id
+        db,
+        task_id=task_id,
+        user_id=user_id,
+        before_message_id=before_message_id,
+        limit=limit - 1 if checkpoint is not None else limit,
+        statuses=statuses,
     )
     subtasks = [item.subtask for item in items if item.subtask.status in statuses]
+    if checkpoint is not None:
+        checkpoint_key = _history_key(checkpoint)
+        return [checkpoint] + [
+            subtask for subtask in subtasks if _history_key(subtask) > checkpoint_key
+        ]
     # Only preserve subtasks[0] as inviolable when a checkpoint was actually
     # found; otherwise (uncompacted task) fall back to plain "most recent N",
     # or `limit` would wrongly pin the oldest turn instead of the checkpoint.
@@ -108,3 +127,28 @@ def resolve_history_subtasks(
     return apply_checkpoint_limit(
         subtasks, limit=limit, from_latest_compaction=scoped_to_checkpoint
     )
+
+
+def _history_key(subtask: Any) -> tuple[Any, ...]:
+    """Match the resolver's stable ordering, including repeated message ids."""
+    return subtask.message_id, subtask.created_at, subtask.id
+
+
+def _resolve_checkpoint(
+    db: Any,
+    task_id: int,
+    user_id: int,
+    before_message_id: int | None,
+    statuses: tuple[SubtaskStatus, ...],
+) -> Any | None:
+    """Read the latest checkpoint across the same fork and status bounds."""
+    checkpoints = task_fork_history_resolver.resolve_for_task(
+        db,
+        task_id=task_id,
+        user_id=user_id,
+        before_message_id=before_message_id,
+        limit=1,
+        statuses=statuses,
+        summary_checkpoint_only=True,
+    )
+    return checkpoints[-1].subtask if checkpoints else None

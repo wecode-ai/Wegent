@@ -22,11 +22,16 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from redis import Redis
 
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.subscription_follow import SubscriptionFollow
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask_context import SubtaskContext
+from app.models.task import TaskResource
 from app.models.user import User
 from shared.utils.crypto import encrypt_sensitive_data
 
@@ -240,7 +245,13 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         return channel.id
 
     def _create_subscription(
-        self, prompt: str, team: dict[str, Any], channel_id: int
+        self,
+        prompt: str,
+        team: dict[str, Any],
+        channel_id: int | None,
+        *,
+        preserve_history: bool = False,
+        history_message_count: int = 10,
     ) -> int:
         suffix = self.suffix
         execution_target = {"type": "managed", "device_id": None}
@@ -266,13 +277,19 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                 "prompt_template": prompt,
                 "enabled": True,
                 "execution_target": execution_target,
-                "notification_webhooks": [
-                    {
-                        "type": "custom",
-                        "url": f"{self.stub_url}/webhook/{suffix}",
-                        "enabled": True,
-                    }
-                ],
+                "preserve_history": preserve_history,
+                "history_message_count": history_message_count,
+                "notification_webhooks": (
+                    [
+                        {
+                            "type": "custom",
+                            "url": f"{self.stub_url}/webhook/{suffix}",
+                            "enabled": True,
+                        }
+                    ]
+                    if channel_id is not None
+                    else []
+                ),
             },
             expected=(201,),
         )
@@ -285,6 +302,8 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         )
         subscription_id = subscription["id"]
         self.created.append(("subscription", subscription_id))
+        if channel_id is None:
+            return subscription_id
         self._api(
             "PUT",
             f"/api/subscriptions/{subscription_id}/developer/notification-settings",
@@ -355,6 +374,23 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
                     with SessionLocal() as db:
                         db.query(Kind).filter(Kind.id == identifier).delete()
                         db.commit()
+                elif kind == "task":
+                    with SessionLocal() as db:
+                        subtask_ids = db.query(Subtask.id).filter(
+                            Subtask.task_id == identifier
+                        )
+                        db.query(SubtaskContext).filter(
+                            SubtaskContext.subtask_id.in_(subtask_ids)
+                        ).delete(synchronize_session=False)
+                        db.query(Subtask).filter(Subtask.task_id == identifier).delete(
+                            synchronize_session=False
+                        )
+                        db.query(TaskResource).filter(
+                            TaskResource.id == identifier
+                        ).delete(synchronize_session=False)
+                        db.commit()
+                    with Redis.from_url(settings.REDIS_URL) as redis:
+                        redis.delete(f"chat:history:{identifier}")
                 else:
                     path = {
                         "model": f"/api/v1/namespaces/default/models/{identifier}",
@@ -454,6 +490,273 @@ class SubscriptionExecutionNotificationDirectives(unittest.TestCase):
         hooks = self._wait_webhook(result)
         self.assertEqual(len(hooks), 1)
         self.assertIn("测试，现在时间", hooks[0]["payload"]["content"])
+
+    def test_subscription_history_window_survives_real_execution(self) -> None:
+        """Assert DB-backed cache rebuilding and actual model history agree."""
+        self.shell_type = "Chat"
+        prompt = f"subscription-window-{self.suffix}: answer directly without tools"
+        model_url = "http://localhost:9999"
+        response = self.client.post(
+            f"{model_url}/stream-rules",
+            json={
+                "matchText": prompt,
+                "responseContent": "window-complete",
+                "chunkDelayMs": 0,
+                "doneDelayMs": 0,
+            },
+        )
+        response.raise_for_status()
+        team = self._create_shell_resources("Chat")
+        subscription_id = self._create_subscription(
+            prompt, team, None, preserve_history=True, history_message_count=20
+        )
+        first = self._api(
+            "POST", f"/api/subscriptions/{subscription_id}/trigger"
+        ).json()
+        self.assertEqual(
+            self._wait_execution(subscription_id, first["id"])["status"], "COMPLETED"
+        )
+        with SessionLocal() as db:
+            execution = db.get(BackgroundExecution, first["id"])
+            task_id = execution.task_id
+            task = db.get(TaskResource, task_id)
+            task_owner_id = task.user_id
+            client_origin = task.client_origin
+            self.created.append(("task", task_id))
+            next_message_id = (
+                db.query(Subtask.message_id)
+                .filter(Subtask.task_id == task_id)
+                .order_by(Subtask.message_id.desc())
+                .first()[0]
+                + 1
+            )
+            seeded_content = []
+            for offset in range(24):
+                role = SubtaskRole.USER if offset % 2 == 0 else SubtaskRole.ASSISTANT
+                content = f"history-window-{self.suffix}-{offset:02d}"
+                seeded_content.append(content)
+                db.add(
+                    Subtask(
+                        user_id=task.user_id,
+                        task_id=task_id,
+                        team_id=team["id"],
+                        title=content,
+                        bot_ids=[],
+                        role=role,
+                        status=SubtaskStatus.COMPLETED,
+                        progress=100,
+                        message_id=next_message_id + offset,
+                        parent_id=next_message_id + offset - 1,
+                        prompt=content if role == SubtaskRole.USER else None,
+                        result=(
+                            {"value": content}
+                            if role == SubtaskRole.ASSISTANT
+                            else None
+                        ),
+                    )
+                )
+            db.commit()
+
+        fork_id = self._api(
+            "POST",
+            f"/api/tasks/{task_id}/fork",
+            params={"client_origin": client_origin},
+            json={"target": {"type": "managed"}},
+        ).json()["task_id"]
+        self.created.append(("task", fork_id))
+        with SessionLocal() as db:
+            workspace = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.kind == "Workspace",
+                    TaskResource.name == f"workspace-{fork_id}",
+                    TaskResource.namespace == "default",
+                    TaskResource.user_id == task_owner_id,
+                )
+                .one()
+            )
+            self.created.append(("task", workspace.id))
+
+        # Subsequent source turns must not replace eligible inherited history.
+        for target_task_id, window in ((task_id, 20), (task_id, 0), (fork_id, 20)):
+            with self.subTest(task_id=target_task_id, history_message_count=window):
+                self._api(
+                    "PUT",
+                    f"/api/subscriptions/{subscription_id}",
+                    json={"history_message_count": window},
+                )
+                with SessionLocal() as db:
+                    subscription = db.get(Kind, subscription_id)
+                    subscription.json = {
+                        **subscription.json,
+                        "_internal": {
+                            **subscription.json.get("_internal", {}),
+                            "bound_task_id": target_task_id,
+                        },
+                    }
+                    db.commit()
+                with Redis.from_url(settings.REDIS_URL) as redis:
+                    self.assertTrue(redis.ping())
+                    redis.delete(f"chat:history:{target_task_id}")
+                before = self.client.get(f"{model_url}/captured-requests")
+                before.raise_for_status()
+                start_index = len(before.json())
+                triggered = self._api(
+                    "POST", f"/api/subscriptions/{subscription_id}/trigger"
+                ).json()
+                state = self._wait_execution(subscription_id, triggered["id"])
+                self.assertEqual(state["status"], "COMPLETED", state)
+                with SessionLocal() as db:
+                    execution = db.get(BackgroundExecution, triggered["id"])
+                    self.assertEqual(execution.task_id, target_task_id)
+                captured = self.client.get(f"{model_url}/captured-requests")
+                captured.raise_for_status()
+                model_messages = [
+                    request["body"]["messages"]
+                    for request in captured.json()[start_index:]
+                    if request["url"].endswith("/chat/completions")
+                    and prompt in json.dumps(request["body"], ensure_ascii=False)
+                ]
+                self.assertTrue(
+                    model_messages, "No subscription model request captured"
+                )
+                expected = seeded_content[-20:] if window else []
+                for messages in model_messages:
+                    actual = [
+                        message["content"]
+                        for message in messages
+                        if message["content"] in seeded_content
+                    ]
+                    self.assertEqual(actual, expected)
+                with Redis.from_url(settings.REDIS_URL) as redis:
+                    raw = redis.get(f"chat:history:{target_task_id}")
+                    cache = json.loads(raw) if raw else []
+                cached_seed = [
+                    message["content"]
+                    for message in cache
+                    if message["content"] in seeded_content
+                ]
+                self.assertEqual(cached_seed, expected)
+
+        self._assert_package_history_payload_window(task_id, fork_id, seeded_content[1])
+        self._assert_package_global_fork_window(fork_id, team["id"], seeded_content[1])
+
+    def _assert_package_global_fork_window(
+        self, fork_id: int, team_id: int, summary: str
+    ) -> None:
+        """A populated fork must not hydrate a separate payload window per node."""
+        from sqlalchemy import event
+
+        from app.db.session import engine
+        from chat_shell.history.loader import _load_history_from_db_sync
+
+        with SessionLocal() as db:
+            task = db.get(TaskResource, fork_id)
+            start = (
+                db.query(Subtask.message_id)
+                .filter(Subtask.task_id == fork_id)
+                .order_by(Subtask.message_id.desc())
+                .first()[0]
+                + 1
+            )
+            contents = [
+                f"global-fork-window-{self.suffix}-{index}" for index in range(24)
+            ]
+            for index, content in enumerate(contents):
+                db.add(
+                    Subtask(
+                        user_id=task.user_id,
+                        task_id=fork_id,
+                        team_id=team_id,
+                        title=content,
+                        bot_ids=[],
+                        role=SubtaskRole.ASSISTANT,
+                        status=SubtaskStatus.COMPLETED,
+                        progress=100,
+                        message_id=start + index,
+                        parent_id=start + index - 1,
+                        result={"value": content},
+                    )
+                )
+            db.commit()
+        payload_rows = []
+
+        def capture(_conn, cursor, statement, _parameters, _context, _many):
+            projection = statement.split("FROM", 1)[0]
+            if statement.lstrip().upper().startswith("SELECT") and (
+                "subtasks" in statement and ".result" in projection
+            ):
+                payload_rows.append(cursor.rowcount)
+
+        event.listen(engine, "after_cursor_execute", capture)
+        try:
+            messages = _load_history_from_db_sync(
+                fork_id, False, limit=20, from_latest_compaction=True
+            )
+        finally:
+            event.remove(engine, "after_cursor_execute", capture)
+        self.assertEqual(messages[0]["content"], summary)
+        self.assertEqual(
+            [message["content"] for message in messages[1:]], contents[-19:]
+        )
+        self.assertTrue(payload_rows, "No actual fork payload load captured")
+        self.assertTrue(all(count >= 0 for count in payload_rows))
+        self.assertLessEqual(sum(payload_rows), 20)
+
+    def _assert_package_history_payload_window(
+        self, task_id: int, fork_id: int, summary: str
+    ) -> None:
+        """Exercise the real package loader and inspect actual MySQL row counts."""
+        from sqlalchemy import event
+
+        from app.db.session import engine
+        from chat_shell.history.loader import _load_history_from_db_sync
+
+        with SessionLocal() as db:
+            checkpoint = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                    Subtask.result["value"].as_string() == summary,
+                )
+                .one()
+            )
+            checkpoint.result = {
+                "messages_chain": [
+                    {
+                        "role": "user",
+                        "content": summary,
+                        "additional_kwargs": {"summary_compacted": True},
+                    }
+                ]
+            }
+            db.commit()
+        for target in [task_id, fork_id]:
+            payload_reads = []
+
+            def capture(_conn, cursor, statement, _parameters, _context, _many):
+                projection = statement.split("FROM", 1)[0]
+                if statement.lstrip().upper().startswith("SELECT") and (
+                    "subtasks" in statement and ".result" in projection
+                ):
+                    payload_reads.append((statement, cursor.rowcount))
+
+            event.listen(engine, "after_cursor_execute", capture)
+            try:
+                messages = _load_history_from_db_sync(
+                    target, False, limit=20, from_latest_compaction=True
+                )
+            finally:
+                event.remove(engine, "after_cursor_execute", capture)
+            self.assertEqual(messages[0]["content"], summary)
+            self.assertTrue(payload_reads, "No actual package payload read captured")
+            self.assertTrue(all(0 <= count <= 20 for _, count in payload_reads))
+            self.assertLessEqual(
+                sum(count for _, count in payload_reads),
+                20 if target == task_id else 40,
+            )
+            self.assertTrue(all("ORDER BY" not in sql for sql, _ in payload_reads))
 
     def test_silent_real_execution_keeps_private(self) -> None:
         result = self._execute(

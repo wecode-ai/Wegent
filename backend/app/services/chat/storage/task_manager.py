@@ -111,6 +111,9 @@ class TaskCreationParams:
     generate_params: Optional[Dict[str, Any]] = None
     # Message source metadata for user subtask persistence.
     message_source: Optional[Dict[str, Any]] = None
+    # Optional DB-level window for callers that only consume recent history.
+    # A null value preserves the existing full-history behavior.
+    history_window: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Treat an explicit model_id as an override selection."""
@@ -914,7 +917,7 @@ def schedule_chat_memory_save(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=existing_subtasks,
+                existing_subtasks=session.memory_history,
                 current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,

@@ -387,6 +387,7 @@ pub async fn build_execution_request(
 pub(crate) async fn build_chat_execution_request(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
+    is_subscription: bool,
     preload_skills: &[Value],
     generation: Option<&Value>,
     model_options: Option<&Value>,
@@ -396,7 +397,7 @@ pub(crate) async fn build_chat_execution_request(
     build_request_with_runtime(
         state,
         input,
-        false,
+        is_subscription,
         preload_skills,
         true,
         generation,
@@ -471,6 +472,17 @@ async fn build_request_with_runtime(
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
+    let is_subscription =
+        is_subscription || super::subscription_window::is_subscription(input.task_json);
+    let history_limit = super::subscription_window::resolve_on(
+        &mut &state.mysql,
+        input.task_json,
+        input.user_id,
+        None,
+        is_subscription,
+    )
+    .await
+    .map_err(dependency)?;
     let selected_generation = generation;
     let generation = preflight::generation_context(
         &state.mysql,
@@ -1000,6 +1012,7 @@ async fn build_request_with_runtime(
             task_json: input.task_json,
             executor_deleted: input.executor_deleted,
             new_session: input.new_session,
+            is_subscription,
             // The deployment's task/subtask table templates; the session
             // context renders its statements against the task's shard exactly
             // like the completion path's `Tables`.
@@ -1101,6 +1114,8 @@ async fn build_request_with_runtime(
         inherited_sessions,
         legacy_session_bindings,
         new_session: input.new_session,
+        is_subscription,
+        history_limit,
         ..ExecutionRequest::default()
     };
     // Device-dispatch contract values (`ExecutionRequest.to_dict`): the Task

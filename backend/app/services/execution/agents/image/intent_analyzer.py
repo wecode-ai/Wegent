@@ -80,6 +80,15 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
                 db,
                 task_id=task_id,
                 exclude_subtask_ids=exclude_subtask_ids,
+                roles=(SubtaskRole.USER,),
+                recent_limit=1,
+            )
+            subtasks += subtask_store.list_by_task_ordered(
+                db,
+                task_id=task_id,
+                exclude_subtask_ids=exclude_subtask_ids,
+                roles=(SubtaskRole.ASSISTANT,),
+                recent_limit=1,
             )
 
             # Debug: show basic history snapshot for follow-up detection

@@ -16,8 +16,12 @@ use wegent_backend_rs::{
 
 use super::fixture::{LARGE_RESULT_BYTES, LONG_CONVERSATION_ROWS};
 
+#[path = "history_window.rs"]
+mod history_window;
 #[path = "session_auth.rs"]
 mod session_auth;
+#[path = "subscription_history_window.rs"]
+mod subscription_history_window;
 
 // The source limits package registers this exact script before EVALSHA.
 const RATE_SCRIPT: &str = "local current\nlocal amount = tonumber(ARGV[2])\ncurrent = redis.call(\"incrby\", KEYS[1], amount)\n\nif tonumber(current) == amount then\n    redis.call(\"expire\", KEYS[1], ARGV[1])\nend\n\nreturn current\n";
@@ -80,12 +84,14 @@ pub async fn assert_http_reads(
     task_ids: &[i64],
     user_id: i32,
     long_conversation: bool,
+    history_tables: &[&str],
 ) {
     require_loopback_services();
     let mut state = build_app_state().await.unwrap();
     state.mysql = mysql.clone();
     state.task_store = store;
     state.user_reader = Arc::new(PublicUserReader::new(mysql.clone()));
+    state.internal_chat.internal_service_token = Some(history_window::TOKEN.into());
     state.auth = AuthConfig {
         jwt_key: "responses-fixture-signing-key".into(),
         legacy_jwt_keys: Vec::new(),
@@ -201,6 +207,23 @@ pub async fn assert_http_reads(
     }
     session_auth::assert_session_compatibility(&client, address, task_ids[0], user_id + 1).await;
     session_auth::assert_skill_identity_compatibility(&client, address, &mysql, user_id).await;
+    if !long_conversation {
+        assert_eq!(task_ids.len(), history_tables.len());
+        for (task_id, table) in task_ids.iter().zip(history_tables) {
+            history_window::assert_history_windows(
+                &client, address, &mysql, *task_id, table, user_id,
+            )
+            .await;
+            subscription_history_window::assert_store_windows(
+                &mysql,
+                state.task_store.as_ref(),
+                *task_id,
+                table,
+                user_id,
+            )
+            .await;
+        }
+    }
     stop.send(()).unwrap();
     gateway_task.await.unwrap();
     api_stop.send(()).unwrap();

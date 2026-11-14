@@ -42,6 +42,7 @@ const CONVERSATION_CONTEXT: &str = "conversation";
 #[derive(Debug, Clone)]
 pub(crate) struct ChatTurn {
     pub task_id: i64,
+    pub is_subscription: bool,
     pub user_subtask_id: i64,
     pub assistant_subtask_id: i64,
     pub user_message_id: i64,
@@ -451,6 +452,7 @@ async fn trigger_ai(state: &AppState, turn: &ChatTurn, user_id: i64) -> Result<(
             web_runtime_guidance: turn.client_origin == CLIENT_ORIGIN_FRONTEND,
             subtask_bot_resolved: true,
         },
+        turn.is_subscription,
         &turn.additional_skills,
         turn.options.generation.as_ref(),
         model_options,
@@ -653,6 +655,7 @@ mod tests {
     #[test]
     fn task_created_requires_the_source_gate() {
         let turn = ChatTurn {
+            is_subscription: false,
             task_id: 1,
             user_subtask_id: 2,
             assistant_subtask_id: 3,

@@ -102,6 +102,7 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
             setup.task_id,
             data.subscription.user_id,
             setup.user_message_id,
+            data.history_limit(),
         )
         .await?;
     }
@@ -167,9 +168,7 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
     .await
     .map_err(|e| anyhow::anyhow!("Subscription request compilation failed: {e:?}"))?;
     request.is_subscription = true;
-    request.history_limit = data
-        .preserve_history
-        .then(|| data.spec["historyMessageCount"].as_i64().unwrap_or(10));
+    request.history_limit = Some(data.history_limit());
     super::super::git_credentials::enrich(app, &mut request).await?;
     mark_running(
         app,

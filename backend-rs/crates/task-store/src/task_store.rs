@@ -17,6 +17,7 @@ use crate::owned_statements::tasks_by_ids_statement;
 
 pub use crate::request_sql::{RequestSql, RouteKey, StatementArgs, fetch_optional_as};
 pub use crate::task_store_default::DefaultTaskStore;
+pub use crate::task_store_history::SubtaskHistoryWindow;
 pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     order_assistant_subtasks, order_subtasks_by_message, ordered_subtasks_for_user,

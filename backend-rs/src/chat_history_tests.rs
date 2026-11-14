@@ -72,6 +72,16 @@ fn limit_without_checkpoint_returns_most_recent() {
 }
 
 #[test]
+fn limit_zero_returns_no_history() {
+    let items = vec![
+        item(1, "COMPLETED", "USER", false),
+        item(2, "COMPLETED", "USER", false),
+    ];
+    assert!(apply_checkpoint_limit(&items, Some(0), false).is_empty());
+    assert!(apply_checkpoint_limit(&items, Some(-1), true).is_empty());
+}
+
+#[test]
 fn limit_with_checkpoint_never_drops_checkpoint() {
     let items = vec![
         item(1, "COMPLETED", "ASSISTANT", true),
@@ -82,6 +92,28 @@ fn limit_with_checkpoint_never_drops_checkpoint() {
     assert_eq!(limited.len(), 2);
     assert_eq!(limited[0].subtask.message_id, 1);
     assert_eq!(limited[1].subtask.message_id, 3);
+}
+
+#[test]
+fn bounded_history_keeps_old_checkpoint_and_only_newer_stable_keys() {
+    use crate::chat_history_window::{keep_checkpoint, lineage_before};
+    let checkpoint = item(2, "COMPLETED", "ASSISTANT", true);
+    let mut duplicate = item(2, "COMPLETED", "ASSISTANT", false);
+    duplicate.subtask.id = 100;
+    let recent = vec![
+        item(1, "COMPLETED", "USER", false),
+        item(2, "COMPLETED", "ASSISTANT", true),
+        duplicate,
+        item(40, "COMPLETED", "USER", false),
+    ];
+    let kept = keep_checkpoint(checkpoint, recent);
+    assert_eq!(
+        kept.iter().map(|item| item.subtask.id).collect::<Vec<_>>(),
+        vec![2, 100, 40]
+    );
+    assert_eq!(lineage_before(Some(30), Some(20)), Some(21));
+    assert_eq!(lineage_before(Some(10), Some(20)), Some(10));
+    assert_eq!(lineage_before(None, Some(i64::MAX)), None);
 }
 
 #[test]

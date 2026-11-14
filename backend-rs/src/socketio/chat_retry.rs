@@ -159,6 +159,8 @@ struct TaskRow {
     user_id: i32,
     #[mysql(rename = "json")]
     json: Json<OpaqueJson>,
+    #[mysql(rename = "is_active")]
+    is_active: i64,
 }
 
 /// `_prepare_chat_retry_dispatch`.
@@ -238,6 +240,7 @@ async fn prepare_retry(
     Ok(PreparedRetry {
         turn: ChatTurn {
             task_id: payload.task_id,
+            is_subscription: task.is_active == 2,
             user_subtask_id: user_subtask.id,
             assistant_subtask_id: failed.id,
             user_message_id: failed.parent_id.unwrap_or_default(),
@@ -307,7 +310,7 @@ async fn fetch_task(
     task_id: i64,
 ) -> Result<Option<TaskRow>, RetryFailure> {
     let statement = format!(
-        "SELECT user_id, json FROM `{table}` WHERE id = ? AND kind = 'Task' \
+        "SELECT user_id, json, is_active FROM `{table}` WHERE id = ? AND kind = 'Task' \
          AND is_active != 0 LIMIT 1"
     );
     let mut handle = &state.mysql;

@@ -377,6 +377,8 @@ class BackgroundExecutionManager:
                 db,
                 task_id=task_id,
                 statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+                limit=1,
+                owner_user_id=task.user_id,
             )
             running_subtask = running_subtasks[0] if running_subtasks else None
 

@@ -54,7 +54,7 @@ def test_create_subtasks_uses_fork_history_next_message_id(monkeypatch):
         helpers,
         "task_fork_history_resolver",
         SimpleNamespace(
-            resolve_for_task=lambda db, *, task_id, user_id, current_task=None: [],
+            resolve_for_task=lambda db, *, task_id, user_id, current_task=None, **kwargs: [],
             get_next_message_id=lambda db, *, task_id, user_id, current_task=None: 9,
         ),
         raising=False,

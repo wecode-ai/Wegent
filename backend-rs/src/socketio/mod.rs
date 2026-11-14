@@ -68,6 +68,8 @@ pub mod runtime_rpc;
 mod runtime_rpc_policy;
 pub mod session;
 pub mod skill_registry;
+mod subscription_forms;
+mod subscription_handoff;
 pub mod terminal_attach;
 pub(crate) mod terminal_device;
 pub mod terminal_relay;

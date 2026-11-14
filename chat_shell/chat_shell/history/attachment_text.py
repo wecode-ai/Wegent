@@ -80,11 +80,12 @@ def _fetch_local(
         # Linked attachment must belong to this task; an unlinked one must belong
         # to the task's user, so the model cannot read arbitrary unlinked
         # attachments across users.
-        task_subtask_ids = {
-            row[0]
-            for row in db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
-        }
-        is_in_task = context.subtask_id in task_subtask_ids
+        is_in_task = (
+            db.query(Subtask.id)
+            .filter(Subtask.task_id == task_id, Subtask.id == context.subtask_id)
+            .first()
+            is not None
+        )
         is_unlinked_same_user = (
             context.subtask_id == 0 and context.user_id == task.user_id
         )

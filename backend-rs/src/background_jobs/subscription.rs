@@ -17,6 +17,9 @@ pub(crate) mod directives;
 mod execution;
 #[path = "subscription_history.rs"]
 pub(crate) mod history;
+#[cfg(test)]
+#[path = "subscription_history_tests.rs"]
+mod history_tests;
 #[path = "subscription_model.rs"]
 pub(crate) mod model;
 #[cfg(test)]

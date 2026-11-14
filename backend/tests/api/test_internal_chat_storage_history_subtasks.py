@@ -67,8 +67,8 @@ def test_list_subtasks_returns_paged_summaries(monkeypatch):
     ]
     monkeypatch.setattr(
         chat_storage.subtask_store,
-        "list_new_messages_since",
-        lambda db, **kw: subtasks,
+        "list_visible_history_page",
+        lambda db, **kw: (subtasks, len(subtasks)),
         raising=False,
     )
 
@@ -80,6 +80,31 @@ def test_list_subtasks_returns_paged_summaries(monkeypatch):
     assert body["has_more"] is False
     assert [s["id"] for s in body["subtasks"]] == [1, 2]
     assert body["subtasks"][0]["preview"] == "hello world"
+
+
+def test_subscription_http_backtracking_caps_an_unlimited_request(test_db, monkeypatch):
+    from app.models.task import TaskResource
+    from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
+    from tests.stores.tasks.test_runtime_reads import seed
+
+    seed(test_db)
+    task = test_db.get(TaskResource, 701)
+    task.is_active = TaskResource.STATE_SUBSCRIPTION
+    test_db.commit()
+    client = _internal_client(monkeypatch)
+    client.app.dependency_overrides[get_db] = lambda: test_db
+    monkeypatch.setattr(
+        chat_storage.subtask_store,
+        "list_visible_history_page",
+        SqlAlchemySubtaskStore().list_visible_history_page,
+    )
+    for query in ["", "?limit=10000"]:
+        response = client.get(f"/internal/chat/history/task-701/subtasks{query}")
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["subtasks"]) == 50
+        assert body["total"] == 250
+        assert body["has_more"]
 
 
 def test_read_subtask_returns_rendered_page(monkeypatch):

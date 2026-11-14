@@ -179,23 +179,16 @@ fn the_pet_refresh_statement_is_the_unlabeled_primary_key_load() {
     );
 }
 
-/// `subtask_store.list_not_executor_deleted_by_task`: the full subtask
-/// projection of the task's undeleted runtime rows, with the source's
-/// `executor_deleted_at = false` predicate and no ordering.
+/// The cleanup pages the task's undeleted runtime rows with an executor-only
+/// projection; large prompts and results stay out of the read.
 #[test]
 fn the_undeleted_runtime_subtask_read_matches_the_source_shape() {
     let sql = super::sql::subtasks_not_executor_deleted_by_task(tables());
-    let flat = sql.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        flat.starts_with("SELECT subtasks_0030.id AS subtasks_0030_id,"),
-        "{flat}"
-    );
-    assert!(
-        flat.ends_with(
-            "FROM subtasks_0030 WHERE subtasks_0030.task_id = ? \
-             AND subtasks_0030.executor_deleted_at = false"
-        ),
-        "{flat}"
+    assert_eq!(
+        sql,
+        "SELECT id, executor_name, executor_namespace FROM subtasks_0030 \
+         WHERE subtasks_0030.task_id = ? AND subtasks_0030.executor_deleted_at = false \
+         AND id > ? ORDER BY id LIMIT 100"
     );
 }
 
