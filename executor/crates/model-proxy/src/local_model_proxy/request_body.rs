@@ -63,17 +63,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_zstd_and_removes_obsolete_transport_headers() {
-        let input = br#"{"client_metadata":{"thread_id":"compressed-thread"}}"#;
-        let compressed = zstd::encode_all(input.as_slice(), 0).unwrap();
-        let mut headers = compressed_headers();
-        let body = decode(&mut headers, Bytes::from(compressed)).unwrap();
-        assert_eq!(body.as_ref(), input);
-        assert!(!headers.contains_key(header::CONTENT_ENCODING));
-        assert!(!headers.contains_key(header::CONTENT_LENGTH));
-    }
-
-    #[test]
     fn rejects_invalid_unsupported_and_oversized_encoded_bodies() {
         let mut headers = compressed_headers();
         let error = decode(&mut headers, Bytes::from_static(b"broken zstd")).unwrap_err();

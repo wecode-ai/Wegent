@@ -73,6 +73,13 @@ pub(super) async fn assert_store_windows(
         )
         .await
         .unwrap();
+    mysql
+        .execute(
+            format!("ALTER TABLE {table} ADD INDEX idx_task_message (task_id, message_id)"),
+            (),
+        )
+        .await
+        .unwrap();
     for (limit, next) in [(20, 31_i64), (0, 33)] {
         let start_bytes = super::history_window::bytes_sent(mysql).await;
         let (history, next_message) = mysql

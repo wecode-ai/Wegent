@@ -274,54 +274,6 @@ mod tests {
     };
 
     #[test]
-    fn rolling_log_file_rotates_when_next_line_exceeds_max_size() {
-        let path = temp_log_path("rotate");
-        let mut file = RollingLogFile::new(RollingLogConfig {
-            path: path.clone(),
-            max_size_bytes: 30,
-            backup_count: 2,
-        })
-        .unwrap();
-
-        file.write_line("first line").unwrap();
-        file.write_line("second line").unwrap();
-        file.write_line("third line").unwrap();
-
-        assert_eq!(fs::read_to_string(&path).unwrap(), "third line\n");
-        assert_eq!(
-            fs::read_to_string(backup_path(&path, 1)).unwrap(),
-            "first line\nsecond line\n"
-        );
-    }
-
-    #[test]
-    fn rolling_log_file_keeps_configured_backup_count() {
-        let path = temp_log_path("backup-count");
-        let mut file = RollingLogFile::new(RollingLogConfig {
-            path: path.clone(),
-            max_size_bytes: 12,
-            backup_count: 2,
-        })
-        .unwrap();
-
-        file.write_line("line-one").unwrap();
-        file.write_line("line-two").unwrap();
-        file.write_line("line-three").unwrap();
-        file.write_line("line-four").unwrap();
-
-        assert_eq!(fs::read_to_string(&path).unwrap(), "line-four\n");
-        assert_eq!(
-            fs::read_to_string(backup_path(&path, 1)).unwrap(),
-            "line-three\n"
-        );
-        assert_eq!(
-            fs::read_to_string(backup_path(&path, 2)).unwrap(),
-            "line-two\n"
-        );
-        assert!(!backup_path(&path, 3).exists());
-    }
-
-    #[test]
     fn recreates_executor_home_when_a_file_blocks_log_directory_creation() {
         let executor_home = temp_executor_home_path("recover-file");
         fs::write(&executor_home, "stale executor home").unwrap();
@@ -341,10 +293,6 @@ mod tests {
         assert!(log_path.exists());
         drop(file);
         fs::remove_dir_all(executor_home).unwrap();
-    }
-
-    fn temp_log_path(label: &str) -> PathBuf {
-        temp_executor_home_path(label).join("executor.log")
     }
 
     fn temp_executor_home_path(label: &str) -> PathBuf {

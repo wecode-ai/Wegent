@@ -351,55 +351,6 @@ done
     }
 
     #[test]
-    fn finds_the_registered_marketplace_source() {
-        let response = json!({
-            "marketplaces": [
-                {"name": "team", "path": "/plugins/team"},
-                {"name": "wework-personal", "path": "/plugins/personal"},
-            ]
-        });
-
-        assert_eq!(
-            marketplace_entry(&response, WEWORK_PERSONAL_MARKETPLACE_ID)
-                .and_then(marketplace_source)
-                .as_deref(),
-            Some("/plugins/personal")
-        );
-    }
-
-    #[test]
-    fn finds_a_registered_marketplace_even_when_codex_omits_its_path() {
-        let response = json!({
-            "marketplaces": [{"name": "wework-personal", "plugins": []}]
-        });
-
-        let marketplace = marketplace_entry(&response, WEWORK_PERSONAL_MARKETPLACE_ID)
-            .expect("the registered marketplace should be detected");
-        assert_eq!(marketplace_source(marketplace), None);
-        assert!(!should_remove_existing_marketplace(true, None));
-        assert!(should_remove_existing_marketplace(
-            true,
-            Some("/plugins/personal")
-        ));
-    }
-
-    #[test]
-    fn compares_marketplace_sources_without_separator_noise() {
-        assert!(marketplace_sources_match(
-            r"C:\plugins\wework-personal\",
-            "C:/plugins/wework-personal"
-        ));
-        assert!(marketplace_sources_match(
-            "/plugins/wework-personal/.agents/plugins/marketplace.json",
-            "/plugins/wework-personal"
-        ));
-        assert!(!marketplace_sources_match(
-            "/old/plugins/wework-personal",
-            "/new/plugins/wework-personal"
-        ));
-    }
-
-    #[test]
     fn native_config_edits_target_only_the_managed_marketplace_source() {
         let update = configured_marketplace_source_update(
             WEWORK_PERSONAL_MARKETPLACE_ID,

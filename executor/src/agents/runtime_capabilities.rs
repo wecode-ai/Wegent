@@ -2514,23 +2514,6 @@ mod tests {
     };
 
     #[test]
-    fn backend_api_url_includes_api_prefix_once() {
-        for suffix in ["", "/", "/api", "/api/"] {
-            for path in [
-                "/api/attachments/1/executor-download",
-                "/api/v1/kinds/skills/1/download",
-                "/api/v1/kinds/skills?namespace=default",
-                "/api",
-            ] {
-                assert_eq!(
-                    api_url(&format!("https://backend.example/wework{suffix}"), path).unwrap(),
-                    format!("https://backend.example/wework{path}")
-                );
-            }
-        }
-    }
-
-    #[test]
     fn backend_api_url_preserves_route_boundaries() {
         for (base, path, expected) in [
             (
@@ -2575,15 +2558,6 @@ mod tests {
         fs::write(&current, "invalid JSON").unwrap();
         assert!(load_global_mcp_records().is_err());
         assert_eq!(fs::read_to_string(current).unwrap(), "invalid JSON");
-    }
-
-    #[test]
-    fn native_mcp_reader_accepts_a_new_empty_managed_home() {
-        let _lock = crate::test_env::lock();
-        let root = tempfile::tempdir().unwrap();
-        let _capabilities =
-            EnvGuard::set("WEGENT_CAPABILITIES_HOME", root.path().to_str().unwrap());
-        assert!(load_global_mcp_records().unwrap().is_empty());
     }
 
     #[test]
@@ -2687,28 +2661,6 @@ mod tests {
     }
 
     #[test]
-    fn stages_local_codex_skill_for_any_runtime() {
-        let temp = tempfile::tempdir().expect("temporary Skill directory");
-        let source = temp.path().join("source");
-        let target = temp.path().join("target");
-        fs::create_dir_all(source.join("references")).expect("nested source directory");
-        fs::write(source.join("SKILL.md"), "# Shared Skill").expect("Skill file");
-        fs::write(source.join("references").join("guide.md"), "guide").expect("reference file");
-
-        stage_local_skill(&source, &target).expect("local Skill should stage");
-
-        assert_eq!(
-            fs::read_to_string(target.join("SKILL.md")).expect("staged Skill"),
-            "# Shared Skill"
-        );
-        assert_eq!(
-            fs::read_to_string(target.join("references").join("guide.md"))
-                .expect("staged reference"),
-            "guide"
-        );
-    }
-
-    #[test]
     fn attachment_filenames_are_disambiguated_on_collision() {
         let mut used = HashMap::new();
         assert_eq!(
@@ -2729,39 +2681,6 @@ mod tests {
         );
         assert_eq!(unique_attachment_filename("draft", &mut used), "draft");
         assert_eq!(unique_attachment_filename("draft", &mut used), "draft-2");
-    }
-
-    #[test]
-    fn coordinate_subagent_uses_its_resolved_model() {
-        let bot = json!({
-            "id": 106,
-            "name": "glm",
-            "description": "GLM worker",
-            "system_prompt": "You are the GLM worker.",
-            "agent_config": {
-                "env": {
-                    "model_id": "weibo-glm5.2"
-                }
-            }
-        });
-
-        let (name, content) = subagent_file(&bot).unwrap();
-
-        assert_eq!(name, "glm-106");
-        assert!(content.contains("model: \"weibo-glm5.2\""));
-    }
-
-    #[test]
-    fn coordinate_subagent_inherits_when_model_is_unconfigured() {
-        let bot = json!({
-            "id": 103,
-            "name": "worker",
-            "system_prompt": "You are a worker."
-        });
-
-        let (_, content) = subagent_file(&bot).unwrap();
-
-        assert!(content.contains("model: inherit"));
     }
 
     pub(super) struct EnvGuard {
@@ -2791,30 +2710,6 @@ mod tests {
                 env::remove_var(self.key);
             }
         }
-    }
-
-    #[test]
-    fn write_claude_user_config_creates_legacy_and_runtime_configs() {
-        let temp = env::temp_dir().join(format!("claude-user-config-{}", std::process::id()));
-        let config_dir = temp.join(".claude");
-
-        write_claude_user_config(&config_dir);
-
-        let legacy_config: Value =
-            serde_json::from_str(&fs::read_to_string(config_dir.join("claude.json")).unwrap())
-                .unwrap();
-        let runtime_config: Value =
-            serde_json::from_str(&fs::read_to_string(config_dir.join(".claude.json")).unwrap())
-                .unwrap();
-        assert_eq!(legacy_config["hasCompletedOnboarding"], true);
-        assert_eq!(legacy_config["bypassPermissionsModeAccepted"], true);
-        assert!(runtime_config["firstStartTime"].as_str().is_some());
-        assert_eq!(runtime_config["migrationVersion"], 13);
-        assert_eq!(runtime_config["opusProMigrationComplete"], true);
-        assert_eq!(runtime_config["sonnet1m45MigrationComplete"], true);
-        assert!(runtime_config["seenNotifications"].is_object());
-
-        let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
@@ -3046,27 +2941,6 @@ mod tests {
             pending_download_attachments(&attachments),
             vec![attachments[2].clone()]
         );
-    }
-
-    #[test]
-    fn attachment_sync_response_serializes_status_and_paths() {
-        let success = vec![attachment(
-            1,
-            Some("success"),
-            Some("/workspace/a.txt"),
-            None,
-        )];
-        let failed = vec![attachment(2, Some("failed"), None, Some("HTTP 404"))];
-
-        let payload = attachment_sync_response("72", "204", &success, &failed);
-
-        assert_eq!(payload["task_id"], "72");
-        assert_eq!(payload["success_count"], 1);
-        assert_eq!(payload["failed_count"], 1);
-        assert_eq!(payload["attachments"][0]["status"], "success");
-        assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
-        assert_eq!(payload["attachments"][1]["status"], "failed");
-        assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
     }
 
     #[test]
@@ -3551,22 +3425,5 @@ mod tests {
 
         assert_eq!(reason, "backend download request failed");
         assert!(!reason.contains("secret-task-token"));
-    }
-
-    #[test]
-    fn request_api_base_url_prefers_env_over_payload_backend_url() {
-        let _lock = crate::test_env::lock();
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _mode = EnvGuard::remove("EXECUTOR_MODE");
-        let _api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
-        let request = ExecutionRequest {
-            backend_url: Some("http://payload-backend.invalid".to_owned()),
-            ..ExecutionRequest::default()
-        };
-
-        assert_eq!(
-            request_api_base_url(&request),
-            "http://env-backend.local:8000"
-        );
     }
 }

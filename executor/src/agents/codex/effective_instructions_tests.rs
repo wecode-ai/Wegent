@@ -3,6 +3,32 @@ use super::*;
 const MANIFEST_KEY: &str = "wework.host-policy.z-manifest";
 
 #[test]
+fn source_question_channels_follow_scoped_provider_guidance_without_vendor_rules() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({"type":"connection_work","sourceProvider":"example/source","askBeforeAct":true}),
+    );
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("source", &request, &launch),
+        thread_fork_params("source", None, &request, &launch),
+        effective_instructions::turn_context_for_test(&request),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("use the current scoped provider assistance"));
+        assert!(instructions.contains("source participant from decisions for the Wework owner"));
+        assert!(instructions.contains("Provider guidance may route an owner's self-conversation"));
+        assert!(instructions.contains("raise a structured question using request_user_input_async"));
+        assert!(instructions.contains("native tool approval controls"));
+        assert!(!instructions.contains("DingTalk"));
+        assert!(!instructions.contains("wework_stand_in.reply"));
+    }
+    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+}
+
+#[test]
 fn task_recovery_routing_reaches_native_start_fork_and_resume_instructions() {
     let request = ExecutionRequest::default();
     let launch = CodexLaunchConfig::default();

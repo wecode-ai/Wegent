@@ -805,8 +805,6 @@ use request_preparation::normalized_responses_api_id;
 #[cfg(test)]
 use request_preparation::prepare_request;
 use request_preparation::prepare_request_with_history;
-#[cfg(test)]
-use request_preparation::prepare_request_with_model_hint;
 pub(super) use responses_stream::is_responses_terminal_event;
 use responses_stream::normalize_responses_event;
 use responses_stream::normalize_responses_stream;
@@ -815,8 +813,6 @@ use responses_stream::responses_event_diagnostics;
 #[cfg(test)]
 use responses_stream::responses_event_values;
 pub(super) use responses_stream::responses_failed_event;
-#[cfg(test)]
-use responses_stream::rewrite_responses_event;
 pub(super) use sse::{append_stream_utf8, finish_stream_utf8, take_sse_block};
 use upstream_transport::bearer_token;
 #[cfg(test)]

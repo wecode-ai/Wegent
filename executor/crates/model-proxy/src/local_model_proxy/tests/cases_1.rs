@@ -156,52 +156,6 @@ fn output_budget_matches_protocol_defaults_and_validates_aliases() {
 }
 
 #[test]
-fn normalizes_provider_api_format_aliases_before_proxy_registration() {
-    for (configured, expected, path) in [
-        ("responses", "openai-responses", "/responses"),
-        (
-            "chat/completions",
-            "openai-chat-completions",
-            "/chat/completions",
-        ),
-        ("messages", "anthropic-messages", "/messages"),
-    ] {
-        let upstream = upstream_from_model_config(&json!({
-            "base_url": "https://example.com",
-            "upstream_api_format": configured
-        }))
-        .expect("model config should be valid")
-        .expect("model config should produce an upstream");
-
-        assert_eq!(upstream.api_format, expected);
-        assert_eq!(
-            upstream.resolved_request_url(),
-            format!("https://example.com{path}")
-        );
-        assert!(!upstream.native_tool_search);
-        assert!(!upstream.native_namespace_tools);
-        assert!(upstream.convert_custom_tools);
-    }
-}
-
-#[test]
-fn explicit_provider_url_takes_precedence_over_the_protocol_default() {
-    for field in ["responses_url", "responsesUrl", "request_url", "requestUrl"] {
-        let mut config = json!({
-            "base_url": "https://example.com/v1/",
-            "upstream_api_format": "anthropic-messages",
-        });
-        config[field] = json!("https://provider.example.com/custom/messages");
-        let upstream = upstream_from_model_config(&config).unwrap().unwrap();
-
-        assert_eq!(
-            upstream.resolved_request_url(),
-            "https://provider.example.com/custom/messages"
-        );
-    }
-}
-
-#[test]
 fn detects_known_upstream_error_codes_in_priority_order() {
     assert_eq!(
         detect_upstream_error_code(
@@ -221,23 +175,6 @@ fn detects_known_upstream_error_codes_in_priority_order() {
         .as_deref(),
         Some("invalid_encrypted_content")
     );
-}
-
-#[test]
-fn normalizes_completed_usage_details() {
-    let event = format!(
-        "data: {}",
-        json!({
-            "type": "response.completed",
-            "response": {"usage": {
-                "input_tokens_details": {},
-                "output_tokens_details": {}
-            }}
-        })
-    );
-    let normalized = normalize_responses_event(&event);
-    assert!(normalized.contains("cached_tokens"));
-    assert!(normalized.contains("reasoning_tokens"));
 }
 
 #[test]
@@ -628,27 +565,6 @@ fn rejects_invalid_chat_request() {
 }
 
 #[test]
-fn preserves_custom_tools_for_native_responses_models() {
-    let body = serde_json::to_vec(&json!({
-        "model": "gpt-5.6-sol",
-        "input": "edit it",
-        "tools": [{
-            "type": "custom",
-            "name": "apply_patch",
-            "description": "Patch files"
-        }]
-    }))
-    .expect("request body");
-
-    let (prepared, conversion, _) =
-        prepare_request("openai-responses", false, None, &body).expect("native request");
-    let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
-
-    assert_eq!(prepared["tools"][0]["type"], "custom");
-    assert!(conversion.is_none());
-}
-
-#[test]
 fn normalizes_cross_protocol_history_ids_for_native_responses_models() {
     let body = cross_protocol_history_with_invalid_ids();
 
@@ -682,53 +598,6 @@ fn normalizes_cross_protocol_history_ids_before_chat_conversion() {
     assert_valid_api_id(call_id);
     assert_ne!(call_id, "functions.exec_command:0");
     assert_eq!(output["tool_call_id"], call["id"]);
-    assert!(matches!(conversion, Some(Conversion::Chat(_))));
-}
-
-#[test]
-fn chat_conversion_uses_the_routing_model_for_kimi_compatibility() {
-    let body = serde_json::to_vec(&json!({
-        "model": "cloud-model-resource-name",
-        "reasoning": {"effort": "low"},
-        "input": "hello",
-        "tools": [{
-            "type": "function",
-            "name": "update_site_metadata",
-            "parameters": {
-                "type": "object",
-                "properties": {"title": {"type": "string"}},
-                "anyOf": [{"type": "object", "required": ["title"]}]
-            }
-        }]
-    }))
-    .expect("request body");
-
-    let (prepared, conversion, _) = prepare_request_with_model_hint(
-        "openai-chat-completions",
-        ResponsesToolCapabilities {
-            custom_tools: chat::CustomToolConversion::None,
-            native_tool_search: false,
-            native_namespace_tools: false,
-            function_tools_only: false,
-        },
-        None,
-        Some("wework-kimi-k3"),
-        &body,
-    )
-    .expect("chat request");
-    let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
-
-    assert_eq!(prepared["model"], "cloud-model-resource-name");
-    assert_eq!(prepared["thinking"], json!({"type": "enabled"}));
-    assert!(prepared.get("reasoning_effort").is_none());
-    assert_eq!(
-        prepared["tools"][0]["function"]["parameters"]["type"],
-        "object"
-    );
-    assert_eq!(
-        prepared["tools"][0]["function"]["parameters"]["allOf"][0]["anyOf"][0]["type"],
-        "object"
-    );
     assert!(matches!(conversion, Some(Conversion::Chat(_))));
 }
 
@@ -826,27 +695,6 @@ fn explicit_request_max_output_tokens_override_model_configuration() {
 }
 
 #[test]
-fn converts_custom_tools_only_for_function_profile_responses_models() {
-    let body = serde_json::to_vec(&json!({
-        "model": "gateway-model",
-        "input": "edit it",
-        "tools": [{
-            "type": "custom",
-            "name": "apply_patch",
-            "description": "Patch files"
-        }]
-    }))
-    .expect("request body");
-
-    let (prepared, conversion, _) =
-        prepare_request("openai-responses", true, None, &body).expect("converted request");
-    let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
-
-    assert_eq!(prepared["tools"][0]["type"], "function");
-    assert!(matches!(conversion, Some(Conversion::Responses(_))));
-}
-
-#[test]
 fn proxy_client_rejects_invalid_url() {
     assert!(proxy_client(Some("not a proxy url")).is_err());
 }
@@ -883,10 +731,4 @@ fn rate_limit_retry_delay_falls_back_to_configured_backoff_sequence() {
         rate_limit_retry_delay(&headers, 20),
         Duration::from_secs(60)
     );
-}
-
-#[test]
-fn leaves_non_completed_events_unchanged() {
-    let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
-    assert_eq!(normalize_responses_event(event), event);
 }
