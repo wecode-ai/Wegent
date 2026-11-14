@@ -301,10 +301,18 @@ def test_cloud_coding_shell_gets_the_matched_connector_server(monkeypatch) -> No
     )
 
     servers = bot_config["mcp_servers"]
-    assert [server["name"] for server in servers] == ["wegent-connector-dingding_log"]
-    assert servers[0]["type"] == "http"
-    assert servers[0]["url"] == "${{backend_api_url}}/mcp/connectors/sse"
+    assert [server["name"] for server in servers] == [
+        "wca",
+        "wegent-connector-dingding_log",
+    ]
+    assert servers[0]["alwaysLoad"] is True
     assert servers[0]["headers"] == {
+        "Authorization": "Bearer ${{task_token}}",
+        "X-Connector-Loading": "lazy",
+    }
+    assert servers[1]["type"] == "http"
+    assert servers[1]["url"] == "${{backend_api_url}}/mcp/connectors/sse"
+    assert servers[1]["headers"] == {
         "Authorization": "Bearer ${{task_token}}",
         "X-Connector-App": "dingding_log",
     }
@@ -407,6 +415,46 @@ def test_claude_lazy_apps_share_one_server_and_fit_the_full_tool_name_budget(
     for app in apps:
         for entry in ("_wegent_discover__", "_wegent_call__"):
             assert len(f"mcp__{servers[0]['name']}__{entry}{app.slug}") <= 128
+
+
+@pytest.mark.parametrize("selected", [False, True])
+def test_claude_compact_entry_survives_keyword_and_selected_skill_preloading(
+    monkeypatch, selected: bool
+) -> None:
+    builder = TaskRequestBuilder(MagicMock())
+    slug = "a" * 100
+    app = SimpleNamespace(slug=slug, keywords=["write document"])
+    monkeypatch.setattr(builder, "_user_has_callable_connectors", lambda user: False)
+    monkeypatch.setattr(builder, "_authorized_lazy_connector_apps", lambda user: [app])
+    scoped = {
+        "name": f"wegent-connector-{slug}",
+        "type": "streamable-http",
+        "url": "${{backend_api_url}}/mcp/connectors/sse",
+        "headers": {
+            "Authorization": "Bearer ${{task_token}}",
+            "X-Connector-App": slug,
+        },
+    }
+    bot = {"shell_type": "ClaudeCode", "mcp_servers": [scoped] if selected else []}
+    builder._attach_connector_mcp_for_coding_shell(
+        bot, user=SimpleNamespace(id=6), auth_token="t", message="write document"
+    )
+    compact = [server for server in bot["mcp_servers"] if server["name"] == "wca"]
+    assert len(compact) == 1
+    assert compact[0]["alwaysLoad"] is True
+    assert compact[0]["headers"] == {
+        "Authorization": "Bearer ${{task_token}}",
+        "X-Connector-Loading": "lazy",
+    }
+    full = [
+        server
+        for server in bot["mcp_servers"]
+        if server["headers"].get("X-Connector-App") == slug
+    ]
+    assert len(full) == 1
+    assert "X-Connector-Loading" not in full[0]["headers"]
+    assert len(f"mcp__wca___wegent_discover__{slug}") <= 128
+    assert len(f"mcp__wegent-connector-{slug}__{slug}__lookup") > 128
 
 
 @pytest.mark.parametrize("shell_type", ["Chat", "Codex", "ClaudeCode"])

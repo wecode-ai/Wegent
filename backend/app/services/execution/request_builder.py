@@ -2977,22 +2977,23 @@ class TaskRequestBuilder:
                 }
             )
         prompt_text = self._extract_prompt_text(message).casefold()
-        for app in self._authorized_lazy_connector_apps(user):
+        lazy_apps = self._authorized_lazy_connector_apps(user)
+        if shell_type == "ClaudeCode" and lazy_apps:
+            # Keep one compact entry point independent of keyword or Skill
+            # preloading: Claude may reject the longer eager tool identities.
+            servers.append(
+                {
+                    "name": "wca",
+                    "type": "streamable-http",
+                    "url": connector_url,
+                    "headers": {**headers, "X-Connector-Loading": "lazy"},
+                    "timeout": 180,
+                    "alwaysLoad": True,
+                }
+            )
+        for app in lazy_apps:
             matched = self._connector_keywords_match(prompt_text, app.keywords)
             if shell_type == "ClaudeCode" and not matched:
-                # Preserve the full app identity in compact tool names while
-                # staying inside Claude's 128-character prefixed name limit.
-                if not any(server["name"] == "wca" for server in servers):
-                    servers.append(
-                        {
-                            "name": "wca",
-                            "type": "streamable-http",
-                            "url": connector_url,
-                            "headers": {**headers, "X-Connector-Loading": "lazy"},
-                            "timeout": 180,
-                            "alwaysLoad": True,
-                        }
-                    )
                 continue
             app_headers = {**headers, "X-Connector-App": app.slug}
             if not matched:

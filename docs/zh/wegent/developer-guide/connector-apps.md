@@ -30,7 +30,7 @@ Connector Apps 让 Wework 在不修改 Codex 源码、也不依赖 ChatGPT 登�
 完整的 lazy 工具通过带 `X-Connector-App` 请求头的 scoped MCP 端点访问，该端点只列出并允许调用指定 App 的工具；共享 `wegent-connectors` 只返回 `static` App。`keywords` 按子串匹配，包含空格的词组要求所有词同时出现（例如 `钉钉 表格`）；命中后会 preload 对应 Skill 并挂载完整 scoped MCP。未授权 App 在对话内按需提示授权，Wework 继续使用 `connector_auth_required` 卡片。
 
 - Chat 中未命中的 lazy App 通过 `load_skill` 挂载 MCP；显式选择文档 Provider 时直接挂载其已授权、可见且启用的 App，未挂载时不能标记为 ready。
-- 云端 Codex/ClaudeCode 中，即使没有关键词或没有命中，lazy App 仍提供 `_wegent_discover__<slug>` 和 `_wegent_call__<slug>` 两个轻量工具。请求头 `X-Connector-Loading: lazy` 让目录不探测上游；discover 返回实际白名单工具、schema 和 `rawToolName`，call 的 `name` 使用该原始上游名字，并执行原有权限检查。ClaudeCode 未命中的 lazy App 共用短名称 `wca`、`alwaysLoad: true` 的服务器，其不带 App scope 的轻量列表只包含当前用户可见且已授权的 lazy App。这样即使 slug 达到 100 字符，完整 `mcp__wca___wegent_discover__<slug>` 名称也不超过 Claude 的 128 字符限制。
+- 云端 Codex/ClaudeCode 中，即使没有关键词或没有命中，lazy App 仍提供 `_wegent_discover__<slug>` 和 `_wegent_call__<slug>` 两个轻量工具。请求头 `X-Connector-Loading: lazy` 让目录不探测上游；discover 返回实际白名单工具、schema 和 `rawToolName`，call 的 `name` 使用该原始上游名字，并执行原有权限检查。ClaudeCode 所有已授权 lazy App 共用短名称 `wca`、`alwaysLoad: true` 的服务器，包括关键词命中和显式 Skill 加载；关键词命中仍预加载完整 schema，其轻量调用入口保持可用。该服务器不带 App scope，列表只包含当前用户可见且已授权的 lazy App。这样即使 slug 达到 100 字符，完整 `mcp__wca___wegent_discover__<slug>` 名称也不超过 Claude 的 128 字符限制。
 - 桌面同步使用 `X-Connector-Loading: compact` 读取已安装应用和 Runtime 目录。目录只含 static 工具和 lazy 轻量入口，lazy 上游仅在 discover 时连接。设置页仍默认读取完整目录；模式切换会更新本地 Skill 和工具目录。
 
 管理后台新增应用时，`keywords` 默认填入应用的显示名和标识名；标识名中的 `-`、`_` 会替换为空格（例如 slug `dingtalk_ai_table` 生成 `dingtalk ai table`）。管理员手动修改关键词后，不会再随名称自动变化。

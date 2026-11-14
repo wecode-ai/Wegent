@@ -170,10 +170,17 @@ fn keyword_phrases_require_all_terms_and_preload_chat_or_direct_coding() {
                     matched
                 );
             } else {
-                assert_eq!(
-                    request.bot[0]["mcp_servers"][0]["headers"]["X-Connector-Loading"] == "lazy",
-                    !matched
-                );
+                let servers = request.bot[0]["mcp_servers"].as_array().unwrap();
+                let scoped = if shell == "ClaudeCode" && matched {
+                    assert_eq!(servers.len(), 2);
+                    assert_eq!(servers[0]["name"], "wca");
+                    assert_eq!(servers[0]["headers"]["X-Connector-Loading"], "lazy");
+                    &servers[1]
+                } else {
+                    assert_eq!(servers.len(), 1);
+                    &servers[0]
+                };
+                assert_eq!(scoped["headers"]["X-Connector-Loading"] == "lazy", !matched);
             }
         }
     }
@@ -203,6 +210,42 @@ fn claude_compact_tools_share_a_server_within_the_provider_name_budget() {
             tool["name"].as_str().unwrap()
         );
         assert!(full_name.len() <= 128, "{full_name}");
+    }
+}
+
+#[test]
+fn claude_compact_entry_survives_keyword_and_explicit_skill_preloading() {
+    for selected in [false, true] {
+        let mut request = request("ClaudeCode");
+        request.prompt = json!("write document");
+        let slug = "a".repeat(100);
+        let mut app = app(&slug, "lazy", true);
+        app.keywords = vec!["write document".into()];
+        if selected {
+            request.user_selected_skills = vec![json!("provider-skill")];
+            request.skill_configs = vec![json!({
+                "name": "provider-skill", "connector_slug": slug
+            })];
+        }
+        assemble(&mut request, &[app], false);
+        let servers = request.bot[0]["mcp_servers"].as_array().unwrap();
+        let compact: Vec<_> = servers.iter().filter(|s| s["name"] == "wca").collect();
+        assert_eq!(compact.len(), 1, "selected={selected}: {servers:?}");
+        assert_eq!(compact[0]["headers"]["X-Connector-Loading"], "lazy");
+        assert_eq!(compact[0]["alwaysLoad"], true);
+        assert!(compact[0]["headers"].get("X-Connector-App").is_none());
+        let scoped = if selected {
+            &request.skill_configs[0]["mcpServers"][format!("wegent-connector-{slug}")]
+        } else {
+            servers
+                .iter()
+                .find(|s| s["headers"]["X-Connector-App"] == slug)
+                .unwrap()
+        };
+        assert_eq!(scoped["headers"]["X-Connector-App"], slug);
+        assert!(scoped["headers"].get("X-Connector-Loading").is_none());
+        assert!(format!("mcp__wca___wegent_discover__{slug}").len() <= 128);
+        assert!(format!("mcp__wegent-connector-{slug}__{slug}__lookup").len() > 128);
     }
 }
 
@@ -249,7 +292,14 @@ fn selected_provider_skill_gets_one_scope_and_supersedes_personal_mcp() {
             }
         );
         assert!(request.mcp_servers.is_empty());
-        assert_eq!(request.bot[0]["mcp_servers"], json!([]));
+        if shell == "ClaudeCode" {
+            let servers = request.bot[0]["mcp_servers"].as_array().unwrap();
+            assert_eq!(servers.len(), 1);
+            assert_eq!(servers[0]["name"], "wca");
+            assert_eq!(servers[0]["headers"]["X-Connector-Loading"], "lazy");
+        } else {
+            assert_eq!(request.bot[0]["mcp_servers"], json!([]));
+        }
     }
 }
 
