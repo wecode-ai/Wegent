@@ -1196,7 +1196,12 @@ export function WeworkSharedProject({
         onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
           const statusError = await updateIssueWhenPersonalTaskStarts(
             scopedApi.issues,
-            taskComposer.issue.id
+            taskComposer.issue.id,
+            {
+              projectStore: project.project_store,
+              dispatchRoundId:
+                taskComposer.dispatch?.roundId ?? taskComposer.humanTaskBinding?.dispatchRoundId,
+            }
           )
           if (statusError !== null)
             notify(statusError || t('task_board_status_update_failed'), 'error')

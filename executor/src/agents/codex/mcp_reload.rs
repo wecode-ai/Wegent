@@ -21,6 +21,9 @@ pub(super) fn thread_context_configuration(params: &Value) -> Map<String, Value>
         "agents.enabled",
         "features.multi_agent",
         "features.multi_agent_v2",
+        "features.multi_agent_v2.root_agent_usage_hint_text",
+        "features.multi_agent_v2.multi_agent_mode_hint_text",
+        "features.multi_agent_v2.usage_hint_text",
     ] {
         if let Some(value) = params["config"].get(key) {
             configuration.insert(key.into(), value.clone());
@@ -158,6 +161,55 @@ impl CodexAppServerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_delegation_policy_changes_and_removal_reload_an_existing_thread() {
+        for key in [
+            "root_agent_usage_hint_text",
+            "multi_agent_mode_hint_text",
+            "usage_hint_text",
+        ] {
+            let key = format!("features.multi_agent_v2.{key}");
+            let mut params = json!({"threadId":"issue-thread", "config":{}});
+            params["config"][&key] = json!("previous policy");
+            let previous = thread_context_configuration(&params);
+            params["config"][&key] = json!("delegate assigned Issue work");
+            let updated = thread_context_configuration(&params);
+            let plan = |params| CodexThreadPlan {
+                start: CodexThreadStart::Request {
+                    operation: "thread/resume",
+                    params,
+                },
+                resume_requested: true,
+                fork_requested: false,
+            };
+            assert_eq!(
+                config_reload_resume_thread_id(
+                    &plan(params.clone()),
+                    &ExecutionRequest::default(),
+                    Some(&previous)
+                ),
+                Some("issue-thread")
+            );
+            assert_eq!(
+                config_reload_resume_thread_id(
+                    &plan(params.clone()),
+                    &ExecutionRequest::default(),
+                    Some(&updated)
+                ),
+                None
+            );
+            params["config"].as_object_mut().unwrap().remove(&key);
+            assert_eq!(
+                config_reload_resume_thread_id(
+                    &plan(params),
+                    &ExecutionRequest::default(),
+                    Some(&updated)
+                ),
+                Some("issue-thread")
+            );
+        }
+    }
 
     #[test]
     fn inference_profile_changes_and_removal_require_native_reload() {
