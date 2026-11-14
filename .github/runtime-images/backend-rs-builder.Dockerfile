@@ -28,6 +28,7 @@ COPY shared/assets/codex-models /workspace/shared/assets/codex-models
 COPY backend-rs/src ./src
 COPY backend-rs/examples ./examples
 COPY backend-rs/migrations ./migrations
+COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json
 RUN find src examples -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e

@@ -82,6 +82,8 @@ async fn verify_initialization(mysql: &MysqlService) -> Result<()> {
     use brz_mysql::Json;
     use serde_json::{Value, json};
     crate::initialization::yaml(mysql).await?;
+    crate::initialization::connectors(mysql).await?;
+    verify_connector_initialization(mysql).await?;
     #[derive(FromMysqlRow)]
     struct Count {
         n: i64,
@@ -129,6 +131,50 @@ async fn verify_initialization(mysql: &MysqlService) -> Result<()> {
     let after:Skill=mysql.fetch_one("SELECT k.json AS payload,b.binary_data AS package_bytes FROM kinds k JOIN skill_binaries b ON b.kind_id=k.id WHERE k.user_id=0 AND k.namespace='default' AND k.kind='Skill' AND k.name='wegent-knowledge'",()).await?;
     assert_eq!(before.payload.0, after.payload.0);
     assert_eq!(before.package_bytes, after.package_bytes);
+    Ok(())
+}
+
+async fn verify_connector_initialization(mysql: &MysqlService) -> Result<()> {
+    use brz_mysql::Json;
+    use serde_json::{Value, json};
+    #[derive(FromMysqlRow)]
+    struct App {
+        name: String,
+        payload: Json<Value>,
+    }
+    let read = async || -> Result<Vec<App>> {
+        Ok(mysql.fetch_all("SELECT name,json AS payload FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 ORDER BY name", ()).await?)
+    };
+    let before = read().await?;
+    assert_eq!(before.len(), 4);
+    for app in &before {
+        assert_eq!(app.payload.0["spec"]["enabled"], true);
+        assert_eq!(app.payload.0["spec"]["authType"], "oauth2");
+        assert_eq!(app.payload.0["spec"]["toolLoadingMode"], "lazy");
+    }
+    mysql.execute("UPDATE kinds SET json=JSON_SET(json,'$.spec.enabled',false,'$.spec.toolLoadingMode','static','$.spec.keywords',JSON_ARRAY('custom')) WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 AND name='dingtalk_docs'", ()).await?;
+    crate::initialization::connectors(mysql).await?;
+    let after = read().await?;
+    assert_eq!(after.len(), 4);
+    let docs = after
+        .iter()
+        .find(|app| app.name == "dingtalk_docs")
+        .unwrap();
+    assert_eq!(docs.payload.0["spec"]["enabled"], false);
+    assert_eq!(docs.payload.0["spec"]["toolLoadingMode"], "static");
+    assert_eq!(docs.payload.0["spec"]["keywords"], json!(["custom"]));
+    mysql.execute("DELETE FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 AND name='dingtalk_docs'", ()).await?;
+    // Another owner's namesake must not suppress the system app.
+    mysql.execute("INSERT INTO kinds (kind,name,namespace,user_id,json,is_active,created_at,updated_at) VALUES ('ConnectorApp','dingtalk_docs','system',7,?,1,NOW(),NOW())", (Json(json!({"spec":{"mcpUrl":"https://foreign.example/mcp"}})),)).await?;
+    crate::initialization::connectors(mysql).await?;
+    let restored = read().await?;
+    assert_eq!(restored.len(), 4);
+    let docs = restored
+        .iter()
+        .find(|app| app.name == "dingtalk_docs")
+        .unwrap();
+    assert_eq!(docs.payload.0["spec"]["enabled"], true);
+    assert_eq!(docs.payload.0["spec"]["toolLoadingMode"], "lazy");
     Ok(())
 }
 

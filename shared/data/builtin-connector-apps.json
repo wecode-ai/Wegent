@@ -1,0 +1,35 @@
+[
+  {
+    "slug": "dingtalk_docs",
+    "name": "钉钉文档",
+    "mcp_url": "https://mcp-gw.dingtalk.com/oauth/server/doc",
+    "keywords": ["钉钉文档", "钉钉 文档", "dingtalk docs", "dingtalk document"]
+  },
+  {
+    "slug": "dingtalk_sheet",
+    "name": "钉钉表格",
+    "mcp_url": "https://mcp-gw.dingtalk.com/oauth/server/sheet",
+    "keywords": [
+      "钉钉表格", "钉钉 表格", "dingtalk table", "spreadsheet", "worksheet",
+      "sheet", "dingtalk spreadsheet", "dingtalk worksheet", "dingtalk sheet",
+      "钉钉工作表", "钉钉 工作表", "钉钉单元格", "钉钉 单元格", "钉钉公式", "钉钉 公式"
+    ]
+  },
+  {
+    "slug": "dingtalk_aitable",
+    "name": "钉钉 AI 表格",
+    "mcp_url": "https://mcp-gw.dingtalk.com/oauth/server/aitable",
+    "keywords": [
+      "钉钉ai表格", "钉钉 ai 表格", "dingtalk ai table", "ai table",
+      "notable", "钉钉多维表", "钉钉 多维表"
+    ]
+  },
+  {
+    "slug": "dingtalk_wiki",
+    "name": "钉钉知识库",
+    "mcp_url": "https://mcp-gw.dingtalk.com/oauth/server/wiki",
+    "keywords": [
+      "钉钉知识库", "钉钉 知识库", "dingtalk wikispace", "dingtalk knowledge base"
+    ]
+  }
+]

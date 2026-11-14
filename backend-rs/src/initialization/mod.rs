@@ -8,6 +8,7 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 
+mod connectors;
 mod plugins;
 mod skills;
 
@@ -199,6 +200,10 @@ pub async fn yaml(mysql: &MysqlService) -> Result<()> {
 
 pub async fn plugins(mysql: &MysqlService) -> Result<()> {
     plugins::apply(mysql).await
+}
+
+pub async fn connectors(mysql: &MysqlService) -> Result<()> {
+    connectors::apply(mysql).await
 }
 
 #[cfg(test)]

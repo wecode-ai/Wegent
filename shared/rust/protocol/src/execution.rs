@@ -211,6 +211,18 @@ impl ExecutionRequest {
         if let Some(auth_token) = &self.auth_token {
             object.insert("task_token".to_owned(), Value::String(auth_token.clone()));
         }
+        if let Some(backend) = self
+            .backend_url
+            .as_deref()
+            .filter(|url| !url.trim().is_empty())
+        {
+            let base = backend.trim().trim_end_matches('/');
+            let root = base.strip_suffix("/api").unwrap_or(base);
+            object.insert(
+                "backend_api_url".to_owned(),
+                Value::String(format!("{root}/api")),
+            );
+        }
         value
     }
 
@@ -258,6 +270,35 @@ fn value_string(value: Option<&Value>) -> Option<String> {
 mod tests {
     use super::ExecutionRequest;
     use serde_json::json;
+
+    #[test]
+    fn backend_api_context_normalizes_prefix_and_rebinds_on_followup() {
+        for backend in [
+            "https://backend.example",
+            "https://backend.example/",
+            "https://backend.example/api",
+            "https://backend.example/api/",
+        ] {
+            let mut request = ExecutionRequest {
+                backend_url: Some(backend.into()),
+                ..Default::default()
+            };
+            assert_eq!(
+                request.variable_context()["backend_api_url"],
+                "https://backend.example/api"
+            );
+            assert_eq!(request.variable_context()["backend_url"], backend);
+            request.backend_url = Some("https://other.example/deployment/api/".into());
+            assert_eq!(
+                request.variable_context()["backend_api_url"],
+                "https://other.example/deployment/api"
+            );
+        }
+        assert!(ExecutionRequest::default()
+            .variable_context()
+            .get("backend_api_url")
+            .is_none());
+    }
 
     #[test]
     fn deserializes_numeric_task_identity_as_strings() {

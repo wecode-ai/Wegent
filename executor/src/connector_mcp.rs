@@ -16,10 +16,12 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
-use crate::connector_gateway::load_connector_gateway_config;
+use crate::connector_gateway::{load_connector_gateway_config, ConnectorGatewayError};
 
 const WEGENT_SITES_SAVE_SOURCE_REVISION: &str = "wegent-sites__save_source_revision";
 const WEGENT_SITES_SUBMIT_MINIAPP_VERSION: &str = "wegent-sites__submit_miniapp_version";
+mod lazy;
+use lazy::{call_deferred_tool, CALL_PREFIX, DISCOVER_PREFIX};
 const MAX_SOURCE_ARCHIVE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_SOURCE_FILE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_SOURCE_FILES: usize = 20_000;
@@ -87,7 +89,7 @@ async fn handle_request(request: &Value) -> Option<Value> {
             Some(
                 match connector_gateway_request(reqwest::Method::GET, "tools", None).await {
                     Ok(value) => result_response(id, json!({ "tools": mcp_tools(&value) })),
-                    Err(error) => error_response(id, -32001, error),
+                    Err(error) => error_response(id, -32001, error.message),
                 },
             )
         }
@@ -104,6 +106,12 @@ async fn handle_request(request: &Value) -> Option<Value> {
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            if name.starts_with(DISCOVER_PREFIX) || name.starts_with(CALL_PREFIX) {
+                return Some(result_response(
+                    id,
+                    call_deferred_tool(name, &arguments).await,
+                ));
+            }
             let arguments = match normalize_tool_arguments(name, arguments) {
                 Ok(arguments) => arguments,
                 Err(error) => return Some(result_response(id, text_result(error, true))),
@@ -117,7 +125,7 @@ async fn handle_request(request: &Value) -> Option<Value> {
                 .await
                 {
                     Ok(value) => result_response(id, tool_result(&value)),
-                    Err(error) => result_response(id, text_result(error, true)),
+                    Err(error) => result_response(id, gateway_error_result(name, &error)),
                 },
             )
         }
@@ -147,6 +155,14 @@ pub(crate) fn mcp_tools(value: &Value) -> Vec<Value> {
                 }
             }))
         })
+        .chain(
+            value
+                .get("deferred_tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .cloned(),
+        )
         .collect()
 }
 
@@ -583,15 +599,43 @@ fn text_result(text: impl Into<String>, is_error: bool) -> Value {
     })
 }
 
+/// Connector apps reject unauthenticated calls with 401. Report that as a
+/// structured authorization request so the agent can hand it to Wework, which
+/// owns the user-initiated OAuth card.
+fn gateway_error_result(tool_name: &str, error: &ConnectorGatewayError) -> Value {
+    if let Some(slug) = connector_auth_required_slug(tool_name, error) {
+        let payload = json!({
+            "error": "connector_auth_required",
+            "connectorSlug": slug,
+            "message": error.message,
+        });
+        return text_result(payload.to_string(), true);
+    }
+    text_result(&error.message, true)
+}
+
+fn connector_auth_required_slug(tool_name: &str, error: &ConnectorGatewayError) -> Option<String> {
+    let requires_auth = error.code == "connector_gateway_error"
+        && error.message.contains("(HTTP 401")
+        && error
+            .message
+            .to_ascii_lowercase()
+            .contains("requires authorization");
+    if !requires_auth {
+        return None;
+    }
+    wegent_protocol::connector::split_tool(tool_name).map(|(slug, _)| slug)
+}
+
 async fn connector_gateway_request(
     method: reqwest::Method,
     path: &str,
     body: Option<Value>,
-) -> Result<Value, String> {
-    load_connector_gateway_config()?
+) -> Result<Value, ConnectorGatewayError> {
+    load_connector_gateway_config()
+        .map_err(|message| ConnectorGatewayError::new("connector_gateway_unavailable", message))?
         .request(method, path, body)
         .await
-        .map_err(|error| error.message)
 }
 
 fn result_response(id: Value, result: Value) -> Value {
@@ -605,6 +649,44 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_connector_authorization_requirement_as_structured_error() {
+        let error = ConnectorGatewayError::new(
+            "connector_gateway_error",
+            "Connector 'dingtalk_log' requires authorization (HTTP 401 Unauthorized)",
+        );
+
+        let result = gateway_error_result(
+            &wegent_protocol::connector::qualify_tool("dingtalk_log", "get_templates"),
+            &error,
+        );
+
+        assert_eq!(result["isError"], true);
+        let text = result["content"][0]["text"].as_str().unwrap();
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["error"], "connector_auth_required");
+        assert_eq!(payload["connectorSlug"], "dingtalk_log");
+    }
+
+    #[test]
+    fn keeps_other_gateway_failures_as_plain_text() {
+        let error = ConnectorGatewayError::new(
+            "connector_gateway_error",
+            "Connector gateway request failed (HTTP 502 Bad Gateway)",
+        );
+
+        let result = gateway_error_result(
+            &wegent_protocol::connector::qualify_tool("dingtalk_log", "get_templates"),
+            &error,
+        );
+
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("502"));
+    }
 
     #[test]
     fn maps_backend_tool_schema_to_mcp_shape() {

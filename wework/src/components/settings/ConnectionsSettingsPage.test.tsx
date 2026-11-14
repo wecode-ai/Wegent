@@ -82,6 +82,16 @@ vi.mock('@/api/models', () => ({
   })),
 }))
 
+vi.mock('@/api/cloud/connectorApps', () => ({
+  listWegentConnectorApps: vi.fn().mockResolvedValue([]),
+  listWegentInstalledConnectorApps: vi.fn().mockResolvedValue({ apps: [] }),
+  authorizeWegentConnector: vi.fn(),
+  refreshWegentConnector: vi.fn(),
+  connectorAuthorizationErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : String(error),
+  notifyConnectorAuthorizationChanged: vi.fn(),
+}))
+
 vi.mock('@/api/local/codexOfficialModels', () => ({
   getLocalCodexOfficialModels: vi.fn().mockResolvedValue({
     providers: [],

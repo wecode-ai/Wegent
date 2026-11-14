@@ -36,6 +36,21 @@ fn an_unresolved_model_is_a_400_with_the_source_message() {
 
 const ANALYSIS_SKILL: &str = "offline-analyzer";
 
+#[test]
+fn device_detection_uses_the_project_when_the_task_has_no_device() {
+    let workspace = json!({"project": {"device_id":"project-device"}});
+    for device in [Value::Null, json!(""), json!("  ")] {
+        assert_eq!(
+            super::execution_device_id(&json!({"spec":{"device_id":device}}), &workspace,),
+            Some("project-device")
+        );
+    }
+    assert_eq!(
+        super::execution_device_id(&json!({"spec":{"device_id":" task-device "}}), &workspace,),
+        Some("task-device")
+    );
+}
+
 fn stored_kind(id: i64, owner: i64, kind: &str, name: &str, spec: Value) -> KindRow {
     KindRow {
         id,
@@ -120,6 +135,7 @@ fn skill_fixture(sql: &str, automatic: bool, preload: bool) -> (Row, Vec<Row>) {
     assert!(
         sql.contains("'SkillBinding'")
             || sql.contains("'Skill'")
+            || sql.contains("'ConnectorApp'")
             || sql.contains("FROM `tasks`")
             || sql.contains("FROM subtasks")
             || sql.contains("FROM subtask_contexts"),

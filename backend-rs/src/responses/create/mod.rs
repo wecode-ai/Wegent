@@ -25,6 +25,7 @@ mod background;
 pub mod bot_config;
 pub mod bound_knowledge;
 pub(crate) mod callback_source;
+mod connectors;
 pub mod contexts;
 pub mod continuation;
 pub use wegent_protocol::dispatch;

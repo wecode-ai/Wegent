@@ -33,6 +33,8 @@ pub struct McpProviderServiceDefinition {
     /// `message_keywords`: substrings that preload this service's Skill.
     pub message_keywords: &'static [&'static str],
     pub oauth_supported: bool,
+    /// Administrator-managed connector replacing the personal provider path.
+    pub connector_slug: Option<&'static str>,
 }
 
 /// `MCPProviderDefinition`.
@@ -56,6 +58,7 @@ static DINGTALK_SERVICES: &[McpProviderServiceDefinition] = &[
         server_name: "dingtalk_docs",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9629",
         skill_name: "dingtalk-docs",
+        connector_slug: Some("dingtalk_docs"),
         display_name: "钉钉文档",
         message_keywords: &["文档", "docs", "document"],
         oauth_supported: true,
@@ -65,6 +68,7 @@ static DINGTALK_SERVICES: &[McpProviderServiceDefinition] = &[
         server_name: "dingtalk_table",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9704",
         skill_name: "dingtalk-table",
+        connector_slug: Some("dingtalk_sheet"),
         display_name: "钉钉表格",
         message_keywords: &[
             "钉钉表格",
@@ -83,6 +87,7 @@ static DINGTALK_SERVICES: &[McpProviderServiceDefinition] = &[
         server_name: "dingtalk_ai_table",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9555",
         skill_name: "dingtalk-ai-table",
+        connector_slug: Some("dingtalk_aitable"),
         display_name: "钉钉AI表格",
         message_keywords: &[
             "钉钉ai表格",
@@ -101,6 +106,7 @@ static DINGTALK_SERVICES: &[McpProviderServiceDefinition] = &[
         server_name: "dingtalk_wikispace",
         detail_url: "https://mcp.dingtalk.com/#/detail?mcpId=9730",
         skill_name: "dingtalk-wikispace",
+        connector_slug: Some("dingtalk_wiki"),
         display_name: "钉钉知识库",
         message_keywords: &["钉钉知识库", "dingtalk wikispace", "wikispace"],
         oauth_supported: true,
@@ -250,6 +256,7 @@ mod tests {
             server_name: "probe_server",
             detail_url: "",
             skill_name: "registry-test-probe-skill",
+            connector_slug: None,
             display_name: "Probe",
             message_keywords: &["probe"],
             oauth_supported: false,

@@ -42,6 +42,10 @@
       "types": "./src/markdown/index.ts",
       "import": "./src/markdown/index.ts"
     },
+    "./markdown/composerReferenceMarkdown": {
+      "types": "./src/markdown/composerReferenceMarkdown.ts",
+      "import": "./src/markdown/composerReferenceMarkdown.ts"
+    },
     "./markdown/safeAnimationFrame": {
       "types": "./src/markdown/safeAnimationFrame.ts",
       "import": "./src/markdown/safeAnimationFrame.ts"

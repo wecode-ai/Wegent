@@ -116,6 +116,7 @@ const CLOUD_CHECKPOINTS = [
   'rendering-extensions',
   'browser-multi-tabs',
   'embedded-browser',
+  'connector-oauth',
 ]
 
 async function createCloudProjectFixture(control, workspacePath) {
@@ -1029,6 +1030,8 @@ async function verifyCloudCheckpoint({
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
       return
     case 'browser-multi-tabs':
+    case 'embedded-browser':
+    case 'connector-oauth':
       assert.ok(desktopScenario, `${checkpoint} requires its desktop scenario module`)
       setPhase(`cloud-${checkpoint}`)
       await desktopScenario.verify(control)

@@ -191,11 +191,15 @@ impl ConnectorRuntime {
     }
 
     pub(super) async fn sync_apps(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let sync_revision = payload
+            .get("syncRevision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AppIpcError::new("bad_request", "syncRevision is required"))?;
         let apps = payload
             .get("apps")
             .and_then(Value::as_array)
             .ok_or_else(|| AppIpcError::new("bad_request", "apps must be an array"))?;
-        let (tools, revision, generation) = self.discover_tools(apps).await?;
+        let (tools, revision, generation) = self.discover_tools(apps, sync_revision).await?;
         // Waiting for an idle turn must not prevent connector-token refresh.
         let _activation = capability_activation::activate().await;
         let _mutation = self.mutation.lock().await;
@@ -231,9 +235,19 @@ impl ConnectorRuntime {
         Ok(result)
     }
 
-    async fn discover_tools(&self, apps: &[Value]) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
+    async fn discover_tools(
+        &self,
+        apps: &[Value],
+        sync_revision: u64,
+    ) -> Result<(Vec<Value>, u64, u64), AppIpcError> {
         let (cloud, revision, generation) = {
             let _mutation = self.mutation.lock().await;
+            if self.revision.load(Ordering::Acquire) != sync_revision {
+                return Err(AppIpcError::new(
+                    "connector_sync_superseded",
+                    "Connector configuration changed before synchronization",
+                ));
+            }
             let cloud = self.cloud.read().await.clone().ok_or_else(|| {
                 AppIpcError::new(
                     "connector_cloud_disconnected",
@@ -410,7 +424,14 @@ fn materialize_skills(
             .collect::<Vec<_>>();
         tool_names.sort();
         tool_names.dedup();
-        let tool_section = if tool_names.is_empty() {
+        let lazy = app.get("toolLoadingMode").and_then(Value::as_str) == Some("lazy");
+        let tool_section = if lazy {
+            format!(
+                "\nTools load on demand. First use `_wegent_discover__{slug}` to read this app's tool schemas, \
+                 then invoke `_wegent_call__{slug}` with the discovered rawToolName and an arguments object. \
+                 Preserve every argument's declared JSON type.\n"
+            )
+        } else if tool_names.is_empty() {
             String::new()
         } else {
             format!(
@@ -422,8 +443,23 @@ fn materialize_skills(
                     .join("\n")
             )
         };
+        let authorization_section = if app
+            .get("authorizationRequired")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            format!(
+                "\nThis app is not authorized for the current user yet, so its tools are unavailable.\n\
+                 When the user's request needs it, say briefly that authorization is required and end the turn with\n\
+                 `connector_auth_required` and `connectorSlug={slug}` so Wework shows its authorization card.\n\
+                 Do not claim the app does not exist and do not guess credentials.\n"
+            )
+        } else {
+            String::new()
+        };
+        let tool_prefix = wegent_protocol::connector::qualify_tool(&slug, "");
         let body = format!(
-            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
+            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Full upstream tool names use the namespace `{tool_prefix}`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{authorization_section}{tool_section}"
         );
         write_skill_if_changed(&skill_path, &body, changed)?;
         let marker = tool_definitions_marker(tools.iter().filter(|tool| {
@@ -433,6 +469,7 @@ fn materialize_skills(
         materialized.push(json!({
             "slug": slug,
             "skillPath": skill_path.display().to_string(),
+            "toolLoadingMode": if lazy { "lazy" } else { "static" },
         }));
     }
     remove_inactive_skills(skills_root, &active_dirs, changed)?;
@@ -443,13 +480,26 @@ fn validate_tool_catalog(apps: &[Value], tools: &[Value]) -> Result<(), AppIpcEr
     let expected: HashSet<_> = apps
         .iter()
         .flat_map(|app| {
+            let Some(slug) = app.get("slug").and_then(Value::as_str) else {
+                return vec![];
+            };
+            let lazy = app.get("toolLoadingMode").and_then(Value::as_str) == Some("lazy")
+                && !app
+                    .get("authorizationRequired")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            if lazy {
+                return vec![
+                    (slug, format!("_wegent_discover__{slug}")),
+                    (slug, format!("_wegent_call__{slug}")),
+                ];
+            }
             app.get("tools")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .filter_map(move |tool| {
-                    Some((app.get("slug")?.as_str()?, tool.get("name")?.as_str()?))
-                })
+                .filter_map(move |tool| Some((slug, tool.get("name")?.as_str()?.to_owned())))
+                .collect::<Vec<_>>()
         })
         .collect();
     let discovered = tools
@@ -457,7 +507,7 @@ fn validate_tool_catalog(apps: &[Value], tools: &[Value]) -> Result<(), AppIpcEr
         .map(|tool| {
             Some((
                 tool.pointer("/_meta/connectorId")?.as_str()?,
-                tool.get("name")?.as_str()?,
+                tool.get("name")?.as_str()?.to_owned(),
             ))
         })
         .collect::<Option<HashSet<_>>>();

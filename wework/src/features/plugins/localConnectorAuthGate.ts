@@ -132,3 +132,37 @@ export function resolveLocalConnectorAuthHint(
   }
   return null
 }
+
+export interface ConnectorAuthHint {
+  /** Local plugin key; absent for administrator-published cloud apps. */
+  pluginKey: string | null
+  connectorSlug: string
+  displayName: string
+  /** Exact native instance binding, when the connector requires one. */
+  instance?: string
+}
+
+/**
+ * Resolve any connector authorization request.
+ *
+ * A `wegent_apps` tool failure names only `connectorSlug` because cloud apps are
+ * not local plugins; those are authorized through the Wegent cloud OAuth flow.
+ */
+export function resolveConnectorAuthHint(
+  text: string | null | undefined
+): ConnectorAuthHint | null {
+  if (!text || !messageRequiresConnectorAuth(text)) return null
+  const pluginKey = extractConnectorAuthPluginKey(text)
+  const connectorSlug = extractConnectorAuthConnectorSlug(text)
+  if (!connectorSlug) return null
+  if (pluginKey === 'gitlab' && connectorSlug.startsWith('wework-gitlab-cli-')) {
+    return resolveLocalConnectorAuthHint(text)
+  }
+  const localHint = resolveLocalConnectorAuthHint(text)
+  return {
+    pluginKey,
+    connectorSlug,
+    displayName: pluginKey ?? connectorSlug,
+    ...(localHint?.instance ? { instance: localHint.instance } : {}),
+  }
+}

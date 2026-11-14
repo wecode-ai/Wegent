@@ -17,7 +17,7 @@ interface HtmlLiteralNode extends SourceRange {
 }
 
 /** Collects syntax that must retain its original bytes during preprocessing. */
-function collectLiteralRanges(source: string): SourceRange[] {
+export function collectMarkdownLiteralRanges(source: string): SourceRange[] {
   const ranges: SourceRange[] = []
   const htmlNodes: HtmlLiteralNode[] = []
   const visit = (node: Nodes) => {
@@ -86,7 +86,7 @@ export function protectComposerReferenceLinks(content: string): string {
 
   let literalRanges: SourceRange[]
   try {
-    literalRanges = collectLiteralRanges(content)
+    literalRanges = collectMarkdownLiteralRanges(content)
   } catch {
     // An incomplete streaming document should never make the renderer corrupt
     // text it cannot classify yet.

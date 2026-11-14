@@ -4,9 +4,14 @@
 
 """API coverage for administrator-managed connector apps."""
 
+import asyncio
+import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -26,7 +31,8 @@ from app.services.connector_connections import (
     connector_connection_service,
 )
 from app.services.connector_oauth import ConnectorOAuthService
-from shared.utils.crypto import decrypt_sensitive_data
+from app.services.connector_runtime import ConnectorDiscovery, ConnectorRuntimeService
+from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 
 def _admin_headers(token: str) -> dict[str, str]:
@@ -74,6 +80,34 @@ def _connector_kind(db: Session, slug: str) -> Kind:
         )
         .one()
     )
+
+
+def test_admin_discovery_projects_tools_from_the_credential_snapshot(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+    monkeypatch,
+):
+    app = _create_app(test_db, test_admin_user)
+    upstream = SimpleNamespace(
+        name="search_tickets",
+        title=None,
+        description="Search tickets",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=None,
+    )
+    discover = AsyncMock(return_value=ConnectorDiscovery([upstream], None))
+    monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", discover)
+
+    response = test_client.post(
+        f"/api/admin/connector-apps/{app.id}/tools/discover",
+        headers=_admin_headers(test_admin_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tools"][0]["name"] == "tickets__search_tickets"
+    discover.assert_awaited_once()
 
 
 def test_admin_can_publish_app_without_secret_disclosure(
@@ -145,6 +179,154 @@ def test_authorization_connector_types_are_persisted(
     assert oauth_app.auth_type == "oauth2"
 
 
+def test_tool_loading_mode_is_persisted(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_token: str,
+):
+    default_response = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(slug="default-loading"),
+    )
+    lazy_response = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(
+            slug="lazy-loading",
+            tool_loading_mode="lazy",
+            keywords=["表格", "spreadsheet"],
+        ),
+    )
+
+    assert default_response.status_code == 201
+    assert default_response.json()["tool_loading_mode"] == "static"
+    assert lazy_response.status_code == 201
+    assert lazy_response.json()["tool_loading_mode"] == "lazy"
+    assert lazy_response.json()["keywords"] == ["表格", "spreadsheet"]
+
+    stored = _connector_kind(test_db, "lazy-loading")
+    assert stored.json["spec"]["toolLoadingMode"] == "lazy"
+    assert stored.json["spec"]["keywords"] == ["表格", "spreadsheet"]
+
+    update_response = test_client.patch(
+        f"/api/admin/connector-apps/{stored.id}",
+        headers=_admin_headers(test_admin_token),
+        json={"tool_loading_mode": "static"},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["tool_loading_mode"] == "static"
+
+
+def test_legacy_loading_mode_names_are_normalized(
+    test_client: TestClient,
+    test_admin_token: str,
+):
+    legacy_static = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(slug="legacy-static", tool_loading_mode="direct"),
+    )
+    legacy_lazy = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(slug="legacy-lazy", tool_loading_mode="skill"),
+    )
+
+    assert legacy_static.status_code == 201
+    assert legacy_static.json()["tool_loading_mode"] == "static"
+    assert legacy_lazy.status_code == 201
+    assert legacy_lazy.json()["tool_loading_mode"] == "lazy"
+
+
+def test_admin_can_clear_registered_oauth_client(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+):
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="oauth-app",
+        name="OAuth App",
+        auth_type="oauth2",
+    )
+    spec = dict(app.row.json["spec"])
+    spec["oauthClientEncrypted"] = encrypt_sensitive_data(
+        json.dumps({"issuer": "https://oauth.example.test", "client_id": "client"})
+    )
+    app.row.json = {**app.row.json, "spec": spec}
+    test_db.commit()
+
+    response = test_client.patch(
+        f"/api/admin/connector-apps/{app.id}",
+        headers=_admin_headers(test_admin_token),
+        json={"clear_oauth_client": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["oauth_client_registered"] is False
+    stored = _connector_kind(test_db, "oauth-app")
+    assert "oauthClientEncrypted" not in stored.json["spec"]
+
+
+def test_admin_can_update_tool_allowlist_with_empty_oauth_scope(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+):
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="oauth-app",
+        name="OAuth App",
+        auth_type="oauth2",
+        oauth_scope=None,
+    )
+    allowlist = [
+        "list_bases",
+        "search_bases",
+        "get_base",
+        "list_tables",
+        "search_records",
+    ]
+
+    response = test_client.patch(
+        f"/api/admin/connector-apps/{app.id}",
+        headers=_admin_headers(test_admin_token),
+        json={"oauth_scope": None, "tool_allowlist": allowlist},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tool_allowlist"] == allowlist
+    assert response.json()["oauth_scope"] is None
+
+
+def test_discover_oauth_connector_requires_authorization(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+):
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="oauth-app",
+        name="OAuth App",
+        auth_type="oauth2",
+    )
+
+    response = test_client.post(
+        f"/api/admin/connector-apps/{app.id}/tools/discover",
+        headers=_admin_headers(test_admin_token),
+    )
+
+    assert response.status_code == 401
+    assert "requires authorization" in response.json()["detail"]
+
+
 def test_github_oauth_api_flow_connects_polls_and_disconnects(
     test_client: TestClient,
     test_db: Session,
@@ -161,6 +343,7 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         tool_allowlist=[],
     )
     sessions: dict[str, dict] = {}
+    callback_locks: set[str] = set()
 
     async def cache_set(key: str, value: dict, expire: int) -> bool:
         sessions[key] = dict(value)
@@ -170,11 +353,18 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         value = sessions.get(key)
         return dict(value) if value else None
 
+    async def cache_setnx(key: str, value: object, expire: int) -> bool:
+        if key in callback_locks:
+            return False
+        callback_locks.add(key)
+        return True
+
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
     monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
     monkeypatch.setattr(cache_manager, "set", cache_set)
     monkeypatch.setattr(cache_manager, "get", cache_get)
+    monkeypatch.setattr(cache_manager, "setnx", cache_setnx)
     monkeypatch.setattr(
         ConnectorOAuthService,
         "_exchange_code",
@@ -228,7 +418,14 @@ def test_role_visibility_is_enforced_for_user_catalog(
     test_user: User,
     test_token: str,
 ):
-    _create_app(test_db, test_admin_user, slug="public-app", name="Public")
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="public-app",
+        name="Public",
+        tool_loading_mode="lazy",
+        keywords=["tickets", "工单"],
+    )
     _create_app(
         test_db,
         test_admin_user,
@@ -246,10 +443,12 @@ def test_role_visibility_is_enforced_for_user_catalog(
     assert response.status_code == 200
     assert [item["slug"] for item in response.json()] == ["public-app"]
     assert response.json()[0]["connection"]["status"] == "connected"
+    # The settings search relies on real keywords from the user projection.
+    assert response.json()[0]["keywords"] == ["tickets", "工单"]
     assert test_user.role != "admin"
 
 
-def test_disabling_app_soft_deletes_connector_kind(
+def test_deleting_app_hard_deletes_kind_and_user_connections(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
@@ -281,20 +480,24 @@ def test_disabling_app_soft_deletes_connector_kind(
     )
 
     assert response.status_code == 204
-    row = test_db.query(Kind).filter(Kind.id == app.id).one()
-    assert row.is_active is False
-    assert row.json["spec"]["enabled"] is False
-    connection_row = (
+    test_db.expire_all()
+    assert test_db.query(Kind).filter(Kind.id == app.id).first() is None
+    assert (
         test_db.query(Kind)
         .filter(
             Kind.kind == CONNECTOR_CONNECTION_KIND,
             Kind.name == app.slug,
-            Kind.user_id == test_user.id,
         )
-        .one()
+        .first()
+        is None
     )
-    assert connection_row.is_active is False
-    assert connection_row.json["spec"]["accessTokenEncrypted"] is None
+    recreate_response = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(slug="disabled-app", name="Recreated app"),
+    )
+    assert recreate_response.status_code == 201
+    assert recreate_response.json()["slug"] == "disabled-app"
 
 
 def test_legacy_authorization_endpoints_stay_removed(
@@ -472,6 +675,93 @@ def test_apps_projection_lists_and_reads_callable_connector(
     )
 
 
+def test_expired_oauth_connector_remains_visible_but_not_callable(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    test_token: str,
+    monkeypatch,
+):
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="expired-oauth",
+        name="Expired OAuth",
+        auth_type="oauth2",
+        tool_allowlist=[],
+    )
+    app.row.json["spec"]["oauthClientEncrypted"] = encrypt_sensitive_data(
+        json.dumps(
+            {
+                "issuer": "https://oauth.example.test",
+                "resource": "https://mcp.example.test",
+                "token_endpoint": "https://oauth.example.test/token",
+                "client_id": "client-id",
+            }
+        )
+    )
+    test_db.commit()
+    connection = connector_connection_service.save_oauth_connection(
+        test_db,
+        slug=app.slug,
+        user_id=test_user.id,
+        access_token="expired-token",
+        refresh_token="refresh-token",
+        token_type="bearer",
+        granted_scopes=["user"],
+        external_account_name="dingtalk-user",
+        expires_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(seconds=1),
+    )
+    assert connection is not None
+
+    installed_response = test_client.get(
+        "/api/apps/list", headers=_admin_headers(test_token)
+    )
+    assert installed_response.status_code == 200
+    installed = [
+        item for item in installed_response.json()["data"] if item["id"] == app.slug
+    ][0]
+    assert installed["connection"]["status"] == "expired"
+    assert installed["callable"] is False
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "access_token": "refreshed-token",
+                "refresh_token": "next-refresh-token",
+                "expires_in": 7200,
+                "token_type": "bearer",
+            }
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(
+        "app.services.connector_oauth.create_connector_http_client",
+        lambda **_kwargs: Client(),
+    )
+    # The route is Rust-owned and cannot be exercised through the Python ASGI
+    # client. Verify the same refresh boundary; the Rust refresh handler has
+    # its own compatibility coverage.
+    refreshed = asyncio.run(
+        ConnectorOAuthService.refresh_connection(test_db, connection)
+    )
+    assert refreshed is not None
+    assert connector_connection_service.response(refreshed).status == "connected"
+
+
 def test_apps_projection_rejects_malformed_cursor(
     test_client: TestClient,
     test_token: str,
@@ -515,3 +805,60 @@ def test_admin_can_register_wegent_sites_mcp_connector(
     assert app.transport == "streamable-http"
     assert app.auth_type == "none"
     assert app.mcp_url == "https://sites.example.test/mcp"
+
+
+@pytest.mark.parametrize("raw_name", ["get_ticket", "members-only__get_ticket"])
+def test_admin_can_test_a_connector_app_restricted_to_other_roles(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_admin_token: str,
+    monkeypatch,
+    raw_name: str,
+):
+    """Catalog validation must not depend on the admin's own visibility."""
+    assert test_admin_user.role != "member"
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="members-only",
+        name="Members only",
+        transport="http",
+        mcp_url="https://tickets.example.test/api",
+        visibility="roles",
+        allowed_roles=["member"],
+        http_tools=[
+            {
+                "name": raw_name,
+                "description": "Get one ticket",
+                "method": "GET",
+                "path": "/tickets/{id}",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                },
+                "argument_locations": {"id": "path"},
+                "timeout_seconds": 20,
+            }
+        ],
+        tool_allowlist=[raw_name],
+    )
+
+    async def fake_call_http_tool(config, definition, arguments):
+        return (([{"type": "text", "text": "ok"}], None, False), 200)
+
+    monkeypatch.setattr(
+        ConnectorRuntimeService,
+        "_call_http_tool",
+        staticmethod(fake_call_http_tool),
+    )
+
+    response = test_client.post(
+        f"/api/admin/connector-apps/{app.id}/tools/test",
+        headers=_admin_headers(test_admin_token),
+        json={"name": raw_name, "arguments": {"id": "1"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["is_error"] is False

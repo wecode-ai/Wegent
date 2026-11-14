@@ -3,7 +3,8 @@ import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
-import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
@@ -143,9 +144,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     source: currentRuntimeTask,
     project: activePaneProject,
   })
+  const cloudConnection = useOptionalCloudConnection()
   const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
+    cloudConnection: {
+      apiBaseUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    },
     onResumeSend: async input => {
       await paneSession.sendContinuation(input)
     },
@@ -464,14 +470,26 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     />
                   )}
                   {connectorAuthRecovery.pending ? (
-                    <ConnectorAuthCard
-                      target={connectorAuthRecovery.pending.target}
-                      title={connectorAuthRecovery.pending.title}
-                      onSuccess={() => {
-                        void connectorAuthRecovery.completePending()
-                      }}
-                      onCancel={connectorAuthRecovery.clearPending}
-                    />
+                    connectorAuthRecovery.pending.cloud ? (
+                      <CloudConnectorAuthCard
+                        slug={connectorAuthRecovery.pending.cloud.slug}
+                        apiBaseUrl={cloudConnection.apiBaseUrl}
+                        token={cloudConnection.token}
+                        onSuccess={() => {
+                          void connectorAuthRecovery.completePending()
+                        }}
+                        onCancel={connectorAuthRecovery.clearPending}
+                      />
+                    ) : (
+                      <ConnectorAuthCard
+                        target={connectorAuthRecovery.pending.target}
+                        title={connectorAuthRecovery.pending.title}
+                        onSuccess={() => {
+                          void connectorAuthRecovery.completePending()
+                        }}
+                        onCancel={connectorAuthRecovery.clearPending}
+                      />
+                    )
                   ) : (
                     <RequestUserInputComposer
                       payload={pendingRequestUserInput}

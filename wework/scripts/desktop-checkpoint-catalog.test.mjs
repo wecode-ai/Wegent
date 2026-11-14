@@ -11,11 +11,58 @@ import {
   loadDesktopCheckpointCatalog,
   readDesktopCheckpointDefinitions,
 } from '../e2e/desktop/checkpoint-catalog.mjs'
-import { expandDesktopCheckpoints } from '../e2e/desktop/checkpoints.mjs'
+import { desktopCheckpointArgs, expandDesktopCheckpoints } from '../e2e/desktop/checkpoints.mjs'
 import { UPGRADE_CHECKPOINTS } from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = new URL('../../', import.meta.url)
 const definitions = readDesktopCheckpointDefinitions()
+
+test('sequential and parallel cloud scenarios never receive conflicting only modes', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  for (const checkpoint of ['connector-oauth', 'connector-account-switch']) {
+    assert.ok(catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint))
+    assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has(checkpoint))
+    assert.deepEqual(desktopCheckpointArgs(checkpoint), ['--segment', checkpoint])
+    assert.deepEqual(desktopCheckpointArgs(checkpoint, 'cloud'), ['--segment', checkpoint])
+  }
+  const ordinaryCloud = [...catalog.CLOUD_ONLY_CHECKPOINTS].find(
+    checkpoint => !catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+  )
+  assert.ok(ordinaryCloud)
+  assert.deepEqual(desktopCheckpointArgs(ordinaryCloud), [
+    '--cloud-only',
+    '--segment',
+    ordinaryCloud,
+  ])
+  assert.deepEqual(desktopCheckpointArgs(ordinaryCloud, 'core'), ['--segment', ordinaryCloud])
+  assert.throws(() => desktopCheckpointArgs(ordinaryCloud, 'unknown'), /scope must be/)
+})
+
+test('Connector account isolation is selectable and runs inside the existing cloud OAuth checkpoint', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  assert.deepEqual(expandDesktopCheckpoints(['connector-account-switch']), [
+    'connector-account-switch',
+  ])
+  assert.ok(catalog.DESKTOP_CHECKPOINTS.includes('connector-account-switch'))
+  assert.equal(
+    catalog.DESKTOP_CHECKPOINT_CI_HOSTS.get('connector-account-switch'),
+    'connector-oauth'
+  )
+  assert.equal(
+    catalog.CHECKPOINT_SCENARIO_MODULES['connector-account-switch'],
+    './scenarios/connector-oauth.scenario.mjs'
+  )
+  assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has('connector-account-switch'))
+  assert.ok(catalog.ci.cloud_shards[7].split(',').includes('connector-oauth'))
+  assert.equal(catalog.ci.cloud_segments.includes('connector-account-switch'), false)
+  for (const path of [
+    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/modules/connector-account-switch.mjs',
+    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
+  ]) {
+    assert.ok(catalog.PATH_TARGETS.get(path)?.includes('cloud:connector-oauth'), path)
+  }
+})
 
 test('every registered checkpoint retains a real module and a CI execution owner', () => {
   const catalog = loadDesktopCheckpointCatalog()
@@ -172,6 +219,21 @@ test('a feature config selects its existing shard rather than all desktop suites
   })
   assert.equal(result.wework_desktop_cloud_e2e, 'false')
   assert.equal(result.wework_desktop_other_e2e, 'false')
+})
+
+test('Connector fixture and standalone checkpoint edits select only their existing cloud host', () => {
+  for (const path of [
+    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/modules/connector-account-switch.mjs',
+    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
+  ]) {
+    const result = classified(path)
+    assert.deepEqual(JSON.parse(result.wework_desktop_cloud_e2e_matrix), {
+      include: [{ id: 'cloud-8', name: 'Cloud / shard 8', segments: 'connector-oauth' }],
+    })
+    assert.equal(result.wework_desktop_core_e2e, 'false')
+    assert.equal(result.wework_desktop_other_e2e, 'false')
+  }
 })
 
 test('plugin cache changes retain the recovery scenario in its existing cloud shard', () => {

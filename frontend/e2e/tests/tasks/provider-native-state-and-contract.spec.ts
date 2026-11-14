@@ -69,9 +69,10 @@ test.describe('Provider-native binding state and contracts', () => {
     await request.post(`${PROVIDER_NATIVE_MOCK_URL}/clear-requests`)
     const missingPrompt = makePrompt('012-missing', '输出唯一断言标记。')
     const modalLink = 'wegent://modal/mcp-provider-config?provider=dingtalk&service=docs'
+    const authorizationLink = 'wegent://modal/connector-oauth?slug=dingtalk_docs'
     await scenario(request, missingPrompt, [
       {
-        responseContent: `当前会话还没有可用的钉钉文档 MCP。请点击 [打开钉钉文档 MCP 配置弹窗](${modalLink}) 完成配置。`,
+        responseContent: `当前会话还没有可用的钉钉文档 MCP。请点击 [打开钉钉文档授权](${authorizationLink}) 完成授权。已有个人 MCP 的用户也可以 [打开钉钉文档 MCP 配置弹窗](${modalLink})。`,
       },
     ])
     const guidanceTask = await sendCurrentTask(page, request, missingPrompt)
@@ -81,12 +82,22 @@ test.describe('Provider-native binding state and contracts', () => {
     const missingRequestText = modelRequestText(missingBodies)
     const missingToolNames = modelToolNames(missingBodies)
     expect(missingBodies.length).toBeGreaterThan(0)
-    expect(missingRequestText).toContain('Configuration Required')
-    expect(missingRequestText).toContain(modalLink)
+    expect(missingRequestText).toContain('These apps need authorization')
+    expect(missingRequestText).toContain(authorizationLink)
+    expect(missingRequestText).toContain('Do not claim access before authorization')
     expect(missingToolNames.some(name => name.includes('dingtalk-docs'))).toBe(false)
     expect(missingToolNames.some(name => /knowledge_search$/.test(name))).toBe(false)
     expect(extractTaskAnswer(guidanceTask)).toContain(modalLink)
     expect(extractTaskAnswer(guidanceTask)).not.toContain(DINGTALK_D1)
+    const authorizationEntry = page.getByRole('link', { name: '打开钉钉文档授权' })
+    await expect(authorizationEntry).toHaveAttribute('href', authorizationLink)
+    await authorizationEntry.click()
+    const connectorDialog = page.getByTestId('connector-oauth-dialog')
+    await expect(connectorDialog).toBeVisible()
+    await expect(connectorDialog.getByTestId('connector-oauth-authorize')).toBeEnabled()
+    await connectorDialog.getByTestId('connector-oauth-cancel').click()
+    await expect(connectorDialog).toBeHidden()
+    // Existing personal MCP configuration remains an independent supported path.
     await expect(page.getByRole('link', { name: '打开钉钉文档 MCP 配置弹窗' })).toHaveAttribute(
       'href',
       modalLink

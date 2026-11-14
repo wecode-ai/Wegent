@@ -20,6 +20,7 @@ from app.schemas.connector import (
 )
 from app.services.connector_apps import connector_app_service
 from app.services.connector_runtime import connector_runtime_service
+from shared.utils.connector_tools import qualify_connector_tool
 
 router = APIRouter(prefix="/connector-apps")
 
@@ -63,9 +64,9 @@ async def discover_connector_tools(
     if app.transport == "http":
         tools = connector_runtime_service._http_tools(app)
     else:
-        upstream_tools = await connector_runtime_service._upstream_tools(db, app, admin)
+        discovery = await connector_runtime_service._upstream_tools(db, app, admin)
         tools = []
-        for tool in upstream_tools:
+        for tool in discovery.tools:
             tools.append(connector_runtime_service._tool_from_upstream(app, tool))
     return ConnectorToolListResponse(tools=tools)
 
@@ -78,13 +79,15 @@ async def test_connector_tool(
     admin: User = Depends(get_admin_user),
 ) -> ConnectorToolCallResponse:
     app = connector_app_service.get_app(db, app_id)
-    tool_name = (
-        payload.name
-        if payload.name.startswith(f"{app.slug}__")
-        else f"{app.slug}__{payload.name}"
-    )
+    tool_name = qualify_connector_tool(app.slug, payload.name)
     content, structured_content, is_error = await connector_runtime_service.call_tool(
-        db, admin, tool_name, payload.arguments
+        db,
+        admin,
+        tool_name,
+        payload.arguments,
+        # Admins validate catalog apps, including ones restricted to roles they
+        # do not hold.
+        enforce_visibility=False,
     )
     return ConnectorToolCallResponse(
         content=content,
@@ -107,11 +110,11 @@ def update_connector_app(
 
 
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
-def disable_connector_app(
+def delete_connector_app(
     app_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ) -> Response:
     app = connector_app_service.get_app(db, app_id)
-    connector_app_service.disable_app(db, app)
+    connector_app_service.delete_app(db, app)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

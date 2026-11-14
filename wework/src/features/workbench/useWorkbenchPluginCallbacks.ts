@@ -177,18 +177,13 @@ export function useListLocalApps({
                 const connected = installedConnectors.apps.filter(
                   app => app.enabled && app.callable
                 )
-                const synced = await requestLocalExecutor<{
+                // Inventory reads must not mutate the runtime connector surface.
+                // The cloud bridge owns revisioned synchronization and consent.
+                const runtime = await requestLocalExecutor<{
                   apps: Array<{ slug: string; skillPath: string }>
-                }>('runtime.connectors.apps.sync', {
-                  apps: connected.map(app => ({
-                    slug: app.slug,
-                    name: app.runtime_name ?? app.slug,
-                    description: app.description ?? '',
-                    tools: app.tool_summaries ?? [],
-                  })),
-                })
+                }>('runtime.connectors.status')
                 if (!isCurrent() || !pluginInventoryReadIsCurrent(cacheKey, snapshot)) return
-                const paths = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+                const paths = new Map(runtime.apps.map(app => [app.slug, app.skillPath]))
                 if (getPluginMarketplaceCache(cacheKey)?.deviceId !== deviceId) return
                 writePluginInventory(cacheKey, deviceId, {
                   connectorApps: connected

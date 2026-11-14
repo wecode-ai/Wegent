@@ -122,6 +122,19 @@ pub struct BuildExecutionRequestInput<'a> {
 const WEB_RUNTIME_GUIDANCE_MARKER: &str = "<wegent_runtime_guidance>";
 const WEB_RUNTIME_GUIDANCE_CLOSE: &str = "</wegent_runtime_guidance>";
 
+fn execution_device_id<'a>(task: &'a Value, workspace: &'a Value) -> Option<&'a str> {
+    task.pointer("/spec/device_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .or_else(|| {
+            workspace
+                .pointer("/project/device_id")
+                .and_then(Value::as_str)
+                .filter(|device| !device.is_empty())
+        })
+}
+
 /// `_append_web_runtime_guidance` (`request_builder.py:1023-1082`): inject the
 /// Wegent web UI runtime guidance into the system prompt.
 async fn with_web_runtime_guidance(
@@ -136,21 +149,8 @@ async fn with_web_runtime_guidance(
     }
     let project_workspace = workspace.get("project").cloned().unwrap_or(Value::Null);
     // `_extract_task_device_id(task) or project_workspace.get("device_id")`.
-    let task_device_id = input
-        .task_json
-        .pointer("/spec/device_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            project_workspace
-                .get("device_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        });
-    let device_type = match task_device_id.as_deref() {
+    let task_device_id = execution_device_id(input.task_json, workspace);
+    let device_type = match task_device_id {
         Some(device_id) => web_runtime_device_type(state, input.user_id, device_id).await,
         None => None,
     };
@@ -946,21 +946,10 @@ async fn build_request_with_runtime(
 
     let mut bot_configs = vec![leader];
     bot_configs.append(&mut member_configs);
-    if super::skills::is_coding_shell(&shell_type) {
-        if coordinate_team {
-            super::background::merge_leader_capabilities(&mut bot_configs);
-            for bot in &mut bot_configs {
-                super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
-            }
-        }
-        if compile_coding_mcp {
-            let leader = &mut bot_configs[0];
-            let mut servers = leader["mcp_servers"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            super::skills::append_coding_mcp(&mut servers, &skills, &shell_type);
-            leader["mcp_servers"] = Value::Array(servers);
+    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
+        super::background::merge_leader_capabilities(&mut bot_configs);
+        for bot in &mut bot_configs {
+            super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
         }
     }
 
@@ -1130,6 +1119,26 @@ async fn build_request_with_runtime(
         &input.team.namespace,
     )
     .await?;
+    let has_local_device = execution_device_id(input.task_json, &request.workspace).is_some();
+    super::connectors::attach(&state.mysql, &mut request, has_local_device).await?;
+    // Compile only after late Skill resolution and connector authorization
+    // have established the final tool surface. Otherwise stale personal MCP
+    // servers can survive in the Bot even after a connector supersedes them.
+    if compile_coding_mcp && super::skills::is_coding_shell(&shell_type) {
+        let mut servers = request.bot[0]["mcp_servers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        super::skills::append_coding_mcp(
+            &mut servers,
+            &super::skills::BotSkills {
+                skills: request.skill_configs.clone(),
+                ..Default::default()
+            },
+            &shell_type,
+        );
+        request.bot[0]["mcp_servers"] = Value::Array(servers);
+    }
     if coordinate_team && super::skills::is_coding_shell(&shell_type) {
         coordinate::keep_compiled_mcp_servers(&mut request);
     }

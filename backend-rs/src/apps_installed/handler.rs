@@ -20,7 +20,13 @@ const INVALID_CREDENTIALS: &str = "Could not validate credentials";
 const APPS_MISSING: &str = "Wegent-Apps-Not-Authenticated";
 const APPS_INACTIVE: &str = "Wegent-Apps-User-Inactive";
 
-struct InstalledAppsUser(UserRow);
+pub(crate) struct InstalledAppsUser(UserRow);
+
+impl InstalledAppsUser {
+    pub(crate) fn into_row(self) -> UserRow {
+        self.0
+    }
+}
 
 impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
     async fn authenticate<'a>(
@@ -83,14 +89,16 @@ impl brz_http_server::Authenticator<InstalledAppsUser> for AppAuthenticator {
 async fn installed_apps(
     #[inject(state)] state: &Arc<AppState>,
     #[auth] user: InstalledAppsUser,
+    #[header("x-connector-loading")] loading: Option<&str>,
 ) -> Result<super::models::InstalledResponse, crate::http_compat::FastApiError> {
-    apps(state, user.0).await
+    apps(state, user.0, loading == Some("compact")).await
 }
 
 /// Handler body for `GET /api/apps/installed`.
 async fn apps(
     state: &Arc<AppState>,
     user: UserRow,
+    compact: bool,
 ) -> Result<super::models::InstalledResponse, crate::http_compat::FastApiError> {
     // `installed_apps` reads the app catalog twice: once inside tool
     // discovery and once for the projection loop, mirroring the two
@@ -109,7 +117,7 @@ async fn apps(
         })?;
     let apps: Vec<ConnectorApp> = rows.iter().map(service::row_to_app).collect();
     let _ = discovery_rows;
-    service::installed_apps(&state.mysql, &apps, &user)
+    service::installed_apps(&state.mysql, &apps, &user, compact)
         .await
         .map_err(|error| {
             tracing::error!(%error, "installed apps projection failed");

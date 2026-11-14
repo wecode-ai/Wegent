@@ -1087,6 +1087,34 @@ def test_provider_skill_frontmatter_matches_runtime_mcp_resolution(
     assert request.provider_native_knowledge is True
 
 
+def test_connector_managed_skill_keeps_the_legacy_personal_url() -> None:
+    """Historical API-key users keep their personal MCP URL in the Skill."""
+    skill_path = (
+        Path(__file__).resolve().parents[3].parent
+        / "backend-rs"
+        / "init_data"
+        / "skills"
+        / "dingtalk-docs"
+        / "SKILL.md"
+    )
+    frontmatter = yaml.safe_load(
+        skill_path.read_text(encoding="utf-8").split("---", 2)[1]
+    )
+    skill_config = {"name": "dingtalk-docs", **frontmatter}
+
+    servers = extract_skill_mcp_servers([skill_config])
+    assert [server["name"] for server in servers] == ["dingtalk-docs_dingtalk_docs"]
+
+    request = ExecutionRequest(
+        bot=[{"shell_type": "ClaudeCode", "mcp_servers": servers}],
+        skill_names=["dingtalk-docs"],
+        skill_configs=[skill_config],
+    )
+    activate_provider_native_knowledge(request, ["dingtalk-docs"])
+
+    assert request.provider_native_knowledge is True
+
+
 def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
     skill_path = (
         Path(__file__).resolve().parents[3].parent
@@ -1108,7 +1136,7 @@ def test_wegent_skill_does_not_broaden_selected_knowledge_queries() -> None:
 
 def test_dingtalk_skill_only_describes_provider_adapter_behavior() -> None:
     skill_path = (
-        Path(__file__).resolve().parents[3].parent
+        Path(__file__).resolve().parents[4]
         / "backend-rs"
         / "init_data"
         / "skills"
@@ -1140,7 +1168,7 @@ def test_activate_provider_native_knowledge_requires_skill_mcp() -> None:
 
 
 @pytest.mark.parametrize("shell_type", ["Chat", "Codex", "ClaudeCode"])
-def test_activate_provider_native_knowledge_allows_user_config_guidance(
+def test_activate_provider_native_knowledge_rejects_unmounted_connector(
     shell_type: str,
 ) -> None:
     request = ExecutionRequest(
@@ -1154,9 +1182,11 @@ def test_activate_provider_native_knowledge_allows_user_config_guidance(
         ],
     )
 
-    activate_provider_native_knowledge(request, ["dingtalk-docs"])
-
-    assert request.provider_native_knowledge is True
+    with pytest.raises(HTTPException) as exc_info:
+        activate_provider_native_knowledge(request, ["dingtalk-docs"])
+    assert exc_info.value.status_code == 503
+    assert "no enabled MCP URL" in exc_info.value.detail
+    assert request.provider_native_knowledge is False
 
 
 @pytest.mark.parametrize(

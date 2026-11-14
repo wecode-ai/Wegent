@@ -23,6 +23,10 @@
 
 mod auth;
 mod handler;
+pub(crate) mod loading;
 mod models;
 mod service;
 mod token;
+
+#[cfg(test)]
+pub(crate) use service::list_tools as list_tools_for_test;
