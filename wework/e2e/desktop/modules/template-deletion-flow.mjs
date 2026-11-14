@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from './collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { reloadMainWindow } from './workspace-flows.mjs'
@@ -28,6 +29,7 @@ export async function verifyTemplateDeletion(control, { request, captureScreensh
   )
   const document = structuredClone(definitions[0])
   document.spec.displayName = `待删除的导入模板-${process.pid}`
+  await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
   await control.command('click', selector('collaboration-primary-templates'))
   await control.command('click', selector('template-import-open'))
   await control.command('selectFile', selector('template-import-file'), {
@@ -62,7 +64,9 @@ export async function verifyTemplateDeletion(control, { request, captureScreensh
   await request(`/api/v1/collaboration-templates/${imported.id}`, 'GET', undefined, undefined, 404)
   await request(`/api/v1/collaboration-templates/${imported.id}`, 'DELETE')
   await reloadMainWindow(control, 'Deleted template must stay deleted after reload')
+  await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
   await control.command('waitFor', selector('collaboration-primary-templates'))
+  await revealCollaborationSidebarElement(control, selector('collaboration-primary-templates'))
   await control.command('click', selector('collaboration-primary-templates'))
   await control.command('waitFor', selector('collaboration-template-page'))
   await control.command('click', selector('template-tab-mine'))

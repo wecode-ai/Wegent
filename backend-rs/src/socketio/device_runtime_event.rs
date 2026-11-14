@@ -97,6 +97,7 @@ pub fn live_channel(user_id: i64, device_id: &str, task_id: &str) -> String {
 #[must_use]
 pub fn working_envelope(data: &Map<String, Value>, logical_device_id: &str) -> Value {
     let mut envelope = data.clone();
+    envelope.remove("appRemoteTaskAccessEnabled");
     match envelope.get("payload") {
         Some(Value::Object(nested)) => {
             let mut nested = nested.clone();
@@ -121,17 +122,56 @@ pub fn working_envelope(data: &Map<String, Value>, logical_device_id: &str) -> V
 pub async fn forward(
     state: &AppState,
     runtime: &std::sync::Arc<SocketRuntime>,
-    user_id: i64,
-    device_id: &str,
-    logical_device_id: &str,
+    session: &super::session::SessionSnapshot,
     data: &Map<String, Value>,
 ) -> Result<Value, crate::BoxError> {
+    let user_id = session.user_id;
+    let device_id = session
+        .device
+        .device_id
+        .as_deref()
+        .expect("registered device");
+    let logical_device_id = session
+        .device
+        .logical_device_id
+        .as_deref()
+        .unwrap_or(device_id);
+    let personal_allowed = super::runtime_rpc_policy::personal_events_allowed(
+        session.device.device_type == Some(super::device::DeviceType::App),
+        data.get("appRemoteTaskAccessEnabled"),
+    );
     let envelope = working_envelope(data, logical_device_id);
     log_terminal_relay(&envelope, user_id, device_id, "received");
-    if let Some(identity) = RuntimeIdentity::parse(&envelope)
+    let project_message = project_event(state, runtime, user_id, device_id, &envelope).await?;
+    let relay_envelope = if session.device.device_type == Some(super::device::DeviceType::App) {
+        working_envelope(envelope.as_object().expect("event object"), device_id)
+    } else {
+        envelope.clone()
+    };
+    if personal_allowed || project_message {
+        relay_runtime_event(state, runtime, user_id, &relay_envelope).await;
+    }
+    if personal_allowed {
+        publish_live(state, user_id, device_id, &relay_envelope).await;
+    }
+    forward_channel_event(state, logical_device_id, &envelope).await;
+    notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
+    log_terminal_relay(&envelope, user_id, device_id, "forwarded");
+    Ok(accepted())
+}
+
+async fn project_event(
+    state: &AppState,
+    runtime: &std::sync::Arc<SocketRuntime>,
+    user_id: i64,
+    device_id: &str,
+    envelope: &Value,
+) -> Result<bool, crate::BoxError> {
+    if let Some(identity) = RuntimeIdentity::parse(envelope)
         && let Some(projected) =
             runtime_projection::project(state, runtime, user_id, device_id, &identity).await?
     {
+        let project_message = python_truthy(&projected.message);
         if let Some((activity, allow_review)) = &projected.terminal_activity {
             match crate::background_jobs::robot::project_runtime_completion(
                 &state.mysql,
@@ -158,25 +198,30 @@ pub async fn forward(
             }
         }
         emit_project_chat(state, runtime, &projected).await;
+        return Ok(project_message);
     }
+    Ok(false)
+}
+
+async fn relay_runtime_event(
+    state: &AppState,
+    runtime: &std::sync::Arc<SocketRuntime>,
+    user_id: i64,
+    envelope: &Value,
+) {
     // `sio.emit` delivers to local sockets first (`_handle_emit`) and then
     // publishes through the Redis adapter.
-    if let Err(error) = runtime.emitters().runtime_event(user_id, &envelope).await {
+    if let Err(error) = runtime.emitters().runtime_event(user_id, envelope).await {
         tracing::warn!(%error, user_id, "runtime:event local delivery failed");
     }
     publish_room_event(
         state,
         RUNTIME_EVENT,
-        &envelope,
+        envelope,
         RUNTIME_NAMESPACE,
         &runtime_user_room(user_id),
     )
     .await;
-    publish_live(state, user_id, device_id, &envelope).await;
-    forward_channel_event(state, logical_device_id, &envelope).await;
-    notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
-    log_terminal_relay(&envelope, user_id, device_id, "forwarded");
-    Ok(accepted())
 }
 
 fn log_terminal_relay(envelope: &Value, user_id: i64, device_id: &str, phase: &str) {
@@ -634,6 +679,22 @@ mod tests {
             envelope.get("payload").unwrap(),
             &json!({"deviceId": "logical-7", "device_id": "logical-7"})
         );
+    }
+
+    #[test]
+    fn consent_markers_stay_private_and_app_readers_get_the_record_route() {
+        let data = json!({
+            "event": "response.output_text.delta",
+            "appRemoteTaskAccessEnabled": true,
+            "payload": {"taskId": "task-1", "deviceId": "reported-id"}
+        });
+        let persisted = working_envelope(data.as_object().unwrap(), "logical-id");
+        let relayed = working_envelope(persisted.as_object().unwrap(), "app-record-72");
+        assert!(relayed.get("appRemoteTaskAccessEnabled").is_none());
+        assert_eq!(persisted["payload"]["deviceId"], "logical-id");
+        assert_eq!(relayed["payload"]["deviceId"], "app-record-72");
+        assert_eq!(relayed["payload"]["device_id"], "app-record-72");
+        assert_eq!(relayed["payload"]["taskId"], "task-1");
     }
 
     #[test]

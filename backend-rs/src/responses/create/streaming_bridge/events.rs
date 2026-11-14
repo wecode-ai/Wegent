@@ -550,6 +550,25 @@ impl ResponseState {
         }
     }
 
+    pub(super) fn use_committed_result(
+        &mut self,
+        queue: &mut VecDeque<Bytes>,
+        result: Option<&Value>,
+    ) {
+        self.response_blocks.clear();
+        self.result_blocks(queue, result);
+        if let Some(text) = result
+            .and_then(|result| result.get("value"))
+            .and_then(Value::as_str)
+        {
+            if !text.is_empty() && !self.message_started {
+                self.handle_chunk(queue, Chunk::Text(text.to_owned()));
+            } else {
+                self.accumulated_text = text.to_owned();
+            }
+        }
+    }
+
     /// Close the text output item and emit `response.completed`/`failed`.
     pub(super) fn finish(
         &mut self,

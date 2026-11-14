@@ -22,6 +22,7 @@ import {
 } from "./issueAssigneeResources";
 
 export interface SharedIssueDetailTaskBinding {
+  stand_in_pending?: boolean | null;
   id: string;
   cloud_project_id: string;
   loop_item_id: string | null;
@@ -99,6 +100,7 @@ export interface SharedIssueDetailAgent {
 }
 
 export interface SharedIssueDetailCreateInput {
+  request_id?: string;
   milestone_id?: string | null;
   title: string;
   description?: string;
@@ -248,6 +250,7 @@ export function toSharedIssueDetailTaskBinding(
     executionContext: binding.executionContext,
     binding_type: binding.bindingType,
     human_assignment_id: binding.humanAssignmentId,
+    stand_in_pending: binding.standInPending,
     dispatch_id: binding.dispatchId,
     linked_at: binding.linkedAt,
   };
@@ -336,6 +339,9 @@ export function createSharedIssueDetailPort(
       get: api.issues.get,
       create: (projectId, input) =>
         api.issues.create(projectId, {
+          ...(input.request_id !== undefined
+            ? { requestId: input.request_id }
+            : {}),
           milestoneId: input.milestone_id,
           title: input.title,
           ...(input.description !== undefined

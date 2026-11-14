@@ -23,6 +23,7 @@ export function localCodexModelSource(model: {
       codexProviderName: model.providerName,
       codexProviderType: model.providerType,
       ui: {
+        controls: ['speed'],
         family:
           model.providerType === 'provider'
             ? `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
@@ -84,7 +85,6 @@ export function localCodexModel(
       ui: {
         ...source.config.ui,
         modelLabel,
-        controls: ['speed'],
       },
     },
     runtime: {

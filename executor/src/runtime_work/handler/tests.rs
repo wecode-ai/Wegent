@@ -57,6 +57,9 @@ mod runtime_rpc_tests;
 #[path = "text_generation_tests.rs"]
 mod text_generation_tests;
 
+#[path = "default_work_item_projection_tests.rs"]
+mod default_work_item_projection_tests;
+
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 #[path = "workspace_identity_tests.rs"]
@@ -325,40 +328,6 @@ async fn create_task_persists_collaboration_member_runtime_profiles() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[tokio::test]
-async fn default_work_item_binding_uses_the_handler_store_path() {
-    let root = temp_runtime_work_index_path("default-work-item-store").with_extension("directory");
-    let database_path = root.join("tasks.sqlite");
-    let handler = RuntimeWorkRpcHandler {
-        task_store_path: Arc::new(database_path.clone()),
-        ..RuntimeWorkRpcHandler::new("device-1", "/bin/false")
-    };
-
-    handler.track_default_work_item_async(
-        "runtime-task-1".to_owned(),
-        "Executor-owned Issue".to_owned(),
-        "Created after runtime acceptance".to_owned(),
-    );
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        if database_path.exists() {
-            let store = LocalTaskStore::open(&database_path).unwrap();
-            if let Ok(binding) = store.find_system_task_binding("device-1", "runtime-task-1") {
-                assert_eq!(binding.task_title.as_deref(), Some("Executor-owned Issue"));
-                break;
-            }
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "executor-owned binding was not written to the handler store"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-
-    let _ = fs::remove_dir_all(root);
-}
-
 #[test]
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -379,16 +348,16 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
         Value::String("/tmp/source".to_owned()),
     );
 
-    handler.reserve_worktree_preparation(&turn);
+    handler.reserve_turn_preparation(&turn);
 
-    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+    assert!(handler.cancel_preparing_turn("task-1"));
     assert_eq!(
         handler
-            .preparing_worktree_turns
+            .preparing_turns
             .lock()
-            .expect("preparing worktree turn map lock should not be poisoned")
+            .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
-        Some(&PreparingWorktreeTurn {
+        Some(&PreparingTurn {
             cancellation_requested: true
         })
     );
@@ -413,7 +382,7 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
         "deferred_worktree_source_path".to_owned(),
         Value::String("/tmp/source".to_owned()),
     );
-    handler.reserve_worktree_preparation(&turn);
+    handler.reserve_turn_preparation(&turn);
 
     let waiter = {
         let handler = handler.clone();
@@ -427,9 +396,9 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
     assert!(!waiter.is_finished());
 
     handler
-        .preparing_worktree_turns
+        .preparing_turns
         .lock()
-        .expect("preparing worktree turn map lock should not be poisoned")
+        .expect("preparing turn map lock should not be poisoned")
         .remove("task-1");
 
     assert!(waiter.await.expect("preparation waiter should finish"));
@@ -482,8 +451,8 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         plan.path.display().to_string(),
         "Task".to_owned(),
     ));
-    handler.reserve_worktree_preparation(&turn);
-    assert!(handler.cancel_preparing_worktree_turn("task-1"));
+    handler.reserve_turn_preparation(&turn);
+    assert!(handler.cancel_preparing_turn("task-1"));
 
     handler
         .prepare_and_start_reserved_turn(turn)
@@ -2589,6 +2558,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
             turn_id: "turn-1".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
@@ -2700,6 +2670,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
             turn_id: "turn-stale".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-stale".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "stale".to_owned(),
@@ -3463,6 +3434,7 @@ fn completed_responses_use_the_active_codex_turn_id() {
                 turn_id: "turn-1".to_owned(),
             }),
             Ok(crate::agents::CodexAppServerTurn {
+                quota_recovery: None,
                 thread_id: format!("thread-{case}"),
                 outcome,
                 response_item_id: response_item_id.clone(),
@@ -3532,6 +3504,7 @@ fn failed_responses_emit_runtime_turn_duration() {
             turn_id: "turn-failed-duration".to_owned(),
         }),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-failed-duration".to_owned(),
             outcome: ExecutionOutcome::Failed {
                 message: "upstream failed".to_owned(),

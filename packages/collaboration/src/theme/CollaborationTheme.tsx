@@ -21,19 +21,25 @@ const ThemeContext = createContext<ThemeSurfaceProps>({ className: "" });
 export function CollaborationTheme({
   mode,
   appearance,
+  variables,
   children,
 }: {
   mode: ResolvedAppearanceMode;
   appearance?: ThemeAppearance;
+  variables?: Readonly<Record<`--${string}`, string>>;
   children: ReactNode;
 }) {
   const surface = useMemo<ThemeSurfaceProps>(
     () => ({
       className: `collaboration-theme${mode === "dark" ? " dark" : ""}`,
       "data-theme": mode,
-      style: { ...resolveThemeVariables(mode, appearance), colorScheme: mode },
+      style: {
+        ...resolveThemeVariables(mode, appearance),
+        ...variables,
+        colorScheme: mode,
+      },
     }),
-    [mode, appearance],
+    [mode, appearance, variables],
   );
   return (
     <ThemeContext.Provider value={surface}>

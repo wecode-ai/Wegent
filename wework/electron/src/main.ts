@@ -19,6 +19,7 @@ import {
 import { mainProcessLog } from './host/main-process-log.js'
 import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup-progress.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
+import { rendererConsoleDiagnostic } from './host/renderer-console-diagnostic.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 import { VerificationDevtools } from './host/verification-devtools.js'
@@ -101,6 +102,7 @@ import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { captureProcessExplorerWindowSnapshot } from './host/process-explorer-window-snapshot.js'
+import { setE2EWindowSize } from './host/e2e-window-size.js'
 import { desktopWindowFrameOptions, startupWindowLayout } from './host/window-layout.js'
 import { MainWindowStateController } from './host/main-window-state.js'
 import { prepareStartupMainWindow } from './host/startup-window-handoff.js'
@@ -599,16 +601,18 @@ app.on('web-contents-created', (_event, contents) => {
     }
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
       console.info(redactLog(message).slice(0, 4096))
-    if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
-      recordReleaseDiagnostic('renderer-error', {
-        message: redactLog(message).slice(0, 4096),
-        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
-      })
-      console.warn('[renderer-error]', {
+    const diagnostic = rendererConsoleDiagnostic({
+      e2e: process.env.VITE_WEWORK_E2E === 'true',
+      level,
+      message,
+      sourceId,
+    })
+    if (diagnostic) {
+      recordReleaseDiagnostic(diagnostic.type, diagnostic.data)
+      console.warn(`[${diagnostic.type}]`, {
         webContentsId: contents.id,
-        message: redactLog(message).slice(0, 4096),
+        ...diagnostic.data,
         lineNumber,
-        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
       })
     }
     // Keep renderer warnings and errors raised while the splash is still up;
@@ -2700,6 +2704,13 @@ async function configureDesktopRuntime(): Promise<void> {
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           startupSplashInspect: () => startupSplashObserver?.inspect() ?? startupSplashInspection(),
           startupSplashClick: testId => clickStartupSplash(startupSplashWindow, testId),
+          startupSplashSize: (width, height) => {
+            const target = startupSplashWindow
+            if (!target || target.isDestroyed()) {
+              throw new Error('Startup splash is unavailable for resizing')
+            }
+            return setE2EWindowSize(target, width, height)
+          },
           startupLogPath: path => app.setPath('logs', path ?? applicationLogDirectory),
           closeStartupSplash: () => {
             const target = startupSplashWindow

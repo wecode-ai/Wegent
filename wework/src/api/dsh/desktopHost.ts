@@ -18,6 +18,13 @@ export class DesktopHostError extends Error {
   }
 }
 
+export class DesktopHostTransportError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'DesktopHostTransportError'
+  }
+}
+
 export interface DesktopHostEvent {
   sequence: number
   type: string
@@ -40,6 +47,7 @@ const desktopHostEventHistory: DesktopHostEvent[] = []
 const MAX_DESKTOP_HOST_EVENT_HISTORY = 1024
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
 const DESKTOP_HOST_EVENT_POLL_INTERVAL_MS = 500
+const ATTACHMENT_REQUEST_TIMEOUT_MS = 15_000
 let desktopHostEventAfter = loadDesktopHostEventCursor()
 let desktopHostEventLoop: Promise<void> | null = null
 let desktopHostEventLoopGeneration = 0
@@ -62,16 +70,38 @@ export async function invokeDesktopHost<Result>(
     )
   }
   const pendingDiagnostic = e2e ? setTimeout(() => diagnostic('pending'), 1_000) : undefined
+  const attachmentRequest = capability.startsWith('attachment.')
+  const abortController = attachmentRequest ? new AbortController() : undefined
+  const requestTimeout = abortController
+    ? setTimeout(() => abortController.abort(), ATTACHMENT_REQUEST_TIMEOUT_MS)
+    : undefined
   try {
-    const response = await fetch('/wework/electron-host/v1/invoke', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ capability, params }),
-    })
-    const body = (await response.json()) as {
+    let response: Response
+    try {
+      response = await fetch('/wework/electron-host/v1/invoke', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ capability, params }),
+        ...(abortController ? { signal: abortController.signal } : {}),
+      })
+    } catch (error) {
+      throw new DesktopHostTransportError(
+        error instanceof Error ? error.message : 'Electron host request failed',
+        { cause: error }
+      )
+    }
+    let body: {
       ok?: boolean
       result?: Result
       error?: DesktopHostErrorPayload
+    }
+    try {
+      body = (await response.json()) as typeof body
+    } catch (error) {
+      throw new DesktopHostTransportError(
+        error instanceof Error ? error.message : 'Electron host response was interrupted',
+        { cause: error }
+      )
     }
     if (e2e && (capability.startsWith('attachment.') || performance.now() - startedAt >= 1_000)) {
       diagnostic('completed', {
@@ -91,9 +121,17 @@ export async function invokeDesktopHost<Result>(
     }
     const result = body.result as Result
     // E2E barriers delay delivery only after the real Electron operation completes.
-    return e2e ? gateRuntimeResponse(capability, params, result) : result
+    return e2e
+      ? gateRuntimeResponse(
+          capability,
+          params,
+          result,
+          () => new DesktopHostTransportError('Electron host response was interrupted')
+        )
+      : result
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)
+    if (requestTimeout !== undefined) clearTimeout(requestTimeout)
   }
 }
 

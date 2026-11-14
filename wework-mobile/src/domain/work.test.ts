@@ -61,6 +61,7 @@ describe('flattenConversations', () => {
 
     expect(result.map(item => item.address.taskId)).toEqual(['new', 'old'])
     expect(result[1]?.projectName).toBe('Wegent')
+    expect(result[1]?.sourceWorkspacePath).toBe('/work/wegent')
   })
 
   it('uses the lifecycle projection instead of a stale work running flag', () => {

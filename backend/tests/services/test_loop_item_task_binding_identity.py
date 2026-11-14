@@ -414,3 +414,28 @@ def test_duplicate_alias_bindings_are_all_disconnected_or_moved(
         assert moved.loop_item_id == other_issue.id
 
     assert loop_item_service.list_task_bindings(test_db, issue.id, test_user.id) == []
+
+
+def test_assistant_reservation_becomes_openable_only_after_runtime_creation(
+    test_db: Session, test_user: User, issue_device: tuple[LoopItem, Kind]
+) -> None:
+    from app.schemas.delivery import LoopItemTaskBindingResponse
+
+    issue, device = issue_device
+    payload = dict(deviceId=device.name, taskId="assistant-task", taskTitle="Review")
+    reserved = loop_item_service.bind_task(
+        test_db,
+        issue.id,
+        LoopItemTaskBind(**payload, standInPending=True),
+        test_user.id,
+    )
+    assert LoopItemTaskBindingResponse.model_validate(reserved).stand_in_pending is True
+    original_id = reserved.id
+    started = loop_item_service.bind_task(
+        test_db,
+        issue.id,
+        LoopItemTaskBind(**payload, standInPending=False),
+        test_user.id,
+    )
+    assert started.id == original_id
+    assert LoopItemTaskBindingResponse.model_validate(started).stand_in_pending is False

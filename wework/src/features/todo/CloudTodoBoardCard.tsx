@@ -16,7 +16,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { CollaborationIssueBadge } from '@wegent/collaboration'
-import type { CloudLoopItem } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { isRuntimeChatStreamDebugEnabled } from '@/api/runtime/runtimeChatStream'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
@@ -142,6 +142,7 @@ interface CloudTodoBoardCardProps {
   childrenAction?: ReactNode
   statusNames?: Record<string, string>
   item: CloudLoopItem
+  projectStore: CloudProject['project_store'] | null
   unread?: boolean
   taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
@@ -180,6 +181,7 @@ export function CloudTodoBoardCard({
   childrenAction,
   statusNames,
   item,
+  projectStore,
   unread,
   taskBindings = [],
   onClick,
@@ -223,7 +225,7 @@ export function CloudTodoBoardCard({
   useBoardRuntimeConversations({
     item,
     conversations: conversationTaskBindings.map(binding => ({
-      address: boardTaskAddress(item, binding),
+      address: boardTaskAddress(item, binding, projectStore),
       task: binding.runtimeTask,
     })),
     enabled: hasActiveTask || item.status === 'in_review',
@@ -337,6 +339,7 @@ export function CloudTodoBoardCard({
         <RuntimeTaskProgressSummary
           key={binding.id}
           item={item}
+          projectStore={projectStore}
           binding={binding}
           compact={compact}
           progressDisplay={progressDisplay}
@@ -371,7 +374,8 @@ export function CloudTodoBoardCard({
 
 function boardTaskAddress(
   item: CloudLoopItem,
-  binding: CloudTodoBoardTaskBinding
+  binding: CloudTodoBoardTaskBinding,
+  projectStore: CloudProject['project_store'] | null
 ): RuntimeTaskAddress {
   const address = { ...runtimeTaskBindingAddress(binding), ...binding.runtimeAddress }
   return {
@@ -379,15 +383,20 @@ function boardTaskAddress(
     ...(binding.modelSelection
       ? { runtimeHandle: { ...address.runtimeHandle, modelSelection: binding.modelSelection } }
       : {}),
-    projectSession: binding.runtimeAddress?.projectSession ?? {
-      projectId: String(item.cloud_project_id),
-      issueId: String(item.id),
-    },
+    ...(projectStore === 'backend'
+      ? {
+          projectSession: address.projectSession ?? {
+            projectId: String(item.cloud_project_id),
+            issueId: String(item.id),
+          },
+        }
+      : {}),
   }
 }
 
 function RuntimeTaskProgressSummary({
   item,
+  projectStore,
   binding,
   compact,
   progressDisplay = 'compact',
@@ -399,6 +408,7 @@ function RuntimeTaskProgressSummary({
   onOpenRuntimeTask,
 }: {
   item: CloudLoopItem
+  projectStore: CloudProject['project_store'] | null
   binding: CloudTodoBoardTaskBinding
   compact: boolean
   progressDisplay?: BoardCardProgressDisplay
@@ -412,8 +422,8 @@ function RuntimeTaskProgressSummary({
   const t = useBoardTranslate()
   const { t: toolTranslate } = useTranslation('chat')
   const taskAddress = useMemo<RuntimeTaskAddress>(
-    () => boardTaskAddress(item, binding),
-    [binding, item]
+    () => boardTaskAddress(item, binding, projectStore),
+    [binding, item, projectStore]
   )
   useEffect(() => {
     if (binding.runtimeGoalLoaded || !onLoadRuntimeGoal) return
@@ -514,7 +524,22 @@ function useRuntimeTaskProjection(
       deviceId: address.deviceId,
       taskId: address.taskId,
       active,
-      turns: turns.map(turn => ({ id: turn.id, status: turn.status, items: turn.items.length })),
+      turns: turns.map(turn => ({
+        id: turn.id,
+        status: turn.status,
+        items: turn.items.length,
+        itemOrder: turn.items.map(item => ({
+          id: item.id,
+          type: item.type,
+          ...(item.type === 'block'
+            ? {
+                blockType: item.block.type,
+                blockStatus: item.block.status,
+                contentLength: 'content' in item.block ? item.block.content?.length : undefined,
+              }
+            : {}),
+        })),
+      })),
       activityActive: projection.activity.active,
       processTextLength: projection.activity.processText.length,
     })

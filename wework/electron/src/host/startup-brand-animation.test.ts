@@ -4,6 +4,34 @@ import { basename, join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import { createAnimationFixture } from '../../test-fixtures/startup-brand-animation'
 
+type AnimationFixture = Awaited<ReturnType<typeof createAnimationFixture>>
+type AnimationContext = AnimationFixture['contexts'][number]
+
+function renderedLogoBounds(
+  context: AnimationContext,
+  canvas: { width: number; height: number },
+  logo: { points: Array<{ x: number; y: number }> },
+  pixelRatio = 1
+) {
+  const [fit, , , , offsetX, offsetY] = context.setTransform.mock.calls.at(-1)!
+  const points = logo.points.map(point => ({
+    x: (point.x + 600) * fit + offsetX,
+    y: (point.y + 340) * fit + offsetY,
+  }))
+  const left = Math.min(...points.map(point => point.x))
+  const right = Math.max(...points.map(point => point.x))
+  const top = Math.min(...points.map(point => point.y))
+  const bottom = Math.max(...points.map(point => point.y))
+  return {
+    left,
+    right,
+    top,
+    bottom,
+    width: (right - left) / pixelRatio,
+    height: (bottom - top) / pixelRatio,
+  }
+}
+
 describe('startup brand animation lifecycle', () => {
   test.each([
     { width: 1440, height: 960, footerTop: 840, pixelRatio: 1 },
@@ -11,7 +39,7 @@ describe('startup brand animation lifecycle', () => {
     { width: 900, height: 520, footerTop: 392, pixelRatio: 2 },
     { width: 320, height: 300, footerTop: 205, pixelRatio: 1.5 },
   ])(
-    'fits the complete centered mark above its footer at $width × $height, DPR $pixelRatio',
+    'fits the complete mark above its reserved footer at $width × $height, DPR $pixelRatio',
     async options => {
       const { animation, canvas, contexts, paths, resizeObserver, footer } =
         await createAnimationFixture(true, options, options)
@@ -29,16 +57,89 @@ describe('startup brand animation lifecycle', () => {
       const top = Math.min(...points.map(point => point.y))
       const bottom = Math.max(...points.map(point => point.y))
       expect((left + right) / 2).toBeCloseTo(canvas.width / 2, 8)
-      expect((top + bottom) / 2).toBeCloseTo(canvas.height / 2, 8)
+      expect((top + bottom) / 2).toBeLessThanOrEqual(canvas.height / 2 + 1e-8)
       expect(left).toBeGreaterThan(0)
       expect(right).toBeLessThan(canvas.width)
       expect(top).toBeGreaterThan(0)
-      expect(bottom).toBeLessThan(options.footerTop * (canvas.height / options.height))
+      expect(bottom).toBeLessThan((options.footerTop - 110) * (canvas.height / options.height))
       expect(resizeObserver.observe).toHaveBeenCalledWith(canvas)
       expect(resizeObserver.observe).toHaveBeenCalledWith(footer)
       animation.destroy()
     }
   )
+
+  test('keeps the mark fixed after reserving the slow-card space', async () => {
+    const { animation, contexts, setSlowVisible } = await createAnimationFixture(
+      true,
+      { width: 1440, height: 900 },
+      { footerTop: 783, slowFooterGrowth: 96 }
+    )
+    const before = contexts[0].setTransform.mock.calls.at(-1)!
+    setSlowVisible(true)
+    const after = contexts[0].setTransform.mock.calls.at(-1)!
+    expect(after[0]).toBeCloseTo(before[0], 8)
+    expect(after[4]).toBeCloseTo(before[4], 8)
+    expect(after[5]).toBeCloseTo(before[5], 8)
+    animation.destroy()
+  })
+
+  test.each([
+    { growth: 96, label: 'wrapped slow card', state: 'slow' },
+    { growth: 110, label: 'timeout note and actions', state: 'timeout' },
+  ])('keeps the measured $label reserve through a DPR resize', async ({ growth, state }) => {
+    const {
+      animation,
+      canvas,
+      contexts,
+      paths,
+      setPixelRatio,
+      setSlowVisible,
+      setTimeoutVisible,
+      slowCard,
+      timeoutActions,
+      timeoutNote,
+    } = await createAnimationFixture(
+      true,
+      { width: 1440, height: 900 },
+      { footerTop: 783, slowFooterGrowth: 96, timeoutFooterGrowth: 110 }
+    )
+    const logo = paths[0]
+    const initial = renderedLogoBounds(contexts[0], canvas, logo)
+    expect(initial.bottom).toBeLessThanOrEqual(783 - growth - 12 + 1e-8)
+    if (state === 'slow') setSlowVisible(true)
+    else setTimeoutVisible(true)
+    setPixelRatio(2)
+    const resized = renderedLogoBounds(contexts[0], canvas, logo, 2)
+    expect(resized.width).toBeCloseTo(initial.width, 8)
+    expect(resized.height).toBeCloseTo(initial.height, 8)
+    expect(resized.bottom).toBeLessThanOrEqual((783 - growth - 12) * 2 + 1e-8)
+    expect(JSON.parse(canvas.dataset.startupLogoBounds!)).toMatchObject({
+      height: expect.closeTo(resized.height, 8),
+      width: expect.closeTo(resized.width, 8),
+    })
+    expect(slowCard.hidden).toBe(state !== 'slow')
+    expect(timeoutNote.hidden).toBe(state !== 'timeout')
+    expect(timeoutActions.hidden).toBe(state !== 'timeout')
+    animation.destroy()
+  })
+
+  test('does not rebase the footer while the slow card appears during formation', async () => {
+    const { animation, canvas, contexts, paths, setSlowVisible, step } =
+      await createAnimationFixture(
+        false,
+        { width: 1440, height: 900 },
+        { footerTop: 783, slowFooterGrowth: 96 }
+      )
+    step(0)
+    step(1_000)
+    const initial = renderedLogoBounds(contexts[0], canvas, paths[0])
+    setSlowVisible(true)
+    const visible = renderedLogoBounds(contexts[0], canvas, paths[0])
+    expect(visible.width).toBeCloseTo(initial.width, 8)
+    expect(visible.height).toBeCloseTo(initial.height, 8)
+    expect(visible.bottom).toBeLessThanOrEqual(783 - 96 - 12 + 1e-8)
+    animation.destroy()
+  })
 
   test('preserves formation and waiting gradient phases across footer changes and DPR resizing', async () => {
     const {
@@ -58,6 +159,7 @@ describe('startup brand animation lifecycle', () => {
     const draws = contexts[0].fill.mock.calls.length
     setFooterTop(280)
     step(4200)
+    expect(brand.classList.contains('is-forming')).toBe(true)
     expect(contexts[0].fill).toHaveBeenCalledTimes(draws)
     expect(contexts[0].clearRect).toHaveBeenLastCalledWith(0, 0, canvas.width, canvas.height)
     setFooterTop(480)
@@ -80,14 +182,14 @@ describe('startup brand animation lifecycle', () => {
     animation.destroy()
   })
 
-  test('keeps a recovery footer available when it covers the full-window center', async () => {
+  test('keeps the mark visible when the footer later covers the full-window center', async () => {
     const { animation, contexts, setFooterTop } = await createAnimationFixture(
       true,
       { width: 500, height: 300 },
-      { footerTop: 140 }
+      { footerTop: 240 }
     )
-    expect(contexts[0].fill).not.toHaveBeenCalled()
-    setFooterTop(240)
+    expect(contexts[0].logoOpacity).toBe(1)
+    setFooterTop(140)
     expect(contexts[0].logoOpacity).toBe(1)
     animation.destroy()
   })
@@ -167,7 +269,7 @@ describe('startup brand animation lifecycle', () => {
     expect(skewY).toBe(0)
 
     const originX = canvas.width * 0.5
-    const originY = canvas.height * 0.5
+    const viewportCenterY = canvas.height * 0.5
     const logo = paths[0]
     const [centerX, centerY] = [600, 340]
     const unscaled = logo.points.map(point => ({
@@ -181,10 +283,10 @@ describe('startup brand animation lifecycle', () => {
       (Math.min(...unscaled.map(point => point.y)) + Math.max(...unscaled.map(point => point.y))) /
       2
     expect(boundsCenterX).toBeCloseTo(originX, 8)
-    expect(boundsCenterY).toBeCloseTo(originY, 8)
+    expect(boundsCenterY).toBeLessThanOrEqual(viewportCenterY + 1e-8)
     const points = unscaled.map(point => ({
       x: originX + (point.x - originX) * 1.018,
-      y: originY + (point.y - originY) * 1.018,
+      y: boundsCenterY + (point.y - boundsCenterY) * 1.018,
     }))
     expect(points.length).toBeGreaterThan(0)
     expect(Math.min(...points.map(point => point.x))).toBeGreaterThanOrEqual(0)

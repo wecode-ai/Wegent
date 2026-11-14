@@ -32,9 +32,10 @@ pub(super) async fn request(
     if payload["operation"] == "describe" {
         return Ok(target);
     }
-    let args = read_arguments(&declaration, &payload)?;
+    let mut args = read_arguments(&declaration, &payload)?;
+    let output = temporary_output(&declaration, &payload, &mut args)?;
     let slug = target["connectorSlug"].as_str().ok_or_else(denied)?;
-    super::local_connector_auth::run_connection_tool(&root, key, slug, &args)
+    let result = super::local_connector_auth::run_connection_tool(&root, key, slug, &args)
         .await
         .map_err(collection_read_error)
         .inspect_err(|error| {
@@ -56,7 +57,63 @@ pub(super) async fn request(
                     ],
                 );
             }
+        })?;
+    match output {
+        Some(file) => publish_output(file, &result),
+        None => Ok(result),
+    }
+}
+
+fn temporary_output(
+    declaration: &Value,
+    payload: &Value,
+    args: &mut Vec<String>,
+) -> Result<Option<tempfile::NamedTempFile>, AppIpcError> {
+    let spec = &declaration["operations"][payload["tool"].as_str().ok_or_else(denied)?];
+    let Some(output) = spec.get("outputFile") else {
+        return Ok(None);
+    };
+    let flag = output["flag"]
+        .as_str()
+        .filter(|flag| {
+            flag.starts_with("--")
+                && flag.len() > 2
+                && flag[2..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                && !args.iter().any(|arg| arg.split('=').next() == Some(*flag))
         })
+        .ok_or_else(denied)?;
+    let file = tempfile::Builder::new()
+        .prefix("wework-source-image-")
+        .suffix(".png")
+        .tempfile()
+        .map_err(|_| output_error())?;
+    args.extend([
+        flag.to_owned(),
+        file.path().to_str().ok_or_else(output_error)?.to_owned(),
+    ]);
+    Ok(Some(file))
+}
+
+fn output_error() -> AppIpcError {
+    AppIpcError::new(
+        "connection_cli_response_invalid",
+        "The source download did not produce a valid temporary file",
+    )
+}
+
+fn publish_output(file: tempfile::NamedTempFile, result: &Value) -> Result<Value, AppIpcError> {
+    if result["success"] == false || result["ok"] == false {
+        return Err(output_error());
+    }
+    let metadata = std::fs::symlink_metadata(file.path()).map_err(|_| output_error())?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(output_error());
+    }
+    let path = file.into_temp_path().keep().map_err(|_| output_error())?;
+    // Return only the host-owned path, never signed download URLs or account data.
+    Ok(serde_json::json!({"path":path,"readOnly":true}))
 }
 
 pub(super) fn collection_read_error(error: AppIpcError) -> AppIpcError {
@@ -167,6 +224,42 @@ mod tests {
     use serde_json::json;
     fn declaration() -> Value {
         json!({"connectorSlug":"account","outputArgs":["--format","json"],"operations":{"search":{"command":["chat","search"],"parameters":{"query":"--query","profile":"--profile"}}}})
+    }
+    #[test]
+    fn source_download_paths_are_host_owned_and_empty_or_failed_outputs_are_removed() {
+        let declaration = serde_json::json!({"outputArgs":["--format","json"],"operations":{
+            "image":{"command":["download"],"parameters":{"resource":"--resource"},
+            "outputFile":{"flag":"--output"}}
+        }});
+        let input = serde_json::json!({"tool":"image","arguments":{"resource":"image"}});
+        let mut args = read_arguments(&declaration, &input).unwrap();
+        let file = temporary_output(&declaration, &input, &mut args)
+            .unwrap()
+            .unwrap();
+        let path = file.path().to_owned();
+        assert_eq!(args[args.len() - 2], "--output");
+        assert_eq!(Path::new(args.last().unwrap()), path);
+        assert!(publish_output(file, &serde_json::json!({"success":true})).is_err());
+        assert!(!path.exists());
+        let mut malicious = input.clone();
+        malicious["arguments"]["output"] = serde_json::json!("/arbitrary/file");
+        assert!(read_arguments(&declaration, &malicious).is_err());
+
+        let mut args = read_arguments(&declaration, &input).unwrap();
+        let file = temporary_output(&declaration, &input, &mut args)
+            .unwrap()
+            .unwrap();
+        std::fs::write(file.path(), b"downloaded-image").unwrap();
+        let result = publish_output(
+            file,
+            &serde_json::json!({"success":true,"downloadUrl":"private-signed-url"}),
+        )
+        .unwrap();
+        assert_eq!(result["readOnly"], true);
+        assert!(result.get("downloadUrl").is_none());
+        let path = result["path"].as_str().unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"downloaded-image");
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn connection_cli_only_accepts_host_declared_operations_and_parameters() {

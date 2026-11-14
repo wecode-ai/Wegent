@@ -1,3 +1,4 @@
+import { IssueCommentChildAction } from "./IssueCommentChildAction";
 import { BrowserIssueReplyComposer } from "./BrowserIssueReplyComposer";
 import { useBrowserIssueReplies } from "./browserIssueRepliesContext";
 import type { ExecutionTaskSummary } from "./IssueChatMessage";
@@ -43,6 +44,8 @@ function ActivityMessage({
 export function IssueProjectChatThread({
   thread,
   canComment,
+  childAssignment,
+  onChildComment,
   send,
   translate,
   executions,
@@ -61,6 +64,12 @@ export function IssueProjectChatThread({
   upload?(file: File): Promise<CollaborationAttachment>;
   remove?(id: string): Promise<void>;
   canComment: boolean;
+  childAssignment?: import("./useCommentAssignment").CommentAssignment;
+  onChildComment?(
+    text: string,
+    requestId: string,
+    sourceMessageId: string,
+  ): Promise<void>;
   send(
     text: string,
     replyToMessageId: string,
@@ -116,45 +125,63 @@ export function IssueProjectChatThread({
           ? "member"
           : undefined;
     return (
-      <ActivityMessage
-        key={message.messageId}
-        message={target?.activityMessage ?? message}
-        members={members}
-        singleExecution={singleExecution}
-        persistedStatus={execution?.display_state}
-        mine={false}
-        compact
-        plain
-        showInlineExecutionStatus={!eventOnly}
-        agentRole={dispatchRole}
-        eventOnly={eventOnly}
-        taskSummary={taskSummaryForMessage?.(message)}
-        translate={translate}
-        testId={`collaboration-chat-message-${message.messageId}`}
-        executionTestId={
-          eventOnly
-            ? `task-activity-run-execution-badge-${message.messageId}`
-            : `cloud-task-activity-execution-badge-${message.messageId}`
-        }
-        executionAliasTestId={
-          execution ? `collaboration-open-execution-${execution.id}` : undefined
-        }
-        onOpenAttachment={onOpenAttachment}
-        onOpenUrl={(url) => {
-          window.open(url, "_blank", "noopener,noreferrer");
-        }}
-        onOpenExecution={
-          target && onOpenExecution
-            ? () => onOpenExecution({ ...target, singleExecution })
-            : undefined
-        }
-        onStopExecution={
-          target && onStopExecution
-            ? () => void onStopExecution(message.messageId, target.address)
-            : undefined
-        }
-        stopping={stoppingMessageId === message.messageId}
-      />
+      <div key={message.messageId}>
+        <ActivityMessage
+          key={message.messageId}
+          message={target?.activityMessage ?? message}
+          members={members}
+          singleExecution={singleExecution}
+          persistedStatus={execution?.display_state}
+          mine={false}
+          compact
+          plain
+          showInlineExecutionStatus={!eventOnly}
+          agentRole={dispatchRole}
+          eventOnly={eventOnly}
+          taskSummary={taskSummaryForMessage?.(message)}
+          translate={translate}
+          testId={`collaboration-chat-message-${message.messageId}`}
+          executionTestId={
+            eventOnly
+              ? `task-activity-run-execution-badge-${message.messageId}`
+              : `cloud-task-activity-execution-badge-${message.messageId}`
+          }
+          executionAliasTestId={
+            execution
+              ? `collaboration-open-execution-${execution.id}`
+              : undefined
+          }
+          onOpenAttachment={onOpenAttachment}
+          onOpenUrl={(url) => {
+            window.open(url, "_blank", "noopener,noreferrer");
+          }}
+          onOpenExecution={
+            target && onOpenExecution
+              ? () => onOpenExecution({ ...target, singleExecution })
+              : undefined
+          }
+          onStopExecution={
+            target && onStopExecution
+              ? () => void onStopExecution(message.messageId, target.address)
+              : undefined
+          }
+          stopping={stoppingMessageId === message.messageId}
+        />
+        {!eventOnly &&
+          canComment &&
+          childAssignment?.createChild &&
+          onChildComment && (
+            <IssueCommentChildAction
+              body={message.content}
+              messageId={message.messageId}
+              assignment={childAssignment}
+              translate={translate}
+              onComment={(text, id) =>
+                onChildComment(text, id, message.messageId)
+              }
+            />
+          )}
+      </div>
     );
   }
   const activityThread = (

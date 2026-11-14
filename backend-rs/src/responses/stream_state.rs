@@ -14,6 +14,14 @@ use brz_redis::{Redis, RedisKey2};
 
 /// `session_manager.CANCEL_KEY_PREFIX`.
 const CANCEL_KEY_PREFIX: &str = "chat:cancel:";
+const CANCEL_INTENT_KEY_PREFIX: &str = "chat:cancel-intent:";
+/// Registration must preserve cancellation admitted before the owner starts.
+pub(super) const REGISTER_SCRIPT: &str = "\
+if redis.call('EXISTS', KEYS[2]) == 0 then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+";
 /// `session_manager.STREAMING_KEY_PREFIX`.
 const STREAMING_KEY_PREFIX: &str = "chat:streaming:";
 /// `session_manager.CANCEL_FLAG_TTL` (seconds).
@@ -49,8 +57,26 @@ where
     }
 }
 
-/// `session_manager.unregister_stream`: drop the local event and `DEL
-/// chat:cancel:{id}`.
+/// Register without erasing a cancellation whose SQL transaction is committing.
+pub async fn register_stream<R>(redis: Option<&R>, subtask_id: i64)
+where
+    R: Redis,
+{
+    let Some(redis) = redis else {
+        return;
+    };
+    let keys = [
+        format!("{CANCEL_KEY_PREFIX}{subtask_id}"),
+        format!("{CANCEL_INTENT_KEY_PREFIX}{subtask_id}"),
+    ];
+    let result: brz_redis::RedisResult<i64> =
+        redis.eval(REGISTER_SCRIPT, keys, [] as [&str; 0]).await;
+    if let Err(error) = result {
+        tracing::warn!(%error, subtask_id, "failed to register Redis cancel lifecycle");
+    }
+}
+
+/// `session_manager.unregister_stream`: atomically close the intent and flag.
 pub async fn unregister_stream<R>(redis: Option<&R>, subtask_id: i64)
 where
     R: Redis,
@@ -58,9 +84,12 @@ where
     let Some(redis) = redis else {
         return;
     };
-    let key = RedisKey2(CANCEL_KEY_PREFIX, subtask_id);
-    if let Err(error) = redis.del(key).await {
-        tracing::warn!(%error, subtask_id, "failed to delete Redis cancel flag");
+    let keys = [
+        format!("{CANCEL_KEY_PREFIX}{subtask_id}"),
+        format!("{CANCEL_INTENT_KEY_PREFIX}{subtask_id}"),
+    ];
+    if let Err(error) = redis.del_many(keys).await {
+        tracing::warn!(%error, subtask_id, "failed to close Redis cancel lifecycle");
     }
 }
 

@@ -299,7 +299,7 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let (request, model_proxy_token) = match prepare_claude_model_proxy(request) {
+        let (mut request, model_proxy_token) = match prepare_claude_model_proxy(request) {
             Ok(prepared) => prepared,
             Err(message) => {
                 self.fail_local_task_execution_start(
@@ -332,6 +332,7 @@ impl RuntimeWorkRpcHandler {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             );
+            handler.recall_stand_in_context(&mut request).await;
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
             let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
@@ -427,11 +428,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Succeeded,
                         None,
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Succeeded,
                         None,
                         Some(result_content),
@@ -457,11 +460,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::NeedsAttention,
                         Some(stop_reason.clone()),
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::NeedsAttention,
                         Some(stop_reason),
                         Some(String::new()),
@@ -481,11 +486,13 @@ impl RuntimeWorkRpcHandler {
                     handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                     handler.finish_automation_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Failed,
                         Some(message.clone()),
                     );
                     handler.finish_queue_run(
                         &local_task_id,
+                        &request,
                         AutomationRunStatus::Failed,
                         Some(message),
                         None,
@@ -504,11 +511,13 @@ impl RuntimeWorkRpcHandler {
                     if handler.settle_cancelled_local_task_execution(&local_task_id, execution_id) {
                         handler.finish_automation_run(
                             &local_task_id,
+                            &request,
                             AutomationRunStatus::Cancelled,
                             Some(message.clone()),
                         );
                         handler.finish_queue_run(
                             &local_task_id,
+                            &request,
                             AutomationRunStatus::Cancelled,
                             Some(message.clone()),
                             None,
@@ -558,6 +567,10 @@ impl RuntimeWorkRpcHandler {
                 "eventSeq": next_runtime_event_sequence(),
             },
         });
+        super::super::events::apply_runtime_event_conversation_context(
+            &mut payload["payload"],
+            request,
+        );
         if let Some(client_user_message_id) = request
             .extra
             .get("client_user_message_id")

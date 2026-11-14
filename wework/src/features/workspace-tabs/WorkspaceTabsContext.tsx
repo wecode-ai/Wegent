@@ -46,6 +46,10 @@ import { getAppPreferences } from '@/desktop/appPreferences'
 import { fixedWorkspaceTabPreference, saveFixedWorkspaceTabs } from './fixedWorkspaceTabs'
 import { findRuntimeTaskTab, navigateWorkspaceTab } from './workspaceNavigation'
 import { acceptWorkspaceTabTransfer } from './workspaceTabTransfer'
+import {
+  COLLABORATION_EXP_TAB_ID,
+  isCollaborationExpPath,
+} from '@/features/collaboration-exp/collaborationExpFeature'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -57,6 +61,7 @@ interface WorkspaceTabsState extends PersistedWorkspaceTabs {
 }
 
 const EMPTY_FIXED_TABS: WorkspaceTab[] = []
+const EMPTY_HIDDEN_TAB_PATHS: readonly string[] = []
 
 type WorkspaceTabsAction =
   | { type: 'routeChanged'; pathname: string; search: string; labels: WorkspaceTabLabels }
@@ -69,8 +74,8 @@ type WorkspaceTabsAction =
   | { type: 'receive'; tab: WorkspaceTab }
   | { type: 'close'; tabId: string; fallback: WorkspaceTab }
   | { type: 'detach'; tabId: string; fallback: WorkspaceTab }
-  | { type: 'closeOthers'; tabId: string }
-  | { type: 'restoreClosed'; restored: WorkspaceTab }
+  | { type: 'closeOthers'; tabId: string; closeTabIds: string[] }
+  | { type: 'restoreClosed'; restored: WorkspaceTab; originalTabId: string }
   | { type: 'move'; sourceId: string; targetId: string }
   | { type: 'syncFixed'; tabs: WorkspaceTab[] }
   | {
@@ -88,6 +93,8 @@ interface WorkspaceTabsProviderProps {
   fixedTabs?: WorkspaceTab[]
   startupTabId?: string
   restoreSessionTabs?: boolean
+  hiddenTabPaths?: readonly string[]
+  retainedTabPaths?: readonly string[]
   children: ReactNode
 }
 
@@ -138,17 +145,22 @@ function loadPersistedTabs(
   search: string,
   labels: WorkspaceTabLabels,
   fixedTabs: WorkspaceTab[],
-  restoreSessionTabs: boolean
+  restoreSessionTabs: boolean,
+  retainedTabPaths: readonly string[]
 ): WorkspaceTabsState {
   const location = parseWorkspaceLocation(pathname, search)
-  if (restoreSessionTabs) {
+  let retainedTabs: WorkspaceTab[] = []
+  if (restoreSessionTabs || retainedTabPaths.length) {
     try {
       const parsed = JSON.parse(
         localStorage.getItem(workspaceTabsStorageKey(scope)) ?? 'null'
       ) as PersistedWorkspaceTabs | null
       if (parsed && Array.isArray(parsed.tabs)) {
         const tabs = parsed.tabs.filter(validTab).map(tab => normalizePersistedTab(tab, labels))
-        if (tabs.length > 0) {
+        retainedTabs = tabs.filter(tab =>
+          retainedTabPaths.includes(tab.contentRoute.split('?', 1)[0])
+        )
+        if (restoreSessionTabs && tabs.length > 0) {
           const requested = location.tabId
             ? tabs.find(tab => tab.id === location.tabId)
             : tabs.find(tab => tab.contentRoute === location.contentRoute)
@@ -165,12 +177,19 @@ function loadPersistedTabs(
     }
   }
 
-  const defaultTabs =
+  const configuredTabs =
     fixedTabs.length > 0
       ? fixedTabs
       : (['task', 'board', 'agent'] as const).map(defaultKind =>
           createWorkspaceTab(defaultKind, labels)
         )
+  const defaultTabs = [
+    ...configuredTabs.map(tab => {
+      const retained = retainedTabs.find(candidate => candidate.id === tab.id)
+      return retained ? { ...retained, fixed: tab.fixed } : tab
+    }),
+    ...retainedTabs.filter(tab => !configuredTabs.some(candidate => candidate.id === tab.id)),
+  ]
   if (isSettingsRoute(pathname)) {
     return { tabs: defaultTabs, activeTabId: defaultTabs[0].id, closedTabs: [] }
   }
@@ -206,10 +225,17 @@ function workspaceTabsReducer(
     case 'routeChanged': {
       if (isSettingsRoute(action.pathname)) return state
       const location = parseWorkspaceLocation(action.pathname, action.search)
-      const requested = location.tabId
-        ? state.tabs.find(tab => tab.id === location.tabId)
-        : undefined
+      const dedicatedRoute = isCollaborationExpPath(action.pathname)
       const kind = inferWorkspaceTabKind(action.pathname)
+      const requested = dedicatedRoute
+        ? state.tabs.find(tab => isCollaborationExpPath(tab.contentRoute))
+        : location.tabId
+          ? state.tabs.find(tab => tab.id === location.tabId && tab.id !== COLLABORATION_EXP_TAB_ID)
+          : state.activeTabId === COLLABORATION_EXP_TAB_ID
+            ? state.tabs.find(
+                tab => tab.kind === kind && tab.contentRoute === location.contentRoute
+              )
+            : undefined
       if (requested) {
         const title =
           location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels)
@@ -233,9 +259,9 @@ function workspaceTabsReducer(
           tabs: state.tabs.map(tab => (tab.id === requested.id ? updated : tab)),
         }
       }
-      if (!location.tabId) {
+      if (!location.tabId && !dedicatedRoute) {
         const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
-        if (activeTab) {
+        if (activeTab && activeTab.id !== COLLABORATION_EXP_TAB_ID) {
           const title = workspaceTabTitle(kind, location.contentRoute, action.labels)
           if (
             activeTab.kind === kind &&
@@ -257,7 +283,11 @@ function workspaceTabsReducer(
         }
       }
       const next = createWorkspaceTab(kind, action.labels, {
-        id: location.tabId ?? undefined,
+        id: dedicatedRoute
+          ? COLLABORATION_EXP_TAB_ID
+          : location.tabId === COLLABORATION_EXP_TAB_ID
+            ? undefined
+            : (location.tabId ?? undefined),
         title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),
         contentRoute: location.contentRoute,
       })
@@ -302,12 +332,9 @@ function workspaceTabsReducer(
     case 'closeOthers': {
       const tab = state.tabs.find(candidate => candidate.id === action.tabId)
       if (!tab) return state
-      const retainedTabs = state.tabs.filter(
-        candidate => candidate.fixed || candidate.id === tab.id
-      )
-      const closedTabs = state.tabs
-        .filter(candidate => !candidate.fixed && candidate.id !== action.tabId)
-        .reverse()
+      const closingIds = new Set(action.closeTabIds)
+      const retainedTabs = state.tabs.filter(candidate => !closingIds.has(candidate.id))
+      const closedTabs = state.tabs.filter(candidate => closingIds.has(candidate.id)).reverse()
       return {
         tabs: retainedTabs,
         activeTabId: tab.id,
@@ -316,11 +343,12 @@ function workspaceTabsReducer(
     }
     case 'restoreClosed': {
       if (state.closedTabs.length === 0) return state
-      const [, ...closedTabs] = state.closedTabs
       return {
-        tabs: [...state.tabs, action.restored],
+        tabs: state.tabs.some(tab => tab.id === action.restored.id)
+          ? state.tabs
+          : [...state.tabs, action.restored],
         activeTabId: action.restored.id,
-        closedTabs,
+        closedTabs: state.closedTabs.filter(tab => tab.id !== action.originalTabId),
       }
     }
     case 'move':
@@ -399,6 +427,8 @@ export function WorkspaceTabsProvider({
   fixedTabs: restoredFixedTabs = EMPTY_FIXED_TABS,
   startupTabId,
   restoreSessionTabs = true,
+  hiddenTabPaths = EMPTY_HIDDEN_TAB_PATHS,
+  retainedTabPaths = EMPTY_HIDDEN_TAB_PATHS,
   children,
 }: WorkspaceTabsProviderProps) {
   const fixedTabs = useMemo(
@@ -411,9 +441,38 @@ export function WorkspaceTabsProvider({
     workspaceTabsReducer,
     undefined,
     (): WorkspaceTabsState =>
-      loadPersistedTabs(storageScope, pathname, search, labels, fixedTabs, restoreSessionTabs)
+      loadPersistedTabs(
+        storageScope,
+        hiddenTabPaths.includes(pathname) ? '/' : pathname,
+        hiddenTabPaths.includes(pathname) ? '' : search,
+        labels,
+        fixedTabs,
+        restoreSessionTabs,
+        retainedTabPaths
+      )
   )
   const stateRef = useRef(state)
+  const hiddenPaths = useMemo(() => new Set(hiddenTabPaths), [hiddenTabPaths])
+  const visibleTabs = useMemo(
+    () => state.tabs.filter(tab => !hiddenPaths.has(tab.contentRoute.split('?', 1)[0])),
+    [hiddenPaths, state.tabs]
+  )
+  const fallbackTab = useMemo(
+    () => visibleTabs[0] ?? createWorkspaceTab('task', labels),
+    [labels, visibleTabs]
+  )
+  const activeTab =
+    visibleTabs.find(tab => tab.id === state.activeTabId) ?? visibleTabs[0] ?? fallbackTab
+
+  useLayoutEffect(() => {
+    if (hiddenPaths.has(pathname)) replaceTo(workspaceTabRoute(activeTab))
+    if (state.activeTabId === activeTab.id) return
+    dispatch(
+      state.tabs.some(tab => tab.id === activeTab.id)
+        ? { type: 'select', tabId: activeTab.id }
+        : { type: 'open', tab: activeTab }
+    )
+  }, [activeTab, hiddenPaths, pathname, state.activeTabId, state.tabs])
 
   useEffect(() => {
     if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
@@ -482,8 +541,10 @@ export function WorkspaceTabsProvider({
       if (activeTab) writeSettingsReturnPath(activeTab.contentRoute)
     }
     previousPathnameRef.current = pathname
-    dispatch({ type: 'routeChanged', pathname, search, labels })
-  }, [labels, pathname, search])
+    if (!hiddenPaths.has(pathname)) {
+      dispatch({ type: 'routeChanged', pathname, search, labels })
+    }
+  }, [hiddenPaths, labels, pathname, search])
 
   useEffect(() => {
     if (startupTabApplied.current) return
@@ -526,20 +587,42 @@ export function WorkspaceTabsProvider({
   ])
 
   useEffect(() => {
-    if (!restoreSessionTabs) return
+    if (!restoreSessionTabs && !retainedTabPaths.length) return
     try {
-      const tabs = sessionRestorableTabs(state.tabs)
+      const restorable = sessionRestorableTabs(state.tabs)
+      const previous = restoreSessionTabs
+        ? null
+        : (JSON.parse(
+            localStorage.getItem(workspaceTabsStorageKey(storageScope)) ?? 'null'
+          ) as PersistedWorkspaceTabs | null)
+      const retained = restorable.filter(tab =>
+        retainedTabPaths.includes(tab.contentRoute.split('?', 1)[0])
+      )
+      if (
+        !restoreSessionTabs &&
+        !retained.length &&
+        !previous?.tabs?.some(tab => retainedTabPaths.includes(tab.contentRoute.split('?', 1)[0]))
+      )
+        return
+      const tabs = restoreSessionTabs
+        ? restorable
+        : [
+            ...(previous?.tabs ?? []).filter(
+              tab => !retainedTabPaths.includes(tab.contentRoute.split('?', 1)[0])
+            ),
+            ...retained,
+          ]
       const persisted: PersistedWorkspaceTabs = {
         activeTabId: tabs.some(tab => tab.id === state.activeTabId)
           ? state.activeTabId
-          : (tabs[0]?.id ?? ''),
+          : (previous?.activeTabId ?? tabs[0]?.id ?? ''),
         tabs,
       }
       persistWorkspaceTabs(storageScope, persisted.tabs, persisted.activeTabId)
     } catch {
       // Tabs remain usable in memory when persistence is unavailable.
     }
-  }, [restoreSessionTabs, state, storageScope])
+  }, [restoreSessionTabs, retainedTabPaths, state, storageScope])
 
   const selectTab = useCallback(
     (tabId: string, updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
@@ -555,11 +638,25 @@ export function WorkspaceTabsProvider({
   const openTab = useCallback(
     (kind: WorkspaceTabKind, overrides: Partial<WorkspaceTab> = {}) => {
       const tab = createWorkspaceTab(kind, labels, overrides)
+      if (hiddenPaths.has(tab.contentRoute.split('?', 1)[0])) {
+        throw new Error('This workspace route is unavailable')
+      }
+      const existing = isCollaborationExpPath(tab.contentRoute)
+        ? stateRef.current.tabs.find(candidate => isCollaborationExpPath(candidate.contentRoute))
+        : undefined
+      if (existing) {
+        const updates = {
+          contentRoute: tab.contentRoute.includes('?') ? tab.contentRoute : existing.contentRoute,
+          title: overrides.title ?? existing.title,
+        }
+        selectTab(existing.id, updates)
+        return { ...existing, ...updates }
+      }
       flushSync(() => dispatch({ type: 'open', tab }))
       navigateTo(workspaceTabRoute(tab))
       return tab
     },
-    [labels]
+    [hiddenPaths, labels, selectTab]
   )
 
   useEffect(() => {
@@ -567,6 +664,29 @@ export function WorkspaceTabsProvider({
       const { kind, contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
       const activeTab = stateRef.current.tabs.find(tab => tab.id === stateRef.current.activeTabId)
       const [path, search] = contentRoute.split('?')
+      if (hiddenPaths.has(path)) {
+        event.preventDefault()
+        return
+      }
+      if (isCollaborationExpPath(path)) {
+        event.preventDefault()
+        openTab('auxiliary', { contentRoute })
+        return
+      }
+      if (activeTab?.id === COLLABORATION_EXP_TAB_ID) {
+        event.preventDefault()
+        navigateWorkspaceTab(
+          {
+            ...stateRef.current,
+            tabs: stateRef.current.tabs.filter(tab => tab.id !== COLLABORATION_EXP_TAB_ID),
+            selectTab,
+            openTab,
+          },
+          kind,
+          contentRoute
+        )
+        return
+      }
       const target = parseRuntimeTaskRoute(path, search)
       const matching = target ? findRuntimeTaskTab(stateRef.current.tabs, target) : null
       const isTaskSurface = (value: WorkspaceTabKind) => value === 'task' || value === 'auxiliary'
@@ -582,7 +702,7 @@ export function WorkspaceTabsProvider({
     }
     window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
     return () => window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
-  }, [selectTab, openTab])
+  }, [hiddenPaths, selectTab, openTab])
 
   const closeTab = useCallback(
     (tabId: string) => {
@@ -618,13 +738,18 @@ export function WorkspaceTabsProvider({
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
       const closedTabIds = state.tabs
-        .filter(candidate => !candidate.fixed && candidate.id !== tabId)
+        .filter(
+          candidate =>
+            !candidate.fixed &&
+            candidate.id !== tabId &&
+            !hiddenPaths.has(candidate.contentRoute.split('?', 1)[0])
+        )
         .map(candidate => candidate.id)
-      flushSync(() => dispatch({ type: 'closeOthers', tabId }))
+      flushSync(() => dispatch({ type: 'closeOthers', tabId, closeTabIds: closedTabIds }))
       dispatchWorkspaceTabsClosed(closedTabIds)
       navigateTo(workspaceTabRoute(tab))
     },
-    [state.tabs]
+    [hiddenPaths, state.tabs]
   )
 
   const moveTab = useCallback((sourceId: string, targetId: string) => {
@@ -632,14 +757,19 @@ export function WorkspaceTabsProvider({
   }, [])
 
   const restoreClosedTab = useCallback(() => {
-    const tab = state.closedTabs[0]
+    const tab = state.closedTabs.find(tab => !hiddenPaths.has(tab.contentRoute.split('?', 1)[0]))
     if (!tab) return
-    const restored = state.tabs.some(candidate => candidate.id === tab.id)
-      ? { ...tab, id: `${tab.kind}-${crypto.randomUUID()}` }
-      : tab
-    flushSync(() => dispatch({ type: 'restoreClosed', restored }))
+    const existingExperiment = isCollaborationExpPath(tab.contentRoute)
+      ? state.tabs.find(candidate => isCollaborationExpPath(candidate.contentRoute))
+      : undefined
+    const restored =
+      existingExperiment ??
+      (state.tabs.some(candidate => candidate.id === tab.id)
+        ? { ...tab, id: `${tab.kind}-${crypto.randomUUID()}` }
+        : tab)
+    flushSync(() => dispatch({ type: 'restoreClosed', restored, originalTabId: tab.id }))
     navigateTo(workspaceTabRoute(restored))
-  }, [state.closedTabs, state.tabs])
+  }, [hiddenPaths, state.closedTabs, state.tabs])
 
   const updateTab = useCallback(
     (tabId: string, updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
@@ -658,13 +788,14 @@ export function WorkspaceTabsProvider({
     [state.activeTabId, updateTab]
   )
 
-  const activeTab =
-    state.tabs.find(tab => tab.id === state.activeTabId) ??
-    state.tabs[0] ??
-    createWorkspaceTab('task', labels)
   const value = useMemo<WorkspaceTabsContextValue>(
     () => ({
       ...state,
+      tabs: visibleTabs,
+      closedTabs: state.closedTabs.filter(
+        tab => !hiddenPaths.has(tab.contentRoute.split('?', 1)[0])
+      ),
+      activeTabId: activeTab.id,
       activeTab,
       openTab,
       selectTab,
@@ -678,6 +809,7 @@ export function WorkspaceTabsProvider({
     }),
     [
       activeTab,
+      hiddenPaths,
       closeOtherTabs,
       closeTab,
       detachTab,
@@ -688,6 +820,7 @@ export function WorkspaceTabsProvider({
       state,
       updateTab,
       updateActiveTab,
+      visibleTabs,
     ]
   )
 

@@ -170,7 +170,13 @@ Keep the existing Electron YAML and `components-<channel>-<platform>-<arch>.json
 
 Legacy clients ignore the new fields and continue updating directly to their advertised latest version. Enforcement begins when the client contains the new implementation. Pre-protocol clients are outside the new E2E matrix; do not pin their channel to a bridge.
 
-A minimum version never proves compatibility. The client follows tested edges to the newest reachable version, minimizing hops and confirming each hop separately. A fixed test pair A → B requires B to be newer than A, not globally newest. Recheck revocation immediately before installation. Missing paths must never cause unrestricted updating.
+A verified A → D upgrade/rollback pair grants interval compatibility to published sources B with A ≤ B < D in the same platform, architecture, and channel catalog. B may upgrade directly to D without separate B → D verification. Thus A → B → C → D plus A → D lets a user on B go straight to D. Intermediate direct upgrades are accepted compatibility inferences, not tested pairs; retain actual evidence without fabricating verified edges. A chain alone still requires its intermediate hops unless a direct pair covers the interval.
+
+The target's minimum source version remains a constraint, never permission by itself. Unknown sources, sources below the verified anchor, and sources at or above the target are ineligible. Choose the shortest path to the newest reachable version and confirm each hop separately. A fixed test target only needs to be newer than its source, not globally newest. Existing clients retain their shipped planning algorithm; interval behavior requires a client containing this updater change.
+
+Revoked targets, witness edges, and witness source releases cannot authorize inferred upgrades. An explicitly revoked B → D pair overrides A → D interval coverage; other valid paths remain available. An installed revoked source may still escape through its own non-revoked verified pair. Recheck the same policy immediately before installation. Missing paths must never cause unrestricted updating.
+
+Acceptance version 22 reuses the upgraded real client in the existing `app-rollback` checkpoint to check interval discovery, revocation, and recovery. Its future target manifest is explicitly marked `fixture`; no fixture archive is downloaded and no release evidence is produced for that pair. Real source-to-target upgrade, data retention, and rollback assertions continue independently. Results are retained in `interval-policy-result.json`, with no additional checkpoint or package build.
 
 ## Release lifecycle
 
@@ -350,6 +356,10 @@ assertion budget.
 
 `wework/upgrade-policy.json` declares only the product's minimum source constraint; no per-release source list is maintained. For each platform, architecture, and target channel, release jobs read the published catalog and retain the previous release's `minSourceVersion` as the fixed baseline X, bounded below by the repository constraint. Stable catalogs contain only Stable versions and floors. Beta catalogs may contain both Stable and Beta and can bootstrap from Stable when Beta has no history. Stable never imports Beta sources or edges.
 
+Release preparation validates that the minimum source is no newer than the target before building,
+including explicit version overrides and tag triggers. A stable version sorts after its matching Beta,
+so a Beta release cannot use its matching stable version as the minimum source.
+
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
 | Fixed baseline X                        | Previous release | Publication decision                                                                       |
@@ -372,7 +382,7 @@ It defaults to empty; aggregation reports unapproved exclusions and blocks promo
 excludes only the matching failed source, never skips tests, converts failure to success, or
 removes existing historical edges and intermediate packages. The CI summary records approved exclusions.
 
-Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
+Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Successful X-to-target verification permits published intermediate sources to upgrade directly under the interval policy. Release CI still verifies the previous release independently and preserves existing edges and bridge packages for other upgrade paths. Interval inference adds no package-pair tests or CI jobs; acceptance version 22 retains the existing real-package upgrade and rollback gate.
 
 Persist the confirmed floor and exact edges in each target channel's `upgradePolicy`. Publish immutable version assets before promoting rolling manifests. The next release reads X from that catalog and retains or raises it automatically, without writing version lists back to source. Stable publication verifies Stable and Beta independently; Beta publication advances only Beta. All platform jobs must succeed before publication. Always retain CI decision summaries and failure logs, distinguishing unavailable baselines, failed verification, and blocked publication; do not retry to hide failures.
 

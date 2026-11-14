@@ -42,10 +42,15 @@ fn resource_uri(meta: &Value) -> Option<&str> {
     .find(|uri| !uri.is_empty())
 }
 
-fn source_call<'a>(thread: &'a Value, call_id: &str) -> Option<&'a Value> {
+pub(super) fn source_call<'a>(
+    thread: &'a Value,
+    call_id: &str,
+    turn_id: Option<&str>,
+) -> Option<&'a Value> {
     thread["turns"]
         .as_array()?
         .iter()
+        .filter(|turn| turn_id.map_or(true, |id| turn["id"] == id))
         .flat_map(|turn| turn["items"].as_array().into_iter().flatten())
         .find(|item| item["id"] == call_id && item["type"] == "mcpToolCall")
 }
@@ -171,14 +176,21 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({}));
         }
-        let read = self
-            .call_codex_thread_method(
-                "thread/read",
-                json!({"threadId":thread_id,"includeTurns":true}),
-            )
+        let started = std::time::Instant::now();
+        let (read, source) = self
+            .mcp_app_source(&thread_id, &call_id, payload["turnId"].as_str())
             .await
             .map_err(|_| app_error("Cannot read source invocation"))?;
-        let source = match source_call(&read["thread"], &call_id) {
+        if started.elapsed().as_millis() >= 250 {
+            crate::logging::log_executor_event(
+                "MCP App source lookup slow",
+                &[
+                    ("elapsed_ms", started.elapsed().as_millis().to_string()),
+                    ("targeted", payload["turnId"].is_string().to_string()),
+                ],
+            );
+        }
+        let source = match source.as_ref() {
             Some(source) => source,
             // Streamed model calls can precede the native MCP invocation record.
             None if discovering => return Ok(Value::Null),
@@ -199,7 +211,18 @@ impl RuntimeWorkRpcHandler {
         let server = source["server"]
             .as_str()
             .ok_or_else(|| app_error("Source server is unavailable"))?;
-        let server_catalog = self.mcp_app_catalog(&thread_id, server).await?;
+        let catalog_started = std::time::Instant::now();
+        let server_catalog = self.mcp_app_catalog(&thread_id, server).await;
+        if catalog_started.elapsed().as_millis() >= 250 {
+            crate::logging::log_executor_event(
+                "MCP App catalog lookup slow",
+                &[(
+                    "elapsed_ms",
+                    catalog_started.elapsed().as_millis().to_string(),
+                )],
+            );
+        }
+        let server_catalog = server_catalog?;
         let server_catalog = server_catalog.as_ref().unwrap_or(&Value::Null);
         let catalog: Vec<Value> = server_catalog["tools"]
             .as_object()
@@ -543,9 +566,12 @@ mod tests {
     #[test]
     fn source_authority_requires_a_real_mcp_call_in_the_requested_thread() {
         let thread = json!({"turns":[{"items":[{"id":"call","type":"mcpToolCall","server":"owned"},{"id":"other","type":"agentMessage"}]}]});
-        assert_eq!(source_call(&thread, "call").unwrap()["server"], "owned");
-        assert!(source_call(&thread, "other").is_none());
-        assert!(source_call(&thread, "foreign").is_none());
+        assert_eq!(
+            source_call(&thread, "call", None).unwrap()["server"],
+            "owned"
+        );
+        assert!(source_call(&thread, "other", None).is_none());
+        assert!(source_call(&thread, "foreign", None).is_none());
     }
 
     #[test]
@@ -760,7 +786,7 @@ done
                 reloaded.upsert_local_task(wrong_server);
                 let isolated = reloaded.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"initialize"})).await.unwrap();
                 assert!(isolated["modelContext"].is_null(), "Another server must not receive saved state");
-                reloaded.codex_app_server.request("test/stop", json!({})).await.unwrap();
+                // Both handlers share the app-server for this binary.
                 handler.mcp_app_request(json!({"taskId":"task","callId":"catalog-app","method":"retain","sessionId":"instance"})).await.unwrap();
                 task.status = "archived".into();
                 handler.upsert_local_task(task);

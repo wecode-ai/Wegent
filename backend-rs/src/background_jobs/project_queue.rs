@@ -70,9 +70,19 @@ pub(crate) async fn prepare_on(
         )
         .await?
         .context("Execution device is unavailable")?;
-        if !routing::allowed_devices_on(query, &issue.cloud_project_id, &input.agent_id)
-            .await?
-            .contains(&device.id)
+        let personal = super::device_access::DeviceAccess {
+            actor: input.assigner,
+            automatic: authority::truthy(&input.context["run_id"]),
+            selection: &input.runtime_selection,
+        }
+        .permits_owner(
+            super::device_access::personal_owner(input.owner, &device.json),
+            device.id,
+        );
+        if !personal
+            && !routing::allowed_devices_on(query, &issue.cloud_project_id, &input.agent_id)
+                .await?
+                .contains(&device.id)
         {
             bail!("Execution authorization is revoked or unavailable")
         }

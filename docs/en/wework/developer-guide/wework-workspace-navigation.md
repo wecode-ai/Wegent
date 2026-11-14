@@ -24,6 +24,16 @@ Settings temporarily replace the surface and retain the return location.
 Routes containing `workspaceTab` explicitly address a tab and bypass navigation
 events. Non-workspace routes such as login retain page navigation.
 
+## Collaboration experiment tab
+
+`collab.experience.v1` maps to the default-off device preference `collaborationExperienceEnabled`. General settings exposes Collaboration experience preview after Experimental features is enabled and keeps its rollback switch available while the preview is on. Its fixed-tab preference uses auxiliary kind, ID `fixed-collaboration-exp` and route `/collaboration-exp`, without extending tab kinds.
+
+Disabling the flag filters the visible tab projection and unmounts the route while retaining raw fixed and session tab records. Re-enabling restores those records and queries. The experiment has its own lazy loading and retryable error boundary; `/todo` remains independent.
+
+The explicit `wework://collaboration-exp?...` scheme and internal route retain query fields. Existing `wework://boards/...` notifications select an experiment only when its flag is enabled and a tab already exists. They update source, project and task, retain list filters, and clear stale node/discussion selection. Other cases retain the original `/todo` path. Direct `/todo` UI navigation does not use this selection rule.
+
+The `collaboration-exp` desktop checkpoint runs in an existing Core CI shard, creates its own real local and cloud data and reuses one real native conversation. It observes disabled target requests and covers original object and conversation references, source-turn isolation, ordinary assistant questions without an Issue, permission changes blocking publication, duplicate submissions publishing once, and query/draft restoration after both reload and a real Electron restart. Only model responses are synthetic. Unit tests cover the disabled flag, hidden-state restoration, deep-link queries, notification targets, assistant navigation and local retry. E2E and `ai:verify` were not run locally for this change.
+
 ## Reading conversation state
 
 The conversation cache owns messages, goals, plans, subagent status, and the send queue.

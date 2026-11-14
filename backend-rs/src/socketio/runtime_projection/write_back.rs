@@ -25,7 +25,7 @@ pub(crate) async fn write_back_execution_event(
     user_id: i64,
     device_id: &str,
     identity: &RuntimeIdentity<'_>,
-) {
+) -> MysqlResult<()> {
     let device_id = device_id.to_owned();
     let result = state
         .mysql
@@ -45,8 +45,10 @@ pub(crate) async fn write_back_execution_event(
                 task = identity.runtime_task_id,
                 "execution runtime event write-back failed"
             );
+            return Err(error);
         }
     }
+    Ok(())
 }
 
 /// The statement sequence `_execution_runtime_event_sync` issues.

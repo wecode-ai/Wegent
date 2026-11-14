@@ -15,6 +15,7 @@ Uses get_metadata_field() helper for transparent field access across both format
 
 from typing import Any, Dict, List, Union
 
+from executor_manager.clients.executor_binding import ObsoleteExecutorDispatch
 from executor_manager.config import config
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.github.github_app import get_github_app
@@ -223,6 +224,8 @@ class TaskProcessor:
                 set_span_attribute("task.submit_success", False)
                 return result, False
 
+        except ObsoleteExecutorDispatch:
+            raise
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error processing task {task_id}: {error_msg}")

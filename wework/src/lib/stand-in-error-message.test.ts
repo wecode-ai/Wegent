@@ -161,7 +161,7 @@ describe('stand-in error localization', () => {
     const error = { code: 'dependency_missing', message: 'Dependency dingtalk is missing' }
     await i18n.changeLanguage('zh-CN')
     const chinese =
-      '来源所需插件尚未安装。请打开分身设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。'
+      '来源所需插件尚未安装。请打开助理设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。'
     expect(getStandInErrorMessage(error)).toBe(chinese)
     expect(getStandInErrorMessage(new Error(chinese))).toBe(chinese)
     await i18n.changeLanguage('en')
@@ -179,7 +179,7 @@ it('preserves recovery guidance for historical agent binding errors through repe
     message: 'invalid task data: Project-scoped agents can only receive work from their project',
   }
   const message = getStandInErrorMessage(error)
-  expect(message).toBe('分身的旧智能体绑定已失效。请重新加载分身设置后重试。')
+  expect(message).toBe('助理的旧智能体绑定已失效。请重新加载助理设置后重试。')
   expect(getStandInErrorMessage(new Error(message))).toBe(message)
   expect(getStandInErrorMessage(error.message)).toBe(message)
 })

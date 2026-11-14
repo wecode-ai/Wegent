@@ -24,6 +24,9 @@ export type CollaborationPlatformView = "spaces" | "resources";
 export type CollaborationDomain = "local" | "cloud";
 export type CollaborationPlatformRootView =
   | "home"
+  | "issues-assigned"
+  | "issues-created"
+  | "issues-participating"
   | "agents"
   | "teams"
   | "devices"
@@ -64,11 +67,34 @@ export interface CollaborationPlatformHostAdapter {
   };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
+  renderPersonalHome?(props: {
+    projects: CollaborationProject[];
+    createIssue: ReactNode;
+    createdIssue?: {
+      key: string;
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem;
+      project: CollaborationProject;
+      task?: import("../ports/SharedWorkspaceApi").WorkspaceRuntimeTaskAddress;
+    };
+    onCreatedIssueHandled?(key: string): void;
+    onOpenIssue(
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
+    ): void;
+  }): ReactNode;
+  createIndependentIssue?(): void;
+  renderIssueList?(props: {
+    scope: "assigned" | "created" | "participating";
+    projects: CollaborationProject[];
+    onOpenIssue(
+      issue: import("../ports/SharedWorkspaceApi").WorkspaceMyWorkItem,
+    ): void;
+  }): ReactNode;
   renderStandInPage?(props: {
     projects: CollaborationProject[];
     onClose(): void;
   }): ReactNode;
   renderProjectSidebarBadge?(project: CollaborationProject): ReactNode;
+  convertLocalProjectToCloud?(project: CollaborationProject): void;
   openProjectConversation?(project: CollaborationProject): void;
   currentUser?: {
     id: number;

@@ -262,7 +262,7 @@ describe('DocumentUpload dingtalk source', () => {
 
     fireEvent.click(expandButton)
 
-    expect(dialog).toHaveClass('top-[5dvh]', 'h-[680px]', 'sm:max-w-3xl')
+    expect(dialog).toHaveClass('top-[5dvh]', 'max-h-[90dvh]', 'sm:max-w-3xl')
     await act(async () => {})
   })
 

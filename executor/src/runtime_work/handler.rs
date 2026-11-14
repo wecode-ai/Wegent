@@ -150,6 +150,7 @@ mod git_source_workspace;
 mod git_webhook_setup;
 mod hooks;
 pub(super) mod lifecycle;
+mod mcp_app_source;
 mod mcp_approval_context;
 mod mcp_apps;
 mod notifications;
@@ -164,6 +165,7 @@ mod project_preparation;
 mod project_router;
 mod queries;
 mod queries_projection;
+mod quota_recovery;
 mod robot_queue_rpc;
 mod runner_catalog;
 mod runner_cloud_models;
@@ -176,6 +178,7 @@ mod stand_in_arrangements;
 mod stand_in_assignment_intake;
 mod stand_in_calendar;
 mod stand_in_connection_guidance;
+mod stand_in_context;
 mod stand_in_conversations;
 mod stand_in_diagnostics;
 mod stand_in_dispatches;
@@ -203,6 +206,7 @@ mod submitted_model;
 mod supervisor;
 use concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
 
+mod generated_issue_title;
 mod system;
 mod tasks;
 mod text_generation;
@@ -556,7 +560,9 @@ pub struct RuntimeWorkRpcHandler {
     command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
-    preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
+    quota_wake: Arc<tokio::sync::Notify>,
+    quota_waker_started: Arc<AtomicBool>,
+    preparing_turns: Arc<Mutex<HashMap<String, PreparingTurn>>>,
     active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_text_generations: Arc<Mutex<HashMap<String, Option<oneshot::Sender<()>>>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
@@ -623,7 +629,7 @@ struct ActiveLocalExecution {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct PreparingWorktreeTurn {
+struct PreparingTurn {
     cancellation_requested: bool,
 }
 
@@ -644,6 +650,7 @@ struct ActiveCodexTurn {
 struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
+    private_discussion: bool,
     items: Vec<Value>,
     // Keep settled request IDs until the turn ends so replay cannot reopen them.
     user_input_requests: HashMap<String, bool>,
@@ -804,6 +811,7 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 turns::RuntimeTurnQueueState::default()
             });
+        quota_recovery::restore_dispatches(&mut persisted_turns);
         for command in persisted_turns.commands.values_mut() {
             if command.is_owner_abandoned()
                 || matches!(
@@ -935,7 +943,9 @@ impl RuntimeWorkRpcHandler {
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
-            preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
+            quota_wake: Arc::new(tokio::sync::Notify::new()),
+            quota_waker_started: Arc::new(AtomicBool::new(false)),
+            preparing_turns: Arc::new(Mutex::new(HashMap::new())),
             active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_text_generations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
@@ -992,6 +1002,13 @@ impl RuntimeWorkRpcHandler {
                 },
             );
         }
+        let queued = handler
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .clone();
+        handler.project_quota_waits(&queued);
         handler.reconcile_command_recovery();
         handler.spawn_archived_delete_worker(archived_delete_rx);
         crate::workbench_control::register(&handler.device_id, Arc::new(handler.clone()));
@@ -1310,3 +1327,7 @@ use runtime_rpc::is_allowed_plugin_app_server_method;
 #[cfg(test)]
 #[path = "handler/tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "handler/private_discussion_tests.rs"]
+mod private_discussion_tests;

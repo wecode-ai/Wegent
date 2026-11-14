@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     ValidationError,
     field_validator,
@@ -149,6 +150,21 @@ def register_runtime_feature_normalizer(
     _runtime_feature_normalizers[name] = normalizer
 
 
+class RuntimeRemoteTaskAccessFeatures(BaseModel):
+    """Target-local consent; missing or malformed metadata grants no access."""
+
+    version: Literal[1]
+    enabled: StrictBool
+    task_creation: StrictBool = Field(default=False, alias="taskCreation")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, value: Any) -> int:
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported remote task access version")
+        return value
+
+
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
@@ -170,6 +186,17 @@ class RuntimeFeatures(BaseModel):
     plugin_sync: Optional[RuntimePluginSyncFeatures] = Field(
         default=None, alias="pluginSync"
     )
+    remote_task_access: Optional[RuntimeRemoteTaskAccessFeatures] = Field(
+        default=None, alias="remoteTaskAccess"
+    )
+
+    @field_validator("remote_task_access", mode="before")
+    @classmethod
+    def normalize_remote_task_access(cls, value: Any) -> Any:
+        try:
+            return RuntimeRemoteTaskAccessFeatures.model_validate(value)
+        except ValidationError:
+            return None
 
     @field_validator("plugin_sync", mode="before")
     @classmethod
@@ -195,6 +222,9 @@ class RuntimeFeatures(BaseModel):
         if self.plugin_sync is None:
             result.pop("pluginSync", None)
             result.pop("plugin_sync", None)
+        if self.remote_task_access is None:
+            result.pop("remoteTaskAccess", None)
+            result.pop("remote_task_access", None)
         return result
 
     @model_validator(mode="before")

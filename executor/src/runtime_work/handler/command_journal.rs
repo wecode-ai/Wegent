@@ -707,6 +707,10 @@ impl RuntimeWorkRpcHandler {
         turn: &SpawnTurnRequest,
         state: CommandState,
     ) {
+        if turn.request.extra.contains_key(quota_recovery::MARKER) {
+            self.finish_quota_command(turn).await;
+            return;
+        }
         let operation = self.turn_queue_operation.clone().lock_owned().await;
         if self
             .active_local_executions

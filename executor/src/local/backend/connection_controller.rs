@@ -6,7 +6,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
     },
     time::Duration,
@@ -35,6 +35,8 @@ pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     runtime_event_hub: Option<ExecutorEventHub>,
+    // The journal outlives individual connections; its delivery cursor must too.
+    runtime_event_cursor: Arc<AtomicU64>,
     state: Arc<Mutex<LocalBackendConnectionState>>,
     /// Lightweight snapshot of the current connection shared with the
     /// runtime-work handler so App-IPC task runs can resolve backend
@@ -126,6 +128,7 @@ impl LocalBackendConnectionController {
             base_config: config,
             runtime_work_handler,
             runtime_event_hub,
+            runtime_event_cursor: Arc::new(AtomicU64::new(0)),
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext::new(Arc::clone(
                 &connection_snapshot,
@@ -224,6 +227,7 @@ impl LocalBackendConnectionController {
                     handler.clone(),
                     event_hub.clone(),
                 )
+                .with_runtime_event_cursor(Arc::clone(&self.runtime_event_cursor))
             } else {
                 LocalBackendRunner::new_for_app_sidecar(
                     LocalBackendConfig::from_device_config(config),
@@ -585,7 +589,9 @@ mod tests {
     use tokio::net::TcpListener;
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn disconnect_invalidates_the_installer_held_by_in_flight_http_work() {
+        let _guard = crate::test_env::lock();
         use super::super::CapabilitySyncRpcHandler;
         use std::sync::{
             atomic::{AtomicBool, Ordering},
@@ -617,7 +623,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn explicit_disconnect_is_distinct_from_a_fresh_executor_and_resets_on_connect() {
+        let _guard = crate::test_env::lock();
         let controller = LocalBackendConnectionController::start(DeviceConfig::default()).await;
         assert_eq!(
             controller.backend_status().await.unwrap()["explicitly_disconnected"],
@@ -654,7 +662,9 @@ mod tests {
     };
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn publishes_the_initial_connection_to_the_shared_snapshot() {
+        let _guard = crate::test_env::lock();
         let config = DeviceConfig {
             connection: ConnectionConfig {
                 backend_url: "https://backend.example.com".to_owned(),
@@ -687,7 +697,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn changing_backend_profile_invalidates_the_previous_plugin_route() {
+        let _guard = crate::test_env::lock();
         let controller = LocalBackendConnectionController::start(DeviceConfig {
             connection: ConnectionConfig {
                 backend_url: "http://127.0.0.1:9".to_owned(),
@@ -727,7 +739,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn rotating_runtime_credentials_preserves_the_running_device_route() {
+        let _guard = crate::test_env::lock();
         let controller = LocalBackendConnectionController::start(DeviceConfig {
             connection: ConnectionConfig {
                 backend_url: "http://127.0.0.1:9".to_owned(),
@@ -773,7 +787,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn reads_backend_quota_without_exposing_the_auth_token() {
+        let _guard = crate::test_env::lock();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {

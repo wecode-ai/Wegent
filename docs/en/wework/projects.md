@@ -13,39 +13,45 @@ sidebar_position: 3
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
-## Collaboration spaces and global resource catalogs
+## Collaboration groups and global resource catalogs
 
 <a id="workspace-resource-controls"></a>
 
-Open **top + → Collaboration**. The sidebar shows accessible **Local projects** and **Remote projects** by default. Use the **+** beside either group to create a project without first choosing or creating a collaboration space. Remote projects require a cloud connection. These groups describe project storage; configure execution devices separately inside the project.
+Open **top + → Collaboration**. The sidebar title is **Collaboration**. One **Projects** area retains both local and cloud projects without separate storage-location sections. Projects appear under their group, with the personal group first. Local and cloud projects outside business groups appear together under Personal group; each project appears once.
 
-Expand **Collaboration spaces** when you need shared membership, resources, and permissions across projects. Space entries provide management controls; open projects from the local/remote project lists above. Existing membership inheritance, project roles, and administration permissions continue to apply. Project-only members can open their projects directly; seeing a parent space name does not grant space access. The project picker defaults to local/remote groups; choose **Filter by collaboration space** to use space groups.
+Personal group is the current account’s personal group. Choose **Personal group → … → New project** to create a local project when disconnected or a cloud project when connected. **Personal group → … → Group settings** opens the actual personal group owned by the account: the cloud personal group when connected, or the local personal group when disconnected. The Projects heading and individual project rows have no plus buttons. Project storage and execution devices are separate.
 
-Global catalogs, space settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace space membership management.
+Groups collapse and expand independently. Only the project region scrolls; personal Issue entries above it and Collaboration management pinned below remain visible. **Collaboration management** starts collapsed; expand it to access devices, templates, Agents and Teams. The home project picker fits the available window height and scrolls internally. Membership inheritance, project roles and administration permissions continue to apply. Seeing a parent group name does not grant group access.
+
+For remote projects, **Choose a group** initially selects **Personal group**, or you can choose an existing group. The first use creates an independent personal group, which later requests reuse. Existing business groups and their projects are not adopted or moved. The add-folder button beside Projects creates a group. Switching groups preserves the project name and description and clears the previous group's member, agent, and template selections; configure these again in the target group before creating.
+
+Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Agents / Teams / Devices catalogs | Select the left navigation item, search/filter All, Created by me or Team shared; create with the appropriate owner and save the form        | Not the project member list; creation/deletion depends on resource type and permission                                      |
-| Add resource to space             | Resource row → Add to space → choose space → confirm; Settings opens its configuration                                                       | Does not expand all project members' permissions or move code directories                                                   |
-| Space name/description            | Space-name … → Space settings → Basic information → edit → Save                                                                              | Requires space management permission; not project renaming                                                                  |
-| Cloud space members               | Space settings → Collaboration members → Members → Invite → search/choose role → click result                                                | Clicking submits; role/removal actions request immediately and remain constrained by inherited membership/management rights |
-| Transfer ownership                | Owner selects a new owner on the space members page, reviews and transfers                                                                   | Previous owner retains administrator permissions; unrelated to assigning an Issue                                           |
-| Space agents/teams                | Space settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
-| Space execution environment       | Space settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
+| Add resource to group             | Resource row → Add to group → choose group → confirm; Settings opens its configuration                                                       | Does not expand all project members' permissions or move code directories                                                   |
+| Group name/description            | Group-name … → Group settings → Basic information → edit → Save                                                                              | Requires group management permission; not project renaming                                                                  |
+| Cloud group members               | Group settings → Collaboration members → Members → Invite → search/choose role → click result                                                | Clicking submits; role/removal actions request immediately and remain constrained by inherited membership/management rights |
+| Transfer ownership                | Owner selects a new owner on the group members page, reviews and transfers                                                                   | Previous owner retains administrator permissions; unrelated to assigning an Issue                                           |
+| Group agents/teams                | Group settings → Collaboration members → Agents / Teams; add/create and configure lead, members, rules and execution requirements, then save | Removing a shared association differs from deleting a project-owned group; inspect impact                                   |
+| Group execution environment       | Group settings → Execution environment → add/share                                                                                           | Separate from project repository initialization; depends on storage type and capabilities                                   |
 
 ### Clean up offline device registrations
 
 <a id="offline-device-cleanup"></a>
 
-Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected spaces, then confirm.
+Open **Top + → Collaboration → Devices**. Use the device ID and last online time to find the historical registration. Select **Delete offline device** on its row, review the registration number and affected groups, then confirm.
 
-You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those spaces and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
+You can remove a registration you own when it is offline and has no running tasks. The current device is protected, as are records that could belong to it while its local identity is unavailable. Removing the registration takes it out of the device selectors in those groups and preserves device files and execution history. See [Offline Device Handling](../wegent/user-guide/ai-devices/local-device-support.md#offline-device-cleanup) for last online display and reconnection behavior.
 
-### Register a space Runner
+<a id="register-a-space-runner"></a>
 
-When supported for a cloud space, use the create action under **Space settings → Execution environment** to open **Register workspace runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.
+### Register a group Runner
 
-Credentials are shown only this time. Do not put their values in chat, documents or screenshots; retain them through your organization's secure process before closing. Removing a public space environment revokes its credentials. Registration does not prove the process started, and cloud connection status does not establish Runner availability.
+When supported for a cloud group, use the create action under **Group settings → Execution environment** to open **Register group runner**. Enter its name and register. Follow the dialog to securely configure `DEVICE_ID`, `WEGENT_AUTH_TOKEN` and `WEGENT_BACKEND_URL` on the target server and run Executor, then verify online status in Wework.
+
+Credentials are shown only this time. Do not put their values in chat, documents or screenshots; retain them through your organization's secure process before closing. Removing a public group environment revokes its credentials. Registration does not prove the process started, and cloud connection status does not establish Runner availability.
 
 ## Collaboration templates and configuration sharing
 
@@ -68,7 +74,31 @@ To delete an imported personal template, open **Collaboration → Templates → 
 
 ## New Issue content and assignee
 
-Open **Collaboration → New Issue**, choose the project first and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+Record an issue directly at the top of **Collaboration → My work**; choose the project and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
+
+<a id="personal-collaboration-home"></a>
+
+### Personal collaboration home
+
+The home defaults to a compact **Record an issue** composer. Choose a project, enter content, optionally assign it to a member, agent or team, and select **Record**. Recording does not directly launch a task; automatic handling of assigned Issues still follows the assistant settings. To begin immediately, select **Create task**; the draft and attachments carry into the Tasks composer with model, plugin, workspace, attachment, plan-mode and voice controls. Submitting automatically derives the Issue title from the content and creates the linked execution in one flow. Results use the existing Issue publication flow. The list stays visible and the new Issue and task open on the right. A rejected start retains the draft and retries the same Issue. Switching back to **Record an issue** preserves drafts.
+
+Collaboration opens **My work** with **Needs my action** selected, showing Issues whose assignee is you. Choose **Participating** for the broader participation list. Both scopes group issues by project and initially show **Unfinished** work. Choose **All** to include completed or cancelled issues. Pending questions explicitly addressed to you show **Needs my input** in the same list.
+
+**Needs my action** prioritizes questions, reviews and approvals addressed to you, followed by unstarted assignments, ongoing work and other unfinished issues. Within each category, priority precedes recent activity; finished and cancelled issues come last. **Participating** keeps issues needing your intervention first and otherwise uses recent activity. New comments and execution completion count as activity; execution heartbeats do not. Projects needing intervention come first, with other projects retaining their existing order. Both local and cloud stores apply ordering before pagination. Use **Sort** above the list to select **Needs my attention**, **Longest assigned**, **Recent activity**, or **Priority**. Issues show the age of their current assignment to you; reassignment resets it and missing assignment evidence does not fall back to creation time. Newly created Issues appear near the top and open on the right. Use **Open in project** in the detail header to view the Issue in its project.
+
+Starting work through **Create task** prevents assistants from automatically taking over that assignment or reserving extra role tasks. Once AI title generation finishes, its title updates the new Issue's provisional title, preserving any manual title edit. A later reassignment can be handled by assistants again. Ordinary assignments made through **Record an issue** still follow assistant settings; one automatic assignment selects one matching role. A reservation awaiting Runtime creation shows **Waiting for assistant** and cannot open as a running task. After the Runtime creates the task, its original conversation becomes available.
+
+**Record an issue** and **Create task** are parallel modes: select either label to switch while preserving the draft. The project selector has no background at rest and uses a subtle hover state. Issues appear in a project-grouped list with title, status and assignee kept together, followed by the summary, assignment comment and a single-line linked-task summary. The list does not use a multi-column card grid. Select an issue for details or a linked task to open its execution.
+
+The right workspace uses the task interface's tab style and opens **Stand-in** by default. The assistant tab remains available alongside at most one Issue detail tab. Selecting another Issue replaces the current detail without navigating the list; selecting it again focuses that detail. The tab shows the Issue title, with its project and number in the tooltip. Closing the detail returns to the assistant. Unsubmitted edits are retained and restored when reopening the Issue. Only the visible stand-in conversation confirms messages as read. Details reuse the full board Issue workflow. Where the existing creation conditions allow it, **Create task** initially appears only beside **Linked tasks**. Once you scroll past that control, the complete **Let AI help me** action bar appears at the top; it disappears when you scroll back. It opens a second conversation pane in the same right-hand tab and widens the workspace. Linked tasks use the same second pane; closing the conversation returns to the Issue and closing the Issue returns to the home list.
+
+The **Stand-in** tab opens a conversation using the primary identity, configuration, and execution device from My Stand-in, with separate collaboration history. This conversation stays in the home assistant and is excluded from the ordinary task sidebar. Send your request to discuss projects and Issues using existing collaboration tools and current permissions. No specific business workflow or automatic board subscription is preset. Select **Assistant tasks** to view Issue-related work grouped by role and processing status; select **Chat** to return without losing your draft. Open a work item to continue its original conversation, or a pending Issue to open its details. **Assistant settings** opens the existing primary configuration. The work list retains board connection guidance; chatting does not require automatic processing to be enabled.
+
+Issue rows show title, status, assignee, tags, date and a content excerpt. When an actual assignment comment exists, **Assignment comment** shows its text and author. Assignment context and task bindings load in the same bounded page without per-Issue requests. One task-summary line shows the first two names, task count and live execution status. A single task opens directly; multiple tasks open a picker. Collaboration items awaiting you show a bell and **Needs my input**, linking to the Issue. Projects use readable group names, cards use #numbers, and detail tabs show Issue titles, with project names and numbers in their tooltips.
+
+Discussions exceeding 20 activity entries preserve the first two and latest ten, with an expandable middle. Comment links and reply targets remain visible.
+
+Notifications remain in the title-bar bell. Reading them does not resolve pending work. Failed list requests show an error and retry action. Reopening the home or focusing the app refreshes the list.
 
 Type **#** and select a matching Issue from this project. After switching projects, recheck/reselect references rather than retaining invalid old-project links. This creates an Issue, not a runtime task, so do not assume task plan-mode/plugin/Skill-slash controls are available. Review project, assignee and references before submitting, then continue in details.
 
@@ -106,7 +136,7 @@ Hover **left sidebar → Projects → project** and select …, or right-click t
 | Change project appearance | Use the appearance action to cycle project styling      | Not the global theme setting                                                                           |
 | Reveal in file manager    | Choose Finder/system file manager                       | Requires an accessible local path                                                                      |
 | Create permanent worktree | Select the action and complete its dialog               | Requires a supported Git source; differs from a temporary task worktree eligible for automatic cleanup |
-| Archive conversations     | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
+| Archive all chats         | Review the confirmation scope before submitting         | Archives project conversations, not the repository                                                     |
 | Remove project            | Select Remove and review confirmation                   | Handle uncommitted work and linked worktrees first; removing a record is not a backup                  |
 
 For project-space Issues, open **top + → Collaboration → project**, then use the board view menu, Issue details or project settings. Role and visibility rules govern available actions. The following sections explain individual fields and workflows.
@@ -180,11 +210,7 @@ After enabling **Settings → General → Experimental features**, open **Edit p
 
 ### Create a local or cloud project space
 
-The Collaboration page always shows the current device's **Local space** in
-the sidebar. When it is empty, the guide offers **Add folder**. After you choose
-a directory and confirm the project name, Wework registers it as a Task project
-and adds it to the local space. Cloud projects are still created inside a cloud
-space, and the creation UI identifies the actual storage location:
+The sidebar places projects without another group under **Personal group**. Open its **… → Create project** action. New projects default to the current device while disconnected and to the cloud while connected. **Add folder** and **Import existing project** in the creation dialog remain available for adding projects from this device:
 
 - A **local project** is stored on the current device and is available only on that device.
 - A **cloud project** is stored in Wegent Cloud and supports collaboration across devices signed in to the same account. Selecting it while signed out starts the sign-in flow. If the account has no cloud space after sign-in, Wework creates one before continuing project creation.
@@ -220,7 +246,9 @@ Local spaces save the agent configuration in the project, preserving its resourc
 
 ### Agent capabilities and disabled state
 
-Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. The Edit action requires permission to edit the Agent definition; shared use permission does not grant editing permission. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
+Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
+
+Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **Runtime settings** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 
@@ -270,8 +298,7 @@ DingTalk controls access to AI Table records. Wework project roles control entry
 ### Import more projects into the local space
 
 Wework automatically adds local Task projects to the local space during initial
-setup. To add more projects later, open the local space's **…** menu or the
-project page's **Add project** menu:
+setup. To add more projects, open **Personal group → … → Create project**, then select an import action. These actions remain available when connected to the cloud:
 
 - **Import existing project** lists projects that already exist on the Tasks
   page but are not yet in the local space. Wework deduplicates them by runtime
@@ -404,6 +431,8 @@ Opening an issue from a project-space board shows its attachments directly in th
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
+For substantial assigned work, collaboration Agents delegate execution to native subagents by default while the primary Agent coordinates, verifies and replies concisely. No extra delegation request is needed. Normally only a brief acknowledgment and the final result are published; routine tool, wait and worker progress stays internal, while material blockers, questions and approvals remain visible. Simple questions are answered directly. Subagents retain the original task's context and permission limits without creating extra Issue execution tasks. Explicit single-agent mode still disables subagents.
+
 Comments in the issue activity have two different execution semantics:
 
 - Sending a new top-level comment from the bottom composer creates a separate execution task from the issue title, description, attachments, and current project configuration. The new task can read the issue context, but it does not automatically inherit another execution task's conversation history.
@@ -411,7 +440,7 @@ Comments in the issue activity have two different execution semantics:
 
 The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
 
-For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
+For ordinary tasks linked to local issues, the Executor writes the issue status from the runtime lifecycle. The board and the issue summary above the task composer use lifecycle transitions to refresh the issue. An ordinary private task linked to a cloud issue marks it **In progress** after task creation is accepted. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status; member task creation callbacks do not overwrite the manager's decision.
 
 Use the UI's archive action for an unneeded Issue from its board card, table row or details' More information entry. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
 
@@ -509,3 +538,33 @@ Desktop regression: `pnpm --filter wework e2e:desktop --segment collaboration-de
 Open an Issue in a cloud project space and click **Copy web link** in its detail header to copy its address on the connected Wegent website. The button confirms success with **Copied**; if copying fails, click again to retry. Recipients still need to sign in and have access to the project.
 
 Local project space Issues have no corresponding Wegent webpage, so this action is hidden. It is also hidden until the cloud website address is available.
+
+<a id="independent-issues"></a>
+
+## Independent Issues and My issues
+
+<!-- ui-source: src/features/todo/IndependentIssueDialog.tsx -->
+<!-- ui-source: src/features/todo/IndependentIssueEditor.tsx -->
+<!-- ui-source: src/features/todo/PersonalIssuesView.tsx -->
+
+The collaboration sidebar keeps the three personal Issue entries above **Projects**. **Needs my action**, **Created by me**, and **Participating** query the current account's local and cloud project Issues and cloud independent Issues. Home keeps its existing composer, project-grouped list and assistant workspace. Project navigation uses one list and preserves group ownership. In all three Issue pages, **Show archived independent Issues** is in the filter toolbar. Issue lists show their creation timestamp alongside other metadata. Selecting an Issue opens its detail drawer on the current page; expanding the detail area remains effective when switching Issues; opening a linked task expands the second conversation drawer. Closing that drawer returns to the Issue. Select a project heading to open its board.
+
+Connect a cloud account and choose **Collaboration → New Issue**. Select a project or keep **Independent Issue · No project**, enter a title and description, then use **Add participants** to search **People / Agents / Teams**. Choose an invited participant as assignee; status, priority and due date appear below the description. Independent Issues belong to no project or group and are private to the creator until invitations are added. A team invitation records its human roster at invitation time; later roster changes do not expand Issue access automatically. The form only saves the Issue and has no automatic execution option.
+
+The creator searches for colleagues under **Edit → Participants**, adds invitations or removes existing participants. Participants can read, edit, comment and work on the Issue, but cannot change invitations or delete it. Removing a participant also clears their assignment. Every subsequent read and write rechecks the current invitation. Assignment grants no access; assignees must be the creator or an invited participant.
+
+Open an Issue to discuss, edit or archive it. **Show archived independent issues** lists archived records for restoration. Only the creator can confirm deletion. Saves require the observed version; a concurrent change preserves the draft and reports a conflict so the current content can be reviewed before resubmitting.
+
+The creator can **Associate project** after reviewing the permission change: project permissions will apply and existing participants receive no automatic project membership. One transaction preserves the Issue and comments, allocates a project sequence number, and opens the existing project detail. Target-project edit permission is required; project operations and permissions apply afterwards.
+
+**Ask AI to help** creates a personal task from the currently authorized Issue content using the task page's selected device, workspace and model. It does not automatically change the Issue status or publish results; add the shareable conclusions as comments. Independent Issues are cloud-shared; cloud connection failures do not block local projects or the rest of the workbench.
+
+Existing catalogs are grouped under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. The group can be expanded or collapsed. The duplicate personal assistant sidebar entry is removed while the assistant remains in Home's right workspace.
+
+Independent Issue details show invited Agents and Teams. Before **Ask AI to help**, choose a processing Agent; the action rereads Issue access and starts a task with that Agent without requiring a project. Project Issues retain project access control. If project association fails, the saved independent Issue remains in the form for correction and retry without duplicate creation.
+
+## Create child Issues from comments
+
+In the Issue comment composer, select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
+
+Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.

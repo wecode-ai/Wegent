@@ -62,6 +62,13 @@ impl LocalTaskStore {
         // fields are omitted: the rebind below merges with a JSON patch where
         // null values would delete the stored identity.
         if let Some(dispatch) = dispatch {
+            if let Some(pending) = dispatch
+                .get("standInPending")
+                .or_else(|| dispatch.get("stand_in_pending"))
+                .and_then(Value::as_bool)
+            {
+                metadata["stand_in_pending"] = json!(pending);
+            }
             for (metadata_key, value) in [
                 (
                     "human_assignment_id",
@@ -387,6 +394,14 @@ impl LocalTaskStore {
         &self,
         item_ids: &[String],
     ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        Self::list_task_bindings_from(&connection, item_ids)
+    }
+
+    pub(super) fn list_task_bindings_from(
+        connection: &Connection,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
         let item_ids = item_ids
             .iter()
             .map(|item_id| item_id.trim())
@@ -399,7 +414,6 @@ impl LocalTaskStore {
             .take(item_ids.len())
             .collect::<Vec<_>>()
             .join(", ");
-        let connection = self.connection()?;
         let mut statement = connection.prepare(&format!(
             "SELECT {TASK_BINDING_COLUMNS}
              FROM loop_items

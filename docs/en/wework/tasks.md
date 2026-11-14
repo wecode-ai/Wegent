@@ -26,6 +26,14 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+### Model overload and quota recovery
+
+Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
+
+When subscription usage is exhausted, the task waits in the queue and releases its execution slot. The composer shows the reset countdown. At that time, Wework checks usage again and continues with the original model, including a persistent goal stopped by the usage limit. If no reset time is available, it checks once per minute. Waiting records survive a Wework restart on the same device; execution requires the application to be running.
+
+Click **Cancel automatic recovery** beside the composer countdown to stop recovery. Pausing, editing or deleting its goal, or sending new task input, invalidates the old wait. Changed account, model configuration or conversation requires a new execution request. An exhausted task budget still requires a budget adjustment before continuing.
+
 <a id="sidebar-task-management"></a>
 
 ### Sidebar task management
@@ -113,7 +121,7 @@ After selecting **Let AI handle it** in an issue detail, use the task composer t
 
 When an issue already has linked tasks, the **Linked tasks** section directly shows every running task and the two most recent tasks. If more history is available, use **Expand** and **Collapse** instead of opening a separate task-list view. The action for creating another task appears beside the section heading.
 
-After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
+After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. When changing the link is supported, the entry remains available while project options refresh or are temporarily empty; you can select a destination once the options load. Wework offers two choices:
 
 - **Create board task** creates and links a card using the current task title and execution status.
 - **Link an existing board task** searches editable cards in the destination board by task ID or title and links the current task to the selected card without changing that card's status.

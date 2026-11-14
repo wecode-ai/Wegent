@@ -37,11 +37,27 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications,human-interactions-browser,human-interactions-hidden"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications,human-interactions-browser,human-interactions-hidden"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications,collaboration-exp"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/notifications/WeworkSchemeBridge.tsx" \
   "wework/src/features/notifications/scheme.ts"
+
+for collaboration_exp_path in \
+  wework/e2e/desktop/catalog/collaboration-exp.json \
+  wework/e2e/desktop/scenarios/collaboration-exp.scenario.mjs \
+  wework/e2e/desktop/modules/collaboration-exp-rhythm.mjs \
+  wework/e2e/desktop/modules/collaboration-exp-state-motion.mjs \
+  wework/src/features/collaboration-exp/CollaborationExpApp.tsx \
+  wework/src/features/collaboration-exp/private/PrivateDiscussionPane.tsx; do
+  assert_desktop_case "collaboration experience changes select its Core checkpoint: $collaboration_exp_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-exp"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$collaboration_exp_path"
+done
 
 assert_desktop_case "Issue read API changes retain board coverage and select notification reads" \
   'wework_desktop_e2e=true
@@ -319,7 +335,8 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 for plugin_sync_checkpoint in \
   plugin-runtime-route-refresh \
   plugin-background-sync-isolation \
-  plugin-periodic-reconcile; do
+  plugin-periodic-reconcile \
+  plugin-package-integrity-recovery; do
   assert_desktop_case "plugin sync checkpoint runs independently: $plugin_sync_checkpoint" \
     "wework_desktop_e2e=true
 wework_desktop_core_e2e=false

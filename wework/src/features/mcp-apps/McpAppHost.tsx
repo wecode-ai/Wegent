@@ -65,6 +65,7 @@ async function createAppDocument(
 
 export function McpAppHost({
   block,
+  turnId,
   address,
   api,
   onMessage,
@@ -72,6 +73,7 @@ export function McpAppHost({
   onDisplayModeChange,
 }: {
   block: ToolBlock
+  turnId?: string
   address: RuntimeTaskAddress
   api: RuntimeMcpAppsApi
   onMessage?: (text: string) => Promise<void>
@@ -102,6 +104,7 @@ export function McpAppHost({
     invokeDesktopHost('mcpApps.retainSession', {
       address,
       callId: block.id,
+      turnId,
       sessionId,
       windowLabel: getDesktopWindowLabel(),
       target: api.getMcpAppSessionTarget?.(address),
@@ -109,7 +112,7 @@ export function McpAppHost({
   )
   const requestApp = useEffectEvent(async (data: Partial<McpAppRequest>) => {
     if (data.sessionId) await retainSession(data.sessionId)
-    return api.requestMcpApp({ ...data, address, callId: block.id })
+    return api.requestMcpApp({ ...data, address, callId: block.id, turnId })
   })
   const hasMessage = onMessage !== undefined
   const hasContext = onContext !== undefined
@@ -143,10 +146,19 @@ export function McpAppHost({
   }, [closed, panelDismissed, mode, onDisplayModeChange, dismissPanel])
 
   const discovered = useRef(false)
+  const attemptedDiscovery = useRef<unknown>(undefined)
+  const discoveryInput = useEffectEvent(() => ({
+    address,
+    turnId,
+    callId: block.id,
+    status: block.status,
+    output: block.toolOutput,
+  }))
   const discoveryPending = useRef(false)
   const discoveryEpoch = useRef(0)
   useEffect(
     () => () => {
+      attemptedDiscovery.current = undefined
       discoveryEpoch.current++
       discoveryPending.current = false
     },
@@ -154,6 +166,9 @@ export function McpAppHost({
   )
   useEffect(() => {
     if (discovered.current || discoveryPending.current) return
+    const input = discoveryInput()
+    if (dequal(attemptedDiscovery.current, input)) return
+    attemptedDiscovery.current = input
     const epoch = discoveryEpoch.current
     const status = block.status
     discoveryPending.current = true
@@ -184,9 +199,9 @@ export function McpAppHost({
         if (epoch !== discoveryEpoch.current) return
         discoveryPending.current = false
         // Schedule after clearing pending so the next effect cannot lose this transition.
-        if (!discovered.current && status !== latest().block.status) setAttempt(value => value + 1)
+        if (!discovered.current && !dequal(input, discoveryInput())) setAttempt(value => value + 1)
       })
-  }, [address.deviceId, address.taskId, block.id, block.status, block.toolOutput, attempt])
+  }, [address.deviceId, address.taskId, block.id, block.status, block.toolOutput, turnId, attempt])
 
   useEffect(() => {
     if (!app || closed) return
@@ -514,6 +529,7 @@ export function McpAppHost({
               aria-label={t('mcp_apps.retry')}
               onClick={() => {
                 discovered.current = false
+                attemptedDiscovery.current = undefined
                 setApp(undefined)
                 setDescriptor(undefined)
                 setFailure(undefined)
@@ -536,6 +552,7 @@ export function McpAppHost({
               onClick={() => {
                 if (closed) {
                   discovered.current = false
+                  attemptedDiscovery.current = undefined
                   setApp(undefined)
                   setDescriptor(undefined)
                   setFailure(undefined)

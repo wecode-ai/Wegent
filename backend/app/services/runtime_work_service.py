@@ -94,6 +94,7 @@ from app.schemas.runtime_work import (
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
+from app.services.device.remote_control_policy import personal_task_devices
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device.runtime_rpc_service import (
     DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
@@ -384,7 +385,7 @@ async def list_runtime_work(
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = personal_task_devices(await device_service.get_all_devices(db, user_id))
     if device_id is not None:
         devices = [device for device in devices if device.get("device_id") == device_id]
     devices_by_id = {str(device.get("device_id")): device for device in devices}
@@ -640,7 +641,7 @@ async def search_runtime_work(
 ) -> RuntimeWorkSearchResponse:
     """Search runtime transcripts on online or busy devices owned by the user."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = personal_task_devices(await device_service.get_all_devices(db, user_id))
     searchable_devices: list[tuple[str, dict[str, Any]]] = []
     for device in devices:
         device_id = str(device.get("device_id") or "")
@@ -871,6 +872,8 @@ async def _dispatch_runtime_send(
     Request-user-input responses use a dedicated executor channel and do not
     spawn a new turn, so they intentionally omit ``executionRequest``.
     """
+    if request.conversation_context is not None:
+        payload["conversationContext"] = request.conversation_context
     if request.request_user_input_response is None:
         address = await resolve_continuation_address(
             db=db,
@@ -941,6 +944,8 @@ async def send_runtime_guidance(
         payload["attachments"] = attachments
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
+    if request.conversation_context is not None:
+        payload["conversationContext"] = request.conversation_context
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
     try:

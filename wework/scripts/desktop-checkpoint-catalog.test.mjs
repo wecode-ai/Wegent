@@ -174,6 +174,26 @@ test('a feature config selects its existing shard rather than all desktop suites
   assert.equal(result.wework_desktop_other_e2e, 'false')
 })
 
+test('plugin cache changes retain the recovery scenario in its existing cloud shard', () => {
+  for (const path of [
+    'executor/crates/plugin-packages/src/services/workbench.rs',
+    'executor/crates/plugin-packages/src/services/workbench_recovery.rs',
+    'executor/crates/plugin-packages/src/local/capabilities/plugin_preparation.rs',
+    'wework/e2e/desktop/catalog/plugin-package-integrity-recovery.json',
+  ]) {
+    const result = classified(path)
+    const shards = JSON.parse(result.wework_desktop_cloud_e2e_matrix).include
+    assert.ok(
+      shards.some(
+        shard =>
+          shard.id === 'cloud-7' &&
+          shard.segments.split(',').includes('plugin-package-integrity-recovery')
+      ),
+      `Plugin cache recovery is missing from CI for ${path}`
+    )
+  }
+})
+
 test('theme changes select the gallery and real content and auxiliary window regressions', () => {
   const result = classified('wework/src/features/appearance/ThemeSelector.tsx')
   const checkpoints = JSON.parse(result.wework_desktop_core_e2e_matrix).include.flatMap(shard =>

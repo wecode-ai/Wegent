@@ -73,6 +73,18 @@ pub(crate) fn is_context_compaction_request(request: &ExecutionRequest) -> bool 
     request.subtask_id.ends_with("-context-compact")
 }
 
+pub(super) fn apply_runtime_event_conversation_context(
+    payload: &mut Value,
+    request: &ExecutionRequest,
+) {
+    if let Some(payload) = payload.as_object_mut() {
+        payload.remove("conversationContext");
+    }
+    if super::util::is_private_discussion(request) {
+        payload["conversationContext"] = json!("private_discussion");
+    }
+}
+
 pub(crate) fn emit_response_event(
     event_tx: &Option<broadcast::Sender<Value>>,
     device_id: &str,
@@ -135,6 +147,7 @@ pub(crate) fn emit_response_event(
             "eventSeq": next_runtime_event_sequence(),
         },
     });
+    apply_runtime_event_conversation_context(&mut payload["payload"], request);
     if let Some(client_user_message_id) = request
         .extra
         .get("client_user_message_id")
@@ -2729,6 +2742,55 @@ mod tests {
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {
+        let (event_tx, mut events) = broadcast::channel(6);
+        for private in [true, false] {
+            let mut request = ExecutionRequest {
+                subtask_id: if private {
+                    "private-turn"
+                } else {
+                    "public-turn"
+                }
+                .into(),
+                ..Default::default()
+            };
+            if private {
+                request
+                    .extra
+                    .insert("conversationContext".into(), json!("private_discussion"));
+            }
+            for event in [
+                "response.created",
+                "response.output_text.delta",
+                "response.completed",
+            ] {
+                let data = json!({"turnId":request.subtask_id,"value":"Original transcript"});
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "same-task",
+                    &request,
+                    data.clone(),
+                );
+                let emitted = events.try_recv().unwrap();
+                assert_eq!(emitted["event"], event);
+                assert_eq!(emitted["payload"]["taskId"], "same-task");
+                assert_eq!(emitted["payload"]["subtaskId"], request.subtask_id);
+                assert_eq!(emitted["payload"]["data"], data);
+                if private {
+                    assert_eq!(
+                        emitted["payload"]["conversationContext"],
+                        "private_discussion"
+                    );
+                } else {
+                    assert!(emitted["payload"].get("conversationContext").is_none());
+                }
+            }
+        }
+    }
 
     #[test]
     fn terminal_content_update_does_not_repeat_streamed_content() {

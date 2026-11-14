@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
+from knowledge_engine.storage.milvus_batching import MilvusRowTooLargeError
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
@@ -116,9 +117,10 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
     logger.warning(f"ValueError for {request.url}: {exc}")
 
     error_response = RemoteRagError(
-        code="invalid_request",
+        code=exc.code if isinstance(exc, MilvusRowTooLargeError) else "invalid_request",
         message=str(exc),
         retryable=False,
+        details=exc.details if isinstance(exc, MilvusRowTooLargeError) else None,
     )
 
     return JSONResponse(

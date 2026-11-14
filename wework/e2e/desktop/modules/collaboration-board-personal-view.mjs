@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { showAllCollaborationIssues } from './collaboration-board-flows.mjs'
 
 import {
   revealCollaborationSidebarElement,
@@ -23,6 +24,11 @@ export async function openProjectBoard(control, scoped, project) {
   })
   await selectCollaborationProjectView(control, scoped('').trim(), 'board')
   await control.command('waitFor', scoped('[data-testid="collaboration-board"]'))
+}
+
+export async function openAllIssuesProjectBoard(control, scoped, project) {
+  await openProjectBoard(control, scoped, project)
+  await showAllCollaborationIssues(control, scoped('').trim())
 }
 
 export async function selectProjectBoardSort(control, scoped, columnKey, rules = []) {
@@ -116,6 +122,7 @@ export async function verifyPersonalAssigneeFilter(
   control,
   { scoped, request, project, currentUser, issues, expectedRole = 'Developer' }
 ) {
+  await showAllCollaborationIssues(control, scoped('').trim())
   const before = await request(`/api/v1/cloud-projects/${project.id}`)
   assert.equal(before.access_role, expectedRole, 'The filter regression has the wrong project role')
   const filter = scoped('[data-testid="cloud-board-group-filter"]')
@@ -146,7 +153,7 @@ export async function verifyPersonalAssigneeFilter(
   await control.command('select', filter, { value: `assignee-${currentUser.id}` })
   await control.command('fill', search, { value: '共同关键词' })
   await reloadMainWindow(control, 'The desktop did not reconnect after filtering my Issues')
-  await openProjectBoard(control, scoped, project)
+  await openAllIssuesProjectBoard(control, scoped, project)
   await assertProjectBoardGrouping(control, scoped, 'assignee')
   assert.equal(await control.command('getValue', filter), '')
   assert.equal(await control.command('getValue', search), '')

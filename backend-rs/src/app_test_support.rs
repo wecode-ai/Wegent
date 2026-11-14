@@ -65,6 +65,7 @@ pub(crate) fn app(mysql: brz_mysql::MysqlService) -> Arc<AppState> {
         erp: Arc::new(crate::erp_provider::NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
+        unique_app_device_names: false,
         skill_market: crate::skill_market::SkillMarketRegistry::default(),
         mcp_providers: crate::mcp_providers::McpProviderRegistry::default(),
         interactive_form: crate::InteractiveFormRegistry::default(),
