@@ -103,6 +103,19 @@ def resolve_generation_model(
     if context.model_config.get("modelType") == model_type:
         return dict(context.model_config)
 
+    default_model_name = _get_default_generation_model_name(model_type)
+    if default_model_name:
+        # An operator-configured default is a persisted choice: it remains
+        # callable after the model is hidden from new selections.
+        return resolve_named_generation_model(
+            db=db,
+            context=context,
+            prompt=prompt,
+            model_name=default_model_name,
+            model_type=model_type,
+            allow_hidden=True,
+        )
+
     models = model_aggregation_service.list_available_models(
         db=db,
         current_user=context.user,
@@ -110,38 +123,22 @@ def resolve_generation_model(
         include_config=False,
         model_category_type=model_type,
     )
-    default_model_name = _get_default_generation_model_name(model_type)
-    if default_model_name:
-        model_name = next(
-            (
-                model.get("name")
-                for model in models
-                if model.get("name") == default_model_name
-            ),
-            None,
-        )
-        if not model_name:
-            raise ValueError(
-                f"Configured default {model_type} model "
-                f"'{default_model_name}' is not available"
-            )
-    else:
-        priority = {"user": 0, "group": 1, "public": 2, "runtime": 3}
-        candidates = sorted(
-            models,
-            key=lambda model: (
-                priority.get(str(model.get("type", "")).lower(), 9),
-                str(model.get("name", "")),
-            ),
-        )
-        model_name = next(
-            (
-                model.get("name")
-                for model in candidates
-                if isinstance(model.get("name"), str) and model.get("name")
-            ),
-            None,
-        )
+    priority = {"user": 0, "group": 1, "public": 2, "runtime": 3}
+    candidates = sorted(
+        models,
+        key=lambda model: (
+            priority.get(str(model.get("type", "")).lower(), 9),
+            str(model.get("name", "")),
+        ),
+    )
+    model_name = next(
+        (
+            model.get("name")
+            for model in candidates
+            if isinstance(model.get("name"), str) and model.get("name")
+        ),
+        None,
+    )
     if not model_name:
         raise ValueError(
             f"No available {model_type} model was found. "
@@ -163,17 +160,28 @@ def resolve_named_generation_model(
     prompt: str,
     model_name: str,
     model_type: str,
+    *,
+    allow_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Resolve a user-selected generation model after availability validation."""
-    models = model_aggregation_service.list_available_models(
-        db=db,
-        current_user=context.user,
-        scope="all",
-        include_config=False,
-        model_category_type=model_type,
-    )
-    if not any(model.get("name") == model_name for model in models):
-        raise ValueError(f"Selected {model_type} model '{model_name}' is not available")
+    """Resolve a generation model selected by the user or persisted in config.
+
+    ``allow_hidden`` skips the visible-catalog check for a persisted default.
+    The subsequent request build still resolves the model by name and applies
+    the active/public-access checks, so a hidden model must exist and remain
+    accessible.
+    """
+    if not allow_hidden:
+        models = model_aggregation_service.list_available_models(
+            db=db,
+            current_user=context.user,
+            scope="all",
+            include_config=False,
+            model_category_type=model_type,
+        )
+        if not any(model.get("name") == model_name for model in models):
+            raise ValueError(
+                f"Selected {model_type} model '{model_name}' is not available"
+            )
 
     request = _build_request(
         db=db,
@@ -189,6 +197,7 @@ def resolve_named_generation_model(
 
 
 def _get_default_generation_model_name(model_type: str) -> str:
+    """Return the operator-configured default for a generation category."""
     if model_type == "image":
         return settings.DEFAULT_IMAGE_GENERATION_MODEL.strip()
     if model_type == "video":
@@ -204,6 +213,7 @@ def _build_request(
     override_model_name: str | None,
     force_override: bool,
 ) -> ExecutionRequest:
+    """Build the execution request for a generation tool's model selection."""
     user, task, subtask, team = context
     return TaskRequestBuilder(db).build(
         subtask=subtask,

@@ -166,13 +166,15 @@ dispatch rules: `wework <path>` opens a workspace, while
 
 Task composers always display the model selector, including initial loading,
 catalog refresh failures, empty catalogs, and task restoration after a cloud
-model is retired or a local configuration is deleted. Sending remains blocked
-until an available model is selected, while the selector still allows adding
-a local model or connecting to the cloud. Selecting a replacement resumes
-follow-ups in the same task. Never use send readiness to hide the selector or
-silently replace the task's model. Desktop and compact composers follow the
-same rule. The `task-model-deletion` desktop E2E checkpoint covers reopening a
-task after local configuration deletion, cold restoration after cloud model
+model is hidden by an admin (`spec.isVisible=false`), deleted, or a local
+configuration is deleted. A hidden cloud model keeps sending with the task's
+recorded identity. A deleted model or local configuration blocks sending until
+an available model is selected, while the selector still allows adding a local
+model or connecting to the cloud. Selecting a replacement resumes follow-ups in
+the same task. Never use send readiness to hide the selector or silently
+replace the task's model. Desktop and compact composers follow the same rule.
+The `task-model-deletion` desktop E2E checkpoint covers reopening a task after
+local configuration deletion, cold restoration after cloud model
 deletion, and continuing the original conversation with a replacement model.
 
 Models keep one canonical identity across the UI, task state, and execution requests: `name`, `type`, `namespace`, and `resourceUserId`. The frontend must not add `local:` or `cloud:` prefixes to distinguish execution locations, and model config must not carry a separate transport source. When catalogs are merged, an Executor-discovered model wins over a Backend-synthesized runtime Codex model with the same `modelId`.

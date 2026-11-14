@@ -95,7 +95,7 @@ def test_resolve_generation_model_uses_configured_default() -> None:
     )
 
 
-def test_resolve_generation_model_rejects_unavailable_configured_default() -> None:
+def test_resolve_generation_model_keeps_configured_default_outside_catalog() -> None:
     context = GenerationContext(
         user=MagicMock(),
         task=MagicMock(),
@@ -108,33 +108,96 @@ def test_resolve_generation_model_rejects_unavailable_configured_default() -> No
         patch(
             "app.services.execution.agents.generation_context."
             "settings.DEFAULT_VIDEO_GENERATION_MODEL",
-            "missing-video-model",
+            "hidden-video-model",
         ),
         patch(
             "app.services.execution.agents.generation_context."
             "model_aggregation_service.list_available_models",
             return_value=[{"name": "available-video-model", "type": "public"}],
-        ),
+        ) as list_models,
         patch(
-            "app.services.execution.agents.generation_context._build_request"
+            "app.services.execution.agents.generation_context._build_request",
+            return_value=SimpleNamespace(
+                model_config={"modelType": "video", "model_id": "video-model"}
+            ),
         ) as build_request,
     ):
+        result = resolve_generation_model(
+            db=MagicMock(),
+            context=context,
+            prompt="animate",
+            model_type="video",
+        )
+
+    assert result["modelType"] == "video"
+    list_models.assert_not_called()
+    assert build_request.call_args.kwargs["override_model_name"] == "hidden-video-model"
+    assert build_request.call_args.kwargs["force_override"] is True
+
+
+def test_resolve_named_generation_model_allow_hidden_skips_catalog() -> None:
+    context = GenerationContext(
+        user=MagicMock(),
+        task=MagicMock(),
+        subtask=MagicMock(),
+        team=MagicMock(),
+        model_config={"modelType": "llm"},
+    )
+
+    with (
+        patch(
+            "app.services.execution.agents.generation_context."
+            "model_aggregation_service.list_available_models",
+        ) as list_models,
+        patch(
+            "app.services.execution.agents.generation_context._build_request",
+            return_value=SimpleNamespace(
+                model_config={"modelType": "image", "model_id": "gpt-image-2"}
+            ),
+        ) as build_request,
+    ):
+        result = resolve_named_generation_model(
+            db=MagicMock(),
+            context=context,
+            prompt="draw",
+            model_name="hidden-image-model",
+            model_type="image",
+            allow_hidden=True,
+        )
+
+    assert result["modelType"] == "image"
+    list_models.assert_not_called()
+    assert build_request.call_args.kwargs["override_model_name"] == "hidden-image-model"
+
+
+def test_resolve_named_generation_model_propagates_missing_persisted_model() -> None:
+    context = GenerationContext(
+        user=MagicMock(),
+        task=MagicMock(),
+        subtask=MagicMock(),
+        team=MagicMock(),
+        model_config={"modelType": "llm"},
+    )
+
+    with (
+        patch(
+            "app.services.execution.agents.generation_context._build_request",
+            side_effect=ValueError("Model hidden-image-model not found"),
+        ),
+    ):
         try:
-            resolve_generation_model(
+            resolve_named_generation_model(
                 db=MagicMock(),
                 context=context,
-                prompt="animate",
-                model_type="video",
+                prompt="draw",
+                model_name="hidden-image-model",
+                model_type="image",
+                allow_hidden=True,
             )
         except ValueError as exc:
-            assert str(exc) == (
-                "Configured default video model "
-                "'missing-video-model' is not available"
-            )
+            assert str(exc) == "Model hidden-image-model not found"
         else:
-            raise AssertionError("Expected unavailable default model to fail")
-
-    build_request.assert_not_called()
+            raise AssertionError("Expected a missing persisted model to fail")
 
 
 def test_resolve_named_generation_model_rejects_unavailable_selection() -> None:

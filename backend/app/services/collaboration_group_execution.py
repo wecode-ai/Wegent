@@ -169,6 +169,9 @@ def _enqueue_ai_leader(
         user_id=user_id,
         selection=runner_selection,
         automatic=automatic,
+        # The group assignment stores the model selection; it must keep working
+        # after an admin hides that model from new selections.
+        allow_hidden_models=True,
     )
     if routes:
         if leader.id not in routes:

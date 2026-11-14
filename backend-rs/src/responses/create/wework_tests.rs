@@ -100,6 +100,39 @@ fn encodes_response_and_conversation_identity() {
 }
 
 #[test]
+fn parses_persisted_model_identifiers_without_splitting_the_name() {
+    assert_eq!(
+        parse_model_identifier("public:default:0:example:model"),
+        Some(("public", "default", 0, "example:model"))
+    );
+    assert_eq!(
+        parse_model_identifier("group:team-a:42:team-model"),
+        Some(("group", "team-a", 42, "team-model"))
+    );
+    assert_eq!(parse_model_identifier("runtime:default:0:model"), None);
+    assert_eq!(parse_model_identifier("public:default:owner:model"), None);
+    assert_eq!(parse_model_identifier("model-without-identifier"), None);
+}
+
+#[test]
+fn derives_model_type_from_the_persisted_owner_and_namespace() {
+    let row = |user_id: i64, namespace: &str| crate::responses::create::resolution::KindRow {
+        id: 1,
+        user_id,
+        kind: "Model".into(),
+        name: "m".into(),
+        namespace: namespace.into(),
+        json: brz_mysql::Json(serde_json::json!({})),
+        is_active: 1,
+        created_at: None,
+        updated_at: None,
+    };
+    assert_eq!(model_type_from_row(&row(0, "default")), "public");
+    assert_eq!(model_type_from_row(&row(7, "default")), "user");
+    assert_eq!(model_type_from_row(&row(7, "team-a")), "group");
+}
+
+#[test]
 fn model_identifier_matches_the_source_join() {
     let model = crate::models_unified::models::UnifiedModel {
         name: "example-claude".into(),
@@ -138,6 +171,7 @@ fn assembles_the_runtime_create_payload_top_level() {
             "weworkCloudModelResourceUserId": 0
         }))
         .expect("options"),
+        from_persisted: false,
     };
     let payload = assemble_create_payload(
         json!({"prompt": "测试"}),
@@ -289,6 +323,89 @@ fn projects_text_deltas_and_terminal_events() {
 }
 
 #[test]
+fn hidden_fallback_must_match_the_conversation_model() {
+    let selection = ModelSelection {
+        model_name: "hidden-model".into(),
+        model_type: "public".into(),
+        options: serde_json::from_value(json!({
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": 0
+        }))
+        .expect("options"),
+        from_persisted: true,
+    };
+    assert!(recorded_selection_matches(
+        Some(&json!({
+            "modelName": "hidden-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": 0
+            }
+        })),
+        &selection
+    ));
+    assert!(
+        recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {
+                    "weworkCloudModelNamespace": "default",
+                    "weworkCloudModelResourceUserId": "0"
+                }
+            })),
+            &selection
+        ),
+        "a recorded string owner matches the numeric resolved owner"
+    );
+    assert!(
+        !recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {}
+            })),
+            &selection
+        ),
+        "a name-and-type-only record has no identity to compare"
+    );
+    let empty_selection = ModelSelection {
+        model_name: "hidden-model".into(),
+        model_type: "public".into(),
+        options: serde_json::from_value(json!({})).expect("options"),
+        from_persisted: true,
+    };
+    assert!(
+        !recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {}
+            })),
+            &empty_selection
+        ),
+        "two missing identities cannot prove a match"
+    );
+    assert!(
+        !recorded_selection_matches(
+            Some(&json!({
+                "modelName": "hidden-model",
+                "modelType": "public",
+                "options": {"weworkCloudModelNamespace": "default"}
+            })),
+            &selection
+        ),
+        "a recorded selection without the owner cannot prove which model row it used"
+    );
+    assert!(!recorded_selection_matches(
+        Some(&json!({"modelName": "other-model", "modelType": "public"})),
+        &selection
+    ));
+    assert!(!recorded_selection_matches(None, &selection));
+}
+
+#[test]
 fn merges_previous_selection_options_under_the_new() {
     let previous = json!({
         "options": {
@@ -303,6 +420,7 @@ fn merges_previous_selection_options_under_the_new() {
             "weworkCloudModelNamespace": "default"
         }))
         .expect("options"),
+        from_persisted: false,
     };
     let merged = merged_selection(Some(&previous), &selection);
     assert_eq!(merged.options.get("reasoning"), Some(&json!("x")));

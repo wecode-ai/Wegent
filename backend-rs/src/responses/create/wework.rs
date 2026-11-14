@@ -936,6 +936,52 @@ fn snapshot_terminal(snapshot: &Value) -> bool {
         .is_some_and(|status| matches!(status, "completed" | "failed" | "cancelled" | "incomplete"))
 }
 
+/// Render a recorded identity option for comparison.
+///
+/// Recorded options can store the resource owner as a JSON number while a
+/// resolved selection stores the same value as a string, so compare the text
+/// form. Missing or non-scalar values cannot identify a model row.
+fn recorded_option_text(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+/// Whether a hidden fallback selection names the conversation's recorded model.
+///
+/// A recorded selection that lacks the cloud namespace or owner cannot prove
+/// which model row it used: the same name can exist in another namespace or
+/// belong to another account. Hidden continuations therefore require both
+/// sides to carry the same identity options instead of skipping absent keys.
+fn recorded_selection_matches(previous: Option<&Value>, selection: &ModelSelection) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if previous.get("modelName").and_then(Value::as_str) != Some(selection.model_name.as_str())
+        || previous.get("modelType").and_then(Value::as_str) != Some(selection.model_type.as_str())
+    {
+        return false;
+    }
+    let previous_options = previous.get("options").unwrap_or(&Value::Null);
+    for key in [
+        "weworkCloudModelNamespace",
+        "weworkCloudModelResourceUserId",
+    ] {
+        let Some(previous_value) = recorded_option_text(previous_options.get(key)) else {
+            return false;
+        };
+        let Some(current_value) = recorded_option_text(selection.options.get(key)) else {
+            return false;
+        };
+        if previous_value != current_value {
+            return false;
+        }
+    }
+    true
+}
+
 /// The existing-conversation branch: get, checks, send, live wait.
 async fn existing_conversation_response(
     state: &AppState,
@@ -973,6 +1019,12 @@ async fn existing_conversation_response(
         .runtime_handle
         .as_ref()
         .and_then(|handle| handle.get("modelSelection"));
+    if selection.from_persisted && !recorded_selection_matches(previous_selection, selection) {
+        return Err(FastApiError::detail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Hidden model does not match the conversation's recorded model",
+        ));
+    }
     let selection = merged_selection(previous_selection, selection);
     let message = body.input_text();
     let title = runtime_task_title(body);
@@ -1168,7 +1220,10 @@ pub(crate) async fn create_response(
     let selection = crate::transaction_outcome::run(
         &state.mysql,
         async |_transaction| {
-            let selection = model_selection(state, &user, &body).await?;
+            // Continuing a conversation keeps its recorded model even after an
+            // admin hides that model from new selections.
+            let allow_hidden = body.conversation.is_some() || body.previous_response_id.is_some();
+            let selection = model_selection(state, &user, &body, allow_hidden).await?;
             Ok(crate::transaction_outcome::Completion::Rollback(selection))
         },
         FastApiError::internal,

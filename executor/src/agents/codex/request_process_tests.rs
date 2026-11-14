@@ -1035,3 +1035,98 @@ async fn native_rpc_responses_protect_the_gap_before_turn_and_goal_notifications
     assert_ne!(pid(client).await, original_pid);
     client.restart().await;
 }
+
+#[tokio::test]
+async fn auth_switch_drains_background_reads_before_restarting_the_process() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    let _activation = crate::services::capability_activation::activate().await;
+    client.ensure_started().await.unwrap();
+    client.state.lock().await.auth_mode = CodexAuthMode::WeworkRouter;
+    let handle = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .expect("the fixture process should be running")
+        .handle();
+    let (sender, _receiver) = oneshot::channel();
+    handle.pending.lock().await.insert(
+        9_000,
+        PendingCodexResponse {
+            sender,
+            native_request: None,
+        },
+    );
+    let drain = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        handle.pending.lock().await.remove(&9_000);
+    });
+
+    let started = Instant::now();
+    let state = client
+        .lock_state_for_auth_mode(Some(CodexAuthMode::LocalSubscription))
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_millis(50),
+        "the switch must wait for the background read instead of rejecting the turn"
+    );
+    assert_eq!(state.auth_mode, CodexAuthMode::LocalSubscription);
+    assert!(state.process.is_none());
+    drop(state);
+    drain.await.unwrap();
+    client.restart().await;
+}
+
+#[tokio::test]
+async fn auth_switch_rejects_an_active_turn_without_waiting_for_reads() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    let _activation = crate::services::capability_activation::activate().await;
+    client.ensure_started().await.unwrap();
+    client.state.lock().await.auth_mode = CodexAuthMode::WeworkRouter;
+    client.mark_thread_active("thread-1").await;
+    let handle = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .expect("the fixture process should be running")
+        .handle();
+    let (sender, _receiver) = oneshot::channel();
+    handle.pending.lock().await.insert(
+        9_001,
+        PendingCodexResponse {
+            sender,
+            native_request: None,
+        },
+    );
+    let drain = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        handle.pending.lock().await.remove(&9_001);
+    });
+
+    let started = Instant::now();
+    let error = match client
+        .lock_state_for_auth_mode(Some(CodexAuthMode::LocalSubscription))
+        .await
+    {
+        Ok(_) => panic!("an active turn must keep the authentication mode unchanged"),
+        Err(error) => error,
+    };
+    assert!(error.contains("authentication mode is busy"), "{error}");
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "an active turn must not be suspended while background reads drain"
+    );
+    assert_eq!(
+        client.state.lock().await.auth_mode,
+        CodexAuthMode::WeworkRouter
+    );
+    drain.await.unwrap();
+    client.finish_thread_activity("thread-1", true).await;
+    client.restart().await;
+}

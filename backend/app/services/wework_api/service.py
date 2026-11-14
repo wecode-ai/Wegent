@@ -47,6 +47,7 @@ class LiveResponse:
 async def _target(
     db: Session, user_id: int, body: WeworkResponseCreate
 ) -> tuple[RuntimeTaskAddress, bool]:
+    """Resolve the runtime address for a new or continuing conversation."""
     identifier = body.conversation
     if body.previous_response_id:
         previous = await native.read_turn(
@@ -76,6 +77,35 @@ async def _target(
     )
 
 
+def _selection_matches_recorded(
+    previous: dict, selection: RuntimeModelSelection
+) -> bool:
+    """Whether a hidden fallback names the conversation's recorded model.
+
+    A recorded selection that lacks the cloud namespace or owner cannot prove
+    which model row it used: the same name can exist in another namespace or
+    belong to another account. Hidden continuations therefore require both
+    selections to carry the same identity options instead of skipping absent
+    keys.
+    """
+    if not previous:
+        return False
+    if previous.get("modelName") != selection.model_name:
+        return False
+    if previous.get("modelType") != selection.model_type:
+        return False
+    previous_options = previous.get("options") or {}
+    for key in (
+        runtime.CLOUD_MODEL_NAMESPACE_OPTION,
+        runtime.CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+    ):
+        if key not in previous_options or key not in selection.options:
+            return False
+        if str(previous_options[key]) != str(selection.options[key]):
+            return False
+    return True
+
+
 async def _dispatch(
     db: Session,
     user_id: int,
@@ -84,7 +114,9 @@ async def _dispatch(
     selection: RuntimeModelSelection,
     identity: ResponseIdentity,
     is_new: bool,
+    from_persisted: bool = False,
 ) -> None:
+    """Create a runtime task or send the next turn to the existing one."""
     if is_new:
         ack = await runtime.create_runtime_task(
             db=db,
@@ -110,6 +142,13 @@ async def _dispatch(
     else:
         handle = address.runtime_handle or {}
         previous_selection = handle.get("modelSelection") or {}
+        if from_persisted and not _selection_matches_recorded(
+            previous_selection, selection
+        ):
+            raise HTTPException(
+                422,
+                "Hidden model does not match the conversation's recorded model",
+            )
         previous_options = previous_selection.get("options") or {}
         selection = selection.model_copy(
             update={"options": {**previous_options, **selection.options}}
@@ -132,7 +171,16 @@ async def _dispatch(
 async def create_response(
     db: Session, user: User, body: WeworkResponseCreate
 ) -> LiveResponse:
-    selection = models.selection(db, user, body)
+    """Create a Wework response for a new or continuing conversation."""
+    selection, from_persisted = models.selection_with_source(
+        db,
+        user,
+        body,
+        # Continuing a conversation keeps its recorded model even when the
+        # admin has hidden it from new selections.
+        allow_hidden=body.conversation is not None
+        or body.previous_response_id is not None,
+    )
     user_id = user.id
     address, is_new = await _target(db, user_id, body)
     identity = ResponseIdentity(
@@ -154,7 +202,16 @@ async def create_response(
     ).model_dump()
     response = LiveResponse(user_id, identity, snapshot, subscription)
     try:
-        await _dispatch(db, user_id, body, address, selection, identity, is_new)
+        await _dispatch(
+            db,
+            user_id,
+            body,
+            address,
+            selection,
+            identity,
+            is_new,
+            from_persisted=from_persisted,
+        )
     except BaseException as exc:
         await response.close()
         if isinstance(exc, HTTPException):

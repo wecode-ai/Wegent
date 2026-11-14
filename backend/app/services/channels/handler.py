@@ -770,7 +770,27 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         for model in all_models:
             if model_name in {model.get("name"), model.get("displayName")}:
                 return is_claude_provider(model.get("provider"))
-        return None
+
+        # The catalog hides models the admin has taken offline. A user's
+        # persisted channel selection must still resolve by name so it keeps
+        # choosing the same provider after that state change.
+        from app.services.chat.config.model_resolver import (
+            _extract_model_config,
+            _find_model_with_namespace,
+            _resolve_bind_model_pointer,
+        )
+
+        try:
+            kind, spec = _find_model_with_namespace(db, model_name, user.id)
+            if not spec:
+                return None
+            # A saved model can be a bind_model pointer wrapper without its own
+            # env section; execution follows the pointer, so compatibility must
+            # inspect the same target instead of treating the wrapper as unknown.
+            kind, spec = _resolve_bind_model_pointer(db, user.id, kind, spec)
+            return is_claude_provider(_extract_model_config(spec).get("model"))
+        except Exception:
+            return None
 
     async def _get_device_mode_model_override(
         self, db: Session, user: User
@@ -810,6 +830,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                         # User selected a Claude model, use it
                         return model_selection.model_name, model_selection.model_type
                     break  # Found the model but it's not Claude
+            else:
+                # The selection can be absent from the visible catalog after
+                # the model is hidden. Read its provider directly so the
+                # persisted channel choice is not silently replaced.
+                if await self._is_claude_compatible_override(
+                    db, user, model_selection.model_name
+                ):
+                    return model_selection.model_name, model_selection.model_type
 
         # User hasn't selected a Claude model, check if there's a default device model
         default_model_name = settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL.strip()

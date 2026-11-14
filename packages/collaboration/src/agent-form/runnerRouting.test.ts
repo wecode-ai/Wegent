@@ -175,13 +175,39 @@ describe('runner routing', () => {
       executionPolicy: { mode: 'project_pool' } as const,
       modelPolicy: { mode: 'fixed', model: cloudModels[0] } as const,
     }
-    expect(() => resolveRunnerSelection({ ...input, cloudModels: [] })).toThrow(
-      'RUNNER_MODEL_UNAVAILABLE'
-    )
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        cloudModels: [],
+        modelPolicy: { mode: 'user_select' },
+        selection: { model: cloudModels[0] },
+      })
+    ).toThrow('RUNNER_MODEL_UNAVAILABLE')
     expect(() =>
       resolveRunnerSelection({
         ...input,
         environments: [{ ...environment('a'), models: [], runtimes: ['claude_code'] }],
+      })
+    ).toThrow('RUNNER_MODEL_UNAVAILABLE')
+  })
+
+  it('keeps a saved hidden cloud model outside the discovery catalog', () => {
+    const saved = cloudModels.find(item => item.runtime === 'codex')!
+    const input = {
+      environments: [{ ...environment('a'), models: [], runtimes: ['codex' as const] }],
+      cloudModels: [] as typeof cloudModels,
+      runtime: 'codex' as const,
+      executionPolicy: { mode: 'fixed', environment_id: 'a' } as const,
+      modelPolicy: { mode: 'fixed', model: saved } as const,
+    }
+    const result = resolveRunnerSelection(input)
+    expect(result.model.source).toBe('cloud')
+    expect(result.model.cloud_model?.name).toBe('cloud-x')
+    expect(result.candidates.map(item => item.id)).toEqual(['a'])
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        modelPolicy: { mode: 'fixed', model: { ...saved, cloud_model: null } },
       })
     ).toThrow('RUNNER_MODEL_UNAVAILABLE')
   })

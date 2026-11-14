@@ -571,6 +571,20 @@ pub(super) async fn validate_model_access(
     Ok(())
 }
 
+/// Whether the resolved Model row is visible to the requesting user.
+///
+/// `_validate_model_access` only proves the requested identity shape (public
+/// models live in `default` with owner `0`, and so on); the public
+/// `allowedUsers` whitelist is stored on the row and must gate the gateway too.
+pub(super) fn model_row_access_allowed(
+    model_type: &str,
+    model_json: &brz_json::OpaqueJson,
+    user_name: &str,
+) -> bool {
+    model_type != "public"
+        || wegent_access::public_models::allowed_for_user_name(model_json, Some(user_name))
+}
+
 /// `get_user_groups` for the group-model access check.
 async fn user_groups(state: &AppState, user: &UserRow) -> Result<Vec<String>, FastApiError> {
     crate::permissions::user_groups(
@@ -618,6 +632,26 @@ mod tests {
             api_format: api_format.map(str::to_string),
             ..ModelConfig::default()
         }
+    }
+
+    #[test]
+    fn public_model_row_access_keeps_the_allowed_users_gate() {
+        let restricted = brz_json::OpaqueJson::from(json!({
+            "spec": {"allowedUsersEnabled": true, "allowedUsers": ["allowed-user"]}
+        }));
+        assert!(model_row_access_allowed(
+            "public",
+            &restricted,
+            "allowed-user"
+        ));
+        assert!(!model_row_access_allowed(
+            "public",
+            &restricted,
+            "other-user"
+        ));
+        let open = brz_json::OpaqueJson::from(json!({"spec": {}}));
+        assert!(model_row_access_allowed("public", &open, "other-user"));
+        assert!(model_row_access_allowed("user", &restricted, "other-user"));
     }
 
     #[test]

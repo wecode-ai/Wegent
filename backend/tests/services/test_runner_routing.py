@@ -1034,3 +1034,80 @@ def test_catalog_report_preserves_device_config_updated_after_loading(
 
     assert device.json["spec"]["cloudConfig"] == cloud_config
     assert device.json["spec"]["runnerCatalog"] == report.model_dump()
+
+
+CLOUD_MODEL = {
+    "runtime": "codex",
+    "provider": "openai-responses",
+    "model_id": "hidden-cloud",
+    "source": "cloud",
+    "cloud_model": {
+        "name": "hidden-cloud",
+        "type": "public",
+        "namespace": "default",
+        "resource_user_id": 0,
+    },
+}
+
+
+def _saved_cloud_selection(devices):
+    return {
+        "execution_policy": {"mode": "fixed", "environment_id": str(devices[0].id)},
+        "model": CLOUD_MODEL,
+    }
+
+
+def _resolve_saved_cloud_selection(
+    test_db, user, issue, devices, monkeypatch, **kwargs
+):
+    calls = []
+
+    def require_cloud_model(db, user_id, model, *, allow_hidden=False):
+        calls.append(allow_hidden)
+        return {
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        }
+
+    monkeypatch.setattr(
+        "app.services.runner_cloud_models.require_cloud_model", require_cloud_model
+    )
+    result = resolve_routing(
+        test_db,
+        config={
+            "runtime": "codex",
+            "execution_policy": {"mode": "user_select"},
+            "model_policy": {"mode": "user_select"},
+        },
+        user_id=user.id,
+        project_id=issue.cloud_project_id,
+        issue_id=issue.id,
+        selection=_saved_cloud_selection(devices),
+        **kwargs,
+    )
+    return result, calls
+
+
+def test_saved_user_selection_executes_a_hidden_cloud_model(
+    test_db, routing_setup, monkeypatch
+):
+    user, devices, issue = routing_setup
+
+    result, calls = _resolve_saved_cloud_selection(
+        test_db, user, issue, devices, monkeypatch, allow_hidden_models=True
+    )
+
+    assert calls == [True]
+    assert result.model.model_id == "hidden-cloud"
+
+
+def test_new_user_selection_still_requires_the_visible_catalog(
+    test_db, routing_setup, monkeypatch
+):
+    user, devices, issue = routing_setup
+
+    _, calls = _resolve_saved_cloud_selection(
+        test_db, user, issue, devices, monkeypatch
+    )
+
+    assert calls == [False]

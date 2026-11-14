@@ -6,6 +6,7 @@
 import pytest
 from fastapi import HTTPException
 
+from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.wework_api import WeworkResponseCreate
 from app.services.model_aggregation_service import (
     kind_service,
@@ -13,6 +14,7 @@ from app.services.model_aggregation_service import (
     public_model_service,
 )
 from app.services.wework_api import models
+from app.services.wework_api.service import _selection_matches_recorded
 
 
 @pytest.fixture
@@ -89,7 +91,7 @@ def test_api_can_select_gateway_models_by_the_returned_identifier(
         model=f"public:default:0:{name}", input="continue", conversation="conv_existing"
     )
 
-    selection = models.selection(test_db, test_user, body)
+    selection = models.selection_with_source(test_db, test_user, body)[0]
 
     assert selection.model_name == name
     assert selection.model_type == "public"
@@ -107,5 +109,199 @@ def test_api_still_rejects_models_outside_wework_catalog(
         model=f"public:default:0:{name}", input="continue", conversation="conv_existing"
     )
     with pytest.raises(HTTPException) as error:
-        models.selection(test_db, test_user, body)
+        models.selection_with_source(test_db, test_user, body)[0]
     assert error.value.status_code == 422
+
+
+def _hidden_public_model(
+    test_db,
+    *,
+    name: str = "hidden-model",
+    is_visible: bool = False,
+    is_wework_available: bool = True,
+    model_type: str = "llm",
+    allowed_users_enabled: bool = False,
+    allowed_users: list[str] | None = None,
+):
+    from app.models.kind import Kind
+
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name=name,
+        namespace="default",
+        is_active=True,
+        json={
+            "kind": "Model",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {
+                "isVisible": is_visible,
+                "isWeworkAvailable": is_wework_available,
+                "modelType": model_type,
+                "allowedUsersEnabled": allowed_users_enabled,
+                "allowedUsers": allowed_users or [],
+                "modelConfig": {
+                    "env": {"model": "openai", "model_id": f"{name}-upstream"}
+                },
+            },
+        },
+    )
+    test_db.add(model)
+    test_db.commit()
+    return model
+
+
+def test_existing_conversation_keeps_a_hidden_public_model(
+    test_db, test_user, monkeypatch
+):
+    _hidden_public_model(test_db)
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="continue",
+        conversation="conv_existing",
+    )
+
+    selection = models.selection_with_source(
+        test_db, test_user, body, allow_hidden=True
+    )[0]
+
+    assert selection.model_name == "hidden-model"
+    assert selection.model_type == "public"
+    assert selection.options == {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": 0,
+    }
+
+
+def test_new_conversation_still_rejects_a_hidden_public_model(
+    test_db, test_user, monkeypatch
+):
+    _hidden_public_model(test_db)
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="new",
+        execution={"type": "wework", "device_id": "device-1"},
+    )
+
+    with pytest.raises(HTTPException) as error:
+        models.selection_with_source(test_db, test_user, body)[0]
+
+    assert error.value.status_code == 422
+
+
+def test_hidden_model_still_has_to_be_available_in_wework(
+    test_db, test_user, monkeypatch
+):
+    _hidden_public_model(test_db, is_wework_available=False)
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="continue",
+        conversation="conv_existing",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        models.selection_with_source(test_db, test_user, body, allow_hidden=True)[0]
+
+    assert error.value.status_code == 422
+
+
+def test_hidden_model_still_has_to_be_an_llm(test_db, test_user, monkeypatch):
+    _hidden_public_model(test_db, model_type="embedding")
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="continue",
+        conversation="conv_existing",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        models.selection_with_source(test_db, test_user, body, allow_hidden=True)[0]
+
+    assert error.value.status_code == 422
+
+
+def test_hidden_model_keeps_the_public_user_whitelist(test_db, test_user, monkeypatch):
+    _hidden_public_model(
+        test_db,
+        allowed_users_enabled=True,
+        allowed_users=["another-user"],
+    )
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="continue",
+        conversation="conv_existing",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        models.selection_with_source(test_db, test_user, body, allow_hidden=True)[0]
+
+    assert error.value.status_code == 422
+
+
+def test_hidden_selection_reports_the_persisted_source(test_db, test_user, monkeypatch):
+    _hidden_public_model(test_db)
+    monkeypatch.setattr(models, "catalog", lambda db, user: [])
+    body = WeworkResponseCreate(
+        model="public:default:0:hidden-model",
+        input="continue",
+        conversation="conv_existing",
+    )
+
+    selection, from_persisted = models.selection_with_source(
+        test_db, test_user, body, allow_hidden=True
+    )
+
+    assert from_persisted is True
+    assert selection.model_name == "hidden-model"
+
+
+def test_visible_selection_reports_the_catalog_source(test_db, test_user, cloud_models):
+    body = WeworkResponseCreate(
+        model="public:default:0:responses-model",
+        input="new",
+        execution={"type": "wework", "device_id": "device-1"},
+    )
+
+    selection, from_persisted = models.selection_with_source(test_db, test_user, body)
+
+    assert from_persisted is False
+    assert selection.model_name == "responses-model"
+
+
+def test_hidden_fallback_must_match_the_recorded_model():
+    selection = RuntimeModelSelection(
+        modelName="hidden-model",
+        modelType="public",
+        options={
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        },
+    )
+
+    assert _selection_matches_recorded(
+        {
+            "modelName": "hidden-model",
+            "modelType": "public",
+            "options": {
+                "weworkCloudModelNamespace": "default",
+                "weworkCloudModelResourceUserId": "0",
+            },
+        },
+        selection,
+    )
+    assert not _selection_matches_recorded(
+        {
+            "modelName": "hidden-model",
+            "modelType": "public",
+            "options": {"weworkCloudModelNamespace": "default"},
+        },
+        selection,
+    ), "a recorded selection without the owner cannot prove which model row it used"
+    assert not _selection_matches_recorded(
+        {"modelName": "other-model", "modelType": "public"}, selection
+    )
+    assert not _selection_matches_recorded({}, selection)

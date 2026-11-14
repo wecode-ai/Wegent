@@ -48,6 +48,11 @@ const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 const AUTH_DEGRADE_PENDING_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 const AUTH_DEGRADE_PENDING_DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(25);
+// Background host reads (tray rate limits, catalog probes) register short-lived
+// app-server requests. A launch that switches authentication must wait for them
+// instead of failing a turn that arrives while one is finishing.
+const AUTH_SWITCH_PENDING_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+const AUTH_SWITCH_PENDING_DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(25);
 pub const CODEX_APP_SERVER_EXECUTOR_SHUTDOWN: &str =
     "codex app-server stopped because the executor is shutting down";
 pub const CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED: &str =
@@ -845,6 +850,44 @@ impl CodexAppServerClient {
             .ok_or_else(|| "turn/steer response missing turnId".to_owned())
     }
 
+    /// Locks shared state for a launch that may switch authentication mode.
+    ///
+    /// The switch restarts the shared app-server, so it must not interleave
+    /// with an in-flight request. Background host reads finish on their own
+    /// within a short interval; drain them instead of rejecting the turn.
+    async fn lock_state_for_auth_mode(
+        &self,
+        requested: Option<CodexAuthMode>,
+    ) -> Result<tokio::sync::MutexGuard<'_, CodexAppServerSharedState>, String> {
+        let deadline = Instant::now() + AUTH_SWITCH_PENDING_DRAIN_TIMEOUT;
+        loop {
+            let mut state = self.state.lock().await;
+            if state
+                .process
+                .as_mut()
+                .is_some_and(|process| process.has_exited())
+            {
+                stop_codex_app_server_process(&mut state, None).await;
+            }
+            let pending_request_count = match state.process.as_ref() {
+                Some(process) => process.pending.lock().await.len(),
+                None => 0,
+            };
+            let needs_switch = requested.is_some_and(|mode| mode != state.auth_mode);
+            if needs_switch
+                && state.active_threads.is_empty()
+                && pending_request_count > 0
+                && Instant::now() < deadline
+            {
+                drop(state);
+                tokio::time::sleep(AUTH_SWITCH_PENDING_DRAIN_POLL_INTERVAL).await;
+                continue;
+            }
+            auth_mode::apply_auth_mode(&mut state, requested, pending_request_count).await?;
+            return Ok(state);
+        }
+    }
+
     async fn prepare_request_with_process(
         &self,
         start_if_missing: bool,
@@ -860,14 +903,9 @@ impl CodexAppServerClient {
         String,
     > {
         ensure_codex_mcp_endpoints().await?;
-        let mut state = self.state.lock().await;
-        if state
-            .process
-            .as_mut()
-            .is_some_and(|process| process.has_exited())
-        {
-            stop_codex_app_server_process(&mut state, None).await;
-        }
+        let mut state = self
+            .lock_state_for_auth_mode(launch_config.and_then(|config| config.auth_mode))
+            .await?;
         let empty_launch_environment = BTreeMap::new();
         let launch_environment = launch_config
             .map(|config| &config.env)
@@ -878,12 +916,6 @@ impl CodexAppServerClient {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        auth_mode::apply_auth_mode(
-            &mut state,
-            launch_config.and_then(|config| config.auth_mode),
-            pending_request_count,
-        )
-        .await?;
         let active_threads = state.active_threads_snapshot();
         // Control and live-reload requests belong to the existing process.
         // Apply launch-environment changes only when a request may start a process.
@@ -1369,22 +1401,15 @@ impl CodexAppServerClient {
         &self,
         launch_config: &CodexLaunchConfig,
     ) -> Result<CodexAppServerHandle, String> {
-        let mut state = self.state.lock().await;
-        if state
-            .process
-            .as_mut()
-            .is_some_and(|process| process.has_exited())
-        {
-            stop_codex_app_server_process(&mut state, None).await;
-        }
+        let mut state = self
+            .lock_state_for_auth_mode(launch_config.auth_mode)
+            .await?;
         let process_environment =
             self.process_environment(&state.runtime_proxy_env, &launch_config.env);
         let pending_request_count = match state.process.as_ref() {
             Some(process) => process.pending.lock().await.len(),
             None => 0,
         };
-        auth_mode::apply_auth_mode(&mut state, launch_config.auth_mode, pending_request_count)
-            .await?;
         let active_threads = state.active_threads_snapshot();
         if state.process.is_some()
             && codex_process_environment_requires_restart(

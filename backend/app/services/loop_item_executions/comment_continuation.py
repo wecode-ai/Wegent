@@ -120,6 +120,8 @@ def apply_continuation(
             issue_id=row.loop_item_id,
             user_id=row.assigner_user_id,
             selection=context.get("runner_selection"),
+            # The dispatch snapshot is a persisted selection.
+            allow_hidden_models=True,
         )
     intent = RuntimeTaskMaterializeRequest.model_validate(
         source["runtime_request"]
