@@ -5,9 +5,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import client from '@/apis/client'
-import { useUser } from '@/features/common/UserContext'
-import { Check, X, UserPlus, Pencil, Trash2, User, Users, Clock } from 'lucide-react'
+import { Check, X, UserPlus, Pencil, Trash2, User, Users } from 'lucide-react'
 
 import { getPermissionTabs, subscribePermissionTabs } from '../permission-tab-registry'
 import { Button } from '@/components/ui/button'
@@ -21,23 +19,17 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
+import {
+  PermissionManagementScope,
+  usePermissionManagementController,
+  type PermissionManagementProps,
+} from './permission-management-controller'
+import { PermissionRequests } from './PermissionRequests'
 import { KnowledgeGrantForm } from './KnowledgeGrantForm'
 import { Input } from '@/components/ui/input'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
+import { KnowledgeGrantDialog } from './KnowledgeGrantDialog'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
-import type {
-  MemberRole,
-  PendingPermissionInfo,
-  PermissionUserInfo,
-  ApprovedPermissionsByRole,
-} from '@/types/knowledge'
+import type { MemberRole, PermissionUserInfo, ApprovedPermissionsByRole } from '@/types/knowledge'
 
 /**
  * Build role-grouped members by applying a filter to each role list.
@@ -55,13 +47,7 @@ function buildRoleGroups(
   }
 }
 
-interface PermissionManagementTabProps {
-  kbId: number
-  refreshKey?: number
-  onChanged?: () => void
-  onAccessDenied?: () => void
-  /** The namespace this KB belongs to; groups in this namespace are excluded from group authorization */
-  kbNamespace?: string
+interface PermissionManagementTabProps extends PermissionManagementProps {
   /**
    * Extension tabs rendered alongside standard tabs (Personal/Groups).
    * Used by internal deployments to add entity-type permission panels.
@@ -74,36 +60,10 @@ interface PermissionManagementTabProps {
 }
 
 export function PermissionManagementTab(props: PermissionManagementTabProps) {
-  const { user } = useUser()
-  const cacheScope = client.getCacheScope()
-  const scope = JSON.stringify([user?.id, cacheScope, props.kbId, props.kbNamespace])
-  const activeScope = useRef({ key: scope, version: 0 })
-  if (activeScope.current.key !== scope) {
-    activeScope.current = { key: scope, version: activeScope.current.version + 1 }
-  }
-  const version = activeScope.current.version
-  const alive = useRef(true)
-  useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-    }
-  }, [])
-  const sameScope = () =>
-    activeScope.current.version === version && client.getCacheScope() === cacheScope
-  const current = () => alive.current && sameScope()
   return (
-    <PermissionManagementSession
-      key={scope}
-      {...props}
-      isCurrentUi={current}
-      onChanged={() => {
-        if (sameScope()) props.onChanged?.()
-      }}
-      onAccessDenied={() => {
-        if (current()) props.onAccessDenied?.()
-      }}
-    />
+    <PermissionManagementScope {...props}>
+      {session => <PermissionManagementSession {...props} {...session} />}
+    </PermissionManagementScope>
   )
 }
 
@@ -130,9 +90,6 @@ function PermissionManagementSession({
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
   const [activeTab, setActiveTab] = useState<string>('user')
-  // Track selected approval roles for pending requests
-  const [approvalRoles, setApprovalRoles] = useState<Record<number, MemberRole>>({})
-
   const {
     permissions,
     loading,
@@ -142,17 +99,17 @@ function PermissionManagementSession({
     updatePermission,
     deletePermission,
     clearError,
-  } = useKnowledgePermissions({ kbId, includePendingRequests: true, onChanged, onAccessDenied })
-
-  const handleExternalChanged = () => {
-    onChanged?.()
-    if (isCurrentUi()) void fetchPermissions()
-  }
-
-  // Fetch permissions on mount
-  useEffect(() => {
-    fetchPermissions()
-  }, [fetchPermissions, refreshKey])
+    approvalRoles,
+    setApprovalRole,
+    membersChanged: handleExternalChanged,
+  } = usePermissionManagementController({
+    kbId,
+    kbNamespace,
+    refreshKey,
+    onChanged,
+    onAccessDenied,
+    isCurrentUi,
+  })
 
   // Load optional KB extensions (e.g., org_department in internal builds)
   useEffect(() => {
@@ -162,34 +119,6 @@ function PermissionManagementSession({
       })
     })
   }, [])
-
-  // Initialize approval roles when pending requests change
-  useEffect(() => {
-    if (permissions?.pending) {
-      setApprovalRoles(prev => {
-        const additions: Record<number, MemberRole> = {}
-        permissions.pending.forEach(p => {
-          if (!(p.id in prev)) {
-            additions[p.id] = p.role || 'Reporter'
-          }
-        })
-        return Object.keys(additions).length ? { ...prev, ...additions } : prev
-      })
-    }
-  }, [permissions?.pending])
-
-  const handleApprovalRoleChange = (permissionId: number, role: MemberRole) => {
-    setApprovalRoles(prev => ({ ...prev, [permissionId]: role }))
-  }
-
-  const handleApprove = async (permission: PendingPermissionInfo) => {
-    try {
-      const role = approvalRoles[permission.id] || permission.role || 'Reporter'
-      await reviewPermission(permission.id, 'approve', role)
-    } catch (_err) {
-      // Error is handled by the hook
-    }
-  }
 
   const handleUpdateRole = async (permissionId: number, role: MemberRole) => {
     try {
@@ -212,14 +141,6 @@ function PermissionManagementSession({
   const startEditing = (permission: PermissionUserInfo) => {
     setEditingId(permission.id)
     setEditingRole(permission.role || 'Reporter')
-  }
-
-  const handleReject = async (permission: PendingPermissionInfo) => {
-    try {
-      await reviewPermission(permission.id, 'reject')
-    } catch (_err) {
-      // Error is handled by the hook
-    }
   }
 
   const cancelEditing = () => {
@@ -253,8 +174,6 @@ function PermissionManagementSession({
       </div>
     )
   }
-
-  const pendingCount = permissions?.pending.length || 0
 
   // Separate namespace members from user members
   const query = search.trim().toLocaleLowerCase()
@@ -459,89 +378,13 @@ function PermissionManagementSession({
       {/* ===== User Tab ===== */}
       {activeTab === 'user' && (
         <div className="space-y-4">
-          {/* Pending Requests Section */}
-          {pendingCount === 0 ? (
-            <p
-              className="flex items-center gap-2 text-xs text-text-muted"
-              data-testid="knowledge-empty-pending"
-            >
-              <Clock className="h-4 w-4 shrink-0" />
-              {t('document.permission.noPendingRequests')}
-            </p>
-          ) : (
-            <Card padding="default" className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Clock className="w-4 h-4 text-warning" />
-                {t('document.permission.pendingRequests')}
-                <span className="bg-warning/10 text-warning px-2 py-0.5 rounded-full text-xs">
-                  {pendingCount}
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {permissions?.pending.map(permission => (
-                  <div
-                    key={permission.id}
-                    className="flex flex-wrap items-center justify-between gap-3 p-3 bg-muted rounded-lg"
-                  >
-                    <div className="flex-1">
-                      <div className="font-medium text-sm">{permission.username}</div>
-                      <div className="text-xs text-text-muted">
-                        {permission.email || t('document.permission.noEmail')}
-                      </div>
-                      <div className="text-xs text-text-muted mt-1">
-                        {t('document.permission.requesting')}:{' '}
-                        {permission.role
-                          ? t(`document.permission.role.${permission.role}`)
-                          : t('document.permission.role.Reporter')}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={approvalRoles[permission.id] || permission.role || 'Reporter'}
-                        onValueChange={value =>
-                          handleApprovalRoleChange(permission.id, value as MemberRole)
-                        }
-                      >
-                        <SelectTrigger className="w-28 h-11 min-w-[44px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ASSIGNABLE_ROLES.map(role => (
-                            <SelectItem key={role} value={role}>
-                              {t(`document.permission.role.${role}`)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-11 min-w-[44px] text-success hover:text-success hover:bg-success/10"
-                        data-testid={`permission-approve-${permission.id}`}
-                        aria-label={t('document.permission.approve')}
-                        onClick={() => handleApprove(permission)}
-                        disabled={loading}
-                      >
-                        <Check className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-11 min-w-[44px] text-error hover:text-error hover:bg-error/10"
-                        data-testid={`permission-reject-${permission.id}`}
-                        aria-label={t('document.permission.reject')}
-                        onClick={() => handleReject(permission)}
-                        disabled={loading}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
+          <PermissionRequests
+            roles={approvalRoles}
+            onRoleChange={setApprovalRole}
+            pending={permissions.pending}
+            loading={loading}
+            onReview={reviewPermission}
+          />
 
           {/* Approved Users Section */}
           <Card padding="default" className="space-y-4">
@@ -701,37 +544,19 @@ function PermissionManagementSession({
       })}
 
       {showAdd && (
-        <Dialog open onOpenChange={setShowAdd}>
-          <DialogContent
-            className="max-h-[90dvh] w-[calc(100%_-_1rem)] min-w-0 max-w-xl flex flex-col overflow-hidden max-md:p-4"
-            onCloseAutoFocus={event => {
-              event.preventDefault()
-              addTrigger.current?.focus()
-            }}
-            closeButtonProps={{
-              className: 'min-h-11 min-w-11 flex items-center justify-center',
-              'data-testid': 'close-add-collaborator',
-            }}
-          >
-            <DialogHeader className="shrink-0 pr-10 text-left">
-              <DialogTitle>{t('document.permission.addCollaborator')}</DialogTitle>
-            </DialogHeader>
-            <DialogDescription className="shrink-0">
-              {t('document.creation.selectTargets')}
-            </DialogDescription>
-            <KnowledgeGrantForm
-              kbId={kbId}
-              kbNamespace={kbNamespace}
-              boundNamespaceIds={Object.values(permissions.approved)
-                .flat()
-                .filter(member => member.entity_type === 'namespace')
-                .flatMap(member => (member.entity_id ? [member.entity_id] : []))}
-              onChanged={handleExternalChanged}
-              onAccessDenied={onAccessDenied}
-              onCancel={() => setShowAdd(false)}
-            />
-          </DialogContent>
-        </Dialog>
+        <KnowledgeGrantDialog trigger={addTrigger} onClose={() => setShowAdd(false)}>
+          <KnowledgeGrantForm
+            kbId={kbId}
+            kbNamespace={kbNamespace}
+            boundNamespaceIds={Object.values(permissions.approved)
+              .flat()
+              .filter(member => member.entity_type === 'namespace')
+              .flatMap(member => (member.entity_id ? [member.entity_id] : []))}
+            onChanged={handleExternalChanged}
+            onAccessDenied={onAccessDenied}
+            onCancel={() => setShowAdd(false)}
+          />
+        </KnowledgeGrantDialog>
       )}
     </div>
   )

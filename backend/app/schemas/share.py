@@ -296,11 +296,35 @@ class ResourceMemberInDB(BaseModel):
     updated_at: datetime
 
 
+class AuthorizationCreator(BaseModel):
+    """Creator identity shown independently of explicit membership rows."""
+
+    user_id: int
+    display_name: str
+
+
+class InheritedAuthorizationSource(BaseModel):
+    """An inherited authorization rule, without expanding its members."""
+
+    source_type: str
+    entity_type: str
+    entity_id: str
+    display_name: str
+    role: Optional[BaseRole] = None
+
+
 class MemberListResponse(BaseModel):
     """Response containing list of resource members."""
 
     members: List[ResourceMemberResponse]
     total: int
+
+
+class KnowledgeBaseMemberListResponse(MemberListResponse):
+    """Knowledge-specific display context alongside explicit member records."""
+
+    creator: AuthorizationCreator
+    inherited_sources: List[InheritedAuthorizationSource] = Field(default_factory=list)
 
 
 # =============================================================================

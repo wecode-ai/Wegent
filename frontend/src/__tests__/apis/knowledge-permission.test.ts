@@ -82,3 +82,24 @@ it('reads only the current user permission sources through the existing share en
   expect(client.get).toHaveBeenCalledTimes(1)
   expect(client.get).toHaveBeenCalledWith('/share/KnowledgeBase/27/my-permission-sources')
 })
+
+it('preserves authorization context without loading pending approvals for readers', async () => {
+  jest.mocked(client.get).mockClear()
+  const creator = { user_id: 1, display_name: 'Creator' }
+  const inherited = [
+    {
+      source_type: 'group_membership',
+      entity_type: 'namespace',
+      entity_id: '9',
+      display_name: 'Team',
+      role: null,
+    },
+  ]
+  jest
+    .mocked(client.get)
+    .mockResolvedValueOnce({ members: [], total: 0, creator, inherited_sources: inherited })
+  const result = await knowledgePermissionApi.listPermissions(27)
+  expect(result.creator).toEqual(creator)
+  expect(result.inherited_sources).toEqual(inherited)
+  expect(client.get).toHaveBeenCalledTimes(1)
+})

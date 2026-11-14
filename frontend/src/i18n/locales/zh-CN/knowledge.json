@@ -988,7 +988,7 @@
       "personalSpace": "个人空间",
       "createInSpace": "在此空间创建",
       "permissionDetails": "权限详情",
-      "permissionDescription": "查看你在 Wegent 的有效权限及来源。",
+      "permissionDescription": "查看你的有效权限、权限来源及全部授权对象。",
       "permissionFailed": "权限来源加载失败",
       "effectivePermission": "我的权限",
       "permissionSource": "授权来源",
@@ -1022,7 +1022,28 @@
       "noMatchingFilters": "无匹配的筛选项",
       "typeAndSort": "类型与排序",
       "companySpace": "公司空间",
-      "manageTeams": "管理团队"
+      "manageTeams": "管理团队",
+      "permissionResult": {
+        "Owner": "可管理",
+        "Maintainer": "可管理",
+        "Developer": "可编辑",
+        "Reporter": "可查看",
+        "RestrictedAnalyst": "仅访问"
+      },
+      "permissionSourceLabels": {
+        "title": "权限来源",
+        "creator": "本人创建此知识库",
+        "direct": "直接授权",
+        "shareLink": "通过分享链接授权",
+        "groupMembership": "从所属群组「{{name}}」继承",
+        "groupOwner": "群组所有者",
+        "groupGrant": "通过群组「{{name}}」授权",
+        "department": "通过部门「{{name}}」授权",
+        "organization": "公司空间规则",
+        "other": "其他授权来源「{{name}}」",
+        "unnamed": "未命名",
+        "withRole": "{{source}}（{{role}}）"
+      }
     },
     "creation": {
       "refreshingLocations": "正在刷新创建位置…",
@@ -1046,6 +1067,36 @@
       "selectTargets": "选择人员或团队，失败时只重试未成功项。",
       "retryFailed": "重试失败项",
       "noMatchingSpaces": "没有匹配的空间"
+    },
+    "authorizationObjects": {
+      "title": "授权对象",
+      "count": "{{count}} 个",
+      "description": "包括直接授权、创建人及归属空间的继承权限",
+      "object": "授权对象",
+      "permission": "权限",
+      "source": "授权方式",
+      "actions": "操作",
+      "objectPermission": "{{name}}的权限",
+      "groupRole": "按群组角色",
+      "organizationRole": "按公司规则",
+      "manageInGroups": "在组管理中修改",
+      "organizationPolicy": "由公司权限规则决定",
+      "notRemovable": "不可移除",
+      "empty": "暂无授权对象",
+      "membershipNote": "群组不展开成员；实际访问仍受知识库访问规则约束。",
+      "organizationNote": "公司知识默认允许用户查看，系统管理员可管理。",
+      "readOnlyNote": "你可以查看全部授权对象；调整授权需联系权限管理者。",
+      "types": {
+        "user": "用户",
+        "namespace": "群组",
+        "organization": "公司",
+        "other": "其他实体"
+      },
+      "sources": {
+        "creator": "创建人",
+        "inherited": "继承",
+        "direct": "直接授权"
+      }
     }
   },
   "add_repository": "添加仓库",

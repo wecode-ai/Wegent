@@ -794,6 +794,7 @@ export interface BatchPermissionAddResponse {
 
 // Permission User Info types
 export interface PermissionUserInfo {
+  invited_by_name?: string | null
   id: number
   user_id?: number | null
   display_name: string
@@ -831,6 +832,17 @@ export interface ApprovedPermissionsByRole {
 export interface PermissionListResponse {
   pending: PendingPermissionInfo[]
   approved: ApprovedPermissionsByRole
+  creator?: {
+    user_id: number
+    display_name: string
+  } | null
+  inherited_sources?: Array<{
+    source_type: string
+    entity_type: string
+    entity_id: string
+    display_name: string
+    role: MemberRole | null
+  }>
 }
 
 // Current User Permission types

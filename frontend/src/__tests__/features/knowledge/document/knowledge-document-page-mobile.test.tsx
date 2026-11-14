@@ -657,8 +657,10 @@ it.each(
     await screen.findByText('Granted user')
     if (operation === 'delete') await user.click(screen.getByTitle('document.permission.remove'))
     else {
-      await user.click(screen.getByTestId('permission-edit-91'))
-      await user.click(screen.getByTestId('permission-save-91'))
+      await user.click(screen.getByTestId('permission-role-91'))
+      await user.click(
+        await screen.findByRole('option', { name: 'document.permission.role.Developer' })
+      )
     }
     await user.click(screen.getByTestId('close-knowledge-access'))
     if (mode === 'library' || mode === 'return') {
@@ -668,7 +670,7 @@ it.each(
         await user.click(screen.getByTestId('knowledge-detail-back-button'))
         await user.click(screen.getByTestId('more-kb-7'))
         await user.click(screen.getByTestId('permission-kb-7'))
-        await screen.findByTestId('perm-tab-user')
+        await screen.findByTestId('knowledge-authorization-objects')
       }
     }
     if (mode === 'unmount') unmount()
@@ -693,7 +695,7 @@ it.each(
 )
 
 it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
-  'searches collaborators and adds registered targets through the full list page (%p)',
+  'lists authorized objects and adds registered targets through the full list page (%p)',
   async Page => {
     const { registerAuthSection } =
       await import('@/features/knowledge/document/auth-section-registry')
@@ -738,11 +740,8 @@ it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
     if (Page === KnowledgeDocumentPageMobile) await user.click(screen.getByTestId('more-kb-7'))
     await user.click(screen.getByTestId('permission-kb-7'))
     await screen.findByText('Granted user')
-    await user.type(screen.getByTestId('knowledge-member-search'), 'missing')
-    expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('0')
-    expect(screen.getByText('document.permission.noMatchingMembers')).toBeInTheDocument()
-    expect(screen.queryByText('Granted user')).not.toBeInTheDocument()
-    await user.clear(screen.getByTestId('knowledge-member-search'))
+    expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('1')
+    expect(screen.getAllByTestId('collaborator-item')).toHaveLength(1)
     expect(screen.getByText('Granted user')).toBeInTheDocument()
     await user.click(screen.getByTestId('permission-add-collaborator'))
     await user.click(screen.getByRole('button', { name: 'Select department' }))
@@ -885,7 +884,9 @@ it.each(
           await click('knowledge-detail-back-button')
           await click('more-kb-7')
           await click('permission-kb-7')
-          await step('wait for original permissions', () => screen.findByTestId('perm-tab-user'))
+          await step('wait for original permissions', () =>
+            screen.findByTestId('knowledge-authorization-objects')
+          )
         }
       }
       phase = 'switch session: ' + mode
