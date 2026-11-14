@@ -95,6 +95,7 @@ describe('CloudTodoBoardCard execution previews', () => {
 
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={item}
         taskBindings={[
           {
@@ -128,6 +129,7 @@ describe('CloudTodoBoardCard execution previews', () => {
     seedProgress({ deviceId: 'local', taskId: 'task-85' })
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={{ ...item, status: 'completed' }}
         taskBindings={[
           {

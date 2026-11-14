@@ -41,6 +41,7 @@ export interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: RuntimeSendRequest['cloudProjectId']
   origin?: RuntimeSendRequest['origin']
+  conversationContext?: RuntimeSendRequest['conversationContext']
 }
 
 export interface GuidanceWorkbenchMessage {

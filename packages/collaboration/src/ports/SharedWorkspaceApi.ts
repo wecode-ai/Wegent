@@ -565,7 +565,11 @@ export interface SharedWorkspaceIssuesApi {
 
 export interface SharedWorkspaceCommentsApi {
   list(issueId: string): Promise<CollaborationComment[]>;
-  create(issueId: string, body: string): Promise<CollaborationComment>;
+  create(
+    issueId: string,
+    body: string,
+    options?: { clientMessageId?: string },
+  ): Promise<CollaborationComment>;
 }
 
 export interface SharedWorkspaceAssignmentsApi {

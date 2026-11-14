@@ -113,6 +113,8 @@ Internal routes below support version maintenance and automated checks; they are
 
 ### Space and auxiliary feature links
 
+Enable the preview, open **top tab strip → + → Collaboration exp**, or roll back: [Collaboration experience preview](./collaboration-experience.md).
+
 Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
 
 | Search terms                                                                      | Detailed steps                                                                       |

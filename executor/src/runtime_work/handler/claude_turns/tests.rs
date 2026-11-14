@@ -1,6 +1,44 @@
 use super::*;
 use tokio::sync::broadcast::error::TryRecvError;
 
+#[test]
+fn private_discussion_context_follows_claude_source_turn_without_hiding_stream() {
+    let (events, mut receiver) = broadcast::channel(6);
+    let handler = RuntimeWorkRpcHandler::with_event_sender("device", "unused", events);
+    for private in [true, false] {
+        let mut request = ExecutionRequest {
+            subtask_id: if private { "private" } else { "public" }.into(),
+            ..Default::default()
+        };
+        if private {
+            request
+                .extra
+                .insert("conversationContext".into(), json!("private_discussion"));
+        }
+        for event in [
+            "response.created",
+            "response.output_text.delta",
+            "response.completed",
+        ] {
+            let data = json!({"turnId":request.subtask_id,"value":"Original private transcript"});
+            handler.emit_claude_runtime_event("same-task", &request, event, data.clone());
+            let emitted = receiver.try_recv().unwrap();
+            assert_eq!(emitted["payload"]["runtime"], "claude_code");
+            assert_eq!(emitted["payload"]["taskId"], "same-task");
+            assert_eq!(emitted["payload"]["subtaskId"], request.subtask_id);
+            assert_eq!(emitted["payload"]["data"], data);
+            if private {
+                assert_eq!(
+                    emitted["payload"]["conversationContext"],
+                    "private_discussion"
+                );
+            } else {
+                assert!(emitted["payload"].get("conversationContext").is_none());
+            }
+        }
+    }
+}
+
 struct EnvGuard {
     key: &'static str,
     previous: Option<String>,

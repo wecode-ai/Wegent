@@ -19,6 +19,7 @@ import {
 import { mainProcessLog } from './host/main-process-log.js'
 import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup-progress.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
+import { rendererConsoleDiagnostic } from './host/renderer-console-diagnostic.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 import { VerificationDevtools } from './host/verification-devtools.js'
@@ -600,16 +601,18 @@ app.on('web-contents-created', (_event, contents) => {
     }
     if (process.env.VITE_WEWORK_E2E === 'true' && message.startsWith('[interaction-focus-state]'))
       console.info(redactLog(message).slice(0, 4096))
-    if (process.env.VITE_WEWORK_E2E === 'true' && level === 3) {
-      recordReleaseDiagnostic('renderer-error', {
-        message: redactLog(message).slice(0, 4096),
-        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
-      })
-      console.warn('[renderer-error]', {
+    const diagnostic = rendererConsoleDiagnostic({
+      e2e: process.env.VITE_WEWORK_E2E === 'true',
+      level,
+      message,
+      sourceId,
+    })
+    if (diagnostic) {
+      recordReleaseDiagnostic(diagnostic.type, diagnostic.data)
+      console.warn(`[${diagnostic.type}]`, {
         webContentsId: contents.id,
-        message: redactLog(message).slice(0, 4096),
+        ...diagnostic.data,
         lineNumber,
-        sourcePath: URL.canParse(sourceId) ? redactLog(new URL(sourceId).pathname) : undefined,
       })
     }
     // Keep renderer warnings and errors raised while the splash is still up;

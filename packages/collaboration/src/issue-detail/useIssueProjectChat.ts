@@ -33,11 +33,13 @@ export function mergeIssueChatMessages(
   return [...byId.values()].sort((a, b) => a.sequenceNumber - b.sequenceNumber)
 }
 
+/** The caller supplies its source's structured access-invalidation policy. */
 export function useIssueProjectChat(
   client: ProjectChatClient | undefined,
   projectId: string,
   issueId: string,
-  revision = 0
+  revision = 0,
+  invalidatesSnapshot?: (cause: unknown) => boolean
 ) {
   // A revision refreshes the stream without changing its owner or mounted drafts.
   const owner = useMemo(() => ({ client, projectId, issueId }), [client, projectId, issueId])
@@ -46,6 +48,7 @@ export function useIssueProjectChat(
       owner,
       messages: [] as ProjectChatMessage[],
       loading: Boolean(client),
+      ready: false,
       currentUserId: undefined as string | undefined,
       error: null as string | null,
     }),
@@ -109,6 +112,7 @@ export function useIssueProjectChat(
             return {
               ...state,
               loading: false,
+              ready: true,
               error: null,
               currentUserId: subscription.snapshot.currentUserId,
               messages: mergeIssueChatMessages(state.messages, subscription.snapshot.messages),
@@ -118,7 +122,7 @@ export function useIssueProjectChat(
         .catch(cause => {
           if (active)
             setSnapshot(previous => ({
-              ...(previous.owner === owner ? previous : empty),
+              ...(previous.owner === owner && !invalidatesSnapshot?.(cause) ? previous : empty),
               loading: false,
               error: cause instanceof Error ? cause.message : String(cause),
             }))
@@ -138,7 +142,7 @@ export function useIssueProjectChat(
       stopReconnect?.()
       unsubscribe?.()
     }
-  }, [client, projectId, issueId, revision, owner, empty])
+  }, [client, projectId, issueId, revision, owner, empty, invalidatesSnapshot])
   const merge = (incoming: ProjectChatMessage[]) =>
     setSnapshot(previous =>
       previous.owner === owner

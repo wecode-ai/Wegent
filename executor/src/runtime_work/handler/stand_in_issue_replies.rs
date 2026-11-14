@@ -99,6 +99,18 @@ impl RuntimeWorkRpcHandler {
         if self.store.read_task(task, |link| {
             link.runtime_handle["origin"]["type"] == "issue_dispatch"
                 && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
+                && !super::super::util::is_private_discussion(&runtime_event_request_from_link(
+                    link,
+                ))
+                && crate::runtime_work::lifecycle::native_execution_state(link).map_or(
+                    true,
+                    |state| {
+                        state.latest_turn_id == codex_notification_turn_id(message)
+                            && state.process_generation == Some(message.process_generation())
+                            && (notification.method != "turn/started"
+                                || state.native_sequence == message.sequence())
+                    },
+                )
         }) != Some(true)
         {
             return;

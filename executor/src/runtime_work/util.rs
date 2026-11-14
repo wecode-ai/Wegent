@@ -28,6 +28,14 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    // Conversation privacy belongs to this send, never to the task's immutable origin.
+    request.extra.remove("conversationContext");
+    if payload["conversationContext"] == "private_discussion" {
+        request.extra.insert(
+            "conversationContext".to_owned(),
+            Value::String("private_discussion".to_owned()),
+        );
+    }
     if payload["manualStandInConfirmation"] == true {
         request
             .extra
@@ -240,6 +248,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     if let Some(turn_id) = id_field(payload, "turn_id") {
         request.subtask_id = turn_id;
     }
+}
+
+pub(crate) fn is_private_discussion(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("conversationContext")
+        .and_then(Value::as_str)
+        == Some("private_discussion")
 }
 
 pub(crate) fn set_runtime_task_title(request: &mut ExecutionRequest, title: &str) {
@@ -1065,6 +1081,23 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn private_discussion_context_belongs_to_one_send_and_preserves_origin() {
+        let origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","userId":7});
+        let mut request = ExecutionRequest::default();
+        request.extra.insert("origin".into(), origin.clone());
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"conversationContext":"private_discussion"}),
+        );
+        assert!(is_private_discussion(&request));
+        assert_eq!(request.extra["origin"], origin);
+        assert!(!request.ephemeral);
+        apply_runtime_payload_metadata(&mut request, &json!({"message":"Public follow-up"}));
+        assert!(!is_private_discussion(&request));
+        assert_eq!(request.extra["origin"], origin);
+    }
 
     #[test]
     fn replaces_runtime_task_id_aliases_without_dropping_address_metadata() {

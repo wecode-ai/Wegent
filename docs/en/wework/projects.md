@@ -431,6 +431,8 @@ Opening an issue from a project-space board shows its attachments directly in th
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
+For substantial assigned work, collaboration Agents delegate execution to native subagents by default while the primary Agent coordinates, verifies and replies concisely. No extra delegation request is needed. Normally only a brief acknowledgment and the final result are published; routine tool, wait and worker progress stays internal, while material blockers, questions and approvals remain visible. Simple questions are answered directly. Subagents retain the original task's context and permission limits without creating extra Issue execution tasks. Explicit single-agent mode still disables subagents.
+
 Comments in the issue activity have two different execution semantics:
 
 - Sending a new top-level comment from the bottom composer creates a separate execution task from the issue title, description, attachments, and current project configuration. The new task can read the issue context, but it does not automatically inherit another execution task's conversation history.
@@ -438,7 +440,7 @@ Comments in the issue activity have two different execution semantics:
 
 The **Execution tasks** section lists these independent tasks separately. An increased task count normally means that a new top-level comment was sent; a thread reply adds another turn to the original task instead.
 
-For ordinary linked tasks, the Executor writes the issue's execution status from the runtime lifecycle. The board and the issue summary above the task composer do not write status independently. When the same task starts another turn or reaches a terminal state, they use the lifecycle transition as an invalidation signal and read the issue again, so an already-open board moves the issue between columns such as **In progress** and **Pending review** without a manual reload. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status.
+For ordinary tasks linked to local issues, the Executor writes the issue status from the runtime lifecycle. The board and the issue summary above the task composer use lifecycle transitions to refresh the issue. An ordinary private task linked to a cloud issue marks it **In progress** after task creation is accepted. For collaboration groups, the manager agent evaluates member outcomes and changes the issue status; member task creation callbacks do not overwrite the manager's decision.
 
 Use the UI's archive action for an unneeded Issue from its board card, table row or details' More information entry. Review subtasks and linked runs first; failure to stop a run means that merely submitting the request is not successful archival. Restore from the project's Archived list. Archival is not permanent deletion.
 
