@@ -17,8 +17,6 @@ export interface MobileWorkspaceChanges {
   target: MobileWorkspaceFileTarget
   selection: WorkspaceGitSelection
   branchName: string
-  /** Undefined means the existing command's automatic primary-branch baseline. */
-  baseRef?: string
   diff: string
   files: MobileWorkspaceChangedFile[]
   fileCount: number

@@ -37,6 +37,35 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 60, bottom: 34 }),
 }))
 vi.mock('./LiquidGlass', () => ({ LiquidGlassSurface: 'Glass' }))
+vi.mock('./ConversationMenuSurface', async () => {
+  const { useImperativeHandle, createElement } = await import('react')
+  return {
+    ConversationMenuSurface: ({
+      ref,
+      children,
+      busy,
+      onDismiss,
+    }: {
+      ref: React.Ref<{ close: (after?: () => void) => void }>
+      children: (ready: boolean) => React.ReactNode
+      busy: boolean
+      onDismiss: () => void
+    }) => {
+      useImperativeHandle(ref, () => ({
+        close: (after?: () => void) => {
+          onDismiss()
+          after?.()
+        },
+      }))
+      return createElement(
+        'Surface',
+        {},
+        createElement('Pressable', { testID: 'conversation-menu-dismiss', disabled: busy }),
+        children(!busy)
+      )
+    },
+  }
+})
 vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => files }))
 
 describe('conversation menu', () => {
@@ -46,11 +75,13 @@ describe('conversation menu', () => {
     address: { deviceId: 'device', taskId: 'task' },
     title: 'Conversation',
     visible: true,
+    anchor: { x: 271, y: 60, width: 108, height: 44 },
     canPin: true,
     pinned: false,
     onPin: vi.fn(),
     onRename: vi.fn(),
     onArchive: vi.fn(),
+    onSettings: vi.fn(),
     onDismiss: vi.fn(),
   }
   const element = (testID: string) =>
@@ -70,6 +101,19 @@ describe('conversation menu', () => {
     expect(files.openBrowser).toHaveBeenCalledOnce()
     await act(() => element('conversation-changes').props.onPress())
     expect(files.openChangesBrowser).toHaveBeenCalledOnce()
+  })
+  it('keeps the original connection settings available from the extended menu', async () => {
+    await act(() => element('conversation-settings').props.onPress())
+    expect(props.onDismiss).toHaveBeenCalledOnce()
+    expect(props.onSettings).toHaveBeenCalledOnce()
+    expect(props.onDismiss.mock.invocationCallOrder[0]).toBeLessThan(
+      props.onSettings.mock.invocationCallOrder[0]!
+    )
+  })
+  it('keeps connection settings available before a conversation or workspace exists', async () => {
+    files.target = null
+    await act(() => renderer.update(<ConversationMenu {...props} address={null} canPin={false} />))
+    expect(element('conversation-settings').props.disabled).toBe(false)
   })
   it('disables file operations without a workspace and task operations before task creation', async () => {
     files.target = null

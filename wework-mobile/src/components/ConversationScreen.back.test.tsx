@@ -142,6 +142,7 @@ describe('conversation keyboard layout and model navigation', () => {
       onPin: vi.fn(),
       onRename: vi.fn(),
       onArchive: vi.fn(),
+      onSettings: vi.fn(),
     },
     onNewConversation: vi.fn(),
     onOpenAdvancedModel: vi.fn(),
@@ -324,5 +325,20 @@ describe('conversation keyboard layout and model navigation', () => {
     await act(() => dock.props.onLayout({ nativeEvent: { layout: { height: 240 } } }))
     expect(list.props.contentInsetEndAdjustment.value).toBe(240)
     expect(list.findByProps({ testID: 'new-chat-configuration' })).toBe(configuration)
+  })
+  it('hands the measured capsule to the menu and restores the source only after dismissal', async () => {
+    await act(() => {
+      renderer = create(<ConversationScreen {...props()} />)
+    })
+    const header = () => renderer.root.findByType('Header' as never)
+    const menu = () => renderer.root.findByType('ConversationMenu' as never)
+    const anchor = { x: 271, y: 60, width: 108, height: 44 }
+    expect(header().props.menuExpanded).toBe(false)
+    await act(() => header().props.onMore(anchor))
+    expect(menu().props.anchor).toEqual(anchor)
+    expect(header().props.menuExpanded).toBe(true)
+    await act(() => menu().props.onDismiss())
+    expect(header().props.menuExpanded).toBe(false)
+    expect(menu().props.visible).toBe(false)
   })
 })

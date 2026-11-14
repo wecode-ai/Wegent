@@ -25,10 +25,11 @@ retains a folder button for its selected project.
 
 **More → Changes (更多 → 更改)** and the **N files +added −deleted** pill above the composer open
 Git changes for the owning workspace. Tap the project title to select **Branch, Unstaged, Staged,
-or Last commit (分支、未暂存、已暂存、最近一次提交)**. Branch mode offers a comparison baseline
-selector at the bottom. The default “Main branch” follows PC automatic selection. An explicit
-baseline requires backend support for `git_compare_branch_diff`; older backends report an error
-instead of silently substituting the default. Staged and unstaged use their corresponding Git semantics.
+or Last commit (分支、未暂存、已暂存、最近一次提交)**. Branch mode follows PC automatic primary-branch
+selection and shows the comparison direction at the bottom. Mobile uses the same Runtime channel
+as PC without a new backend API. Staged and unstaged use their corresponding Git semantics.
+A directory confirmed not to be a Git repository has no changes summary pill; the changes sheet
+explains why comparison is unavailable. Offline and API authorization failures retain their actual errors.
 Large reviews open individual diffs on demand while preserving real statistics; empty lists show a mode-specific empty state.
 
 The bottom-left folder button returns to files, and bottom-right history opens **Recent (最近)**.
@@ -37,10 +38,11 @@ keep their original owner. Records do not survive logout or restart and do not s
 **Back (返回)** returns to the previous location. Top-right **Close (关闭)** or the iOS swipe-down
 gesture dismisses the sheet.
 
-The conversation **More** menu also offers **Pin / Unpin, Rename, Copy conversation ID, and Archive
+The conversation **More** menu expands from its existing button capsule and offers **Pin / Unpin, Rename, Copy conversation ID, and Archive
 (置顶 / 取消置顶、重命名、复制对话 ID、归档)** using PC cloud conversation identities and APIs.
 Archiving a managed worktree preserves a snapshot before cleanup; cleanup failures are reported
 separately without pretending the already archived conversation remains unarchived.
+It also retains **Connection settings (连接设置)** for the backend address, current account, and sign-out.
 
 The **N agents (N 个智能体)** pill above the composer appears only when the conversation has real
 subagents. It opens their status and conversations. Running agents show live activity; completed
@@ -50,7 +52,9 @@ child threads load history independently from the owning device without switchin
 
 Tap the filename in the preview header for content search, line navigation, copy path, refresh,
 and wrapping. Code wraps by default with fixed line numbers; continuation lines do not repeat them.
-Renderable text such as Markdown and HTML offers **Preview / Source (预览 / 源码)**. Format viewers
+Renderable text such as Markdown and HTML offers a visible **Preview / Source (预览 / 源码)**
+segmented control directly below the filename. Ordinary code opens as source; binary documents
+do not show an invalid source action. Format viewers
 provide their supported reading controls. The top-right share button opens **Share or save file
 (分享或存储文件)**; available destinations come from iOS or Android. The filename menu also shows
 the full path and size. Failed previews offer retry and **View error details (查看错误详情)** for
@@ -85,7 +89,10 @@ flowchart TD
   E[Files / message links / attachments / changes] --> T[Shared file source and path resolution]
   T --> W[Cloud directory / text / chunk commands]
   T --> A[Authenticated attachment download]
-  T --> D[Turn or current Git diff]
+  T --> D[Turn diff]
+  T --> G[The same Runtime channel as PC]
+  G --> GD[Existing device.execute_command Git commands]
+  GD --> C
   W --> C[Phone cache for the authenticated session]
   A --> C
   D --> C
@@ -100,6 +107,7 @@ Chunks are written directly to native cache files, and complete sharing does not
 back into JavaScript. Rendering still depends on WebView and each viewer's memory and format support.
 
 - `wework/src/api/environment.ts` and `runtimeWork.ts`: Git comparisons and conversation actions.
+- `wework/src/api/hybrid/hybridServices.ts` and `packages/chat-core/src/runtime-ipc.ts`: cloud-device Runtime command routing.
 - `wework/src/api/devices.ts` and `attachments.ts`: cloud commands and authenticated downloads.
 - `wework/src/lib/workspace-target.ts`: ownership and worktree resolution.
 - `wework/src/components/layout/workspace-panels/WorkspaceFilePreview.tsx`: formats and presentation.
@@ -115,7 +123,7 @@ modules or changing bundled preview pages requires rebuilding and installing the
 and Expo exports do not replace native modules or preview assets inside an already installed app.
 
 The existing cloud `workspace-attachments` E2E checkpoint includes a binary file larger than 512 KiB,
-chunk offset/size/EOF checks, full-file SHA-256 verification, and real baseline/staged/unstaged Git comparisons using the existing CI cloud fixture.
+chunk offset/size/EOF checks, full-file SHA-256 verification, and real branch/staged/unstaged/last-commit Git comparisons using the existing CI cloud fixture.
 This is a **real cloud file protocol regression**, not native mobile UI verification; it was not run
 for this change. Type checks, component tests, asset builds, and iOS/Android exports also do not establish
 physical-device compatibility. Android physical-device behavior was not verified for this change;

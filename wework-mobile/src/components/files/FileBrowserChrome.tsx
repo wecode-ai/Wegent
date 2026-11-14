@@ -244,6 +244,27 @@ export function FileSegments<T extends string>({
   )
 }
 
+export function FilePreviewModes({
+  value,
+  onChange,
+}: {
+  value: 'preview' | 'source'
+  onChange: (value: 'preview' | 'source') => void
+}) {
+  return (
+    <View style={styles.previewModes} testID="file-preview-modes">
+      <FileSegments
+        value={value}
+        onChange={onChange}
+        items={[
+          { value: 'preview', label: '预览', testID: 'file-mode-preview' },
+          { value: 'source', label: '源码', testID: 'file-mode-source' },
+        ]}
+      />
+    </View>
+  )
+}
+
 export function FileErrorState({
   title,
   message,
@@ -371,6 +392,7 @@ const styles = StyleSheet.create({
   menu: { borderRadius: 12, paddingVertical: 4 },
   menuItem: { minHeight: 44, borderRadius: 8, marginHorizontal: 4 },
   metadata: { paddingHorizontal: 16, paddingVertical: 12, gap: 4 },
+  previewModes: { alignSelf: 'center', width: 200, maxWidth: '100%', paddingBottom: 8 },
   segments: { flexDirection: 'row', position: 'relative' },
   segmentTrack: { position: 'absolute', top: 6, bottom: 6, left: 0, right: 0, borderRadius: 22 },
   segment: { flex: 1, minWidth: 64, minHeight: 44, paddingHorizontal: 2, paddingVertical: 8 },

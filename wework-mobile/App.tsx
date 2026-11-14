@@ -202,6 +202,7 @@ function RuntimeApplication({
                     onLoadApps={runtime.loadComposerApps}
                     onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
                     conversationActions={{
+                      onSettings: openSettings,
                       threadId: pinTarget?.threadId ?? null,
                       canPin: Boolean(pinTarget),
                       pinned: pinTarget?.pinned ?? false,

@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConversationChangesPill } from './ConversationChangesPill'
 import { FilePreviewContext, type MobileFilePreviewActions } from './files/FilePreviewContext'
+import { WorkspaceNotGitRepositoryError } from '@/services/mobileWorkspaceGit'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const events = vi.hoisted(() => ({ active: undefined as undefined | ((state: string) => void) }))
@@ -84,20 +85,33 @@ describe('conversation changes summary', () => {
     await act(() => resolve({ ...summary, fileCount: 99 }))
     expect(pill().props.accessibilityLabel).toContain('2 个文件')
   })
-  it('keeps a failed load actionable and recovers on the next completed turn', async () => {
-    loadChanges.mockRejectedValueOnce(new Error('Device offline'))
-    await act(() => {
-      renderer = create(tree())
-    })
-    expect(pill().props.accessibilityLabel).toBe('更改加载失败，打开重试')
-    await act(() => renderer.update(tree('task-a:next-turn')))
-    expect(pill().props.accessibilityLabel).toContain('9 个文件')
-  })
+  it.each(['Device offline', 'HTTP 403', '此目录不是 Git 仓库'])(
+    'keeps a generic failure %s actionable and recovers on the next completed turn',
+    async message => {
+      loadChanges.mockRejectedValueOnce(new Error(message))
+      await act(() => {
+        renderer = create(tree())
+      })
+      expect(pill().props.accessibilityLabel).toBe('更改加载失败，打开重试')
+      await act(() => renderer.update(tree('task-a:next-turn')))
+      expect(pill().props.accessibilityLabel).toContain('9 个文件')
+    }
+  )
   it('hides empty changes instead of inventing counts', async () => {
     loadChanges.mockResolvedValue({ ...summary, fileCount: 0 })
     await act(() => {
       renderer = create(tree())
     })
     expect(renderer.root.findAllByType('GlassButton' as never)).toHaveLength(0)
+  })
+  it('hides a confirmed non-Git summary and can show real changes after the workspace becomes a repository', async () => {
+    loadChanges.mockRejectedValueOnce(new WorkspaceNotGitRepositoryError())
+    await act(() => {
+      renderer = create(tree())
+    })
+    expect(renderer.root.findAllByType('GlassButton' as never)).toHaveLength(0)
+    await act(() => events.active?.('active'))
+    expect(pill().props.accessibilityLabel).toContain('9 个文件')
+    expect(loadChanges).toHaveBeenCalledTimes(2)
   })
 })

@@ -8,7 +8,7 @@ import {
   resolveWorkspaceFilePath,
   workspaceParentPath,
 } from '../../../../packages/chat-core/src/workspace-file-paths'
-import { isHtmlFile, isMarkdownFile } from '../../../../packages/chat-core/src/workspace-file-types'
+import { isPreviewableTextFile } from '../../../../packages/chat-core/src/workspace-file-types'
 import { canPreviewSource, canSearchPreview } from '../../../preview/protocol'
 import {
   formatFileSize,
@@ -29,6 +29,7 @@ import {
   FileBrowserHeader,
   FileErrorState,
   FileGlassAction,
+  FilePreviewModes,
   FileTextAction,
   type FileMenuAction,
 } from './FileBrowserChrome'
@@ -237,9 +238,7 @@ function FilePreviewContent({
     }
     onNavigate({ kind: 'file', request: { kind: 'workspace', target, path } })
   }
-  const canRender =
-    document &&
-    (document.kind !== 'text' || isMarkdownFile(document.name) || isHtmlFile(document.name))
+  const canRender = document && (document.kind !== 'text' || isPreviewableTextFile(document.name))
   const changeMode = (value: 'preview' | 'source') => {
     setRendererError(null)
     setMode(value)
@@ -310,23 +309,6 @@ function FilePreviewContent({
       selected: searchVisible,
       onPress: toggleFind,
     })
-  if (canRender && sourceAvailable)
-    menuActions.push(
-      {
-        label: '预览',
-        icon: 'eye-outline',
-        testID: 'file-mode-preview',
-        selected: mode === 'preview',
-        onPress: () => changeMode('preview'),
-      },
-      {
-        label: '源码',
-        icon: 'code-slash-outline',
-        testID: 'file-mode-source',
-        selected: mode === 'source',
-        onPress: () => changeMode('source'),
-      }
-    )
   const goToLine = () => {
     const lineStart = Number(lineDraft)
     if (!Number.isSafeInteger(lineStart) || lineStart <= 0) {
@@ -352,6 +334,9 @@ function FilePreviewContent({
         actions={menuActions}
         share={shareAction}
       />
+      {canRender && sourceAvailable ? (
+        <FilePreviewModes value={mode} onChange={changeMode} />
+      ) : null}
       {sharing ? (
         <View style={styles.statusRow}>
           <ActivityIndicator size="small" testID="file-sharing" />

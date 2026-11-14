@@ -95,7 +95,7 @@ describe('FileChangesView', () => {
   let api: {
     getWorkspaceGitBranch: ReturnType<typeof vi.fn>
     getWorkspaceGitDiff: ReturnType<typeof vi.fn>
-    listWorkspaceGitBranches: ReturnType<typeof vi.fn>
+    isWorkspaceGitRepository: ReturnType<typeof vi.fn>
   }
   const onNavigate = vi.fn()
   const onSelectionChange = vi.fn()
@@ -125,17 +125,15 @@ describe('FileChangesView', () => {
     api = {
       getWorkspaceGitBranch: vi.fn().mockResolvedValue('feature/work'),
       getWorkspaceGitDiff: vi.fn().mockResolvedValue(patch),
-      listWorkspaceGitBranches: vi
-        .fn()
-        .mockResolvedValue(['feature/work', 'origin/main', 'origin/release']),
+      isWorkspaceGitRepository: vi.fn().mockResolvedValue(true),
     }
   })
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
   })
 
-  it('renders real changed files and opens a diff with its complete original owner and baseline', async () => {
-    const selection = { mode: 'branch', baseRef: 'origin/main' } as const
+  it('renders real changed files and opens a diff with its complete original owner and comparison mode', async () => {
+    const selection = { mode: 'branch' } as const
     await render({ selection })
     expect(api.getWorkspaceGitDiff).toHaveBeenCalledWith(
       target.deviceId,
@@ -167,37 +165,24 @@ describe('FileChangesView', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
-  it('changes modes without carrying a branch baseline into staged or unstaged comparisons', async () => {
-    await render({ selection: { mode: 'branch', baseRef: 'origin/release' } })
-    await act(() => element('file-preview-more')!.props.onPress())
-    expect(element('files-changes-mode-branch')!.props.accessibilityState.checked).toBe(true)
-    await act(() => element('files-changes-mode-staged')!.props.onPress())
-    expect(onSelectionChange).toHaveBeenCalledWith({ mode: 'staged' })
-  })
+  it.each(['branch', 'unstaged', 'staged', 'commit'] as const)(
+    'selects the existing %s comparison mode from the project menu',
+    async mode => {
+      await render({ selection: { mode: 'branch' } })
+      await act(() => element('file-preview-more')!.props.onPress())
+      expect(element('files-changes-mode-branch')!.props.accessibilityState.checked).toBe(true)
+      await act(() => element(`files-changes-mode-${mode}`)!.props.onPress())
+      expect(onSelectionChange).toHaveBeenCalledWith({ mode })
+    }
+  )
 
-  it('lists real remote branches and passes the selected ref to the branch comparison', async () => {
+  it('shows the actual current branch and the primary-branch label without offering an unsupported selector', async () => {
     await render({ selection: { mode: 'branch' } })
-    expect(api.listWorkspaceGitBranches).not.toHaveBeenCalled()
+    expect(element('files-changes-comparison')).toBeDefined()
+    expect(JSON.stringify(renderer.toJSON())).toContain('feature/work')
     expect(JSON.stringify(renderer.toJSON())).toContain('主分支')
-    await act(() => element('files-changes-base')!.props.onPress())
-    expect(api.listWorkspaceGitBranches).toHaveBeenCalledWith(
-      target.deviceId,
-      target.path,
-      expect.any(AbortSignal)
-    )
-    await act(() => element('files-branch-origin/release')!.props.onPress())
-    expect(onSelectionChange).toHaveBeenCalledWith({ mode: 'branch', baseRef: 'origin/release' })
-  })
-
-  it('exposes a branch-load failure and retries without inventing a baseline list', async () => {
-    api.listWorkspaceGitBranches.mockRejectedValueOnce(new Error('Branch command failed'))
-    await render({ selection: { mode: 'branch' } })
-    await act(() => element('files-changes-base')!.props.onPress())
-    expect(element('files-branches-retry')).toBeDefined()
-    expect(element('files-branch-origin/main')).toBeUndefined()
-    await act(() => element('files-branches-retry')!.props.onPress())
-    expect(element('files-branch-origin/main')).toBeDefined()
-    expect(api.listWorkspaceGitBranches).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('origin/main')
+    expect(element('files-changes-base')).toBeUndefined()
   })
 
   it('does not describe a command failure as an empty workspace and retries the real operation', async () => {
@@ -208,6 +193,31 @@ describe('FileChangesView', () => {
     await act(() => element('files-changes-retry')!.props.onPress())
     expect(element('files-changes-list')).toBeDefined()
     expect(api.getWorkspaceGitDiff).toHaveBeenCalledTimes(2)
+  })
+
+  it('explains a confirmed non-Git directory without presenting a failed load or an empty diff', async () => {
+    api.getWorkspaceGitDiff.mockRejectedValueOnce(new Error('git command failed'))
+    api.isWorkspaceGitRepository.mockResolvedValueOnce(false)
+    await render()
+    expect(element('files-changes-not-git')).toBeDefined()
+    expect(JSON.stringify(renderer.toJSON())).toContain('此目录不是 Git 仓库')
+    expect(element('files-changes-empty')).toBeUndefined()
+    expect(element('files-changes-error')).toBeUndefined()
+    expect(element('files-changes-list')).toBeUndefined()
+    expect(element('files-changes-comparison')).toBeUndefined()
+    await act(() => element('files-tab-files')!.props.onPress())
+    expect(onFiles).toHaveBeenCalledOnce()
+  })
+
+  it('keeps permission and probe failures actionable without claiming the directory is not Git', async () => {
+    api.getWorkspaceGitDiff.mockRejectedValueOnce(new Error('HTTP 403'))
+    api.isWorkspaceGitRepository.mockRejectedValueOnce(new Error('Device offline'))
+    await render()
+    expect(element('files-changes-not-git')).toBeUndefined()
+    expect(element('files-changes-empty')).toBeUndefined()
+    expect(element('files-changes-retry')).toBeDefined()
+    await act(() => element('files-changes-error-details-toggle')!.props.onPress())
+    expect(JSON.stringify(renderer.toJSON())).toContain('HTTP 403')
   })
 
   it('aborts and hides previous workspace results when the owning device changes', async () => {

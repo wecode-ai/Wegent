@@ -1,7 +1,4 @@
-import {
-  validateWorkspaceGitBaseRef,
-  workspaceGitDiffCommand,
-} from '../../../packages/chat-core/src/workspace-git'
+import { workspaceGitDiffCommand } from '../../../packages/chat-core/src/workspace-git'
 import { mobileWorkspaceChangedFiles } from '@/domain/mobileWorkspaceGit'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import type { MobileWorkspaceChanges, WorkspaceGitSelection } from '@/types/workspaceGit'
@@ -9,8 +6,15 @@ import type { RuntimeApi } from './runtimeApi'
 
 type WorkspaceGitApi = Pick<
   RuntimeApi,
-  'getWorkspaceGitBranch' | 'getWorkspaceGitDiff' | 'listWorkspaceGitBranches'
+  'getWorkspaceGitBranch' | 'getWorkspaceGitDiff' | 'isWorkspaceGitRepository'
 >
+
+export class WorkspaceNotGitRepositoryError extends Error {
+  constructor() {
+    super('此目录不是 Git 仓库')
+    this.name = 'WorkspaceNotGitRepositoryError'
+  }
+}
 
 export async function loadMobileWorkspaceChanges(
   api: WorkspaceGitApi,
@@ -19,22 +23,15 @@ export async function loadMobileWorkspaceChanges(
   signal?: AbortSignal
 ): Promise<MobileWorkspaceChanges> {
   signal?.throwIfAborted()
-  const normalized: WorkspaceGitSelection =
-    selection.mode === 'branch' && selection.baseRef !== undefined
-      ? { mode: 'branch', baseRef: validateWorkspaceGitBaseRef(selection.baseRef) }
-      : { ...selection }
+  const normalized: WorkspaceGitSelection = { mode: selection.mode }
   workspaceGitDiffCommand(normalized)
-  const [branchName, diff] = await Promise.all([
-    api.getWorkspaceGitBranch(target.deviceId, target.path, signal),
-    api.getWorkspaceGitDiff(target.deviceId, target.path, normalized, signal),
-  ])
+  const [branchName, diff] = await readGitSnapshot(api, target, normalized, signal)
   signal?.throwIfAborted()
   const files = mobileWorkspaceChangedFiles(diff)
   return {
     target: { ...target },
     selection: normalized,
     branchName,
-    baseRef: normalized.baseRef,
     diff,
     files,
     fileCount: files.length,
@@ -43,10 +40,28 @@ export async function loadMobileWorkspaceChanges(
   }
 }
 
-export function listMobileWorkspaceBranches(
+async function readGitSnapshot(
   api: WorkspaceGitApi,
   target: MobileWorkspaceFileTarget,
+  selection: WorkspaceGitSelection,
   signal?: AbortSignal
-): Promise<string[]> {
-  return api.listWorkspaceGitBranches(target.deviceId, target.path, signal)
+): Promise<[string, string]> {
+  try {
+    return await Promise.all([
+      api.getWorkspaceGitBranch(target.deviceId, target.path, signal),
+      api.getWorkspaceGitDiff(target.deviceId, target.path, selection, signal),
+    ])
+  } catch (error) {
+    signal?.throwIfAborted()
+    // Match PC environment loading: probe a failed Git read before classifying it as non-Git.
+    let isGitRepository: boolean | undefined
+    try {
+      isGitRepository = await api.isWorkspaceGitRepository(target.deviceId, target.path, signal)
+    } catch {
+      signal?.throwIfAborted()
+      throw error
+    }
+    if (isGitRepository === false) throw new WorkspaceNotGitRepositoryError()
+    throw error
+  }
 }

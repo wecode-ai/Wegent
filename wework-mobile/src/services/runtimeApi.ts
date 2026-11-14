@@ -11,6 +11,8 @@ import type { RuntimeTranscriptResponse as CoreTranscript } from '../../../packa
 import { readRuntimeTranscript } from '../../../packages/chat-core/src/runtime-transcript-transport'
 import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
 import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
+import type { RuntimeStream } from './runtimeStream'
+import type { RuntimeDeviceCommandResponse } from '@/types/runtimeCommand'
 import {
   normalizeAbsoluteWorkspacePath,
   normalizeWorkspaceFileChunk,
@@ -25,8 +27,6 @@ import type {
 } from '../../../packages/chat-core/src/workspace-files'
 import type { RuntimeWorkspaceSearchResponse } from '../../../packages/chat-core/src/runtime-workspace-search'
 import {
-  workspaceGitBranches,
-  WORKSPACE_GIT_COMPARISON_BRANCH_ARGS,
   workspaceGitCommandOutput,
   workspaceGitDiffCommand,
   type WorkspaceGitSelection,
@@ -75,18 +75,6 @@ export interface RuntimeAttachmentDownload {
   mimeType?: string
 }
 
-interface RuntimeDeviceCommandResponse {
-  success: boolean
-  exit_code?: number | null
-  stdout: string | Record<string, unknown> | unknown[]
-  stderr?: string
-  error?: string | null
-  duration?: number
-  timed_out?: boolean
-  stdout_truncated?: boolean
-  stderr_truncated?: boolean
-}
-
 type RuntimeFileUploader = (input: {
   headers: Record<string, string>
   mimeType: string
@@ -107,7 +95,8 @@ export class RuntimeApi {
   constructor(
     private readonly config: RuntimeSessionConfig,
     private readonly uploadFile: RuntimeFileUploader = uploadRuntimeFile,
-    private readonly getAccessToken: () => string = () => config.accessToken
+    private readonly getAccessToken: () => string = () => config.accessToken,
+    private readonly commands?: Pick<RuntimeStream, 'executeCommand'>
   ) {}
 
   async testConnection(): Promise<void> {
@@ -198,28 +187,6 @@ export class RuntimeApi {
     return this.readWorkspaceGitCommand(deviceId, path, 'git_branch', { signal })
   }
 
-  async listWorkspaceGitBranches(
-    deviceId: string,
-    path: string,
-    signal?: AbortSignal
-  ): Promise<string[]> {
-    const [output, currentBranch] = await Promise.all([
-      this.readWorkspaceGitCommand(deviceId, path, 'git_branch_list', {
-        args: WORKSPACE_GIT_COMPARISON_BRANCH_ARGS,
-        signal,
-        timeoutSeconds: 15,
-        maxOutputBytes: 64 * 1024,
-      }),
-      // Current-branch discovery only affects ordering, as in PC comparison branches.
-      this.getWorkspaceGitBranch(deviceId, path, signal).catch(error => {
-        if (signal?.aborted) throw error
-        return ''
-      }),
-    ])
-    signal?.throwIfAborted()
-    return workspaceGitBranches(output, currentBranch)
-  }
-
   async getWorkspaceGitDiff(
     deviceId: string,
     path: string,
@@ -228,7 +195,6 @@ export class RuntimeApi {
   ): Promise<string> {
     const command = workspaceGitDiffCommand(selection)
     return this.readWorkspaceGitCommand(deviceId, path, command.commandKey, {
-      args: command.args,
       signal,
       timeoutSeconds: 30,
       maxOutputBytes: 5 * 1024 * 1024,
@@ -240,7 +206,6 @@ export class RuntimeApi {
     path: string,
     commandKey: string,
     options: {
-      args?: string[]
       signal?: AbortSignal
       timeoutSeconds?: number
       maxOutputBytes?: number
@@ -249,14 +214,45 @@ export class RuntimeApi {
     options.signal?.throwIfAborted()
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-    const response = await this.executeDeviceCommand(deviceId, {
-      commandKey,
-      path: normalizedPath,
-      ...options,
-      timeoutSeconds: options.timeoutSeconds ?? 10,
-    })
+    if (!this.commands) throw new Error('Runtime command connection is unavailable')
+    const response = await this.commands.executeCommand(
+      deviceId,
+      {
+        command_key: commandKey,
+        path: normalizedPath,
+        timeout_seconds: options.timeoutSeconds ?? 10,
+        max_output_bytes: options.maxOutputBytes ?? 4096,
+      },
+      options.signal
+    )
     options.signal?.throwIfAborted()
     return workspaceGitCommandOutput(response, commandKey)
+  }
+
+  async isWorkspaceGitRepository(
+    deviceId: string,
+    path: string,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    signal?.throwIfAborted()
+    if (!deviceId.trim()) throw new Error('Workspace target device is required')
+    const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
+    if (!this.commands) throw new Error('Runtime command connection is unavailable')
+    const response = await this.commands.executeCommand(
+      deviceId,
+      {
+        command_key: 'git_is_worktree',
+        path: normalizedPath,
+        args: [normalizedPath],
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      },
+      signal
+    )
+    signal?.throwIfAborted()
+    if (response.stdout_truncated) throw new Error('Git repository probe was truncated')
+    // PC uses this command's success + true output as its repository capability probe.
+    return response.success && workspaceGitCommandOutput(response, 'git_is_worktree') === 'true'
   }
 
   async readWorkspaceTextFile(

@@ -212,6 +212,85 @@ describe('FileBrowserModal', () => {
     expect(element('file-preview-close')).toBeDefined()
   })
 
+  it.each(['agreement.html', 'page.htm', 'readme.md', 'notes.markdown'])(
+    'exposes preview/source tabs for %s without opening the filename menu',
+    async name => {
+      const formatted = { ...document, name }
+      store.acquire.mockResolvedValueOnce({ document: formatted, release: releasePreview })
+      await render()
+      expect(element('file-preview-modes')).toBeDefined()
+      expect(element('file-preview-full-path')).toBeUndefined()
+      expect(element('file-mode-preview').props.accessibilityState.selected).toBe(true)
+      expect(element('file-mode-source').props.accessibilityRole).toBe('tab')
+      expect(element('file-preview-share-close')).toBeDefined()
+      expect(element('file-preview-folder')).toBeDefined()
+      expect(element('file-preview-history')).toBeDefined()
+      await act(() => element('file-mode-source').props.onPress())
+      expect(preview().props.mode).toBe('source')
+      expect(element('file-mode-source').props.accessibilityState.selected).toBe(true)
+      expect(element('file-mode-preview').props.accessibilityState.selected).toBe(false)
+      await act(() => element('file-mode-preview').props.onPress())
+      expect(preview().props.mode).toBe('preview')
+      expect(preview().props.document).toBe(formatted)
+      expect(store.acquire).toHaveBeenCalledTimes(1)
+      expect(releasePreview).not.toHaveBeenCalled()
+      await act(() => element('file-preview-more').props.onPress())
+      expect(
+        renderer.root.findAll(
+          node =>
+            node.type === ('MenuItem' as never) &&
+            ['file-mode-preview', 'file-mode-source'].includes(node.props.testID)
+        )
+      ).toHaveLength(0)
+    }
+  )
+
+  it.each(['script.ts', 'notes.txt'])(
+    'keeps %s directly in its code view without redundant display modes',
+    async name => {
+      store.acquire.mockResolvedValueOnce({
+        document: { ...document, name },
+        release: releasePreview,
+      })
+      await render()
+      expect(element('file-preview-modes')).toBeUndefined()
+      expect(preview().props.document.kind).toBe('text')
+      await act(() => element('file-preview-more').props.onPress())
+      expect(element('file-mode-source')).toBeUndefined()
+      expect(element('file-wrap')).toBeDefined()
+    }
+  )
+
+  it.each(['diagram.mmd', 'diagram.puml', 'data.csv', 'image.svg'])(
+    'keeps both visible modes for source-readable rendered format %s',
+    async name => {
+      store.acquire.mockResolvedValueOnce({
+        document: { ...document, name, kind: 'binary', text: undefined },
+        release: releasePreview,
+      })
+      await render()
+      expect(element('file-preview-modes')).toBeDefined()
+      await act(() => element('file-mode-source').props.onPress())
+      expect(preview().props.mode).toBe('source')
+      expect(store.acquire).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each(['report.pdf', 'report.docx', 'image.jpg'])(
+    'does not offer an unusable source mode for binary format %s',
+    async name => {
+      store.acquire.mockResolvedValueOnce({
+        document: { ...document, name, kind: 'binary', text: undefined },
+        release: releasePreview,
+      })
+      await render()
+      expect(element('file-preview-modes')).toBeUndefined()
+      await act(() => element('file-preview-more').props.onPress())
+      expect(element('file-mode-source')).toBeUndefined()
+      expect(element('file-mode-preview')).toBeUndefined()
+    }
+  )
+
   it('shows neutral recoverable errors with technical details only on demand', async () => {
     store.acquire.mockRejectedValueOnce(new Error('HTTP 403: internal renderer request failed'))
     await render()
@@ -350,7 +429,7 @@ describe('FileBrowserModal', () => {
     await render({ location: { kind: 'file', request: lineRequest } })
     expect(preview().props.mode).toBe('source')
     expect(preview().props.document).toMatchObject({ lineStart: 12, lineEnd: 18 })
-    await menuAction('file-mode-preview')
+    await act(() => element('file-mode-preview').props.onPress())
     expect(preview().props.mode).toBe('preview')
     await menuAction('file-find')
     await act(() => element('file-find-input').props.onChangeText('needle'))
@@ -488,7 +567,8 @@ describe('FileBrowserModal', () => {
     await render()
     await act(() => preview().props.onError('PlantUML service unavailable'))
     expect(element('file-preview-error')).toBeDefined()
-    await menuAction('file-mode-source')
+    expect(element('file-preview-modes')).toBeDefined()
+    await act(() => element('file-mode-source').props.onPress())
     expect(preview().props.mode).toBe('source')
     expect(element('file-preview-error')).toBeUndefined()
     expect(store.acquire).toHaveBeenCalledTimes(1)
@@ -543,7 +623,7 @@ describe('FileBrowserModal', () => {
     const gitDiff: MobileFileRequest = {
       kind: 'git-diff',
       target: original,
-      selection: { mode: 'branch', baseRef: 'origin/release' },
+      selection: { mode: 'branch' },
       path: 'src/old.ts',
     }
     store.acquire.mockResolvedValueOnce({
@@ -561,7 +641,7 @@ describe('FileBrowserModal', () => {
   })
 
   it('routes a changes location to the workspace tabs with its requested Git selection', async () => {
-    const selection = { mode: 'branch', baseRef: 'origin/main' } as const
+    const selection = { mode: 'branch' } as const
     await render({ location: { kind: 'changes', target, selection } })
     const browser = renderer.root.findByType('FileDirectoryBrowser' as never)
     expect(browser.props).toMatchObject({

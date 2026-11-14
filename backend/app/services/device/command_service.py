@@ -54,7 +54,6 @@ REMOTE_READ_ONLY_COMMAND_KEYS = frozenset(
         "git_branch_list",
         "git_diff",
         "git_branch_diff",
-        "git_compare_branch_diff",
         "git_diff_unstaged",
         "git_diff_staged",
         "git_diff_last_commit",

@@ -56,6 +56,7 @@ import { ConversationChangesPill } from './ConversationChangesPill'
 import { ConversationAgentsPill } from './ConversationAgentsPill'
 import { ConversationHeader, CONVERSATION_HEADER_HEIGHT } from './ConversationHeader'
 import { ConversationMenu, type ConversationMenuActions } from './ConversationMenu'
+import type { MenuAnchor } from '@/domain/conversationMenuGeometry'
 import { MessageList } from './MessageList'
 import { QuickModelDismissLayer, QuickModelSelector } from './QuickModelSelector'
 import { groupModelsByFamily } from '../../../packages/collaboration/src/controls/model-ui'
@@ -119,7 +120,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
   const [useWorktree, setUseWorktree] = useState(false)
   const [bottomControlHeight, setBottomControlHeight] = useState(0)
   const [headerHeight, setHeaderHeight] = useState(CONVERSATION_HEADER_HEIGHT)
-  const [menuVisible, setMenuVisible] = useState(false)
+  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null)
 
   const onlineDevices = mobileCreatableDevices(props.devices)
   const configurationDevice =
@@ -373,9 +374,10 @@ export function ConversationScreen(props: ConversationScreenProps) {
           else props.onBack()
         }}
         onLayout={handleHeaderLayout}
-        onMore={() => {
+        menuExpanded={Boolean(menuAnchor)}
+        onMore={anchor => {
           Keyboard.dismiss()
-          setMenuVisible(true)
+          setMenuAnchor(anchor)
         }}
         onNewConversation={props.onNewConversation}
         canCreateConversation={onlineDevices.length > 0}
@@ -387,8 +389,9 @@ export function ConversationScreen(props: ConversationScreenProps) {
         {...props.conversationActions}
         address={props.currentAddress}
         title={props.currentTitle}
-        visible={menuVisible}
-        onDismiss={() => setMenuVisible(false)}
+        anchor={menuAnchor}
+        visible={Boolean(menuAnchor)}
+        onDismiss={() => setMenuAnchor(null)}
       />
 
       <KeyboardStickyView

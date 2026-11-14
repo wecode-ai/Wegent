@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceGitSelection } from '@/types/workspaceGit'
 import { RuntimeApi } from './runtimeApi'
-import { listMobileWorkspaceBranches, loadMobileWorkspaceChanges } from './mobileWorkspaceGit'
+import { loadMobileWorkspaceChanges, WorkspaceNotGitRepositoryError } from './mobileWorkspaceGit'
 
 const config = {
   apiBaseUrl: 'https://example.com/api',
@@ -26,177 +26,86 @@ const patch = [
   '+second',
   '',
 ].join('\n')
-
-const response = (stdout: unknown, extra: Record<string, unknown> = {}) =>
-  new Response(JSON.stringify({ success: true, exit_code: 0, stdout, stderr: '', ...extra }))
-const requestBody = (input: RequestInit) => JSON.parse(input.body as string)
-
+const response = (stdout: unknown, extra: Record<string, unknown> = {}) => ({
+  success: true,
+  exit_code: 0,
+  stdout,
+  stderr: '',
+  ...extra,
+})
 afterEach(() => vi.unstubAllGlobals())
 
-describe('Mobile cloud workspace Git protocol', () => {
+describe('Mobile uses the PC cloud runtime command transport', () => {
   it.each([
-    [{ mode: 'branch' }, 'git_branch_diff', undefined],
-    [
-      { mode: 'branch', baseRef: ' origin/release ' },
-      'git_compare_branch_diff',
-      ['origin/release'],
-    ],
-    [{ mode: 'unstaged' }, 'git_diff_unstaged', undefined],
-    [{ mode: 'staged' }, 'git_diff_staged', undefined],
-    [{ mode: 'commit' }, 'git_diff_last_commit', undefined],
+    [{ mode: 'branch' }, 'git_branch_diff'],
+    [{ mode: 'unstaged' }, 'git_diff_unstaged'],
+    [{ mode: 'staged' }, 'git_diff_staged'],
+    [{ mode: 'commit' }, 'git_diff_last_commit'],
   ] as const)(
-    'routes %j through the PC cloud command with its exact scope',
-    async (selection, key, args) => {
-      const controller = new AbortController()
-      const fetch = vi.fn().mockResolvedValue(response(patch))
-      vi.stubGlobal('fetch', fetch)
-      await expect(
-        new RuntimeApi(config).getWorkspaceGitDiff(
-          target.deviceId,
-          target.path,
-          selection,
-          controller.signal
-        )
-      ).resolves.toBe(patch.trim())
-      expect(fetch).toHaveBeenCalledWith(
-        'https://example.com/api/devices/cloud%2Fselected/commands',
-        expect.objectContaining({
-          method: 'POST',
-          signal: controller.signal,
-          headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
-        })
-      )
-      expect(requestBody(fetch.mock.calls[0]![1])).toEqual({
-        command_key: key,
-        path: target.path,
-        ...(args ? { args } : {}),
-        timeout_seconds: 30,
-        max_output_bytes: 5 * 1024 * 1024,
-      })
-    }
-  )
-
-  it.each(['', '-main', '../main', 'main~1', 'main^{commit}', 'main\nother', 'a.lock', 'a//b'])(
-    'rejects invalid named base %j without contacting the device',
-    async baseRef => {
+    'routes %j through the existing command key with exact scope and cancellation',
+    async (selection, key) => {
       const fetch = vi.fn()
       vi.stubGlobal('fetch', fetch)
+      const commands = { executeCommand: vi.fn().mockResolvedValue(response(patch)) }
+      const controller = new AbortController()
+      const api = new RuntimeApi(config, undefined, undefined, commands)
       await expect(
-        new RuntimeApi(config).getWorkspaceGitDiff(target.deviceId, target.path, {
-          mode: 'branch',
-          baseRef,
-        })
-      ).rejects.toThrow('Invalid comparison branch')
+        api.getWorkspaceGitDiff(target.deviceId, target.path, selection, controller.signal)
+      ).resolves.toBe(patch.trim())
+      expect(commands.executeCommand).toHaveBeenCalledExactlyOnceWith(
+        target.deviceId,
+        {
+          command_key: key,
+          path: target.path,
+          timeout_seconds: 30,
+          max_output_bytes: 5 * 1024 * 1024,
+        },
+        controller.signal
+      )
       expect(fetch).not.toHaveBeenCalled()
     }
   )
 
-  it('rejects unsupported selections, relative paths and empty device identity before transport', async () => {
-    const fetch = vi.fn()
-    vi.stubGlobal('fetch', fetch)
-    const api = new RuntimeApi(config)
+  it('rejects unknown modes, relative paths and empty device identities before transport', async () => {
+    const commands = { executeCommand: vi.fn() }
+    const api = new RuntimeApi(config, undefined, undefined, commands)
     await expect(
       api.getWorkspaceGitDiff('cloud', '/repo', {
-        mode: 'unstaged',
-        baseRef: 'main',
+        mode: 'invalid',
       } as unknown as WorkspaceGitSelection)
-    ).rejects.toThrow('Only branch diffs')
+    ).rejects.toThrow('Invalid Git diff mode')
     await expect(api.getWorkspaceGitDiff('cloud', 'repo', { mode: 'branch' })).rejects.toThrow(
       'absolute'
     )
     await expect(api.getWorkspaceGitBranch(' ', '/repo')).rejects.toThrow('device is required')
-    expect(fetch).not.toHaveBeenCalled()
+    expect(commands.executeCommand).not.toHaveBeenCalled()
   })
 
-  it('normalizes a Windows cloud workspace without changing its device', async () => {
-    const fetch = vi.fn().mockResolvedValue(response('main\n'))
-    vi.stubGlobal('fetch', fetch)
-    await new RuntimeApi(config).getWorkspaceGitBranch('windows-cloud', 'c:\\worktrees\\repo')
-    expect(requestBody(fetch.mock.calls[0]![1])).toEqual({
-      command_key: 'git_branch',
-      path: 'C:/worktrees/repo',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-  })
-
-  it('preserves PC branch ordering and deduplicates current branch exactly once', async () => {
-    const fetch = vi.fn(async (_url: string, input: RequestInit) =>
-      response(
-        requestBody(input).command_key === 'git_branch_list'
-          ? ['feature/a', ' main ', '', 'feature/a', 'release', 'origin/main']
-          : 'release\n'
-      )
+  it('normalizes Windows workspace paths without changing the owning execution target', async () => {
+    const commands = { executeCommand: vi.fn().mockResolvedValue(response('main\n')) }
+    await new RuntimeApi(config, undefined, undefined, commands).getWorkspaceGitBranch(
+      'execution-target',
+      'c:\\worktrees\\repo'
     )
-    vi.stubGlobal('fetch', fetch)
-    await expect(listMobileWorkspaceBranches(new RuntimeApi(config), target)).resolves.toEqual([
-      'release',
-      'feature/a',
-      'main',
-      'origin/main',
-    ])
-    expect(fetch.mock.calls.map(([, input]) => requestBody(input))).toEqual([
+    expect(commands.executeCommand).toHaveBeenCalledWith(
+      'execution-target',
       {
-        command_key: 'git_branch_list',
-        args: ['--all', '--format=%(if)%(symref)%(then)%(else)%(refname:short)%(end)'],
-        path: target.path,
-        timeout_seconds: 15,
-        max_output_bytes: 65536,
+        command_key: 'git_branch',
+        path: 'C:/worktrees/repo',
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
       },
-      { command_key: 'git_branch', path: target.path, timeout_seconds: 10, max_output_bytes: 4096 },
-    ])
-  })
-
-  it('retains the branch list if optional current-branch ordering is unavailable, like PC', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, input: RequestInit) =>
-        requestBody(input).command_key === 'git_branch_list'
-          ? response('main\nrelease')
-          : response('', { success: false, error: 'branch discovery failed' })
-      )
+      undefined
     )
-    await expect(listMobileWorkspaceBranches(new RuntimeApi(config), target)).resolves.toEqual([
-      'main',
-      'release',
-    ])
   })
 
-  it('surfaces an old backend rejecting explicit comparison without retrying a different baseline', async () => {
-    const fetch = vi.fn(async (_url: string, input: RequestInit) =>
-      requestBody(input).command_key === 'git_compare_branch_diff'
-        ? new Response(JSON.stringify({ detail: 'Unsupported command' }), { status: 400 })
-        : response(patch)
-    )
-    vi.stubGlobal('fetch', fetch)
-    const api = new RuntimeApi(config)
-    await expect(
-      api.getWorkspaceGitDiff(target.deviceId, target.path, {
-        mode: 'branch',
-        baseRef: 'origin/main',
-      })
-    ).rejects.toThrow('Unsupported command')
-    expect(fetch).toHaveBeenCalledTimes(1)
-    await expect(
-      api.getWorkspaceGitDiff(target.deviceId, target.path, { mode: 'branch' })
-    ).resolves.toBe(patch.trim())
-    expect(fetch).toHaveBeenCalledTimes(2)
-  })
-
-  it('preserves permission denial without changing owner or attempting another command', async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ detail: 'Forbidden workspace' }), { status: 403 })
-      )
+  it('does not replace an unavailable runtime connection with an HTTP command request', async () => {
+    const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     await expect(
-      new RuntimeApi(config).getWorkspaceGitDiff(target.deviceId, target.path, {
-        mode: 'branch',
-        baseRef: 'origin/main',
-      })
-    ).rejects.toMatchObject({ status: 403, message: 'Forbidden workspace' })
-    expect(fetch).toHaveBeenCalledOnce()
+      new RuntimeApi(config).getWorkspaceGitBranch(target.deviceId, target.path)
+    ).rejects.toThrow('Runtime command connection is unavailable')
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -204,34 +113,61 @@ describe('Mobile cloud workspace Git protocol', () => {
     [{ success: true, exit_code: 128, stderr: 'unknown branch' }, 'unknown branch'],
     [{ stdout: { diff: patch } }, 'Expected text stdout'],
     [{ stdout_truncated: true }, 'size limit'],
-  ])(
-    'does not reinterpret command failure or incomplete output as an empty change list: %j',
-    async (extra, message) => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response('', extra)))
-      await expect(
-        new RuntimeApi(config).getWorkspaceGitDiff(target.deviceId, target.path, { mode: 'branch' })
-      ).rejects.toThrow(message)
+  ])('preserves failed or incomplete command results: %j', async (extra, message) => {
+    const commands = { executeCommand: vi.fn().mockResolvedValue(response('', extra)) }
+    await expect(
+      new RuntimeApi(config, undefined, undefined, commands).getWorkspaceGitDiff(
+        target.deviceId,
+        target.path,
+        { mode: 'branch' }
+      )
+    ).rejects.toThrow(message)
+    expect(commands.executeCommand).toHaveBeenCalledOnce()
+  })
+
+  it('uses the exact PC repository probe and preserves rejected permission checks', async () => {
+    const commands = {
+      executeCommand: vi
+        .fn()
+        .mockResolvedValueOnce(response('true\n'))
+        .mockResolvedValueOnce(
+          response('', { success: false, exit_code: 128, stderr: 'not a git repository' })
+        )
+        .mockRejectedValueOnce(new Error('permission denied')),
     }
-  )
+    const api = new RuntimeApi(config, undefined, undefined, commands)
+    await expect(api.isWorkspaceGitRepository(target.deviceId, target.path)).resolves.toBe(true)
+    expect(commands.executeCommand).toHaveBeenNthCalledWith(
+      1,
+      target.deviceId,
+      {
+        command_key: 'git_is_worktree',
+        path: target.path,
+        args: [target.path],
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      },
+      undefined
+    )
+    await expect(api.isWorkspaceGitRepository(target.deviceId, target.path)).resolves.toBe(false)
+    await expect(api.isWorkspaceGitRepository(target.deviceId, target.path)).rejects.toThrow(
+      'permission denied'
+    )
+  })
 })
 
 describe('Mobile workspace changes state', () => {
   const api = () => ({
     getWorkspaceGitBranch: vi.fn().mockResolvedValue('feature/selected'),
     getWorkspaceGitDiff: vi.fn().mockResolvedValue(patch),
-    listWorkspaceGitBranches: vi.fn().mockResolvedValue(['feature/selected', 'main']),
+    isWorkspaceGitRepository: vi.fn().mockResolvedValue(true),
   })
-
-  it('returns exact target, explicit baseline and shared PC per-file statistics', async () => {
+  it('returns the exact owner, mode and shared PC per-file statistics', async () => {
     const service = api()
-    const result = await loadMobileWorkspaceChanges(service, target, {
-      mode: 'branch',
-      baseRef: ' main ',
-    })
+    const result = await loadMobileWorkspaceChanges(service, target, { mode: 'branch' })
     expect(result).toMatchObject({
       target,
-      selection: { mode: 'branch', baseRef: 'main' },
-      baseRef: 'main',
+      selection: { mode: 'branch' },
       branchName: 'feature/selected',
       fileCount: 1,
       additions: 2,
@@ -249,13 +185,14 @@ describe('Mobile workspace changes state', () => {
     expect(service.getWorkspaceGitDiff).toHaveBeenCalledWith(
       target.deviceId,
       target.path,
-      { mode: 'branch', baseRef: 'main' },
+      { mode: 'branch' },
       undefined
     )
+    expect(service.isWorkspaceGitRepository).not.toHaveBeenCalled()
     expect(result.target).not.toBe(target)
   })
 
-  it('keeps empty and detached repositories truthful without inventing a branch or baseline', async () => {
+  it('keeps empty and detached repositories truthful without inventing a branch', async () => {
     const service = api()
     service.getWorkspaceGitBranch.mockResolvedValue('')
     service.getWorkspaceGitDiff.mockResolvedValue('')
@@ -263,7 +200,6 @@ describe('Mobile workspace changes state', () => {
       loadMobileWorkspaceChanges(service, target, { mode: 'branch' })
     ).resolves.toMatchObject({
       branchName: '',
-      baseRef: undefined,
       files: [],
       fileCount: 0,
       additions: 0,
@@ -271,16 +207,34 @@ describe('Mobile workspace changes state', () => {
     })
   })
 
-  it('rejects invalid selection before any branch or diff requests', async () => {
+  it('uses a distinct non-Git state only after a failed read and a confirmed negative probe', async () => {
     const service = api()
+    service.getWorkspaceGitBranch.mockRejectedValueOnce(new Error('Git failed'))
+    service.isWorkspaceGitRepository.mockResolvedValue(false)
     await expect(
-      loadMobileWorkspaceChanges(service, target, { mode: 'branch', baseRef: '-main' })
-    ).rejects.toThrow()
-    expect(service.getWorkspaceGitBranch).not.toHaveBeenCalled()
-    expect(service.getWorkspaceGitDiff).not.toHaveBeenCalled()
+      loadMobileWorkspaceChanges(service, target, { mode: 'branch' })
+    ).rejects.toBeInstanceOf(WorkspaceNotGitRepositoryError)
+    expect(service.isWorkspaceGitRepository).toHaveBeenCalledWith(
+      target.deviceId,
+      target.path,
+      undefined
+    )
   })
 
-  it('does not publish an aborted old device load even when its responses arrive later', async () => {
+  it.each(['permission denied', 'device offline'])(
+    'preserves %s when the repository probe cannot establish non-Git status',
+    async message => {
+      const service = api()
+      const failure = new Error(message)
+      service.getWorkspaceGitDiff.mockRejectedValueOnce(failure)
+      service.isWorkspaceGitRepository.mockRejectedValueOnce(new Error(message))
+      await expect(loadMobileWorkspaceChanges(service, target, { mode: 'branch' })).rejects.toBe(
+        failure
+      )
+    }
+  )
+
+  it('does not publish an aborted old-device result or issue a capability probe after cancellation', async () => {
     const service = api()
     let resolve!: (value: string) => void
     service.getWorkspaceGitDiff.mockImplementationOnce(
@@ -299,14 +253,10 @@ describe('Mobile workspace changes state', () => {
     controller.abort()
     resolve(patch)
     await expect(loading).rejects.toMatchObject({ name: 'AbortError' })
-    expect(service.getWorkspaceGitBranch).toHaveBeenCalledWith(
-      target.deviceId,
-      target.path,
-      controller.signal
-    )
+    expect(service.isWorkspaceGitRepository).not.toHaveBeenCalled()
   })
 
-  it('allows an explicit retry after failure without caching failed or cross-device results', async () => {
+  it('allows an explicit retry without caching failed or cross-device results', async () => {
     const service = api()
     service.getWorkspaceGitDiff.mockRejectedValueOnce(new Error('device disconnected'))
     await expect(loadMobileWorkspaceChanges(service, target, { mode: 'unstaged' })).rejects.toThrow(

@@ -214,12 +214,12 @@ beforeEach(() => {
 })
 
 describe('live workspace diffs', () => {
-  it('keeps device, worktree and baseline identity and cancels a stale live diff on refresh', async () => {
+  it('keeps device, worktree and comparison mode identity and cancels a stale live diff on refresh', async () => {
     const { api, store } = setup()
     const request: MobileFileRequest = {
       kind: 'git-diff',
       target: { deviceId: 'device-a', path: '/worktree' },
-      selection: { mode: 'branch', baseRef: 'origin/main' },
+      selection: { mode: 'branch' },
       path: 'src/a.ts',
     }
     api.getWorkspaceGitDiff.mockResolvedValue('diff --git a/src/a.ts b/src/a.ts\n+first')

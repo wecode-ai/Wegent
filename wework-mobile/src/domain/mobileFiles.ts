@@ -62,7 +62,6 @@ export function mobileFileKey(request: MobileFileRequest): string {
         request.target.deviceId,
         request.target.path,
         request.selection.mode,
-        request.selection.baseRef,
         request.path,
       ])
   }

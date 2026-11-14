@@ -4,6 +4,7 @@ import { io } from 'socket.io-client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RuntimeStream } from './runtimeStream'
+import { RuntimeApi } from './runtimeApi'
 import type { DeviceInfo } from '@/types/runtime'
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }))
@@ -30,6 +31,7 @@ describe('RuntimeStream', () => {
   }
   afterEach(() => {
     streams.splice(0).forEach(stream => stream.dispose())
+    vi.unstubAllGlobals()
     vi.useRealTimers()
   })
 
@@ -62,15 +64,27 @@ describe('RuntimeStream', () => {
     emit.mockReset()
     vi.mocked(io)
       .mockReset()
-      .mockReturnValue({
-        connected: false,
-        connect,
-        disconnect,
-        emit,
-        on: vi.fn((name: string, handler: (payload?: unknown) => void) => {
-          handlers.set(name, handler)
-        }),
-      } as never)
+      .mockImplementation(() => {
+        const rawHandlers = new Map<string, Set<(payload?: unknown) => void>>()
+        handlers.clear()
+        return {
+          connected: false,
+          connect,
+          disconnect,
+          emit,
+          on: vi.fn((name: string, handler: (payload?: unknown) => void) => {
+            const listeners = rawHandlers.get(name) ?? new Set()
+            listeners.add(handler)
+            rawHandlers.set(name, listeners)
+            handlers.set(name, payload => {
+              for (const listener of [...listeners]) listener(payload)
+            })
+          }),
+          off: vi.fn((name: string, handler: (payload?: unknown) => void) => {
+            rawHandlers.get(name)?.delete(handler)
+          }),
+        } as never
+      })
   })
 
   it('keeps an authenticated connection active when credentials refresh', async () => {
@@ -146,6 +160,136 @@ describe('RuntimeStream', () => {
     const unsubscribe = await subscribed
     expect(ready).toBe(true)
     unsubscribe()
+  })
+
+  it('executes Mobile Git over the same authenticated runtime socket as PC without an HTTP command call', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    emit.mockImplementation((name, payload, acknowledge) => {
+      expect(name).toBe('runtime:request')
+      expect(payload).toMatchObject({
+        method: 'device.execute_command',
+        device_id: 'cloud-owner',
+        timeout_seconds: 30,
+        params: {
+          command_key: 'git_branch_diff',
+          path: '/worktrees/repo',
+          timeout_seconds: 30,
+          max_output_bytes: 5 * 1024 * 1024,
+        },
+      })
+      acknowledge({
+        ok: true,
+        result: {
+          success: true,
+          exit_code: 0,
+          stdout: 'diff --git a/a b/a\n+新内容\n',
+          stderr: '',
+        },
+      })
+    })
+    const stream = await createStream(config)
+    const api = new RuntimeApi(config, undefined, undefined, stream)
+    await expect(
+      api.getWorkspaceGitDiff('cloud-owner', '/worktrees/repo', { mode: 'branch' })
+    ).resolves.toContain('+新内容')
+    expect(io).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('preserves runtime permission/offline rejection and does not retry another transport', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    emit.mockImplementation((_name, _payload, acknowledge) =>
+      acknowledge({
+        ok: false,
+        error: { code: 'remote_control_disabled', message: 'Access denied' },
+      })
+    )
+    const stream = await createStream(config)
+    await expect(
+      stream.executeCommand('execution-target', { command_key: 'git_branch', path: '/repo' })
+    ).rejects.toMatchObject({
+      code: 'remote_control_disabled',
+      message: 'remote_control_disabled: Access denied',
+    })
+    expect(emit).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('decodes compressed command output and refuses a corrupted gzip trailer', async () => {
+    const bytes = gzipSync(
+      strToU8(JSON.stringify({ success: true, exit_code: 0, stdout: '中文 diff', stderr: '' }))
+    )
+    emit.mockImplementation((_name, _payload, acknowledge) =>
+      acknowledge({
+        ok: true,
+        result: { __runtimeRpcEncoding: 'gzip+base64+json', payload: base64.encode(bytes) },
+      })
+    )
+    const stream = await createStream(config)
+    await expect(
+      stream.executeCommand('cloud', { command_key: 'git_branch_diff' })
+    ).resolves.toMatchObject({ stdout: '中文 diff' })
+    bytes[bytes.length - 8]! ^= 1
+    await expect(
+      stream.executeCommand('cloud', { command_key: 'git_branch_diff' })
+    ).rejects.toThrow('Corrupted gzip')
+  })
+
+  it('cancels command reads and ignores acknowledgements from the previous view', async () => {
+    let acknowledge!: (value: unknown) => void
+    emit.mockImplementation((_name, _payload, ack) => {
+      acknowledge = ack
+    })
+    const stream = await createStream(config)
+    const controller = new AbortController()
+    const request = stream.executeCommand('cloud', { command_key: 'git_branch' }, controller.signal)
+    const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    await Promise.resolve()
+    controller.abort()
+    await rejected
+    acknowledge({ ok: true, result: { success: true, stdout: 'stale' } })
+    await expect(
+      stream.executeCommand('cloud', { command_key: 'git_branch' }, controller.signal)
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(emit).toHaveBeenCalledOnce()
+  })
+
+  it('keeps PC command timeout plus acknowledgement grace and fails immediately on disconnect', async () => {
+    vi.useFakeTimers()
+    const stream = await createStream(config)
+    const request = stream.executeCommand('cloud', {
+      command_key: 'git_branch',
+      timeout_seconds: 2,
+    })
+    const rejected = expect(request).rejects.toThrow('请求超时')
+    await Promise.resolve()
+    expect(emit.mock.calls[0]?.[1]).toMatchObject({ timeout_seconds: 2 })
+    await vi.advanceTimersByTimeAsync(12000)
+    await rejected
+    const disconnected = stream.executeCommand('cloud', { command_key: 'git_branch' })
+    const disconnectedResult = expect(disconnected).rejects.toThrow('连接已断开')
+    await Promise.resolve()
+    handlers.get('disconnect')?.('transport close')
+    await disconnectedResult
+  })
+
+  it('rejects if the connection closes before the request resumes from ensureConnected', async () => {
+    vi.useFakeTimers()
+    const stream = await createStream(config)
+    const raw = vi.mocked(io).mock.results.at(-1)!.value
+    const request = stream
+      .executeCommand('cloud', { command_key: 'git_branch' })
+      .catch(error => error)
+    raw.connected = false
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(emit).not.toHaveBeenCalled()
+    expect(await request).toMatchObject({ message: 'device.execute_command 连接已断开' })
+    expect(raw.off).toHaveBeenCalledWith('disconnect', expect.any(Function))
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('loads transcripts through the Wework runtime request protocol', async () => {

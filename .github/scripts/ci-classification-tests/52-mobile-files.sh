@@ -29,6 +29,11 @@ for mobile_file_path in \
   wework-mobile/src/services/mobileFileStore.ts \
   wework-mobile/src/services/mobilePreviewRuntime.ts \
   wework-mobile/src/services/runtimeFilesApi.test.ts \
+  wework-mobile/src/services/runtimeStream.ts \
+  wework-mobile/src/services/runtimeStream.test.ts \
+  wework-mobile/src/types/runtimeCommand.ts \
+  wework-mobile/src/hooks/useMobileRuntime.ts \
+  wework-mobile/src/hooks/useMobileRuntime.test.tsx \
   wework-mobile/src/types/files.ts \
   wework-mobile/src/types/workspaceGit.ts \
   wework-mobile/src/domain/mobileWorkspaceGit.ts \

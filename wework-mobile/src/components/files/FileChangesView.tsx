@@ -1,19 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useEffect, useState } from 'react'
-import {
-  FlatList,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native'
-import { ActivityIndicator, Menu, Text, useTheme } from 'react-native-paper'
+import { FlatList, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native'
+import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import {
-  listMobileWorkspaceBranches,
   loadMobileWorkspaceChanges,
+  WorkspaceNotGitRepositoryError,
 } from '@/services/mobileWorkspaceGit'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import type {
@@ -22,12 +14,7 @@ import type {
   WorkspaceGitSelection,
 } from '@/types/workspaceGit'
 import type { FileLocation } from './FileBrowserModal'
-import {
-  FileBrowserHeader,
-  FileErrorState,
-  FileSegments,
-  FileTextAction,
-} from './FileBrowserChrome'
+import { FileBrowserHeader, FileErrorState, FileSegments } from './FileBrowserChrome'
 
 const modeLabels = {
   branch: '分支',
@@ -67,10 +54,11 @@ export function FileChangesView({
     null
   )
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<Error | null>(null)
   const [revision, setRevision] = useState(0)
-  const scope = JSON.stringify([target.deviceId, target.path, selection.mode, selection.baseRef])
+  const scope = JSON.stringify([target.deviceId, target.path, selection.mode])
   const changes = result?.scope === scope ? result.value : null
+  const notGitRepository = error instanceof WorkspaceNotGitRepositoryError
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
@@ -83,7 +71,7 @@ export function FileChangesView({
         },
         cause => {
           if (!controller.signal.aborted)
-            setError(cause instanceof Error ? cause.message : String(cause))
+            setError(cause instanceof Error ? cause : new Error(String(cause)))
         }
       )
       .finally(() => {
@@ -144,17 +132,30 @@ export function FileChangesView({
           color={theme.colors.onSurfaceVariant}
         />
       ) : null}
-      {error ? (
+      {error && !notGitRepository ? (
         <FileErrorState
           title="暂时无法读取更改"
-          message={error}
+          message={error.message}
           testID="files-changes-error"
           retryTestID="files-changes-retry"
           onRetry={refresh}
           compact
         />
       ) : null}
-      {changes?.fileCount ? (
+      {notGitRepository ? (
+        <View style={styles.empty} testID="files-changes-not-git">
+          <Ionicons name="folder-outline" size={44} color={theme.colors.onSurfaceVariant} />
+          <Text variant="titleLarge" style={styles.emptyTitle}>
+            此目录不是 Git 仓库
+          </Text>
+          <Text
+            variant="bodyMedium"
+            style={[styles.explanation, { color: theme.colors.onSurfaceVariant }]}
+          >
+            可切换到“所有文件”浏览此目录。
+          </Text>
+        </View>
+      ) : changes?.fileCount ? (
         <FlatList
           style={styles.screen}
           contentContainerStyle={styles.cards}
@@ -182,14 +183,23 @@ export function FileChangesView({
       ) : (
         <View style={styles.screen} />
       )}
-      {selection.mode === 'branch' ? (
-        <BranchComparison
-          api={api}
-          target={target}
-          branchName={changes?.branchName}
-          baseRef={selection.baseRef}
-          onSelect={baseRef => onSelectionChange({ mode: 'branch', baseRef })}
-        />
+      {selection.mode === 'branch' && changes?.branchName ? (
+        <View
+          style={[styles.comparison, { borderTopColor: theme.colors.outlineVariant }]}
+          testID="files-changes-comparison"
+        >
+          <Text
+            variant="bodyLarge"
+            numberOfLines={1}
+            style={[styles.branch, { color: theme.colors.onSurfaceVariant }]}
+          >
+            {changes.branchName}
+          </Text>
+          <Ionicons name="arrow-forward" size={24} color={theme.colors.onSurfaceVariant} />
+          <Text variant="bodyLarge" style={{ color: theme.colors.onSurfaceVariant }}>
+            主分支
+          </Text>
+        </View>
       ) : null}
     </View>
   )
@@ -312,124 +322,6 @@ function ChangedFileCard({
   )
 }
 
-function BranchComparison({
-  api,
-  target,
-  branchName,
-  baseRef,
-  onSelect,
-}: {
-  api: RuntimeApi
-  target: MobileWorkspaceFileTarget
-  branchName?: string
-  baseRef?: string
-  onSelect: (branch: string) => void
-}) {
-  const theme = useTheme()
-  const { height, width } = useWindowDimensions()
-  const [visible, setVisible] = useState(false)
-  const [branches, setBranches] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [revision, setRevision] = useState(0)
-  useEffect(() => {
-    if (!visible) return
-    const controller = new AbortController()
-    setLoading(true)
-    setError(null)
-    setBranches([])
-    void listMobileWorkspaceBranches(api, target, controller.signal)
-      .then(
-        values => {
-          if (!controller.signal.aborted) setBranches(values)
-        },
-        cause => {
-          if (!controller.signal.aborted)
-            setError(cause instanceof Error ? cause.message : String(cause))
-        }
-      )
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
-  }, [api, target, visible, revision])
-  return (
-    <View style={[styles.comparison, { borderTopColor: theme.colors.outlineVariant }]}>
-      <Text
-        variant="bodyLarge"
-        numberOfLines={1}
-        style={[styles.branch, { color: theme.colors.onSurfaceVariant }]}
-      >
-        {branchName || '…'}
-      </Text>
-      <Ionicons name="arrow-forward" size={24} color={theme.colors.onSurfaceVariant} />
-      <View style={styles.grow}>
-        <Menu
-          visible={visible}
-          onDismiss={() => setVisible(false)}
-          anchorPosition="top"
-          statusBarHeight={0}
-          contentStyle={{ maxWidth: width - 32, backgroundColor: theme.colors.elevation.level2 }}
-          anchor={
-            <Pressable
-              style={styles.baseBranch}
-              accessibilityRole="button"
-              accessibilityLabel="选择比较分支"
-              testID="files-changes-base"
-              onPress={() => setVisible(true)}
-            >
-              <Text
-                variant="bodyLarge"
-                numberOfLines={1}
-                style={[styles.branch, { color: theme.colors.onSurfaceVariant }]}
-              >
-                {baseRef || '主分支'}
-              </Text>
-              <Ionicons name="chevron-down" size={14} color={theme.colors.onSurfaceVariant} />
-            </Pressable>
-          }
-        >
-          <ScrollView style={{ maxHeight: height * 0.5 }} keyboardShouldPersistTaps="handled">
-            {loading ? (
-              <ActivityIndicator testID="files-branches-loading" style={styles.loading} />
-            ) : null}
-            {error ? (
-              <View style={styles.branchError}>
-                <Text variant="bodySmall">{error}</Text>
-                <FileTextAction
-                  label="重试"
-                  testID="files-branches-retry"
-                  onPress={() => setRevision(value => value + 1)}
-                />
-              </View>
-            ) : (
-              branches.map(branch => (
-                <Menu.Item
-                  key={branch}
-                  testID={`files-branch-${branch}`}
-                  title={branch}
-                  titleStyle={theme.fonts.bodyMedium}
-                  style={styles.branchItem}
-                  trailingIcon={branch === baseRef ? 'check' : undefined}
-                  onPress={() => {
-                    setVisible(false)
-                    onSelect(branch)
-                  }}
-                />
-              ))
-            )}
-            {!loading && !error && !branches.length ? (
-              <Text variant="bodyMedium" style={styles.branchError}>
-                没有可用的比较分支
-              </Text>
-            ) : null}
-          </ScrollView>
-        </Menu>
-      </View>
-    </View>
-  )
-}
-
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   grow: { flex: 1, minWidth: 0 },
@@ -465,6 +357,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   emptyTitle: { textAlign: 'center', marginTop: 20 },
+  explanation: { textAlign: 'center' },
   comparison: {
     minHeight: 56,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -474,7 +367,4 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   branch: { flexShrink: 1 },
-  baseBranch: { flexDirection: 'row', minHeight: 44, alignItems: 'center', gap: 6 },
-  branchItem: { minHeight: 44 },
-  branchError: { padding: 16 },
 })

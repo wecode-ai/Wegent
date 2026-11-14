@@ -73,13 +73,13 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   const deviceInventoryRef = useRef<DeviceInfo[]>([])
   const tokenRef = useRef(config.accessToken)
   tokenRef.current = config.accessToken
-  const api = useMemo(
-    () => new RuntimeApi(config, undefined, () => tokenRef.current),
-    [config.apiBaseUrl, userId]
-  )
   const stream = useMemo(
     () => new RuntimeStream(config, () => deviceInventoryRef.current),
     [config.apiBaseUrl, config.socketBaseUrl, config.socketPath, userId]
+  )
+  const api = useMemo(
+    () => new RuntimeApi(config, undefined, () => tokenRef.current, stream),
+    [config.apiBaseUrl, userId, stream]
   )
   const cache = useMemo(
     () => new MobileRuntimeCache(config.apiBaseUrl, userId),

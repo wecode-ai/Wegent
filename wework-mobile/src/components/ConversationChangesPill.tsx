@@ -3,12 +3,13 @@ import { useFocusEffect } from '@react-navigation/native'
 import { AppState, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import type { MobileWorkspaceChanges } from '@/types/workspaceGit'
+import { WorkspaceNotGitRepositoryError } from '@/services/mobileWorkspaceGit'
 import { LiquidGlassButton } from './LiquidGlass'
 import { useMobileFilePreview } from './files/FilePreviewContext'
 
 type ChangesState =
   | { key: string; status: 'ready'; changes: MobileWorkspaceChanges }
-  | { key: string; status: 'loading' | 'error' }
+  | { key: string; status: 'loading' | 'error' | 'not-git' }
 
 /** Owns only the active conversation's Git summary; opening the sheet reloads its full state. */
 export function ConversationChangesPill({ revision }: { revision: string }) {
@@ -31,8 +32,12 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
           changes => {
             if (!current.signal.aborted) setState({ key, status: 'ready', changes })
           },
-          () => {
-            if (!current.signal.aborted) setState({ key, status: 'error' })
+          cause => {
+            if (!current.signal.aborted)
+              setState({
+                key,
+                status: cause instanceof WorkspaceNotGitRepositoryError ? 'not-git' : 'error',
+              })
           }
         )
       }
@@ -48,7 +53,11 @@ export function ConversationChangesPill({ revision }: { revision: string }) {
   )
   if (!target || !preview) return null
   const current = state?.key === key ? state : null
-  if (current?.status === 'ready' && current.changes.fileCount === 0) return null
+  if (
+    current?.status === 'not-git' ||
+    (current?.status === 'ready' && current.changes.fileCount === 0)
+  )
+    return null
   return (
     <View style={styles.touchArea}>
       <LiquidGlassButton

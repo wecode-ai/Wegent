@@ -8,7 +8,6 @@ import {
   commitProjectChanges,
   createAndCheckoutProjectBranch,
   listProjectBranches,
-  listProjectComparisonBranches,
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
   parseGitShortStat,
@@ -1440,62 +1439,6 @@ describe('branch environment commands', () => {
     },
   }
 
-  test('compares an explicit base ref through the cloud workspace command without checkout', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      exit_code: 0,
-      stdout: 'diff --git a/a.txt b/a.txt\n+changed\n',
-      stderr: '',
-    })
-    const target = { deviceId: 'cloud-device', path: '/workspace/worktrees/task/repo' }
-    await expect(
-      loadProjectEnvironmentDiff({ executeCommand }, project, target, 'branch', ' origin/release ')
-    ).resolves.toBe('diff --git a/a.txt b/a.txt\n+changed')
-    expect(executeCommand).toHaveBeenCalledExactlyOnceWith('cloud-device', {
-      command_key: 'git_compare_branch_diff',
-      path: target.path,
-      args: ['origin/release'],
-      timeout_seconds: 30,
-      max_output_bytes: 5 * 1024 * 1024,
-    })
-  })
-
-  test('rejects invalid comparison refs and base refs for non-branch diffs before execution', async () => {
-    const executeCommand = vi.fn()
-    for (const ref of ['', '-main', 'main~1', 'main\nother', 'a//b', 'a.lock']) {
-      await expect(
-        loadProjectEnvironmentDiff({ executeCommand }, project, undefined, 'branch', ref)
-      ).rejects.toThrow('Invalid comparison branch')
-    }
-    await expect(
-      loadProjectEnvironmentDiff({ executeCommand }, project, undefined, 'unstaged', 'main')
-    ).rejects.toThrow('Only branch diffs')
-    expect(executeCommand).not.toHaveBeenCalled()
-  })
-
-  test('surfaces an invalid or truncated comparison result instead of displaying an empty diff', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      exit_code: 128,
-      stdout: '',
-      stderr: 'Unknown comparison ref',
-    })
-    await expect(
-      loadProjectEnvironmentDiff({ executeCommand }, project, undefined, 'branch', 'missing')
-    ).rejects.toThrow('Unknown comparison ref')
-    executeCommand.mockResolvedValue({
-      success: true,
-      exit_code: 0,
-      stdout: 'partial',
-      stderr: '',
-      stdout_truncated: true,
-    })
-    await expect(loadProjectEnvironmentDiff({ executeCommand }, project)).rejects.toThrow(
-      'size limit'
-    )
-    expect(executeCommand).toHaveBeenCalledTimes(2)
-  })
-
   test('runs branch commands in the active workspace target', async () => {
     const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
       if (data.command_key === 'git_branch_list') {
@@ -1548,29 +1491,6 @@ describe('branch environment commands', () => {
       timeout_seconds: 30,
       max_output_bytes: 8192,
     })
-  })
-
-  test('lists remote comparison refs without changing local checkout branch listing', async () => {
-    const executeCommand = vi.fn(async (_deviceId, data) => ({
-      success: true,
-      stdout:
-        data.command_key === 'git_branch'
-          ? 'feature/topic'
-          : 'main\nfeature/topic\n\norigin/main\norigin/release',
-      stderr: '',
-    }))
-    const target = { deviceId: 'cloud', path: '/worktrees/repo', source: 'runtime' as const }
-    await expect(
-      listProjectComparisonBranches({ executeCommand }, project, target)
-    ).resolves.toEqual(['feature/topic', 'main', 'origin/main', 'origin/release'])
-    expect(executeCommand).toHaveBeenCalledWith(
-      'cloud',
-      expect.objectContaining({
-        command_key: 'git_branch_list',
-        path: target.path,
-        args: ['--all', '--format=%(if)%(symref)%(then)%(else)%(refname:short)%(end)'],
-      })
-    )
   })
 
   test('rejects invalid branch names before running checkout commands', async () => {

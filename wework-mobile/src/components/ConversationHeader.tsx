@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
+import { useRef } from 'react'
 import {
   Pressable,
   StyleSheet,
@@ -9,6 +10,7 @@ import {
 } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { LiquidGlassButton, LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import type { MenuAnchor } from '@/domain/conversationMenuGeometry'
 
 interface ConversationHeaderProps {
   backAccessibilityLabel?: string
@@ -20,7 +22,8 @@ interface ConversationHeaderProps {
   onLayout?: (event: LayoutChangeEvent) => void
   onNewConversation: () => void
   canCreateConversation?: boolean
-  onMore: () => void
+  onMore: (anchor: MenuAnchor) => void
+  menuExpanded?: boolean
   style?: StyleProp<ViewStyle>
 }
 
@@ -37,9 +40,20 @@ export function ConversationHeader({
   onNewConversation,
   canCreateConversation = true,
   onMore,
+  menuExpanded = false,
   style,
 }: ConversationHeaderProps) {
   const theme = useTheme()
+  const capsule = useRef<View>(null)
+  const measuring = useRef(false)
+  const openMore = () => {
+    if (menuExpanded || measuring.current || !capsule.current) return
+    measuring.current = true
+    capsule.current?.measureInWindow((x, y, width, height) => {
+      measuring.current = false
+      if (width > 0 && height > 0) onMore({ x, y, width, height })
+    })
+  }
 
   return (
     <LiquidGlassGroup
@@ -56,13 +70,30 @@ export function ConversationHeader({
       />
       {minimal ? (
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
-          <View style={{ width: 44, height: 44 }}>
-            <HeaderAction
-              accessibilityLabel="更多"
-              icon="ellipsis-horizontal"
-              onPress={onMore}
-              testID="more-actions"
-            />
+          <View
+            ref={capsule}
+            collapsable={false}
+            pointerEvents={menuExpanded ? 'none' : 'auto'}
+            accessibilityElementsHidden={menuExpanded}
+            importantForAccessibility={menuExpanded ? 'no-hide-descendants' : 'auto'}
+            style={{ width: 44, height: 44, opacity: menuExpanded ? 0 : 1 }}
+            testID="conversation-menu-anchor"
+          >
+            <LiquidGlassSurface
+              colorScheme={theme.dark ? 'dark' : 'light'}
+              fallbackStyle={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.outlineVariant,
+              }}
+              style={styles.minimalCapsule}
+            >
+              <HeaderAction
+                accessibilityLabel="更多"
+                icon="ellipsis-horizontal"
+                onPress={openMore}
+                testID="more-actions"
+              />
+            </LiquidGlassSurface>
           </View>
         </View>
       ) : null}
@@ -114,30 +145,40 @@ export function ConversationHeader({
             </View>
           </View>
 
-          <LiquidGlassSurface
-            colorScheme={theme.dark ? 'dark' : 'light'}
-            fallbackStyle={{
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.outlineVariant,
-            }}
-            style={styles.actionCapsule}
+          <View
+            ref={capsule}
+            collapsable={false}
+            pointerEvents={menuExpanded ? 'none' : 'auto'}
+            accessibilityElementsHidden={menuExpanded}
+            importantForAccessibility={menuExpanded ? 'no-hide-descendants' : 'auto'}
+            style={[styles.actionCapsule, menuExpanded && { opacity: 0 }]}
+            testID="conversation-menu-anchor"
           >
-            <View style={styles.actionRow}>
-              <HeaderAction
-                accessibilityLabel="新会话"
-                disabled={!canCreateConversation}
-                icon="create-outline"
-                onPress={onNewConversation}
-                testID="new-conversation"
-              />
-              <HeaderAction
-                accessibilityLabel="更多"
-                icon="ellipsis-horizontal"
-                onPress={onMore}
-                testID="more-actions"
-              />
-            </View>
-          </LiquidGlassSurface>
+            <LiquidGlassSurface
+              colorScheme={theme.dark ? 'dark' : 'light'}
+              fallbackStyle={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.outlineVariant,
+              }}
+              style={styles.actionCapsule}
+            >
+              <View style={styles.actionRow}>
+                <HeaderAction
+                  accessibilityLabel="新会话"
+                  disabled={!canCreateConversation}
+                  icon="create-outline"
+                  onPress={onNewConversation}
+                  testID="new-conversation"
+                />
+                <HeaderAction
+                  accessibilityLabel="更多"
+                  icon="ellipsis-horizontal"
+                  onPress={openMore}
+                  testID="more-actions"
+                />
+              </View>
+            </LiquidGlassSurface>
+          </View>
         </>
       )}
     </LiquidGlassGroup>
@@ -236,6 +277,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     overflow: 'hidden',
   },
+  minimalCapsule: { flex: 1, borderRadius: 22 },
   actionRow: {
     flex: 1,
     flexDirection: 'row',
