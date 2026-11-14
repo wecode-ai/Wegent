@@ -149,6 +149,7 @@ import {
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
+import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -4703,6 +4704,19 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     // Anchor the follow-up measurement to the failure itself; the diagnostic
     // captures below can consume several seconds of wall-clock time.
     const failedAt = Date.now()
+    if (String(error).includes('Timed out delivering UI action')) {
+      // Sample the stalled renderer without retrying or relaxing the failed command.
+      const stopProfile = await startRendererCpuProfile(
+        resultDir,
+        'command-delivery-timeout.cpuprofile',
+        3000
+      )
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } finally {
+        await stopProfile()
+      }
+    }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
