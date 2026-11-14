@@ -218,7 +218,8 @@ test('approved authorization stays read-only on mobile and desktop without appro
       await expect(dialog.getByTestId('collaborator-item')).toHaveCount(2)
       await expect(
         dialog
-          .locator('[data-authorization-id="creator"]')
+          .getByTestId('collaborator-item')
+          .filter({ has: page.getByText(ADMIN_USER.username, { exact: true }) })
           .getByText(ADMIN_USER.username, { exact: true })
       ).toBeVisible()
       const readerObject = dialog
