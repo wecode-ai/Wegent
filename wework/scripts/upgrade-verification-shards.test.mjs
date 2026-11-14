@@ -243,7 +243,7 @@ test('the aggregation CLI requires both platforms and writes every channel polic
   const policy = JSON.parse(
     await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
   )
-  const f = fixture()
+  const f = fixture([], policy.releasePurpose ? { releasePurpose: policy.releasePurpose } : {})
   for (const [platform, arch] of [
     ['windows', 'x64'],
     ['macos', 'arm64'],
@@ -290,12 +290,13 @@ test('the aggregation CLI requires both platforms and writes every channel polic
       }
     )
   run()
-  assert.deepEqual((await readdir(output)).sort(), [
-    'upgrade-policy-beta-macos-arm64.json',
-    'upgrade-policy-beta-windows-x64.json',
-    'upgrade-policy-stable-macos-arm64.json',
-    'upgrade-policy-stable-windows-x64.json',
-  ])
+  assert.deepEqual(
+    (await readdir(output)).sort(),
+    (policy.releasePurpose === 'bridge' ? ['stable'] : ['beta', 'stable']).flatMap(channel => [
+      `upgrade-policy-${channel}-macos-arm64.json`,
+      `upgrade-policy-${channel}-windows-x64.json`,
+    ])
+  )
   const rejected = join(reports, 'upgrade-shard-macos-0.json')
   const shard = JSON.parse(await readFile(rejected, 'utf8'))
   await writeFile(rejected, JSON.stringify({ ...shard, status: 'failed', evidence: null }))
