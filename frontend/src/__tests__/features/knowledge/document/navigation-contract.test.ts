@@ -105,10 +105,10 @@ it('separates actual ownership from receiving teams and leaves unresolved namesp
       .filter(kb => matchesKnowledgeOwnershipFilter(kb, filter))
       .map(kb => kb.id)
       .sort()
-  expect(ids('personal')).toEqual([1])
-  expect(ids('organization')).toEqual([2])
-  expect(ids('company')).toEqual([3])
-  expect(ids('unknown')).toEqual([5])
+  expect(ids('space:personal')).toEqual([1])
+  expect(ids('space:organization')).toEqual([2])
+  expect(ids('organization')).toEqual([3])
+  expect(ids('space:unknown')).toEqual([5])
   expect(ids('group-receiving')).toEqual([])
   expect(ids('group-not-in-directory')).toEqual([])
   expect(rows.every(kb => kb.effective_role === null)).toBe(true)
@@ -126,7 +126,7 @@ it('changes owning-space classification only when the library actually moves', (
     })),
   }
   const row = collectNavigationKnowledge(migrated).find(kb => kb.id === personal.id)!
-  expect(matchesKnowledgeOwnershipFilter(row, 'organization')).toBe(true)
+  expect(matchesKnowledgeOwnershipFilter(row, 'space:organization')).toBe(true)
   expect(matchesKnowledgeOwnershipFilter(row, 'group-source')).toBe(true)
-  expect(matchesKnowledgeOwnershipFilter(row, 'personal')).toBe(false)
+  expect(matchesKnowledgeOwnershipFilter(row, 'space:personal')).toBe(false)
 })

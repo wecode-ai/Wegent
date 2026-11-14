@@ -664,8 +664,8 @@ function KnowledgeDocumentSession({
         getKbGroupInfo={sidebar.getKbGroupInfo}
         isAllMode
         showCompanySpace={sidebar.viewMode === 'all'}
-        filterLevel={sidebar.filterLevel}
-        onFilterLevelChange={sidebar.setFilterLevel}
+        filterGroupId={sidebar.filterGroupId}
+        onFilterGroupChange={sidebar.setFilterGroupId}
         availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}
         onMigrateKb={kb => {
           const full = sidebar.allKnowledgeBases.find(k => k.id === kb.id)

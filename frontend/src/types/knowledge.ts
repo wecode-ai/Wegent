@@ -37,8 +37,6 @@ export interface DocumentProcessingError {
   request_id?: string | null
 }
 
-export type KnowledgeLevel = 'personal' | 'organization' | 'company'
-
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
 // Retrieval Config types

@@ -14,8 +14,14 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import {
+  COMPANY_SPACE_FILTER,
+  PERSONAL_SPACE_FILTER,
+  ORGANIZATION_SPACE_FILTER,
+  UNKNOWN_SPACE_FILTER,
+  matchesKnowledgeOwnershipFilter,
+} from '../library-level'
 import { getListedPermission } from '../navigation'
-import { getKnowledgeOwnershipLevel, matchesKnowledgeOwnershipFilter } from '../library-level'
 import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
@@ -109,10 +115,10 @@ export interface KnowledgeGroupListPageProps {
   /** Whether this is "All" mode */
   isAllMode?: boolean
   showCompanySpace?: boolean
-  /** Selected library level or concrete organization filter (for "All" mode). */
-  filterLevel?: string | null
-  /** Set the selected library level or concrete organization (for "All" mode) */
-  onFilterLevelChange?: (level: string | null) => void
+  /** Selected team identity or personal-space filter (for "All" mode). */
+  filterGroupId?: string | null
+  /** Set filter group ID (for "All" mode) */
+  onFilterGroupChange?: (groupId: string | null) => void
   /** Available groups for filter (for "All" mode) */
   availableGroups?: Omit<KnowledgeTeamOption, 'kbCount'>[]
   /** Whether this is "Personal" mode (to show created/shared sections) */
@@ -201,8 +207,8 @@ export function KnowledgeGroupListPage({
   getKbGroupInfo,
   isAllMode = false,
   showCompanySpace = false,
-  filterLevel,
-  onFilterLevelChange,
+  filterGroupId,
+  onFilterGroupChange,
   availableGroups,
   isPersonalMode = false,
   personalCreatedByMe = [],
@@ -220,8 +226,8 @@ export function KnowledgeGroupListPage({
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
   const searchQuery = search.trim().toLocaleLowerCase()
-  const supportsLevelFilter = isAllMode && groupId !== 'organization'
-  const levelFilter = supportsLevelFilter ? filterLevel : null
+  const supportsSpaceFilter = isAllMode && groupId !== 'organization'
+  const spaceFilter = supportsSpaceFilter ? filterGroupId : null
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
@@ -332,18 +338,18 @@ export function KnowledgeGroupListPage({
   const filteredKbs = useMemo(
     () =>
       sortKbs(
-        candidateKbs.filter(kb => !levelFilter || matchesKnowledgeOwnershipFilter(kb, levelFilter))
+        candidateKbs.filter(kb => !spaceFilter || matchesKnowledgeOwnershipFilter(kb, spaceFilter))
       ),
-    [candidateKbs, levelFilter, sortKbs]
+    [candidateKbs, spaceFilter, sortKbs]
   )
-  const hasActiveFilters = Boolean(searchQuery || category !== 'all' || levelFilter)
+  const hasActiveFilters = Boolean(searchQuery || category !== 'all' || spaceFilter)
   const canClearFilters = Boolean(
-    searchQuery || category !== 'all' || (levelFilter && onFilterLevelChange)
+    searchQuery || category !== 'all' || (spaceFilter && onFilterGroupChange)
   )
   const clearFilters = () => {
     setSearch('')
     setCategory('all')
-    onFilterLevelChange?.(null)
+    onFilterGroupChange?.(null)
     resultHeadingRef.current?.focus()
   }
 
@@ -780,27 +786,34 @@ export function KnowledgeGroupListPage({
                 : 'h-9 w-48'
             }
           />
-          {supportsLevelFilter && onFilterLevelChange && (
+          {supportsSpaceFilter && onFilterGroupChange && (
             <div className={mobile ? 'min-w-0 flex-1' : undefined}>
               <KnowledgeLibraryFilter
                 groups={filterGroups}
                 personalCount={
-                  candidateKbs.filter(kb => getKnowledgeOwnershipLevel(kb) === 'personal').length
+                  candidateKbs.filter(kb =>
+                    matchesKnowledgeOwnershipFilter(kb, PERSONAL_SPACE_FILTER)
+                  ).length
                 }
                 organizationCount={
-                  candidateKbs.filter(kb => getKnowledgeOwnershipLevel(kb) === 'organization')
-                    .length
+                  candidateKbs.filter(kb =>
+                    matchesKnowledgeOwnershipFilter(kb, ORGANIZATION_SPACE_FILTER)
+                  ).length
                 }
                 unknownCount={
-                  candidateKbs.filter(kb => getKnowledgeOwnershipLevel(kb) === 'unknown').length
+                  candidateKbs.filter(kb =>
+                    matchesKnowledgeOwnershipFilter(kb, UNKNOWN_SPACE_FILTER)
+                  ).length
                 }
                 companyCount={
                   showCompanySpace
-                    ? candidateKbs.filter(kb => getKnowledgeOwnershipLevel(kb) === 'company').length
+                    ? candidateKbs.filter(kb =>
+                        matchesKnowledgeOwnershipFilter(kb, COMPANY_SPACE_FILTER)
+                      ).length
                     : undefined
                 }
-                value={levelFilter ?? null}
-                onValueChange={onFilterLevelChange}
+                value={spaceFilter ?? null}
+                onValueChange={onFilterGroupChange}
                 mobile={mobile}
               />
             </div>
