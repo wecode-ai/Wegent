@@ -531,6 +531,7 @@ async fn bounded_native_history_never_copies_unrelated_cached_bodies() {
 async fn native_timeline_keeps_inflight_items_separate_from_historical_page_order() {
     let (mut handler, root) = native_handler("native-runtime-inflight");
     handler.active_codex_transcript_items.lock().unwrap().insert("task-1".into(), ActiveCodexTranscriptItems {
+        private_discussion: false,
         user_input_requests: HashMap::new(),
         thread_id: "thread-1".into(), turn_id: "current".into(), items: vec![
             json!({"id":"old-cached","type":"agentMessage","text":"Old cache","lifecycleCompleted":true}),

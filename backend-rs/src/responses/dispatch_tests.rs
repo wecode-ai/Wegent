@@ -9,9 +9,6 @@
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use brz_redis::{
-    EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisResult, SetOptions,
-};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -23,179 +20,12 @@ use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
 
 use crate::responses::test_mysql::{RecordingMysql, SUBTASK_ID, TASK_ID, TASK_OWNER_ID};
+use crate::responses::test_redis::RecordingRedis;
 
 fn tables() -> Tables {
     Tables {
         tasks: "tasks_0424",
         subtasks: "subtasks_0424",
-    }
-}
-
-/// Records every Redis command the consumer issues, in call order.
-#[derive(Clone, Default)]
-struct RecordingRedis {
-    calls: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingRedis {
-    fn key<K: EncodeRedisArg>(key: &K) -> String {
-        key.as_encoded_bytes()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default()
-    }
-
-    fn record(&self, call: String) {
-        self.calls.lock().unwrap().push(call);
-    }
-
-    fn calls(&self) -> Vec<String> {
-        self.calls.lock().unwrap().clone()
-    }
-
-    fn count(&self, prefix: &str) -> usize {
-        self.calls()
-            .iter()
-            .filter(|call| call.starts_with(prefix))
-            .count()
-    }
-}
-
-impl brz_redis::Redis for RecordingRedis {
-    async fn get<K, R>(&self, key: K) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        self.record(format!("GET {}", Self::key(&key)));
-        Ok(None)
-    }
-
-    async fn set<K, V>(&self, key: K, _: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("SET {}", Self::key(&key)));
-        Ok(())
-    }
-
-    async fn set_with<K, V>(&self, key: K, _: V, _: SetOptions) -> RedisResult<bool>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("SET {}", Self::key(&key)));
-        Ok(true)
-    }
-
-    async fn append<K, V>(&self, key: K, _: V) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("APPEND {}", Self::key(&key)));
-        Ok(0)
-    }
-
-    async fn expire<K>(&self, key: K, _: u64) -> RedisResult<bool>
-    where
-        K: EncodeRedisArg + Send,
-    {
-        self.record(format!("EXPIRE {}", Self::key(&key)));
-        Ok(true)
-    }
-
-    async fn del<K>(&self, key: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-    {
-        self.record(format!("DEL {}", Self::key(&key)));
-        Ok(1)
-    }
-
-    async fn del_many<K>(&self, _: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        self.record("DEL keys".to_string());
-        Ok(1)
-    }
-
-    async fn mget<K, R>(&self, _: K) -> RedisResult<Vec<Option<R>>>
-    where
-        K: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        self.record("MGET".to_string());
-        Ok(Vec::new())
-    }
-
-    async fn lset<K, V>(&self, key: K, _: i64, _: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("LSET {}", Self::key(&key)));
-        Ok(())
-    }
-
-    async fn lrange<K, R>(&self, key: K, start: i64, stop: i64) -> RedisResult<Vec<R>>
-    where
-        K: EncodeRedisArg + Send,
-        R: FromRedisValue + Send,
-    {
-        self.record(format!("LRANGE {} {start} {stop}", Self::key(&key)));
-        Ok(Vec::new())
-    }
-
-    async fn publish<C, M>(&self, channel: C, payload: M) -> RedisResult<i64>
-    where
-        C: EncodeRedisArg + Send,
-        M: EncodeRedisArg + Send,
-    {
-        self.record(format!(
-            "PUBLISH {} {}",
-            Self::key(&channel),
-            Self::key(&payload)
-        ));
-        Ok(1)
-    }
-
-    async fn rpush<K, V>(&self, key: K, _: V) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArgs + Send,
-    {
-        self.record(format!("RPUSH {}", Self::key(&key)));
-        Ok(1)
-    }
-
-    async fn pfcount<K>(&self, _: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        Ok(0)
-    }
-
-    async fn hget<K, F, R>(&self, _: K, _: F) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        Ok(None)
-    }
-
-    async fn hmget<K, F, R>(&self, _: K, _: F) -> RedisResult<brz_redis::RedisValues<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        Err(brz_redis::RedisError::new(
-            brz_redis::ErrorKind::ClientError,
-            "stub does not serve HMGET",
-        ))
     }
 }
 
@@ -444,17 +274,17 @@ fn chat_job(
     }
 }
 
-async fn wait_for_cancel_dels(redis: &RecordingRedis, expected: usize) {
+async fn wait_for_cancel_cleanup(redis: &RecordingRedis) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if redis.count("DEL chat:cancel:") >= expected {
+            if redis.count("DEL-MANY chat:cancel:") >= 1 {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the expected chat:cancel DELs arrive within the bound");
+    .expect("the atomic chat:cancel cleanup arrives within the bound");
 }
 
 /// The background dispatch stores streamed content and commits its terminal state.
@@ -472,18 +302,26 @@ async fn background_job_runs_the_real_consumer_lifecycle() {
         redis.clone()
     )))));
 
-    wait_for_cancel_dels(&redis, 2).await;
+    wait_for_cancel_cleanup(&redis).await;
 
     let cancel_key = format!("chat:cancel:{SUBTASK_ID}");
+    let intent_key = format!("chat:cancel-intent:{SUBTASK_ID}");
+    let calls = redis.calls();
     assert_eq!(
-        redis
-            .calls()
+        calls
             .iter()
-            .filter(|call| **call == format!("DEL {cancel_key}"))
+            .filter(|call| **call == format!("EVAL {cancel_key} {intent_key}"))
             .count(),
-        2,
-        "register and unregister each delete the same key: {:?}",
-        redis.calls()
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| **call == format!("DEL-MANY {cancel_key} {intent_key}"))
+            .count(),
+        1,
+        "{calls:?}"
     );
     assert!(
         redis.count(&format!("GET {cancel_key}")) >= 1,
@@ -517,14 +355,20 @@ async fn acceptance_returns_before_the_consumer_finishes() {
     // The server saw the request and the consumer is blocked on the gate.
     let _ = server.started.await;
     assert_eq!(
-        redis.count("DEL chat:cancel:"),
+        redis.count("EVAL chat:cancel:"),
         1,
-        "only the registration DEL is issued while the stream is still open: {:?}",
+        "only intent-guarded registration is issued while the stream is open: {:?}",
         redis.calls()
     );
 
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        0,
+        "{:?}",
+        redis.calls()
+    );
     server.release.expect("gated server").send(()).unwrap();
-    wait_for_cancel_dels(&redis, 2).await;
+    wait_for_cancel_cleanup(&redis).await;
 }
 
 /// A chat-shell 500 is surfaced (and logged with the job identity), never

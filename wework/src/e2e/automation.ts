@@ -2262,7 +2262,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const property = command.value?.trim()
       if (!property) throw new Error('getComputedStyleValue requires a CSS property')
-      return getComputedStyle(element).getPropertyValue(property).trim()
+      const pseudo = command.target
+      if (pseudo !== undefined && pseudo !== '::before' && pseudo !== '::after')
+        throw new Error('getComputedStyleValue target must be ::before or ::after')
+      return getComputedStyle(element, pseudo).getPropertyValue(property).trim()
     }
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)

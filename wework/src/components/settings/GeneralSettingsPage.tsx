@@ -55,6 +55,11 @@ import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harness
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
 import { getPlatform } from '@/lib/platform'
 import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
+import {
+  COLLABORATION_EXP_PATH,
+  COLLABORATION_EXP_TAB_ID,
+  isCollaborationExpPath,
+} from '@/features/collaboration-exp/collaborationExpFeature'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -471,6 +476,10 @@ export function GeneralSettingsPage() {
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
   const fixedWorkspaceTabs =
     preferences.fixedWorkspaceTabs ?? defaultAppPreferences.fixedWorkspaceTabs
+  const visibleFixedWorkspaceTabs = fixedWorkspaceTabs.filter(
+    tab =>
+      preferences.collaborationExperienceEnabled || !isCollaborationExpPath(tab.contentRoute ?? '')
+  )
   const startupWorkspaceTabId =
     preferences.startupWorkspaceTabId ?? defaultAppPreferences.startupWorkspaceTabId
   const friendlyTitleModels = workbench?.projectChat?.models ?? []
@@ -643,7 +652,7 @@ export function GeneralSettingsPage() {
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
               <div className="w-full space-y-2 md:w-[360px]" data-testid="general-fixed-tabs">
-                {fixedWorkspaceTabs.map((tab, index) => {
+                {visibleFixedWorkspaceTabs.map((tab, index) => {
                   const label =
                     tab.kind === 'smart_app'
                       ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
@@ -651,7 +660,9 @@ export function GeneralSettingsPage() {
                         ? (tab.title ??
                           (tab.contentRoute === INTERACTIONS_PATH
                             ? t('interactions.title', '待你处理')
-                            : t('workbench.workspace_tab_auxiliary', '工作区')))
+                            : isCollaborationExpPath(tab.contentRoute ?? '')
+                              ? t('workbench.workspace_tab_collaboration_exp', '协作 exp')
+                              : t('workbench.workspace_tab_auxiliary', '工作区')))
                         : (tab.title ??
                           t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
                   return (
@@ -691,7 +702,13 @@ export function GeneralSettingsPage() {
                         disabled={loading || saving || index === 0}
                         onClick={() => {
                           void saveFixedWorkspaceTabs(
-                            moveFixedTab(fixedWorkspaceTabs, index, index - 1)
+                            moveFixedTab(
+                              fixedWorkspaceTabs,
+                              fixedWorkspaceTabs.findIndex(item => item.id === tab.id),
+                              fixedWorkspaceTabs.findIndex(
+                                item => item.id === visibleFixedWorkspaceTabs[index - 1]?.id
+                              )
+                            )
                           )
                         }}
                         className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
@@ -702,10 +719,18 @@ export function GeneralSettingsPage() {
                       <button
                         type="button"
                         data-testid={`general-fixed-tab-down-${tab.id}`}
-                        disabled={loading || saving || index === fixedWorkspaceTabs.length - 1}
+                        disabled={
+                          loading || saving || index === visibleFixedWorkspaceTabs.length - 1
+                        }
                         onClick={() => {
                           void saveFixedWorkspaceTabs(
-                            moveFixedTab(fixedWorkspaceTabs, index, index + 1)
+                            moveFixedTab(
+                              fixedWorkspaceTabs,
+                              fixedWorkspaceTabs.findIndex(item => item.id === tab.id),
+                              fixedWorkspaceTabs.findIndex(
+                                item => item.id === visibleFixedWorkspaceTabs[index + 1]?.id
+                              )
+                            )
                           )
                         }}
                         className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
@@ -716,7 +741,7 @@ export function GeneralSettingsPage() {
                       <button
                         type="button"
                         data-testid={`general-fixed-tab-remove-${tab.id}`}
-                        disabled={loading || saving || fixedWorkspaceTabs.length === 1}
+                        disabled={loading || saving || visibleFixedWorkspaceTabs.length === 1}
                         onClick={() =>
                           void saveFixedWorkspaceTabs(
                             fixedWorkspaceTabs.filter(item => item.id !== tab.id)
@@ -741,14 +766,21 @@ export function GeneralSettingsPage() {
                     const smartApp = installedSmartApps.find(app => `smart_app:${app.id}` === value)
                     const nextTab: FixedWorkspaceTabPreference | null = builtIn
                       ? { id: `fixed-${builtIn}`, kind: builtIn }
-                      : smartApp
+                      : value === COLLABORATION_EXP_TAB_ID &&
+                          preferences.collaborationExperienceEnabled
                         ? {
-                            id: `fixed-smart-app-${smartApp.id}`,
-                            kind: 'smart_app',
-                            installationId: smartApp.id,
-                            title: smartApp.manifest.displayName,
+                            id: COLLABORATION_EXP_TAB_ID,
+                            kind: 'auxiliary',
+                            contentRoute: COLLABORATION_EXP_PATH,
                           }
-                        : null
+                        : smartApp
+                          ? {
+                              id: `fixed-smart-app-${smartApp.id}`,
+                              kind: 'smart_app',
+                              installationId: smartApp.id,
+                              title: smartApp.manifest.displayName,
+                            }
+                          : null
                     if (nextTab) {
                       void saveFixedWorkspaceTabs([...fixedWorkspaceTabs, nextTab])
                     }
@@ -765,6 +797,14 @@ export function GeneralSettingsPage() {
                       {t(`workbench.general_settings_default_workspace_tab_${kind}`)}
                     </option>
                   ))}
+                  {preferences.collaborationExperienceEnabled &&
+                  !fixedWorkspaceTabs.some(tab =>
+                    isCollaborationExpPath(tab.contentRoute ?? '')
+                  ) ? (
+                    <option value={COLLABORATION_EXP_TAB_ID}>
+                      {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
+                    </option>
+                  ) : null}
                   {(preferences.experimentalFeaturesEnabled ? installedSmartApps : [])
                     .filter(
                       app =>
@@ -793,6 +833,14 @@ export function GeneralSettingsPage() {
             label: t('workbench.general_settings_experimental_features'),
             description: t('workbench.general_settings_experimental_features_description'),
           })}
+          {preferences.experimentalFeaturesEnabled || preferences.collaborationExperienceEnabled
+            ? renderSwitchRow({
+                preferenceKey: 'collaborationExperienceEnabled',
+                testId: 'general-collaboration-experience-toggle',
+                label: t('workbench.general_settings_collaboration_experience'),
+                description: t('workbench.general_settings_collaboration_experience_description'),
+              })
+            : null}
           <SettingsRow
             label={t('workbench.external_import_row_title')}
             description={t('workbench.external_import_row_description')}

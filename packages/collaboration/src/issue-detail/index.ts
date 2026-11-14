@@ -10,6 +10,7 @@ export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";
 export * from "./IssueHistoryLists";
 export * from "./attachmentMarkdown";
+export { useIssueProjectChat } from "./useIssueProjectChat";
 export * from "./createSharedIssueDetailPort";
 export { persistIssueDetailFields } from "./persistIssueDetailFields";
 export * from "./dateTime";

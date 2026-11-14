@@ -170,6 +170,7 @@ pub(crate) use home::{
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
+mod collaboration;
 mod effective_instructions;
 #[cfg(test)]
 pub(crate) use effective_instructions::turn_context_for_test;
@@ -6770,6 +6771,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6805,6 +6807,7 @@ fn thread_fork_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6873,6 +6876,7 @@ fn thread_resume_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }

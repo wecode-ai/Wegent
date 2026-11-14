@@ -11,6 +11,11 @@ import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInterac
 import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
 import { PluginPythonRuntimeNotice } from '@/components/plugins/PluginPythonRuntimeNotice'
 import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
+import { CollaborationExpRoute } from '@/features/collaboration-exp/CollaborationExpRoute'
+import {
+  COLLABORATION_EXP_PATH,
+  isCollaborationExpPath,
+} from '@/features/collaboration-exp/collaborationExpFeature'
 import {
   Activity,
   useCallback,
@@ -131,6 +136,7 @@ import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -174,6 +180,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
+const COLLABORATION_EXP_TAB_PATHS = [COLLABORATION_EXP_PATH] as const
 
 function isPopoutWindowRuntime() {
   return isElectronRuntime() && getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
@@ -318,6 +325,7 @@ function UnavailableWorkspaceRoute({ path }: { path: string }) {
 
 interface WorkspaceTabSurfaceProps {
   active: boolean
+  collaborationExperienceEnabled?: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
@@ -331,6 +339,7 @@ interface WorkspaceTabSurfaceProps {
 
 export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   active,
+  collaborationExperienceEnabled = false,
   cloudWebUrl,
   lifecycleStore,
   nativeWorkbenchKind,
@@ -350,6 +359,8 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryRoute = resolveDshRoute(tabPath)
+  const collaborationExperienceActive =
+    collaborationExperienceEnabled && isCollaborationExpPath(tabPath)
   const inferredNativeKind = inferWorkspaceTabKind(tabPath)
   const retainedNativeKind = nativeWorkbenchKind ?? inferredNativeKind
   const routedDshApp = workspaceTabDshApp(tabPath, inferredNativeKind)
@@ -360,7 +371,10 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
     (inferredNativeKind === 'task' || inferredNativeKind === 'board') &&
     nativeDshApp?.workspaceKinds?.includes(inferredNativeKind)
   )
-  const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
+  const auxiliaryActive =
+    Boolean(auxiliaryRoute || surfaceDshApp) ||
+    dshWorkspaceTabActive ||
+    collaborationExperienceActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
   const [harnessAppStartupOwner, setHarnessAppStartupOwner] = useState(() => ({
@@ -478,6 +492,9 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
           <DshRouteSurface route={auxiliaryRoute} search={tabSearch} workspaceTabId={tab.id} />
         </div>
       ) : null}
+      {collaborationExperienceActive ? (
+        <CollaborationExpRoute active={active} search={tabSearch} />
+      ) : null}
       {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
       {dshWorkspaceTabActive ? (
         <DshWorkspaceTabSurface active={active} path={tabPath} tab={tab} />
@@ -564,6 +581,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const experimentalFeatures = useExperimentalFeaturesState()
+  const collaborationExperience = useAppPreferenceFeatureState('collaborationExperienceEnabled')
   const workspaceTabs = useOptionalWorkspaceTabs()
   const [mountedTabs, setMountedTabs] = useState(() => ({
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
@@ -814,6 +832,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
             lifecycleStore={lifecycleStore}
             nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
             smartAppsEnabled={experimentalFeatures.enabled}
+            collaborationExperienceEnabled={collaborationExperience.enabled}
             services={services}
             cloudWebUrl={cloudWebUrl}
             onOpenWeworkForAppshot={onOpenWeworkForAppshot}
@@ -981,6 +1000,7 @@ function AppShell() {
           ])
         ),
         [INTERACTIONS_PATH]: t('interactions.title', '待你处理'),
+        [COLLABORATION_EXP_PATH]: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
       },
     }),
     [registeredRoutes, t]
@@ -1023,10 +1043,15 @@ function AppShell() {
   )
   const startupWorkspaceTabId = useMemo(() => {
     if (!isMainWindow || !appPreferences?.loaded) return undefined
+    const visibleFixedTabs = fixedWorkspaceTabs.filter(
+      tab =>
+        appPreferences.preferences.collaborationExperienceEnabled ||
+        !isCollaborationExpPath(tab.contentRoute)
+    )
     const preferredId = appPreferences.preferences.startupWorkspaceTabId
-    return fixedWorkspaceTabs.some(tab => tab.id === preferredId)
+    return visibleFixedTabs.some(tab => tab.id === preferredId)
       ? preferredId
-      : fixedWorkspaceTabs[0]?.id
+      : visibleFixedTabs[0]?.id
   }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const updateImNotificationPresence = useMemo(() => {
@@ -1295,11 +1320,19 @@ function AppShell() {
       <WorkspaceTabsProvider
         pathname={path}
         search={search}
-        storageScope={workspaceTabStorageScope}
+        storageScope={
+          isMainWindow ? `${workspaceTabStorageScope}:${ownershipKey}` : workspaceTabStorageScope
+        }
         labels={workspaceTabLabels}
         fixedTabs={fixedWorkspaceTabs}
         startupTabId={startupWorkspaceTabId}
         restoreSessionTabs={!isMainWindow}
+        retainedTabPaths={isMainWindow ? COLLABORATION_EXP_TAB_PATHS : undefined}
+        hiddenTabPaths={
+          appPreferences?.preferences.collaborationExperienceEnabled
+            ? undefined
+            : COLLABORATION_EXP_TAB_PATHS
+        }
       >
         <RuntimeInteractionsProvider accountKey={ownershipKey}>
           <ElectronWorkbenchTabBridge />

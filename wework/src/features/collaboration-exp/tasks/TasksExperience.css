@@ -1,0 +1,714 @@
+.collaboration-exp-app .experience-task-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: rgb(var(--color-bg-base));
+}
+
+:where(html:not([data-input-modality='pointer']))
+  .collaboration-exp-app
+  :is(.experience-task-list, .experience-task-home)
+  :is(button, input, select):focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: -2px;
+}
+
+.collaboration-exp-app .experience-task-controls {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.collaboration-exp-app .experience-task-toolbar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 60px;
+  height: 60px;
+  gap: 0;
+  padding: 0 12px;
+}
+
+.collaboration-exp-app .experience-task-view-switch {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  margin-right: auto;
+  position: relative;
+}
+
+.collaboration-exp-app .experience-task-view-switch-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 8px 10px 8px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--text-base-line);
+  text-align: left;
+  cursor: pointer;
+}
+
+.collaboration-exp-app .experience-task-view-switch-trigger > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.collaboration-exp-app .experience-task-view-switch-trigger > svg {
+  flex: 0 0 auto;
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-exp-app .experience-task-view-switch-trigger:hover {
+  background: rgb(var(--color-bg-surface));
+}
+
+.collaboration-exp-app .experience-task-view-menu {
+  z-index: 40;
+  display: grid;
+  width: var(--radix-popover-trigger-width);
+  min-width: 140px;
+  max-height: var(--radix-popover-content-available-height);
+  gap: 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 5px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 9px;
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+  box-shadow: 0 8px 32px rgb(0 0 0 / 14%);
+}
+
+.collaboration-exp-app .experience-task-view-menu > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 36px;
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  padding: 9px 10px;
+  background: transparent;
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.collaboration-exp-app .experience-task-view-menu > button:hover,
+.collaboration-exp-app .experience-task-view-menu > button:focus-visible {
+  background: rgb(var(--color-bg-hover));
+  outline: none;
+}
+
+.collaboration-exp-app .experience-task-view-menu > button[aria-selected='true'] {
+  font-weight: 500;
+}
+
+.collaboration-exp-app .experience-task-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 36px;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(var(--color-text-primary));
+}
+
+.collaboration-exp-app .experience-task-icon-button > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.collaboration-exp-app .experience-task-icon-button:hover,
+.collaboration-exp-app .experience-task-icon-button[data-active] {
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-exp-app .experience-task-filter-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid rgb(var(--color-border));
+  font-size: var(--text-xs);
+}
+
+.collaboration-exp-app .experience-task-search,
+.collaboration-exp-app .experience-task-relevance {
+  min-width: 0;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+  background: rgb(var(--color-bg-surface));
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+}
+
+.collaboration-exp-app .experience-task-filter-select {
+  width: 100%;
+  min-height: 36px;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+}
+
+.collaboration-exp-app .experience-task-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.collaboration-exp-app .experience-task-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 8px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.collaboration-exp-app .experience-task-group-title {
+  display: flex;
+  justify-content: space-between;
+  margin: 18px 10px 8px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: var(--text-base-line);
+}
+
+.collaboration-exp-app .experience-task-row {
+  isolation: isolate;
+  position: relative;
+  width: 100%;
+  height: 107px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.collaboration-exp-app .experience-task-row:hover,
+.collaboration-exp-app .experience-task-row[data-selected] {
+  background: rgb(var(--color-bg-hover));
+}
+
+.collaboration-exp-app .experience-task-row[data-selected] {
+  box-shadow: inset 2px 0 rgb(var(--color-text-secondary));
+}
+
+.collaboration-exp-app .experience-task-row-main {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 14px 20px 43px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.collaboration-exp-app .experience-task-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.collaboration-exp-app .experience-task-row-title strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: var(--text-base-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-exp-app .experience-task-row-title > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: rgb(var(--color-text-muted));
+}
+
+.collaboration-exp-app .experience-task-row-title > svg[data-state='waiting'] {
+  width: 9px;
+  height: 9px;
+  fill: currentColor;
+  color: rgb(var(--color-error));
+}
+
+.collaboration-exp-app .experience-task-row-title > svg[data-state='running'] {
+  color: rgb(var(--color-focus));
+}
+
+.collaboration-exp-app .experience-task-row-title > svg[data-state='completed'] {
+  color: rgb(var(--color-success));
+}
+
+.collaboration-exp-app .experience-task-row-description {
+  display: block;
+  margin-top: 8px;
+  overflow: hidden;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  line-height: var(--text-base-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-exp-app .experience-task-row-meta {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  height: 21px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+  line-height: 1.9;
+  pointer-events: none;
+}
+
+.collaboration-exp-app .experience-task-row-project {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.collaboration-exp-app .experience-task-row-project:hover {
+  text-decoration: underline;
+}
+
+.collaboration-exp-app .experience-task-row-signals,
+.collaboration-exp-app .experience-task-row-conversations {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.collaboration-exp-app .experience-task-home {
+  width: min(100%, 900px);
+  max-width: 900px;
+  min-width: 0;
+  margin: 0 auto;
+  padding: clamp(28px, 6vh, 64px) 30px 40px;
+  container-type: inline-size;
+}
+
+.collaboration-exp-app .experience-task-home-hero {
+  display: grid;
+  align-items: stretch;
+  gap: 24px;
+}
+
+.collaboration-exp-app .experience-task-home-copy {
+  align-self: center;
+  min-width: 0;
+}
+
+.collaboration-exp-app .experience-task-home-symbol {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 20px;
+  color: rgb(var(--color-text-secondary));
+}
+
+.collaboration-exp-app .experience-task-home-symbol > img {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.collaboration-exp-app .experience-task-home-symbol > span {
+  display: grid;
+  gap: 2px;
+}
+
+.collaboration-exp-app .experience-task-home-symbol strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.collaboration-exp-app .experience-task-home-symbol small {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-caption);
+}
+
+.collaboration-exp-app .experience-task-home-copy h1 {
+  max-width: none;
+  margin: 0 0 12px;
+  font-size: var(--text-h1);
+  line-height: var(--text-h1-line);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.collaboration-exp-app .experience-task-home-copy > p {
+  max-width: 48ch;
+  margin: 0 0 24px;
+  color: rgb(var(--color-text-secondary));
+  line-height: 1.85;
+}
+
+.collaboration-exp-app .experience-task-create-primary {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid rgb(var(--color-text-primary));
+  border-radius: 8px;
+  color: rgb(var(--color-bg-base));
+  background: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.collaboration-exp-app .experience-task-create-primary:hover {
+  opacity: 0.88;
+}
+
+.collaboration-exp-app .experience-task-home-pulse {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background: rgb(var(--color-bg-surface));
+}
+
+.collaboration-exp-app .experience-task-home-pulse::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 1px;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, rgb(var(--color-focus)), transparent);
+  transform-origin: 0 center;
+  transform: scaleX(0.2);
+}
+
+.collaboration-exp-app .experience-task-home-pulse[data-live='true']::after {
+  opacity: 0.55;
+}
+
+.collaboration-exp-app .experience-task-home-pulse-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.collaboration-exp-app .experience-task-home-pulse-head > svg {
+  flex: 0 0 auto;
+  color: rgb(var(--color-focus));
+}
+
+.collaboration-exp-app .experience-task-home-pulse-head > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.collaboration-exp-app .experience-task-home-pulse-head strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.collaboration-exp-app .experience-task-home-pulse-head small {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+}
+
+.collaboration-exp-app .experience-task-home-live-work {
+  display: grid;
+  position: relative;
+  gap: 5px;
+  min-width: 0;
+  padding: 14px 40px 14px 14px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+  text-align: left;
+}
+
+.collaboration-exp-app .experience-task-home-live-work:hover {
+  border-color: rgb(var(--color-text-muted));
+  background: rgb(var(--color-bg-hover));
+  transform: translateY(-1px);
+}
+
+.collaboration-exp-app .experience-task-home-live-work > span {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+}
+
+.collaboration-exp-app .experience-task-home-live-work strong,
+.collaboration-exp-app .experience-task-home-live-work small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collaboration-exp-app .experience-task-home-live-work strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.collaboration-exp-app .experience-task-home-live-work small {
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  line-height: 1.65;
+}
+
+.collaboration-exp-app .experience-task-home-live-work > svg {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  color: rgb(var(--color-text-muted));
+  transform: translateY(-50%);
+}
+
+.collaboration-exp-app .experience-task-home-live-work:hover > svg {
+  color: rgb(var(--color-text-primary));
+  transform: translate(3px, -50%);
+}
+
+.collaboration-exp-app .experience-task-home-pulse > p {
+  margin: 0;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+.collaboration-exp-app .experience-task-home-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: auto;
+}
+
+.collaboration-exp-app .experience-task-home-metrics > div {
+  display: grid;
+  gap: 2px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(var(--color-border));
+}
+
+.collaboration-exp-app .experience-task-home-metrics dd {
+  font-size: var(--text-h3);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.collaboration-exp-app .experience-task-home-metrics dt {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-caption);
+  white-space: nowrap;
+}
+
+.collaboration-exp-app .experience-task-home-metrics > [data-tone='waiting'] dd {
+  color: rgb(var(--color-error));
+}
+
+.collaboration-exp-app .experience-task-home-metrics > [data-tone='running'] dd {
+  color: rgb(var(--color-focus));
+}
+
+.collaboration-exp-app .experience-task-home-next {
+  position: relative;
+  margin-top: 28px;
+  padding: 18px 0 0 20px;
+  border-top: 1px solid rgb(var(--color-border));
+}
+
+.collaboration-exp-app .experience-task-home-next::before {
+  content: '';
+  position: absolute;
+  top: 24px;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: rgb(var(--color-error));
+  opacity: 0.7;
+}
+
+.collaboration-exp-app .experience-task-home-next > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+}
+
+.collaboration-exp-app .experience-task-home-next h2 {
+  margin: 12px 0 7px;
+  overflow-wrap: anywhere;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.collaboration-exp-app .experience-task-home-next p {
+  margin: 0 0 10px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.75;
+}
+
+.collaboration-exp-app .experience-task-home-next-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-sm);
+}
+
+@container (width >= 660px) {
+  .collaboration-exp-app .experience-task-home-hero {
+    grid-template-columns: minmax(0, 1.18fr) minmax(250px, 0.82fr);
+  }
+}
+
+@keyframes experience-task-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes experience-task-live-trace {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scaleX(0.2);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scaleX(1);
+  }
+}
+
+@media (width <= 760px) {
+  .collaboration-exp-app .experience-task-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .collaboration-exp-app .experience-task-view-switch-trigger,
+  .collaboration-exp-app .experience-task-view-menu > button {
+    min-height: 44px;
+  }
+  .collaboration-exp-app .experience-task-home {
+    padding: 22px 14px 30px;
+  }
+  .collaboration-exp-app .experience-task-home-symbol {
+    margin-bottom: 16px;
+  }
+  .collaboration-exp-app .experience-task-home-copy h1 {
+    max-width: 14ch;
+    font-size: var(--text-h1);
+    line-height: 1.35;
+  }
+  .collaboration-exp-app .experience-task-home-copy > p {
+    font-size: var(--text-sm);
+  }
+  .collaboration-exp-app .experience-task-home-pulse {
+    padding: 16px;
+  }
+  .collaboration-exp-app .experience-task-home-next {
+    padding-left: 16px;
+  }
+  .collaboration-exp-app .experience-task-search,
+  .collaboration-exp-app .experience-task-relevance,
+  .collaboration-exp-app .experience-task-filter-select,
+  .collaboration-exp-app .experience-task-home-next-action {
+    min-height: 44px;
+  }
+
+  .collaboration-exp-app .experience-task-row-project {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .collaboration-exp-app .experience-task-home-hero {
+    animation: experience-task-enter 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  }
+  .collaboration-exp-app .experience-task-home-pulse[data-live='true']::after {
+    animation: experience-task-live-trace 2.8s ease-in-out infinite;
+  }
+  .collaboration-exp-app .experience-task-home-next {
+    animation: experience-task-enter 0.42s cubic-bezier(0.2, 0.75, 0.25, 1) 0.12s both;
+  }
+  .collaboration-exp-app .experience-task-home-live-work {
+    transition:
+      border-color 0.14s,
+      background-color 0.14s,
+      transform 0.14s;
+  }
+  .collaboration-exp-app .experience-task-home-live-work > svg {
+    transition:
+      transform 0.14s,
+      color 0.14s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collaboration-exp-app .experience-task-home-live-work:hover {
+    transform: none;
+  }
+}

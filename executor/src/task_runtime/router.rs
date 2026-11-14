@@ -72,10 +72,12 @@ impl TaskRuntime {
     }
 
     pub(crate) fn list_collaboration_projects(&self) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let duplicate_keys =
-            crate::runtime_work::sync_local_collaboration_projects(&self.local_store)?;
-        Ok(self
-            .list_projects()?
+        use wegent_runtime_logging::project_index_diagnostics::trace;
+
+        let duplicate_keys = trace("projects_list.sync", || {
+            crate::runtime_work::sync_local_collaboration_projects(&self.local_store)
+        })?;
+        Ok(trace("projects_list.read", || self.list_projects())?
             .into_iter()
             .filter(|project| {
                 // Keep previously imported aliases and their issues addressable by ID;

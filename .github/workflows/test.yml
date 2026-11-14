@@ -828,7 +828,7 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1
@@ -854,6 +854,10 @@ jobs:
       - name: Verify delegated work command and history contracts
         if: matrix.shard == 1
         run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
+
+      - name: Verify collaboration experiment desktop contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs
 
       - name: Run Wework tests
         env:

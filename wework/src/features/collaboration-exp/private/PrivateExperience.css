@@ -1,0 +1,291 @@
+[data-testid='collaboration-exp-app'] .experience-private-discussion {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: rgb(var(--color-bg-base));
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-standalone-heading {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid rgb(var(--color-border));
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-standalone-heading h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--experience-text-title);
+  font-weight: 500;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-standalone-heading button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: rgb(var(--color-text-muted));
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-context {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px;
+  background: rgb(var(--color-bg-base));
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-context > span {
+  overflow: hidden;
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-context small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-context-back {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-context-back:hover {
+  color: rgb(var(--color-accent-text));
+  text-decoration: underline;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-history-notice {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 24px;
+  border-bottom: 1px solid rgb(var(--color-border));
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-quiet));
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-history-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-history-notice button,
+[data-testid='collaboration-exp-app'] .experience-private-ready button {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  color: rgb(var(--color-text-secondary));
+  background: transparent;
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-ready {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 12px 0 0;
+  font-size: var(--text-xs);
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-ready > span {
+  flex: 1 1 170px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+  line-height: 1.6;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-ready > button {
+  white-space: nowrap;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-native {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-native[hidden],
+[data-testid='collaboration-exp-app']
+  .experience-private-native[data-read-only]
+  [data-testid='right-workspace-chat-composer-shell'] {
+  display: none;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-private-native
+  [data-testid='right-workspace-chat-scroll-area'] {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-private-native
+  [data-testid='right-workspace-chat-composer-shell'] {
+  width: min(calc(100% - 32px), 720px);
+  margin: 8px auto 16px;
+  padding: 0;
+  background: rgb(var(--color-bg-base));
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-private-native
+  [data-testid='side-chat-composer-layout'] {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: 24px;
+  color: rgb(var(--color-text-secondary));
+  background: rgb(var(--color-bg-base));
+  font-size: var(--text-xs);
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion-eyebrow {
+  margin: 0;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion h3 {
+  margin: 12px 0 24px;
+  color: rgb(var(--color-text-primary));
+  font-size: var(--text-h3);
+  line-height: 1.6;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion label {
+  display: block;
+  margin-bottom: 8px;
+  color: rgb(var(--color-text-primary));
+  font-weight: 500;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid rgb(var(--color-border-strong));
+  border-radius: 8px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font-size: var(--text-base);
+  line-height: 1.8;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-publish-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 16px 0 24px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  line-height: 1.8;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-publish-hint svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion [role='alert'] {
+  color: rgb(var(--color-destructive));
+  font-size: var(--text-sm);
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion-actions button {
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-base));
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion-actions button[type='submit'] {
+  border-color: transparent;
+  color: rgb(var(--color-primary-contrast));
+  background: rgb(var(--color-primary));
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-conclusion-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+[data-testid='collaboration-exp-app'] .experience-private-unavailable {
+  padding: 20px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+
+@media (width <= 767px) {
+  [data-testid='collaboration-exp-app'] .experience-private-standalone-heading button,
+  [data-testid='collaboration-exp-app'] .experience-private-context-back,
+  [data-testid='collaboration-exp-app'] .experience-private-history-notice button,
+  [data-testid='collaboration-exp-app'] .experience-private-ready button,
+  [data-testid='collaboration-exp-app'] .experience-private-conclusion-actions button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  [data-testid='collaboration-exp-app']
+    .experience-private-native
+    [data-testid='right-workspace-chat-composer-shell'] {
+    width: calc(100% - 24px);
+    margin: 8px auto 12px;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-private-conclusion {
+    padding: 20px 16px;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-private-ready {
+    padding-top: 8px;
+  }
+}

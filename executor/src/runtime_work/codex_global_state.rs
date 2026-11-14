@@ -29,7 +29,7 @@ use super::{
 
 pub(crate) use super::remote_projects::CodexGlobalRemoteProject;
 
-mod diagnostics;
+use wegent_runtime_logging::project_index_diagnostics as diagnostics;
 mod migration;
 pub use migration::run_project_state_query;
 
