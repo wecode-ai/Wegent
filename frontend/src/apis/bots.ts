@@ -23,6 +23,7 @@ export interface CreateBotRequest {
   name: string
   shell_name: string // Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
   agent_config: Record<string, unknown>
+  model_id?: number | null
   system_prompt: string
   mcp_servers: Record<string, unknown>
   plugins?: UnifiedAgentPluginRef[]
@@ -37,12 +38,14 @@ export interface CreateBotRequest {
   namespace?: string // Group namespace, defaults to 'default' for personal bots
   secondary_model_name?: string | null
   secondary_model_namespace?: string
+  secondary_model_id?: number | null
 }
 
 export interface UpdateBotRequest {
   name?: string
   shell_name?: string // Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
   agent_config?: Record<string, unknown>
+  model_id?: number | null
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
   plugins?: UnifiedAgentPluginRef[]
@@ -56,8 +59,10 @@ export interface UpdateBotRequest {
   target_group_names?: string[] // Transient context for validating team-scoped Skills
   is_active?: boolean
   namespace?: string // Group namespace
+  team_id?: number // Team context for updating a Bot referenced by that Team
   secondary_model_name?: string | null
   secondary_model_namespace?: string
+  secondary_model_id?: number | null
 }
 export interface BotListResponse {
   total: number

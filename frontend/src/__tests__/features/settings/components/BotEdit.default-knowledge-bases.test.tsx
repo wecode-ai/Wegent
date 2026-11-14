@@ -227,6 +227,8 @@ async function renderBotEdit(
   props: {
     scope?: 'personal' | 'group' | 'all' | 'public'
     groupName?: string
+    teamId?: number
+    targetGroupNames?: string[]
     modelCategoryType?: 'llm' | 'image' | 'video'
     allowGenerationPrimaryModel?: boolean
     mode?: 'edit' | 'clone' | 'new'
@@ -267,6 +269,8 @@ async function renderBotEdit(
         toast={toast}
         scope={props.scope || 'personal'}
         groupName={props.groupName}
+        teamId={props.teamId}
+        targetGroupNames={props.targetGroupNames}
         modelCategoryType={props.modelCategoryType}
         allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
       />
@@ -919,6 +923,30 @@ describe('BotEdit default knowledge bases', () => {
             { id: 101, name: 'Product Docs' },
             { id: 202, name: 'Runbooks' },
           ],
+        })
+      )
+    })
+  })
+
+  test('includes the existing Agent context when saving from its Bot drawer', async () => {
+    await renderBotEdit(
+      {},
+      {
+        scope: 'group',
+        groupName: 'engineering',
+        teamId: 77,
+        targetGroupNames: ['engineering'],
+      }
+    )
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          team_id: 77,
+          target_group_names: ['engineering'],
         })
       )
     })
