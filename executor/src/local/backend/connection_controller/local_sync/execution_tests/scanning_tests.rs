@@ -49,6 +49,86 @@ pub(super) async fn settle_recovery(fixture: &Fixture, unconfirmed: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_full_reconciliations_wait_for_a_fresh_scan() {
+    for phase in [1, 2] {
+        let (fixture, held, first) = held_scan(phase, false).await;
+        settle_recovery(&fixture, false).await;
+        let mut second = tokio::spawn({
+            let fixture = fixture.clone();
+            async move { fixture.sync(json!({"full":true})).await }
+        });
+        // The first real scan is held: another full request must remain queued,
+        // rather than report a transient scan collision to its caller.
+        let premature = tokio::time::timeout(Duration::from_millis(250), &mut second).await;
+        assert!(
+            premature.is_err(),
+            "Overlapping full check returned early: {premature:?}"
+        );
+        let independent = Fixture::new(Plan::Valid, false).await;
+        persist(&independent.path, &json!({"version":1,"pending":[]})).unwrap();
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                independent.sync(json!({"full":true}))
+            )
+            .await
+            .expect("An independent journal waited for another account's scan")
+            .unwrap()["localCompleted"],
+            true
+        );
+        drop(held);
+        assert_eq!(first.await.unwrap().unwrap()["localCompleted"], true);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), second)
+                .await
+                .expect("Queued full check did not resume")
+                .unwrap()
+                .unwrap()["localCompleted"],
+            true
+        );
+        assert_eq!(
+            load_journal(&fixture.path).unwrap()["verifiedDigest"],
+            "actual"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_queued_full_check_revalidates_foreground_admission_before_scanning() {
+    let (fixture, held, first) = held_scan(2, false).await;
+    settle_recovery(&fixture, false).await;
+    let mut queued = tokio::spawn({
+        let fixture = fixture.clone();
+        async move { fixture.sync(json!({"full":true})).await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), &mut queued)
+            .await
+            .is_err()
+    );
+    let _foreground = scanning::ForegroundOperation::begin(
+        fixture.controller.local_sync_foreground.clone(),
+        &fixture.path,
+    );
+    drop(held);
+    assert_eq!(first.await.unwrap().unwrap()["localCompleted"], true);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), queued)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .code,
+        "plugin_local_sync_busy"
+    );
+    assert_eq!(
+        fixture.installer.digest_calls.load(Ordering::SeqCst),
+        2,
+        "A queued full check must yield to foreground work before scanning or scheduling recovery"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_scans_allow_pending_submission_and_foreground_completion() {
     for phase in [1, 2] {
         let (fixture, held, full) = held_scan(phase, true).await;

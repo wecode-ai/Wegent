@@ -337,6 +337,21 @@ fn local_result(payload: &Value, result: Value) -> Value {
 }
 
 impl LocalBackendConnectionController {
+    fn plugin_source_device_id(&self) -> String {
+        if !self
+            .connection_status
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return String::new();
+        }
+        self.device_route_id
+            .lock()
+            .ok()
+            .and_then(|route| route.clone())
+            .filter(|route| !optional_origin(route).is_empty())
+            .unwrap_or_default()
+    }
+
     pub(super) async fn local_plugin_sync(&self, params: Value) -> Result<Value, AppIpcError> {
         let root = wework_codex_home().join("plugin-local-sync");
         self.local_plugin_sync_at(params, &root).await
@@ -401,8 +416,20 @@ impl LocalBackendConnectionController {
                 || journal["reconcilePending"] == true;
             let mut capabilities = capabilities;
             capabilities["recoveryPending"] = json!(recovery);
-            capabilities["sourceDeviceId"] = json!(optional_origin(&self.base_config.device_id));
+            capabilities["sourceDeviceId"] = json!(self.plugin_source_device_id());
             return Ok(capabilities);
+        }
+
+        let targeted = params["action"].is_string()
+            || params["installedPluginId"]
+                .as_u64()
+                .is_some_and(|id| id > 0)
+                && params["full"] != true;
+        let _foreground = targeted.then(|| {
+            scanning::ForegroundOperation::begin(self.local_sync_foreground.clone(), &path)
+        });
+        if !targeted && self.has_foreground_plugin_operation(&path) {
+            return Err(error("plugin_local_sync_busy"));
         }
 
         let mut lease = Some(self.acquire_local_sync_lease(&connection, &path).await?);
@@ -473,7 +500,17 @@ impl LocalBackendConnectionController {
         if let Some(request) = &selected {
             recovery::record_submission_attempt(&mut journal, operation.unwrap());
             persist(path, &journal)?;
-            let outcome = submit(connection, instance, request, &self.base_config.device_id).await;
+            drop(lease.take());
+            let outcome = submit(
+                connection,
+                instance,
+                request,
+                &self.plugin_source_device_id(),
+            )
+            .await;
+            journal = self
+                .resume_local_sync_journal(connection, path, lease)
+                .await?;
             recovery::record_submission_result(&mut journal, operation.unwrap(), &outcome);
             persist(path, &journal)?;
             if !matches!(outcome, Ok(SubmitOutcome::Accepted)) {
@@ -488,6 +525,26 @@ impl LocalBackendConnectionController {
             .as_u64()
             .filter(|_| selected.is_none() && params["full"] != true);
         let targeted = selected.is_some() || installed_plugin_id.is_some();
+        let _reconciliation = if targeted {
+            None
+        } else {
+            // Full checks share scan evidence. Queue them without holding the
+            // short journal lease; foreground plugin operations never join it.
+            drop(lease.take());
+            let guard = scanning::full_reconciliation_gate(path).lock_owned().await;
+            journal = self
+                .resume_local_sync_journal(connection, path, lease)
+                .await?;
+            if self.has_foreground_plugin_operation(path) {
+                return Err(error("plugin_local_sync_busy"));
+            }
+            Some(guard)
+        };
+        if installed_plugin_id.is_some() {
+            // Target-only refreshes also fence older full plans after cancellation.
+            next_intent_order(&mut journal)?;
+            persist(path, &journal)?;
+        }
         if !targeted && !journal["pending"].as_array().unwrap().is_empty() {
             if let Err(failure) =
                 self.schedule_local_recovery(connection, instance, path, &mut journal)
@@ -514,7 +571,7 @@ impl LocalBackendConnectionController {
             .map(str::to_owned);
         // Recovery may have settled while the scan ran. Use its current status
         // without losing original requests or replaying an old journal snapshot.
-        let pending = journal["pending"].as_array().unwrap();
+        let pending = journal["pending"].as_array().unwrap().clone();
         let operation_ids: Vec<String> = if let Some(operation) = operation {
             vec![operation.to_owned()]
         } else if !targeted {
@@ -527,7 +584,22 @@ impl LocalBackendConnectionController {
         } else {
             Vec::new()
         };
-        let snapshot=post(connection,"/api/plugins/local-sync",&json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id})).await?;
+        if !targeted && self.has_foreground_plugin_operation(path) {
+            return Err(error("plugin_local_sync_busy"));
+        }
+        let plan_order = journal["nextIntentOrder"].clone();
+        let plan_request = json!({"protocolVersion":1,"instanceId":instance,"operationId":operation,"recoveryPending":!pending.is_empty() || journal["reconcilePending"] == true,"knownRevision":known_revision,"actualRevision":known_revision,"targeted":targeted,"installedPluginId":installed_plugin_id});
+        drop(lease.take());
+        let snapshot = post(connection, "/api/plugins/local-sync", &plan_request).await?;
+        journal = self
+            .resume_local_sync_journal(connection, path, lease)
+            .await?;
+        if !targeted
+            && (journal["nextIntentOrder"] != plan_order
+                || self.has_foreground_plugin_operation(path))
+        {
+            return Err(error("plugin_local_sync_busy"));
+        }
         // Profile replacement fences the shared installer as well as this HTTP scope.
         {
             let state = self.state.lock().await;
@@ -541,7 +613,7 @@ impl LocalBackendConnectionController {
         }
         if snapshot["unchanged"] == true {
             if !verified
-                || !pending.is_empty()
+                || !journal["pending"].as_array().unwrap().is_empty()
                 || journal["reconcilePending"] == true
                 || snapshot["revision"] != journal["revision"]
             {
@@ -572,12 +644,16 @@ impl LocalBackendConnectionController {
         }
         journal["reconcilePending"] = json!(true);
         persist(path, &journal)?;
+        drop(lease.take());
         let result = local_result(
             &snapshot["payload"],
             handler
                 .handle_sync_capabilities(snapshot["payload"].clone())
                 .await,
         );
+        journal = self
+            .resume_local_sync_journal(connection, path, lease)
+            .await?;
         let completed = result["success"] == true
             && result["plugins"].as_array().is_some_and(|items| {
                 items
@@ -585,7 +661,9 @@ impl LocalBackendConnectionController {
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
         if completed {
-            journal["revision"] = if targeted {
+            let intervening = journal["nextIntentOrder"] != plan_order
+                || !targeted && self.has_foreground_plugin_operation(path);
+            journal["revision"] = if targeted || intervening {
                 Value::Null
             } else {
                 snapshot["revision"].clone()
@@ -604,13 +682,35 @@ impl LocalBackendConnectionController {
                         .is_some_and(|id| operation_ids.iter().any(|item| item == id))
                 });
             }
-            journal["reconcilePending"] = json!(targeted);
+            journal["reconcilePending"] = json!(
+                targeted || intervening || !journal["pending"].as_array().unwrap().is_empty()
+            );
         }
         persist(path, &journal)?;
         if !completed {
+            if result["success"] == true
+                && result["plugins"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item["status"] == "superseded"))
+            {
+                if targeted {
+                    if let Some(operation) = operation {
+                        retire_superseded(&mut journal, operation);
+                        persist(path, &journal)?;
+                    }
+                }
+                return Err(error(if targeted {
+                    "INTENT_SUPERSEDED"
+                } else {
+                    "plugin_local_sync_busy"
+                }));
+            }
             return Err(error("plugin_local_apply_failed"));
         }
-        if !targeted {
+        if !targeted
+            && journal["nextIntentOrder"] == plan_order
+            && !self.has_foreground_plugin_operation(path)
+        {
             let digest = self
                 .scan_local_plugin_content(&session, &mut journal, lease)
                 .await?;

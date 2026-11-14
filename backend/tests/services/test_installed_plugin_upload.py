@@ -37,6 +37,7 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilityResolutionError,
     DeviceCapabilitySyncError,
 )
+from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import InstalledPluginService
 from app.services.plugin_package_parser import (
     MAX_PLUGIN_PACKAGE_SIZE_BYTES,
@@ -98,6 +99,62 @@ def test_safe_kind_name_uses_hash_suffix_to_avoid_slug_collisions():
 
     assert service._safe_kind_name("my/plugin") != service._safe_kind_name("my plugin")
     assert len(service._safe_kind_name("x" * 200)) <= 100
+
+
+@pytest.mark.parametrize("source", ["upload", "marketplace"])
+@pytest.mark.parametrize("active", [True, False])
+def test_reinstall_preserves_a_renamed_installation_without_another_state(
+    test_db, test_user, source, active
+):
+    service = InstalledPluginService()
+    package = _create_plugin_zip()
+    if source == "marketplace":
+        item = service.publish_marketplace_plugin(
+            db=test_db,
+            user_id=test_user.id,
+            package_bytes=package,
+            filename="plugin.zip",
+            visibility="workspace",
+        )
+
+    def install():
+        if source == "upload":
+            return service.upload_plugin(
+                db=test_db,
+                user_id=test_user.id,
+                package_bytes=package,
+                filename="plugin.zip",
+            )
+        return service.install_marketplace_plugin(
+            db=test_db, user_id=test_user.id, marketplace_id=int(item.id)
+        )
+
+    original = install()
+    installed_id = int(original.metadata["labels"]["id"])
+    state = lock_plugin_sync_state(test_db, test_user.id)
+    test_db.commit()
+    row = test_db.get(Kind, installed_id)
+    old_name = "renamed-existing-plugin"
+    # Represent an existing catalog identity without invoking rename behavior.
+    row.name = old_name
+    row.is_active = active
+    test_db.commit()
+    state_id = state.id
+    result = install()
+    assert int(result.metadata["labels"]["id"]) == installed_id
+    test_db.refresh(row)
+    assert row.name == old_name and row.is_active
+    states = (
+        test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            kind="PluginSyncState",
+            namespace="plugin-sync",
+            name="account",
+        )
+        .all()
+    )
+    assert [row.id for row in states] == [state_id]
 
 
 def test_upload_plugin_stores_package_in_database(test_db, test_user):

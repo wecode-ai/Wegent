@@ -42,7 +42,7 @@ where
             auth_token,
             store,
             package_provider,
-            sync_lock: std::sync::Arc::new(AsyncMutex::new(())),
+            sync_lock: Arc::new(AsyncMutex::new(())),
             plugin_sync_inflight: Default::default(),
             plugin_sync_binding,
             plugin_preparation,
@@ -97,7 +97,7 @@ where
             _lane: None,
             _slot: slot,
         });
-        let _sync_guard = self.sync_lock.lock().await;
+        let sync_guard = Arc::new(self.sync_lock.clone().lock_owned().await);
         let _activation = crate::services::capability_activation::activate().await;
         let queued_ms = started.elapsed().as_millis();
         let _publication_lock = self.store.lock_shared_manifest()?;
@@ -172,8 +172,13 @@ where
         let mut plugin_results = Vec::with_capacity(plugin_specs.len());
         for spec in &plugin_specs {
             plugin_results.push(
-                self.sync_plugin(spec, &mut manifest, preparation_lease.clone())
-                    .await,
+                self.sync_plugin(
+                    spec,
+                    &mut manifest,
+                    preparation_lease.clone(),
+                    sync_guard.clone(),
+                )
+                .await,
             );
         }
         let _binding = self.plugin_sync_binding.lock_active()?;
@@ -305,8 +310,12 @@ where
         spec: &PluginSyncSpec,
         manifest: &mut Value,
         lease: std::sync::Arc<plugin_preparation::PreparationLease>,
+        publication: Arc<tokio::sync::OwnedMutexGuard<()>>,
     ) -> Value {
-        match self.try_sync_plugin(spec, manifest, lease).await {
+        match self
+            .try_sync_plugin(spec, manifest, lease, publication)
+            .await
+        {
             Ok(()) => match spec.installed_plugin_id {
                 Some(id) => json!({"id": id, "name": spec.name, "status": "synced"}),
                 None => json!({"name": spec.name, "status": "synced"}),
@@ -338,9 +347,11 @@ where
         spec: &PluginSyncSpec,
         manifest: &mut Value,
         lease: std::sync::Arc<plugin_preparation::PreparationLease>,
+        publication: Arc<tokio::sync::OwnedMutexGuard<()>>,
     ) -> Result<(), PluginSyncFailure> {
-        // Legacy synchronization already holds sync_lock for the full transaction.
-        let mut prepared = self.prepare_plugin(spec, manifest, lease, None).await?;
+        let mut prepared = self
+            .prepare_plugin(spec, manifest, lease, Some(publication))
+            .await?;
         let _binding = self
             .plugin_sync_binding
             .lock_active()

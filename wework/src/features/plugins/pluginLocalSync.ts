@@ -47,6 +47,7 @@ export function createLocalFirstPluginApi(
         plugin_local_acceptance_unconfirmed: 'plugins_local_sync_unconfirmed',
         plugin_local_journal_unavailable: 'plugins_local_sync_journal_error',
         plugin_local_journal_invalid: 'plugins_local_sync_journal_error',
+        plugin_local_sync_busy: 'plugins_local_sync_busy',
         INTENT_SUPERSEDED: 'plugins_local_sync_superseded',
         LOCAL_SYNC_DISABLED: 'plugins_local_sync_disabled',
         plugin_route_profile_mismatch: 'plugins_runtime_changed',

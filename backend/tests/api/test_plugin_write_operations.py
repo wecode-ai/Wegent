@@ -6,6 +6,7 @@ import json
 import time
 import zipfile
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -490,8 +491,20 @@ def test_coordination_failure_before_account_commit_is_fail_closed(
         monkeypatch.setattr(coordination, "_redis_client", unavailable)
     else:
         redis = coordination._redis_client()
+        from app.services.plugin_write_identity import marketplace_write_name
+
+        with context.sessions() as db:
+            name = (
+                previous.name
+                if previous is not None
+                else (
+                    installed_plugin_service._safe_kind_name(LEGACY_KEY)
+                    if entry == "legacy"
+                    else marketplace_write_name(db, context.user_id, context.plugin_id)
+                )
+            )
         with redis.mutex:
-            redis.values[f"wegent:plugin-write:{context.user_id}"] = (
+            redis.values[f"wegent:plugin-write:{context.user_id}:{name}"] = (
                 "another-owner",
                 time.monotonic() + 30,
             )
@@ -586,7 +599,12 @@ def test_device_coordination_failure_preserves_account_commit_and_recovers(
             assert len(devices) == 1
             assert devices[0].state == "installed"
             assert devices[0].actual_release_id == account.json["spec"]["releaseId"]
-    assert assert_account_write(context, entry).json == account.json
+    recovered_account = assert_account_write(context, entry)
+    before, after = deepcopy(account.json), deepcopy(recovered_account.json)
+    before_fence = before["spec"].pop("writeRevision", 0)
+    after_fence = after["spec"].pop("writeRevision", 0)
+    assert after_fence >= before_fence
+    assert after == before
 
 
 @pytest.mark.parametrize(
@@ -720,13 +738,23 @@ def test_background_coordination_failure_preserves_account_and_recovery(
 
     assert f"Plugin change remains pending: user_id={context.user_id}" in caplog.text
     deferred.assert_not_called()
-    assert assert_account_write(context, entry).json == account.json
+    recovered_account = assert_account_write(context, entry)
+    before, after = deepcopy(account.json), deepcopy(recovered_account.json)
+    before_fence = before["spec"].pop("writeRevision", 0)
+    after_fence = after["spec"].pop("writeRevision", 0)
+    assert after_fence >= before_fence
+    assert after == before
     recovered = context.client.post(
         "/plugins/installed/sync-device", params={"device_id": DEVICE_ID}
     )
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["sync"]["success"] is True
-    assert assert_account_write(context, entry).json == account.json
+    recovered_account = assert_account_write(context, entry)
+    before, after = deepcopy(account.json), deepcopy(recovered_account.json)
+    before_fence = before["spec"].pop("writeRevision", 0)
+    after_fence = after["spec"].pop("writeRevision", 0)
+    assert after_fence >= before_fence
+    assert after == before
 
 
 @pytest.mark.parametrize("superseded_attempts", [1, 3])

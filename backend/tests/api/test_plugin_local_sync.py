@@ -537,9 +537,9 @@ def test_previously_accepted_request_cannot_be_marked_unaccepted(
     original_lock = plugin_local_sync.acquire_plugin_write_lock
     original_lookup = plugin_local_sync._lookup_operation
 
-    def acquire(db, user_id):
+    def acquire(db, user_id, **scope):
         nonlocal acquired
-        original_lock(db, user_id)
+        original_lock(db, user_id, **scope)
         acquired = True
 
     def lookup(*args):
@@ -786,8 +786,9 @@ def test_install_rechecks_supersession_after_catalog_repair_commits(
     c.seed_update()
     installed = c.installed_id
 
-    def repair_then_accept_newer(db, *, user_id):
+    def repair_then_accept_newer(db, *, user_id, plugin_id=None):
         assert user_id == c.user_id
+        assert plugin_id == c.plugin_id
         db.commit()
         newer = c.client.put(
             f"/plugins/installed/{installed}",

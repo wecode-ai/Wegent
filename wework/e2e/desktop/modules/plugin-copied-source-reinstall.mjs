@@ -18,7 +18,7 @@ function within(root, path) {
 
 /** Seed historical account-record cleanup without inventing a local installation ID. */
 export async function purgeUninstalledFixtureRecord(cloud, item) {
-  const lease = await holdPluginWriteLease(cloud)
+  const lease = await holdPluginWriteLease(cloud, item)
   try {
     const removed = await cloud.executeDatabase(
       "DELETE FROM kinds WHERE id = %s AND user_id = %s AND namespace = %s AND kind = %s AND is_active = 0 AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.source.pluginKey')) = %s",

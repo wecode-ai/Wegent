@@ -1,30 +1,39 @@
 """Reconcile account-managed plugins without changing independent capabilities."""
 
 import asyncio
+from copy import deepcopy
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.schemas.installed_plugin import PluginDeviceSyncResponse
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device.plugin_change_sync import dispatch_snapshot
-from app.services.device.plugin_sync_protocol import load_versioned_plugin_payload
+from app.services.device.plugin_sync_protocol import (
+    load_versioned_plugin_payload,
+    lock_plugin_sync_state,
+)
 from app.services.plugin_device_installation_service import (
+    _is_mysql_deadlock,
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_sync_revision import require_snapshot_revision
 from app.services.plugin_write_coordination import (
-    acquire_plugin_write_lock,
+    acquire_plugin_write_locks,
     configure_plugin_session,
 )
+from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_operations import run_plugin_transaction
 from shared.telemetry.decorators import trace_async
 
 
 def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
-    with get_db_session() as db:
-        configure_plugin_session(db)
+    def prepare(db: Session) -> dict[str, Any]:
         changed = plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
             db, user_id=user_id
         )
@@ -37,6 +46,8 @@ def desired_plugins(user_id: int, device_id: str) -> dict[str, Any]:
             db, user_id=user_id, device_id=device_id
         )
 
+    return run_plugin_transaction(prepare, get_db_session, attempts=3, retry_busy=True)
+
 
 def record_reconciliation_result(
     user_id: int,
@@ -44,10 +55,21 @@ def record_reconciliation_result(
     payload: dict[str, Any],
     result: DeviceCapabilitySyncResult,
 ) -> dict[str, Any] | None:
-    """Validate and persist the acknowledged snapshot under one write lease."""
-    with get_db_session() as db:
+    """Atomically validate and persist the snapshot in a fresh plugin transaction."""
+
+    def record(db: Session) -> dict[str, Any] | None:
         configure_plugin_session(db)
-        acquire_plugin_write_lock(db, user_id)
+        scopes = plugin_device_installation_service._response_scopes(
+            db,
+            user_id,
+            DeviceCapabilitySyncResponse(results=[result]),
+            None,
+        )
+        acquire_plugin_write_locks(
+            db, ((user_id, installed_id) for installed_id in scopes)
+        )
+        state = lock_plugin_sync_state(db, user_id)
+        require_snapshot_revision(db, state)
         latest = device_capability_sync_service.build_desired_plugins(
             db, user_id=user_id, device_id=device_id
         )
@@ -55,10 +77,19 @@ def record_reconciliation_result(
             item.status == "superseded" for item in result.plugins
         ):
             return latest
-        plugin_device_installation_service.record_device_sync_result(
-            db, user_id=user_id, result=result
-        )
-    return None
+        try:
+            plugin_device_installation_service._record_device_sync_result(
+                db, user_id, result, installed_ids=scopes
+            )
+            state.json = deepcopy(state.json)
+            db.commit()
+        except OperationalError as error:
+            if _is_mysql_deadlock(error):
+                raise PluginWriteError("plugin_write_conflict") from error
+            raise
+        return None
+
+    return run_plugin_transaction(record, get_db_session, attempts=3, retry_busy=True)
 
 
 def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:

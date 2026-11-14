@@ -1817,7 +1817,7 @@ export function PluginsWorkspace({
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
     const isCurrent = capturePluginScope()
     if (!isCurrent()) return
-    if (isReconcilingPlugins) {
+    if (reconciliationBlocksActions) {
       setPluginOperationNotice({
         id: 'plugin-reconciliation-busy',
         kind: 'error',
@@ -1993,6 +1993,7 @@ export function PluginsWorkspace({
   })
 
   const isReconcilingPlugins = reconciliation.active
+  const reconciliationBlocksActions = isReconcilingPlugins && !reconciliation.waitingOnNative
   const isOfficialCatalogView =
     selectedDistributionTab === 'official' && !marketplaceSourceFilterKey
   const isCatalogRefreshBusy = isOfficialCatalogView
@@ -2290,7 +2291,7 @@ export function PluginsWorkspace({
   ) => {
     if (isMarketplacePluginUninstalling(item)) return
     const isCurrent = capturePluginScope()
-    if (isReconcilingPlugins) {
+    if (reconciliationBlocksActions) {
       setPluginOperationNotice({
         id: 'plugin-reconciliation-busy',
         kind: 'error',
@@ -2473,7 +2474,7 @@ export function PluginsWorkspace({
   }
 
   function executeMarketplaceInstall(install: PendingMarketplaceInstall | null = pendingInstall) {
-    if (!install || isReconcilingPlugins) return
+    if (!install || reconciliationBlocksActions) return
     const { item: dialogItem, promptAfterInstall } = install
     if (installingMarketplacePluginIds.has(dialogItem.id)) return
 
@@ -5390,7 +5391,7 @@ export function PluginsWorkspace({
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.plugins_update', '更新')}
         confirmTestId="plugin-update-confirm-button"
-        pending={isReconcilingPlugins}
+        pending={reconciliationBlocksActions}
         onClose={() => setPendingPluginUpdate(null)}
         onConfirm={() => {
           const item = pendingPluginUpdate
@@ -5413,7 +5414,7 @@ export function PluginsWorkspace({
             componentCount: marketplaceComponentCount(pendingInstall.item),
             requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}
-          confirmDisabled={isReconcilingPlugins}
+          confirmDisabled={reconciliationBlocksActions}
           onCancel={() => setPendingInstall(null)}
           onConfirm={() => executeMarketplaceInstall()}
         />
@@ -5852,7 +5853,7 @@ export function PluginsWorkspace({
       selectedMarketplacePlugin.installedPluginId
     const primaryActionPending = pluginDetailPrimaryActionPending({
       operationPending: isActionPending,
-      reconciling: isReconcilingPlugins,
+      reconciling: reconciliationBlocksActions,
       readyToTry: isInstalled,
       updateAvailable: Boolean(canUpdate),
     })
@@ -6204,6 +6205,7 @@ export function PluginsWorkspace({
                 type="button"
                 data-testid="plugins-refresh-button"
                 data-reconciling={isReconcilingPlugins}
+                data-local-sync={localSyncAvailable}
                 data-catalog-loading={pluginMarketplaceState.isLoading}
                 data-marketplace-refreshing={isMarketplaceRefreshing}
                 data-official-catalog-loading={openAiCatalog.loading}
@@ -6285,7 +6287,7 @@ export function PluginsWorkspace({
           marketplaceCategorySections={marketplaceCategorySections}
           visibleSearchResultLimit={visibleSearchResultLimit}
           isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
-          isReconciling={isReconcilingPlugins}
+          isReconciling={reconciliationBlocksActions}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
@@ -6306,7 +6308,7 @@ export function PluginsWorkspace({
         <CategoryBrowseDialog
           section={browsingCategorySection}
           isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
-          isReconciling={isReconcilingPlugins}
+          isReconciling={reconciliationBlocksActions}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}

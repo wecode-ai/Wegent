@@ -4409,6 +4409,7 @@
     "runtime_task_load_failed": "Unable to load this task. Refresh and try again.",
     "plugins_install_authorization_pending": "{{name}} is installed. Connect your account in plugin details if required.",
     "plugins_local_sync_network_error": "The service is temporarily unavailable. Check your network and retry; submitted operations can resume after recovery.",
+    "plugins_local_sync_busy": "Plugin state is still synchronizing. Try again shortly.",
     "plugins_local_sync_apply_error": "Local plugin processing did not finish. Refresh the installation state and retry.",
     "plugins_local_sync_unconfirmed": "The submission result is not confirmed. Refresh to check the installation state first.",
     "plugins_local_sync_journal_error": "Local operation records could not be read or saved. Check disk space and permissions, then retry.",

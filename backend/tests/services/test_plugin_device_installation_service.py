@@ -60,6 +60,42 @@ def test_record_sync_response_does_not_retry_other_database_errors(monkeypatch):
     db.commit.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "code", ["plugin_write_busy", "plugin_write_unavailable", "plugin_write_lease_lost"]
+)
+def test_record_sync_response_does_not_retry_lease_failures(monkeypatch, code):
+    service = PluginDeviceInstallationService()
+    db = Mock()
+    reconcile = Mock(side_effect=PluginWriteError(code))
+    monkeypatch.setattr(module, "reconcile_plugin_device_rows", reconcile)
+
+    with pytest.raises(PluginWriteError, match=code):
+        service.record_sync_response(
+            db, user_id=7, response=DeviceCapabilitySyncResponse(results=[])
+        )
+
+    reconcile.assert_called_once()
+    db.rollback.assert_called_once_with()
+    db.commit.assert_not_called()
+
+
+def test_record_sync_response_bounds_metadata_conflict_retries(monkeypatch):
+    service = PluginDeviceInstallationService()
+    db = Mock()
+    reconcile = Mock(side_effect=PluginWriteError("plugin_write_conflict"))
+    monkeypatch.setattr(module, "reconcile_plugin_device_rows", reconcile)
+    monkeypatch.setattr(module.time, "sleep", Mock())
+
+    with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+        service.record_sync_response(
+            db, user_id=7, response=DeviceCapabilitySyncResponse(results=[])
+        )
+
+    assert reconcile.call_count == module.DEVICE_SYNC_WRITE_ATTEMPTS
+    assert db.rollback.call_count == module.DEVICE_SYNC_WRITE_ATTEMPTS
+    db.commit.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_device_enumeration_does_not_restore_uninstalled_plugin(
     test_db, test_user, monkeypatch, plugin_write_sessions
@@ -402,7 +438,8 @@ async def test_all_device_materialization_waits_in_its_own_worker_session(monkey
         assert sessions == []
         return [{"device_id": "desktop"}]
 
-    def acquire(db, user_id):
+    def acquire(db, user_id, *, installed_id):
+        assert installed_id == 11
         db.touch()
         assert db is not request_db
         assert threading.get_ident() != loop_thread
@@ -438,3 +475,181 @@ async def test_all_device_materialization_waits_in_its_own_worker_session(monkey
     assert sessions[0].closed
     assert len(set(sessions[0].threads)) == 1
     assert sessions[0].threads[0] != loop_thread
+
+
+def test_first_device_materialization_holds_the_installation_lease(
+    test_db, test_user, plugin_write_backend, monkeypatch
+):
+    installed, _ = _device_install(test_db, test_user.id)
+    test_db.query(PluginDeviceInstallation).delete(synchronize_session=False)
+    test_db.commit()
+    service = PluginDeviceInstallationService()
+    original = service._ensure_desired_install_pending
+
+    def materialize(*args, **kwargs):
+        assert (
+            f"wegent:plugin-write:{test_user.id}:{installed.name}"
+            in plugin_write_backend.values
+        )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "_ensure_desired_install_pending", materialize)
+    assert (
+        service.ensure_pending_for_device(
+            test_db, user_id=test_user.id, device_id="first-device"
+        )
+        == 1
+    )
+    assert test_db.query(PluginDeviceInstallation).count() == 1
+
+
+def test_local_ack_skips_installations_activated_after_scope_acquisition(
+    test_db, test_user, monkeypatch
+):
+    from app.schemas.installed_plugin import PluginDeviceReportItem
+
+    installed, release = _device_install(test_db, test_user.id)
+    service = PluginDeviceInstallationService()
+    monkeypatch.setattr(
+        service, "_desired_installs", Mock(side_effect=[[], [installed]])
+    )
+    acknowledge = Mock(return_value=True)
+    monkeypatch.setattr(service, "_acknowledge_local_install", acknowledge)
+    assert (
+        service.acknowledge_local_installs(
+            test_db,
+            user_id=test_user.id,
+            device_id="device",
+            reported_plugins=[
+                PluginDeviceReportItem(
+                    installedPluginId=installed.id,
+                    releaseId=release.id,
+                    version=release.version,
+                )
+            ],
+        )
+        == []
+    )
+    acknowledge.assert_not_called()
+
+
+def test_deferred_complete_uninstall_ack_records_other_acknowledged_plugins(
+    test_db, test_user, monkeypatch
+):
+    from copy import deepcopy
+
+    removed, release = _device_install(test_db, test_user.id)
+    retained = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="retained",
+        json=deepcopy(removed.json),
+        is_active=True,
+    )
+    removed.is_active = False
+    test_db.add(retained)
+    test_db.flush()
+    for installed in (removed, retained):
+        test_db.add(
+            PluginDeviceInstallation(
+                user_id=test_user.id,
+                installed_kind_id=installed.id,
+                device_id="desktop",
+                desired_release_id=release.id,
+                actual_release_id=0,
+                state="pending",
+            )
+        )
+    test_db.commit()
+    removed_id, retained_id, release_id = removed.id, retained.id, release.id
+    desired = {"installed_plugin_id": retained_id, "version": release.version}
+    monkeypatch.setattr(
+        "app.services.device.capability_sync_service.device_capability_sync_service._load_installed_plugins",
+        lambda *args, **kwargs: (
+            [desired] if retained_id in kwargs.get("only_ids", [retained_id]) else []
+        ),
+    )
+    result = DeviceCapabilitySyncResult(
+        device_id="desktop",
+        success=True,
+        plugins=[
+            {"id": removed_id, "status": "removed"},
+            {"id": retained_id, "status": "synced"},
+        ],
+        desired_plugin_snapshot={
+            "plugins": [desired],
+            "removed_plugins": [{"installed_plugin_id": removed_id}],
+            "plugin_sync": {"version": 2, "generation": 1, "complete": True},
+        },
+    )
+    PluginDeviceInstallationService().record_uninstall_response(
+        test_db,
+        user_id=test_user.id,
+        installed_kind_id=removed_id,
+        response=DeviceCapabilitySyncResponse(results=[result]),
+    )
+    rows = test_db.query(PluginDeviceInstallation).all()
+    assert len(rows) == 1
+    assert rows[0].installed_kind_id == retained_id
+    assert rows[0].actual_release_id == release_id
+    assert rows[0].state == "installed"
+
+
+def test_pending_active_plugins_do_not_wait_for_an_inactive_plugin_lease(
+    test_db, test_user, monkeypatch
+):
+    from copy import deepcopy
+
+    from app.services import plugin_device_identity
+
+    installed, release = _device_install(test_db, test_user.id)
+    inactive = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="inactive-busy",
+        json=deepcopy(installed.json),
+        is_active=False,
+    )
+    test_db.add(inactive)
+    test_db.flush()
+    test_db.add(
+        PluginDeviceInstallation(
+            user_id=test_user.id,
+            installed_kind_id=inactive.id,
+            device_id="desktop",
+            state="uninstalling",
+        )
+    )
+    test_db.commit()
+    inactive_id = inactive.id
+    original = module.acquire_plugin_write_locks
+
+    def busy(db, targets):
+        targets = list(targets)
+        if any(id == inactive_id for _, id in targets):
+            raise PluginWriteError("plugin_write_busy")
+        original(db, targets)
+
+    monkeypatch.setattr(module, "acquire_plugin_write_locks", busy)
+    monkeypatch.setattr(plugin_device_identity, "acquire_plugin_write_locks", busy)
+    assert (
+        PluginDeviceInstallationService().ensure_pending_for_device(
+            test_db, user_id=test_user.id, device_id="desktop"
+        )
+        == 1
+    )
+    active = (
+        test_db.query(PluginDeviceInstallation)
+        .filter_by(installed_kind_id=installed.id)
+        .one()
+    )
+    assert active.desired_release_id == release.id
+    assert (
+        test_db.query(PluginDeviceInstallation)
+        .filter_by(installed_kind_id=inactive_id)
+        .one()
+        .state
+        == "uninstalling"
+    )

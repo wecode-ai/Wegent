@@ -1,11 +1,14 @@
 //! Account-scoped execution plans reuse the existing generation and latest intent slots.
 use super::{
     desired_capabilities::{build_local_plugins, capability_snapshot, restrict_local_plugin},
-    write_coordination::{PluginWriteLease, coordination_error, http_error},
+    write_coordination::{coordination_error, http_error},
 };
 use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 use brz_http_server::StatusCode;
-use brz_mysql::{FromMysqlRow, MysqlError, MysqlResult, MysqlTransaction};
+use brz_mysql::{
+    FromMysqlRow, MysqlError, MysqlIsolationLevel, MysqlResult, MysqlTransaction,
+    MysqlTransactionOptions,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -29,7 +32,6 @@ struct SyncRequest {
 
 #[derive(FromMysqlRow)]
 struct StateRow {
-    id: i64,
     json: Value,
 }
 
@@ -98,37 +100,94 @@ async fn local_sync(
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
     super::auto_update::complete_auto_update(async move {
-        let lease = PluginWriteLease::acquire(redis.as_ref(), i64::from(user.id)).await?;
-        let result = async {
-            lease.ensure_policy(&mysql).await?;
-            tokio::time::timeout_at(lease.deadline, mysql.with_transaction(async |tx| {
-                let revision = lease.read_revision(tx).await?;
-                let mut query = &mut *tx;
-                let mut payload = build_local_plugins(&mut query, i64::from(user.id)).await.map_err(|error| {
-                    tracing::error!(%error, "local plugin snapshot failed"); coordination_error("plugin_write_unavailable")
-                })?;
-                let desired_revision = hash(&capability_snapshot(&payload));
-                let operation = read_operation(tx, i64::from(user.id), &body.instance_id, body.operation_id.as_deref()).await?;
-                if !enabled() && !has_instance(tx, i64::from(user.id), &body.instance_id).await? {
-                    return Err(coordination_error("LOCAL_SYNC_DISABLED"));
-                }
-                if body.known_revision.as_deref() == Some(&desired_revision) && body.actual_revision.as_deref() == Some(&desired_revision) && !body.recovery_pending && !body.targeted {
-                    return Ok(json!({"enabled":enabled(),"protocolVersion":1,"revision":desired_revision,"unchanged":true,"operation":operation}));
-                }
-                if body.targeted {
-                    let target=operation["installedPluginId"].as_i64().or(body.installed_plugin_id).ok_or_else(||coordination_error("SNAPSHOT_NOT_OWNED"))?;
-                    let mut query=&mut *tx;
-                    restrict_local_plugin(&mut query,i64::from(user.id),target,&mut payload).await.map_err(|error|match error { super::desired_capabilities::BuildError::Mysql(error)=>error, _=>coordination_error("plugin_write_unavailable") })?;
-                }
-                let generation = next_generation(tx, i64::from(user.id)).await?;
-                payload["plugin_sync"] = json!({"version":2,"generation":generation,"complete":!body.targeted});
-                lease.commit_revision(tx, revision).await?;
-                Ok(json!({"enabled":enabled(),"protocolVersion":1,"revision":desired_revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation}))
-            })).await.unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))
-        }.await;
-        lease.release().await;
-        result
-    }).await.map_err(map_error)
+        super::plugin_sync_protocol::ensure_sync_state(&mysql, redis.as_ref(), i64::from(user.id))
+            .await?;
+        super::plugin_sync_protocol::retry_sync_write(|| {
+            mysql.with_transaction_options(
+                MysqlTransactionOptions::default()
+                    .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                async |tx| local_plan(tx, i64::from(user.id), &body).await,
+            )
+        })
+        .await
+    })
+    .await
+    .map_err(map_error)
+}
+
+async fn local_plan(
+    tx: &mut impl MysqlTransaction,
+    user_id: i64,
+    body: &SyncRequest,
+) -> MysqlResult<Value> {
+    use super::plugin_sync_protocol::{lock_plugin_sync_state, write_sync_state_document};
+    let mut query = &mut *tx;
+    let state = lock_plugin_sync_state(&mut query, user_id).await?;
+    let operation =
+        read_operation(tx, user_id, &body.instance_id, body.operation_id.as_deref()).await?;
+    if !enabled() && !has_instance(tx, user_id, &body.instance_id).await? {
+        return Err(coordination_error("LOCAL_SYNC_DISABLED"));
+    }
+    let mut query = &mut *tx;
+    let mut payload = if body.targeted {
+        let target = operation["installedPluginId"]
+            .as_i64()
+            .or(body.installed_plugin_id)
+            .ok_or_else(|| coordination_error("SNAPSHOT_NOT_OWNED"))?;
+        let mut payload = json!({"mode":"merge", "scope":"plugins", "plugins":[]});
+        restrict_local_plugin(&mut query, user_id, target, &mut payload)
+            .await
+            .map_err(|error| match error {
+                super::desired_capabilities::BuildError::Mysql(error) => error,
+                _ => coordination_error("plugin_write_unavailable"),
+            })?;
+        payload
+    } else {
+        build_local_plugins(&mut query, user_id)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "local plugin snapshot failed");
+                coordination_error("plugin_write_unavailable")
+            })?
+    };
+    let revision = hash(&capability_snapshot(&payload));
+    let unchanged = !body.targeted
+        && body.known_revision.as_deref() == Some(&revision)
+        && body.actual_revision.as_deref() == Some(&revision)
+        && !body.recovery_pending;
+    let mut document = state.json.clone();
+    let generation = if unchanged {
+        None
+    } else {
+        let current = document["spec"]["generation"]
+            .as_u64()
+            .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+        let generation = current
+            .checked_add(1)
+            .filter(|value| *value < i64::MAX as u64)
+            .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+        document["spec"]["generation"] = json!(generation);
+        Some(generation)
+    };
+    let mut query = &mut *tx;
+    write_sync_state_document(
+        &mut query,
+        state.id,
+        user_id,
+        &crate::json_compat::python_json_value(&document),
+        true,
+    )
+    .await?;
+    if unchanged {
+        return Ok(
+            json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":true,"operation":operation}),
+        );
+    }
+    let generation = generation.expect("changed snapshot has a generation");
+    payload["plugin_sync"] = json!({"version":2,"generation":generation,"complete":!body.targeted});
+    Ok(
+        json!({"enabled":enabled(),"protocolVersion":1,"revision":revision,"unchanged":false,"generation":generation,"payload":payload,"operation":operation}),
+    )
 }
 
 async fn read_operation(
@@ -140,7 +199,7 @@ async fn read_operation(
     let Some(operation) = operation else {
         return Ok(Value::Null);
     };
-    let rows: Vec<StateRow> = tx.fetch_all("SELECT id,json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2", (user,)).await?;
+    let rows: Vec<StateRow> = tx.fetch_all("SELECT json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2", (user,)).await?;
     if rows.len() > 1 {
         return Err(coordination_error("plugin_write_conflict"));
     }
@@ -182,46 +241,13 @@ async fn has_instance(
     user: i64,
     instance: &str,
 ) -> MysqlResult<bool> {
-    let rows:Vec<StateRow>=tx.fetch_all("SELECT id,json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2",(user,)).await?;
+    let rows:Vec<StateRow>=tx.fetch_all("SELECT json FROM kinds WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1 LIMIT 2",(user,)).await?;
     if rows.len() > 1 {
         return Err(coordination_error("plugin_write_conflict"));
     }
     Ok(rows
         .first()
         .is_some_and(|row| row.json["spec"]["localIntentOrders"][instance].is_object()))
-}
-
-async fn next_generation(tx: &mut impl MysqlTransaction, user: i64) -> MysqlResult<u64> {
-    let rows: Vec<StateRow> = tx.fetch_all("SELECT id, json FROM kinds WHERE user_id = ? AND kind = 'PluginSyncState' AND namespace = 'plugin-sync' AND name = 'account' LIMIT 2", (user,)).await?;
-    if rows.len() > 1 {
-        return Err(coordination_error("plugin_write_conflict"));
-    }
-    if let Some(row) = rows.into_iter().next() {
-        let mut document = row.json;
-        let current_generation = match document.pointer("/spec/generation") {
-            None => 0,
-            Some(value) => value
-                .as_u64()
-                .ok_or_else(|| coordination_error("plugin_write_conflict"))?,
-        };
-        if !document.get("spec").is_some_and(Value::is_object) {
-            return Err(coordination_error("plugin_write_conflict"));
-        }
-        let generation = current_generation
-            .checked_add(1)
-            .filter(|g| *g < i64::MAX as u64)
-            .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
-        document["spec"]["generation"] = json!(generation);
-        tx.execute(
-            "UPDATE kinds SET json = ?, updated_at = NOW() WHERE id = ? AND user_id = ? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",
-            (document, row.id, user),
-        )
-        .await?;
-        Ok(generation)
-    } else {
-        tx.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (?, 'PluginSyncState','plugin-sync','account', ?, true,NOW(),NOW())", (user,json!({"spec":{"generation":1}}))).await?;
-        Ok(1)
-    }
 }
 
 #[cfg(test)]

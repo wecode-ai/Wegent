@@ -14,10 +14,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.plugin_write_coordination import (
-    acquire_plugin_write_lock,
-    configure_plugin_session,
+from app.services.plugin_sync_revision import (
+    materialize_sync_state,
+    remember_sync_revision,
 )
+from app.services.plugin_write_coordination import configure_plugin_session
 from shared.telemetry.decorators import trace_sync
 
 PLUGIN_SYNC_VERSION = 2
@@ -48,21 +49,24 @@ def load_versioned_plugin_payload(
     """Commit a snapshot's sequence before dispatch, using a fresh DB session.
 
     The loader must resolve committed desired state inside this transaction,
-    rather than reuse an earlier request's ORM objects or payload. Serializing
-    snapshot reads ensures a higher generation cannot describe an older state.
+    rather than reuse an earlier request's ORM objects or payload. Metadata CAS
+    retries ensure a higher generation cannot describe an older committed state.
     """
-    with session_factory() as db:
-        try:
-            state = lock_plugin_sync_state(db, user_id)
-            generation = _next_generation(state)
-            payload = dict(load_payload(db))
-            document = deepcopy(state.json)
-            document.setdefault("spec", {})["generation"] = generation
-            state.json = document
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+    from app.services.plugin_write_operations import run_plugin_transaction
+
+    def build(db: Session) -> tuple[dict[str, Any], int]:
+        state = lock_plugin_sync_state(db, user_id)
+        generation = _next_generation(state)
+        payload = dict(load_payload(db))
+        document = deepcopy(state.json)
+        document.setdefault("spec", {})["generation"] = generation
+        state.json = document
+        db.commit()
+        return payload, generation
+
+    payload, generation = run_plugin_transaction(
+        build, session_factory, retry_conflicts=True
+    )
     payload["plugin_sync"] = {
         "version": PLUGIN_SYNC_VERSION,
         "generation": generation,
@@ -83,31 +87,30 @@ def register_plugin_snapshot_intent(
     from app.services.plugin_device_identity import plugin_device_id
 
     metadata = payload["plugin_sync"]
-    with session_factory() as db:
-        try:
-            state = lock_plugin_sync_state(db, user_id)
-            canonical_device_id = plugin_device_id(db, user_id, device_id)
-            advance_plugin_snapshot_watermark(
-                state,
-                canonical_device_id,
-                generation=metadata["generation"],
-                complete=metadata["complete"],
-                installed_plugin_ids=[
-                    item["installed_plugin_id"]
-                    for field in ("plugins", "removed_plugins")
-                    for item in payload.get(field) or []
-                ],
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+    from app.services.plugin_write_operations import run_plugin_transaction
+
+    def register(db: Session) -> None:
+        state = lock_plugin_sync_state(db, user_id, merge=True)
+        canonical_device_id = plugin_device_id(db, user_id, device_id)
+        advance_plugin_snapshot_watermark(
+            state,
+            canonical_device_id,
+            generation=metadata["generation"],
+            complete=metadata["complete"],
+            installed_plugin_ids=[
+                item["installed_plugin_id"]
+                for field in ("plugins", "removed_plugins")
+                for item in payload.get(field) or []
+            ],
+        )
+        db.commit()
+
+    run_plugin_transaction(register, session_factory, retry_conflicts=True)
 
 
-def lock_plugin_sync_state(db: Session, user_id: int) -> Kind:
-    """Serialize protocol writes with the account lease and revision CAS."""
+def lock_plugin_sync_state(db: Session, user_id: int, *, merge: bool = False) -> Kind:
+    """Read the protocol CAS fence before any desired-state snapshot reads."""
     configure_plugin_session(db)
-    acquire_plugin_write_lock(db, user_id)
     pending = [
         row
         for row in set(db.new) | set(db.dirty)
@@ -121,7 +124,9 @@ def lock_plugin_sync_state(db: Session, user_id: int) -> Kind:
         # Batch recording re-enters with autoflush disabled. Preserve earlier
         # devices' changes before the locking read refreshes this identity.
         db.flush(pending)
-    return _sync_state(db, user_id)
+    row = _sync_state(db, user_id)
+    remember_sync_revision(db, row, merge=merge)
+    return row
 
 
 def plugin_snapshot_watermark(state: Kind, device_id: str, installed_id: int) -> int:
@@ -171,12 +176,10 @@ def _sync_state(db: Session, user_id: int) -> Kind:
         .one_or_none()
     )
     if state is None:
-        state = Kind(
-            user_id=user_id,
-            kind=PLUGIN_SYNC_STATE_KIND,
-            namespace=PLUGIN_SYNC_STATE_NAMESPACE,
-            name=PLUGIN_SYNC_STATE_NAME,
-            json={
+        materialize_sync_state(
+            db,
+            user_id,
+            {
                 "apiVersion": "agent.wecode.io/v1",
                 "kind": PLUGIN_SYNC_STATE_KIND,
                 "metadata": {
@@ -185,9 +188,8 @@ def _sync_state(db: Session, user_id: int) -> Kind:
                 },
                 "spec": {"generation": 0},
             },
-            is_active=True,
         )
-        db.add(state)
+        return _sync_state(db, user_id)
     return state
 
 

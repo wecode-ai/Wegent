@@ -258,7 +258,11 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         const created = findValue(value, item => item.accepted === true && item.conversation_id)
         assert.ok(created)
         assert.equal(created.deviceId, sourceDeviceId)
-        await waitForCompletedRuntimeTaskThread(localControl, created.taskId, uiTimeoutMs)
+        await waitForCompletedRuntimeTaskThread(
+          localControl,
+          created.taskId,
+          modelResponseTimeoutMs
+        )
         const task = findRuntimeWorkTask(
           JSON.parse(await localControl.command('getLocalRuntimeWork', 'body')),
           created.taskId

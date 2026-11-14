@@ -19,6 +19,7 @@ from app.services.device.plugin_sync_protocol import lock_plugin_sync_state
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_identity import local_write_name
 from shared.telemetry.decorators import trace_sync
 
 LOCAL_DELIVERY_MODE = "local_pull_v1"
@@ -54,6 +55,9 @@ def mutate_local_plugin(
 ) -> dict[str, Any] | None:
     """Commit account intent, idempotent result in one transaction."""
     with _rejection_context(db, user_id, instance_id, operation_id, intent_order):
+        acquire_plugin_write_lock(
+            db, user_id, name=f"@operation:{instance_id}:{operation_id}"
+        )
         if type(intent_order) is not int or not 0 < intent_order < 2**63:
             raise HTTPException(422, "INVALID_LOCAL_INTENT_ORDER")
         if source_device_id and not _IDENTIFIER.fullmatch(source_device_id):
@@ -77,7 +81,6 @@ def mutate_local_plugin(
             == "true"
         )
         if not enabled:
-            acquire_plugin_write_lock(db, user_id)
             previous = _replay_operation(
                 db, user_id, instance_id, operation_id, request_hash
             )
@@ -90,7 +93,6 @@ def mutate_local_plugin(
         if action in {"install", "ensure_builtin"}:
             # Resolve supersession from owned state before catalog repair can
             # change its identity or fail for a withdrawn catalog entry.
-            acquire_plugin_write_lock(db, user_id)
             if (
                 _replay_operation(db, user_id, instance_id, operation_id, request_hash)
                 is None
@@ -100,10 +102,26 @@ def mutate_local_plugin(
                 )
             # Legacy catalog repair owns its own commit; finish it before opening
             # the atomic intent/operation transaction.
-            plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
-                db, user_id=user_id
-            )
-        acquire_plugin_write_lock(db, user_id)
+            plugin_id = int(target_id) if action == "install" else None
+            if action == "ensure_builtin":
+                from app.services.plugin_installation_operations import (
+                    _builtin_catalog_plugin,
+                )
+
+                catalog = _builtin_catalog_plugin(db, str(target_id))
+                plugin_id = catalog.id if catalog is not None else None
+            if plugin_id is not None:
+                plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+                    db,
+                    user_id=user_id,
+                    plugin_id=plugin_id,
+                )
+        acquire_plugin_write_lock(
+            db, user_id, name=f"@operation:{instance_id}:{operation_id}"
+        )
+        acquire_plugin_write_lock(
+            db, user_id, name=local_write_name(db, user_id, action, target_id)
+        )
         existing = _replay_operation(
             db, user_id, instance_id, operation_id, request_hash
         )
@@ -176,7 +194,7 @@ def mutate_local_plugin(
         )
         _guard_intent_order(db, user_id, instance_id, int(installed_id), intent_order)
         result = installed.model_dump(mode="json") if installed else None
-        state = lock_plugin_sync_state(db, user_id)
+        state = lock_plugin_sync_state(db, user_id, merge=True)
         document = deepcopy(state.json)
         slots = document.setdefault("spec", {}).setdefault("localIntents", {})
         local = slots.setdefault(instance_id, {})
@@ -197,7 +215,7 @@ def mutate_local_plugin(
 def _lookup_operation(
     db: Session, user_id: int, instance_id: str, operation_id: str
 ) -> dict[str, Any] | None:
-    state = lock_plugin_sync_state(db, user_id)
+    state = lock_plugin_sync_state(db, user_id, merge=True)
     slots = state.json.get("spec", {}).get("localIntents", {}).get(instance_id, {})
     if not isinstance(slots, dict):
         raise HTTPException(409, "plugin_write_conflict")
@@ -288,7 +306,7 @@ def _guard_intent_order(
     This watermark outlives operation retention. A rejected post-flush
     install is rolled back by run_plugin_operation together with all its writes.
     """
-    state = lock_plugin_sync_state(db, user_id)
+    state = lock_plugin_sync_state(db, user_id, merge=True)
     document = deepcopy(state.json)
     orders = document.setdefault("spec", {}).setdefault("localIntentOrders", {})
     if not isinstance(orders, dict) or not isinstance(orders.get(instance, {}), dict):
@@ -323,7 +341,9 @@ def _rejection_context(
             # A timed-out predecessor may still be committing this same ID.
             # Serialize the proof with account writes, including failures from
             # catalog repair or validation before the normal lease acquisition.
-            acquire_plugin_write_lock(db, user_id)
+            acquire_plugin_write_lock(
+                db, user_id, name=f"@operation:{instance}:{operation}"
+            )
             with db.no_autoflush:
                 accepted = _lookup_operation(db, user_id, instance, operation)
             state = lock_plugin_sync_state(db, user_id)

@@ -3,6 +3,8 @@
 import asyncio
 import threading
 from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -22,7 +24,7 @@ async def test_operation_owns_transaction_and_releases_lease(
     sessions = []
     session_factory = operations.get_db_session
     original_configure = operations.configure_plugin_session
-    failure = PluginWriteError("plugin_write_conflict")
+    failure = PluginWriteError("plugin_write_lease_lost")
     events = []
 
     @contextmanager
@@ -43,7 +45,7 @@ async def test_operation_owns_transaction_and_releases_lease(
     def mutate(*, db, name):
         assert db is sessions[0] and db is not test_db
         events.append(("mutate", threading.get_ident()))
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, name=name)
         db.add(
             Kind(
                 user_id=user_id,
@@ -175,3 +177,108 @@ async def test_operation_failure_rolls_back_before_session_close(monkeypatch):
 
     assert caught.value is failure
     assert events == ["open", "configure", "mutate", "rollback", "close"]
+
+
+def test_backoff_cannot_start_a_new_transaction_after_the_shared_deadline(monkeypatch):
+    clock = [0.0]
+    opened = []
+    conflict = PluginWriteError("plugin_write_conflict")
+
+    @contextmanager
+    def session():
+        opened.append(True)
+        yield Mock()
+
+    def fail(_db):
+        clock[0] = 19.999
+        raise conflict
+
+    monkeypatch.setattr(operations, "configure_plugin_session", Mock())
+    monkeypatch.setattr(operations.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        operations.time, "sleep", lambda _delay: clock.__setitem__(0, 20.001)
+    )
+    with pytest.raises(PluginWriteError) as caught:
+        operations.run_plugin_transaction(fail, session)
+    assert caught.value is conflict
+    assert len(opened) == 1
+
+
+@pytest.mark.parametrize(
+    ("code", "retry_busy"),
+    [
+        ("plugin_write_busy", False),
+        ("plugin_write_lease_lost", True),
+        ("plugin_write_unavailable", True),
+    ],
+)
+def test_snapshot_contention_policy_does_not_retry_other_failures(
+    monkeypatch, code, retry_busy
+):
+    sessions = []
+    failure = PluginWriteError(code)
+
+    @contextmanager
+    def session():
+        db = Mock()
+        sessions.append(db)
+        yield db
+
+    def fail(_db):
+        raise failure
+
+    def unexpected_backoff(_delay):
+        pytest.fail("A nonretryable error was retried")
+
+    monkeypatch.setattr(operations, "configure_plugin_session", Mock())
+    monkeypatch.setattr(
+        operations,
+        "time",
+        SimpleNamespace(monotonic=lambda: 0, sleep=unexpected_backoff),
+    )
+    with pytest.raises(PluginWriteError) as caught:
+        operations.run_plugin_transaction(fail, session, retry_busy=retry_busy)
+    assert caught.value is failure
+    assert len(sessions) == 1
+    sessions[0].rollback.assert_called_once()
+
+
+@pytest.mark.parametrize("code", ["plugin_write_busy", "plugin_write_conflict"])
+def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
+    monkeypatch,
+    code,
+):
+    clock = [0.0]
+    sessions = []
+    failure = PluginWriteError(code)
+
+    @contextmanager
+    def session():
+        assert clock[0] < 20, "Contention opened a transaction after its deadline"
+        db = Mock(closed=False)
+        sessions.append(db)
+        try:
+            yield db
+        finally:
+            db.closed = True
+
+    def backoff(delay):
+        assert all(db.closed for db in sessions)
+        assert 0 < delay <= 20 - clock[0]
+        clock[0] += delay
+
+    def fail(_db):
+        raise failure
+
+    monkeypatch.setattr(operations, "configure_plugin_session", Mock())
+    monkeypatch.setattr(
+        operations, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=backoff)
+    )
+    with pytest.raises(PluginWriteError) as caught:
+        operations.run_plugin_transaction(
+            fail, session, retry_busy=True, retry_conflicts=True
+        )
+    assert caught.value is failure
+    assert clock[0] == 20
+    assert len(sessions) > 2
+    assert all(db.closed and db.rollback.call_count == 1 for db in sessions)

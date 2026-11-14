@@ -14,7 +14,7 @@
 //! dispatch first advances the per-device watermark so older acknowledgements
 //! cannot materialize newer state.
 
-use brz_mysql::{MysqlIsolationLevel, MysqlResult, MysqlTransactionOptions};
+use brz_mysql::{Mysql, MysqlIsolationLevel, MysqlResult, MysqlTransactionOptions};
 use serde_json::{Map, Value};
 
 use crate::device_identity::plugin_device_id_on;
@@ -35,7 +35,52 @@ const PLUGIN_SYNC_STATE_NAMESPACE: &str = "plugin-sync";
 /// `PLUGIN_SYNC_STATE_NAME`.
 const PLUGIN_SYNC_STATE_NAME: &str = "account";
 
-/// `_sync_state`'s locking read over one active account state row.
+pub(super) async fn with_sync_write_budget<T, E>(
+    write: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E>
+where
+    E: From<brz_mysql::MysqlError>,
+{
+    tokio::time::timeout(std::time::Duration::from_secs(20), write)
+        .await
+        .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy").into()))
+}
+
+/// Replay only optimistic database work, within one shared time budget.
+pub(super) async fn retry_sync_write<F, Fut, T>(mut write: F) -> MysqlResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = MysqlResult<T>>,
+{
+    with_sync_write_budget(async {
+        let mut backoff = 10;
+        loop {
+            let outcome = write().await;
+            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
+                continue;
+            }
+            return outcome;
+        }
+    })
+    .await
+}
+
+/// Back off after rollback, without holding a connection or a plugin lease.
+async fn wait_on_metadata_conflict(
+    error: Option<&brz_mysql::MysqlError>,
+    backoff_ms: &mut u64,
+) -> bool {
+    if !error.is_some_and(|error| {
+        super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict")
+    }) {
+        return false;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
+    *backoff_ms = (*backoff_ms + 10).min(250);
+    true
+}
+
+/// `_sync_state`'s optimistic read over one active account state row.
 fn sync_state_statement() -> String {
     format!(
         "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
@@ -50,8 +95,7 @@ const INSERT_SYNC_STATE_QUERY: &str = "INSERT INTO kinds (user_id, kind, name, n
      true, now(), now())";
 
 /// `UPDATE kinds SET json=..., updated_at=now() WHERE kinds.id = ...`.
-const UPDATE_SYNC_STATE_QUERY: &str =
-    "UPDATE kinds SET json=?, updated_at=now() WHERE kinds.id = ?";
+const UPDATE_SYNC_STATE_QUERY: &str = "UPDATE kinds SET json=?, updated_at=now() WHERE kinds.id=? AND user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)=?";
 
 /// `supports_plugin_sync_v2`: only an explicit integer `protocolVersion = 2`
 /// advertisement selects the versioned payload.
@@ -73,6 +117,44 @@ pub(crate) struct PluginSyncState {
     pub id: Option<i64>,
     /// The stored Kind document.
     pub json: Value,
+}
+
+pub(crate) async fn ensure_sync_state<M: Mysql, R: brz_redis::Redis>(
+    mysql: &M,
+    redis: Option<&R>,
+    user_id: i64,
+) -> MysqlResult<()> {
+    let exists = mysql
+        .with_transaction(async |tx| {
+            let mut query = &mut *tx;
+            Ok(lock_plugin_sync_state(&mut query, user_id)
+                .await?
+                .id
+                .is_some())
+        })
+        .await?;
+    if exists {
+        return Ok(());
+    }
+    let lease = PluginWriteLease::acquire_names(redis, user_id, vec!["@sync-init".into()]).await?;
+    let result = mysql
+        .with_transaction(async |tx| {
+            let mut query = &mut *tx;
+            let state = lock_plugin_sync_state(&mut query, user_id).await?;
+            if state.id.is_none() {
+                lease.verify_owned().await?;
+                write_sync_state(&mut query, user_id, &state, &state.json).await?;
+            }
+            Ok(())
+        })
+        .await;
+    if matches!(
+        &result,
+        Ok(_) | Err(brz_mysql::MysqlError::InvalidQuery { .. })
+    ) {
+        lease.release().await;
+    }
+    result
 }
 
 impl PluginSyncState {
@@ -106,10 +188,9 @@ impl PluginSyncState {
 
 /// `lock_plugin_sync_state`'s state read.
 ///
-/// The source serializes protocol writes with the account write lease before
-/// this read; callers own the lease and hold it for the whole transaction. A
-/// duplicated row is SQLAlchemy's `MultipleResultsFound` and aborts the
-/// caller's transaction.
+/// Callers compare the metadata revision when publishing their snapshot or
+/// watermark. No account-wide plugin lease is held while loading desired state.
+/// Duplicate state rows abort the caller's transaction.
 pub(crate) async fn lock_plugin_sync_state<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
@@ -263,20 +344,41 @@ pub(crate) async fn write_sync_state_document<Q: PluginQuery>(
     document: &str,
     changed: bool,
 ) -> MysqlResult<()> {
+    let mut payload: Value =
+        serde_json::from_str(document).map_err(|_| coordination_error("plugin_write_conflict"))?;
+    let revision = super::write_coordination::business_revision(&payload)?;
+    payload["spec"]["revision"] = Value::from(revision + 1);
+    let serialized = python_json_value(&payload);
     match state_id {
         Some(id) => {
             if !changed {
                 return Ok(());
             }
-            query
-                .execute(UPDATE_SYNC_STATE_QUERY, (document, id))
+            let updated = query
+                .execute(UPDATE_SYNC_STATE_QUERY, (serialized, id, user_id, revision))
                 .await?;
+            if updated.rows_affected != 1 {
+                return Err(coordination_error("plugin_write_conflict"));
+            }
         }
         None => {
             query
-                .execute(INSERT_SYNC_STATE_QUERY, (user_id, document))
+                .execute(INSERT_SYNC_STATE_QUERY, (user_id, serialized))
                 .await?;
         }
+    }
+    Ok(())
+}
+
+pub(crate) async fn touch_desired_state<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+) -> MysqlResult<()> {
+    let updated = query.execute(
+        "UPDATE kinds SET json=JSON_SET(json,'$.spec.revision',COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.revision')) AS SIGNED),0)+1),updated_at=NOW() WHERE user_id=? AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account' AND is_active=1", (user_id,),
+    ).await?;
+    if updated.rows_affected != 1 {
+        return Err(coordination_error("plugin_write_conflict"));
     }
     Ok(())
 }
@@ -329,60 +431,53 @@ pub(crate) async fn load_versioned_registration_payload(
     include_plugins: bool,
     complete: bool,
 ) -> Result<Value, BuildError> {
-    let lease = PluginWriteLease::acquire(state.redis.as_ref(), user_id)
-        .await
-        .map_err(BuildError::Mysql)?;
-    let mut build_error: Option<BuildError> = None;
-    let mut generation = 0_i64;
-    let outcome = state
-        .mysql
-        .with_transaction_options(
-            MysqlTransactionOptions::default()
-                .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
-            async |transaction| {
-                let mut session = &mut *transaction;
-                // `lock_plugin_sync_state` reads the account policy for its
-                // revision CAS before the state row.
-                let revision = lease.read_policy_revision(&mut *session).await?;
-                lease.verify_owned().await?;
-                let snapshot = match build_versioned_snapshot(
-                    &mut session,
-                    user_id,
-                    device_id,
-                    include_plugins,
-                    Some(&lease),
+    with_sync_write_budget(async {
+        ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id)
+            .await
+            .map_err(BuildError::Mysql)?;
+        let mut backoff = 10;
+        loop {
+            let mut build_error = None;
+            let mut generation = 0;
+            let outcome = state
+                .mysql
+                .with_transaction_options(
+                    MysqlTransactionOptions::default()
+                        .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                    async |tx| {
+                        let mut query = &mut *tx;
+                        let snapshot = build_versioned_snapshot(
+                            &mut query,
+                            user_id,
+                            device_id,
+                            include_plugins,
+                            None,
+                        )
+                        .await
+                        .map_err(|error| match error {
+                            BuildError::Mysql(error) => error,
+                            error => {
+                                build_error = Some(error);
+                                coordination_error("plugin_snapshot_build_failed")
+                            }
+                        })?;
+                        generation = snapshot.generation;
+                        Ok(snapshot.payload)
+                    },
                 )
-                .await
-                {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => {
-                        build_error = Some(error);
-                        return Err(coordination_error("plugin_snapshot_build_failed"));
-                    }
-                };
-                generation = snapshot.generation;
-                match revision {
-                    Some(revision) => lease.commit_revision(&mut *session, revision).await,
-                    None => Ok(()),
-                }?;
-                Ok(snapshot.payload)
-            },
-        )
-        .await;
-    lease.release().await;
-    match (outcome, build_error) {
-        (_, Some(error)) => Err(error),
-        (Ok(mut payload), None) => {
-            if let Value::Object(object) = &mut payload {
-                object.insert(
-                    "plugin_sync".to_string(),
-                    plugin_sync_metadata(generation, complete),
-                );
+                .await;
+            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
+                continue;
             }
-            Ok(payload)
+            if let Some(error) = build_error {
+                return Err(error);
+            }
+            let mut payload = outcome.map_err(BuildError::Mysql)?;
+            payload["plugin_sync"] = plugin_sync_metadata(generation, complete);
+            return Ok(payload);
         }
-        (Err(error), None) => Err(BuildError::Mysql(error)),
-    }
+    })
+    .await
 }
 
 /// `document.setdefault("spec", {})["generation"] = generation`.
@@ -415,46 +510,45 @@ pub(crate) async fn register_plugin_snapshot_intent(
     device_id: &str,
     payload: &Value,
 ) -> MysqlResult<()> {
-    let Some(metadata) = payload.get("plugin_sync") else {
-        return Ok(());
-    };
-    let generation = generation_value(metadata.get("generation"));
-    let complete = metadata.get("complete") == Some(&Value::Bool(true));
-    let installed_plugin_ids = payload_plugin_ids(payload);
-    let lease = PluginWriteLease::acquire(state.redis.as_ref(), user_id).await?;
-    let outcome = state
-        .mysql
-        .with_transaction_options(
-            MysqlTransactionOptions::default()
-                .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
-            async |transaction| {
-                let mut session = &mut *transaction;
-                let revision = lease.read_policy_revision(&mut *session).await?;
-                lease.verify_owned().await?;
-                let snapshot_state = lock_plugin_sync_state(&mut session, user_id).await?;
-                let canonical_device_id =
-                    plugin_device_id_on(&mut session, user_id, device_id).await?;
-                let mut document = snapshot_state.json.clone();
-                advance_plugin_snapshot_watermark(
-                    &mut document,
-                    &canonical_device_id,
-                    generation,
-                    complete,
-                    &installed_plugin_ids,
-                );
-                // The source's `before_flush` lease check runs before the
-                // state row's UPDATE.
-                lease.verify_owned().await?;
-                write_sync_state(&mut session, user_id, &snapshot_state, &document).await?;
-                match revision {
-                    Some(revision) => lease.commit_revision(&mut *session, revision).await,
-                    None => Ok(()),
-                }
-            },
-        )
-        .await;
-    lease.release().await;
-    outcome
+    with_sync_write_budget(async {
+        let Some(metadata) = payload.get("plugin_sync") else {
+            return Ok(());
+        };
+        let generation = generation_value(metadata.get("generation"));
+        let complete = metadata.get("complete") == Some(&Value::Bool(true));
+        let installed_plugin_ids = payload_plugin_ids(payload);
+        ensure_sync_state(&state.mysql, state.redis.as_ref(), user_id).await?;
+        let mut backoff = 10;
+        loop {
+            let outcome = state
+                .mysql
+                .with_transaction_options(
+                    MysqlTransactionOptions::default()
+                        .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                    async |tx| {
+                        let mut query = &mut *tx;
+                        let snapshot_state = lock_plugin_sync_state(&mut query, user_id).await?;
+                        let canonical_device_id =
+                            plugin_device_id_on(&mut query, user_id, device_id).await?;
+                        let mut document = snapshot_state.json.clone();
+                        advance_plugin_snapshot_watermark(
+                            &mut document,
+                            &canonical_device_id,
+                            generation,
+                            complete,
+                            &installed_plugin_ids,
+                        );
+                        write_sync_state(&mut query, user_id, &snapshot_state, &document).await
+                    },
+                )
+                .await;
+            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
+                continue;
+            }
+            return outcome;
+        }
+    })
+    .await
 }
 
 /// The `installed_plugin_id` values of both payload plugin fields.
@@ -583,6 +677,67 @@ fn is_integer(value: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn snapshot_and_intent_work_share_the_same_bounded_budget() {
+        let start = tokio::time::Instant::now();
+        let result =
+            super::with_sync_write_budget(std::future::pending::<brz_mysql::MysqlResult<()>>())
+                .await;
+        assert_eq!(
+            super::super::write_coordination::plugin_write_error_code(&result.unwrap_err()),
+            Some("plugin_write_busy")
+        );
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(20));
+        let result =
+            super::with_sync_write_budget(std::future::pending::<Result<(), super::BuildError>>())
+                .await;
+        let super::BuildError::Mysql(error) = result.unwrap_err() else {
+            panic!("snapshot timeout must retain the coordination error");
+        };
+        assert_eq!(
+            super::super::write_coordination::plugin_write_error_code(&error),
+            Some("plugin_write_busy")
+        );
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(40));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn local_snapshot_survives_more_than_eight_concurrent_metadata_writers() {
+        let mut attempts = 0;
+        let result = super::retry_sync_write(|| {
+            attempts += 1;
+            std::future::ready(if attempts <= 9 {
+                Err(super::coordination_error("plugin_write_conflict"))
+            } else {
+                Ok(17)
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 10);
+        assert_eq!(result, 17);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn continuous_metadata_conflicts_stop_at_the_original_budget() {
+        let start = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let error = super::retry_sync_write(|| {
+            attempts += 1;
+            std::future::ready(Err::<(), _>(super::coordination_error(
+                "plugin_write_conflict",
+            )))
+        })
+        .await
+        .unwrap_err();
+        assert!(attempts > 8);
+        assert_eq!(start.elapsed(), std::time::Duration::from_secs(20));
+        assert_eq!(
+            super::super::write_coordination::plugin_write_error_code(&error),
+            Some("plugin_write_busy")
+        );
+    }
+
     use std::sync::{Arc, Mutex};
 
     use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlExecution, MysqlResult, MysqlTransaction};

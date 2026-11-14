@@ -1,12 +1,88 @@
 //! Scan outside foreground leases, then merge only still-current evidence.
 use super::*;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock, Weak};
+
+type ReconciliationGates = Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>;
+static RECONCILIATIONS: OnceLock<ReconciliationGates> = OnceLock::new();
+
+pub(super) fn full_reconciliation_gate(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let mut gates = RECONCILIATIONS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = gates.get(path).and_then(Weak::upgrade) {
+        return gate;
+    }
+    let gate = Arc::new(tokio::sync::Mutex::new(()));
+    gates.insert(path.to_owned(), Arc::downgrade(&gate));
+    gate
+}
 
 pub(super) struct LocalSyncLease {
     _file: std::fs::File,
     _serial: tokio::sync::OwnedMutexGuard<()>,
 }
 
+pub(super) struct ForegroundOperation {
+    active: Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>>,
+    path: PathBuf,
+}
+
+impl ForegroundOperation {
+    pub(super) fn begin(
+        active: Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>>,
+        path: &Path,
+    ) -> Self {
+        *active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .entry(path.to_owned())
+            .or_default() += 1;
+        Self {
+            active,
+            path: path.to_owned(),
+        }
+    }
+}
+
+impl Drop for ForegroundOperation {
+    fn drop(&mut self) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(count) = active.get_mut(&self.path) {
+            *count -= 1;
+            if *count == 0 {
+                active.remove(&self.path);
+            }
+        }
+    }
+}
+
 impl LocalBackendConnectionController {
+    pub(super) fn has_foreground_plugin_operation(&self, path: &Path) -> bool {
+        self.local_sync_foreground
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(path)
+            .is_some_and(|count| *count > 0)
+    }
+
+    pub(super) async fn resume_local_sync_journal(
+        &self,
+        connection: &ConnectionConfig,
+        path: &Path,
+        lease: &mut Option<LocalSyncLease>,
+    ) -> Result<Value, AppIpcError> {
+        drop(lease.take());
+        *lease = Some(self.acquire_local_sync_lease(connection, path).await?);
+        load_journal(path)
+    }
+
     pub(super) async fn acquire_local_sync_lease(
         &self,
         connection: &ConnectionConfig,
@@ -42,26 +118,24 @@ impl LocalBackendConnectionController {
         let foreground_order = journal["nextIntentOrder"].clone();
         let revision = session.handler.local_plugin_revision();
         let handler = session.handler.clone();
-        let scanning = recovery::lock_file(&session.path.with_extension("scan.lock"))?;
+        let scan_lock = session.path.with_extension("scan.lock");
         drop(lease.take());
         let scanned = tokio::task::spawn_blocking(move || {
             // Cancellation cannot release the scan slot while its worker lives.
-            let _scanning = scanning;
-            (
+            let _scanning = recovery::lock_file(&scan_lock)?;
+            Ok::<_, AppIpcError>((
                 handler.local_plugin_digest(),
                 handler.local_plugin_revision(),
-            )
+            ))
         })
         .await;
-        *lease = Some(
-            self.acquire_local_sync_lease(session.connection, session.path)
-                .await?,
-        );
-        let current = load_journal(session.path)?;
+        let current = self
+            .resume_local_sync_journal(session.connection, session.path, lease)
+            .await?;
         if current["nextIntentOrder"] != foreground_order {
             return Err(error("plugin_local_sync_busy"));
         }
-        let (digest, after) = scanned.map_err(|_| error("plugin_local_scan_failed"))?;
+        let (digest, after) = scanned.map_err(|_| error("plugin_local_scan_failed"))??;
         if revision != after || after != session.handler.local_plugin_revision() {
             return Err(error("plugin_local_sync_busy"));
         }

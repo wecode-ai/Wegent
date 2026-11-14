@@ -20,10 +20,12 @@ mod local_http;
 mod local_lifecycle;
 mod migrations;
 mod native_credential;
+mod notifications;
 mod oauth_refresh;
 mod revocations;
 pub(crate) mod route;
 mod transfers;
+mod write_targets;
 
 use serde_json::{Value, json};
 
@@ -344,10 +346,12 @@ pub(crate) async fn exchange(
         // checks and the payload validation, exactly like `reconcile` obtains
         // it; the outer holder lets it outlive COMMIT/ROLLBACK.
         let mut lease_slot: Option<automation::Lease<'_>> = None;
+        let mut changed_targets = Vec::new();
         let outcome = state
             .mysql
             .with_transaction_options(options, async |transaction| {
-                recheck_identity(transaction, user_id, &runtime_id, &instance_id).await?;
+                let device_type =
+                    recheck_identity(transaction, user_id, &runtime_id, &instance_id).await?;
                 let request = if operation != AUTOMATIC {
                     if !request_valid(operation, data) {
                         return Err(exchange_error(INVALID_REQUEST));
@@ -359,20 +363,57 @@ pub(crate) async fn exchange(
                             .ok_or_else(|| exchange_error(INVALID_REQUEST))?,
                     )
                 };
-                let lease = automation::acquire_lease(state, user_id)
-                    .await
-                    .map_err(exchange_error)?;
-                let lease = lease_slot.insert(lease);
-                if let Some(request) = request {
+                if request.as_ref().is_some_and(|request| request.prepare_only)
+                    && matches!(
+                        device_type,
+                        crate::socketio::device::DeviceType::Local
+                            | crate::socketio::device::DeviceType::App
+                    )
+                {
                     return automation::reconcile_on(
+                        transaction, None, user_id, &runtime_id,
+                        request.as_ref().expect("validated automatic request"),
+                    )
+                    .await
+                    .map_err(exchange_error);
+                }
+                // Cloud grants lease only installations missing a device grant.
+                // Native reconciliation uses the request's installation IDs.
+                let targets = if operation == AUTOMATIC
+                    && data["installed_plugin_ids"].as_array().is_some_and(Vec::is_empty)
+                    && matches!(
+                        device_type,
+                        crate::socketio::device::DeviceType::Cloud
+                            | crate::socketio::device::DeviceType::Remote
+                    )
+                {
+                    automation::grant_targets(transaction, user_id, &runtime_id)
+                        .await.map_err(exchange_error)?
+                } else {
+                    write_targets::resolve(transaction, user_id, data).await?
+                };
+                let lease = crate::plugins_installed::write_coordination::PluginWriteLease::acquire_installed_on(
+                    transaction, state.redis.as_ref(), user_id, &targets,
+                )
+                .await?;
+                let lease = lease_slot.insert(lease);
+                changed_targets = lease.installation_ids().unwrap_or_default().to_vec();
+                lease.ensure_policy_on(transaction).await?;
+                let policy = lease.read_revision(transaction).await?;
+                let revisions = lease.read_plugin_revisions(transaction).await?;
+                if let Some(request) = request {
+                    let result = automation::reconcile_on(
                         transaction,
-                        lease,
+                        Some(lease),
                         user_id,
                         &runtime_id,
                         &request,
                     )
                     .await
-                    .map_err(exchange_error);
+                    .map_err(exchange_error)?;
+                    lease.commit_plugin_revisions(transaction, revisions).await?;
+                    lease.validate_policy_revision(transaction, policy).await?;
+                    return Ok(result);
                 }
                 let result = if operation == PREPARE {
                     migrations::prepare_on(
@@ -443,7 +484,10 @@ pub(crate) async fn exchange(
                     )
                     .await
                 };
-                result.map_err(auth_exchange_error)
+                let result = result.map_err(auth_exchange_error)?;
+                lease.commit_plugin_revisions(transaction, revisions).await?;
+                lease.validate_policy_revision(transaction, policy).await?;
+                Ok(result)
             })
             .await;
         // Release only after the transaction truly ended. `with_transaction_options`
@@ -459,6 +503,9 @@ pub(crate) async fn exchange(
             && releasable
         {
             lease.release().await;
+        }
+        if outcome.is_ok() && notifications::changes_credentials(operation) {
+            notifications::publish(state, user_id, &changed_targets).await;
         }
         return Ok(exchange_reply(outcome));
     }
@@ -496,7 +543,7 @@ async fn recheck_identity<T: brz_mysql::MysqlTransaction>(
     user_id: i64,
     runtime_id: &str,
     instance_id: &str,
-) -> Result<(), brz_mysql::MysqlError> {
+) -> Result<crate::socketio::device::DeviceType, brz_mysql::MysqlError> {
     let current = route::identity_on(transaction, user_id, runtime_id)
         .await
         .map_err(|_| exchange_error(EXCHANGE_FAILED))?;
@@ -508,7 +555,7 @@ async fn recheck_identity<T: brz_mysql::MysqlTransaction>(
     {
         return Err(exchange_error(STALE_DEVICE_SOCKET));
     }
-    Ok(())
+    Ok(current.device_type)
 }
 
 fn exchange_error(code: &'static str) -> brz_mysql::MysqlError {

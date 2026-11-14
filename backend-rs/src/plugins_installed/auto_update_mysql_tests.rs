@@ -140,8 +140,7 @@ async fn verify_rollback(
     redis: &RedisService,
     resolvers: &EntityResolvers<brz_redis::RedisService>,
 ) -> MysqlResult<()> {
-    let lease = PluginWriteLease::acquire(Some(redis), 7).await?;
-    lease.ensure_policy(mysql).await?;
+    let lease = PluginWriteLease::acquire_installed(mysql, Some(redis), 7, Some(&[1])).await?;
     let installed = mysql
         .with_transaction(async |tx| list_installed_kinds(tx, 7).await)
         .await?;
@@ -149,12 +148,12 @@ async fn verify_rollback(
         .await?
         .expect("fixture installation is eligible");
     let failure: MysqlResult<()> = mysql.with_transaction(async |tx| {
-            let revision = lease.read_revision(tx).await?;
+            let revision = lease.read_plugin_revisions(tx).await?;
             let installed = list_installed_kinds(tx, 7).await?;
             assert_eq!(apply_auto_update_batch(tx, &catalog, &installed, 7).await?.updated_count, 1);
             let id: i64 = tx.fetch_one("SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.releaseId')) AS SIGNED) FROM kinds WHERE id=1", ()).await?;
             assert_eq!(id, 2);
-            lease.commit_revision(tx, revision).await?;
+            lease.commit_plugin_revisions(tx, revision).await?;
             Err(MysqlError::InvalidQuery { reason: "forced rollback after actual batch UPDATE".into() })
         }).await;
     lease.release().await;
@@ -171,13 +170,13 @@ async fn verify_rollback(
     assert_eq!(id, 1, "failed batch must roll back UPDATE");
     let revision: i64 = mysql
         .fetch_one(
-            "SELECT CAST(JSON_EXTRACT(json, '$.spec.revision') AS SIGNED) FROM kinds \
-             WHERE user_id=7 AND kind='ConnectorAuthPolicy' AND namespace='plugin-auth' \
-             AND name='account'",
+            "SELECT COALESCE(CAST(JSON_EXTRACT(json, '$.spec.writeRevision') AS SIGNED),0) FROM kinds \
+             WHERE user_id=7 AND kind='InstalledPlugin' AND namespace='default' \
+             AND name='example'",
             (),
         )
         .await?;
-    assert_eq!(revision, 0, "failed batch must roll back the policy CAS");
+    assert_eq!(revision, 0, "failed batch must roll back the plugin CAS");
 
     Ok(())
 }
@@ -206,7 +205,9 @@ async fn verify_stale_batch(mysql: &MysqlService, redis: &RedisService) -> Mysql
     snapshot_rx.await.unwrap();
     let current = auto_update_batch(mysql, Some(redis), &registry(), 7).await;
     resume_tx.send(()).unwrap();
-    let stale_error = stale.await.unwrap().unwrap_err();
+    let stale = stale.await.unwrap();
+    assert!(stale.is_err(), "current={current:?}; stale={stale:?}");
+    let stale_error = stale.unwrap_err();
     assert_eq!(current?.updated_count, 1);
     assert_eq!(
         http_error(stale_error).detail_message(),

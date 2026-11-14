@@ -16,7 +16,6 @@ use crate::device_identity::DeviceKindRow;
 use crate::plugins_installed::write_coordination::PluginWriteLease;
 use crate::plugins_marketplace::db::KIND_COLUMNS;
 use crate::socketio::device::DeviceType;
-use crate::state::AppState;
 
 use super::EXCHANGE_FAILED;
 use super::connections::{self, AuthFailure};
@@ -60,18 +59,9 @@ struct PolicyRow {
 /// The lease type the exchange holds across its transaction.
 pub(crate) type Lease<'a> = PluginWriteLease<'a, brz_redis::RedisService>;
 
-pub(crate) async fn acquire_lease<'a>(
-    state: &'a AppState,
-    user_id: i64,
-) -> Result<PluginWriteLease<'a, brz_redis::RedisService>, &'static str> {
-    PluginWriteLease::acquire(state.redis.as_ref(), user_id)
-        .await
-        .map_err(|error| lease_code(&error))
-}
-
 pub(super) async fn reconcile_on(
     transaction: &mut brz_mysql::MysqlTransactionService,
-    lease: &PluginWriteLease<'_, brz_redis::RedisService>,
+    lease: Option<&PluginWriteLease<'_, brz_redis::RedisService>>,
     user_id: i64,
     device_id: &str,
     request: &AutomationRequest,
@@ -81,18 +71,14 @@ pub(super) async fn reconcile_on(
     } else {
         "migrations"
     };
-    // `_acquire_plugin_write_lock` reads the shared parent revision
-    // (`read_policy_revision`); `enabled()` issues its own policy read below.
-    let (_, revision) = lease
-        .read_policy_snapshot(transaction)
-        .await
-        .map_err(|error| lease_code(&error))?;
-    // `plugin_write_coordination.py:183-198`: after `read_policy_revision` the
-    // new-lease branch runs `lease.check()` before any business read.
-    lease
-        .verify_owned()
-        .await
-        .map_err(|error| lease_code(&error))?;
+    // The caller captured installation fences and the real account policy.
+    // Check ownership again before business reads or dependent writes.
+    if let Some(lease) = lease {
+        lease
+            .verify_owned()
+            .await
+            .map_err(|error| lease_code(&error))?;
+    }
     // The acquire-time `check()` above belongs to this same `_coordinate_owner`
     // call (`plugin_account_connections.py:274-278`: `acquire_plugin_write_lock`
     // then the owner read), so only the owner row is read here.
@@ -113,21 +99,24 @@ pub(super) async fn reconcile_on(
     // `grant_current_device` is a sub-procedure with its own return boundary:
     // a disabled policy or an unresolvable identity ends only the grant, while
     // `reconcile` keeps its original identity for the Local/App decision.
-    let granted = grant_current_device(transaction, lease, user_id, device_id).await?;
+    if let Some(lease) = lease {
+        grant_current_device(transaction, lease, user_id, device_id).await?;
+    } else if !request.prepare_only
+        || !matches!(identity.device_type, DeviceType::Local | DeviceType::App)
+    {
+        return Err(EXCHANGE_FAILED);
+    }
     // `grant_current_device` mutates only CLOUD/REMOTE devices; a local or app
     // runtime grants nothing, and every other type stops with an empty result.
     if !matches!(identity.device_type, DeviceType::Local | DeviceType::App) {
-        if let Some(expected) = revision.filter(|_| granted) {
-            lease
-                .commit_revision(transaction, expected)
-                .await
-                .map_err(|error| lease_code(&error))?;
-        }
         return Ok(json!({"success": true, (result_key): []}));
     }
     let plugins = installed_plugins(transaction, user_id, &request.installed_ids).await?;
     let mut migrations = Vec::new();
-    'plugins: for plugin in plugins {
+    'plugins: for plugin in plugins
+        .into_iter()
+        .filter(|plugin| lease.is_none_or(|lease| lease.owns_installation(plugin.id)))
+    {
         let spec = plugin.json.get("spec").cloned().unwrap_or_default();
         if spec.get("enabled") == Some(&Value::Bool(false)) {
             continue;
@@ -171,13 +160,7 @@ pub(super) async fn reconcile_on(
             }
         }
     }
-    // The transaction's shared parent advances once, under the lease.
-    if let Some(expected) = revision {
-        lease
-            .commit_revision(transaction, expected)
-            .await
-            .map_err(|error| lease_code(&error))?;
-    }
+    // The caller advances each installation fence before committing.
     Ok(json!({"success": true, (result_key): migrations}))
 }
 
@@ -223,7 +206,7 @@ fn account_auth_connectors(spec: &Value) -> Vec<Value> {
 /// Prepare the package without creating an intent, or create one for a ready connector.
 async fn connector_work<T: MysqlTransaction>(
     transaction: &mut T,
-    lease: &PluginWriteLease<'_, brz_redis::RedisService>,
+    lease: Option<&PluginWriteLease<'_, brz_redis::RedisService>>,
     user_id: i64,
     device_id: &str,
     plugin: &DeviceKindRow,
@@ -279,8 +262,15 @@ async fn connector_work<T: MysqlTransaction>(
         expected_account_id: None,
         operation: MigrationOperation::Export,
     };
-    let intent =
-        migrations::create(transaction, lease, user_id, &request, true, fresh_login).await?;
+    let intent = migrations::create(
+        transaction,
+        lease.ok_or(AuthFailure::Internal)?,
+        user_id,
+        &request,
+        true,
+        fresh_login,
+    )
+    .await?;
     Ok(Some(json!({
         "id": intent.id,
         "installed_plugin_id": plugin.id,
@@ -329,25 +319,14 @@ async fn grant_current_device<T: MysqlTransaction>(
     }
     let binding = route::device_binding_on(transaction, user_id, device_id).await?;
     let logical = binding.logical_device_id.as_str();
-    let rows: Vec<DeviceKindRow> = transaction
-        .fetch_all(
-            format!(
-                "SELECT {KIND_COLUMNS} FROM kinds WHERE kind='ConnectorConnection' \
-                 AND namespace='plugin-auth' AND user_id=? AND is_active IS true ORDER BY id"
-            ),
-            (user_id,),
-        )
-        .await
-        .map_err(|_| EXCHANGE_FAILED)?;
+    let rows = grant_connections(transaction, user_id).await?;
     let mut granted = false;
     for mut row in rows {
         let spec = &mut row.json["spec"];
-        if spec["status"] != "connected"
-            || !crate::json_compat::python_truthy(&spec["credential"])
-            || spec["deviceGrants"].get(logical).is_some()
-            || spec["deviceRevocations"]
-                .as_array()
-                .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(logical)))
+        if !spec["installedPluginId"]
+            .as_i64()
+            .is_some_and(|id| lease.owns_installation(id))
+            || !needs_device_grant(spec, logical)
         {
             continue;
         }
@@ -365,11 +344,52 @@ async fn grant_current_device<T: MysqlTransaction>(
     Ok(granted)
 }
 
+pub(super) async fn grant_targets<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+    device_id: &str,
+) -> Result<Vec<i64>, &'static str> {
+    let binding = route::device_binding_on(transaction, user_id, device_id).await?;
+    Ok(grant_connections(transaction, user_id)
+        .await?
+        .into_iter()
+        .filter(|row| needs_device_grant(&row.json["spec"], &binding.logical_device_id))
+        .filter_map(|row| row.json["spec"]["installedPluginId"].as_i64())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
+fn needs_device_grant(spec: &Value, logical: &str) -> bool {
+    spec["status"] == "connected"
+        && crate::json_compat::python_truthy(&spec["credential"])
+        && spec["deviceGrants"].get(logical).is_none()
+        && !spec["deviceRevocations"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(logical)))
+}
+
+async fn grant_connections<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+) -> Result<Vec<DeviceKindRow>, &'static str> {
+    transaction
+        .fetch_all(
+            format!(
+                "SELECT {KIND_COLUMNS} FROM kinds WHERE kind='ConnectorConnection' \
+                 AND namespace='plugin-auth' AND user_id=? AND is_active IS true ORDER BY id"
+            ),
+            (user_id,),
+        )
+        .await
+        .map_err(|_| EXCHANGE_FAILED)
+}
+
 /// `PluginNativeAutomation`: preparation and targeted reconcile share strict validation.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct AutomationRequest {
     installed_ids: Vec<i64>,
-    prepare_only: bool,
+    pub(super) prepare_only: bool,
     targets: Option<BTreeSet<(i64, String)>>,
 }
 

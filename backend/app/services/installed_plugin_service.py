@@ -31,6 +31,7 @@ from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_identity import acquire_installation_write_lock
 
 
 class InstalledPluginService:
@@ -47,9 +48,13 @@ class InstalledPluginService:
     ) -> InstalledPlugin:
         parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
         file_hash = hashlib.sha256(package_bytes).hexdigest()
-        acquire_plugin_write_lock(db, user_id)
-        existing = self._find_uploaded_plugin(
-            db, user_id=user_id, plugin_key=parsed.name
+        existing = acquire_installation_write_lock(
+            db,
+            user_id,
+            creation_name=self._safe_kind_name(parsed.name),
+            find_existing=lambda: self._find_uploaded_plugin(
+                db, user_id=user_id, plugin_key=parsed.name
+            ),
         )
         if existing:
             return self._reactivate_existing(
@@ -105,7 +110,7 @@ class InstalledPluginService:
         request: InstalledPluginUpdateRequest,
         commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
@@ -150,7 +155,7 @@ class InstalledPluginService:
         installed_id: int,
         commit: bool = True,
     ) -> None:
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
@@ -317,7 +322,6 @@ class InstalledPluginService:
         enabled: bool = True,
         commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
         row = (
             db.query(Kind)
             .filter(
@@ -349,12 +353,17 @@ class InstalledPluginService:
             package.binary_data
         )
         file_hash = hashlib.sha256(package_bytes).hexdigest()
-        existing = self._find_installed_plugin(
+        existing = acquire_installation_write_lock(
             db,
-            user_id=user_id,
-            source_type="marketplace",
-            plugin_key=parsed.name,
-            marketplace_id=marketplace_id,
+            user_id,
+            creation_name=self._safe_kind_name(parsed.name),
+            find_existing=lambda: self._find_installed_plugin(
+                db,
+                user_id=user_id,
+                source_type="marketplace",
+                plugin_key=parsed.name,
+                marketplace_id=marketplace_id,
+            ),
         )
         if existing:
             return self._reactivate_existing(
@@ -397,7 +406,6 @@ class InstalledPluginService:
         plugin_key: str,
         commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
         row = self._find_marketplace_item(
             db,
             user_id=BUILTIN_PLUGIN_OWNER_ID,

@@ -24,7 +24,7 @@ impl MysqlTransaction for BatchTransaction {
         let rows_affected = self
             .rows_affected
             .expect("an empty batch has no installation writes");
-        assert_eq!(args.len(), 5);
+        assert_eq!(args.len(), 6);
         self.writes.push(sql.as_ref().to_string());
         let payload = args.first_route_value().unwrap().as_str().unwrap();
         self.payloads.push(serde_json::from_str(payload).unwrap());
@@ -181,7 +181,7 @@ async fn legacy_installation_cas_adds_revision_without_changing_preferences() {
     assert_eq!(
         transaction.payloads[0],
         serde_json::json!({
-            "spec": {"releaseId": 2, "enabled": false, "revision": 1}
+            "spec": {"releaseId": 2, "enabled": false, "revision": 1, "writeRevision": 0}
         })
     );
 }

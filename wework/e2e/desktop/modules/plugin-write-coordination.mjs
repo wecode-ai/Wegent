@@ -84,11 +84,13 @@ export async function verifyPluginWriteCoordination({
   await openPlugin(control, responsive)
   await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
   await assertInstallButton(control, responsive)
-  let lease = await holdPluginWriteLease(cloud)
+  const independent = await publishIndependentPluginReleases(cloud, 'coordination-e2e-independent')
+  let lease = await holdPluginWriteLease(cloud, responsive)
   let pending
   try {
     pending = startInstall(responsive, localDeviceId)
     await lease.waitFor('contended')
+    await verifyIndependentPluginMutations(cloud, independent, evidence)
     const startedAt = Date.now()
     // Bypass Rust's liveness handler: this must share the Python ASGI loop
     // with the contended plugin install. The real lease remains held.
@@ -156,7 +158,7 @@ export async function verifyPluginWriteCoordination({
       'The real remote Executor did not materialize the committed install',
       timeoutMs
     )
-    lease = await holdPluginWriteLease(cloud)
+    lease = await holdPluginWriteLease(cloud, acknowledged)
     deviceProxy.pauseDeviceAcknowledgements(false)
     await lease.waitFor('contended')
     const response = await installResponse(pending)
@@ -513,4 +515,70 @@ export function hasLateInstallCorrection(log, installedId, deviceId) {
     )
   )
   return delivered >= 0 && retry > delivered
+}
+
+/** Account writes progress while another installation's lease is held. */
+export async function verifyIndependentPluginMutations(cloud, releases, evidence) {
+  let installedId
+  let removed = false
+  const call = async (path, method, body) => {
+    const response = await fetch(`${cloud.backendUrl}/api${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(8_000),
+    }).catch(async error => {
+      const waits = await cloud.queryDatabase(
+        'SELECT requested.OBJECT_NAME, requested.INDEX_NAME, requested.LOCK_MODE, requested.LOCK_DATA, requested.ENGINE_TRANSACTION_ID AS waiting_transaction, blocking.ENGINE_TRANSACTION_ID AS blocking_transaction FROM performance_schema.data_lock_waits AS waits JOIN performance_schema.data_locks AS requested ON requested.ENGINE_LOCK_ID=waits.REQUESTING_ENGINE_LOCK_ID JOIN performance_schema.data_locks AS blocking ON blocking.ENGINE_LOCK_ID=waits.BLOCKING_ENGINE_LOCK_ID'
+      )
+      console.error('[plugin-write-coordination] database lock waits', JSON.stringify(waits))
+      throw error
+    })
+    if (!response.ok) {
+      const failure = await response.json()
+      assert.fail(
+        `${method} ${path.split('?')[0]}: HTTP ${response.status} ${typeof failure.detail === 'string' ? failure.detail : 'request_failed'}`
+      )
+    }
+    return response.status === 204 ? null : response.json()
+  }
+  try {
+    const installed = await call(`/plugins/marketplace/${releases.latest.pluginId}/install`, 'POST')
+    installedId = Number(installed.plugin.metadata.labels.id)
+    const updated = await call(`/plugins/installed/${installedId}`, 'PUT', {
+      releaseId: releases.first.releaseId,
+    })
+    assert.equal(updated.spec.releaseId, releases.first.releaseId)
+    const configured = await call(`/plugins/installed/${installedId}`, 'PUT', { enabled: false })
+    assert.equal(configured.spec.enabled, false)
+    await call(`/plugins/installed/${installedId}`, 'DELETE')
+    removed = true
+    const rows = await cloud.queryDatabase(
+      "SELECT is_active, JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.installState')) AS state FROM kinds WHERE id=%s AND user_id=1 AND kind='InstalledPlugin' AND namespace='default'",
+      [installedId]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].is_active, 0)
+    assert.equal(rows[0].state, 'uninstalled')
+    evidence.push({
+      case: 'different-plugin-install-update-uninstall-before-lock-release',
+      installedId,
+    })
+  } finally {
+    if (installedId && !removed) await call(`/plugins/installed/${installedId}`, 'DELETE')
+  }
+}
+
+export async function publishIndependentPluginReleases(cloud, slug) {
+  const first = await cloud.publishPluginRelease({
+    slug,
+    version: '1.0.0',
+    skills: { [slug]: 'first' },
+  })
+  const latest = await cloud.publishPluginRelease({
+    slug,
+    version: '1.1.0',
+    skills: { [slug]: 'latest' },
+  })
+  return { first, latest }
 }

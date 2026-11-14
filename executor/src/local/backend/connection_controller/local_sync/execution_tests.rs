@@ -23,6 +23,48 @@ mod journal_tests;
 mod runtime_token_tests;
 mod scanning_tests;
 
+#[tokio::test]
+async fn foreground_and_recovery_use_only_the_registered_record_route_as_source() {
+    for registered in [false, true] {
+        let fixture = Fixture::new(Plan::Valid, false).await;
+        *fixture.controller.device_route_id.lock().unwrap() =
+            registered.then(|| "app-record-92".to_owned());
+        fixture
+            .controller
+            .connection_status
+            .store(registered, Ordering::Release);
+        let lease = fixture
+            .controller
+            .acquire_local_sync_lease(&fixture.connection, &fixture.path)
+            .await
+            .unwrap();
+        let recovery = fixture
+            .controller
+            .schedule_local_recovery(
+                &fixture.connection,
+                "native",
+                &fixture.path,
+                &mut load_journal(&fixture.path).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        drop(lease);
+        fixture.recovery_entered.notified().await;
+        fixture.recovery_release.notify_one();
+        recovery.await.unwrap().unwrap();
+        let result = fixture
+            .sync(json!({"action":"update","targetId":8,"payload":{"enabled":true}}))
+            .await
+            .unwrap();
+        assert_eq!(result["localCompleted"], true);
+        let submitted = fixture.submissions.lock().unwrap();
+        assert_eq!(submitted.len(), 2);
+        assert!(submitted.iter().all(
+            |query| query["source_device_id"] == if registered { "app-record-92" } else { "" }
+        ));
+    }
+}
+
 #[derive(Default)]
 struct DigestGate {
     hold_at: AtomicUsize,
@@ -48,6 +90,7 @@ enum Plan {
     UnexpectedUnchanged,
     FailedApplication,
     HeldHttp,
+    HeldTargetHttp,
     HeldApplication,
 }
 
@@ -103,7 +146,10 @@ impl CapabilitySyncRpcHandler for Installer {
             let removed = payload["removed_plugins"]
                 .as_array()
                 .is_some_and(|items| !items.is_empty());
-            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":8,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
+            let id = payload["plugins"][0]["installed_plugin_id"]
+                .as_u64()
+                .unwrap_or(8);
+            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":id,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
         })
     }
 }
@@ -118,6 +164,7 @@ struct Fixture {
     recovery_release: Arc<Notify>,
     probe_entered: Arc<Notify>,
     plans: Arc<Mutex<Vec<Value>>>,
+    submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -155,12 +202,16 @@ impl Fixture {
         let recovery_release = Arc::new(Notify::new());
         let probe_entered = Arc::new(Notify::new());
         let plans = Arc::new(Mutex::new(Vec::new()));
+        let submissions = Arc::new(Mutex::new(Vec::new()));
         let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
         let accept_intent = {
             let removals = removals.clone();
+            let submissions = submissions.clone();
             move |method: axum::http::Method, Query(query): Query<HashMap<String, String>>| {
                 let removals = removals.clone();
+                let submissions = submissions.clone();
                 async move {
+                    submissions.lock().unwrap().push(query.clone());
                     removals.lock().unwrap().insert(
                         query["operation_id"].clone(),
                         method == axum::http::Method::DELETE,
@@ -202,7 +253,7 @@ impl Fixture {
                             return Json(json!({"enabled":true,"protocolVersion":1,"contractRevision":3,"accountId":1})).into_response();
                         }
                         plans.lock().unwrap().push(body.clone());
-                        if matches!(plan, Plan::HeldHttp) {
+                        if matches!(plan, Plan::HeldHttp) || (matches!(plan, Plan::HeldTargetHttp) && body["installedPluginId"] == 8) {
                             entered.notify_one();
                             release.notified().await;
                         }
@@ -221,17 +272,21 @@ impl Fixture {
                         }
                         let operation = body["operationId"].as_str();
                         let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":8}])},"removed_plugins":if removed {json!([{"installed_plugin_id":8}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        let installed_id = body["installedPluginId"].as_u64().unwrap_or(8);
+                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
                     }
                 }
             }))
             .route("/api/plugins/marketplace/7/install", post({
                 let entered = recovery_entered.clone();
                 let release = recovery_release.clone();
+                let submissions = submissions.clone();
                 move |Query(query): Query<HashMap<String,String>>| {
                     let entered = entered.clone();
                     let release = release.clone();
+                    let submissions = submissions.clone();
                     async move {
+                        submissions.lock().unwrap().push(query.clone());
                         assert_eq!(query["operation_id"], "original");
                         assert_eq!(query["local_intent_order"], "7");
                         assert_eq!(query["release_id"], "3");
@@ -289,6 +344,7 @@ impl Fixture {
             recovery_release,
             probe_entered,
             plans,
+            submissions,
             server,
         }
     }
@@ -456,4 +512,49 @@ async fn a_targeted_update_does_not_replay_unrelated_pending_work() {
     let state = load_journal(&fixture.path).unwrap();
     assert!(state["pending"][0]["lastAttemptAt"].is_null());
     assert_eq!(state["pending"][0]["operationId"], "original");
+}
+
+#[tokio::test]
+async fn targeted_http_wait_does_not_hold_another_plugins_journal() {
+    let fixture = Arc::new(Fixture::new(Plan::HeldTargetHttp, true).await);
+    let slow = tokio::spawn({
+        let fixture = fixture.clone();
+        async move { fixture.sync(json!({"installedPluginId":8})).await }
+    });
+    tokio::time::timeout(Duration::from_secs(3), fixture.installer.entered.notified())
+        .await
+        .unwrap();
+    let fast = tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.sync(json!({"installedPluginId":9})),
+    )
+    .await
+    .expect("An unrelated plugin waited for the slow HTTP request")
+    .unwrap();
+    assert_eq!(fast["localCompleted"], true);
+    assert!(!slow.is_finished());
+    assert_eq!(
+        load_journal(&fixture.path).unwrap()["pending"][0]["operationId"],
+        "original"
+    );
+    fixture.installer.release.notify_one();
+    assert_eq!(slow.await.unwrap().unwrap()["localCompleted"], true);
+}
+
+#[tokio::test]
+async fn foreground_scope_is_released_on_cancellation_and_full_sync_defers() {
+    let fixture = Fixture::new(Plan::Valid, true).await;
+    let foreground = scanning::ForegroundOperation::begin(
+        fixture.controller.local_sync_foreground.clone(),
+        &fixture.path,
+    );
+    assert_eq!(
+        fixture.sync(json!({"full":true})).await.unwrap_err().code,
+        "plugin_local_sync_busy"
+    );
+    drop(foreground);
+    assert!(!fixture
+        .controller
+        .has_foreground_plugin_operation(&fixture.path));
+    assert!(fixture.sync(json!({"installedPluginId":9})).await.is_ok());
 }

@@ -11,20 +11,19 @@
 //! record_device_sync_result` (line 191) with `_record_removed_installs`,
 //! `_record_desired_install`, and `_device_install_state`.
 
-use std::collections::HashMap;
-
 use brz_mysql::MysqlResult;
 use chrono::{Local, NaiveDateTime};
 use serde_json::{Map, Value};
 
-use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
-};
-use crate::plugins_marketplace::db::{InstalledKindRow, KIND_COLUMNS};
+use crate::device_identity::{PluginDeviceInstallationRow, plugin_device_id_on};
+use crate::plugins_marketplace::db::InstalledKindRow;
 use crate::plugins_marketplace::query::PluginQuery;
 
-use super::desired_capabilities::load_installed_plugins_for_ids;
 use super::report::{DESIRED_INSTALLS_QUERY, DEVICE_ROW_QUERY, INSERT_INSTALLATION_QUERY};
+
+mod versioned;
+
+use versioned::record_versioned_result;
 
 /// `PLUGIN_AUTO_UPDATE_FAILURE_LIMIT` (`app/core/constants.py`).
 const AUTO_UPDATE_FAILURE_LIMIT: i64 = 3;
@@ -358,32 +357,51 @@ pub async fn record_device_sync_result<Q>(
 where
     Q: PluginQuery,
 {
-    // `_record_device_sync_result`: a versioned snapshot serializes with the
-    // account protocol state before the alias reconciliation reads rows. Its
-    // `lock_plugin_sync_state` re-enters `acquire_plugin_write_lock`, and the
-    // reconciliation then re-enters it again, so the versioned branch owns two
-    // acquire checks. The legacy branch's only acquire is the reconciliation's,
-    // which the caller already ran before this function's reads.
-    if result.desired_plugin_snapshot.is_some() {
-        super::plugin_sync_protocol::lock_plugin_sync_state(session, user_id).await?;
-        if let Some(guard) = guard {
-            guard.check().await?;
-        }
+    record_device_sync_result_for_installs(session, user_id, result, guard, None).await
+}
+
+pub(crate) async fn record_device_sync_result_for_installs<Q>(
+    session: &mut Q,
+    user_id: i64,
+    result: &SyncResult,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    installed_ids: Option<&[i64]>,
+) -> MysqlResult<()>
+where
+    Q: PluginQuery,
+{
+    // Check ownership before alias mutations. The versioned branch reads its
+    // protocol state once, after resolving the canonical device identity.
+    if result.desired_plugin_snapshot.is_some()
+        && let Some(guard) = guard
+    {
+        guard.check().await?;
     }
     // `reconcile_plugin_device_rows` owns the first flush boundaries: the
     // superseded alias DELETE batch and the selected canonical `device_id`
     // assignment (dirty even when the value is unchanged).
-    reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
-        .await?;
+    crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(session, user_id, guard, installed_ids)
+    .await?;
     let canonical_id = plugin_device_id_on(session, user_id, &result.device_id).await?;
     if let Some(payload) = &result.desired_plugin_snapshot {
-        return record_versioned_result(session, user_id, &canonical_id, result, payload, guard)
-            .await;
+        return record_versioned_result(
+            session,
+            user_id,
+            &canonical_id,
+            result,
+            payload,
+            guard,
+            installed_ids,
+        )
+        .await;
     }
-    let installs: Vec<InstalledKindRow> = session
+    let mut installs: Vec<InstalledKindRow> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
-    let desired_ids: Vec<i64> = installs.iter().map(|installed| installed.id).collect();
+    installs.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
     let mut flush = PendingFlush::default();
     let plugin_results: Vec<(i64, SyncItem)> = result
         .plugins
@@ -393,15 +411,19 @@ where
     // Source `_record_removed_installs` receives `set(plugin_results)`: a
     // reported plugin item acknowledges its install attempt even when a newer
     // uninstall already removed it from the desired set.
-    let reported_ids: Vec<i64> = plugin_results.iter().map(|(id, _)| *id).collect();
+    let retained_ids: Vec<i64> = installs
+        .iter()
+        .map(|installed| installed.id)
+        .chain(plugin_results.iter().map(|(id, _)| *id))
+        .collect();
     record_removed_installs(
         session,
         user_id,
         &canonical_id,
         result,
-        &desired_ids,
-        &reported_ids,
+        &retained_ids,
         &mut flush,
+        installed_ids,
     )
     .await?;
     for installed in &installs {
@@ -427,199 +449,6 @@ where
     flush.flush_with_guard(session, guard).await
 }
 
-/// `record_versioned_result`: materialize only the acknowledged generation of
-/// a versioned snapshot.
-///
-/// Source: `app/services/device/plugin_sync_recording.py`. A generation below
-/// the device's watermark, an item the device never acknowledged, or a desired
-/// plugin that changed after dispatch never rewrites rows. Removed plugins
-/// follow the acknowledgement's `remove` outcome, and the per-device watermark
-/// advances to the snapshot's generation.
-async fn record_versioned_result<Q>(
-    session: &mut Q,
-    user_id: i64,
-    device_id: &str,
-    result: &SyncResult,
-    payload: &Value,
-    guard: Option<&dyn crate::device_identity::LeaseCheck>,
-) -> MysqlResult<()>
-where
-    Q: PluginQuery,
-{
-    let Some(metadata) = payload.get("plugin_sync") else {
-        return Ok(());
-    };
-    let generation = metadata
-        .get("generation")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let complete = metadata.get("complete") == Some(&Value::Bool(true));
-    // The recording transaction re-enters `lock_plugin_sync_state`; the
-    // source's reentrant acquire checks the lease before the state read.
-    if let Some(guard) = guard {
-        guard.check().await?;
-    }
-    let sync_state = super::plugin_sync_protocol::lock_plugin_sync_state(session, user_id).await?;
-    let expected = expected_plugins(payload);
-    let mut removed_ids = removed_plugin_ids(payload);
-    let rows: Vec<PluginDeviceInstallationRow> = session
-        .fetch_all(DEVICE_ROWS_FOR_DEVICE_QUERY, (user_id, device_id))
-        .await?;
-    if complete {
-        for row in &rows {
-            if !expected.iter().any(|(id, _)| *id == row.installed_kind_id) {
-                removed_ids.push(row.installed_kind_id);
-            }
-        }
-    }
-    let mut ids = expected.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    ids.extend(removed_ids.iter().copied());
-    ids.sort_unstable();
-    ids.dedup();
-    let (filter, id_arguments) = crate::sql_support::id_in_clause("kinds.id", &ids);
-    let statement = format!(
-        "SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.user_id = ? AND kinds.kind = \
-         'InstalledPlugin' AND kinds.namespace = 'default' AND {filter} ORDER BY kinds.id"
-    );
-    let mut arguments = vec![crate::sql_support::StatementArg::Int(user_id)];
-    arguments.extend(id_arguments);
-    let installs: Vec<InstalledKindRow> = session.fetch_all(&statement, arguments).await?;
-    let current = load_installed_plugins_for_ids(session, user_id, device_id, &ids)
-        .await
-        .map_err(build_failure)?;
-    let current: HashMap<i64, Value> = current
-        .into_iter()
-        .filter_map(|item| {
-            item.get("installed_plugin_id")
-                .and_then(Value::as_i64)
-                .map(|id| (id, item))
-        })
-        .collect();
-    let acknowledgements: HashMap<String, SyncItem> = result
-        .plugins
-        .iter()
-        .map(|item| (SyncItem::text(&item.id).unwrap_or_default(), item.clone()))
-        .collect();
-    let now = Local::now().naive_local();
-    let mut flush = PendingFlush::default();
-    for installed in &installs {
-        if generation
-            < super::plugin_sync_protocol::plugin_snapshot_watermark(
-                &sync_state.json,
-                device_id,
-                installed.id,
-            )
-        {
-            continue;
-        }
-        let item = acknowledgements.get(&installed.id.to_string()).cloned();
-        if item
-            .as_ref()
-            .is_some_and(|item| item.status_text() == "superseded")
-        {
-            continue;
-        }
-        let desired = current.get(&installed.id);
-        let previous = expected
-            .iter()
-            .find(|(id, _)| *id == installed.id)
-            .map(|(_, item)| item);
-        if let (Some(previous), Some(desired)) = (previous, desired) {
-            if stable_plugin(desired) != stable_plugin(previous) {
-                continue;
-            }
-            record_desired_install(
-                session, user_id, device_id, installed, result, item, &mut flush,
-            )
-            .await?;
-        } else if removed_ids.contains(&installed.id) && desired.is_none() {
-            let Some(row) = rows
-                .iter()
-                .find(|row| row.installed_kind_id == installed.id)
-            else {
-                continue;
-            };
-            if result.success
-                && item
-                    .as_ref()
-                    .is_none_or(|item| item.status_text() == "removed")
-            {
-                flush.push_delete(row.id);
-            } else if !result.success
-                || item
-                    .as_ref()
-                    .is_some_and(|item| item.status_text() == "failed")
-            {
-                let error = result
-                    .error
-                    .as_deref()
-                    .unwrap_or("Device rejected plugin removal");
-                flush.push_update(row.id, removed_failed_assignments(row, error, now));
-            }
-        }
-    }
-    let mut document = sync_state.json.clone();
-    super::plugin_sync_protocol::advance_plugin_snapshot_watermark(
-        &mut document,
-        device_id,
-        generation,
-        complete,
-        &ids,
-    );
-    // Assigning the state document dirties the row even when every value is
-    // unchanged, so the source's `before_flush` lease check runs before the
-    // (possibly empty) flush.
-    let changed = document != sync_state.json;
-    flush.assign_state(sync_state.id, user_id, &document, changed);
-    flush.flush_with_guard(session, guard).await
-}
-
-/// `payload["plugins"]` keyed by `installed_plugin_id`.
-fn expected_plugins(payload: &Value) -> Vec<(i64, Value)> {
-    payload
-        .get("plugins")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    item.get("installed_plugin_id")
-                        .and_then(Value::as_i64)
-                        .map(|id| (id, item.clone()))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// `{item["installed_plugin_id"] for item in payload["removed_plugins"]}`.
-fn removed_plugin_ids(payload: &Value) -> Vec<i64> {
-    payload
-        .get("removed_plugins")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.get("installed_plugin_id").and_then(Value::as_i64))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// `stable_plugin`: a payload item without its signed download fields.
-fn stable_plugin(plugin: &Value) -> Value {
-    let Value::Object(object) = plugin else {
-        return plugin.clone();
-    };
-    let mut projected = Map::new();
-    for (key, value) in object {
-        if key != "download_path" && key != "download_url_expires_at" {
-            projected.insert(key.clone(), value.clone());
-        }
-    }
-    Value::Object(projected)
-}
-
 /// The recording aborts on a non-database desired-state failure (the source
 /// lets the exception escape); the transaction rolls back and the follow-up
 /// logs it.
@@ -639,9 +468,9 @@ async fn record_removed_installs<Q>(
     user_id: i64,
     device_id: &str,
     result: &SyncResult,
-    desired_ids: &[i64],
-    reported_ids: &[i64],
+    retained_ids: &[i64],
     flush: &mut PendingFlush,
+    installed_ids: Option<&[i64]>,
 ) -> MysqlResult<()>
 where
     Q: PluginQuery,
@@ -651,9 +480,10 @@ where
         .await?;
     let now = Local::now().naive_local();
     for row in rows {
-        if desired_ids.contains(&row.installed_kind_id)
-            || reported_ids.contains(&row.installed_kind_id)
-        {
+        if !installed_ids.is_none_or(|ids| ids.contains(&row.installed_kind_id)) {
+            continue;
+        }
+        if retained_ids.contains(&row.installed_kind_id) {
             continue;
         }
         if result.success {

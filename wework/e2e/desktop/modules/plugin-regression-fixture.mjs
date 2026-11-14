@@ -109,13 +109,13 @@ export async function completedApiResourceTimings(control, path) {
     })
 }
 
-export async function requestPluginExecutor(control, method, params = {}) {
+export async function requestPluginExecutor(control, method, params = {}, options = {}) {
   const origin = await control.command('getLocationOrigin', 'body')
   const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ id: 'plugin-regression', method, params }),
-    timeoutMs: 10_000,
+    timeoutMs: options.timeoutMs ?? 10_000,
   })
   return { status: response.status, payload: await response.json() }
 }

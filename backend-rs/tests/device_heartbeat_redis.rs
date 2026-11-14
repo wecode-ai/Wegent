@@ -35,9 +35,9 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         address.ip().is_loopback(),
         "only a disposable Redis is allowed"
     );
-    let redis = RedisService::single(address.to_string()).await.unwrap();
+    let redis = fixture_redis(address).await;
     let fixture = fixture::Fixture::new().await;
-    migrations::upgrade(&fixture.mysql).await.unwrap();
+    initialize_schema(&fixture.mysql).await;
     fixture
         .mysql
         .execute(
@@ -111,6 +111,36 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
     fixture.close().await;
     stopped.unwrap().unwrap();
     outcome.unwrap();
+}
+
+async fn initialize_schema(mysql: &brz_mysql::MysqlService) {
+    let row: brz_mysql::MysqlRow = mysql
+        .fetch_one("SELECT DATABASE() AS name", ())
+        .await
+        .unwrap();
+    let database: String = row.get_required("name").unwrap();
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS").unwrap();
+    // Schema DDL needs the migration callback budget, not the fixture's ordinary
+    // 10-second query budget. Keep heartbeat queries on the original client.
+    let migration = migrations::connect(&format!(
+        "mysql://root@{address}/{database}?ssl-mode=disabled"
+    ))
+    .unwrap();
+    let result = timeout(Duration::from_secs(60), migrations::upgrade(&migration)).await;
+    migration.close().await;
+    result
+        .expect("heartbeat schema preparation timed out")
+        .unwrap();
+}
+
+async fn fixture_redis(address: SocketAddr) -> RedisService {
+    // Keep cold Redis setup within the existing integration request budget.
+    RedisService::single_with_options(
+        address.to_string(),
+        brz_redis::RedisServiceOptions::default().with_timeout(Duration::from_secs(5)),
+    )
+    .await
+    .unwrap()
 }
 
 async fn assert_heartbeats(
@@ -358,10 +388,10 @@ async fn app_registration_respects_a_legacy_unique_device_name() {
         address.ip().is_loopback(),
         "only a disposable Redis is allowed"
     );
-    let redis = RedisService::single(address.to_string()).await.unwrap();
+    let redis = fixture_redis(address).await;
 
     let fixture = fixture::Fixture::new().await;
-    migrations::upgrade(&fixture.mysql).await.unwrap();
+    initialize_schema(&fixture.mysql).await;
     fixture.mysql.execute(
         "CREATE UNIQUE INDEX uniq_user_kind_name_namespace ON kinds (user_id, kind, name, namespace)",
         (),

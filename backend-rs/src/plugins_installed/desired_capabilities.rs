@@ -222,10 +222,10 @@ pub(super) async fn restrict_local_plugin<Q: PluginQuery>(
     let Some(row) = query.fetch_optional::<_,_,InstalledKindRow>(format!("SELECT {KIND_COLUMNS} FROM kinds WHERE id = ? AND user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default'"), (installed_id,user_id)).await? else {
         return Err(brz_mysql::MysqlError::InvalidQuery{reason:"SNAPSHOT_NOT_OWNED".into()}.into());
     };
-    let plugins = payload["plugins"]
-        .as_array_mut()
-        .expect("local plugins builder");
-    plugins.retain(|item| item["installed_plugin_id"].as_i64() == Some(installed_id));
+    let mut plugins = Vec::new();
+    if row.is_active && is_synced_install(&row.json.0.to_value()) {
+        plugins.push(plugin_payload(query, &row, None, true).await?);
+    }
     let mut removed = Vec::new();
     if plugins.is_empty() {
         let document = row.json.0.to_value();
@@ -234,6 +234,7 @@ pub(super) async fn restrict_local_plugin<Q: PluginQuery>(
         removed.push(serde_json::json!({"installed_plugin_id":installed_id,"name":plugin_payload_name(&row,&document,&spec,&source),"marketplace":spec.get("marketplace").or_else(||source.get("marketplace"))}));
     }
     payload["scope"] = Value::String("plugin_delta".into());
+    payload["plugins"] = Value::Array(plugins);
     payload["removed_plugins"] = Value::Array(removed);
     Ok(())
 }
