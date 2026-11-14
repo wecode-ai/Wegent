@@ -4,7 +4,8 @@
 
 'use client'
 
-import React, { memo, useMemo, useState, useCallback } from 'react'
+import React, { memo, useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfmSafe from '@/lib/remark-gfm-safe'
 import { autolinkUrls } from '@/lib/autolink-urls'
@@ -20,6 +21,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { SandboxedHtmlFrame } from '@/components/common/SandboxedHtmlFrame'
+import { useTranslation } from '@/hooks/useTranslation'
 import { preprocessCjkEmphasis } from '@wegent/collaboration/markdown/preprocessCjkEmphasis'
 
 import 'katex/dist/katex.min.css'
@@ -139,16 +141,59 @@ function splitSpecialMarkdownBlocks(markdown: string): ContentPart[] {
 }
 
 function ArtifactPreview({ title, html }: { title: string; html: string }) {
+  const { t } = useTranslation('common')
+  const [scriptError, setScriptError] = useState<{ message: string; line?: number } | null>(null)
+  const frameRef = useRef<HTMLIFrameElement | null>(null)
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) {
+        return
+      }
+      const data = event.data as
+        | { source?: string; type?: string; message?: string; line?: number }
+        | undefined
+      if (
+        data?.source !== 'wegent-html-preview' ||
+        data.type !== 'script-error' ||
+        typeof data.message !== 'string'
+      ) {
+        return
+      }
+      setScriptError({ message: data.message, line: data.line })
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
+
   return (
     <div className="my-4 overflow-hidden rounded-lg border border-border bg-surface">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-text-secondary">{title}</span>
       </div>
+      {scriptError && (
+        <div
+          data-testid="artifact-preview-script-error"
+          className="flex items-start gap-2 border-b border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {t('attachment.html.script_error')}
+            {scriptError.line
+              ? ` ${t('attachment.html.script_error_line', { line: scriptError.line })}`
+              : ''}
+            : {scriptError.message}
+          </span>
+        </div>
+      )}
       <SandboxedHtmlFrame
+        ref={frameRef}
         title={title}
         content={html}
         className="block h-[520px] max-h-[70vh] min-h-[320px] w-full border-0 bg-white"
         testId="artifact-preview-iframe"
+        reportScriptErrors
       />
     </div>
   )

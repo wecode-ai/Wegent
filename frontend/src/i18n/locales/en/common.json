@@ -1820,7 +1820,9 @@
     "html": {
       "source_mode": "Source",
       "load_failed": "Preview Load Failed",
-      "view_source": "View Source"
+      "view_source": "View Source",
+      "script_error": "This page script failed",
+      "script_error_line": "(line {{line}})"
     }
   },
   "editor": {
