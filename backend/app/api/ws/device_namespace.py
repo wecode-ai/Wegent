@@ -930,6 +930,10 @@ def _project_chat_runtime_event_sync(
             payload.get("status"),
         )
         return None
+    from app.services.runtime_event_context import runtime_event_is_private_discussion
+
+    if runtime_event_is_private_discussion(payload):
+        return None
     projected_status = _workflow_status_for_runtime_event(event_name, payload)
     log_runtime_event = logger.info if projected_status is not None else logger.debug
     log_runtime_event(
@@ -1043,6 +1047,11 @@ def _execution_runtime_event_sync(
     payload: dict,
 ) -> dict[str, Any] | None:
     """Project device runtime events onto the matching robot execution."""
+
+    from app.services.runtime_event_context import runtime_event_is_private_discussion
+
+    if runtime_event_is_private_discussion(payload):
+        return None
 
     try:
         with get_db_session() as db:

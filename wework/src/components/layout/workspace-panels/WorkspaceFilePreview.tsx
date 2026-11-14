@@ -37,7 +37,7 @@ import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/work
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
-import { isHtmlFile, isMarkdownFile } from './workspaceFileTypes'
+import { isHtmlFile, isMarkdownFile, workspaceFileViewerType } from './workspaceFileTypes'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -132,46 +132,6 @@ interface WorkspaceFilePreviewProps {
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
   previewMode?: 'preview' | 'source'
-}
-
-const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
-  'application/epub+zip': 'epub',
-  'application/msword': 'doc',
-  'application/pdf': 'pdf',
-  'application/vnd.ms-excel': 'xls',
-  'application/vnd.ms-powerpoint': 'ppt',
-  'application/vnd.oasis.opendocument.presentation': 'odp',
-  'application/vnd.oasis.opendocument.spreadsheet': 'ods',
-  'application/vnd.oasis.opendocument.text': 'odt',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/zip': 'zip',
-  'image/avif': 'avif',
-  'image/bmp': 'bmp',
-  'image/gif': 'gif',
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/svg+xml': 'svg',
-  'image/tiff': 'tiff',
-  'image/webp': 'webp',
-  'text/csv': 'csv',
-}
-
-const DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION: Record<string, string> = {
-  mermaid: 'mermaid',
-  mmd: 'mermaid',
-  plantuml: 'plantuml',
-  puml: 'plantuml',
-}
-
-function workspaceFileViewerType(name: string, mimeType: string): string | undefined {
-  const extension = name.split('.').pop()?.toLowerCase() ?? ''
-  return (
-    ({ csv: 'csv', tsv: 'csv', xlsm: 'xlsx' } as Record<string, string>)[extension] ??
-    DIAGRAM_FILE_VIEWER_TYPE_BY_EXTENSION[extension] ??
-    FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
-  )
 }
 
 const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({

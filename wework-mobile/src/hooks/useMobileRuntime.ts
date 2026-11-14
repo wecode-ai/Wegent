@@ -10,6 +10,7 @@ import {
   selectedOnlineDeviceId,
 } from '@/domain/deviceOrdering'
 import { continuationSelection, executionFields } from '@/domain/modelSelection'
+import { resolveMobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import {
   isRunningRuntimeEvent,
   isTerminalRuntimeEvent,
@@ -41,6 +42,14 @@ import { useMobileTranscript } from './useMobileTranscript'
 import { useWorkspaceGitRef } from './useWorkspaceGitRef'
 import { useDeviceModels } from './useDeviceModels'
 import { useMobileUserInput } from './useMobileUserInput'
+import { useConversationActions } from './useConversationActions'
+import {
+  runtimeTaskRunning,
+  sameRuntimeAddress,
+  createRuntimeTaskId,
+  titleFrom,
+  messageFrom,
+} from './mobileRuntimeHelpers'
 import type { MobileRuntimeState, NewConversationOptions } from './mobileRuntimeTypes'
 export type { MobileRuntimeState, NewConversationOptions } from './mobileRuntimeTypes'
 import type {
@@ -64,13 +73,13 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
   const deviceInventoryRef = useRef<DeviceInfo[]>([])
   const tokenRef = useRef(config.accessToken)
   tokenRef.current = config.accessToken
-  const api = useMemo(
-    () => new RuntimeApi(config, undefined, () => tokenRef.current),
-    [config.apiBaseUrl, userId]
-  )
   const stream = useMemo(
     () => new RuntimeStream(config, () => deviceInventoryRef.current),
     [config.apiBaseUrl, config.socketBaseUrl, config.socketPath, userId]
+  )
+  const api = useMemo(
+    () => new RuntimeApi(config, undefined, () => tokenRef.current, stream),
+    [config.apiBaseUrl, userId, stream]
   )
   const cache = useMemo(
     () => new MobileRuntimeCache(config.apiBaseUrl, userId),
@@ -634,6 +643,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
         type: 'optimistic-user',
         id: userMessageId,
         content: message,
+        attachments: options?.attachments,
         createdAt: Date.now(),
       })
       setSending(true)
@@ -694,7 +704,9 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
           taskId,
           runtime: 'codex',
           workspacePath,
-          workspaceKind: selectedWorkspace?.workspaceKind ?? 'chat',
+          workspaceKind: options?.worktreeBranch
+            ? 'worktree'
+            : (selectedWorkspace?.workspaceKind ?? 'chat'),
         }
         currentAddressRef.current = provisionalAddress
         setCurrentAddress(provisionalAddress)
@@ -906,8 +918,24 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     () => flattenConversations(work, taskRunningByKey),
     [work, taskRunningByKey]
   )
+  const conversationActions = useConversationActions({
+    api,
+    work,
+    currentAddress: currentAddressRef,
+    reloadWork,
+    setCurrentTitle,
+    clearCurrentConversation: startNewConversation,
+    setError,
+  })
+  const fileTarget = useMemo(
+    () => resolveMobileWorkspaceFileTarget(currentAddress, work, selectedWorkspace),
+    [currentAddress, work, selectedWorkspace]
+  )
 
   return {
+    ...conversationActions,
+    api,
+    fileTarget,
     work,
     devices,
     conversations,
@@ -952,41 +980,4 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     createProject,
     clearError: () => setError(null),
   }
-}
-
-function runtimeTaskRunning(
-  address: RuntimeTaskAddress,
-  work: RuntimeWorkListResponse,
-  runningByTask: ReadonlyMap<string, boolean>
-): boolean {
-  const projected = runningByTask.get(runtimeTaskKey(address))
-  if (typeof projected === 'boolean') return projected
-  return allWorkspaces(work).some(
-    workspace =>
-      workspace.deviceId === address.deviceId &&
-      workspace.tasks.some(task => task.taskId === address.taskId && task.running === true)
-  )
-}
-
-function sameRuntimeAddress(
-  current: RuntimeTaskAddress | null,
-  candidate: RuntimeTaskAddress
-): boolean {
-  return current?.deviceId === candidate.deviceId && current.taskId === candidate.taskId
-}
-
-function createRuntimeTaskId(): string {
-  const seed = `codex-${Crypto.randomUUID()}`
-  let hash = 0
-  for (const character of seed) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
-  return `runtime-${(hash % 1_000_000_000) + 1}`
-}
-
-function titleFrom(message: string): string {
-  const normalized = message.replace(/\s+/g, ' ').trim()
-  return Array.from(normalized).slice(0, 48).join('') || '新会话'
-}
-
-function messageFrom(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }

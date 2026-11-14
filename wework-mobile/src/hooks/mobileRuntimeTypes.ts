@@ -1,5 +1,8 @@
 import type { RuntimePermissionMode } from '@/services/runtimePermissionPreference'
+import type { RuntimeApi } from '@/services/runtimeApi'
+import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import type {
+  Attachment,
   ChatMessage,
   ConversationItem,
   DeviceInfo,
@@ -16,12 +19,17 @@ import type {
 } from '@/types/runtime'
 
 export interface MobileRuntimeState {
+  api: RuntimeApi
+  fileTarget: MobileWorkspaceFileTarget | null
   work: RuntimeWorkListResponse
   devices: DeviceInfo[]
   conversations: ConversationItem[]
   messages: ChatMessage[]
   currentAddress: RuntimeTaskAddress | null
   currentTitle: string
+  setConversationPinned: (address: RuntimeTaskAddress, pinned: boolean) => Promise<void>
+  renameConversation: (address: RuntimeTaskAddress, title: string) => Promise<void>
+  archiveConversation: (address: RuntimeTaskAddress) => Promise<void>
   selectedWorkspace: RuntimeDeviceWorkspace | null
   selectedDeviceId: string | null
   allDevicesSelected: boolean
@@ -64,5 +72,6 @@ export interface MobileRuntimeState {
 export interface NewConversationOptions {
   worktreeBranch?: string
   attachmentIds?: number[]
+  attachments?: Attachment[]
   pursueGoal?: boolean
 }

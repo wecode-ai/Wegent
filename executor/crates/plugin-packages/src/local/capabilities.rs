@@ -421,7 +421,7 @@ where
     auth_token: String,
     store: GlobalCapabilityStore,
     package_provider: P,
-    sync_lock: AsyncMutex<()>,
+    sync_lock: std::sync::Arc<AsyncMutex<()>>,
     plugin_sync_inflight: plugin_sync_protocol::InFlightRequests,
     plugin_sync_binding: plugin_sync_protocol::ConnectionBinding,
     plugin_preparation: std::sync::Arc<plugin_preparation::PreparationCoordinator>,

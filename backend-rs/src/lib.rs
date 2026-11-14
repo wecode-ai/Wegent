@@ -171,6 +171,7 @@ mod knowledge_multimodal_prompts;
 mod knowledge_organization_namespace;
 mod knowledge_wiki_bindings;
 pub mod llm_proxy;
+mod local_project_import;
 mod loop_deliveries;
 mod loop_item_attachments;
 mod loop_item_executions;

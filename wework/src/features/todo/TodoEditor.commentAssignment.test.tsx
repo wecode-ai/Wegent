@@ -8,7 +8,7 @@ import {
   type SharedEditorProject,
 } from '@wegent/collaboration'
 
-function setup(canAssign = true) {
+function setup(canAssign = true, editable = true) {
   const item = {
     id: 'issue',
     cloud_project_id: 'project',
@@ -60,7 +60,7 @@ function setup(canAssign = true) {
       mode="edit"
       item={item}
       project={project}
-      editable
+      editable={editable}
       canAssign={canAssign}
       allItems={[item]}
       port={port as unknown as SharedIssueDetailPort}
@@ -112,8 +112,18 @@ describe('Issue comment assignment persistence', () => {
     }
   )
 
-  it('omits comment assignment without permission', async () => {
+  it('keeps parent assignment forbidden while allowing editable Issues to create children', async () => {
     const { port, getAssignment } = setup(false)
+    await waitFor(() => expect(getAssignment()?.options.length).toBe(3))
+    expect(getAssignment()?.canAssignCurrent).toBe(false)
+    expect(getAssignment()?.createChild).toBeTypeOf('function')
+    await expect(getAssignment()!.assign('1')).rejects.toThrow()
+    expect(port.issues.assign).not.toHaveBeenCalled()
+    expect(port.issues.update).not.toHaveBeenCalled()
+  })
+
+  it('omits both assignment actions on read-only Issues', async () => {
+    const { port, getAssignment } = setup(false, false)
     await waitFor(() => expect(port.members.list).toHaveBeenCalled())
     expect(getAssignment()).toBeUndefined()
   })

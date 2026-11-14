@@ -178,6 +178,7 @@ mod stand_in_arrangements;
 mod stand_in_assignment_intake;
 mod stand_in_calendar;
 mod stand_in_connection_guidance;
+mod stand_in_context;
 mod stand_in_conversations;
 mod stand_in_diagnostics;
 mod stand_in_dispatches;
@@ -649,6 +650,7 @@ struct ActiveCodexTurn {
 struct ActiveCodexTranscriptItems {
     thread_id: String,
     turn_id: String,
+    private_discussion: bool,
     items: Vec<Value>,
     // Keep settled request IDs until the turn ends so replay cannot reopen them.
     user_input_requests: HashMap<String, bool>,
@@ -1325,3 +1327,7 @@ use runtime_rpc::is_allowed_plugin_app_server_method;
 #[cfg(test)]
 #[path = "handler/tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "handler/private_discussion_tests.rs"]
+mod private_discussion_tests;

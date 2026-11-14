@@ -45,6 +45,15 @@ The card shows **Answered (已回答)** or **Skipped (已跳过)** only after th
 
 Opening model controls preserves your unsent draft. Device, project, and conversation ownership follows the desktop app. Changing a list filter does not move an existing task to another device.
 
+## File and change previews
+
+The top-right folder icon, **Browse workspace files (浏览工作空间文件)**, opens the current directory;
+it is disabled until an accessible workspace is known. Tap file links, tool-detail paths, attachments,
+or expanded changed files for a read-only preview with search, navigation, and system sharing.
+**Recent (最近)** keeps files and reading positions only for the current authenticated app session.
+Closing a preview preserves the chat draft. See [Mobile file previews](./mobile-file-preview.md)
+for entry points, truncated text, and format limitations.
+
 ## iOS and Android
 
 Supported iOS versions use native Liquid Glass buttons and panels. Enabling the system's Reduce Transparency setting replaces them with opaque surfaces. Android uses native panels, rounded corners, borders, and touch feedback. Both platforms retain the same feature entries and accommodate safe areas and the keyboard.

@@ -50,7 +50,7 @@ export interface WorkspaceResourceCommands {
   createTemplateGroups?(
     document: import("../templates/types").CollaborationTemplate,
     drafts: import("../project-create/types").ProjectCreateCollaborationGroupDraft[],
-    resolveRouting?: import('../templates/types').TemplateRoutingResolver,
+    resolveRouting?: import("../templates/types").TemplateRoutingResolver,
   ): Promise<CollaborationGroup[]>;
   searchUsers(query: string): Promise<CollaborationUser[]>;
   addMember(
@@ -148,7 +148,7 @@ const copy = {
     cancel: "取消",
     collaborationGroups: "协作小组",
     collaborationGroupHint:
-      "把空间中的人与智能体组织成可复用的协作小组。负责人负责分解、委派、收敛和最终汇报。",
+      "把分组中的人与智能体组织成可复用的协作小组。负责人负责分解、委派、收敛和最终汇报。",
     groupName: "协作小组名称",
     groupDescription: "协作目标与边界",
     groupRule: "协作规则",
@@ -165,10 +165,10 @@ const copy = {
     saveGroup: "保存",
     backToGroups: "返回协作小组",
     createGroup: "创建协作小组",
-    noGroups: "空间中还没有协作小组",
+    noGroups: "分组中还没有协作小组",
     noProjectGroups: "当前项目还没有使用协作小组",
-    availableWorkspaceGroups: "可从协作空间添加",
-    workspaceOwned: "空间资源",
+    availableWorkspaceGroups: "可从协作分组添加",
+    workspaceOwned: "分组资源",
     projectOwned: "项目资源",
     removeFromProject: "移出项目",
     deleteProjectGroup: "删除",
@@ -276,7 +276,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
   detailPresentation?: "page" | "dialog";
   agentActions?: CollaborationGroupAgentActions;
   showGroupCollection?: boolean;
-  agentConfiguration?: import('../project-agent-config/types').ProjectAgentConfigurationHost;
+  agentConfiguration?: import("../project-agent-config/types").ProjectAgentConfigurationHost;
 }) {
   const messages = copy[locale];
   const templateStore = useCollaborationTemplateStore();
@@ -1389,9 +1389,14 @@ export function WorkspaceCollaborationGroupsConfiguration({
                     <div className="collaboration-group-create-content">
                       <section className="collaboration-group-create-panel">
                         <GroupTemplateCreator
-                          modelConfiguration={agentConfiguration && workspace ? {
-                            host: agentConfiguration, location: workspace.location,
-                          } : undefined}
+                          modelConfiguration={
+                            agentConfiguration && workspace
+                              ? {
+                                  host: agentConfiguration,
+                                  location: workspace.location,
+                                }
+                              : undefined
+                          }
                           locale={locale}
                           candidates={candidates.map((candidate) => ({
                             ...candidate,

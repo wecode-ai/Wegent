@@ -104,3 +104,39 @@ export function parseUnifiedDiff(diff: string): DiffFileSection[] {
   flush();
   return sections;
 }
+
+export function getDiffStats(lines: string[]) {
+  return lines.reduce(
+    (stats, line) => {
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        stats.additions += 1;
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        stats.deletions += 1;
+      }
+      return stats;
+    },
+    { additions: 0, deletions: 0 },
+  );
+}
+
+export function getSectionsDiffStats(sections: DiffFileSection[]) {
+  return sections.reduce(
+    (total, section) => {
+      const stats = getDiffStats(section.lines);
+      total.additions += stats.additions;
+      total.deletions += stats.deletions;
+      return total;
+    },
+    { additions: 0, deletions: 0 },
+  );
+}
+
+export function getDiffFileStatus(section: DiffFileSection) {
+  if (section.lines.some((line) => line.startsWith("new file mode")))
+    return "added" as const;
+  if (section.lines.some((line) => line.startsWith("deleted file mode")))
+    return "deleted" as const;
+  if (section.oldPath && section.oldPath !== section.path)
+    return "renamed" as const;
+  return "modified" as const;
+}

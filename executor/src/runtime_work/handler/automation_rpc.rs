@@ -319,9 +319,13 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn finish_automation_run(
         &self,
         local_task_id: &str,
+        request: &ExecutionRequest,
         status: AutomationRunStatus,
         error: Option<String>,
     ) {
+        if super::super::util::is_private_discussion(request) {
+            return;
+        }
         if let Some(automation_id) =
             self.automation_store
                 .complete_task(local_task_id, status, error)

@@ -12,6 +12,32 @@ classify_path() {
   fi
 
   case "$path" in
+    # Reuse real subagent isolation and restored-history coverage, not native Mobile UI.
+    wework-mobile/src/components/ConversationAgentsPill* | \
+      wework-mobile/src/domain/mobileSubagents* | \
+      wework-mobile/src/domain/mobileProcessingBlocks* | \
+      wework-mobile/src/services/mobileTranscriptTransfer*)
+      select_target "core:streaming-subagents"
+      return
+      ;;
+    # The existing cloud fixture verifies Mobile's file transport, not native UI.
+    wework-mobile/src/components/files/* | wework-mobile/src/domain/mobileFile* | \
+      wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
+      wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
+      wework-mobile/src/services/runtimeStream* | wework-mobile/src/types/runtimeCommand.ts | \
+      wework-mobile/src/services/mobileAbort.ts | \
+      wework-mobile/src/hooks/useMobileRuntime* | \
+      wework-mobile/src/types/files.ts | wework-mobile/src/types/workspaceGit.ts | \
+      wework-mobile/src/domain/mobileWorkspaceGit* | wework-mobile/src/services/mobileWorkspaceGit* | \
+      wework-mobile/src/components/ConversationChangesPill* | wework-mobile/preview/* | \
+      wework-mobile/src/components/ConversationMenu* | wework-mobile/src/hooks/useConversationActions* | \
+      wework-mobile/src/domain/conversationActions* | wework-mobile/src/services/mobileConversationArchive* | \
+      wework/e2e/desktop/modules/workspace-file-chunks-flow.mjs | \
+      wework/e2e/desktop/modules/conversation-menu-flow.mjs | \
+      wework/e2e/desktop/modules/workspace-git-review-flow.mjs)
+      select_target "cloud:workspace-attachments"
+      return
+      ;;
     executor/src/runtime_work/remote_task_access.rs)
       select_catalog_path_targets "$path"
       return

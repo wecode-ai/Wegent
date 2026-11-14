@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyStandInConversationAssignmentIndependence } from '../modules/stand-in-conversation-assignment-independence.mjs'
-import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
+import {
+  isCollaborationSubagentRequest,
+  nativeSubagentCompletionPayload,
+} from '../modules/subagent-request.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { verifyStandInRoleDeviceChange } from '../modules/stand-in-role-device-change.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
@@ -39,7 +42,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
   let supplementHandled = false
   let waitCount = 0
   let waitCallId
-  let childId
+  let childName
   const waitOutputs = []
   const messageVisibility = []
   const reply = (response, events) => {
@@ -133,44 +136,38 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         ])
       } else if (!waited) {
         const spawnOutput = toolOutputText(body, 'issue-room-spawn')
-        childId = JSON.parse(spawnOutput).agent_id
-        assert.ok(childId, `The parent must receive a real native child identity: ${spawnOutput}`)
+        childName = JSON.parse(spawnOutput).task_name
+        assert.ok(
+          childName,
+          `The parent must receive a real native child task name: ${spawnOutput}`
+        )
         waited = true
         waitCallId = `issue-room-wait-${++waitCount}`
         reply(
           response,
-          selectedToolCall(
-            waitCallId,
-            selectTool(body, 'wait_agent', { targets: [childId], timeout_ms: 60000 })
-          )
+          selectedToolCall(waitCallId, selectTool(body, 'wait_agent', { timeout_ms: 60000 }))
         )
       } else if (!delivered) {
         const output = toolOutputText(body, waitCallId)
         assert.ok(output, 'Each wait must return through a real native tool call')
         waitOutputs.push(output)
         const waitedResult = JSON.parse(output)
-        const statuses = Object.values(waitedResult.status)
-        assert.ok(
-          !statuses.some(status => status.errored || status === 'not_found'),
-          `Native child execution failed: ${output}`
-        )
-        const childReport = statuses.some(status => status.completed === RAW_CHILD)
-        if (!childReport) {
-          assert.equal(
-            waitedResult.timed_out,
-            true,
-            `Native wait returned no completed child: ${output}`
-          )
+        assert.equal(typeof waitedResult.message, 'string', `Invalid native wait: ${output}`)
+        assert.equal(typeof waitedResult.timed_out, 'boolean', `Invalid native wait: ${output}`)
+        const childReport = nativeSubagentCompletionPayload(body, childName)
+        if (childReport === undefined) {
           waitCallId = `issue-room-wait-${++waitCount}`
           reply(
             response,
-            selectedToolCall(
-              waitCallId,
-              selectTool(body, 'wait_agent', { targets: [childId], timeout_ms: 60000 })
-            )
+            selectedToolCall(waitCallId, selectTool(body, 'wait_agent', { timeout_ms: 60000 }))
           )
           return true
         }
+        assert.equal(
+          childReport,
+          RAW_CHILD,
+          'The native child must return its exact verified result'
+        )
         assert.ok(childReleased, 'A result cannot be published before the child finishes')
         delivered = true
         reply(response, [assistantMessage(RESULT)])

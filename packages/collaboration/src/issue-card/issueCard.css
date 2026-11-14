@@ -1,0 +1,29 @@
+.collaboration-issue-card-list {
+  container-name: collaboration-issue-card;
+  container-type: inline-size;
+}
+
+.collaboration-issue-list-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px 12px;
+}
+
+.collaboration-issue-list-metadata {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+@container collaboration-issue-card (min-width: 640px) {
+  .collaboration-issue-list-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .collaboration-issue-list-metadata {
+    max-width: 60cqw;
+  }
+}

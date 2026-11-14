@@ -45,7 +45,6 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
     },
     async verify(control) {
       await createSingleRootLocalProject(control, workspacePath, 'notification-tab-navigation')
-      await selectE2EModel(control)
       const taskTab = await control.command('getAttribute', '[role="tab"][aria-selected="true"]', {
         value: 'data-testid',
       })
@@ -74,6 +73,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       )
       const tabsBefore = source.testIds.filter(id => id.startsWith('workspace-tab-select-')).sort()
       await control.command('click', selector(taskTab))
+      await selectE2EModel(control)
       await control.command('fill', COMPOSER, { value: PROMPT })
       await control.command('press', COMPOSER, { key: 'Enter' })
       const address = await waitFor(

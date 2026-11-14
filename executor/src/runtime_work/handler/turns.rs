@@ -406,6 +406,13 @@ impl RuntimeWorkRpcHandler {
         for (task, owner) in &owner_admissions {
             self.record_stand_in_owner_admission(task, owner);
         }
+        // Only admitted turns replace the current request. Queued follow-ups
+        // retain their own context without changing the active native turn.
+        for turn in starting {
+            self.store.update_task(&turn.local_task_id, |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
+        }
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
@@ -1584,7 +1591,8 @@ impl RuntimeWorkRpcHandler {
                     ) {
                         return;
                     }
-                    active_turn_handler.start_queue_run(&active_turn_local_task_id);
+                    active_turn_handler
+                        .start_queue_run(&active_turn_local_task_id, &active_turn_request);
                     *callback_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned") =
@@ -1668,6 +1676,8 @@ impl RuntimeWorkRpcHandler {
             });
             let mut result = async {
                 execution_context?;
+                let mut request = request.clone();
+                handler.recall_stand_in_context(&mut request).await;
                 handler
                     .validate_project_coordinator_request(&request)
                     .await?;
@@ -1794,11 +1804,13 @@ impl RuntimeWorkRpcHandler {
                 {
                     handler.finish_automation_run(
                         &turn_local_task_id,
+                        &event_request,
                         AutomationRunStatus::Cancelled,
                         Some("cancelled".to_owned()),
                     );
                     handler.finish_queue_run(
                         &turn_local_task_id,
+                        &event_request,
                         AutomationRunStatus::Cancelled,
                         Some("cancelled".to_owned()),
                         None,
@@ -2249,8 +2261,14 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, status, error.clone());
-            self.finish_queue_run(local_task_id, status, error, queue_result_content);
+            self.finish_automation_run(local_task_id, &event_request, status, error.clone());
+            self.finish_queue_run(
+                local_task_id,
+                &event_request,
+                status,
+                error,
+                queue_result_content,
+            );
         }
     }
 

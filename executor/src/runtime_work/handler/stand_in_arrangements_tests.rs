@@ -52,6 +52,59 @@ fn queue_stand_in_turns(handler: &mut RuntimeWorkRpcHandler, root: &Path) {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Isolate process-wide native model discovery.
+async fn collaboration_chat_inherits_primary_settings_with_separate_persistent_history() {
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let (mut handler, _claude_home) = memory_review_handler(root.path());
+    queue_stand_in_turns(&mut handler, root.path());
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store.materialize_implicit_primary(7, "device").unwrap();
+    let mut settings = store.personal_stand_in(7, "device").unwrap();
+    settings["primary"]["prompt"] = json!("Use concise project summaries.");
+    settings["primary"]["model"] =
+        json!({"runtime":"codex","provider":"openai","model_id":"review-default"});
+    let saved = store.save_personal_stand_in(7, "device", settings).unwrap();
+    let primary = handler
+        .stand_in_conversation(json!({"userId":7,"message":"Personal chat"}))
+        .await
+        .unwrap();
+    let collaboration = handler
+        .stand_in_conversation(json!({"userId":7,"message":"Discuss project work",
+        "options":{"conversationScope":"collaboration"}}))
+        .await
+        .unwrap();
+    assert_ne!(primary["taskId"], collaboration["taskId"]);
+    let turns = super::turns::read_runtime_turn_queue(handler.turn_queue_path.as_ref()).unwrap();
+    for (address, scope) in [
+        (&primary, Value::Null),
+        (&collaboration, json!("collaboration")),
+    ] {
+        let request = &turns
+            .iter()
+            .find(|turn| turn.local_task_id == address["taskId"])
+            .unwrap()
+            .request;
+        assert_eq!(request.extra["origin"]["userId"], 7);
+        assert_eq!(request.extra["origin"]["standInId"], Value::Null);
+        assert_eq!(request.extra["origin"]["conversationScope"], scope);
+        assert!(request
+            .system_prompt
+            .contains("Use concise project summaries."));
+        assert_eq!(
+            request.system_prompt.contains("collaboration conversation"),
+            scope == "collaboration"
+        );
+    }
+    assert_eq!(store.personal_stand_in(7, "device").unwrap(), saved);
+    assert_eq!(
+        handler.identity_conversation_address(collaboration["taskId"].as_str().unwrap())["taskId"],
+        collaboration["taskId"]
+    );
+}
+
+#[tokio::test]
 #[allow(clippy::await_holding_lock)] // Isolate process-wide model discovery settings.
 async fn stand_in_reasoning_aliases_keep_resolved_provider_in_execution_and_persistence() {
     let _lock = crate::test_env::lock();

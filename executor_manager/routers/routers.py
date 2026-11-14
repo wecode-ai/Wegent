@@ -1032,7 +1032,11 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-        result = executor.cancel_task(request.task_id, request.subtask_id)
+        result = await asyncio.to_thread(
+            executor.cancel_task,
+            request.task_id,
+            request.subtask_id,
+        )
 
         if result["status"] == "success":
             logger.info(f"Successfully cancelled task {request.task_id}")

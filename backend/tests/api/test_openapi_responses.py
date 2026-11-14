@@ -2263,7 +2263,8 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.get_streaming_content = AsyncMock(
             return_value="Partial content"
         )
-        mock_session_manager.cancel_stream = AsyncMock()
+        mock_session_manager.response_cancel.prepare.return_value = "intent"
+        mock_session_manager.finish_response_cancel = AsyncMock(return_value=True)
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",
@@ -2273,8 +2274,11 @@ class TestOpenAPIResponsesCancel:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == f"resp_{task.id}"
-        mock_session_manager.cancel_stream.assert_awaited_once_with(
-            running_subtask.id, skip_settled=True
+        mock_session_manager.response_cancel.prepare.assert_called_once_with(
+            running_subtask.id
+        )
+        mock_session_manager.finish_response_cancel.assert_awaited_once_with(
+            running_subtask.id, "intent"
         )
 
     @patch("app.services.chat.storage.session_manager")
@@ -2382,7 +2386,8 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.get_streaming_content = AsyncMock(
             return_value="Partial content"
         )
-        mock_session_manager.cancel_stream = AsyncMock()
+        mock_session_manager.response_cancel.prepare.return_value = "intent"
+        mock_session_manager.finish_response_cancel = AsyncMock(return_value=True)
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",

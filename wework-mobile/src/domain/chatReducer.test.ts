@@ -3,12 +3,164 @@ import { describe, expect, it } from 'vitest'
 import { appendDelta, chatReducer, type RuntimeStreamEvent } from './chatReducer'
 import { projectMobileRuntimeTranscript } from './runtimeTranscript'
 import { hydrateRuntimeTranscript } from './runtimeTranscriptHydration'
+import type { Attachment } from '@/types/runtime'
+
+const attachment: Attachment = {
+  id: 17,
+  filename: 'report.png',
+  file_size: 120,
+  mime_type: 'image/png',
+  status: 'ready',
+  file_extension: 'png',
+  created_at: '2026-11-14T10:00:00Z',
+  workspace_file: { device_id: 'storage-device', workspace_path: '/worktree', path: 'report.png' },
+  image_width: 320,
+  image_height: 180,
+  ui_group_id: 'artifact',
+  ui_group_role: 'primary',
+  ui_kind: 'appshot',
+}
 
 function stream(state: ReturnType<typeof chatReducer>, event: RuntimeStreamEvent) {
   return chatReducer(state, { type: 'stream', event })
 }
 
 describe('chatReducer', () => {
+  it('preserves canonical diff identity and bytes on transcript summaries and blocks', () => {
+    const source = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact',
+      device_id: 'storage',
+      workspace_path: '/original',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'a.ts',
+          change_type: 'created' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+      diff: 'diff --git a/a.ts b/a.ts\n+hello',
+    }
+    const [message] = chatReducer([], {
+      type: 'replace',
+      messages: [
+        {
+          id: 'assistant',
+          role: 'assistant',
+          content: '',
+          subtaskId: 'turn',
+          blocks: [{ id: 'changes', type: 'file_changes', file_changes: source, status: 'done' }],
+        },
+      ],
+    })
+    expect(message.fileChanges?.source).toMatchObject(source)
+    expect(message.blocks?.[0]).toMatchObject({ fileChanges: { source } })
+    const streamed = stream([], {
+      name: 'response.completed',
+      payload: { subtaskId: 'turn', data: { file_changes: source } },
+    })
+    expect(streamed[0].fileChanges?.source).toMatchObject(source)
+  })
+  it('keeps complete attachment metadata through canonical projection and message hydration', () => {
+    const transcript = projectMobileRuntimeTranscript({
+      taskId: 'task',
+      workspacePath: '/worktree',
+      runtime: 'codex',
+      messages: [],
+      runtimeTurns: [],
+      turns: [
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [
+            {
+              id: 'input',
+              type: 'user_message',
+              message: {
+                id: 'provider-user',
+                clientUserMessageId: 'user',
+                role: 'user',
+                content: 'Inspect',
+                attachments: [attachment],
+              },
+            },
+          ],
+        },
+      ],
+    })
+    const [message] = chatReducer([], { type: 'replace', messages: transcript.messages })
+    expect(message.id).toBe('user')
+    expect(message.attachments).toEqual([attachment])
+  })
+
+  it('retains optimistic attachments when confirmation and reconnect omit optional metadata', () => {
+    const optimistic = chatReducer([], {
+      type: 'optimistic-user',
+      id: 'user',
+      content: 'Inspect',
+      createdAt: 10,
+      attachments: [attachment],
+    })
+    const delivered = chatReducer(optimistic, { type: 'user-delivered', id: 'user' })
+    expect(delivered[0]).toMatchObject({ attachments: [attachment], pendingDelivery: false })
+    const result = hydrateRuntimeTranscript(
+      delivered,
+      {
+        taskId: 'task',
+        workspacePath: '/worktree',
+        runtime: 'codex',
+        messages: [
+          { id: 'provider-user', clientUserMessageId: 'user', role: 'user', content: 'Inspect' },
+        ],
+      },
+      [],
+      true
+    )
+    expect(result.messages).toHaveLength(1)
+    expect(result.messages[0].attachments).toEqual([attachment])
+  })
+
+  it('accepts authoritative attachment updates and explicit removal without reviving old attachments', () => {
+    const original = chatReducer([], {
+      type: 'replace',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [attachment] }],
+    })
+    const updated = { ...attachment, filename: 'renamed.png', image_width: 640 }
+    const merged = chatReducer(original, {
+      type: 'merge-latest',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [updated] }],
+    })
+    expect(merged[0].attachments).toEqual([updated])
+    const removed = chatReducer(merged, {
+      type: 'merge-latest',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [] }],
+    })
+    const prepended = chatReducer(removed, {
+      type: 'prepend',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [attachment] }],
+    })
+    expect(prepended[0].attachments).toEqual([])
+  })
+
+  it('does not lose attachments at an overlapping pagination boundary', () => {
+    const current = chatReducer([], {
+      type: 'replace',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect' }],
+    })
+    const prepended = chatReducer(current, {
+      type: 'prepend',
+      messages: [{ id: 'user', role: 'user', content: 'Inspect', attachments: [attachment] }],
+    })
+    expect(prepended).toHaveLength(1)
+    expect(prepended[0].attachments).toEqual([attachment])
+  })
+
   it('joins a streamed reply to its canonical reconnect snapshot without duplicating it', () => {
     const previous = stream([], {
       name: 'response.output_text.delta',
