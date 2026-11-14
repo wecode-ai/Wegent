@@ -432,6 +432,8 @@ Opening an issue from a project-space board shows its attachments directly in th
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
+For substantial assigned work, collaboration Agents delegate execution to native subagents by default while the primary Agent coordinates, verifies and replies concisely. No extra delegation request is needed. Normally only a brief acknowledgment and the final result are published; routine tool, wait and worker progress stays internal, while material blockers, questions and approvals remain visible. Simple questions are answered directly. Subagents retain the original task's context and permission limits without creating extra Issue execution tasks. Explicit single-agent mode still disables subagents.
+
 Comments in the issue activity have two different execution semantics:
 
 - Sending a new top-level comment from the bottom composer creates a separate execution task from the issue title, description, attachments, and current project configuration. The new task can read the issue context, but it does not automatically inherit another execution task's conversation history.

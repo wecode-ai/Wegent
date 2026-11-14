@@ -4938,7 +4938,14 @@ fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<Strin
     }
     let explicit_native_mode =
         matches!(codex_collaboration_mode(request), Some("default" | "plan"));
+    let issue_conversation = request.extra.get("origin").is_some_and(|origin| {
+        matches!(
+            origin["type"].as_str(),
+            Some("issue_dispatch" | "board_task" | "board_comment")
+        )
+    });
     if explicit_native_mode
+        || issue_conversation
         || request
             .extra
             .get("origin")
@@ -4947,11 +4954,39 @@ fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<Strin
             == Some("stand_in_identity")
     {
         // A resumed thread retains its agent family, including an earlier disabled state.
-        // Explicit native modes and stand-in chat require the V2 mailbox tools.
-        return vec![
+        // Issue agents need the same V2 mailbox tools as personal conversations.
+        let mut overrides = vec![
             "agents.enabled=true".to_owned(),
             CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
         ];
+        if issue_conversation {
+            // Native's explicit-request-only mode otherwise overrides the host's delegation policy.
+            let policy = concat!(
+                    "In this Wework collaboration Issue, the primary agent delegates substantial ",
+                    "assigned work to native subagents without requiring the user to request delegation. ",
+                    "Discover collaboration tools through Code Mode, pass the complete requirements ",
+                    "and authorization limits, review the worker's evidence, and return a concise result. ",
+                    "Answer simple questions directly. Keep routine execution progress internal; ",
+                    "publish only useful acceptance, verified results, material blockers or required questions. ",
+                    "If you are a delegated subagent, perform your bounded assignment and return evidence ",
+                    "to the parent without publishing Issue comments or recursively delegating by default. ",
+                    "Child agents share the workspace; preserve shared edits and verify the combined outcome. ",
+                    "Use inherited model and reasoning settings unless explicitly instructed otherwise. ",
+                    "Delegation never expands native permissions or bypasses approvals."
+            );
+            // Keep the root, mode and spawn-tool guidance consistent.
+            for key in [
+                "root_agent_usage_hint_text",
+                "multi_agent_mode_hint_text",
+                "usage_hint_text",
+            ] {
+                overrides.push(format!(
+                    "features.multi_agent_v2.{key}={}",
+                    toml_value(policy)
+                ));
+            }
+        }
+        return overrides;
     }
     Vec::new()
 }

@@ -4387,6 +4387,86 @@ fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
 }
 
 #[test]
+fn issue_stand_in_delegation_survives_start_and_resume_without_a_user_spawn_request() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true
+        }),
+    );
+    let config = CodexLaunchConfig {
+        config_overrides: codex_collaboration_config_overrides(&request),
+        ..Default::default()
+    };
+    let start = thread_start_params(&request, &config);
+    let resume = thread_resume_params("existing-issue", &request, &config);
+    for params in [start, resume] {
+        assert_eq!(params["config"]["agents.enabled"], true);
+        assert_eq!(params["config"]["features.multi_agent_v2"], true);
+        let policy = params["config"]["features.multi_agent_v2.multi_agent_mode_hint_text"]
+            .as_str()
+            .unwrap();
+        assert!(policy.contains("without requiring the user to request delegation"));
+        assert!(policy.contains("If you are a delegated subagent"));
+        assert!(policy.contains("never expands native permissions"));
+        assert_eq!(
+            params["config"]["features.multi_agent_v2.root_agent_usage_hint_text"],
+            policy
+        );
+        assert_eq!(
+            params["config"]["features.multi_agent_v2.usage_hint_text"],
+            policy
+        );
+    }
+    for origin in [
+        json!({"type":"project_task"}),
+        json!({"type":"project_coordinator"}),
+        json!({"type":"stand_in_task"}),
+        json!({"type":"stand_in_task","initiatedBy":"stand_in","publicConversation":true}),
+    ] {
+        request.extra.insert("origin".into(), origin);
+        assert!(codex_collaboration_config_overrides(&request).is_empty());
+    }
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true
+        }),
+    );
+    request
+        .extra
+        .insert("collaborationMode".into(), json!("single"));
+    assert_eq!(
+        codex_collaboration_config_overrides(&request),
+        vec![
+            CODEX_DISABLE_AGENTS_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE,
+        ]
+    );
+}
+
+#[test]
+fn assigned_collaboration_agents_use_native_delegation_in_local_and_cloud_origins() {
+    for kind in ["issue_dispatch", "board_task", "board_comment"] {
+        for role in ["executor", "member", "manager"] {
+            let mut request = ExecutionRequest::default();
+            request
+                .extra
+                .insert("origin".into(), json!({"type":kind,"dispatchRole":role}));
+            let overrides = codex_collaboration_config_overrides(&request);
+            assert!(overrides.contains(&"agents.enabled=true".to_owned()));
+            assert!(overrides.contains(&CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()));
+            assert!(overrides
+                .iter()
+                .any(|value| value
+                    .starts_with("features.multi_agent_v2.multi_agent_mode_hint_text=")));
+        }
+    }
+}
+
+#[test]
 fn single_stand_in_identity_still_disables_both_native_agent_families() {
     let mut request = ExecutionRequest::default();
     request
