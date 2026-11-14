@@ -79,6 +79,7 @@ afterEach(() => {
   styleElement.remove()
   document.documentElement.classList.remove('dark')
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 function Draft() {
@@ -316,6 +317,95 @@ describe('ExperiencePanes', () => {
     fireEvent.doubleClick(separator)
     expect(panelLayout().list).toBeCloseTo(original.list)
     expect(panelLayout().timeline).toBeCloseTo(original.timeline)
+  })
+
+  it('resets four retained panes to the current viewport defaults after resizing a saved nondefault layout', () => {
+    const observers = new Set<ResizeObserver>()
+    const notifyResize = new Map<ResizeObserver, () => void>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class implements ResizeObserver {
+        private targets = new Set<Element>()
+        constructor(callback: ResizeObserverCallback) {
+          observers.add(this)
+          notifyResize.set(this, () => {
+            callback(
+              [...this.targets].map(target => {
+                const contentRect = target.getBoundingClientRect()
+                const size = [{ inlineSize: contentRect.width, blockSize: contentRect.height }]
+                return {
+                  target,
+                  contentRect,
+                  borderBoxSize: size,
+                  contentBoxSize: size,
+                  devicePixelContentBoxSize: size,
+                }
+              }),
+              this
+            )
+          })
+        }
+        observe(target: Element) {
+          this.targets.add(target)
+        }
+        unobserve(target: Element) {
+          this.targets.delete(target)
+        }
+        disconnect() {
+          observers.delete(this)
+          notifyResize.delete(this)
+        }
+      }
+    )
+    availableWidth = 1280
+    render(
+      <ExperiencePanes
+        navigation={<nav>Navigation</nav>}
+        panes={[
+          { id: 'tasks', title: 'Tasks', content: null, minWidth: 240, defaultWidth: 300 },
+          { id: 'timeline', title: 'Timeline', content: null, minWidth: 360, defaultWidth: 620 },
+          {
+            id: 'discussion',
+            title: 'Private discussion',
+            content: <Draft />,
+            minWidth: 320,
+            defaultWidth: 480,
+          },
+        ]}
+      />
+    )
+    const group = document.querySelector('[data-group]')
+    const separator = document.getElementById('collaboration-exp-resize-timeline-discussion')!
+    const draft = screen.getByRole('textbox', { name: 'Private draft' })
+    fireEvent.change(draft, { target: { value: 'Keep the resized discussion draft' } })
+    const initial = panelLayout()
+    fireEvent.keyDown(separator, { key: 'ArrowRight' })
+    const saved = panelLayout()
+    expect(saved.timeline).toBeGreaterThan(initial.timeline)
+    expect(saved.discussion).toBeLessThan(initial.discussion)
+
+    resize(1440)
+    act(() => {
+      for (const observer of [...observers]) notifyResize.get(observer)?.()
+    })
+    const retained = panelLayout()
+    for (const id of Object.keys(saved)) expect(retained[id]).toBeCloseTo(saved[id], 4)
+    expect(document.querySelector('[data-group]')).toBe(group)
+    const pixels = (id: string) => document.getElementById(id)!.getBoundingClientRect().width
+    // Four panes share 1416px after the three 8px separators at this viewport.
+    const defaults = {
+      'collaboration-exp-navigation': 164,
+      tasks: 281.5,
+      timeline: 539 + 5 / 6,
+      discussion: 430 + 2 / 3,
+    }
+    expect(Math.abs(pixels('timeline') - defaults.timeline)).toBeGreaterThan(2)
+    fireEvent.doubleClick(separator)
+    for (const [id, width] of Object.entries(defaults)) expect(pixels(id)).toBeCloseTo(width, 2)
+    expect(Object.keys(defaults).reduce((total, id) => total + pixels(id), 0)).toBeCloseTo(1416, 3)
+    expect(screen.getAllByRole('separator')).toHaveLength(3)
+    expect(screen.getByRole('textbox', { name: 'Private draft' })).toBe(draft)
+    expect(draft).toHaveValue('Keep the resized discussion draft')
   })
 
   it('cancels the active pointer resize on Escape without allowing an outer layer-close handler', () => {

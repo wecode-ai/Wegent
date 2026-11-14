@@ -9,7 +9,7 @@ const box = { left: 0, top: 0, width: 300, height: 60 }
 
 function paneControl(change = {}) {
   const calls = []
-  let widths = [600, 480]
+  let widths = [560, 520]
   return {
     calls,
     async command(action, selector, options) {
@@ -28,8 +28,9 @@ function paneControl(change = {}) {
           return JSON.stringify([{ ...box, width: widths[1] }])
         assert.fail(`Unexpected metrics selector: ${selector}`)
       }
-      if (action === 'press') widths = options.key === 'ArrowRight' ? [616, 464] : [600, 480]
-      if (action === 'doubleClick') widths = [600, 480]
+      if (action === 'press')
+        widths = options.key === 'ArrowRight' ? [widths[0] + 16, widths[1] - 16] : [600, 480]
+      if (action === 'doubleClick' && !change.resetDisabled) widths = [600, 480]
       if (action === 'dragStart') widths = [640, 440]
       if (action === 'getValue') return change.draft ?? 'Unsent private draft'
       return ''
@@ -55,6 +56,7 @@ test('desktop verification owns the actual task toolbar and preserves all resize
       .filter(call => ['press', 'doubleClick', 'dragStart', 'dragEnd'].includes(call.action))
       .map(call => [call.action, call.options?.key]),
     [
+      ['doubleClick', undefined],
       ['press', 'ArrowRight'],
       ['doubleClick', undefined],
       ['dragStart', undefined],
@@ -76,6 +78,19 @@ test('desktop verification owns the actual task toolbar and preserves all resize
         draft: 'Unsent private draft',
       })
     )
+})
+
+test('desktop verification rejects a broken reset even after establishing its default baseline', async () => {
+  await assert.rejects(
+    () =>
+      assertDesktopPanes(paneControl({ resetDisabled: true }), {
+        appSelector: 'app',
+        testId,
+        privateInput: 'private-input',
+        draft: 'Unsent private draft',
+      }),
+    /Double-click must restore the current default widths/
+  )
 })
 
 function planControl(change = {}) {
