@@ -1915,12 +1915,12 @@ fn codex_app_is_running() -> bool {
     false
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn codex_app_running_probe_args() -> [&'static str; 2] {
     ["-axo", "command="]
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn is_codex_gui_process_command(command: &str) -> bool {
     let command = command.trim();
     command.ends_with("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
