@@ -40,8 +40,7 @@ pub struct ChatSessionSetup {
     pub assistant_executor_name: String,
     pub assistant_executor_namespace: String,
     /// The assistant subtask row's `executor_deleted_at`: `_build_session_context`
-    /// reads it to decide whether the persisted sessions join the inherited
-    /// list. The create flow inserts the row, so it is always false there.
+    /// reads it to decide whether the persisted sessions join the inherited list.
     pub assistant_executor_deleted: bool,
     /// The inserted assistant subtask's `created_at` (the task-run-metric
     /// hook's captured value, read inside the insert's savepoint).
@@ -410,7 +409,7 @@ async fn append_subtasks(
         user_message_id: ids.next_message_id,
         assistant_executor_name: inserted.executor.name,
         assistant_executor_namespace: inserted.executor.namespace,
-        assistant_executor_deleted: false,
+        assistant_executor_deleted: inserted.executor.deleted_at != 0,
         assistant_created_at: inserted.assistant_created_at,
         existing_subtasks,
     })
