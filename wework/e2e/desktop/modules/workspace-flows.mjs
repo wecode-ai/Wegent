@@ -491,8 +491,8 @@ export async function enterLocalCollaborationWorkspace(control, contentSelector)
     '[data-testid="collaboration-workspace-tree-wework-local-workspace"] .collaboration-workspace-identity',
     contentSelector
   )
-  if (Number(await control.command('getElementCount', localIdentity)) > 0)
-    await control.command('click', localIdentity)
+  await revealCollaborationSidebarElement(control, localIdentity, WORKBENCH_READY_TIMEOUT_MS)
+  await control.command('clickWhenEnabled', localIdentity)
   const group = inCollaborationSidebar(
     '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child',
     contentSelector
@@ -2126,7 +2126,13 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     firstBoardContent
   )
-  await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-identity`)
+  const firstWorkspaceIdentity = `${firstWorkspaceTree} .collaboration-workspace-identity`
+  await revealCollaborationSidebarElement(
+    control,
+    firstWorkspaceIdentity,
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('hover', firstWorkspaceIdentity)
   await control.command(
     'click',
     `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
