@@ -1,5 +1,6 @@
 import asyncio
 import json
+import subprocess
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -29,15 +30,27 @@ class Page:
 def make_context() -> SimpleNamespace:
     session = SimpleNamespace(
         send=AsyncMock(
-            return_value={"targetInfo": {"targetId": "main", "type": "page"}}
+            return_value={
+                "targetInfo": {
+                    "targetId": "main",
+                    "type": "page",
+                    "browserContextId": "owned",
+                }
+            }
         ),
         detach=AsyncMock(),
         on=Mock(),
     )
     return SimpleNamespace(
         browser=SimpleNamespace(
-            new_browser_cdp_session=AsyncMock(return_value=session)
+            new_browser_cdp_session=AsyncMock(
+                return_value=SimpleNamespace(
+                    on=Mock(), send=AsyncMock(), detach=AsyncMock()
+                )
+            )
         ),
+        on=Mock(),
+        close=AsyncMock(),
         route=AsyncMock(),
         new_cdp_session=AsyncMock(return_value=session),
         route_web_socket=AsyncMock(),
@@ -275,19 +288,27 @@ async def test_child_target_is_guarded_before_execution(
     import app.services.web_scraper.chromium_security as module
 
     parent = SimpleNamespace(on=Mock())
-    child = SimpleNamespace(on=Mock(), send=AsyncMock())
+    child = SimpleNamespace(
+        on=Mock(), send=AsyncMock(return_value={"result": {"value": True}})
+    )
     monkeypatch.setattr(module, "_TargetSession", lambda *args: child)
     guard = ChromiumRequestGuard(make_guard())
     guard._listen_for_targets(parent)
 
     await parent.on.call_args.args[1](
-        {"sessionId": "child", "targetInfo": {"type": target_type, "targetId": "frame"}}
+        {
+            "sessionId": "child",
+            "waitingForDebugger": True,
+            "targetInfo": {"type": target_type, "targetId": "frame"},
+        }
     )
 
     commands = [call.args[0] for call in child.send.await_args_list]
     expected = ["Target.setAutoAttach", "Runtime.runIfWaitingForDebugger"]
     if target_type != "worker":
         expected.insert(0, "Fetch.enable")
+    if target_type in {"worker", "shared_worker"}:
+        expected[:0] = ["Runtime.enable", "Runtime.evaluate"]
     assert commands == expected
     attach = next(
         call
@@ -295,6 +316,71 @@ async def test_child_target_is_guarded_before_execution(
         if call.args[0] == "Target.setAutoAttach"
     )
     assert attach.args[1]["waitForDebuggerOnStart"] is True
+
+
+@pytest.mark.parametrize("target_type", ["worker", "shared_worker"])
+async def test_worker_socket_capabilities_are_disabled_before_execution(
+    monkeypatch: pytest.MonkeyPatch, target_type: str
+) -> None:
+    import app.services.web_scraper.chromium_security as module
+
+    parent = SimpleNamespace(on=Mock())
+    child = SimpleNamespace(
+        on=Mock(), send=AsyncMock(return_value={"result": {"value": True}})
+    )
+    monkeypatch.setattr(module, "_TargetSession", lambda *args: child)
+    ChromiumRequestGuard(make_guard())._listen_for_targets(parent)
+
+    await parent.on.call_args.args[1](
+        {
+            "sessionId": "child",
+            "waitingForDebugger": True,
+            "targetInfo": {"type": target_type, "targetId": "w"},
+        }
+    )
+
+    commands = [call.args[0] for call in child.send.await_args_list]
+    assert "Runtime.evaluate" in commands
+    assert commands.index("Runtime.enable") < commands.index("Runtime.evaluate")
+    assert commands.index("Runtime.evaluate") < commands.index(
+        "Runtime.runIfWaitingForDebugger"
+    )
+    evaluation = next(
+        call.args[1]
+        for call in child.send.await_args_list
+        if call.args[0] == "Runtime.evaluate"
+    )
+    assert evaluation["returnByValue"] is True
+
+
+@pytest.mark.parametrize(
+    "response",
+    [{"exceptionDetails": {"text": "blocked"}}, {"result": {"value": False}}],
+)
+async def test_worker_is_not_resumed_when_socket_policy_is_not_installed(
+    monkeypatch: pytest.MonkeyPatch, response: dict[str, Any]
+) -> None:
+    import app.services.web_scraper.chromium_security as module
+
+    async def send(method: str, params: Any = None) -> dict[str, Any]:
+        return response if method == "Runtime.evaluate" else {}
+
+    parent = SimpleNamespace(on=Mock())
+    child = SimpleNamespace(on=Mock(), send=AsyncMock(side_effect=send))
+    monkeypatch.setattr(module, "_TargetSession", lambda *args: child)
+    ChromiumRequestGuard(make_guard())._listen_for_targets(parent)
+
+    with pytest.raises(RuntimeError, match="Worker WebSocket protection"):
+        await parent.on.call_args.args[1](
+            {
+                "sessionId": "child",
+                "waitingForDebugger": True,
+                "targetInfo": {"type": "worker", "targetId": "w"},
+            }
+        )
+    assert "Runtime.runIfWaitingForDebugger" not in [
+        call.args[0] for call in child.send.await_args_list
+    ]
 
 
 async def test_child_command_error_keeps_method_and_code() -> None:
@@ -340,11 +426,19 @@ async def test_dedicated_worker_uses_creator_request_interception_before_running
 
     async def send(method: str, params: dict | None = None) -> dict:
         if method == "Target.getTargetInfo":
-            return {"targetInfo": {"targetId": "main", "type": "page"}}
+            return {
+                "targetInfo": {
+                    "targetId": "main",
+                    "type": "page",
+                    "browserContextId": "owned",
+                }
+            }
         if method == "Target.sendMessageToTarget":
             command = json.loads(params["message"])
             commands.append(("worker", command["method"]))
             reply = {"id": command["id"], "result": {}}
+            if command["method"] == "Runtime.evaluate":
+                reply["result"] = {"result": {"value": True}}
             if command["method"] == "Fetch.enable":
                 reply = {"id": command["id"], "error": {"code": -32601}}
             await handlers["Target.receivedMessageFromTarget"](
@@ -364,6 +458,7 @@ async def test_dedicated_worker_uses_creator_request_interception_before_running
     await handlers["Target.attachedToTarget"](
         {
             "sessionId": "dedicated",
+            "waitingForDebugger": True,
             "targetInfo": {"targetId": "worker", "type": "worker"},
         }
     )
@@ -383,4 +478,196 @@ async def test_dedicated_worker_uses_creator_request_interception_before_running
     assert commands[-2:] == [
         ("page", "Fetch.continueRequest"),
         ("page", "Fetch.failRequest"),
+    ]
+
+
+def test_worker_socket_policy_cannot_be_replaced_or_recovered_from_prototypes() -> None:
+    from app.services.web_scraper.chromium_security import BLOCK_WORKER_WEBSOCKETS
+
+    program = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const context = vm.createContext({DOMException});
+vm.runInContext(`
+  globalThis.WebSocket = function () { throw new Error('native-called'); };
+  Object.setPrototypeOf(globalThis, {
+    WebSocketStream: function () { throw new Error('native-stream-called'); }
+  });
+  globalThis.fetch = () => 'http-is-unchanged';
+`, context);
+assert.equal(vm.runInContext(POLICY, context), true);
+assert.equal(vm.runInContext(POLICY, context), true);
+vm.runInContext(`
+  const blocked = globalThis.WebSocket;
+  if (Reflect.set(globalThis, 'WebSocket', function () {})) throw new Error('replace');
+  if (Reflect.deleteProperty(globalThis, 'WebSocket')) throw new Error('delete');
+  if (globalThis.WebSocket !== blocked) throw new Error('changed');
+  for (let owner = globalThis; owner; owner = Object.getPrototypeOf(owner)) {
+    for (const name of ['WebSocket', 'WebSocketStream']) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, name);
+      if (!descriptor) continue;
+      if (descriptor.writable || descriptor.configurable) throw new Error('mutable');
+      try {
+        new descriptor.value('ws://127.0.0.1/private');
+        throw new Error('connected');
+      } catch (error) {
+        if (error.name !== 'SecurityError') throw error;
+      }
+    }
+  }
+  if (fetch() !== 'http-is-unchanged') throw new Error('http-changed');
+`, context);
+const absent = vm.createContext({DOMException, WebSocket: function () {}});
+vm.runInContext(POLICY, absent);
+assert.equal(vm.runInContext("'WebSocketStream' in globalThis", absent), false);
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            "const POLICY = " + json.dumps(BLOCK_WORKER_WEBSOCKETS) + ";" + program,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+async def test_browser_worker_observer_is_context_scoped_and_closed_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.web_scraper.chromium_security as module
+
+    context = make_context()
+    root = context.browser.new_browser_cdp_session.return_value
+    root.send.return_value = {"sessionId": "manual"}
+    child = SimpleNamespace(
+        on=Mock(), send=AsyncMock(return_value={"result": {"value": True}})
+    )
+    factory = Mock(return_value=child)
+    monkeypatch.setattr(module, "_TargetSession", factory)
+    guard = ChromiumRequestGuard(make_guard())
+    await guard.begin_navigation(context, Page(), BrowserNavigation())
+    await guard.begin_navigation(context, Page(), BrowserNavigation())
+    context.browser.new_browser_cdp_session.assert_awaited_once()
+    listener = root.on.call_args.args[1]
+    await listener(
+        {
+            "sessionId": "unowned",
+            "waitingForDebugger": True,
+            "targetInfo": {
+                "type": "shared_worker",
+                "targetId": "other",
+                "browserContextId": "other",
+            },
+        }
+    )
+    factory.assert_not_called()
+    root.send.assert_awaited_with("Target.detachFromTarget", {"sessionId": "unowned"})
+    root.send.reset_mock()
+    await listener(
+        {
+            "sessionId": "automatic",
+            "waitingForDebugger": True,
+            "targetInfo": {
+                "type": "shared_worker",
+                "targetId": "w",
+                "browserContextId": "owned",
+            },
+        }
+    )
+    factory.assert_called_once_with(root, "manual")
+    commands = [call.args[0] for call in child.send.await_args_list]
+    assert commands == [
+        "Runtime.enable",
+        "Runtime.evaluate",
+        "Fetch.enable",
+        "Target.setAutoAttach",
+    ]
+    root.send.assert_awaited_with("Target.detachFromTarget", {"sessionId": "automatic"})
+    assert "Runtime.runIfWaitingForDebugger" not in commands
+    await context.on.call_args.args[1]()
+    await context.on.call_args.args[1]()
+    root.detach.assert_awaited_once()
+
+
+@pytest.mark.parametrize("success", [True, False])
+async def test_owned_service_worker_is_closed_without_resume(success: bool) -> None:
+    context = make_context()
+    guard = ChromiumRequestGuard(make_guard())
+    await guard.begin_navigation(context, Page(), BrowserNavigation())
+    root = context.browser.new_browser_cdp_session.return_value
+    root.send.reset_mock()
+    root.send.return_value = {"success": success}
+    event = {
+        "sessionId": "automatic",
+        "waitingForDebugger": True,
+        "targetInfo": {
+            "type": "service_worker",
+            "targetId": "w",
+            "browserContextId": "owned",
+        },
+    }
+    listener = root.on.call_args.args[1]
+    if success:
+        await listener(event)
+    else:
+        with pytest.raises(RuntimeError, match="could not be closed"):
+            await listener(event)
+    root.send.assert_awaited_once_with("Target.closeTarget", {"targetId": "w"})
+
+
+@pytest.mark.parametrize("kind", ["worker", "shared_worker"])
+async def test_already_running_owned_worker_rejects_its_context(kind: str) -> None:
+    context = make_context()
+    guard = ChromiumRequestGuard(make_guard())
+    await guard.begin_navigation(context, Page(), BrowserNavigation())
+    event = {
+        "sessionId": "late",
+        "waitingForDebugger": False,
+        "targetInfo": {"type": kind, "targetId": "w", "browserContextId": "owned"},
+    }
+    if kind == "shared_worker":
+        root = context.browser.new_browser_cdp_session.return_value
+        root.send.reset_mock()
+        listener = root.on.call_args.args[1]
+    else:
+        parent = SimpleNamespace(on=Mock())
+        guard._listen_for_targets(parent)
+        listener = parent.on.call_args.args[1]
+    with pytest.raises(RuntimeError, match="Worker started before scraper protection"):
+        await listener(event)
+    context.close.assert_awaited_once()
+
+
+async def test_browser_worker_configuration_failure_keeps_startup_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.web_scraper.chromium_security as module
+
+    context = make_context()
+    guard = ChromiumRequestGuard(make_guard())
+    await guard.begin_navigation(context, Page(), BrowserNavigation())
+    root = context.browser.new_browser_cdp_session.return_value
+    root.send.reset_mock()
+    root.send.return_value = {"sessionId": "manual"}
+    child = SimpleNamespace(
+        on=Mock(), send=AsyncMock(return_value={"exceptionDetails": {}})
+    )
+    monkeypatch.setattr(module, "_TargetSession", lambda *args: child)
+    with pytest.raises(RuntimeError, match="Worker WebSocket protection"):
+        await root.on.call_args.args[1](
+            {
+                "sessionId": "automatic",
+                "waitingForDebugger": True,
+                "targetInfo": {
+                    "type": "shared_worker",
+                    "targetId": "w",
+                    "browserContextId": "owned",
+                },
+            }
+        )
+    assert "Target.detachFromTarget" not in [
+        call.args[0] for call in root.send.await_args_list
     ]

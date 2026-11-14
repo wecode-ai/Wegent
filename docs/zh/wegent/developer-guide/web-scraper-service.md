@@ -148,7 +148,10 @@ WEB_SCRAPER_SITE_CONFIG={"example.com":{"wait_until":"networkidle","page_timeout
 - 初始 URL 和最终响应 URL 都要校验。
 - PDF 下载不能只校验请求前 URL，必须校验 redirect 后的 `response.url`。
 - Playwright fallback 必须启用 request interception，拒绝不安全 scheme、本地地址和私有网段请求。
-- WebSocket URL 也必须经过同一类 SSRF 校验。
+- 页面 WebSocket 的目标 URL 同样经过 SSRF 校验。
+- 专用、共享及嵌套 worker 的普通 HTTP 请求保留。由于现有 Chromium 路由不能在 worker 的 WebSocket 握手前按 URL 审查，worker 内的 WebSocket 和 WebSocketStream 在启动前禁用。
+- Service Worker 使用原生目标控制关闭，避免仅替换注册方法被绕过。防护在首次导航前安装；发现已经运行的未受保护 worker 时，关闭本次抓取上下文，不影响其他上下文。
+- 第三方日志统一交给应用日志系统；日志和异常文本隐藏 URL 用户信息、查询参数和片段，Authorization 与 token 字段按完整值脱敏。
 - Browser、context 和 page 资源必须在异常路径释放。
 
 新增抓取策略或 extractor 时，应先补充 focused tests，再接入编排器。

@@ -16,6 +16,32 @@ from weakref import WeakKeyDictionary, WeakValueDictionary
 
 from app.services.web_scraper.security import WebScraperUrlGuard
 
+BLOCK_WORKER_WEBSOCKETS = """(() => {
+  const key = Symbol.for('wegent.scraper.workerWebSocketsBlocked');
+  if (globalThis[key] === true) return true;
+  const blocked = function () {
+    throw new DOMException('Worker WebSockets are disabled by the scraper policy', 'SecurityError');
+  };
+  for (const name of ['WebSocket', 'WebSocketStream']) {
+    let exposed = false;
+    for (let owner = globalThis; owner; owner = Object.getPrototypeOf(owner)) {
+      if (Object.getOwnPropertyDescriptor(owner, name)) {
+        Object.defineProperty(owner, name, {
+          value: blocked, writable: false, configurable: false
+        });
+        exposed = true;
+      }
+    }
+    if (exposed) {
+      Object.defineProperty(globalThis, name, {
+        value: blocked, writable: false, configurable: false
+      });
+    }
+  }
+  Object.defineProperty(globalThis, key, {value: true, writable: false, configurable: false});
+  return true;
+})()"""
+
 
 class ChromiumProtocolError(RuntimeError):
     """Preserve safe protocol diagnostics without exposing request parameters."""
@@ -97,13 +123,18 @@ class _TargetSession:
 
 
 class ChromiumRequestGuard:
-    """Guard an owned page and pause its child iframe targets before requests."""
+    """Guard owned pages and worker targets before they can send requests."""
 
     def __init__(self, guard: WebScraperUrlGuard) -> None:
         self._guard = guard
         self._lock = asyncio.Lock()
         self._navigations: WeakValueDictionary[str, Any] = WeakValueDictionary()
         self._pages: WeakKeyDictionary[Any, str] = WeakKeyDictionary()
+        self._browser_session: Any | None = None
+        self._browser_context_id: str | None = None
+        self._browser_targets: set[str] = set()
+        self._protected_workers: set[str] = set()
+        self._context: Any | None = None
 
     async def begin_navigation(self, context: Any, page: Any, navigation: Any) -> None:
         async with self._lock:
@@ -113,12 +144,108 @@ class ChromiumRequestGuard:
             session = await context.new_cdp_session(page)
             info = await session.send("Target.getTargetInfo")
             target = info["targetInfo"]
+            await self._guard_browser_workers(context, target.get("browserContextId"))
             self._navigations[target["targetId"]] = navigation
             await self._configure_target(session, target)
             self._pages[page] = target["targetId"]
 
+    async def _guard_browser_workers(
+        self, context: Any, context_id: str | None
+    ) -> None:
+        if not context_id:
+            raise RuntimeError("Protected browser context identity is required")
+        if self._browser_session is not None:
+            if context_id != self._browser_context_id:
+                raise RuntimeError("Worker guard cannot span browser contexts")
+            return
+        self._browser_context_id = context_id
+        self._context = context
+        session = await context.browser.new_browser_cdp_session()
+        self._browser_session = session
+        initial: list[asyncio.Task[Any]] | None = []
+
+        def attached(event: dict[str, Any]) -> asyncio.Task[Any]:
+            task = asyncio.create_task(self._browser_worker_attached(event))
+            if initial is not None:
+                initial.append(task)
+            return task
+
+        session.on("Target.attachedToTarget", attached)
+
+        async def closed(*args: Any) -> None:
+            if self._browser_session is not session:
+                return
+            self._browser_session = None
+            self._browser_targets.clear()
+            self._protected_workers.clear()
+            try:
+                await session.detach()
+            except Exception:
+                if context.browser.is_connected():
+                    raise
+
+        context.on("close", closed)
+        await session.send(
+            "Target.setAutoAttach",
+            {
+                "autoAttach": True,
+                "waitForDebuggerOnStart": True,
+                "flatten": True,
+                "filter": [
+                    {"type": "shared_worker"},
+                    {"type": "service_worker"},
+                    {"exclude": True},
+                ],
+            },
+        )
+        await asyncio.gather(*initial)
+        initial = None
+
+    async def _browser_worker_attached(self, event: dict[str, Any]) -> None:
+        session = self._browser_session
+        info = event["targetInfo"]
+        if info.get("browserContextId") != self._browser_context_id:
+            # Detaching releases only this observer's startup barrier reference.
+            await session.send(
+                "Target.detachFromTarget", {"sessionId": event["sessionId"]}
+            )
+            return
+        target_id = info["targetId"]
+        if target_id in self._browser_targets:
+            if event["waitingForDebugger"]:
+                await session.send(
+                    "Target.detachFromTarget", {"sessionId": event["sessionId"]}
+                )
+            return
+        self._browser_targets.add(target_id)
+        if not event["waitingForDebugger"]:
+            await self._reject_late_worker()
+        if info["type"] == "service_worker":
+            result = await session.send("Target.closeTarget", {"targetId": target_id})
+            if result.get("success") is not True:
+                raise RuntimeError("Unprotected worker could not be closed")
+            return
+        # Browser auto-attach must be flattened. Hold its barrier while adding
+        # the message-based child session used by the same recursive guard.
+        legacy = await session.send(
+            "Target.attachToTarget", {"targetId": target_id, "flatten": False}
+        )
+        child = _TargetSession(session, legacy["sessionId"])
+        await self._configure_target(child, info)
+        self._protected_workers.add(target_id)
+        await session.send("Target.detachFromTarget", {"sessionId": event["sessionId"]})
+
+    async def _reject_late_worker(self) -> None:
+        # A running worker may already retain native socket constructors. A late
+        # injection cannot establish this context's security precondition.
+        if self._context is not None:
+            await self._context.close()
+        raise RuntimeError("Worker started before scraper protection was installed")
+
     async def _configure_target(self, session: Any, info: dict[str, Any]) -> None:
         self._listen_for_targets(session)
+        if info["type"] in {"worker", "shared_worker"}:
+            await self._disable_worker_websockets(session)
         # Dedicated workers have no Fetch domain. Their requests are intercepted
         # by the creator page/iframe, as in Playwright's Chromium network manager.
         # Shared workers and out-of-process iframes do expose their own Fetch.
@@ -133,6 +260,21 @@ class ChromiumRequestGuard:
                 {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]},
             )
         await session.send("Target.setAutoAttach", self._auto_attach_params())
+
+    @staticmethod
+    async def _disable_worker_websockets(session: Any) -> None:
+        # CDP Fetch and Playwright's page-only WebSocket shim cannot guard worker
+        # handshakes. Keep workers paused until this capability is disabled.
+        await session.send("Runtime.enable")
+        response = await session.send(
+            "Runtime.evaluate",
+            {"expression": BLOCK_WORKER_WEBSOCKETS, "returnByValue": True},
+        )
+        if (
+            response.get("exceptionDetails")
+            or response.get("result", {}).get("value") is not True
+        ):
+            raise RuntimeError("Worker WebSocket protection could not be installed")
 
     @staticmethod
     def _auto_attach_params() -> dict[str, Any]:
@@ -150,8 +292,17 @@ class ChromiumRequestGuard:
 
     def _listen_for_targets(self, parent: Any) -> None:
         async def attached(event: dict[str, Any]) -> None:
+            info = event["targetInfo"]
+            if (
+                info["type"] in {"worker", "shared_worker"}
+                and not event["waitingForDebugger"]
+                and info["targetId"] not in self._protected_workers
+            ):
+                await self._reject_late_worker()
             session = _TargetSession(parent, event["sessionId"])
-            await self._configure_target(session, event["targetInfo"])
+            await self._configure_target(session, info)
+            if info["type"] in {"worker", "shared_worker"}:
+                self._protected_workers.add(info["targetId"])
             await session.send("Runtime.runIfWaitingForDebugger")
 
         parent.on("Target.attachedToTarget", attached)

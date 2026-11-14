@@ -5,6 +5,7 @@
 """Real Chromium checks against public-IP fixtures in the disposable CI namespace."""
 
 import asyncio
+import json
 import os
 import socket
 import threading
@@ -61,14 +62,45 @@ class WikiHandler(BaseHTTPRequestHandler):
             return
         body = self._body(private, loopback).encode()
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header(
+            "Content-Type",
+            (
+                "application/javascript"
+                if self.path.endswith(".js")
+                else "text/html; charset=utf-8"
+            ),
+        )
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def _body(self, private: str, loopback: str) -> str:
+        if self.path == "/shared-worker.js":
+            return (
+                self._socket_probe()
+                + f"""
+onconnect = event => {{
+  const port = event.ports[0];
+  port.postMessage(socketsBlocked() ? 'sockets_blocked' : 'sockets_escaped');
+  fetch('{private}/shared-worker-resource').then(() => port.postMessage('http_allowed'));
+  fetch('{loopback}/blocked-shared-worker').catch(() => port.postMessage('http_blocked'));
+}};
+"""
+            )
+        if self.path == "/native-service-worker.js":
+            return f"fetch('{loopback}/blocked-service-worker'); fetch('{private}/service-worker-ran');"
         if self.path == "/js-redirect":
             return f'<script>location.replace("{private}/hop-one")</script>'
+        if self.path == "/frame":
+            probe = (
+                self._socket_probe()
+                + "postMessage(socketsBlocked() ? 'frame_sockets_blocked' : 'frame_sockets_escaped');"
+            )
+            return f"""<h1>Frame content</h1><img src="{private}/asset-redirect">
+<script>
+const childWorker = new Worker(URL.createObjectURL(new Blob([{json.dumps(probe)}], {{type: 'text/javascript'}})));
+childWorker.onmessage = event => parent.postMessage(event.data, '*');
+</script>"""
         if self.path != "/wiki":
             return (
                 "<h1>Frame content</h1><p>Public page reference material.</p>"
@@ -77,7 +109,13 @@ class WikiHandler(BaseHTTPRequestHandler):
         blocked_ws = self.websocket_url.replace(
             private.split("//")[1].split(":")[0], "127.0.0.1"
         )
-        return f"""<html><head><title>Public reference page</title></head><body>
+        return f"""<html><head><title>Public reference page</title>
+<script>
+window.addEventListener('message', event => {{
+  if (event.origin === new URL('{self.frame_url}').origin && event.data === 'frame_sockets_blocked')
+    document.body.dataset.frame_sockets_blocked = 'ok';
+}});
+</script></head><body>
 <h1>Public reference page</h1>
 <p>This public page has enough useful structured content to be indexed as a
 knowledge document. Its normal public resources must remain available while
@@ -97,14 +135,59 @@ navigator.serviceWorker.register('/worker.js').then(
   }},
   () => {{ document.body.dataset.worker = 'blocked'; }}
 );
-const worker = new Worker(URL.createObjectURL(new Blob([`
-fetch('{private}/worker-resource').then(() => postMessage('allowed'));
-fetch('{loopback}/blocked-worker').catch(() => postMessage('blocked'));
-`], {{type: 'text/javascript'}})));
+const worker = new Worker(URL.createObjectURL(new Blob([{json.dumps(self._worker_script(private, loopback))}], {{type: 'text/javascript'}})));
 worker.onmessage = (event) => {{
   document.body.dataset['worker_' + event.data] = 'ok';
 }};
+const shared = new SharedWorker('{private}/shared-worker.js');
+shared.port.onmessage = event => {{ document.body.dataset['shared_' + event.data] = 'ok'; }};
+shared.port.start();
 </script></body></html>"""
+
+    @staticmethod
+    def _socket_probe() -> str:
+        public = WikiHandler.websocket_url + "/worker-socket-public"
+        private = public.replace(
+            WikiHandler.base_url.split("//")[1].split(":")[0], "127.0.0.1"
+        ).replace("worker-socket-public", "worker-socket-private")
+        return (
+            "const socketProbeUrls = "
+            + json.dumps([public, private])
+            + ";"
+            + """
+function socketsBlocked() {
+  for (const name of ['WebSocket', 'WebSocketStream']) {
+    let exposed = false;
+    for (let owner = globalThis; owner; owner = Object.getPrototypeOf(owner)) {
+      if (!Object.getOwnPropertyDescriptor(owner, name)) continue;
+      exposed = true;
+      for (const url of socketProbeUrls) {
+        try { new owner[name](url); return false; }
+        catch (error) { if (error.name !== 'SecurityError') return false; }
+      }
+    }
+    if (name === 'WebSocket' && !exposed) return false;
+  }
+  return true;
+}
+"""
+        )
+
+    def _worker_script(self, private: str, loopback: str) -> str:
+        nested = (
+            self._socket_probe()
+            + "postMessage(socketsBlocked() ? 'nested_sockets_blocked' : 'nested_sockets_escaped');"
+        )
+        return (
+            self._socket_probe()
+            + f"""
+fetch('{private}/worker-resource').then(() => postMessage('allowed'));
+fetch('{loopback}/blocked-worker').catch(() => postMessage('blocked'));
+postMessage(socketsBlocked() ? 'sockets_blocked' : 'sockets_escaped');
+const nested = new Worker(URL.createObjectURL(new Blob([{json.dumps(nested)}], {{type: 'text/javascript'}})));
+nested.onmessage = event => postMessage(event.data);
+"""
+        )
 
 
 async def check_browser(browser: Browser, guard: WebScraperUrlGuard) -> None:
@@ -120,11 +203,19 @@ async def check_browser(browser: Browser, guard: WebScraperUrlGuard) -> None:
             "document.body.dataset.ws === 'ok' && document.body.dataset.worker === 'blocked'"
             " && document.body.dataset.worker_allowed === 'ok'"
             " && document.body.dataset.worker_blocked === 'ok'"
+            " && document.body.dataset.worker_sockets_blocked === 'ok'"
+            " && document.body.dataset.worker_nested_sockets_blocked === 'ok'"
+            " && document.body.dataset.shared_sockets_blocked === 'ok'"
+            " && document.body.dataset.shared_http_allowed === 'ok'"
+            " && document.body.dataset.shared_http_blocked === 'ok'"
+            " && document.body.dataset.frame_sockets_blocked === 'ok'"
         )
     except BrowserTimeoutError as error:
         signals = await page.evaluate(
             "Object.fromEntries(['ws', 'worker', 'worker_allowed', 'worker_blocked',"
-            " 'blockedWs'].map(key => [key, document.body.dataset[key] ?? null]))"
+            " 'blockedWs', 'worker_sockets_blocked', 'worker_nested_sockets_blocked',"
+            " 'shared_sockets_blocked', 'shared_http_allowed', 'shared_http_blocked', 'frame_sockets_blocked'"
+            "].map(key => [key, document.body.dataset[key] ?? null]))"
         )
         hits = {
             path.split("?", 1)[0]: count for path, count in WikiHandler.hits.items()
@@ -144,6 +235,24 @@ async def check_browser(browser: Browser, guard: WebScraperUrlGuard) -> None:
     assert WikiHandler.hits["/allowed-resource"] > 0
     assert WikiHandler.hits["/worker.js"] == 0
     assert WikiHandler.hits["/worker-resource"] > 0
+    assert WikiHandler.hits["/shared-worker-resource"] > 0
+    # Call the native prototype method instead of Playwright's instance shim.
+    await asyncio.wait_for(
+        page.evaluate(
+            """async () => {
+          try {
+            await ServiceWorkerContainer.prototype.register.call(
+              navigator.serviceWorker, '/native-service-worker.js'
+            );
+          } catch (_) {}
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          if (registrations.some(registration => registration.active))
+            throw new Error('A native service worker became active');
+        }"""
+        ),
+        timeout=20,
+    )
+    assert WikiHandler.hits["/service-worker-ran"] == 0
     try:
         await page.goto(WikiHandler.base_url + "/hop-one")
     except Error:
@@ -211,9 +320,12 @@ async def main() -> None:
     WikiHandler.base_url = f"http://{ip}:{server.server_port}"
     WikiHandler.frame_url = f"http://11.255.255.253:{server.server_port}/frame"
     websocket_peers: list[str] = []
+    websocket_paths: list[str] = []
 
     async def echo(websocket: ServerConnection) -> None:
         websocket_peers.append(websocket.remote_address[0])
+        assert websocket.request is not None
+        websocket_paths.append(websocket.request.path)
         await websocket.send("ok")
 
     try:
@@ -243,6 +355,9 @@ async def main() -> None:
             path for path in WikiHandler.hits if path.startswith("/blocked")
         ], WikiHandler.hits
         assert websocket_peers and "127.0.0.1" not in websocket_peers, websocket_peers
+        assert not any(
+            path.startswith("/worker-socket-") for path in websocket_paths
+        ), websocket_paths
         print("Browser and Crawl4AI request policy checks passed")
     finally:
         server.shutdown()
