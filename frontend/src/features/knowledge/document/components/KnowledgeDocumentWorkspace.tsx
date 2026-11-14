@@ -765,9 +765,13 @@ function KnowledgeDocumentSession({
           kbId={permissionKb.id}
           kbNamespace={permissionKb.namespace}
           resourceCreated={Boolean(dialogs.createdKb)}
-          restoreFocus={() => {
-            if (createTrigger.current?.isConnected) createTrigger.current.focus()
-          }}
+          restoreFocus={
+            dialogs.createdKb
+              ? () => {
+                  if (createTrigger.current?.isConnected) createTrigger.current.focus()
+                }
+              : undefined
+          }
           refreshError={dialogs.createdKb ? dialogs.createRefreshError || sidebar.loadError : null}
           onRetryRefresh={() => void dialogs.retryCreatedList()}
           onClose={() => {
