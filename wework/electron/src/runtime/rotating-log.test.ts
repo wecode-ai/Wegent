@@ -13,6 +13,75 @@ describe('RotatingLog', () => {
     ).toBe('Authorization: [REDACTED] token="[REDACTED]" api_key=[REDACTED] cookie=[REDACTED]')
   })
 
+  test.each([
+    ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: [REDACTED]'],
+    ['authorization=Bearer synthetic-token', 'authorization=[REDACTED]'],
+    [
+      '{"headers":{"Authorization":"Basic dXNlcjpwYXNz","Accept":"application/json"},"status":401}',
+      '{"headers":{"Authorization":"[REDACTED]","Accept":"application/json"},"status":401}',
+    ],
+    [
+      "headers: { authorization: 'Bearer synthetic-token', requestId: 'request-1' }",
+      "headers: { authorization: '[REDACTED]', requestId: 'request-1' }",
+    ],
+    [
+      'Authorization:\tBasic\tdXNlcjpwYXNz\r\nX-Request-Id: request-1\r\nstatus=401',
+      'Authorization:\t[REDACTED]\r\nX-Request-Id: request-1\r\nstatus=401',
+    ],
+    [
+      'request failed Authorization: Basic dXNlcjpwYXNz status=401; token=synthetic-token retry=false',
+      'request failed Authorization: [REDACTED] status=401; token=[REDACTED] retry=false',
+    ],
+    [
+      'Authorization: Bearer synthetic-token, requestId=request-1; status=401',
+      'Authorization: [REDACTED], requestId=request-1; status=401',
+    ],
+    [
+      '{"Authorization":"Digest username=\\"synthetic-user\\", response=\\"synthetic-response\\"","status":401}',
+      '{"Authorization":"[REDACTED]","status":401}',
+    ],
+    [
+      'Authorization: Digest username="synthetic-user", response="synthetic-response"\nstatus=401',
+      'Authorization: [REDACTED]\nstatus=401',
+    ],
+    [
+      'Authorization: Basic \u001b[31m dXNlcjpwYXNz\u001b[0m\nstatus=401',
+      'Authorization: [REDACTED]\nstatus=401',
+    ],
+    [
+      '{"Authorization":"Basic\\tdXNlcjpwYXNz\\r\\n","requestId":"request-1"}',
+      '{"Authorization":"[REDACTED]","requestId":"request-1"}',
+    ],
+  ])(
+    'redacts a complete authorization value without losing its surrounding diagnostics: %s',
+    (input, expected) => {
+      const result = redactLog(input)
+      expect(result).toBe(expected)
+      expect(redactLog(result)).toBe(expected)
+    }
+  )
+
+  test('preserves diagnostics that do not contain credential fields', () => {
+    const diagnostic = 'Authorization failed: 401; authorizationStatus=denied; requestId=request-1'
+    expect(redactLog(diagnostic)).toBe(diagnostic)
+  })
+
+  test('never persists basic credentials while retaining the warning and request metadata', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-authorization-log-'))
+    const path = join(directory, 'runtime.log')
+    const log = new RotatingLog({ path })
+    await log.write(
+      'stderr',
+      'renderer warning {"Authorization":"Basic dXNlcjpwYXNz","requestId":"request-1","status":401}'
+    )
+    await log.flush()
+    const content = await readFile(path, 'utf8')
+    expect(content).not.toContain('dXNlcjpwYXNz')
+    expect(content).toContain(
+      'renderer warning {"Authorization":"[REDACTED]","requestId":"request-1","status":401}'
+    )
+  })
+
   test('rotates bounded log files', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-rotating-log-'))
     const path = join(directory, 'runtime.log')

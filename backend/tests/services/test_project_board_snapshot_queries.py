@@ -24,6 +24,7 @@ from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import CloudProjectAccess
 from app.services.collaboration_human_assignments import human_task_bindings
 from app.services.collaboration_permissions import collaboration_permission_service
+from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.service import loop_item_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
@@ -211,6 +212,58 @@ def test_batch_projection_preserves_related_issue_visibility(
     assert [item.id for item in snapshot.items] == [item_ids[0]]
     assert snapshot.items[0].can_view_detail is True
     assert snapshot.items[0].description == "Preview"
+
+
+def test_multi_project_context_keeps_each_projects_role_and_default_security(
+    test_db: Session, test_user: User
+) -> None:
+    reader = User(
+        user_name="multi-project-reader", password_hash="unused", is_active=True
+    )
+    test_db.add(reader)
+    test_db.flush()
+    items = []
+    accesses = []
+    for role, security in (
+        (BaseRole.Maintainer, "related"),
+        (BaseRole.Viewer, "related"),
+        (BaseRole.Developer, "open"),
+    ):
+        project_id, item_ids = _project(test_db, test_user.id, 1)
+        project = test_db.get(CloudProject, project_id)
+        project.metadata_json = {"default_issue_security": security}
+        test_db.add(
+            ResourceMember.create(
+                resource_type="CloudProject",
+                resource_id=int(project_id),
+                entity_type="user",
+                entity_id=str(reader.id),
+                role=role.value,
+                status="approved",
+            )
+        )
+        test_db.flush()
+        decision = collaboration_permission_service.check(
+            test_db, reader.id, "read", project_id
+        )
+        assert decision.role == role
+        accesses.append(CloudProjectAccess(project, decision.role))
+        items.append(test_db.get(LoopItem, item_ids[0]))
+    test_db.commit()
+
+    context = LoopItemReadContext.load_for_projects(test_db, items, reader.id, accesses)
+    values = [
+        loop_item_service.response_values_many(
+            test_db, [item], reader.id, access=access, read_context=context
+        )[0]
+        for item, access in zip(items, accesses, strict=True)
+    ]
+
+    assert [value["can_view_detail"] for value in values] == [True, False, True]
+    assert [value["description"] for value in values] == ["Preview", "", "Preview"]
+    assert [value["permissions"]["execute"] for value in values] == [True, False, True]
+    with pytest.raises(ValueError, match="project's access"):
+        LoopItemReadContext.load_for_projects(test_db, items, reader.id, accesses[:1])
 
 
 def test_snapshot_rechecks_access_after_membership_is_revoked(

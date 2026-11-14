@@ -48,6 +48,7 @@ describe('board progress activation', () => {
     const onClick = vi.fn()
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={{ ...item, can_view_detail: false }}
         taskBindings={progressBindings}
         display={minimalDisplay}
@@ -71,6 +72,7 @@ describe('board progress activation', () => {
     const onConfirm = vi.fn()
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={item}
         display={minimalDisplay}
         onClick={onClick}
@@ -100,6 +102,7 @@ describe('board progress activation', () => {
     const user = userEvent.setup()
     render(
       <CloudTodoBoardCard
+        projectStore="backend"
         item={item}
         taskBindings={progressBindings}
         display={minimalDisplay}
@@ -130,6 +133,7 @@ describe('board progress activation', () => {
 
 it('passes milestone metadata through the desktop card and hides it with unavailable details', () => {
   const props = {
+    projectStore: 'backend' as const,
     item,
     display: minimalDisplay,
     onClick: vi.fn(),

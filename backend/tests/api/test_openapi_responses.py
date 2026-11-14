@@ -2263,7 +2263,8 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.get_streaming_content = AsyncMock(
             return_value="Partial content"
         )
-        mock_session_manager.cancel_stream = AsyncMock()
+        mock_session_manager.response_cancel.prepare.return_value = "intent"
+        mock_session_manager.finish_response_cancel = AsyncMock(return_value=True)
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",
@@ -2379,7 +2380,8 @@ class TestOpenAPIResponsesCancel:
         mock_session_manager.get_streaming_content = AsyncMock(
             return_value="Partial content"
         )
-        mock_session_manager.cancel_stream = AsyncMock()
+        mock_session_manager.response_cancel.prepare.return_value = "intent"
+        mock_session_manager.finish_response_cancel = AsyncMock(return_value=True)
 
         response = test_client.post(
             f"/api/v1/responses/resp_{task.id}/cancel",

@@ -845,6 +845,10 @@ jobs:
         if: matrix.shard == 1
         run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
 
+      - name: Verify collaboration experiment desktop contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs
+
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai

@@ -26,6 +26,7 @@ const mergedDefaultPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: 75,
   experimentalFeaturesEnabled: false,
+  collaborationExperienceEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentRevision: 0,
   telemetryConsentAsked: false,

@@ -16,6 +16,8 @@ use chrono::Local;
 
 use wegent_runtime_config::device::DeviceConfig;
 
+pub mod project_index_diagnostics;
+
 const DEFAULT_LOG_FILE_NAME: &str = "executor.log";
 const BYTES_PER_MIB: u64 = 1024 * 1024;
 

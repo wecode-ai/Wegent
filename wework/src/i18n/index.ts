@@ -13,6 +13,8 @@ import enSites from './locales/en/sites.json'
 import zhSites from './locales/zh-CN/sites.json'
 import enHooks from './locales/en/hooks.json'
 import zhHooks from './locales/zh-CN/hooks.json'
+import enCollaborationExp from './locales/en/collaborationExp.json'
+import zhCollaborationExp from './locales/zh-CN/collaborationExp.json'
 import { extensionI18nResources } from '@extensions/i18n'
 
 const extensionNamespaces = Array.from(
@@ -31,6 +33,7 @@ i18n
         sites: enSites,
         hooks: enHooks,
         modelConnections: enModelConnections,
+        collaborationExp: enCollaborationExp,
         ...(extensionI18nResources.en ?? {}),
       },
       'zh-CN': {
@@ -40,6 +43,7 @@ i18n
         sites: zhSites,
         hooks: zhHooks,
         modelConnections: zhModelConnections,
+        collaborationExp: zhCollaborationExp,
         ...(extensionI18nResources['zh-CN'] ?? {}),
       },
     },
@@ -54,6 +58,7 @@ i18n
       'sites',
       'hooks',
       'modelConnections',
+      'collaborationExp',
       ...extensionNamespaces,
     ],
     interpolation: { escapeValue: false },

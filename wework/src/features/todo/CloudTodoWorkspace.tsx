@@ -213,10 +213,7 @@ import {
   projectRuntimeStatusSignature,
   toWeworkIssueTaskBinding,
 } from './WeworkCollaborationPlatform'
-import {
-  rememberProjectTaskStore,
-  toWorkspaceRuntimeTaskAddress,
-} from '@/features/workbench/projectTaskTracking'
+import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
@@ -3912,7 +3909,6 @@ export function CloudTodoWorkspace({
             : null
         )
       }
-      rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
       if (selectedItemProject.location === 'cloud') {
@@ -5110,6 +5106,7 @@ export function CloudTodoWorkspace({
                             : 'compact'
                         return (
                           <CloudTodoBoardCard
+                            projectStore={selectedProject.project_store}
                             statusNames={Object.fromEntries(
                               nativeStatuses.map(status => [status.id, status.name])
                             )}

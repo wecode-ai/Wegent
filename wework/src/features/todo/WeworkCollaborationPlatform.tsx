@@ -1489,6 +1489,7 @@ export function WeworkSharedProject({
                 return (
                   <div className="w-full" data-testid={collaborationTestIds.issue(issue.id)}>
                     <CloudTodoBoardCard
+                      projectStore={project.project_store}
                       metadata={metadata}
                       childrenAction={childrenAction}
                       item={

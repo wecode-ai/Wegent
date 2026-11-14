@@ -599,6 +599,7 @@ export function TaskBoardView({
         )}
         renderItem={(item, column, state) => (
           <CloudTodoBoardCard
+            projectStore={null}
             item={item}
             unread={unreadRuntimeTaskKeys.has(getRuntimeTaskReminderKey(item.runtime_address))}
             taskBindings={[taskBinding(item)]}

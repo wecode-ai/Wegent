@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from tests.e2e import terminal_handoff_gateway
+from tests.e2e.terminal_handoff_frames import assert_intermediate_frames
 
 
 class FrameSubscription:
@@ -30,30 +31,40 @@ def test_intermediate_observation_ignores_ack_control_frames() -> None:
             "method": "emit",
             "event": "task:status",
             "room": "user:7",
+            "namespace": "/chat",
             "data": [{"task_id": 13, "status": "PENDING"}],
         },
         {
             "method": "emit",
             "event": "chat:done",
             "room": "task:13",
+            "namespace": "/chat",
             "data": [{"task_id": 13, "subtask_id": 17}],
         },
         {
             "method": "emit",
             "event": "task:status",
             "room": "user:7",
+            "namespace": "/chat",
             "data": [{"task_id": 13, "status": "RUNNING"}],
         },
     ]
     subscription = FrameSubscription(frames)
-    observer._assert_intermediate_frames(subscription, 13, 17)
+    assert_intermediate_frames(observer, subscription, 13, 17)
     assert not subscription.frames
 
 
 def test_intermediate_observation_still_rejects_malformed_business_events() -> None:
     observer = terminal_handoff_gateway.TerminalHandoffGateway()
     observer.user_id = 7
-    with pytest.raises(KeyError, match="data"):
-        observer._assert_intermediate_frames(
-            FrameSubscription([{"method": "emit", "event": "task:status"}]), 13, 17
-        )
+    frame = {
+        "method": "emit",
+        "event": "task:status",
+        "room": "user:7",
+        "namespace": "/chat",
+    }
+    with pytest.raises(
+        AssertionError, match="Invalid intermediate Socket.IO frame"
+    ) as error:
+        assert_intermediate_frames(observer, FrameSubscription([frame]), 13, 17)
+    assert repr(frame) in str(error.value)
