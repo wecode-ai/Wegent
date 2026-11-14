@@ -1056,6 +1056,27 @@ class SkillKindsService:
 
         return skill_binary.binary_data
 
+    def to_skill_option(self, kind: Kind) -> Skill:
+        """Return discovery metadata without prompts, tools, or MCP credentials."""
+        spec = kind.json.get("spec", {})
+        fields = (
+            "description",
+            "displayName",
+            "version",
+            "author",
+            "tags",
+            "bindShells",
+            "visible",
+        )
+        return Skill(
+            metadata=ObjectMeta(
+                name=kind.name,
+                namespace=kind.namespace,
+                labels={"id": str(kind.id), "user_id": str(kind.user_id)},
+            ),
+            spec=SkillSpec(**{key: spec[key] for key in fields if key in spec}),
+        )
+
     def _kind_to_skill(self, kind: Kind) -> Skill:
         """Convert Kind model to Skill CRD"""
         metadata = ObjectMeta(

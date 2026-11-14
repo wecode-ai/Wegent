@@ -126,3 +126,13 @@ export async function webApi<T>(
     { requestPath: path, requestInit: init }
   )
 }
+
+/** Open the complete board for stories about other owners and completed work. */
+export async function showAllProjectIssues(page: Page): Promise<void> {
+  const filter = page.getByTestId('project-needs-my-input-filter')
+  await expect(filter).toBeVisible()
+  // Set an explicit choice before reading state that can follow async work.
+  await filter.click()
+  if ((await filter.getAttribute('aria-pressed')) === 'true') await filter.click()
+  await expect(filter).toHaveAttribute('aria-pressed', 'false')
+}

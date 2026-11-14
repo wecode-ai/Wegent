@@ -1189,3 +1189,11 @@ path = "/api/v1/personal-issues/:issue_id/comments"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/personal-issues/:issue_id/project"
+
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/import-local"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/personal-issues/:issue_id/resources/:kind/:resource_id"

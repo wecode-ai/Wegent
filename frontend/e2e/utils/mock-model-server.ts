@@ -64,6 +64,8 @@ interface StreamRule {
   responseTool?: ToolResponse
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
+  holdDone?: boolean
+  terminalError?: string
   doneDelayMs?: number
   holdResponse?: boolean
 }
@@ -396,7 +398,9 @@ function writeStreamingResponse(
   res: http.ServerResponse,
   content: string,
   chunkDelayMs: number,
-  doneDelayMs: number
+  doneDelayMs: number,
+  doneGate?: MockResponseGate,
+  terminalError?: string
 ): void {
   const chunks = content.split(' ')
   let index = 0
@@ -410,7 +414,16 @@ function writeStreamingResponse(
       return
     }
 
-    setTimeout(() => writeSseDone(res), doneDelayMs)
+    const finish = async () => {
+      await doneGate?.wait(res)
+      if (res.destroyed) return
+      if (terminalError) {
+        res.end(`data: ${JSON.stringify({ error: { message: terminalError } })}\n\n`)
+      } else {
+        writeSseDone(res)
+      }
+    }
+    setTimeout(() => void finish(), doneDelayMs)
   }
 
   sendChunk()
@@ -682,7 +695,7 @@ const server = http.createServer((req, res) => {
       (req.url?.includes('/messages') && !req.url.includes('/messages/count_tokens'))
     const streamRule = modelEndpoint ? findStreamRule(parsedBody) : undefined
     const responseGate = streamRule && responseGates.get(streamRule.matchText)
-    if (responseGate) {
+    if (responseGate && !streamRule?.holdDone) {
       await responseGate.wait(res)
       if (res.destroyed) return
     }
@@ -767,7 +780,9 @@ const server = http.createServer((req, res) => {
           res,
           responseContent,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
-          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
+          streamRule?.holdDone ? responseGate : undefined,
+          streamRule?.terminalError
         )
       } else {
         // Return non-streaming response
@@ -891,7 +906,7 @@ const server = http.createServer((req, res) => {
       const existingIndex = streamRules.findIndex(rule => rule.matchText === streamRule.matchText)
       responseGates.get(streamRule.matchText)?.release()
       responseGates.delete(streamRule.matchText)
-      if (streamRule.holdResponse) {
+      if (streamRule.holdResponse || streamRule.holdDone) {
         responseGates.set(streamRule.matchText, new MockResponseGate())
       }
       servedToolRuleCounts.delete(streamRule.matchText)

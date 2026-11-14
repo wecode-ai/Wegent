@@ -162,6 +162,7 @@ impl PreparedPlugin {
         store: &GlobalCapabilityStore,
         mut spec: PluginSyncSpec,
         manifest: &Value,
+        metadata_lock: Option<&AsyncMutex<()>>,
         package: Option<LeasedPluginPackage>,
         private_package: Option<tempfile::TempDir>,
         path: Option<PathBuf>,
@@ -204,9 +205,14 @@ impl PreparedPlugin {
             let reused = store
                 .unchanged_plugin_runtime_paths(&result.spec, &source)
                 .map_err(PluginSyncFailure::runtime_metadata)?;
-            result.unchanged = store
-                .plugin_metadata_matches(&result.spec, manifest, &source, &reused)
-                .unwrap_or(false);
+            result.unchanged = {
+                // Native files are shared by all plugins. Read and compare one
+                // coherent publication, while payload verification stays parallel.
+                let _metadata = metadata_lock.map(AsyncMutex::blocking_lock);
+                store
+                    .plugin_metadata_matches(&result.spec, manifest, &source, &reused)
+                    .unwrap_or(false)
+            };
             if !result.unchanged {
                 result.runtime = Some(
                     PreparedRuntime::prepare(store, &result.spec, &source, reused)
@@ -282,6 +288,7 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         spec: &PluginSyncSpec,
         manifest: &Value,
         lease: Arc<PreparationLease>,
+        metadata_lock: Option<Arc<AsyncMutex<()>>>,
     ) -> Result<PreparedPlugin, PluginSyncFailure> {
         let verify_started = Instant::now();
         let store = self.store.clone();
@@ -412,10 +419,26 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
             let _lease = lease;
             if let Some(root) = root {
                 let package = prepare_shared_package(&root, &spec, cached, bytes)?;
-                PreparedPlugin::finish(&store, spec, &manifest, Some(package), None, None)
+                PreparedPlugin::finish(
+                    &store,
+                    spec,
+                    &manifest,
+                    metadata_lock.as_deref(),
+                    Some(package),
+                    None,
+                    None,
+                )
             } else {
                 let staged = prepare_private_package(path.as_deref(), &spec, bytes)?;
-                PreparedPlugin::finish(&store, spec, &manifest, None, staged, path)
+                PreparedPlugin::finish(
+                    &store,
+                    spec,
+                    &manifest,
+                    metadata_lock.as_deref(),
+                    None,
+                    staged,
+                    path,
+                )
             }
         })
         .await

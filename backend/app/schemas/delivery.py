@@ -27,6 +27,7 @@ from app.utils.schedule_time import normalize_schedule_datetime
 
 
 class LoopItemCreate(BaseModel):
+    request_id: str | None = Field(default=None, min_length=1, max_length=64)
     personal_task: bool = False
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
@@ -147,6 +148,12 @@ class IssueBadge(BaseModel):
     tooltip: str = ""
 
 
+class IssueResourceParticipant(BaseModel):
+    kind: Literal["agent", "group"]
+    id: int
+    name: str
+
+
 class LoopItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -165,6 +172,7 @@ class LoopItemResponse(BaseModel):
     assignee_agent_name: str | None = None
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
+    resource_participants: list[IssueResourceParticipant] = Field(default_factory=list)
     ai_state: dict[str, Any] | None = None
     processing_actor: dict[str, str] | None = None
     human_waiting_since: str | None = None

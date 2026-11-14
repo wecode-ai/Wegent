@@ -470,14 +470,13 @@ const _: () = {
                                 let observation = metrics.handler.start();
                                 let result = match accepted {
                                     Ok((session, input, turn)) => {
-                                        if let Some(turn) = &turn {
-                                            turn.wait().await;
-                                        }
-                                        let reply = device_responses::handle(
-                                            &dependencies.app, &dependencies.runtime,
-                                            &session, &name, input,
+                                        let reply = in_response_turn(
+                                            turn,
+                                            device_responses::handle(
+                                                &dependencies.app, &dependencies.runtime,
+                                                &session, &name, input,
+                                            ),
                                         ).await;
-                                        drop(turn);
                                         Ok(Reply::payload(reply))
                                     }
                                     Err(error) => Err(error),
@@ -494,6 +493,16 @@ const _: () = {
         )
     }
 };
+
+async fn in_response_turn<T>(
+    turn: Option<Turn<i64>>,
+    work: impl std::future::Future<Output = T>,
+) -> T {
+    if let Some(turn) = &turn {
+        turn.wait().await;
+    }
+    work.await
+}
 
 fn reserve_response_turn(
     runtime: &SocketRuntime,
@@ -535,6 +544,27 @@ fn is_responses_event(name: &str, input: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn late_terminal_ack_releases_the_subtask_turn() {
+        let (runtime, _workers) = SocketRuntime::new();
+        let session = SessionSnapshot {
+            user_id: 7,
+            user_name: "device-owner".into(),
+            auth_type: "jwt",
+            client_ip: None,
+            device: crate::socketio::session::DeviceSessionState {
+                device_id: Some("device".into()),
+                ..Default::default()
+            },
+        };
+        let input = json!({"task_id":41,"subtask_id":42,"data":{}});
+        let turn = reserve_response_turn(&runtime, &session, "response.completed", &input).unwrap();
+        assert_eq!(runtime.response_event_order().tracked_sessions(), 1);
+        let reply = in_response_turn(turn, async { json!({"success":true}) }).await;
+        assert_eq!(reply, json!({"success":true}));
+        assert_eq!(runtime.response_event_order().tracked_sessions(), 0);
+    }
 
     #[test]
     fn dynamic_responses_keep_open_event_names() {

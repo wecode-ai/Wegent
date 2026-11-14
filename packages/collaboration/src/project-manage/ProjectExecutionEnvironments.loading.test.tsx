@@ -163,7 +163,7 @@ describe('execution environment settings loading', () => {
     expect(element('-picker-loading')).not.toBeNull()
     await act(async () => slow.resolve([device]))
     expect(element('-picker-loading')).toBeNull()
-    expect(element('-1')?.textContent).toContain('空间共享')
+    expect(element('-1')?.textContent).toContain('分组共享')
   })
 
   it('shows an initial failure with retry without claiming that the device pool is empty', async () => {

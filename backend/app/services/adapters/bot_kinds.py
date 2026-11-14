@@ -29,6 +29,10 @@ from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for
 from app.services.base import BaseService
 from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.skill_binding_policy import (
+    SkillBindingPolicy,
+    normalize_binding_groups,
+)
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
@@ -2410,28 +2414,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     ) -> Dict[str, SkillRefMeta]:
         """Resolve skill refs from request payload or fallback by skill name."""
         unique_skill_names = list(dict.fromkeys(skill_names or []))
-        normalized_group_names = list(
-            dict.fromkeys(
-                group_name.strip()
-                for group_name in target_group_names or []
-                if group_name.strip() and group_name.strip() != "default"
-            )
+        normalized_group_names = normalize_binding_groups(
+            db, user_id, target_group_names
         )
-        unauthorized_groups = [
-            group_name
-            for group_name in normalized_group_names
-            if not check_group_permission(
-                db,
-                user_id,
-                group_name,
-                BaseRole.Reporter,
-            )
-        ]
-        if unauthorized_groups:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Group access denied: {', '.join(sorted(unauthorized_groups))}",
-            )
         if not unique_skill_names:
             return {}
 
@@ -2476,13 +2461,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             name for name in unique_skill_names if name not in provided_keys
         ]
 
+        policy = SkillBindingPolicy.load(db, user_id, namespace, normalized_group_names)
         for skill_name in unique_skill_names:
             provided_ref = provided_refs.get(skill_name)
             if not provided_ref:
                 continue
 
-            skill = (
-                db.query(Kind)
+            result = (
+                db.query(Kind, policy.permission_filter)
                 .filter(
                     Kind.id == provided_ref.skill_id,
                     Kind.kind == "Skill",
@@ -2490,57 +2476,23 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
                 .first()
             )
-            if not skill:
+            if not result:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Invalid skill reference for '{skill_name}': skill_id {provided_ref.skill_id} not found",
                 )
+            skill, can_bind = result
             if skill.name != skill_name:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Invalid skill reference for '{skill_name}': name does not match skill_id {provided_ref.skill_id}",
                 )
 
-            is_public = skill.user_id == 0
-            if not is_public:
-                accessible_personal = (
-                    skill.user_id == user_id and skill.namespace == "default"
+            if not can_bind:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Permission denied for skill '{skill_name}'",
                 )
-                accessible_group = (
-                    namespace != "default" and skill.namespace == namespace
-                )
-                accessible_binding = skill.id in (
-                    skill_binding_service.list_user_default_skill_ids(db, user_id)
-                )
-                if namespace != "default" and not accessible_binding:
-                    accessible_binding = (
-                        skill_binding_service.is_skill_available_to_group(
-                            db,
-                            group_namespace=namespace,
-                            skill_id=skill.id,
-                            user_id=user_id,
-                        )
-                    )
-                accessible_target_groups = bool(normalized_group_names) and all(
-                    skill.namespace == group_name
-                    or skill_binding_service.is_skill_available_to_group(
-                        db,
-                        group_namespace=group_name,
-                        skill_id=skill.id,
-                        user_id=user_id,
-                    )
-                    for group_name in normalized_group_names
-                )
-                if not (
-                    accessible_personal
-                    or accessible_group
-                    or accessible_binding
-                    or accessible_target_groups
-                ):
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"Permission denied for skill '{skill_name}'",
-                    )
 
             resolved[skill_name] = SkillRefMeta(**build_skill_ref_meta(skill))
 
