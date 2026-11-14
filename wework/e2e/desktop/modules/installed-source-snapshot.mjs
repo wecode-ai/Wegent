@@ -3,14 +3,18 @@ import { createHash } from 'node:crypto'
 import {
   copyFile,
   lstat,
+  mkdtemp,
   mkdir,
   readFile,
   readdir,
   readlink,
+  rename,
+  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { relocateLinks, relocatePath } from './installed-source-preparation.mjs'
 
 // Capture only the shipped CLI's initial output, before any app or task runs.
@@ -18,7 +22,7 @@ import { relocateLinks, relocatePath } from './installed-source-preparation.mjs'
 async function copyTree(source, target) {
   const files = []
   async function collect(fromRoot, toRoot) {
-    await mkdir(toRoot, { recursive: true })
+    await mkdir(toRoot)
     for (const entry of await readdir(fromRoot, { withFileTypes: true })) {
       const from = join(fromRoot, entry.name),
         to = join(toRoot, entry.name)
@@ -31,6 +35,7 @@ async function copyTree(source, target) {
       }
     }
   }
+  await mkdir(dirname(target), { recursive: true })
   await collect(source, target)
   for (let offset = 0; offset < files.length; offset += 8) {
     const results = await Promise.allSettled(
@@ -69,19 +74,68 @@ async function treeHash(root) {
   return hash.digest('hex')
 }
 
-export async function saveInstalledSourceSnapshot({ cache, slot, dataDirectory, identity }) {
-  const contents = join(cache, 'slot')
-  await copyTree(slot, contents)
-  await writeFile(
-    join(cache, 'snapshot.json'),
-    JSON.stringify({
-      schemaVersion: 1,
-      identity,
-      dataDirectory,
-      slot,
-      sha256: await treeHash(contents),
-    })
+function isMissingOrMalformedCacheEntry(error) {
+  return ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(error?.code)
+}
+
+async function readReusableInstalledSourceSnapshot({ cache, identity }) {
+  let metadata
+  try {
+    metadata = JSON.parse(await readFile(join(cache, 'snapshot.json'), 'utf8'))
+  } catch (error) {
+    if (isMissingOrMalformedCacheEntry(error) || error instanceof SyntaxError) return null
+    throw error
+  }
+  if (
+    !metadata ||
+    typeof metadata !== 'object' ||
+    metadata.schemaVersion !== 1 ||
+    typeof metadata.slot !== 'string' ||
+    !isAbsolute(metadata.slot) ||
+    typeof metadata.dataDirectory !== 'string' ||
+    !isAbsolute(metadata.dataDirectory) ||
+    !isDeepStrictEqual(metadata.identity, identity)
   )
+    return null
+  try {
+    if ((await treeHash(join(cache, 'slot'))) !== metadata.sha256) return null
+  } catch (error) {
+    if (isMissingOrMalformedCacheEntry(error)) return null
+    throw error
+  }
+  return metadata
+}
+
+export async function canReuseInstalledSourceSnapshot({ cache, identity }) {
+  return Boolean(await readReusableInstalledSourceSnapshot({ cache, identity }))
+}
+
+export async function saveInstalledSourceSnapshot({ cache, slot, dataDirectory, identity }) {
+  if (await canReuseInstalledSourceSnapshot({ cache, identity })) return false
+  const parent = dirname(cache)
+  await mkdir(parent, { recursive: true })
+  // Publish a complete cache entry so an interrupted copy cannot leave a
+  // snapshot that a later channel mistakes for reusable.
+  const staging = await mkdtemp(join(parent, '.installed-source-snapshot-'))
+  try {
+    const contents = join(staging, 'slot')
+    await copyTree(slot, contents)
+    await writeFile(
+      join(staging, 'snapshot.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        identity,
+        dataDirectory,
+        slot,
+        sha256: await treeHash(contents),
+      })
+    )
+    await rm(cache, { recursive: true, force: true })
+    await rename(staging, cache)
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+  }
+  return true
 }
 
 export async function restoreInstalledSourceSnapshot({ cache, slot, dataDirectory, identity }) {

@@ -38,6 +38,39 @@ impl RuntimeWorkRpcHandler {
             .count()
     }
 
+    pub(super) async fn background_terminal_work_count(&self) -> Result<usize, String> {
+        // Persisted rows arrive after notifications; query native state before concluding work is idle.
+        let persisted_count = self.background_terminal_count();
+        if persisted_count > 0 {
+            return Ok(persisted_count);
+        }
+        let mut thread_ids = HashSet::new();
+        for link in self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .filter(|link| link.runtime == "codex")
+        {
+            if let Some(thread_id) = link.thread_id {
+                thread_ids.insert(thread_id);
+            }
+        }
+        if let Ok(active) = self.active_codex_transcript_items.lock() {
+            thread_ids.extend(
+                active
+                    .values()
+                    .map(|transcript| transcript.thread_id.clone()),
+            );
+        }
+        let mut thread_ids = thread_ids.into_iter().collect::<Vec<_>>();
+        thread_ids.sort();
+        let has_live_terminal = self
+            .codex_app_server
+            .has_live_background_terminal(&thread_ids)
+            .await?;
+        Ok(usize::from(has_live_terminal))
+    }
+
     pub(super) fn record_background_terminal_notification(&self, task_id: &str, message: &Value) {
         let notification = codex_notification(message);
         // Keep streaming and persisted transcripts in one atomic handoff.
@@ -76,6 +109,7 @@ impl RuntimeWorkRpcHandler {
             update_completed_command(&mut link.runtime_handle, &update.0, &update.1);
         });
         drop(active_items);
+        self.notify_background_terminal_changed();
     }
 
     pub(super) async fn clean_background_terminals(
@@ -97,7 +131,13 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("background_terminals_clean_failed", error))?;
+        self.notify_background_terminal_changed();
         Ok(task_action_success(&link))
+    }
+
+    fn notify_background_terminal_changed(&self) {
+        self.background_terminal_changed
+            .send_modify(|version| *version = version.wrapping_add(1));
     }
 }
 

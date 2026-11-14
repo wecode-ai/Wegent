@@ -18,7 +18,7 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex as AsyncMutex, Semaphore};
 use tokio::time::sleep;
 
 use crate::{
@@ -550,6 +550,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     startup_recovery_deferred: Arc<AtomicBool>,
     bundled_plugin_marketplace_reconciliation: Arc<AsyncMutex<()>>,
+    background_terminal_changed: watch::Sender<u64>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -930,6 +931,7 @@ impl RuntimeWorkRpcHandler {
             )),
             startup_recovery_deferred: Arc::new(AtomicBool::new(false)),
             bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
+            background_terminal_changed: watch::channel(0).0,
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),

@@ -390,6 +390,16 @@ export async function createDesktopScenario(options) {
         }
         if (snapshot) await saveInstalledSourceSnapshot(snapshot)
       }
+      if (snapshot) {
+        assert.equal(
+          await saveInstalledSourceSnapshot(snapshot),
+          false,
+          'Saving the same installed-source snapshot twice must reuse it'
+        )
+        console.log(
+          `[upgrade-e2e] Reused installed-source snapshot cache: sha256=${pair.from.sha256}`
+        )
+      }
       if (!options.preparationOnly)
         await installPreparedSource(
           join(root, 'slots/source-preparation'),

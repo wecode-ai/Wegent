@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::AsyncWriteExt,
     process::{ChildStdin, Command},
-    sync::{broadcast, mpsc, oneshot, Mutex},
+    sync::{broadcast, mpsc, oneshot, watch, Mutex},
     time::{timeout, timeout_at, Instant},
 };
 
@@ -708,11 +708,79 @@ impl CodexAppServerClient {
         Ok(())
     }
 
+    /// Reads live process state because completed transcript persistence can lag a finished turn.
+    pub async fn has_live_background_terminal(
+        &self,
+        thread_ids: &[String],
+    ) -> Result<bool, String> {
+        if thread_ids.is_empty() {
+            return Ok(false);
+        }
+        {
+            let mut state = self.state.lock().await;
+            let running = state
+                .process
+                .as_mut()
+                .is_some_and(|process| !process.has_exited());
+            if !running {
+                return Ok(false);
+            }
+        }
+        for thread_id in thread_ids.iter().cloned().collect::<BTreeSet<_>>() {
+            let mut cursor = None;
+            let mut seen_cursors = HashSet::new();
+            loop {
+                let response = match self
+                    .request_existing(
+                        "thread/backgroundTerminals/list",
+                        json!({"threadId": thread_id, "cursor": cursor, "limit": 100}),
+                    )
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        if is_missing_codex_thread_error(&error) {
+                            break;
+                        }
+                        let mut state = self.state.lock().await;
+                        let running = state
+                            .process
+                            .as_mut()
+                            .is_some_and(|process| !process.has_exited());
+                        return if running { Err(error) } else { Ok(false) };
+                    }
+                };
+                let data = response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        "thread/backgroundTerminals/list response missing data".to_owned()
+                    })?;
+                if !data.is_empty() {
+                    return Ok(true);
+                }
+                let Some(next_cursor) = response
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .filter(|cursor| !cursor.is_empty())
+                    .map(str::to_owned)
+                else {
+                    break;
+                };
+                if !seen_cursors.insert(next_cursor.clone()) {
+                    return Err("thread/backgroundTerminals/list repeated a cursor".to_owned());
+                }
+                cursor = Some(next_cursor);
+            }
+        }
+        Ok(false)
+    }
+
     pub async fn mutate_auth_if_idle<F>(&self, mutation: F) -> Result<(), CodexIdleMutationError>
     where
         F: FnOnce() -> Result<(), String>,
     {
-        self.mutate_if_idle(Some(CodexAuthMode::default()), || async {
+        self.mutate_if_idle(false, Some(CodexAuthMode::default()), || async {
             mutation().map(|_| ((), true))
         })
         .await
@@ -727,11 +795,12 @@ impl CodexAppServerClient {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(T, bool), String>>,
     {
-        self.mutate_if_idle(None, mutation).await
+        self.mutate_if_idle(true, None, mutation).await
     }
 
     async fn mutate_if_idle<F, Fut, T>(
         &self,
+        wait_for_pending_requests: bool,
         auth_mode: Option<CodexAuthMode>,
         mutation: F,
     ) -> Result<T, CodexIdleMutationError>
@@ -739,28 +808,41 @@ impl CodexAppServerClient {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(T, bool), String>>,
     {
-        let mut state = self.state.lock().await;
-        let pending_request_count = match state.process.as_ref() {
-            Some(process) => process.pending.lock().await.len(),
-            None => 0,
-        };
-        let active_turn_count = state.protected_turn_count();
-        if active_turn_count > 0 || pending_request_count > 0 {
-            return Err(CodexIdleMutationError::Busy {
-                active_turn_count,
-                pending_request_count,
-            });
-        }
-        let (result, changed) = mutation().await.map_err(CodexIdleMutationError::Update)?;
-        if changed {
-            if let Some(auth_mode) = auth_mode {
-                state.auth_mode = auth_mode;
+        loop {
+            let mut state = self.state.lock().await;
+            let mut pending_changed = None;
+            let pending_request_count = match state.process.as_ref() {
+                Some(process) => {
+                    pending_changed = Some(process.notifications.pending_changed.subscribe());
+                    process.pending.lock().await.len()
+                }
+                None => 0,
+            };
+            let active_turn_count = state.protected_turn_count();
+            if active_turn_count > 0 || (!wait_for_pending_requests && pending_request_count > 0) {
+                return Err(CodexIdleMutationError::Busy {
+                    active_turn_count,
+                    pending_request_count,
+                });
             }
-            state.thread_generations.clear();
-            state.idle_thread_generations.clear();
-            stop_codex_app_server_process(&mut state, None).await;
+            if pending_request_count > 0 {
+                drop(state);
+                if let Some(pending_changed) = pending_changed.as_mut() {
+                    let _ = pending_changed.changed().await;
+                }
+                continue;
+            }
+            let (result, changed) = mutation().await.map_err(CodexIdleMutationError::Update)?;
+            if changed {
+                if let Some(auth_mode) = auth_mode {
+                    state.auth_mode = auth_mode;
+                }
+                state.thread_generations.clear();
+                state.idle_thread_generations.clear();
+                stop_codex_app_server_process(&mut state, None).await;
+            }
+            return Ok(result);
         }
-        Ok(result)
     }
 
     async fn restart_stalled_turn_process(
@@ -1602,7 +1684,12 @@ async fn stop_codex_app_server_process(
     };
     checkpoint("started");
     if let Some(error) = pending_error {
-        fail_all_pending(&process.pending, error.to_owned()).await;
+        fail_all_pending(
+            &process.pending,
+            &process.notifications.pending_changed,
+            error.to_owned(),
+        )
+        .await;
     }
     process.reader_task.abort();
     let _ = (&mut process.reader_task).await;
@@ -1651,6 +1738,7 @@ struct CodexNotificationHub {
     runtime: RuntimeNotificationSubscribers,
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
+    pending_changed: watch::Sender<u64>,
     mcp_recovery: Arc<mcp_recovery::McpRecovery>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
@@ -1676,6 +1764,7 @@ impl CodexNotificationHub {
             runtime,
             threads: Arc::new(StdMutex::new(HashMap::new())),
             native_activity: Arc::new(StdMutex::new(CodexNativeActivity::default())),
+            pending_changed: watch::channel(0).0,
             mcp_recovery: Arc::new(mcp_recovery::McpRecovery::default()),
             thread_activity_changed,
         }
@@ -1844,6 +1933,9 @@ impl CodexAppServerHandle {
 
     async fn remove_pending(&self, request_id: u64) {
         self.pending.lock().await.remove(&request_id);
+        self.notifications.pending_changed.send_modify(|version| {
+            *version = version.wrapping_add(1);
+        });
     }
 }
 
@@ -2025,6 +2117,7 @@ async fn read_persistent_codex_app_server_stdout(
                 .await;
                 fail_all_pending(
                     &pending,
+                    &notifications.pending_changed,
                     "codex app-server exited while shared process was running".to_owned(),
                 )
                 .await;
@@ -2040,6 +2133,7 @@ async fn read_persistent_codex_app_server_stdout(
                     .await;
                     fail_all_pending(
                         &pending,
+                        &notifications.pending_changed,
                         format!("failed to parse codex JSON-RPC message: {error}"),
                     )
                     .await;
@@ -2054,6 +2148,7 @@ async fn read_persistent_codex_app_server_stdout(
                 .await;
                 fail_all_pending(
                     &pending,
+                    &notifications.pending_changed,
                     format!("failed to read codex JSON-RPC message: {error}"),
                 )
                 .await;
@@ -2064,6 +2159,9 @@ async fn read_persistent_codex_app_server_stdout(
         if is_json_rpc_response(&message) {
             if let Some(request_id) = response_id(&message) {
                 if let Some(request) = pending.lock().await.remove(&request_id) {
+                    notifications.pending_changed.send_modify(|version| {
+                        *version = version.wrapping_add(1);
+                    });
                     let result = response_result(message);
                     if let (Some(context), Ok(response)) = (&request.native_request, &result) {
                         notifications.update_native_activity(|activity| {
@@ -2159,16 +2257,24 @@ async fn notify_shared_process_closed(notifications: &CodexNotificationHub, mess
 
 async fn fail_all_pending(
     pending: &Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    pending_changed: &watch::Sender<u64>,
     message: String,
 ) {
     let pending = std::mem::take(&mut *pending.lock().await);
     for (_, sender) in pending {
         let _ = sender.sender.send(Err(message.clone()));
     }
+    pending_changed.send_modify(|version| {
+        *version = version.wrapping_add(1);
+    });
 }
 
 fn is_json_rpc_response(message: &Value) -> bool {
     response_id(message).is_some() && message.get("method").is_none()
+}
+
+fn is_missing_codex_thread_error(error: &str) -> bool {
+    error.trim_start().starts_with("thread not found:")
 }
 
 pub async fn run_codex_app_server_turn(
