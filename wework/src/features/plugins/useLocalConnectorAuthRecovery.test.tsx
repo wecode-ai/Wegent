@@ -173,6 +173,41 @@ describe('authorization after plugin use', () => {
     expect(mocks.health).not.toHaveBeenCalled()
   })
 
+  test('discards deferred cloud recovery when the conversation changes before the card opens', async () => {
+    const { result, rerender } = renderRecovery([
+      {
+        ...authMessage,
+        content: 'connector_auth_required\nconnectorSlug=dingtalk_log',
+      },
+    ])
+
+    rerender({ currentMessages: [], active: true })
+    await act(async () => undefined)
+
+    expect(result.current.pending).toBeNull()
+    expect(mocks.health).not.toHaveBeenCalled()
+  })
+
+  test('a replaced cloud request cannot suppress a pending local authorization probe', async () => {
+    const health = deferred<LocalConnectorAuthResult>()
+    mocks.health.mockReturnValue(health.promise)
+    const { result, rerender } = renderRecovery([
+      {
+        ...authMessage,
+        content: 'connector_auth_required\nconnectorSlug=dingtalk_log',
+      },
+    ])
+
+    rerender({ currentMessages: [{ ...authMessage, id: 'local-auth' }], active: true })
+    await act(async () => undefined)
+    expect(result.current.pending).toBeNull()
+
+    await act(async () => health.resolve({ status: 'need_login' }))
+    await waitFor(() => expect(result.current.pending?.target).toEqual(target))
+    expect(result.current.pending?.cloud).toBeUndefined()
+    expect(mocks.health).toHaveBeenCalledOnce()
+  })
+
   test('resumes a cloud connector with only the continuation prompt', async () => {
     const onSend = vi.fn()
     const { result } = renderRecovery(

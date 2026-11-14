@@ -101,6 +101,13 @@ export function useLocalConnectorAuthRecovery(options: {
     if (!active || pending || !messageId || !connectorSlug) return
     if (messageStatus !== 'done' && messageStatus !== 'failed') return
     if (handledMessageIdsRef.current.has(messageId)) return
+    const version = recoveryVersionRef.current
+    let cancelled = false
+    const isCurrent = () =>
+      !cancelled &&
+      version === recoveryVersionRef.current &&
+      !pendingRef.current &&
+      !handledMessageIdsRef.current.has(messageId)
     // Cloud apps are authorized by Wegent, so there is nothing to probe.
     if (cloudAuth) {
       const probe = { messageId }
@@ -109,9 +116,8 @@ export function useLocalConnectorAuthRecovery(options: {
         // Defer past the effect body so the pending state settles like the
         // probed local path instead of setting state during render.
         await Promise.resolve()
-        if (inFlightRef.current !== probe) return
+        if (!isCurrent() || inFlightRef.current !== probe) return
         inFlightRef.current = null
-        if (handledMessageIdsRef.current.has(messageId)) return
         handledMessageIdsRef.current.add(messageId)
         const next: PendingConnectorAuth = {
           target: { pluginKey: '', connectorSlug },
@@ -121,16 +127,11 @@ export function useLocalConnectorAuthRecovery(options: {
         pendingRef.current = next
         setPending(next)
       })()
-      return
+      return () => {
+        cancelled = true
+      }
     }
     if (!pluginKey) return
-    const version = recoveryVersionRef.current
-    let cancelled = false
-    const isCurrent = () =>
-      !cancelled &&
-      version === recoveryVersionRef.current &&
-      !pendingRef.current &&
-      !handledMessageIdsRef.current.has(messageId)
     const identifiedTarget = { pluginKey, connectorSlug, ...(instance ? { instance } : {}) }
     const githubCli = isGithubCliTarget(identifiedTarget)
     const target = githubCli ? GITHUB_CLI_TARGET : identifiedTarget
