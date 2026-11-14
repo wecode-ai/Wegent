@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -91,7 +92,7 @@ def clear_execution(db: Session, owner_id: int, task_id: str, route: str) -> Non
         db.delete(workspace)
 
 
-def main() -> None:
+def apply_state(data: dict[str, Any]) -> None:
     url = make_url(os.environ["DATABASE_URL"])
     if (
         url.host not in {"localhost", "127.0.0.1", "mysql"}
@@ -101,7 +102,6 @@ def main() -> None:
 
     from app.db.session import SessionLocal
 
-    data = json.load(sys.stdin)
     suffix = str(UUID(data["suffix"]))
     device_id = f"e2e-admin-delete-{suffix}"
     runtime_id = f"runtime-{suffix}"
@@ -130,6 +130,12 @@ def main() -> None:
         else:
             raise ValueError(f"Unknown fixture action {action}")
         db.commit()
+
+
+def main() -> None:
+    for line in sys.stdin:
+        apply_state(json.loads(line))
+        print("ADMIN_DEVICE_STATE " + json.dumps({"success": True}), flush=True)
 
 
 if __name__ == "__main__":
