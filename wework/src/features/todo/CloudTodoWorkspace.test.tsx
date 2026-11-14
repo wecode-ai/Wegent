@@ -28,7 +28,7 @@ import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
 } from './projectSpaceCodeWorkspacePreference'
-import { workItemStartedUpdate, workItemTaskInput } from './workItemTaskInput'
+import { workItemTaskInput } from './workItemTaskInput'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -384,15 +384,6 @@ describe('workItemTaskInput', () => {
   it('uses the description only when the title is empty', () => {
     expect(workItemTaskInput({ title: '  ', description: 'Use the shared workspace' })).toBe(
       'Use the shared workspace'
-    )
-  })
-
-  it('marks a pending Issue in progress when its personal task starts', () => {
-    expect(workItemStartedUpdate({ status: 'pending', tags: [], version: 3 } as never, [])).toEqual(
-      {
-        version: 3,
-        status: 'in_progress',
-      }
     )
   })
 })
@@ -2034,17 +2025,11 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
-  it('finishes the Issue start before creating its runtime task without a later Issue write', async () => {
+  it('binds a task without overwriting the executor Issue status', async () => {
     const workbenchServices = services()
-    const pendingItem = { ...item, tags: [], status: 'pending' as const }
-    const startedItem = { ...item, tags: [], version: item.version + 1 }
-    let finishUpdate!: (value: typeof startedItem) => void
-    const update = new Promise<typeof startedItem>(resolve => {
-      finishUpdate = resolve
-    })
-    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => pendingItem)
-    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [pendingItem] }))
-    workbenchServices.deliveryApi!.updateLoopItem = vi.fn(() => update)
+    const reviewedItem = { ...item, tags: [], status: 'in_review' as const }
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => reviewedItem)
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [reviewedItem] }))
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -2059,23 +2044,13 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
     await waitFor(() =>
-      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledWith(item.id, {
-        version: item.version,
-        status: 'in_progress',
-      })
-    )
-    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute('data-runtime-task-id')
-    await act(async () => {
-      finishUpdate(startedItem)
-      await update
-    })
-    await waitFor(() =>
       expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
         'data-runtime-task-id',
         'runtime-created'
       )
     )
-    expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenCalledOnce()
+    expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledOnce()
+    expect(workbenchServices.deliveryApi!.updateLoopItem).not.toHaveBeenCalled()
   })
 
   it('preserves the selected model when a new runtime task becomes the task conversation', async () => {

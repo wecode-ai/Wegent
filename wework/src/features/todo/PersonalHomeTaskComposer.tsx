@@ -14,7 +14,6 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 import { issueRuntimePort } from './issueRuntimePort'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { PersonalHomeTaskDraft, PersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
 
@@ -347,8 +346,6 @@ function ProjectTaskComposer({
           }),
       })
       if (!address) return false
-      const statusError = await updateIssueWhenPersonalTaskStarts(api.issues, issue.id)
-      if (statusError !== null) setError(statusError || t('task_board_status_update_failed'))
       draft.onTaskCreated?.(issue, toWorkspaceRuntimeTaskAddress(address))
       completed.current = value
       draft.onChange('')

@@ -141,7 +141,7 @@ import {
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
 import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
-import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
+import { workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -1194,12 +1194,6 @@ export function WeworkSharedProject({
           })
         }
         onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
-          const statusError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id
-          )
-          if (statusError !== null)
-            notify(statusError || t('task_board_status_update_failed'), 'error')
           if (localProject) {
             saveProjectSpaceCodeWorkspacePreference(
               userId,

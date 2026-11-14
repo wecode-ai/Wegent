@@ -9,7 +9,8 @@ function nativeSubagentCompletionPayload(request, sender) {
   const parent = sender.slice(0, sender.lastIndexOf('/'))
   const prefix = `Message Type: FINAL_ANSWER\nTask name: ${parent}\nSender: ${sender}\nPayload:\n`
   for (const item of request.input ?? []) {
-    if (item.role !== 'assistant') continue
+    if (item.type !== 'agent_message' || item.author !== sender || item.recipient !== parent)
+      continue
     const content =
       typeof item.content === 'string'
         ? item.content

@@ -1,5 +1,4 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { persistIssueDetailFields, type SharedWorkspaceApi } from '@wegent/collaboration'
 
 export function workItemComposerReference(
   project: Pick<CloudProject, 'id' | 'project_key'>,
@@ -16,37 +15,18 @@ export function workItemTaskInput(item: Pick<CloudLoopItem, 'title' | 'descripti
   return item.title.trim() || item.description?.trim() || ''
 }
 
-export function workItemStartedUpdate(
-  item: { status: string; tags?: string[] | null; version: number },
+export function workItemAssociationUpdate(
+  item: { tags?: string[] | null; version: number },
   associatedTags: string[]
-): { version: number; status?: 'in_progress'; tags?: string[] } | null {
-  const shouldStartIssue =
-    item.status === 'inbox' || item.status === 'pending' || item.status === 'in_review'
+): { version: number; tags: string[] } | null {
   const currentTags = item.tags ?? []
   const associationChanged =
     associatedTags.length !== currentTags.length ||
     associatedTags.some((tag, index) => tag !== currentTags[index])
-  if (!shouldStartIssue && !associationChanged) return null
+  if (!associationChanged) return null
   return {
     version: item.version,
-    ...(shouldStartIssue ? { status: 'in_progress' as const } : {}),
-    ...(associationChanged ? { tags: associatedTags } : {}),
-  }
-}
-
-export async function updateIssueWhenPersonalTaskStarts(
-  issues: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>,
-  issueId: string
-): Promise<string | null> {
-  try {
-    const latestIssue = await issues.get(issueId)
-    const startUpdate = workItemStartedUpdate(latestIssue, latestIssue.tags)
-    if (startUpdate) {
-      await persistIssueDetailFields(latestIssue, { status: startUpdate.status }, issues)
-    }
-    return null
-  } catch (error) {
-    return error instanceof Error ? error.message : ''
+    tags: associatedTags,
   }
 }
 
