@@ -48,7 +48,10 @@ describe('Mobile uses the PC cloud runtime command transport', () => {
     async (selection, key) => {
       const fetch = vi.fn()
       vi.stubGlobal('fetch', fetch)
-      const commands = { executeCommand: vi.fn().mockResolvedValue(response(patch)) }
+      const commands = {
+        request: vi.fn(),
+        executeCommand: vi.fn().mockResolvedValue(response(patch)),
+      }
       const controller = new AbortController()
       const api = new RuntimeApi(config, undefined, undefined, commands)
       await expect(
@@ -69,7 +72,7 @@ describe('Mobile uses the PC cloud runtime command transport', () => {
   )
 
   it('rejects unknown modes, relative paths and empty device identities before transport', async () => {
-    const commands = { executeCommand: vi.fn() }
+    const commands = { request: vi.fn(), executeCommand: vi.fn() }
     const api = new RuntimeApi(config, undefined, undefined, commands)
     await expect(
       api.getWorkspaceGitDiff('cloud', '/repo', {
@@ -84,7 +87,10 @@ describe('Mobile uses the PC cloud runtime command transport', () => {
   })
 
   it('normalizes Windows workspace paths without changing the owning execution target', async () => {
-    const commands = { executeCommand: vi.fn().mockResolvedValue(response('main\n')) }
+    const commands = {
+      request: vi.fn(),
+      executeCommand: vi.fn().mockResolvedValue(response('main\n')),
+    }
     await new RuntimeApi(config, undefined, undefined, commands).getWorkspaceGitBranch(
       'execution-target',
       'c:\\worktrees\\repo'
@@ -116,7 +122,10 @@ describe('Mobile uses the PC cloud runtime command transport', () => {
     [{ stdout: { diff: patch } }, 'Expected text stdout'],
     [{ stdout_truncated: true }, 'size limit'],
   ])('preserves failed or incomplete command results: %j', async (extra, message) => {
-    const commands = { executeCommand: vi.fn().mockResolvedValue(response('', extra)) }
+    const commands = {
+      request: vi.fn(),
+      executeCommand: vi.fn().mockResolvedValue(response('', extra)),
+    }
     await expect(
       new RuntimeApi(config, undefined, undefined, commands).getWorkspaceGitDiff(
         target.deviceId,
@@ -129,6 +138,7 @@ describe('Mobile uses the PC cloud runtime command transport', () => {
 
   it('uses the exact PC repository probe and preserves rejected permission checks', async () => {
     const commands = {
+      request: vi.fn(),
       executeCommand: vi
         .fn()
         .mockResolvedValueOnce(response('true\n'))

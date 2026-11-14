@@ -40,7 +40,7 @@ gesture dismisses the sheet.
 
 The conversation **More** menu uses SwiftUI Menu on iOS and Jetpack Compose DropdownMenu on Android.
 The system owns anchoring, material, opening, and dismissal. It offers **Pin / Unpin, Rename, Copy conversation ID, and Archive
-(置顶 / 取消置顶、重命名、复制对话 ID、归档)** using PC cloud conversation identities and APIs.
+(置顶 / 取消置顶、重命名、复制对话 ID、归档)** using the PC cloud-device Runtime RPCs and conversation identities.
 Archiving a managed worktree preserves a snapshot before cleanup; cleanup failures are reported
 separately without pretending the already archived conversation remains unarchived.
 It also retains **Connection settings (连接设置)** for the backend address, current account, and sign-out.

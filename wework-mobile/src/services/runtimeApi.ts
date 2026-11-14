@@ -97,7 +97,7 @@ export class RuntimeApi {
     private readonly config: RuntimeSessionConfig,
     private readonly uploadFile: RuntimeFileUploader = uploadRuntimeFile,
     private readonly getAccessToken: () => string = () => config.accessToken,
-    private readonly commands?: Pick<RuntimeStream, 'executeCommand'>
+    private readonly runtime?: Pick<RuntimeStream, 'executeCommand' | 'request'>
   ) {}
 
   async testConnection(): Promise<void> {
@@ -215,8 +215,8 @@ export class RuntimeApi {
     throwIfAborted(options.signal)
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-    if (!this.commands) throw new Error('Runtime command connection is unavailable')
-    const response = await this.commands.executeCommand(
+    if (!this.runtime) throw new Error('Runtime command connection is unavailable')
+    const response = await this.runtime.executeCommand(
       deviceId,
       {
         command_key: commandKey,
@@ -238,8 +238,8 @@ export class RuntimeApi {
     throwIfAborted(signal)
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
-    if (!this.commands) throw new Error('Runtime command connection is unavailable')
-    const response = await this.commands.executeCommand(
+    if (!this.runtime) throw new Error('Runtime command connection is unavailable')
+    const response = await this.runtime.executeCommand(
       deviceId,
       {
         command_key: 'git_is_worktree',
@@ -482,24 +482,25 @@ export class RuntimeApi {
   }
 
   setRuntimeTaskPinned(input: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
-    return this.request('/runtime-work/sidebar/tasks/pin', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
+    return this.requestRuntime('runtime.sidebar.tasks.pin', { ...input }, input.deviceId)
   }
 
   renameRuntimeTask(input: RuntimeTaskRenameRequest): Promise<RuntimeTaskArchiveResponse> {
-    return this.request('/runtime-work/rename', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
+    return this.requestRuntime('runtime.tasks.rename', { ...input }, input.address.deviceId)
   }
 
   archiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
-    return this.request('/runtime-work/archived-conversations/archive', {
-      method: 'POST',
-      body: JSON.stringify(address),
-    })
+    return this.requestRuntime('runtime.tasks.archive', { ...address }, address.deviceId)
+  }
+
+  private async requestRuntime<T>(
+    method: string,
+    params: Record<string, unknown>,
+    deviceId: string
+  ): Promise<T> {
+    if (!deviceId.trim()) throw new Error('Runtime target device is required')
+    if (!this.runtime) throw new Error('Runtime connection is unavailable')
+    return this.runtime.request<T>(method, params, deviceId)
   }
 
   /** An isolated child-thread read never changes the parent's active conversation. */

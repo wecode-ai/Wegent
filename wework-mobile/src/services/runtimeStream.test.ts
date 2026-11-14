@@ -217,6 +217,43 @@ describe('RuntimeStream', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('sends menu mutations through the existing authenticated cloud socket', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const address = { deviceId: 'cloud-owner', taskId: 'task-1', workspacePath: '/repo' }
+    emit.mockImplementation((_name, _payload, acknowledge) => {
+      acknowledge({ ok: true, result: { accepted: true, taskId: 'task-1' } })
+    })
+    const stream = await createStream(config)
+    const api = new RuntimeApi(config, undefined, undefined, stream)
+    await api.setRuntimeTaskPinned({ deviceId: 'cloud-owner', threadId: 'thread-1', pinned: true })
+    await api.renameRuntimeTask({ address, title: 'Renamed conversation' })
+    await api.archiveConversation(address)
+    expect(emit.mock.calls.map(([event, payload]) => ({ event, ...payload }))).toEqual([
+      expect.objectContaining({
+        event: 'runtime:request',
+        device_id: 'cloud-owner',
+        timeout_seconds: 75,
+        method: 'runtime.sidebar.tasks.pin',
+        params: { deviceId: 'cloud-owner', threadId: 'thread-1', pinned: true },
+      }),
+      expect.objectContaining({
+        event: 'runtime:request',
+        device_id: 'cloud-owner',
+        method: 'runtime.tasks.rename',
+        params: { address, title: 'Renamed conversation' },
+      }),
+      expect.objectContaining({
+        event: 'runtime:request',
+        device_id: 'cloud-owner',
+        method: 'runtime.tasks.archive',
+        params: address,
+      }),
+    ])
+    expect(io).toHaveBeenCalledOnce()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('preserves runtime permission/offline rejection and does not retry another transport', async () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)

@@ -30,7 +30,7 @@ const RUNTIME_NAMESPACE = '/wework-runtime'
 const RUNTIME_EVENT = 'runtime:event'
 const REQUEST_EVENT = 'runtime:request'
 const TRANSCRIPT_TIMEOUT_MS = 15_000
-const LIST_TIMEOUT_MS = 75_000
+const REQUEST_TIMEOUT_MS = 75_000
 export const TRANSCRIPT_PAGE_SIZE = 5
 const TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE = 1
 const COMPRESSED_ENCODING = 'gzip+base64+json'
@@ -150,7 +150,7 @@ export class RuntimeStream {
       'runtime.tasks.list',
       {},
       deviceId,
-      LIST_TIMEOUT_MS
+      REQUEST_TIMEOUT_MS
     )
     return adaptRuntimeWorkListResponse(response, deviceId, deviceName)
   }
@@ -270,11 +270,11 @@ export class RuntimeStream {
     this.listener(event)
   }
 
-  private async request<T>(
+  async request<T>(
     method: string,
     params: Record<string, unknown>,
     deviceId: string,
-    timeoutMs: number,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
     options: { signal?: AbortSignal; relayTimeoutSeconds?: number } = {}
   ): Promise<T> {
     const { signal } = options

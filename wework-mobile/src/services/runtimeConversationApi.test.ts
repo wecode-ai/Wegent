@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RuntimeApi } from './runtimeApi'
 
 const config = {
@@ -16,61 +16,89 @@ const address = {
   workspaceKind: 'worktree',
   worktreeId: 'tree-1',
 }
+const request = vi.fn()
+const fetch = vi.fn()
+const runtime = { executeCommand: vi.fn(), request }
+const api = () => new RuntimeApi(config, undefined, undefined, runtime)
+
+beforeEach(() => {
+  request.mockReset()
+  fetch.mockReset()
+  vi.stubGlobal('fetch', fetch)
+})
 afterEach(() => vi.unstubAllGlobals())
 
-describe('Mobile conversation mutations follow PC backend-relay contracts', () => {
-  it('pins by owning device and thread identity, preserving optional order', async () => {
+describe('Mobile conversation mutations follow PC cloud Runtime contracts', () => {
+  it('pins by the owning device and thread identity, preserving optional order', async () => {
     const result = { accepted: true, deviceId: address.deviceId, error: null }
-    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(result)))
-    vi.stubGlobal('fetch', fetch)
+    request.mockResolvedValue(result)
     const input = {
       deviceId: address.deviceId,
       threadId: 'thread-1',
       pinned: true,
       beforeThreadId: 'thread-2',
     }
-    await expect(new RuntimeApi(config).setRuntimeTaskPinned(input)).resolves.toEqual(result)
-    expect(fetch.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/sidebar/tasks/pin`)
-    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual(input)
+    await expect(api().setRuntimeTaskPinned(input)).resolves.toEqual(result)
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.sidebar.tasks.pin',
+      input,
+      address.deviceId
+    )
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('renames the addressed cloud conversation without dropping workspace metadata', async () => {
     const result = { accepted: true, taskId: address.taskId, workspacePath: address.workspacePath }
-    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(result)))
-    vi.stubGlobal('fetch', fetch)
-    await expect(
-      new RuntimeApi(config).renameRuntimeTask({ address, title: 'New title' })
-    ).resolves.toEqual(result)
-    expect(fetch.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/rename`)
-    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({ address, title: 'New title' })
+    request.mockResolvedValue(result)
+    const input = { address, title: 'New title' }
+    await expect(api().renameRuntimeTask(input)).resolves.toEqual(result)
+    expect(request).toHaveBeenCalledExactlyOnceWith('runtime.tasks.rename', input, address.deviceId)
+    expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('archives the conversation through the archive catalog without invoking runtime task deletion', async () => {
+  it('archives through the same Runtime operation used by the PC cloud archive catalog', async () => {
     const result = { accepted: true, taskId: address.taskId, workspacePath: address.workspacePath }
-    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(result)))
-    vi.stubGlobal('fetch', fetch)
-    await expect(new RuntimeApi(config).archiveConversation(address)).resolves.toEqual(result)
-    expect(fetch).toHaveBeenCalledExactlyOnceWith(
-      `${config.apiBaseUrl}/runtime-work/archived-conversations/archive`,
-      expect.objectContaining({ method: 'POST', body: JSON.stringify(address) })
+    request.mockResolvedValue(result)
+    await expect(api().archiveConversation(address)).resolves.toEqual(result)
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      'runtime.tasks.archive',
+      address,
+      address.deviceId
     )
+    expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('preserves rejected business outcomes for the caller and never retries failed mutations', async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ accepted: false, deviceId: address.deviceId, error: 'Read only' })
-        )
-      )
-      .mockResolvedValueOnce(new Response('{"detail":"Device unavailable"}', { status: 409 }))
-    vi.stubGlobal('fetch', fetch)
-    const api = new RuntimeApi(config)
+  it('preserves business rejection and transport errors without repeating a mutation', async () => {
+    const rejected = { accepted: false, deviceId: address.deviceId, error: 'Read only' }
+    request.mockResolvedValueOnce(rejected).mockRejectedValueOnce(new Error('Device unavailable'))
+    const client = api()
     await expect(
-      api.setRuntimeTaskPinned({ deviceId: address.deviceId, threadId: 'thread-1', pinned: false })
-    ).resolves.toEqual({ accepted: false, deviceId: address.deviceId, error: 'Read only' })
-    await expect(api.archiveConversation(address)).rejects.toThrow('Device unavailable')
-    expect(fetch).toHaveBeenCalledTimes(2)
+      client.setRuntimeTaskPinned({
+        deviceId: address.deviceId,
+        threadId: 'thread-1',
+        pinned: false,
+      })
+    ).resolves.toEqual(rejected)
+    await expect(client.archiveConversation(address)).rejects.toThrow('Device unavailable')
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('requires the existing Runtime connection instead of trying an absent REST endpoint', async () => {
+    const client = new RuntimeApi(config)
+    await expect(
+      client.setRuntimeTaskPinned({
+        deviceId: address.deviceId,
+        threadId: 'thread-1',
+        pinned: true,
+      })
+    ).rejects.toThrow('Runtime connection is unavailable')
+    await expect(client.renameRuntimeTask({ address, title: 'New title' })).rejects.toThrow(
+      'Runtime connection is unavailable'
+    )
+    await expect(client.archiveConversation(address)).rejects.toThrow(
+      'Runtime connection is unavailable'
+    )
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
