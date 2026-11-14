@@ -2127,9 +2127,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     firstBoardContent
   )
   await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-identity`)
+  // The exact `collaboration-workspace-actions` testid only renders on the
+  // currently active workspace; the local workspace carries the suffixed form
+  // whenever another workspace is active (see CollaborationPlatformNavigation).
   await control.command(
     'click',
-    `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
+    `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`
   )
   await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(
