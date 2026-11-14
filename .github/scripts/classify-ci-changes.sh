@@ -232,6 +232,7 @@ classify_path() {
       wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
       wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
       wework-mobile/src/services/runtimeStream* | wework-mobile/src/types/runtimeCommand.ts | \
+      wework-mobile/src/services/mobileAbort.ts | \
       wework-mobile/src/hooks/useMobileRuntime* | \
       wework-mobile/src/types/files.ts | wework-mobile/src/types/workspaceGit.ts | \
       wework-mobile/src/domain/mobileWorkspaceGit* | wework-mobile/src/services/mobileWorkspaceGit* | \

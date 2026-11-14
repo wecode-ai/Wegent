@@ -56,6 +56,7 @@ describe('native document WebView boundary', () => {
       wrap: false,
       initialPosition: 0,
       onPositionChange: vi.fn(),
+      onModeChange: vi.fn(),
       onOpenLink: vi.fn(),
       onError: vi.fn(),
       onResolveResource: vi
@@ -98,6 +99,19 @@ describe('native document WebView boundary', () => {
     await act(() => renderer.update(<MobileDocumentPreview {...props} />))
     expect(mocks.open).toHaveBeenCalledTimes(2)
     expect(mocks.release).toHaveBeenCalledOnce()
+  })
+  it('accepts only trusted display-mode controls supported by the current document', async () => {
+    await render()
+    await message({ type: 'mode', token: 'wrong', mode: 'source' })
+    await message({ type: 'mode', token: 'bridge-secret', mode: 'edit' })
+    expect(props.onModeChange).not.toHaveBeenCalled()
+    await message({ type: 'mode', token: 'bridge-secret', mode: 'source' })
+    expect(props.onModeChange).toHaveBeenCalledExactlyOnceWith('source')
+    expect(mocks.open).toHaveBeenCalledOnce()
+    props = { ...props, document: { ...document, name: 'report.pdf', kind: 'binary' } }
+    await act(() => renderer.update(<MobileDocumentPreview {...props} />))
+    await message({ type: 'mode', token: 'bridge-secret', mode: 'source' })
+    expect(props.onModeChange).toHaveBeenCalledOnce()
   })
   it('gates every top-level navigation and disables native file access', async () => {
     await render()

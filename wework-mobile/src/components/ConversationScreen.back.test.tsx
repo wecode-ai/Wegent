@@ -326,19 +326,26 @@ describe('conversation keyboard layout and model navigation', () => {
     expect(list.props.contentInsetEndAdjustment.value).toBe(240)
     expect(list.findByProps({ testID: 'new-chat-configuration' })).toBe(configuration)
   })
-  it('hands the measured capsule to the menu and restores the source only after dismissal', async () => {
+  it('mounts the native menu in the header and scopes its dialogs to the current conversation', async () => {
+    const screenProps = props()
     await act(() => {
-      renderer = create(<ConversationScreen {...props()} />)
+      renderer = create(<ConversationScreen {...screenProps} />)
     })
     const header = () => renderer.root.findByType('Header' as never)
-    const menu = () => renderer.root.findByType('ConversationMenu' as never)
-    const anchor = { x: 271, y: 60, width: 108, height: 44 }
-    expect(header().props.menuExpanded).toBe(false)
-    await act(() => header().props.onMore(anchor))
-    expect(menu().props.anchor).toEqual(anchor)
-    expect(header().props.menuExpanded).toBe(true)
-    await act(() => menu().props.onDismiss())
-    expect(header().props.menuExpanded).toBe(false)
-    expect(menu().props.visible).toBe(false)
+    const initialMenu = header().props.menu
+    expect(initialMenu.type).toBe('ConversationMenu')
+    expect(initialMenu.props.compact).toBe(true)
+    expect(initialMenu.props.onSettings).toBe(screenProps.conversationActions.onSettings)
+    expect(header().props.menuExpanded).toBeUndefined()
+    expect(header().props.onMore).toBeUndefined()
+    const address = { deviceId: 'device', taskId: 'task' }
+    await act(() =>
+      renderer.update(
+        <ConversationScreen {...screenProps} currentAddress={address} isNew={false} />
+      )
+    )
+    expect(header().props.menu.props.address).toBe(address)
+    expect(header().props.menu.props.compact).toBe(false)
+    expect(header().props.menu.key).not.toBe(initialMenu.key)
   })
 })

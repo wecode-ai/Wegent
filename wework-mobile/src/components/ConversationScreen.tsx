@@ -56,7 +56,6 @@ import { ConversationChangesPill } from './ConversationChangesPill'
 import { ConversationAgentsPill } from './ConversationAgentsPill'
 import { ConversationHeader, CONVERSATION_HEADER_HEIGHT } from './ConversationHeader'
 import { ConversationMenu, type ConversationMenuActions } from './ConversationMenu'
-import type { MenuAnchor } from '@/domain/conversationMenuGeometry'
 import { MessageList } from './MessageList'
 import { QuickModelDismissLayer, QuickModelSelector } from './QuickModelSelector'
 import { groupModelsByFamily } from '../../../packages/collaboration/src/controls/model-ui'
@@ -120,7 +119,6 @@ export function ConversationScreen(props: ConversationScreenProps) {
   const [useWorktree, setUseWorktree] = useState(false)
   const [bottomControlHeight, setBottomControlHeight] = useState(0)
   const [headerHeight, setHeaderHeight] = useState(CONVERSATION_HEADER_HEIGHT)
-  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null)
 
   const onlineDevices = mobileCreatableDevices(props.devices)
   const configurationDevice =
@@ -374,24 +372,20 @@ export function ConversationScreen(props: ConversationScreenProps) {
           else props.onBack()
         }}
         onLayout={handleHeaderLayout}
-        menuExpanded={Boolean(menuAnchor)}
-        onMore={anchor => {
-          Keyboard.dismiss()
-          setMenuAnchor(anchor)
-        }}
+        menu={
+          <ConversationMenu
+            {...props.conversationActions}
+            key={conversationKey}
+            address={props.currentAddress}
+            title={props.currentTitle}
+            compact={props.isNew}
+          />
+        }
         onNewConversation={props.onNewConversation}
         canCreateConversation={onlineDevices.length > 0}
         projectName={conversationProjectName}
         style={[styles.headerOverlay, { top: headerTop }]}
         title={props.currentTitle}
-      />
-      <ConversationMenu
-        {...props.conversationActions}
-        address={props.currentAddress}
-        title={props.currentTitle}
-        anchor={menuAnchor}
-        visible={Boolean(menuAnchor)}
-        onDismiss={() => setMenuAnchor(null)}
       />
 
       <KeyboardStickyView

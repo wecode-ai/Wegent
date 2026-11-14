@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RuntimeStream } from './runtimeStream'
 import { RuntimeApi } from './runtimeApi'
+import { loadMobileWorkspaceChanges } from './mobileWorkspaceGit'
+import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 import type { DeviceInfo } from '@/types/runtime'
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }))
@@ -54,6 +56,7 @@ describe('RuntimeStream', () => {
   })
 
   beforeEach(() => {
+    installReactNativeAbortGlobals()
     handlers.clear()
     connect.mockReset().mockImplementation(() => {
       const raw = vi.mocked(io).mock.results.at(-1)?.value
@@ -167,15 +170,16 @@ describe('RuntimeStream', () => {
     vi.stubGlobal('fetch', fetch)
     emit.mockImplementation((name, payload, acknowledge) => {
       expect(name).toBe('runtime:request')
+      const branch = payload.params.command_key === 'git_branch'
       expect(payload).toMatchObject({
         method: 'device.execute_command',
         device_id: 'cloud-owner',
-        timeout_seconds: 30,
+        timeout_seconds: branch ? 10 : 30,
         params: {
-          command_key: 'git_branch_diff',
+          command_key: branch ? 'git_branch' : 'git_branch_diff',
           path: '/worktrees/repo',
-          timeout_seconds: 30,
-          max_output_bytes: 5 * 1024 * 1024,
+          timeout_seconds: branch ? 10 : 30,
+          max_output_bytes: branch ? 4096 : 5 * 1024 * 1024,
         },
       })
       acknowledge({
@@ -183,16 +187,32 @@ describe('RuntimeStream', () => {
         result: {
           success: true,
           exit_code: 0,
-          stdout: 'diff --git a/a b/a\n+新内容\n',
+          stdout: branch
+            ? 'feature/review\n'
+            : 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+新内容\n',
           stderr: '',
         },
       })
     })
     const stream = await createStream(config)
     const api = new RuntimeApi(config, undefined, undefined, stream)
+    const signal = new AbortController().signal
+    expect('throwIfAborted' in signal).toBe(false)
+    expect('reason' in signal).toBe(false)
     await expect(
-      api.getWorkspaceGitDiff('cloud-owner', '/worktrees/repo', { mode: 'branch' })
-    ).resolves.toContain('+新内容')
+      loadMobileWorkspaceChanges(
+        api,
+        { deviceId: 'cloud-owner', path: '/worktrees/repo' },
+        { mode: 'branch' },
+        signal
+      )
+    ).resolves.toMatchObject({
+      branchName: 'feature/review',
+      fileCount: 1,
+      additions: 1,
+      deletions: 1,
+    })
+    expect(emit).toHaveBeenCalledTimes(2)
     expect(io).toHaveBeenCalledOnce()
     expect(fetch).not.toHaveBeenCalled()
   })

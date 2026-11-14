@@ -2,7 +2,10 @@ import {
   classifyMarkdownLink,
   transformMarkdownUrl,
 } from '../../packages/collaboration/src/markdown/assistantMarkdownLinks'
-import { workspaceFileViewerType } from '../../packages/chat-core/src/workspace-file-types'
+import {
+  isPreviewableTextFile,
+  workspaceFileViewerType,
+} from '../../packages/chat-core/src/workspace-file-types'
 
 export interface PreviewState {
   name: string
@@ -40,6 +43,12 @@ export function canPreviewSource(document: PreviewDocumentKind): boolean {
   )
 }
 
+export function canSwitchPreviewMode(document: PreviewDocumentKind): boolean {
+  return (
+    canPreviewSource(document) && (document.kind !== 'text' || isPreviewableTextFile(document.name))
+  )
+}
+
 export function canSearchPreview(
   document: PreviewDocumentKind,
   mode: 'preview' | 'source' = 'preview'
@@ -65,6 +74,7 @@ export function canSearchPreview(
 
 export type PreviewEvent =
   | { type: 'ready' }
+  | { type: 'mode'; mode: 'preview' | 'source' }
   | { type: 'position'; value: number }
   | { type: 'link'; href: string }
   | { type: 'error'; message: string }
@@ -88,6 +98,8 @@ export function parsePreviewEvent(raw: string, token: string): PreviewEvent | nu
   const event = value as Record<string, unknown>
   if (event.token !== token || !token) return null
   if (event.type === 'ready') return { type: 'ready' }
+  if (event.type === 'mode' && (event.mode === 'preview' || event.mode === 'source'))
+    return { type: 'mode', mode: event.mode }
   if (event.type === 'position' && typeof event.value === 'number' && Number.isFinite(event.value))
     return { type: 'position', value: Math.max(0, event.value) }
   if (event.type === 'link' && typeof event.href === 'string')

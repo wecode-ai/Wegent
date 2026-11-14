@@ -84,8 +84,13 @@ function RuntimeApplication({
   const [settingsVisible, setSettingsVisible] = useState(false)
   const [search, setSearch] = useState('')
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
+  const conversationEntryRevisionRef = useRef(conversationEntryRevision)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const pendingComposerFocus = useRef(false)
+  const enterConversation = () => {
+    conversationEntryRevisionRef.current += 1
+    setConversationEntryRevision(conversationEntryRevisionRef.current)
+  }
   const openSettings = () => {
     Keyboard.dismiss()
     setSettingsVisible(true)
@@ -133,6 +138,7 @@ function RuntimeApplication({
                   devices={runtime.devices}
                   loading={runtime.loading}
                   onNewConversation={workspace => {
+                    enterConversation()
                     pendingComposerFocus.current = true
                     runtime.startNewConversation(workspace)
                     navigation.navigate('conversation')
@@ -145,8 +151,8 @@ function RuntimeApplication({
                   onRefresh={runtime.refresh}
                   onSelectAllDevices={runtime.selectAllDevices}
                   onSelectConversation={item => {
+                    enterConversation()
                     pendingComposerFocus.current = false
-                    setConversationEntryRevision(current => current + 1)
                     void runtime.openConversation(item)
                     navigation.navigate('conversation')
                   }}
@@ -220,10 +226,15 @@ function RuntimeApplication({
                       onArchive: async () => {
                         if (!runtime.currentAddress) return
                         await runtime.archiveConversation(runtime.currentAddress)
-                        navigation.goBack()
+                        if (
+                          conversationEntryRevisionRef.current === conversationEntryRevision &&
+                          navigation.isFocused()
+                        )
+                          navigation.goBack()
                       },
                     }}
                     onNewConversation={() => {
+                      enterConversation()
                       runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
                       setComposerFocusRequest(current => current + 1)
                     }}

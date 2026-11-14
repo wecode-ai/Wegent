@@ -11,6 +11,7 @@ import type { RuntimeTranscriptResponse as CoreTranscript } from '../../../packa
 import { readRuntimeTranscript } from '../../../packages/chat-core/src/runtime-transcript-transport'
 import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
 import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
+import { mobileAbortError, throwIfAborted } from './mobileAbort'
 import type { RuntimeStream } from './runtimeStream'
 import type { RuntimeDeviceCommandResponse } from '@/types/runtimeCommand'
 import {
@@ -211,7 +212,7 @@ export class RuntimeApi {
       maxOutputBytes?: number
     } = {}
   ): Promise<string> {
-    options.signal?.throwIfAborted()
+    throwIfAborted(options.signal)
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
     if (!this.commands) throw new Error('Runtime command connection is unavailable')
@@ -225,7 +226,7 @@ export class RuntimeApi {
       },
       options.signal
     )
-    options.signal?.throwIfAborted()
+    throwIfAborted(options.signal)
     return workspaceGitCommandOutput(response, commandKey)
   }
 
@@ -234,7 +235,7 @@ export class RuntimeApi {
     path: string,
     signal?: AbortSignal
   ): Promise<boolean> {
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     if (!deviceId.trim()) throw new Error('Workspace target device is required')
     const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
     if (!this.commands) throw new Error('Runtime command connection is unavailable')
@@ -249,7 +250,7 @@ export class RuntimeApi {
       },
       signal
     )
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     if (response.stdout_truncated) throw new Error('Git repository probe was truncated')
     // PC uses this command's success + true output as its repository capability probe.
     return response.success && workspaceGitCommandOutput(response, 'git_is_worktree') === 'true'
@@ -508,7 +509,7 @@ export class RuntimeApi {
     signal?: AbortSignal
   ): Promise<RuntimeTranscriptResponse> {
     if (!threadId.trim()) throw new Error('A thread view requires an explicit thread identity')
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     const response = await readRuntimeTranscript<CoreTranscript & { taskId: string }>(
       { ...address, threadId, includeFullContent: true },
       query =>
@@ -519,7 +520,7 @@ export class RuntimeApi {
         }),
       decodeMobileTranscriptGzip
     )
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     if (response.threadId !== threadId)
       throw new Error('Runtime returned a different thread for the requested view')
     return projectMobileRuntimeTranscript(response)
@@ -642,7 +643,7 @@ async function downloadRuntimeAttachment(
     import('expo-file-system'),
     import('expo-file-system/legacy'),
   ])
-  if (signal?.aborted) throw new DOMException('附件下载已取消', 'AbortError')
+  throwIfAborted(signal)
   const destination = new File(destinationUri)
   if (destination.exists) throw new Error('附件下载目标已存在')
   const download = createDownloadResumable(url, destinationUri, {
@@ -661,7 +662,8 @@ async function downloadRuntimeAttachment(
     const response = await download.downloadAsync()
     const cancellationErrors = await cancellation
     if (cancellationErrors?.length) throw cancellationErrors[0]
-    if (signal?.aborted || !response) throw new DOMException('附件下载已取消', 'AbortError')
+    throwIfAborted(signal)
+    if (!response) throw mobileAbortError()
     if (response.status < 200 || response.status >= 300)
       throw new RuntimeApiError(`附件下载失败（HTTP ${response.status}）`, response.status)
     const headers = new Headers(response.headers)

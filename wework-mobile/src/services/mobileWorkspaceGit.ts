@@ -3,6 +3,7 @@ import { mobileWorkspaceChangedFiles } from '@/domain/mobileWorkspaceGit'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import type { MobileWorkspaceChanges, WorkspaceGitSelection } from '@/types/workspaceGit'
 import type { RuntimeApi } from './runtimeApi'
+import { throwIfAborted } from './mobileAbort'
 
 type WorkspaceGitApi = Pick<
   RuntimeApi,
@@ -22,11 +23,11 @@ export async function loadMobileWorkspaceChanges(
   selection: WorkspaceGitSelection,
   signal?: AbortSignal
 ): Promise<MobileWorkspaceChanges> {
-  signal?.throwIfAborted()
+  throwIfAborted(signal)
   const normalized: WorkspaceGitSelection = { mode: selection.mode }
   workspaceGitDiffCommand(normalized)
   const [branchName, diff] = await readGitSnapshot(api, target, normalized, signal)
-  signal?.throwIfAborted()
+  throwIfAborted(signal)
   const files = mobileWorkspaceChangedFiles(diff)
   return {
     target: { ...target },
@@ -52,13 +53,13 @@ async function readGitSnapshot(
       api.getWorkspaceGitDiff(target.deviceId, target.path, selection, signal),
     ])
   } catch (error) {
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     // Match PC environment loading: probe a failed Git read before classifying it as non-Git.
     let isGitRepository: boolean | undefined
     try {
       isGitRepository = await api.isWorkspaceGitRepository(target.deviceId, target.path, signal)
     } catch {
-      signal?.throwIfAborted()
+      throwIfAborted(signal)
       throw error
     }
     if (isGitRepository === false) throw new WorkspaceNotGitRepositoryError()

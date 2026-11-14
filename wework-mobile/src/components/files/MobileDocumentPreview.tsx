@@ -4,6 +4,7 @@ import { ActivityIndicator, useTheme } from 'react-native-paper'
 import type { WebView } from 'react-native-webview'
 
 import {
+  canSwitchPreviewMode,
   isPreviewLinkAllowed,
   parsePreviewEvent,
   type PreviewState,
@@ -19,6 +20,7 @@ interface MobileDocumentPreviewProps {
   wrap: boolean
   initialPosition: number
   onPositionChange: (position: number) => void
+  onModeChange: (mode: 'preview' | 'source') => void
   onOpenLink: (href: string) => void
   onError: (message: string) => void
   onResolveResource?: (href: string) => Promise<{ uri: string; name: string; release?: () => void }>
@@ -154,7 +156,10 @@ export function MobileDocumentPreview(props: MobileDocumentPreviewProps) {
           const message = parsePreviewEvent(event.nativeEvent.data, session.bridgeToken)
           if (!message) return
           if (message.type === 'ready') setReady(true)
-          else if (message.type === 'position') latest.current.onPositionChange(message.value)
+          else if (message.type === 'mode') {
+            if (canSwitchPreviewMode(latest.current.document))
+              latest.current.onModeChange(message.mode)
+          } else if (message.type === 'position') latest.current.onPositionChange(message.value)
           else if (message.type === 'link') openLink(message.href)
           else if (message.type === 'resource') {
             if (
@@ -210,7 +215,7 @@ export function MobileDocumentPreview(props: MobileDocumentPreviewProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, minHeight: 0 },
   loading: { flex: 1 },
   overlay: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
 })

@@ -63,10 +63,16 @@ body {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px;
-  padding-bottom: 80px;
   line-height: 1.75;
   overflow-wrap: anywhere;
+}
+.document-content {
+  padding: 20px 20px 80px;
+}
+.preview-modes {
+  flex: 0 0 52px;
+  height: 52px;
+  min-width: 0;
 }
 .code-preview,
 .binary-preview,
@@ -79,9 +85,15 @@ body {
 }
 .binary-preview {
   display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
+.binary-preview > .preview-modes {
+  margin-top: calc(-1 * var(--preview-header-offset, 0px));
+}
 .code-preview {
+  overflow: auto;
+  overscroll-behavior: contain;
   --mobile-code-gutter: #e8e8ea;
   --mobile-code-number: #8e8e93;
   background: #f8f8f8;
@@ -93,6 +105,8 @@ body {
 }
 .file-viewer {
   overflow: auto;
+  overflow-anchor: none;
+  height: 0;
 }
 .html-preview {
   flex: 1;

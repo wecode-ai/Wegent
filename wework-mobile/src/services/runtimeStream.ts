@@ -20,6 +20,7 @@ import type {
 } from '@/types/runtime'
 import type { RuntimeSessionConfig } from './backendConfig'
 import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
+import { mobileAbortError, throwIfAborted } from './mobileAbort'
 import type {
   RuntimeDeviceCommandRequest,
   RuntimeDeviceCommandResponse,
@@ -277,9 +278,9 @@ export class RuntimeStream {
     options: { signal?: AbortSignal; relayTimeoutSeconds?: number } = {}
   ): Promise<T> {
     const { signal } = options
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     await this.client.ensureConnected()
-    signal?.throwIfAborted()
+    throwIfAborted(signal)
     const requestId = `mobile-runtime-${nextRequestId++}`
     return new Promise<T>((resolve, reject) => {
       let settled = false
@@ -294,7 +295,7 @@ export class RuntimeStream {
         cleanup()
         reject(error)
       }
-      const onAbort = () => fail(signal?.reason ?? new Error('Runtime request cancelled'))
+      const onAbort = () => fail(mobileAbortError())
       const onDisconnect = () => fail(new Error(`${method} 连接已断开`))
       const timeout = setTimeout(() => {
         fail(new Error(`${method} 请求超时`))

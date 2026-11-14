@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 import type { Attachment } from '../../../packages/chat-core/src/runtime'
 import type { WorkspaceFileChunkResponse } from '../../../packages/chat-core/src/workspace-files'
 import type { MobileFileRequest } from '@/types/files'
@@ -200,6 +201,7 @@ function setup() {
 }
 
 beforeEach(() => {
+  installReactNativeAbortGlobals()
   native.files.clear()
   native.sizes.clear()
   native.directories.clear()
@@ -212,6 +214,7 @@ beforeEach(() => {
   native.closed = 0
   native.text.mockReset()
 })
+afterEach(() => vi.unstubAllGlobals())
 
 describe('live workspace diffs', () => {
   it('keeps device, worktree and comparison mode identity and cancels a stale live diff on refresh', async () => {

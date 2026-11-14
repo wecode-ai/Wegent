@@ -9,6 +9,7 @@ import type { RuntimeApi } from '@/services/runtimeApi'
 import type { LoadedMobileFile, MobileFileRequest } from '@/types/files'
 import { mobileFileKey } from '@/domain/mobileFiles'
 import { FileBrowserModal } from './FileBrowserModal'
+import { canSwitchPreviewMode } from '../../../preview/protocol'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
@@ -213,23 +214,21 @@ describe('FileBrowserModal', () => {
   })
 
   it.each(['agreement.html', 'page.htm', 'readme.md', 'notes.markdown'])(
-    'exposes preview/source tabs for %s without opening the filename menu',
+    'lets the document own the scrolling preview/source controls for %s',
     async name => {
       const formatted = { ...document, name }
       store.acquire.mockResolvedValueOnce({ document: formatted, release: releasePreview })
       await render()
-      expect(element('file-preview-modes')).toBeDefined()
+      expect(element('file-preview-modes')).toBeUndefined()
       expect(element('file-preview-full-path')).toBeUndefined()
-      expect(element('file-mode-preview').props.accessibilityState.selected).toBe(true)
-      expect(element('file-mode-source').props.accessibilityRole).toBe('tab')
+      expect(canSwitchPreviewMode(preview().props.document)).toBe(true)
+      expect(preview().props.mode).toBe('preview')
       expect(element('file-preview-share-close')).toBeDefined()
       expect(element('file-preview-folder')).toBeDefined()
       expect(element('file-preview-history')).toBeDefined()
-      await act(() => element('file-mode-source').props.onPress())
+      await act(() => preview().props.onModeChange('source'))
       expect(preview().props.mode).toBe('source')
-      expect(element('file-mode-source').props.accessibilityState.selected).toBe(true)
-      expect(element('file-mode-preview').props.accessibilityState.selected).toBe(false)
-      await act(() => element('file-mode-preview').props.onPress())
+      await act(() => preview().props.onModeChange('preview'))
       expect(preview().props.mode).toBe('preview')
       expect(preview().props.document).toBe(formatted)
       expect(store.acquire).toHaveBeenCalledTimes(1)
@@ -254,6 +253,7 @@ describe('FileBrowserModal', () => {
       })
       await render()
       expect(element('file-preview-modes')).toBeUndefined()
+      expect(canSwitchPreviewMode(preview().props.document)).toBe(false)
       expect(preview().props.document.kind).toBe('text')
       await act(() => element('file-preview-more').props.onPress())
       expect(element('file-mode-source')).toBeUndefined()
@@ -269,8 +269,9 @@ describe('FileBrowserModal', () => {
         release: releasePreview,
       })
       await render()
-      expect(element('file-preview-modes')).toBeDefined()
-      await act(() => element('file-mode-source').props.onPress())
+      expect(element('file-preview-modes')).toBeUndefined()
+      expect(canSwitchPreviewMode(preview().props.document)).toBe(true)
+      await act(() => preview().props.onModeChange('source'))
       expect(preview().props.mode).toBe('source')
       expect(store.acquire).toHaveBeenCalledTimes(1)
     }
@@ -429,7 +430,7 @@ describe('FileBrowserModal', () => {
     await render({ location: { kind: 'file', request: lineRequest } })
     expect(preview().props.mode).toBe('source')
     expect(preview().props.document).toMatchObject({ lineStart: 12, lineEnd: 18 })
-    await act(() => element('file-mode-preview').props.onPress())
+    await act(() => preview().props.onModeChange('preview'))
     expect(preview().props.mode).toBe('preview')
     await menuAction('file-find')
     await act(() => element('file-find-input').props.onChangeText('needle'))

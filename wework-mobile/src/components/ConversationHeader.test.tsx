@@ -38,20 +38,11 @@ describe('ConversationHeader', () => {
       projectName: 'Wegent',
       onBack: vi.fn(),
       onNewConversation: vi.fn(),
-      onMore: vi.fn(),
+      menu: React.createElement('NativeMenuTrigger', { testID: 'more-actions' }),
       ...overrides,
     }
     await act(() => {
-      renderer = create(<ConversationHeader {...props} />, {
-        createNodeMock: element =>
-          (element.props as { testID?: string }).testID === 'conversation-menu-anchor'
-            ? {
-                measureInWindow: (
-                  callback: (x: number, y: number, width: number, height: number) => void
-                ) => callback(271, 60, 108, 44),
-              }
-            : null,
-      })
+      renderer = create(<ConversationHeader {...props} />)
     })
     return props
   }
@@ -72,10 +63,8 @@ describe('ConversationHeader', () => {
   })
 
   it('exposes the menu before sending the first message', async () => {
-    const props = await render({ minimal: true })
-    await act(() => elements('more-actions')[0]!.props.onPress())
-    expect(props.onMore).toHaveBeenCalledOnce()
-    expect(props.onMore).toHaveBeenCalledWith({ x: 271, y: 60, width: 108, height: 44 })
+    await render({ minimal: true })
+    expect(elements('more-actions')).toHaveLength(1)
     expect(elements('new-conversation')).toHaveLength(0)
   })
 
@@ -94,16 +83,15 @@ describe('ConversationHeader', () => {
   })
 
   it('preserves new-conversation capability and the more action', async () => {
-    const props = await render({ canCreateConversation: false })
+    await render({ canCreateConversation: false })
     expect(elements('new-conversation')[0]!.props.disabled).toBe(true)
-    await act(() => elements('more-actions')[0]!.props.onPress())
-    expect(props.onMore).toHaveBeenCalledOnce()
+    expect(elements('more-actions')).toHaveLength(1)
   })
-  it('hides the source capsule and blocks retriggering while its menu is expanded', async () => {
-    const props = await render({ menuExpanded: true })
-    expect(elements('conversation-menu-anchor')[0]!.props.pointerEvents).toBe('none')
-    expect(elements('conversation-menu-anchor')[0]!.props.accessibilityElementsHidden).toBe(true)
-    await act(() => elements('more-actions')[0]!.props.onPress())
-    expect(props.onMore).not.toHaveBeenCalled()
+  it('keeps the native trigger mounted in a visible capsule without manual measurement', async () => {
+    await render()
+    const capsule = elements('conversation-menu-anchor')[0]!
+    expect(capsule.props.style.opacity).toBeUndefined()
+    expect(capsule.props.accessibilityElementsHidden).toBeUndefined()
+    expect(capsule.findAllByType('NativeMenuTrigger' as never)).toHaveLength(1)
   })
 })

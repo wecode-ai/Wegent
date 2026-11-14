@@ -9,6 +9,7 @@ import { parseUnifiedDiff } from '../../../packages/collaboration/src/conversati
 import { mobileFileKey, mobileFileName } from '@/domain/mobileFiles'
 import type { LoadedMobileFile, MobileFileRequest } from '@/types/files'
 import type { RuntimeApi } from './runtimeApi'
+import { throwIfAborted } from './mobileAbort'
 
 export interface FileLoadOptions {
   signal: AbortSignal
@@ -40,10 +41,6 @@ export interface MobileFileLease {
 }
 
 type FileReadResult = Pick<NativeFileRead, 'document' | 'complete'>
-
-function throwIfAborted(signal: AbortSignal) {
-  if (signal.aborted) throw new Error('文件读取已取消')
-}
 
 function selectFileDiff(
   text: string,

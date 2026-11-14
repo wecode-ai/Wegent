@@ -1,5 +1,6 @@
 import { gzipSync, strToU8 } from 'fflate'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
 import { RuntimeApi } from './runtimeApi'
 
@@ -34,6 +35,7 @@ const transcript = (threadId = 'child-thread') => ({
   ],
 })
 afterEach(() => vi.unstubAllGlobals())
+beforeEach(installReactNativeAbortGlobals)
 
 describe('isolated Mobile subagent transcript', () => {
   it('preserves parent routing and reads exactly the selected thread using the PC v2 protocol', async () => {

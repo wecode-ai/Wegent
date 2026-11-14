@@ -31,6 +31,7 @@ import { createCodeItems, findCodeMatch, initialCodeTarget } from './codeNavigat
 import { codeItemMetrics, codeLayout, codeStyles, codeTheme } from './codePresentation'
 import { HtmlPreview } from './HtmlPreview'
 import { readSourcePreview } from './sourcePreview'
+import { PreviewModes } from './PreviewModes'
 import './style.css'
 
 declare global {
@@ -93,7 +94,13 @@ function findText(container: HTMLElement, query: string) {
   }
 }
 
-function TextPreview({ state }: { state: PreviewState }) {
+function TextPreview({
+  state,
+  modeState = state,
+}: {
+  state: PreviewState
+  modeState?: PreviewState
+}) {
   const code = useRef<CodeViewHandle<undefined, undefined>>(null)
   const container = useRef<HTMLDivElement>(null)
   const markdown = state.mode === 'preview' && isMarkdownFile(state.name) && state.kind !== 'diff'
@@ -131,8 +138,10 @@ function TextPreview({ state }: { state: PreviewState }) {
         text={text}
         name={state.name}
         search={state.search}
+        theme={state.theme}
         initialPosition={initial.current}
         onPosition={value => post({ type: 'position', value })}
+        onModeChange={mode => post({ type: 'mode', mode })}
       />
     )
   if (markdown)
@@ -142,20 +151,29 @@ function TextPreview({ state }: { state: PreviewState }) {
         className="document-scroll"
         onScroll={event => post({ type: 'position', value: event.currentTarget.scrollTop })}
       >
-        <AssistantMarkdown
-          content={text}
-          variant="document"
-          sourceLineAnchors
-          onOpenFile={openLink}
-        />
+        <PreviewModes state={modeState} post={post} />
+        <div className="document-content">
+          <AssistantMarkdown
+            content={text}
+            variant="document"
+            sourceLineAnchors
+            onOpenFile={openLink}
+          />
+        </div>
       </div>
     )
   if (state.kind === 'diff' && items.length === 0)
-    return <p className="empty">没有可显示的文本变更</p>
+    return (
+      <div className="document-scroll">
+        <PreviewModes state={modeState} post={post} />
+        <p className="empty">没有可显示的文本变更</p>
+      </div>
+    )
   return (
     <CodeView
       ref={code}
       className="code-preview"
+      renderCodeViewHeader={() => <PreviewModes state={modeState} post={post} />}
       items={items}
       onScroll={position => post({ type: 'position', value: position })}
       selectedLines={
@@ -263,7 +281,7 @@ function BinaryPreview({ state }: { state: PreviewState }) {
   if (state.mode === 'source' && canPreviewSource(state))
     return source?.file === file ? (
       <>
-        <TextPreview state={{ ...state, kind: 'text', text: source.text }} />
+        <TextPreview state={{ ...state, kind: 'text', text: source.text }} modeState={state} />
         {source.truncated ? <div className="truncated">文件较大，当前显示部分内容</div> : null}
       </>
     ) : (
@@ -278,10 +296,16 @@ function BinaryPreview({ state }: { state: PreviewState }) {
       className="binary-preview"
       onScrollCapture={event => {
         const target = event.target as HTMLElement
-        if (target.scrollHeight > target.clientHeight)
+        if (target.scrollHeight > target.clientHeight) {
+          event.currentTarget.style.setProperty(
+            '--preview-header-offset',
+            `${Math.min(52, Math.max(0, target.scrollTop))}px`
+          )
           post({ type: 'position', value: target.scrollTop })
+        }
       }}
     >
+      <PreviewModes state={state} post={post} />
       {extension === 'xmind' ? (
         <XMindPreview
           file={file}

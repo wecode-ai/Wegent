@@ -38,7 +38,8 @@ keep their original owner. Records do not survive logout or restart and do not s
 **Back (返回)** returns to the previous location. Top-right **Close (关闭)** or the iOS swipe-down
 gesture dismisses the sheet.
 
-The conversation **More** menu expands from its existing button capsule and offers **Pin / Unpin, Rename, Copy conversation ID, and Archive
+The conversation **More** menu uses SwiftUI Menu on iOS and Jetpack Compose DropdownMenu on Android.
+The system owns anchoring, material, opening, and dismissal. It offers **Pin / Unpin, Rename, Copy conversation ID, and Archive
 (置顶 / 取消置顶、重命名、复制对话 ID、归档)** using PC cloud conversation identities and APIs.
 Archiving a managed worktree preserves a snapshot before cleanup; cleanup failures are reported
 separately without pretending the already archived conversation remains unarchived.
@@ -53,7 +54,8 @@ child threads load history independently from the owning device without switchin
 Tap the filename in the preview header for content search, line navigation, copy path, refresh,
 and wrapping. Code wraps by default with fixed line numbers; continuation lines do not repeat them.
 Renderable text such as Markdown and HTML offers a visible **Preview / Source (预览 / 源码)**
-segmented control directly below the filename. Ordinary code opens as source; binary documents
+segmented control at the start of the document. It scrolls away with the content and is available
+again at the top. Source and diffs retain a bounded, virtualized scroll container. Ordinary code opens as source; binary documents
 do not show an invalid source action. Format viewers
 provide their supported reading controls. The top-right share button opens **Share or save file
 (分享或存储文件)**; available destinations come from iOS or Android. The filename menu also shows

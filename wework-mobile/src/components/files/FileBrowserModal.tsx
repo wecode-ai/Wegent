@@ -8,8 +8,7 @@ import {
   resolveWorkspaceFilePath,
   workspaceParentPath,
 } from '../../../../packages/chat-core/src/workspace-file-paths'
-import { isPreviewableTextFile } from '../../../../packages/chat-core/src/workspace-file-types'
-import { canPreviewSource, canSearchPreview } from '../../../preview/protocol'
+import { canPreviewSource, canSearchPreview, canSwitchPreviewMode } from '../../../preview/protocol'
 import {
   formatFileSize,
   mobileAttachmentRequest,
@@ -238,7 +237,6 @@ function FilePreviewContent({
     }
     onNavigate({ kind: 'file', request: { kind: 'workspace', target, path } })
   }
-  const canRender = document && (document.kind !== 'text' || isPreviewableTextFile(document.name))
   const changeMode = (value: 'preview' | 'source') => {
     setRendererError(null)
     setMode(value)
@@ -334,9 +332,6 @@ function FilePreviewContent({
         actions={menuActions}
         share={shareAction}
       />
-      {canRender && sourceAvailable ? (
-        <FilePreviewModes value={mode} onChange={changeMode} />
-      ) : null}
       {sharing ? (
         <View style={styles.statusRow}>
           <ActivityIndicator size="small" testID="file-sharing" />
@@ -420,6 +415,9 @@ function FilePreviewContent({
       ) : null}
       {error || rendererError ? (
         <ScrollView style={styles.screen} contentContainerStyle={styles.errorContent}>
+          {document && canSwitchPreviewMode(document) ? (
+            <FilePreviewModes value={mode} onChange={changeMode} />
+          ) : null}
           <FileErrorState
             title={error ? '暂时无法读取文件' : '暂时无法显示预览'}
             message={error || rendererError!}
@@ -436,6 +434,7 @@ function FilePreviewContent({
           search={search}
           wrap={wrap}
           initialPosition={initialPosition.current}
+          onModeChange={changeMode}
           onPositionChange={value => onPositionChange(request, value)}
           onOpenLink={href => onLink(href, owner)}
           onResolveResource={async href => {

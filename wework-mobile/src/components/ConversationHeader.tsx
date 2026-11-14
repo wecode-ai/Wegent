@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { useRef } from 'react'
+import type { ReactElement } from 'react'
 import {
   Pressable,
   StyleSheet,
@@ -10,7 +10,6 @@ import {
 } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { LiquidGlassButton, LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
-import type { MenuAnchor } from '@/domain/conversationMenuGeometry'
 
 interface ConversationHeaderProps {
   backAccessibilityLabel?: string
@@ -22,8 +21,7 @@ interface ConversationHeaderProps {
   onLayout?: (event: LayoutChangeEvent) => void
   onNewConversation: () => void
   canCreateConversation?: boolean
-  onMore: (anchor: MenuAnchor) => void
-  menuExpanded?: boolean
+  menu: ReactElement
   style?: StyleProp<ViewStyle>
 }
 
@@ -39,21 +37,10 @@ export function ConversationHeader({
   onLayout,
   onNewConversation,
   canCreateConversation = true,
-  onMore,
-  menuExpanded = false,
+  menu,
   style,
 }: ConversationHeaderProps) {
   const theme = useTheme()
-  const capsule = useRef<View>(null)
-  const measuring = useRef(false)
-  const openMore = () => {
-    if (menuExpanded || measuring.current || !capsule.current) return
-    measuring.current = true
-    capsule.current?.measureInWindow((x, y, width, height) => {
-      measuring.current = false
-      if (width > 0 && height > 0) onMore({ x, y, width, height })
-    })
-  }
 
   return (
     <LiquidGlassGroup
@@ -70,15 +57,7 @@ export function ConversationHeader({
       />
       {minimal ? (
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
-          <View
-            ref={capsule}
-            collapsable={false}
-            pointerEvents={menuExpanded ? 'none' : 'auto'}
-            accessibilityElementsHidden={menuExpanded}
-            importantForAccessibility={menuExpanded ? 'no-hide-descendants' : 'auto'}
-            style={{ width: 44, height: 44, opacity: menuExpanded ? 0 : 1 }}
-            testID="conversation-menu-anchor"
-          >
+          <View style={{ width: 44, height: 44 }} testID="conversation-menu-anchor">
             <LiquidGlassSurface
               colorScheme={theme.dark ? 'dark' : 'light'}
               fallbackStyle={{
@@ -87,12 +66,7 @@ export function ConversationHeader({
               }}
               style={styles.minimalCapsule}
             >
-              <HeaderAction
-                accessibilityLabel="更多"
-                icon="ellipsis-horizontal"
-                onPress={openMore}
-                testID="more-actions"
-              />
+              {menu}
             </LiquidGlassSurface>
           </View>
         </View>
@@ -145,15 +119,7 @@ export function ConversationHeader({
             </View>
           </View>
 
-          <View
-            ref={capsule}
-            collapsable={false}
-            pointerEvents={menuExpanded ? 'none' : 'auto'}
-            accessibilityElementsHidden={menuExpanded}
-            importantForAccessibility={menuExpanded ? 'no-hide-descendants' : 'auto'}
-            style={[styles.actionCapsule, menuExpanded && { opacity: 0 }]}
-            testID="conversation-menu-anchor"
-          >
+          <View style={styles.actionCapsule} testID="conversation-menu-anchor">
             <LiquidGlassSurface
               colorScheme={theme.dark ? 'dark' : 'light'}
               fallbackStyle={{
@@ -170,12 +136,7 @@ export function ConversationHeader({
                   onPress={onNewConversation}
                   testID="new-conversation"
                 />
-                <HeaderAction
-                  accessibilityLabel="更多"
-                  icon="ellipsis-horizontal"
-                  onPress={openMore}
-                  testID="more-actions"
-                />
+                {menu}
               </View>
             </LiquidGlassSurface>
           </View>

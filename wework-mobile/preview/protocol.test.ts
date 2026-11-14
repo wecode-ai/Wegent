@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   canPreviewSource,
   canSearchPreview,
+  canSwitchPreviewMode,
   isPreviewLinkAllowed,
   parsePreviewEvent,
 } from './protocol'
@@ -38,6 +39,24 @@ describe('preview bridge boundaries', () => {
         'secret'
       )
     ).toBeNull()
+  })
+  it('limits scrolling mode controls to previews with a readable source', () => {
+    for (const name of ['readme.md', 'agreement.html'])
+      expect(canSwitchPreviewMode({ name, kind: 'text', mimeType: '' })).toBe(true)
+    for (const name of ['script.ts', 'notes.txt'])
+      expect(canSwitchPreviewMode({ name, kind: 'text', mimeType: '' })).toBe(false)
+    for (const name of ['diagram.mmd', 'diagram.puml', 'table.csv', 'image.svg'])
+      expect(canSwitchPreviewMode({ name, kind: 'binary', mimeType: '' })).toBe(true)
+    expect(canSwitchPreviewMode({ name: 'report.pdf', kind: 'binary', mimeType: '' })).toBe(false)
+  })
+  it('accepts only authenticated preview/source mode changes', () => {
+    const parse = (mode: unknown, token = 'secret') =>
+      parsePreviewEvent(JSON.stringify({ type: 'mode', mode, token }), 'secret')
+    expect(parse('preview')).toEqual({ type: 'mode', mode: 'preview' })
+    expect(parse('source')).toEqual({ type: 'mode', mode: 'source' })
+    expect(parse('edit')).toBeNull()
+    expect(parse({ mode: 'source' })).toBeNull()
+    expect(parse('source', 'old')).toBeNull()
   })
   it.each([
     'javascript:alert(1)',

@@ -30,6 +30,7 @@ for mobile_file_path in \
   wework-mobile/src/services/mobilePreviewRuntime.ts \
   wework-mobile/src/services/runtimeFilesApi.test.ts \
   wework-mobile/src/services/runtimeStream.ts \
+  wework-mobile/src/services/mobileAbort.ts \
   wework-mobile/src/services/runtimeStream.test.ts \
   wework-mobile/src/types/runtimeCommand.ts \
   wework-mobile/src/hooks/useMobileRuntime.ts \

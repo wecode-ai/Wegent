@@ -1,14 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import * as Clipboard from 'expo-clipboard'
 import { useEffect, useRef, useState } from 'react'
-import { BackHandler, Pressable, StyleSheet, View } from 'react-native'
+import { BackHandler, Keyboard, View } from 'react-native'
 import { Button, Dialog, Portal, Text, TextInput, useTheme } from 'react-native-paper'
 import type { RuntimeTaskAddress } from '@/types/runtime'
-import type { MenuAnchor } from '@/domain/conversationMenuGeometry'
-import {
-  ConversationMenuSurface,
-  type ConversationMenuSurfaceHandle,
-} from './ConversationMenuSurface'
+import { ConversationMenuNative } from './ConversationMenuNative'
+import type { ConversationMenuAction } from './ConversationMenuNative.types'
 import { useMobileFilePreview } from './files/FilePreviewContext'
 
 export interface ConversationMenuActions {
@@ -24,227 +21,210 @@ export interface ConversationMenuActions {
 interface Props extends ConversationMenuActions {
   address: RuntimeTaskAddress | null
   title: string
-  visible: boolean
-  anchor: MenuAnchor | null
-  onDismiss: () => void
+  compact?: boolean
 }
 
 export function ConversationMenu(props: Props) {
   const theme = useTheme()
-  const surface = useRef<ConversationMenuSurfaceHandle>(null)
   const files = useMobileFilePreview()
+  const pending = useRef(false)
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(props.title)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
-    if (!props.visible) return
-    setTitle(props.title)
-    setRenaming(false)
-    setError(null)
-  }, [props.visible, props.title, props.address?.deviceId, props.address?.taskId])
-  useEffect(() => {
-    if (!renaming) return
+    if (!renaming && !error) return
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (!busy) setRenaming(false)
+      if (!pending.current) {
+        setRenaming(false)
+        setError(null)
+      }
       return true
     })
     return () => listener.remove()
-  }, [busy, renaming])
+  }, [error, renaming])
 
-  const run = async (action: () => Promise<unknown>) => {
-    if (busy) return
+  const run = async (action: () => unknown, afterSuccess?: () => void) => {
+    if (pending.current) return
+    pending.current = true
     setBusy(true)
     setError(null)
     try {
       await action()
-      if (renaming) setRenaming(false)
-      else surface.current?.close()
+      afterSuccess?.()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
+      pending.current = false
       setBusy(false)
     }
   }
-  const openFiles = (changes: boolean) => {
-    surface.current?.close(() => {
-      if (changes) files?.openChangesBrowser()
-      else files?.openBrowser()
-    })
+  const actions: ConversationMenuAction[] = [
+    {
+      id: 'conversation-pin',
+      title: props.pinned ? '取消置顶' : '置顶',
+      icon: props.pinned ? 'pin.slash' : 'pin',
+      disabled: busy || !props.canPin,
+      section: 'conversation',
+    },
+    {
+      id: 'conversation-rename',
+      title: '重命名',
+      icon: 'pencil',
+      disabled: busy || !props.address,
+      section: 'conversation',
+    },
+    {
+      id: 'conversation-copy-id',
+      title: '复制对话串 ID',
+      icon: 'doc.on.doc',
+      disabled: busy || !props.address || !props.threadId,
+      section: 'conversation',
+    },
+    {
+      id: 'conversation-archive',
+      title: '归档',
+      icon: 'archivebox',
+      disabled: busy || !props.address,
+      destructive: true,
+      section: 'conversation',
+    },
+    {
+      id: 'conversation-changes',
+      title: '更改',
+      icon: 'arrow.triangle.branch',
+      disabled: busy || !files?.target,
+      section: 'workspace',
+    },
+    {
+      id: 'conversation-files',
+      title: '文件',
+      icon: 'folder',
+      disabled: busy || !files?.target,
+      section: 'workspace',
+    },
+    {
+      id: 'conversation-settings',
+      title: '连接设置',
+      icon: 'gearshape',
+      disabled: busy,
+      section: 'settings',
+    },
+  ]
+  const select = (id: string) => {
+    const action = actions.find(item => item.id === id)
+    if (!action || action.disabled || pending.current || renaming || error) return
+    Keyboard.dismiss()
+    // Native menus dismiss themselves when an item is selected. Dialogs and
+    // navigation do not depend on an iOS open/close callback or animation timer.
+    switch (id) {
+      case 'conversation-pin':
+        void run(props.onPin)
+        break
+      case 'conversation-rename':
+        setTitle(props.title)
+        setError(null)
+        setRenaming(true)
+        break
+      case 'conversation-copy-id':
+        void run(() => Clipboard.setStringAsync(props.threadId!))
+        break
+      case 'conversation-archive':
+        void run(props.onArchive)
+        break
+      case 'conversation-changes':
+        void run(() => files?.openChangesBrowser())
+        break
+      case 'conversation-files':
+        void run(() => files?.openBrowser())
+        break
+      case 'conversation-settings':
+        void run(props.onSettings)
+        break
+    }
   }
-  if (!props.visible && !renaming) return null
+  const dismiss = () => {
+    if (pending.current) return
+    setRenaming(false)
+    setError(null)
+  }
+  const width = props.compact ? 44 : 54
 
   return (
-    <Portal>
-      {renaming ? (
-        <Dialog
-          visible
-          onDismiss={busy ? undefined : () => setRenaming(false)}
-          testID="conversation-rename-dialog"
+    <>
+      <ConversationMenuNative
+        actions={actions}
+        colorScheme={theme.dark ? 'dark' : 'light'}
+        disabled={busy || renaming || Boolean(error)}
+        onSelect={select}
+        title={props.title}
+        width={width}
+      >
+        <View
+          accessible={false}
+          style={{ width, height: 44, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Dialog.Title>重命名</Dialog.Title>
-          <Dialog.Content>
-            <TextInput
-              autoFocus
-              accessibilityLabel="会话名称"
-              value={title}
-              onChangeText={setTitle}
-              disabled={busy}
-              testID="conversation-rename-input"
-            />
-            {error ? (
-              <Text accessibilityRole="alert" style={{ color: theme.colors.error }}>
-                {error}
-              </Text>
-            ) : null}
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button
-              disabled={busy}
-              onPress={() => setRenaming(false)}
-              testID="conversation-rename-cancel"
-            >
-              取消
-            </Button>
-            <Button
-              disabled={busy || !title.trim()}
-              loading={busy}
-              onPress={() => void run(() => props.onRename(title.trim()))}
-              testID="conversation-rename-save"
-            >
-              保存
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-      ) : (
-        <ConversationMenuSurface
-          ref={surface}
-          anchor={props.anchor!}
-          busy={busy}
-          onDismiss={props.onDismiss}
-        >
-          {interactive => (
-            <>
-              <Text
-                numberOfLines={1}
-                style={[styles.title, { color: theme.colors.onSurfaceVariant }]}
-              >
-                {props.title}
-              </Text>
-              <MenuItem
-                label={props.pinned ? '取消置顶' : '置顶'}
-                icon="pin-outline"
-                disabled={!interactive || !props.canPin}
-                onPress={() => void run(props.onPin)}
-                testID="conversation-pin"
-              />
-              <MenuItem
-                label="重命名"
-                icon="pencil-outline"
-                disabled={!interactive || !props.address}
-                onPress={() => surface.current?.close(() => setRenaming(true))}
-                testID="conversation-rename"
-              />
-              <MenuItem
-                label="复制对话串 ID"
-                icon="copy-outline"
-                disabled={!interactive || !props.address || !props.threadId}
-                onPress={() => {
-                  const threadId = props.threadId
-                  if (threadId) void run(() => Clipboard.setStringAsync(threadId))
-                }}
-                testID="conversation-copy-id"
-              />
-              <MenuItem
-                label="归档"
-                icon="archive-outline"
-                destructive
-                disabled={!interactive || !props.address}
-                onPress={() => void run(props.onArchive)}
-                testID="conversation-archive"
-              />
-              <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
-              <MenuItem
-                label="更改"
-                icon="git-branch-outline"
-                disabled={!interactive || !files?.target}
-                onPress={() => openFiles(true)}
-                testID="conversation-changes"
-              />
-              <MenuItem
-                label="文件"
-                icon="folder-outline"
-                disabled={!interactive || !files?.target}
-                onPress={() => openFiles(false)}
-                testID="conversation-files"
-              />
-              <View style={[styles.divider, { backgroundColor: theme.colors.outlineVariant }]} />
-              <MenuItem
-                label="连接设置"
-                icon="settings-outline"
-                disabled={!interactive}
-                onPress={() => {
-                  surface.current?.close(props.onSettings)
-                }}
-                testID="conversation-settings"
+          <Ionicons color={theme.colors.onSurface} name="ellipsis-horizontal" size={25} />
+        </View>
+      </ConversationMenuNative>
+      <Portal>
+        {renaming ? (
+          <Dialog
+            visible
+            onDismiss={dismiss}
+            dismissable={!busy}
+            testID="conversation-rename-dialog"
+          >
+            <Dialog.Title>重命名</Dialog.Title>
+            <Dialog.Content>
+              <TextInput
+                autoFocus
+                accessibilityLabel="会话名称"
+                value={title}
+                onChangeText={setTitle}
+                disabled={busy}
+                testID="conversation-rename-input"
               />
               {error ? (
-                <Text
-                  accessibilityRole="alert"
-                  style={[styles.error, { color: theme.colors.error }]}
-                >
+                <Text accessibilityRole="alert" style={{ color: theme.colors.error }}>
                   {error}
                 </Text>
               ) : null}
-            </>
-          )}
-        </ConversationMenuSurface>
-      )}
-    </Portal>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button disabled={busy} onPress={dismiss} testID="conversation-rename-cancel">
+                取消
+              </Button>
+              <Button
+                disabled={busy || !title.trim()}
+                loading={busy}
+                onPress={() => {
+                  if (title.trim())
+                    void run(
+                      () => props.onRename(title.trim()),
+                      () => setRenaming(false)
+                    )
+                }}
+                testID="conversation-rename-save"
+              >
+                保存
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+        ) : error ? (
+          <Dialog visible onDismiss={dismiss} testID="conversation-menu-error-dialog">
+            <Dialog.Title>操作失败</Dialog.Title>
+            <Dialog.Content>
+              <Text accessibilityRole="alert">{error}</Text>
+            </Dialog.Content>
+            <Dialog.Actions>
+              <Button onPress={dismiss} testID="conversation-menu-error-dismiss">
+                确定
+              </Button>
+            </Dialog.Actions>
+          </Dialog>
+        ) : null}
+      </Portal>
+    </>
   )
 }
-
-function MenuItem({
-  label,
-  icon,
-  disabled,
-  destructive,
-  onPress,
-  testID,
-}: {
-  label: string
-  icon: keyof typeof Ionicons.glyphMap
-  disabled: boolean
-  destructive?: boolean
-  onPress: () => void
-  testID: string
-}) {
-  const theme = useTheme()
-  const color = destructive ? theme.colors.error : theme.colors.onSurface
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        disabled && { opacity: 0.35 },
-        pressed && { opacity: 0.6 },
-      ]}
-      testID={testID}
-    >
-      <Ionicons name={icon} size={22} color={color} />
-      <Text style={[styles.label, { color }]}>{label}</Text>
-    </Pressable>
-  )
-}
-
-const styles = StyleSheet.create({
-  title: { fontSize: 13, lineHeight: 18, marginBottom: 8 },
-  row: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 16 },
-  label: { fontSize: 17, lineHeight: 24 },
-  divider: { height: StyleSheet.hairlineWidth, marginVertical: 9 },
-  error: { marginTop: 8, fontSize: 13 },
-})

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
 import { RuntimeApi, RuntimeApiError } from './runtimeApi'
+import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 
 const native = vi.hoisted(() => ({
   files: new Set<string>(),
@@ -71,6 +72,7 @@ function chunk(offset = 0) {
 
 describe('RuntimeApi file protocols', () => {
   beforeEach(() => {
+    installReactNativeAbortGlobals()
     native.files.clear()
     native.download.mockReset()
     native.download.mockResolvedValue({ status: 200, headers: {}, mimeType: null })

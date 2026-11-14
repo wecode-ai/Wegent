@@ -2,6 +2,7 @@ import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConversationMenu } from './ConversationMenu'
+import type { ConversationMenuNativeProps } from './ConversationMenuNative.types'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const files = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }))
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
   BackHandler: { addEventListener: () => ({ remove: vi.fn() }) },
+  Keyboard: { dismiss: vi.fn() },
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles, absoluteFill: {}, hairlineWidth: 1 },
   View: 'View',
@@ -37,31 +39,24 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 60, bottom: 34 }),
 }))
 vi.mock('./LiquidGlass', () => ({ LiquidGlassSurface: 'Glass' }))
-vi.mock('./ConversationMenuSurface', async () => {
-  const { useImperativeHandle, createElement } = await import('react')
+vi.mock('./ConversationMenuNative', async () => {
+  const { createElement } = await import('react')
   return {
-    ConversationMenuSurface: ({
-      ref,
-      children,
-      busy,
-      onDismiss,
-    }: {
-      ref: React.Ref<{ close: (after?: () => void) => void }>
-      children: (ready: boolean) => React.ReactNode
-      busy: boolean
-      onDismiss: () => void
-    }) => {
-      useImperativeHandle(ref, () => ({
-        close: (after?: () => void) => {
-          onDismiss()
-          after?.()
-        },
-      }))
+    ConversationMenuNative: (props: ConversationMenuNativeProps) => {
       return createElement(
-        'Surface',
-        {},
-        createElement('Pressable', { testID: 'conversation-menu-dismiss', disabled: busy }),
-        children(!busy)
+        'NativeMenu',
+        props,
+        props.children,
+        ...props.actions.map(action =>
+          createElement('NativeAction', {
+            key: action.id,
+            testID: action.id,
+            disabled: action.disabled,
+            title: action.title,
+            destructive: action.destructive,
+            onPress: () => props.onSelect(action.id),
+          })
+        )
       )
     },
   }
@@ -74,15 +69,12 @@ describe('conversation menu', () => {
     threadId: 'thread-1',
     address: { deviceId: 'device', taskId: 'task' },
     title: 'Conversation',
-    visible: true,
-    anchor: { x: 271, y: 60, width: 108, height: 44 },
     canPin: true,
     pinned: false,
     onPin: vi.fn(),
     onRename: vi.fn(),
     onArchive: vi.fn(),
     onSettings: vi.fn(),
-    onDismiss: vi.fn(),
   }
   const element = (testID: string) =>
     renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID)[0]!
@@ -104,11 +96,7 @@ describe('conversation menu', () => {
   })
   it('keeps the original connection settings available from the extended menu', async () => {
     await act(() => element('conversation-settings').props.onPress())
-    expect(props.onDismiss).toHaveBeenCalledOnce()
     expect(props.onSettings).toHaveBeenCalledOnce()
-    expect(props.onDismiss.mock.invocationCallOrder[0]).toBeLessThan(
-      props.onSettings.mock.invocationCallOrder[0]!
-    )
   })
   it('keeps connection settings available before a conversation or workspace exists', async () => {
     files.target = null
@@ -131,12 +119,11 @@ describe('conversation menu', () => {
   it('copies the conversation ID through the platform clipboard', async () => {
     await act(() => element('conversation-copy-id').props.onPress())
     expect(clipboard).toHaveBeenCalledWith('thread-1')
-    expect(props.onDismiss).toHaveBeenCalledOnce()
   })
   it('keeps a rejected mutation visible with the real error', async () => {
     props.onPin.mockRejectedValue(new Error('device offline'))
     await act(() => element('conversation-pin').props.onPress())
-    expect(props.onDismiss).not.toHaveBeenCalled()
+    expect(element('conversation-menu-error-dialog')).toBeDefined()
     expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0]!.props.children).toBe(
       'device offline'
     )
@@ -152,6 +139,7 @@ describe('conversation menu', () => {
     await act(() => element('conversation-rename-input').props.onChangeText(' New title '))
     await act(() => element('conversation-rename-save').props.onPress())
     expect(props.onRename).toHaveBeenCalledWith('New title')
+    expect(renderer.root.findAllByProps({ testID: 'conversation-rename-dialog' })).toHaveLength(0)
   })
   it('keeps mutations disabled while an archive is in flight', async () => {
     let complete!: () => void
@@ -162,11 +150,56 @@ describe('conversation menu', () => {
     )
     await act(() => element('conversation-archive').props.onPress())
     expect(element('conversation-archive').props.disabled).toBe(true)
-    expect(element('conversation-menu-dismiss').props.disabled).toBe(true)
+    expect(renderer.root.findByType('NativeMenu' as never).props.disabled).toBe(true)
+    await act(() => element('conversation-pin').props.onPress())
+    expect(props.onPin).not.toHaveBeenCalled()
     await act(async () => {
       complete()
       await Promise.resolve()
     })
-    expect(props.onDismiss).toHaveBeenCalledOnce()
+    expect(renderer.root.findByType('NativeMenu' as never).props.disabled).toBe(false)
+  })
+
+  it('dismisses an action error and allows the user to retry', async () => {
+    props.onPin.mockRejectedValueOnce(new Error('device offline')).mockResolvedValue(undefined)
+    await act(() => element('conversation-pin').props.onPress())
+    expect(renderer.root.findByType('NativeMenu' as never).props.disabled).toBe(true)
+    await act(() => element('conversation-menu-error-dismiss').props.onPress())
+    expect(renderer.root.findByType('NativeMenu' as never).props.disabled).toBe(false)
+    await act(() => element('conversation-pin').props.onPress())
+    expect(props.onPin).toHaveBeenCalledTimes(2)
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0)
+  })
+
+  it('retains a rejected rename draft and submits it again without reopening the menu', async () => {
+    props.onRename.mockRejectedValueOnce(new Error('device offline')).mockResolvedValue(undefined)
+    await act(() => element('conversation-rename').props.onPress())
+    await act(() => element('conversation-rename-input').props.onChangeText('Retry title'))
+    await act(() => element('conversation-rename-save').props.onPress())
+    expect(element('conversation-rename-input').props.value).toBe('Retry title')
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })[0]!.props.children).toBe(
+      'device offline'
+    )
+    await act(() => element('conversation-rename-save').props.onPress())
+    expect(props.onRename).toHaveBeenLastCalledWith('Retry title')
+    expect(renderer.root.findAllByProps({ testID: 'conversation-rename-dialog' })).toHaveLength(0)
+  })
+
+  it('uses the latest title when reopening rename and rejects blank names', async () => {
+    await act(() => element('conversation-rename').props.onPress())
+    await act(() => element('conversation-rename-input').props.onChangeText('  '))
+    expect(element('conversation-rename-save').props.disabled).toBe(true)
+    await act(() => element('conversation-rename-save').props.onPress())
+    expect(props.onRename).not.toHaveBeenCalled()
+    await act(() => element('conversation-rename-cancel').props.onPress())
+    await act(() => renderer.update(<ConversationMenu {...props} title="Updated title" />))
+    await act(() => element('conversation-rename').props.onPress())
+    expect(element('conversation-rename-input').props.value).toBe('Updated title')
+  })
+
+  it('exposes unpin and destructive archive as native menu semantics', async () => {
+    await act(() => renderer.update(<ConversationMenu {...props} pinned />))
+    expect(element('conversation-pin').props.title).toBe('取消置顶')
+    expect(element('conversation-archive').props.destructive).toBe(true)
   })
 })

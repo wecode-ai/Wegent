@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 import type { WorkspaceGitSelection } from '@/types/workspaceGit'
 import { RuntimeApi } from './runtimeApi'
 import { loadMobileWorkspaceChanges, WorkspaceNotGitRepositoryError } from './mobileWorkspaceGit'
@@ -34,6 +35,7 @@ const response = (stdout: unknown, extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 afterEach(() => vi.unstubAllGlobals())
+beforeEach(installReactNativeAbortGlobals)
 
 describe('Mobile uses the PC cloud runtime command transport', () => {
   it.each([
