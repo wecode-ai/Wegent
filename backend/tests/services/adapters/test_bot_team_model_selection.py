@@ -48,6 +48,7 @@ def _create_model(
     [
         "missing",
         "editor_private",
+        "retained_name_editor_private",
         "public_shadow",
         "retained_name_public_shadow",
         "retained_name_missing_public",
@@ -60,8 +61,17 @@ def test_new_model_must_match_persisted_owner_lookup(
     _, team, bot, _, _ = group_agent
     name = "new-selected-model"
     config = {"bind_model": name}
-    if selection == "editor_private":
+    if selection in ("editor_private", "retained_name_editor_private"):
         _create_model(test_db, owner_id=test_user.id, name=name)
+        if selection == "retained_name_editor_private":
+            bot.json = {
+                **bot.json,
+                "spec": {
+                    **bot.json["spec"],
+                    "modelRef": {"name": name, "namespace": "default"},
+                },
+            }
+            test_db.commit()
     elif selection in (
         "public_shadow",
         "retained_name_public_shadow",

@@ -1267,14 +1267,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     and existing_ref.name == model_name
                     and existing_ref.namespace == model_namespace
                 )
-                if not new_model_reference and model_type and model:
-                    selected_model = self._get_model_by_name_and_type(
-                        db,
-                        model_name,
-                        model_namespace,
-                        bot.user_id,
-                        model_type,
-                        viewer_id=user_id,
+                if not new_model_reference:
+                    selected_model = (
+                        self._get_model_by_name_and_type(
+                            db,
+                            model_name,
+                            model_namespace,
+                            bot.user_id,
+                            model_type,
+                            viewer_id=user_id,
+                        )
+                        if model_type
+                        else model
                     )
                     new_model_reference = (
                         selected_model is None or selected_model.id != model.id
