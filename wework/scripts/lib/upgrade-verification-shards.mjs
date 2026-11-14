@@ -19,7 +19,7 @@ export function planUpgradeShards({ catalogs, version, channel, policy, platform
     assert.equal(catalog.arch, arch)
   }
   const target = { version, minSourceVersion: policy.minSourceVersion }
-  const channels = releaseVerificationChannels(channel).map(selected => {
+  const channels = releaseVerificationChannels(channel, '', '', policy).map(selected => {
     const plan = releaseUpgradePlan(Object.values(catalogs), target, selected)
     const required = (policy.requiredDirectUpgrades?.[version] ?? []).map(source =>
       upgradeSource(selected === 'stable' ? [catalogs.stable] : Object.values(catalogs), source)
@@ -61,6 +61,12 @@ export async function aggregateUpgradeShards(frozen, shards, runId, approvedExcl
   assert.equal(target.arch, frozen.arch)
   assert.equal(target.fixture, false)
   assert.equal(target.minSourceVersion, frozen.policy.minSourceVersion)
+  if (frozen.policy.releasePurpose === 'bridge')
+    assert.equal(
+      target.afterStopPreparation,
+      undefined,
+      'A bridge cannot require stopped migration'
+    )
   for (const other of targets) assert.deepEqual(other, target, 'Target packages disagree')
   const consumed = new Set()
   const edges = new Map()

@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve, win32 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
@@ -601,6 +601,10 @@ const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
 const CLOUD_FOLLOW_UP_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
+const CLOUD_HTML_LINK_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_HTML_LINK: open the Cloud HTML preview and missing-file links.'
+const CLOUD_HTML_LINK_FILENAME = 'cloud-html-link-preview.html'
+const CLOUD_HTML_LINK_MISSING_FILENAME = 'cloud-html-link-missing.html'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -1058,6 +1062,18 @@ async function commandOutputAsync(command, args, options = {}) {
       )
     })
   })
+}
+
+function redisCliBinary(
+  serverBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim(),
+  platform = process.platform
+) {
+  if (!serverBinary) return 'redis-cli'
+  const paths = platform === 'win32' ? win32 : posix
+  return paths.join(
+    paths.dirname(serverBinary),
+    platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'
+  )
 }
 
 async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
@@ -1986,6 +2002,9 @@ export {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+  CLOUD_HTML_LINK_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
   CLOUD_ARTIFACT_NAME,
   CLOUD_ARTIFACT_CONTENT,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -2086,6 +2105,7 @@ export {
   pathExists,
   commandOutput,
   commandOutputAsync,
+  redisCliBinary,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

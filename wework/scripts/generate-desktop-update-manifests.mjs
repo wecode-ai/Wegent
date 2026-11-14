@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises'
 
 import { componentReleaseScope } from './desktop-component-release.mjs'
 import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
+import { releasePublicationChannels } from './lib/upgrade-evidence.mjs'
 
 const [
   assetsDirectory,
@@ -53,7 +54,11 @@ await mkdir(output, { recursive: true })
 const macArm = await updateAsset(`macos_arm64.zip`)
 const macX64 = await updateAsset(`macos_x64.zip`)
 const windows = await updateAsset(`windows_x64-setup.exe`)
-const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
+const policy = JSON.parse(
+  await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
+)
+const componentChannels = releasePublicationChannels(channel, policy)
+const electronChannels = componentChannels.map(value => (value === 'stable' ? 'latest' : value))
 
 for (const targetChannel of electronChannels) {
   await writeFile(
@@ -117,7 +122,6 @@ for (const [platform, architecture] of [
       entryPath: component.entryPath,
     }
   }
-  const componentChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
   for (const targetChannel of componentChannels) {
     let upgradePolicy
     try {

@@ -1,4 +1,5 @@
 import { readNativeToolCallId } from './native-tool-call-id.mjs'
+import { waitForClosedStartupSplash } from './native-window-state.mjs'
 import { readFile, readdir } from 'node:fs/promises'
 import { waitForElementTop, waitForElementWidth } from './layout-metrics.mjs'
 import { verifyConversationDiagrams } from './conversation-diagrams.mjs'
@@ -301,6 +302,7 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
   )
   control.setScenario('fresh_chat')
   await restartDesktopApp()
+  await waitForClosedStartupSplash(control, DEFAULT_STEP_TIMEOUT_MS)
   await control.command('focusMainWindow', 'body')
   await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
   await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
