@@ -325,6 +325,51 @@ def test_secondary_model_selection_requires_shared_owner_scope(
     assert test_db.get(Kind, ghost.id).json["spec"] == original_ghost
 
 
+def test_secondary_retention_requires_a_resolvable_owner_reference(
+    test_db, test_user, group_agent
+):
+    """A stale secondary name cannot be replaced by an editor-private model."""
+    _, team, bot, ghost, _ = group_agent
+    name = "stale-secondary-model"
+    editor_model = _create_model(test_db, owner_id=test_user.id, name=name)
+    bot.json = {
+        **bot.json,
+        "spec": {
+            **bot.json["spec"],
+            "secondaryModelRef": {"name": name, "namespace": "default"},
+        },
+    }
+    test_db.commit()
+    original_bot = dict(bot.json["spec"])
+    original_ghost = dict(ghost.json["spec"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            user_id=test_user.id,
+            obj_in=BotUpdate(
+                team_id=team.id,
+                secondary_model_name=name,
+                system_prompt="A stale secondary reference must not be replaced.",
+            ),
+        )
+
+    assert exc_info.value.status_code == 403
+    test_db.rollback()
+    test_db.expire_all()
+    assert test_db.get(Kind, bot.id).json["spec"] == original_bot
+    assert test_db.get(Kind, ghost.id).json["spec"] == original_ghost
+    assert (
+        bot_kinds_service._get_model_by_name(test_db, name, "default", bot.user_id)
+        is None
+    )
+    assert (
+        bot_kinds_service._get_model_by_name(test_db, name, "default", test_user.id).id
+        == editor_model.id
+    )
+
+
 def test_group_editor_can_select_public_secondary_model_and_reload(
     test_db, test_user, group_agent
 ):

@@ -1125,6 +1125,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 and existing_ref.name == name
                 and (existing_ref.namespace or "default") == namespace
             )
+            if retained:
+                retained_model = self._get_model_by_name(
+                    db, name, namespace, bot.user_id
+                )
+                retained = retained_model is not None
             if name and not retained:
                 self._require_shared_model_reference(
                     db,
