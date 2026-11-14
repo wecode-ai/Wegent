@@ -2572,6 +2572,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           }
         ).__WEWORK_E2E_SYSTEM_NOTIFICATIONS__?.notifications ?? []
       )
+    case 'getInteractionDeviceScope':
+      return JSON.stringify(
+        (
+          globalThis as typeof globalThis & {
+            __WEWORK_E2E_INTERACTION_DEVICE_SCOPE__?: { localDeviceIds: string[] }
+          }
+        ).__WEWORK_E2E_INTERACTION_DEVICE_SCOPE__ ?? null
+      )
     case 'clearSystemNotifications': {
       const root = globalThis as typeof globalThis & {
         __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {

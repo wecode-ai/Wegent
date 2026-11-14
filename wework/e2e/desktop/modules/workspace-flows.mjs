@@ -1771,7 +1771,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     text: targetProjectName,
     visible: true,
@@ -1815,7 +1815,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('fill', pickerSearch, { value: targetProjectName })
   await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
     text: targetProjectName,
@@ -1848,7 +1848,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     text: targetProjectName,
     visible: true,
@@ -1900,7 +1900,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command(
     'markElementWithText',
     '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',

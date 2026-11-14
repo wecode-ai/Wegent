@@ -167,6 +167,11 @@ describe('pending interaction membership and read cache', () => {
         runtimeWorkApi: {
           ...rendered.taskSource.services!.runtimeWorkApi!,
         },
+        getLocalRuntimeSidebarIdentity: async () => ({
+          deviceId: 'local',
+          runtimeInstanceId: 'local-runtime',
+          provenance: 'local-ipc',
+        }),
       },
     }
     rendered.rerenderSource(newService)
