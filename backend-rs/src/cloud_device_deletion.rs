@@ -20,7 +20,7 @@ use crate::state::AppState;
 /// counts as success so a request can retry the registration cleanup.
 #[async_trait::async_trait]
 pub trait CloudDeviceDestroyer: Send + Sync {
-    async fn destroy(&self, sandbox_id: &str) -> Result<(), FastApiError>;
+    async fn destroy(&self, record_id: i64, sandbox_id: &str) -> Result<(), FastApiError>;
 }
 
 const CLOUD_RECORDS_FOR_UPDATE: &str =
@@ -48,29 +48,39 @@ pub(crate) async fn delete_cloud_device(
     })?;
     let sandbox = sandbox_id(spec)?;
     let redis = state.redis.as_ref().ok_or_else(status_unavailable)?;
-    provider.destroy(sandbox).await?;
+    provider.destroy(record_id, sandbox).await?;
     let lock = IdentityLock::acquire(redis, user_id)
         .await
         .map_err(|error| {
-            tracing::warn!(%error, "cloud device identity lock acquisition failed");
+            tracing::warn!(record_id, %error, "cloud device identity lock acquisition failed");
             status_unavailable()
         })?
-        .ok_or_else(status_unavailable)?;
+        .ok_or_else(|| {
+            tracing::warn!(
+                record_id,
+                "cloud device identity lock acquisition timed out"
+            );
+            status_unavailable()
+        })?;
     let outcome = tokio::time::timeout(
         IDENTITY_LOCK_BODY_TIMEOUT,
-        remove_cloud_records(state, redis, user_id, sandbox),
+        remove_cloud_records(state, redis, user_id, record_id, sandbox),
     )
     .await;
     if let Err(error) = lock.release().await {
-        tracing::warn!(%error, "cloud device identity lock release failed");
+        tracing::warn!(record_id, %error, "cloud device identity lock release failed");
     }
-    outcome.map_err(|_| status_unavailable())?
+    outcome.map_err(|_| {
+        tracing::warn!(record_id, "cloud device registration cleanup timed out");
+        status_unavailable()
+    })?
 }
 
 async fn remove_cloud_records<R: Redis>(
     state: &AppState,
     redis: &R,
     user_id: i64,
+    record_id: i64,
     sandbox: &str,
 ) -> Result<(), FastApiError> {
     state
@@ -89,7 +99,7 @@ async fn remove_cloud_records<R: Redis>(
                 && let Err(error) = redis.del_many(keys).await
             {
                 // Preserve the rows so the whole cleanup can be retried.
-                tracing::warn!(%error, "cloud device online status cleanup failed");
+                tracing::warn!(record_id, %error, "cloud device online status cleanup failed");
                 return Ok(false);
             }
             for device in devices {
@@ -99,7 +109,7 @@ async fn remove_cloud_records<R: Redis>(
         })
         .await
         .map_err(|error| {
-            tracing::error!(%error, "cloud device registration cleanup failed");
+            tracing::error!(record_id, %error, "cloud device registration cleanup failed");
             internal_error()
         })?
         .then_some(())

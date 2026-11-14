@@ -209,7 +209,12 @@ async fn delete_admin_device_record(
         .ok_or_else(record_not_found)?;
     let user_id = i64::from(device.user_id);
     let spec = &device.json["spec"];
-    let message = if spec["deviceType"].as_str() == Some(CLOUD_DEVICE_TYPE) {
+    let device_type = match spec["deviceType"].as_str() {
+        Some(device_type @ (CLOUD_DEVICE_TYPE | "app" | "remote" | "local")) => device_type,
+        None => "local",
+        _ => "unknown",
+    };
+    let message = if device_type == CLOUD_DEVICE_TYPE {
         delete_cloud_device(state, user_id, record_id, spec).await?;
         "Cloud device deleted"
     } else {
@@ -221,6 +226,7 @@ async fn delete_admin_device_record(
         admin_id = admin.0.id,
         owner_id = user_id,
         record_id,
+        device_type,
         "admin removed device registration"
     );
     Ok(DeviceRecordRemoved { message })
