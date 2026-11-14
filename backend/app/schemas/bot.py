@@ -18,6 +18,7 @@ class BotCreate(BaseModel):
     name: str
     shell_name: str  # Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
     agent_config: dict[str, Any]
+    model_id: Optional[int] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
@@ -37,6 +38,7 @@ class BotCreate(BaseModel):
     is_active: bool = True
     secondary_model_name: Optional[str] = None
     secondary_model_namespace: Optional[str] = "default"
+    secondary_model_id: Optional[int] = None
 
 
 class BotUpdate(BaseModel):
@@ -47,6 +49,7 @@ class BotUpdate(BaseModel):
         None  # Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
     )
     agent_config: Optional[dict[str, Any]] = None
+    model_id: Optional[int] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     plugins: Optional[List[dict[str, Any]]] = None
@@ -71,6 +74,7 @@ class BotUpdate(BaseModel):
     is_active: Optional[bool] = None
     secondary_model_name: Optional[str] = None
     secondary_model_namespace: Optional[str] = None
+    secondary_model_id: Optional[int] = None
 
 
 class BotInDB(BaseModel):

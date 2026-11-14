@@ -51,7 +51,6 @@ def _create_model(
         "retained_name_editor_private",
         "public_shadow",
         "retained_name_public_shadow",
-        "retained_name_missing_public",
     ],
 )
 def test_new_model_must_match_persisted_owner_lookup(
@@ -61,6 +60,7 @@ def test_new_model_must_match_persisted_owner_lookup(
     _, team, bot, _, _ = group_agent
     name = "new-selected-model"
     config = {"bind_model": name}
+    public_model = None
     if selection in ("editor_private", "retained_name_editor_private"):
         _create_model(test_db, owner_id=test_user.id, name=name)
         if selection == "retained_name_editor_private":
@@ -78,9 +78,11 @@ def test_new_model_must_match_persisted_owner_lookup(
         "retained_name_missing_public",
     ):
         _create_model(test_db, owner_id=bot.user_id, name=name)
-        if selection != "retained_name_missing_public":
-            _create_model(test_db, owner_id=0, name=name)
+        # The owner's stale private reference is only trustworthy when no
+        # explicit public selection ID identifies a different resource.
         config["bind_model_type"] = "public"
+        if selection != "retained_name_missing_public":
+            public_model = _create_model(test_db, owner_id=0, name=name)
         if selection.startswith("retained_name"):
             bot.json = {
                 **bot.json,
@@ -97,7 +99,11 @@ def test_new_model_must_match_persisted_owner_lookup(
             test_db,
             bot_id=bot.id,
             user_id=test_user.id,
-            obj_in=BotUpdate(team_id=team.id, agent_config=config),
+            obj_in=BotUpdate(
+                team_id=team.id,
+                model_id=public_model.id if public_model else None,
+                agent_config=config,
+            ),
         )
     assert exc_info.value.status_code == 403
     test_db.rollback()
@@ -159,6 +165,49 @@ def test_group_editor_can_retain_existing_creator_private_model(
     assert bot_kinds_service._get_bot_components(test_db, bot, bot.user_id)[2].id == (
         model.id
     )
+
+
+def test_same_name_primary_model_is_not_implicit_editor_selection(
+    test_db, test_user, group_agent
+):
+    """A name collision cannot silently retain the creator's private model."""
+    _, team, bot, ghost, _ = group_agent
+    name = "same-name-private-model"
+    owner_model = _create_model(test_db, owner_id=bot.user_id, name=name)
+    editor_model = _create_model(test_db, owner_id=test_user.id, name=name)
+    bot.json = {
+        **bot.json,
+        "spec": {
+            **bot.json["spec"],
+            "modelRef": {"name": name, "namespace": "default"},
+        },
+    }
+    test_db.commit()
+    original_bot = dict(bot.json["spec"])
+    original_ghost = dict(ghost.json["spec"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        bot_kinds_service.update_with_user(
+            test_db,
+            bot_id=bot.id,
+            user_id=test_user.id,
+            obj_in=BotUpdate(
+                team_id=team.id,
+                model_id=editor_model.id,
+                agent_config={"bind_model": name, "bind_model_type": "user"},
+                system_prompt="An editor's same-name model must be authorized.",
+            ),
+        )
+
+    assert exc_info.value.status_code == 403
+    test_db.rollback()
+    test_db.expire_all()
+    assert test_db.get(Kind, bot.id).json["spec"] == original_bot
+    assert test_db.get(Kind, ghost.id).json["spec"] == original_ghost
+    assert bot_kinds_service._get_bot_components(test_db, bot, bot.user_id)[2].id == (
+        owner_model.id
+    )
+    assert editor_model.user_id == test_user.id
 
 
 @pytest.mark.parametrize("model_type", [None, "group"])

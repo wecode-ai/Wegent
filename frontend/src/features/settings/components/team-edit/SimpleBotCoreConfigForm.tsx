@@ -32,7 +32,12 @@ interface SimpleBotCoreConfigFormProps {
   modelNamespace?: string
   models: UnifiedModel[]
   loadingModels: boolean
-  onModelChange: (value: { name: string; type?: ModelTypeEnum; namespace?: string }) => void
+  onModelChange: (value: {
+    name: string
+    type?: ModelTypeEnum
+    namespace?: string
+    id?: number | null
+  }) => void
   selectedSkills: string[]
   selectedSkillRefs: Record<string, SkillRefMeta>
   availableSkills: UnifiedSkill[]
@@ -134,6 +139,7 @@ export default function SimpleBotCoreConfigForm({
                 name: model.name,
                 type: model.type,
                 namespace: model.namespace || 'default',
+                id: model.id ?? null,
               })
             }
             onSelectSpecialOption={value => onModelChange(parseModelSelectValue(value))}

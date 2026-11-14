@@ -178,6 +178,7 @@ class UnifiedModel:
             safe_config["modelCapabilities"] = self.model_capabilities
         result = {
             "name": self.name,
+            "id": self.resource_id,
             "type": self.type.value,
             "displayName": self.display_name,
             "provider": self.provider,
@@ -695,6 +696,7 @@ class ModelAggregationService:
                 cost_index=model_dict.get("costIndex"),
                 capability=model_dict.get("capability"),
                 model_capabilities=model_dict.get("modelCapabilities"),
+                resource_id=model_dict.get("id"),
                 resource_user_id=0,
                 created_at=model_dict.get("created_at"),
                 updated_at=model_dict.get("updated_at"),

@@ -545,6 +545,27 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 403, "Model selection is unavailable in the Bot owner's scope"
             )
 
+    def _is_retained_model_reference(
+        self,
+        db: Session,
+        *,
+        name: str,
+        namespace: str,
+        owner_id: int,
+        editor_id: int,
+        model_type: Optional[str],
+        owner_model: Optional[Any],
+        selected_model_id: Optional[int] = None,
+    ) -> bool:
+        """Require a same-name selection to resolve to the owner's current model."""
+        if owner_model is None:
+            return False
+        if selected_model_id is not None:
+            return selected_model_id == owner_model.id
+        # Without a selection ID, preserve backward compatibility for existing
+        # owner-resolvable references. New UI selections always provide an ID.
+        return True
+
     # Note: _get_shell_info_by_name has been moved to shell_utils.py
     # Use get_shell_info_by_name from shell_utils instead
 
@@ -1129,7 +1150,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 retained_model = self._get_model_by_name(
                     db, name, namespace, bot.user_id
                 )
-                retained = retained_model is not None
+                retained = self._is_retained_model_reference(
+                    db,
+                    name=name,
+                    namespace=namespace,
+                    owner_id=bot.user_id,
+                    editor_id=user_id,
+                    model_type=None,
+                    owner_model=retained_model,
+                    selected_model_id=obj_in.secondary_model_id,
+                )
             if name and not retained:
                 self._require_shared_model_reference(
                     db,
@@ -1277,20 +1307,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     and existing_ref.namespace == model_namespace
                 )
                 if not new_model_reference:
-                    selected_model = (
-                        self._get_model_by_name_and_type(
-                            db,
-                            model_name,
-                            model_namespace,
-                            bot.user_id,
-                            model_type,
-                            viewer_id=user_id,
-                        )
-                        if model_type
-                        else model
-                    )
-                    new_model_reference = (
-                        selected_model is None or selected_model.id != model.id
+                    new_model_reference = not self._is_retained_model_reference(
+                        db,
+                        name=model_name,
+                        namespace=model_namespace,
+                        owner_id=bot.user_id,
+                        editor_id=user_id,
+                        model_type=model_type,
+                        owner_model=model,
+                        selected_model_id=obj_in.model_id,
                     )
                 if (
                     model_type == "group"

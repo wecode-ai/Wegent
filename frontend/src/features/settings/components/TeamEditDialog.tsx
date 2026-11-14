@@ -419,6 +419,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       simpleCustomShellName,
       simpleBotName,
       simpleModelName,
+      simpleModelId,
       simpleModelType,
       simpleModelNamespace,
       simplePrompt,
@@ -575,6 +576,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleField('simpleModelName', '', { userEdited: false })
       setSimpleField('simpleModelType', undefined, { userEdited: false })
       setSimpleField('simpleModelNamespace', undefined, { userEdited: false })
+      setSimpleField('simpleModelId', null, { userEdited: false })
     }
   }, [
     setSimpleField,
@@ -881,6 +883,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleField('simpleModelName', '')
       setSimpleField('simpleModelType', undefined)
       setSimpleField('simpleModelNamespace', undefined)
+      setSimpleField('simpleModelId', null)
     }
     setBindMode(nextBindMode)
   }
@@ -1036,6 +1039,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           name: simpleBotName,
           shellName: selectedShell.name,
           modelName: simpleModelName,
+          modelId: simpleModelId,
           modelType: simpleModelType,
           modelNamespace: simpleModelNamespace,
           prompt: simplePrompt,
@@ -1490,6 +1494,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     setSimpleField('simpleModelName', value.name)
                     setSimpleField('simpleModelType', value.type)
                     setSimpleField('simpleModelNamespace', value.namespace)
+                    setSimpleField('simpleModelId', value.id ?? null)
                   }}
                   selectedSkills={simpleSelectedSkills}
                   selectedSkillRefs={simpleSelectedSkillRefs}
