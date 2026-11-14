@@ -20,6 +20,7 @@ export async function createDesktopScenario(options) {
     acknowledgment: ACK,
     result: RESULT,
     privateEvidence: PRIVATE,
+    holdChild: true,
   })
   let active = false
   let issueId, projectId
@@ -71,6 +72,14 @@ export async function createDesktopScenario(options) {
       await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'))
       await control.command('waitFor', scoped('collaboration-issue-detail'), { text: MARKER })
       await storyUntil(
+        () => model.state.childRan,
+        Boolean,
+        options.modelResponseTimeoutMs,
+        'The assigned Agent must start a real native worker'
+      )
+      await control.command('waitFor', scoped('cloud-task-activity-list'), { text: ACK })
+      model.releaseChild()
+      await storyUntil(
         async () => {
           const issue = (await rpc('todos.list', { project_id: projectId })).find(
             row => row.title === MARKER
@@ -84,17 +93,21 @@ export async function createDesktopScenario(options) {
       )
       await control.command('waitFor', scoped('cloud-task-activity-list'), { text: RESULT })
       const activity = await control.command('getText', scoped('cloud-task-activity-list'))
-      assert.ok(activity.includes(ACK))
       assert.ok(!activity.includes(PRIVATE), 'Raw child evidence must not become an Issue comment')
       assert.deepEqual(model.state, { spawned: true, childRan: true, completed: true })
       const executions = (
         await rpc('executions.list', { project_id: projectId, include_terminal: true })
       ).filter(row => row.loop_item_id === issueId)
       assert.equal(executions.length, 1, 'Subagents must not create extra Issue executions')
-      assert.equal(executions[0].status, 'succeeded')
+      assert.equal(executions[0].status, 'completed')
+      assert.equal(executions[0].observed_state, 'succeeded')
     },
     diagnostics() {
       return { existing: existing.diagnostics(), projectId, issueId, ...model.state }
+    },
+    async cleanup() {
+      model.cleanup()
+      await existing.cleanup?.()
     },
   }
 }

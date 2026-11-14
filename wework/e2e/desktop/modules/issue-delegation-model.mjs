@@ -20,9 +20,11 @@ export function createIssueDelegationModel({
   privateEvidence,
   simple,
   answer,
+  holdChild = false,
 }) {
   const state = { spawned: false, childRan: false, completed: false }
   let waitId, childId
+  let childResponse
   let sequence = 0
   const spawnId = `${marker}-spawn`
   const reply = (response, events) => {
@@ -32,6 +34,14 @@ export function createIssueDelegationModel({
   }
   return {
     state,
+    releaseChild() {
+      assert.ok(childResponse, 'Release the actual native worker after observing acceptance')
+      reply(childResponse, [assistantMessage(privateEvidence)])
+      childResponse = undefined
+    },
+    cleanup() {
+      childResponse?.destroy()
+    },
     async handleHttp(req, response, url) {
       if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -43,7 +53,8 @@ export function createIssueDelegationModel({
       if (isCollaborationSubagentRequest(req.headers)) {
         assert.equal(state.childRan, false, 'Run one real native worker')
         state.childRan = true
-        reply(response, [assistantMessage(privateEvidence)])
+        if (holdChild) childResponse = response
+        else reply(response, [assistantMessage(privateEvidence)])
         return true
       }
       assert.ok(
