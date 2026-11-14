@@ -6,7 +6,6 @@ import { Plus } from 'lucide-react'
 import { KnowledgeGrantForm } from '@extensions/knowledge-permissions'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { Input } from '@/components/ui/input'
 
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PermissionListResponse } from '@/types/knowledge'
@@ -30,7 +29,6 @@ function authorizationRows(permissions: PermissionListResponse): AuthorizationRo
             key: 'creator',
             name: creator.display_name,
             type: 'user',
-            entityId: String(creator.user_id),
             role: 'Owner' as const,
             source: 'creator' as const,
           },
@@ -40,7 +38,6 @@ function authorizationRows(permissions: PermissionListResponse): AuthorizationRo
       key: `inherited:${source.source_type}:${source.entity_id}`,
       name: source.display_name || source.entity_id,
       type: source.entity_type,
-      entityId: source.entity_id,
       role: source.role,
       source: 'inherited' as const,
       inheritedType: source.source_type,
@@ -50,13 +47,7 @@ function authorizationRows(permissions: PermissionListResponse): AuthorizationRo
       .map(member => ({
         key: `member:${member.id}`,
         name: member.display_name || member.entity_id || String(member.user_id),
-        searchText: [member.display_name, member.entity_id, member.email].filter(Boolean).join(' '),
         type: member.entity_type || 'user',
-        entityId:
-          member.entity_id ||
-          ((!member.entity_type || member.entity_type === 'user') && member.user_id != null
-            ? String(member.user_id)
-            : undefined),
         role: member.role,
         source: 'direct' as const,
         memberId: member.id,
@@ -67,7 +58,7 @@ function authorizationRows(permissions: PermissionListResponse): AuthorizationRo
 
 export function KnowledgeAuthorizationObjects(props: PermissionManagementProps) {
   return (
-    <PermissionManagementScope {...props} canManage={props.canManage === true}>
+    <PermissionManagementScope {...props}>
       {session => <AuthorizationSession {...session} />}
     </PermissionManagementScope>
   )
@@ -77,7 +68,6 @@ function AuthorizationSession(props: PermissionManagementSessionProps) {
   const { t } = useTranslation('knowledge')
   const actions = usePermissionManagementController(props)
   const { permissions, loading, error, fetchPermissions } = actions
-  const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const canManage = props.canManage === true
@@ -108,11 +98,7 @@ function AuthorizationSession(props: PermissionManagementSessionProps) {
         )}
       </div>
     )
-  const allRows = authorizationRows(permissions)
-  const query = search.trim().toLocaleLowerCase()
-  const rows = allRows.filter(
-    row => !query || (row.searchText ?? row.name).toLocaleLowerCase().includes(query)
-  )
+  const rows = authorizationRows(permissions)
   const boundNamespaceIds = Object.values(permissions.approved)
     .flat()
     .filter(member => member.entity_type === 'namespace')
@@ -135,11 +121,11 @@ function AuthorizationSession(props: PermissionManagementSessionProps) {
           <div>
             <h3
               className="text-sm font-semibold text-text-primary"
-              data-testid="knowledge-authorization-object-count"
+              data-testid="knowledge-member-count"
             >
               {t(`${text}.title`)}{' '}
               <span className="ml-1 text-xs font-normal text-text-muted">
-                {t(`${text}.count`, { count: allRows.length })}
+                {t(`${text}.count`, { count: rows.length })}
               </span>
             </h3>
             <p className="mt-1 text-xs text-text-muted">{t(`${text}.description`)}</p>
@@ -159,17 +145,6 @@ function AuthorizationSession(props: PermissionManagementSessionProps) {
             </Button>
           )}
         </div>
-        <Input
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-          placeholder={t(`${text}.searchPlaceholder`)}
-          aria-label={t(`${text}.searchPlaceholder`)}
-          data-testid="knowledge-member-search"
-          className="min-h-11"
-        />
-        <p role="status" data-testid="knowledge-member-count" className="text-xs text-text-muted">
-          {t(`${text}.matchingCount`, { count: rows.length })}
-        </p>
         {error && (
           <div role="alert">
             <p>{t('document.navigation.membersFailed')}</p>
@@ -216,11 +191,7 @@ function AuthorizationSession(props: PermissionManagementSessionProps) {
             </tbody>
           </table>
         </div>
-        {!rows.length && (
-          <p className="text-sm text-text-muted">
-            {t(query ? 'document.permission.noMatchingMembers' : `${text}.empty`)}
-          </p>
-        )}
+        {!rows.length && <p className="text-sm text-text-muted">{t(`${text}.empty`)}</p>}
         <p className="text-xs leading-relaxed text-text-muted">{t(`${text}.membershipNote`)}</p>
         {rows.some(row => row.inheritedType === 'organization') && (
           <p className="text-xs text-text-muted">{t(`${text}.organizationNote`)}</p>

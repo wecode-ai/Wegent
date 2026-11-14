@@ -988,7 +988,7 @@
       "personalSpace": "Personal space",
       "createInSpace": "Create in this space",
       "permissionDetails": "Permissions",
-      "permissionDescription": "Your effective access and its sources in Wegent.",
+      "permissionDescription": "View your effective permissions, their sources, and all authorized entities.",
       "permissionFailed": "Unable to load permission sources",
       "effectivePermission": "My permission",
       "permissionSource": "Permission source",
@@ -1022,7 +1022,28 @@
       "noMatchingFilters": "No matching filters",
       "typeAndSort": "Type and sort",
       "companySpace": "Company space",
-      "manageTeams": "Manage teams"
+      "manageTeams": "Manage teams",
+      "permissionResult": {
+        "Owner": "Manage",
+        "Maintainer": "Manage",
+        "Developer": "Edit",
+        "Reporter": "View",
+        "RestrictedAnalyst": "Visit Only"
+      },
+      "permissionSourceLabels": {
+        "title": "Permission sources",
+        "creator": "You created this knowledge base",
+        "direct": "Direct grant",
+        "shareLink": "Granted through a share link",
+        "groupMembership": "Inherited from owning group “{{name}}”",
+        "groupOwner": "Group owner",
+        "groupGrant": "Granted through group “{{name}}”",
+        "department": "Granted through department “{{name}}”",
+        "organization": "Organization policy",
+        "other": "Other permission source “{{name}}”",
+        "unnamed": "Unnamed",
+        "withRole": "{{source}} ({{role}})"
+      }
     },
     "creation": {
       "refreshingLocations": "Refreshing creation locations…",
@@ -1075,12 +1096,7 @@
         "creator": "Creator",
         "inherited": "Inherited",
         "direct": "Direct grant"
-      },
-      "searchPlaceholder": "Search authorization objects",
-      "matchingCount": "{{count}} matching authorization objects",
-      "identifier": "ID: {{id}}",
-      "grantIdentifier": "Grant ID: {{id}}",
-      "removeObject": "Remove {{name}}"
+      }
     }
   },
   "add_repository": "Add Repository",

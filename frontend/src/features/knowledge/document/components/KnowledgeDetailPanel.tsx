@@ -118,7 +118,7 @@ export function KnowledgeDetailPanel({
   // Team context for ChatArea
   const { teams, isTeamsLoading, loadError, refreshTeams } = useTeamContext()
 
-  // Tab state for documents/permissions (classic mode)
+  // Bind the open dialog to the selected resource without replacing its documents.
   const [permissionKbId, setPermissionKbId] = useState<number | null>(null)
   const permissionTrigger = useRef<HTMLButtonElement>(null)
   const documentRegion = useRef<HTMLDivElement>(null)
@@ -205,13 +205,6 @@ export function KnowledgeDetailPanel({
     })
   }, [selectedKb, user, myPermission, verifiedRole])
 
-  useEffect(() => {
-    setPermissionKbId(null)
-  }, [selectedKb?.id, currentView])
-  useEffect(() => {
-    if (!canManagePermissions) setPermissionKbId(null)
-  }, [canManagePermissions])
-
   // Get search params to check for taskId in URL
   // Support multiple parameter formats for compatibility
   const searchParams = useSearchParams()
@@ -259,6 +252,8 @@ export function KnowledgeDetailPanel({
       setArtifactPromptRequest(null)
       setCapabilityDraftRequest(null)
     }
+
+    if (currentView !== 'documents') setPermissionKbId(null)
 
     if (currentView === 'documents') {
       selectTask(null)
@@ -469,7 +464,7 @@ export function KnowledgeDetailPanel({
             initialDocPath={initialDocPath}
             initialDocumentId={initialDocumentId}
           />
-          {permissionKbId === selectedKb.id && canManagePermissions && (
+          {permissionKbId === selectedKb.id && (
             <KnowledgeAccessDialog
               kbId={selectedKb.id}
               kbNamespace={selectedKb.namespace}

@@ -150,13 +150,13 @@ export const knowledgePermissionApi = {
         // For entity-type members, backend populates display_name via _get_entity_display_name
         const isEntity = m.entity_type && m.entity_type !== 'user'
         const member: PermissionUserInfo = {
+          invited_by_name: m.invited_by_user_name,
           id: m.id,
           user_id: m.user_id,
           display_name:
             m.display_name || m.entity_display_name || (isEntity ? m.entity_id || '' : ''),
           email: isEntity ? '' : m.user_email || '',
           role: role,
-          invited_by_name: m.invited_by_user_name,
           requested_at: m.requested_at,
           reviewed_at: m.reviewed_at || undefined,
           reviewed_by: m.reviewed_by_user_id || undefined,

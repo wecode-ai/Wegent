@@ -829,24 +829,20 @@ export interface ApprovedPermissionsByRole {
   RestrictedAnalyst: PermissionUserInfo[]
 }
 
-export interface AuthorizationCreator {
-  user_id: number
-  display_name: string
-}
-
-export interface InheritedAuthorizationSource {
-  source_type: string
-  entity_type: string
-  entity_id: string
-  display_name: string
-  role: MemberRole | null
-}
-
 export interface PermissionListResponse {
-  creator?: AuthorizationCreator
-  inherited_sources?: InheritedAuthorizationSource[]
   pending: PendingPermissionInfo[]
   approved: ApprovedPermissionsByRole
+  creator?: {
+    user_id: number
+    display_name: string
+  } | null
+  inherited_sources?: Array<{
+    source_type: string
+    entity_type: string
+    entity_id: string
+    display_name: string
+    role: MemberRole | null
+  }>
 }
 
 // Current User Permission types

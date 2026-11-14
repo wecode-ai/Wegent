@@ -18,8 +18,8 @@ import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isManager } from '@/types/base-role'
 import type { MyPermissionSourcesResponse } from '@/types/knowledge'
-import { KnowledgeAuthorizationObjects } from '../../permission/components/KnowledgeAuthorizationObjects'
 import { KnowledgePermissionSources } from './KnowledgePermissionSources'
+import { KnowledgeAuthorizationObjects } from '@/features/knowledge/permission/components/KnowledgeAuthorizationObjects'
 
 interface KnowledgeAccessDialogProps {
   restoreFocus?: () => void
@@ -117,13 +117,12 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
       <DialogContent
         onCloseAutoFocus={event => {
           event.preventDefault()
-          if (props.resourceCreated && props.restoreFocus) {
+          if (props.restoreFocus) {
             props.restoreFocus()
             return
           }
           const target = returnFocus.current
           if (target?.isConnected && !target.closest('[role="dialog"]')) target.focus()
-          else props.restoreFocus?.()
         }}
         className="max-h-[90dvh] min-w-0 w-[calc(100%_-_1rem)] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto max-md:p-4"
         closeButtonProps={{
@@ -132,7 +131,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
         }}
       >
         <DialogHeader className="pr-10 text-left">
-          <DialogTitle>
+          <DialogTitle className="text-lg font-semibold">
             {t(
               props.resourceCreated
                 ? 'document.creation.created'
@@ -140,7 +139,7 @@ function KnowledgeAccessSession(props: KnowledgeAccessDialogProps) {
             )}
           </DialogTitle>
         </DialogHeader>
-        <DialogDescription>
+        <DialogDescription className="text-xs leading-relaxed text-text-muted">
           {t(
             props.resourceCreated
               ? 'document.creation.createdDescription'

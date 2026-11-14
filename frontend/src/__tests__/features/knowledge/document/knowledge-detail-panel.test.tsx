@@ -120,9 +120,22 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeAccessDialog', () => ({
-  KnowledgeAccessDialog: ({ onClose }: { onClose: () => void }) => (
-    <div data-testid="mock-classic-permissions">
-      <button onClick={onClose}>Close permissions</button>
+  KnowledgeAccessDialog: ({
+    canManage,
+    onChanged,
+    onClose,
+  }: {
+    canManage: boolean
+    onChanged: () => void
+    onClose: () => void
+  }) => (
+    <div role="dialog">
+      {canManage && (
+        <button data-testid="mock-classic-permissions" onClick={onChanged}>
+          Change permission
+        </button>
+      )}
+      <button onClick={onClose}>Close permission dialog</button>
     </div>
   ),
 }))

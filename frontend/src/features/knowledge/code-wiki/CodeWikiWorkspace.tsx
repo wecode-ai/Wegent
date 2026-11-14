@@ -102,10 +102,6 @@ export function CodeWikiWorkspace({
     }
   }, [myPermission, user, wiki, verifiedRole])
 
-  useEffect(() => {
-    if (!permissions.canManagePermissions) setPermissionKbId(null)
-  }, [permissions.canManagePermissions])
-
   const contentOrigin: KnowledgeContentOrigin = documentView === 'user' ? 'user' : 'generated'
   const contentTabs = (
     <div className="flex shrink-0 items-center gap-2">
@@ -178,7 +174,7 @@ export function CodeWikiWorkspace({
             groupInfo={groupInfo}
             onGroupClick={onGroupClick}
           />
-          {permissionKbId === wiki.id && permissions.canManagePermissions && (
+          {permissionKbId === wiki.id && (
             <KnowledgeAccessDialog
               kbId={wiki.id}
               kbNamespace={wiki.namespace}

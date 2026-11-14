@@ -456,8 +456,7 @@ creationTest(
     await expect(page.getByTestId('knowledge-authorization-complete')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('permission-add-collaborator')).toBeFocused()
-    await page.getByTestId('knowledge-member-search').fill(REGULAR_USER.username)
-    await expect(page.getByTestId('knowledge-member-count')).toContainText('1')
+    await expect(page.getByTestId('collaborator-item')).toHaveCount(2)
     await page.keyboard.press('Escape')
     await page.setViewportSize({ width: 375, height: 480 })
     await page.goto(`/knowledge/default/${encodeURIComponent(name)}?type=document&view=documents`)
@@ -467,8 +466,9 @@ creationTest(
     const mountedDocumentAction = await documentAction.elementHandle()
     await permissionTrigger.click()
     expect(await mountedDocumentAction!.evaluate(element => element.isConnected)).toBe(true)
-    await page.getByTestId('knowledge-member-search').fill(REGULAR_USER.username)
-    const detail = page.getByTestId('knowledge-detail-classic')
+    const detail = page
+      .getByRole('dialog')
+      .filter({ has: page.getByTestId('close-knowledge-access') })
     await expect
       .poll(() =>
         detail.evaluate(element => element.getBoundingClientRect().bottom <= window.innerHeight)
@@ -477,7 +477,7 @@ creationTest(
     await expect
       .poll(() => page.evaluate(() => document.body.scrollHeight <= window.innerHeight))
       .toBe(true)
-    await expect(page.getByTestId('knowledge-member-count')).toContainText('1')
+    await expect(page.getByTestId('collaborator-item')).toHaveCount(2)
     await page.getByTestId('permission-add-collaborator').click()
     await expect(page.getByTestId('knowledge-auth-user-search')).toBeVisible()
     await page.getByTestId('submit-created-permissions').scrollIntoViewIfNeeded()

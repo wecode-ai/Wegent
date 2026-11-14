@@ -988,7 +988,7 @@
       "personalSpace": "个人空间",
       "createInSpace": "在此空间创建",
       "permissionDetails": "权限详情",
-      "permissionDescription": "查看你在 Wegent 的有效权限及来源。",
+      "permissionDescription": "查看你的有效权限、权限来源及全部授权对象。",
       "permissionFailed": "权限来源加载失败",
       "effectivePermission": "我的权限",
       "permissionSource": "授权来源",
@@ -1022,7 +1022,28 @@
       "noMatchingFilters": "无匹配的筛选项",
       "typeAndSort": "类型与排序",
       "companySpace": "公司空间",
-      "manageTeams": "管理团队"
+      "manageTeams": "管理团队",
+      "permissionResult": {
+        "Owner": "可管理",
+        "Maintainer": "可管理",
+        "Developer": "可编辑",
+        "Reporter": "可查看",
+        "RestrictedAnalyst": "仅访问"
+      },
+      "permissionSourceLabels": {
+        "title": "权限来源",
+        "creator": "本人创建此知识库",
+        "direct": "直接授权",
+        "shareLink": "通过分享链接授权",
+        "groupMembership": "从所属群组「{{name}}」继承",
+        "groupOwner": "群组所有者",
+        "groupGrant": "通过群组「{{name}}」授权",
+        "department": "通过部门「{{name}}」授权",
+        "organization": "公司空间规则",
+        "other": "其他授权来源「{{name}}」",
+        "unnamed": "未命名",
+        "withRole": "{{source}}（{{role}}）"
+      }
     },
     "creation": {
       "refreshingLocations": "正在刷新创建位置…",
@@ -1075,12 +1096,7 @@
         "creator": "创建人",
         "inherited": "继承",
         "direct": "直接授权"
-      },
-      "searchPlaceholder": "搜索授权对象",
-      "matchingCount": "{{count}} 个匹配的授权对象",
-      "identifier": "标识：{{id}}",
-      "grantIdentifier": "授权记录：{{id}}",
-      "removeObject": "移除 {{name}}"
+      }
     }
   },
   "add_repository": "添加仓库",

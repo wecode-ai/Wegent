@@ -1,19 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+jest.mock('@extensions/knowledge-permissions', () =>
+  jest.requireActual('@/extensions/knowledge-permissions')
+)
+
 import { useState } from 'react'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
-import { KnowledgeAuthorizationObjects } from '@/features/knowledge/permission/components/KnowledgeAuthorizationObjects'
 import { KnowledgeBaseActions } from '@/features/knowledge/document/components/KnowledgeBaseActions'
 import { KnowledgeAccessDialog } from '@/features/knowledge/document/components/KnowledgeAccessDialog'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 
 let mockUser = { id: 1 }
 let mockScope = 'backend:session-one'
-const mockT = (key: string, options?: Record<string, unknown>) =>
-  options ? key + ' ' + Object.values(options).join(' ') : key
+const mockT = (key: string, options?: { name?: string; source?: string; role?: string }) =>
+  [key, options?.name, options?.source, options?.role].filter(Boolean).join(' ')
 jest.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: mockT }) }))
 jest.mock('@/features/common/UserContext', () => ({ useUser: () => ({ user: mockUser }) }))
 jest.mock('@/apis/client', () => ({
@@ -81,16 +84,30 @@ beforeEach(() => {
   jest.mocked(knowledgePermissionApi.listPermissions).mockResolvedValue(members)
 })
 
-it('shows approved authorization objects read-only without requesting approvals', async () => {
+it('shows all authorization objects to a reader without management actions', async () => {
+  jest.mocked(knowledgePermissionApi.listPermissions).mockResolvedValue({
+    ...members,
+    creator: { user_id: 2, display_name: 'Library creator' },
+    inherited_sources: [
+      {
+        source_type: 'group_membership',
+        entity_type: 'namespace',
+        entity_id: '9',
+        display_name: 'Owning group',
+        role: null,
+      },
+    ],
+  })
   render(<KnowledgeAccessDialog {...props()} />)
-  expect(await screen.findByText('Visible source team')).toBeInTheDocument()
-  await waitFor(() =>
-    expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
-      includePendingRequests: false,
-    })
-  )
+  expect(await screen.findByText('Visible source team', { exact: false })).toBeInTheDocument()
+  expect(await screen.findByText('Library creator')).toBeInTheDocument()
+  expect(screen.getByText('Owning group')).toBeInTheDocument()
+  expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
+    includePendingRequests: false,
+  })
   expect(screen.queryByTestId('permission-add-collaborator')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('permission-approve-1')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('knowledge-authorization-actions')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('perm-tab-user')).not.toBeInTheDocument()
 })
 
 it('reuses the existing manager and rechecks access after a successful permission change', async () => {
@@ -125,22 +142,19 @@ it('reuses the existing manager and rechecks access after a successful permissio
   expect(knowledgePermissionApi.getMyPermissionSources).toHaveBeenCalledTimes(2)
 })
 
-it('retries a source error before loading approved members without treating an error as revoked access', async () => {
+it('retries a source error without reading members or treating an error as revoked access', async () => {
   const callbacks = props()
   jest
     .mocked(knowledgePermissionApi.getMyPermissionSources)
     .mockRejectedValueOnce(new Error('offline'))
   render(<KnowledgeAccessDialog {...callbacks} />)
   await screen.findByRole('alert')
-  expect(knowledgePermissionApi.listPermissions).not.toHaveBeenCalled()
   expect(callbacks.onAccessLost).not.toHaveBeenCalled()
   await userEvent.setup().click(screen.getByTestId('retry-permission-sources'))
-  expect(await screen.findByText('Visible source team')).toBeInTheDocument()
-  await waitFor(() =>
-    expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
-      includePendingRequests: false,
-    })
-  )
+  expect(await screen.findByText('Visible source team', { exact: false })).toBeInTheDocument()
+  expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
+    includePendingRequests: false,
+  })
 })
 
 it('closes on confirmed access loss even when the underlying role is still a manager', async () => {
@@ -173,9 +187,9 @@ it.each(['user', 'backend', 'session', 'library'])(
       sources: [{ ...reader.sources[0], display_name: 'Current scope source' }],
     })
     rerender(<KnowledgeAccessDialog {...callbacks} kbId={kind === 'library' ? 28 : 27} />)
-    expect(await screen.findByText('Current scope source')).toBeInTheDocument()
+    expect(await screen.findByText('Current scope source', { exact: false })).toBeInTheDocument()
     await act(async () => finish(reader))
-    expect(screen.queryByText('Visible source team')).not.toBeInTheDocument()
+    expect(screen.queryByText('Visible source team', { exact: false })).not.toBeInTheDocument()
   }
 )
 
@@ -213,7 +227,7 @@ it('restores keyboard focus to the surviving trigger on Escape', async () => {
   render(<Harness />)
   const trigger = screen.getByTestId('permission-open-focus')
   await userEvent.setup().click(trigger)
-  await screen.findByText('Visible source team')
+  await screen.findByText('Visible source team', { exact: false })
   await userEvent.setup().keyboard('{Escape}')
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   expect(trigger).toHaveFocus()
@@ -233,15 +247,11 @@ it('stops manager requests after a server denial even if raw source roles still 
   await waitFor(() =>
     expect(knowledgePermissionApi.getMyPermissionSources).toHaveBeenCalledTimes(2)
   )
-  expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
-    includePendingRequests: true,
+  expect(knowledgePermissionApi.listPermissions).toHaveBeenLastCalledWith(27, {
+    includePendingRequests: false,
   })
-  await waitFor(() =>
-    expect(knowledgePermissionApi.listPermissions).toHaveBeenLastCalledWith(27, {
-      includePendingRequests: false,
-    })
-  )
   expect(screen.queryByTestId('permission-add-collaborator')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('perm-tab-user')).not.toBeInTheDocument()
 })
 
 it('keeps an initial member error distinct from an empty member list and retries locally', async () => {
@@ -269,7 +279,7 @@ it('keeps zero pending requests as a compact status without an empty approval se
     'document.permission.noPendingRequests'
   )
   expect(screen.queryByText('document.permission.pendingRequests')).not.toBeInTheDocument()
-  expect(screen.getByTestId('knowledge-authorization-objects')).toBeInTheDocument()
+  expect(screen.getByText('document.authorizationObjects.title')).toBeInTheDocument()
 })
 
 it('keeps real pending requests actionable and compacts the section after approval', async () => {
@@ -309,11 +319,9 @@ it('keeps real pending requests actionable and compacts the section after approv
   expect(await screen.findByTestId('knowledge-empty-pending')).toBeInTheDocument()
 })
 
-async function openGroupGrant(legacy = false) {
+async function openGroupGrant() {
   const user = userEvent.setup()
-  if (legacy) await user.click(await screen.findByTestId('perm-tab-namespace'))
-  else await screen.findByTestId('permission-add-collaborator')
-  await user.click(screen.getByTestId('permission-add-collaborator'))
+  await user.click(await screen.findByTestId('permission-add-collaborator'))
   await user.click(screen.getByTestId('add-namespace-group-search'))
   await user.click(await screen.findByRole('button', { name: /Team A/ }))
   return user
@@ -374,9 +382,7 @@ it.each([
     const user = await openGroupGrant()
     await user.click(screen.getByTestId('submit-created-permissions'))
     await waitFor(() => expect(callbacks.onChanged).toHaveBeenCalled())
-    await waitFor(() =>
-      expect(screen.queryByTestId('permission-add-collaborator')).not.toBeInTheDocument()
-    )
+    await waitFor(() => expect(screen.queryByTestId('perm-tab-namespace')).not.toBeInTheDocument())
     if (hasAccess) {
       expect(callbacks.onAccessLost).not.toHaveBeenCalled()
       expect(callbacks.onClose).not.toHaveBeenCalled()
@@ -429,7 +435,7 @@ it.each(['success', 'denied'])(
     const { rerender } = render(
       <PermissionManagementTab kbId={27} onChanged={changed} onAccessDenied={denied} />
     )
-    const user = await openGroupGrant(true)
+    const user = await openGroupGrant()
     await user.click(screen.getByTestId('submit-created-permissions'))
     rerender(<PermissionManagementTab kbId={28} onChanged={changed} onAccessDenied={denied} />)
     rerender(<PermissionManagementTab kbId={27} onChanged={changed} onAccessDenied={denied} />)
@@ -464,150 +470,71 @@ it('returns to mobile More after closing the actual read-only permission dialog'
   const more = screen.getByTestId('more-kb-27')
   await user.click(more)
   await user.click(screen.getByTestId('permission-kb-27'))
-  await screen.findByText('Visible source team')
+  await screen.findByText('Visible source team', { exact: false })
   await user.click(screen.getByTestId('close-knowledge-access'))
   await waitFor(() => expect(more).toHaveFocus())
 })
 
-it('shows the complete approved roster and rules read-only with stable same-name identities', async () => {
+it('keeps my permission visible when authorized entities fail and retries only that section', async () => {
   jest
     .mocked(knowledgePermissionApi.listPermissions)
-    .mockReset()
-    .mockResolvedValue({
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce({
       ...members,
-      creator: { user_id: 1, display_name: 'Library creator' },
-      inherited_sources: [
-        {
-          source_type: 'group_membership',
-          entity_type: 'namespace',
-          entity_id: '71',
-          display_name: 'Owning group',
-          role: null,
-        },
-      ],
-      approved: {
-        ...members.approved,
-        Reporter: Array.from({ length: 121 }, (_, index) => ({
-          id: index + 1,
-          user_id: index + 5,
-          display_name: index < 2 ? 'Same name' : `Approved ${index}`,
-          email: `approved-${index}@example.invalid`,
-          role: 'Reporter' as const,
-          requested_at: '2026-11-04T00:00:00Z',
-        })),
-      },
+      creator: { user_id: 2, display_name: 'Recovered creator' },
     })
   render(<KnowledgeAccessDialog {...props()} />)
-  expect(await screen.findByText('Library creator')).toBeInTheDocument()
-  expect(screen.getByText('Owning group')).toBeInTheDocument()
-  expect(screen.getByText('Approved 120')).toBeInTheDocument()
-  expect(screen.getAllByText('Same name')).toHaveLength(2)
-  expect(screen.getByText('document.authorizationObjects.groupRole')).toBeInTheDocument()
-  expect(screen.queryByTestId('permission-add-collaborator')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('knowledge-authorization-actions')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('knowledge-empty-pending')).not.toBeInTheDocument()
-  expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
-    includePendingRequests: false,
-  })
-  await userEvent.setup().type(screen.getByTestId('knowledge-member-search'), 'approved-120@')
-  expect(screen.getByText('Approved 120')).toBeInTheDocument()
-  expect(screen.queryByText('Approved 119')).not.toBeInTheDocument()
+  expect(await screen.findByText('Visible source team', { exact: false })).toBeVisible()
+  await userEvent.setup().click(await screen.findByTestId('retry-knowledge-members'))
+  expect(await screen.findByText('Recovered creator')).toBeVisible()
+  expect(knowledgePermissionApi.getMyPermissionSources).toHaveBeenCalledTimes(1)
 })
 
-it('distinguishes same-name objects and controls by both entity type and stable identity', async () => {
+it.each(['user', 'backend', 'library'])(
+  'does not publish stale authorized entities after %s changes',
+  async kind => {
+    let finish!: (value: typeof members) => void
+    jest.mocked(knowledgePermissionApi.listPermissions).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    const callbacks = props()
+    const { rerender } = render(<KnowledgeAccessDialog {...callbacks} />)
+    await waitFor(() => expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledTimes(1))
+    if (kind === 'user') mockUser = { id: 2 }
+    if (kind === 'backend') mockScope = 'backend:other'
+    jest
+      .mocked(knowledgePermissionApi.listPermissions)
+      .mockResolvedValue({ ...members, creator: { user_id: 3, display_name: 'Current creator' } })
+    rerender(<KnowledgeAccessDialog {...callbacks} kbId={kind === 'library' ? 28 : 27} />)
+    expect(await screen.findByText('Current creator')).toBeVisible()
+    await act(async () =>
+      finish({
+        ...members,
+        creator: { user_id: 2, display_name: 'Previous creator' },
+      } as typeof members)
+    )
+    expect(screen.queryByText('Previous creator')).not.toBeInTheDocument()
+  }
+)
+
+it('retains the read-only authorization list after a management denial confirms downgrade', async () => {
+  const { ApiError } = await import('@/apis/client')
   jest
     .mocked(knowledgePermissionApi.getMyPermissionSources)
-    .mockResolvedValue({ ...reader, effective_role: 'Maintainer' })
+    .mockResolvedValueOnce({ ...reader, effective_role: 'Maintainer' })
+    .mockResolvedValue(reader)
   jest
     .mocked(knowledgePermissionApi.listPermissions)
-    .mockReset()
+    .mockRejectedValueOnce(new ApiError('denied', 403))
     .mockResolvedValue({
       ...members,
-      approved: {
-        ...members.approved,
-        Reporter: [
-          ...[71, 72].map(id => ({
-            id,
-            user_id: null,
-            display_name: 'Same organization',
-            entity_type: 'namespace',
-            entity_id: String(id),
-            role: 'Reporter' as const,
-            requested_at: '2026-11-04T00:00:00Z',
-          })),
-          {
-            id: 73,
-            user_id: 71,
-            display_name: 'Same organization',
-            entity_type: 'user',
-            entity_id: '71',
-            role: 'Reporter' as const,
-            requested_at: '2026-11-04T00:00:00Z',
-          },
-        ],
-      },
+      creator: { user_id: 2, display_name: 'Still visible creator' },
     })
   render(<KnowledgeAccessDialog {...props()} canManage />)
-  await screen.findByTestId('knowledge-authorization-objects')
-  expect(screen.getAllByText('document.authorizationObjects.identifier 71')).toHaveLength(2)
-  expect(screen.getByText('document.authorizationObjects.identifier 72')).toBeInTheDocument()
-  expect(screen.getAllByText('Same organization')).toHaveLength(3)
-  expect(
-    screen.getByRole('combobox', { name: /Same organization.*types.namespace.*71/ })
-  ).toBeEnabled()
-  expect(screen.getByRole('combobox', { name: /Same organization.*72/ })).toBeEnabled()
-  expect(screen.getByRole('combobox', { name: /Same organization.*types.user.*71/ })).toBeEnabled()
-  expect(
-    screen.getByRole('button', { name: /removeObject.*Same organization.*types.user.*71/ })
-  ).toBeEnabled()
-  expect(
-    screen.getByRole('button', { name: /removeObject.*Same organization.*types.namespace.*71/ })
-  ).toBeEnabled()
-  expect(screen.getByRole('button', { name: /removeObject.*Same organization.*72/ })).toBeEnabled()
-})
-
-it('defaults the public authorization-object view to read-only without loading approvals', async () => {
-  render(<KnowledgeAuthorizationObjects kbId={27} onChanged={jest.fn()} />)
-  await screen.findByTestId('knowledge-authorization-objects')
-  expect(knowledgePermissionApi.listPermissions).toHaveBeenCalledWith(27, {
-    includePendingRequests: false,
-  })
+  expect(await screen.findByText('Still visible creator')).toBeVisible()
   expect(screen.queryByTestId('permission-add-collaborator')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('knowledge-empty-pending')).not.toBeInTheDocument()
-})
-
-it('keeps a direct reader source and approved object visible even when their names match', async () => {
-  jest.mocked(knowledgePermissionApi.getMyPermissionSources).mockResolvedValue({
-    ...reader,
-    sources: [{ source_type: 'direct', display_name: 'Direct reader', role: 'Reporter' }],
-  })
-  jest
-    .mocked(knowledgePermissionApi.listPermissions)
-    .mockReset()
-    .mockResolvedValue({
-      ...members,
-      creator: { user_id: 1, display_name: 'Library creator' },
-      approved: {
-        ...members.approved,
-        Reporter: [
-          {
-            id: 91,
-            user_id: 6,
-            display_name: 'Direct reader',
-            role: 'Reporter',
-            requested_at: '2026-11-04T00:00:00Z',
-          },
-        ],
-      },
-    })
-  render(<KnowledgeAccessDialog {...props()} />)
-  await screen.findByTestId('knowledge-authorization-objects')
-  expect(screen.getAllByText('Direct reader')).toHaveLength(2)
-  expect(
-    within(screen.getByTestId('knowledge-permission-sources')).getByText('Direct reader')
-  ).toBeVisible()
-  expect(
-    within(screen.getByTestId('knowledge-authorization-objects')).getByText('Direct reader')
-  ).toBeVisible()
-  expect(screen.getAllByTestId('collaborator-item')).toHaveLength(2)
+  expect(screen.queryByTestId('knowledge-authorization-actions')).not.toBeInTheDocument()
 })

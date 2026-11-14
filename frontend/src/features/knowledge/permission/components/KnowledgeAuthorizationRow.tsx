@@ -18,9 +18,7 @@ import type { MemberRole } from '@/types/knowledge'
 export interface AuthorizationRow {
   key: string
   name: string
-  searchText?: string
   type: string
-  entityId?: string
   role: MemberRole | null
   source: 'creator' | 'inherited' | 'direct'
   memberId?: number
@@ -45,23 +43,12 @@ export function KnowledgeAuthorizationRow({
   const text = 'document.authorizationObjects'
   const Icon = row.type === 'user' ? User : row.type === 'namespace' ? Users : Building2
   const type = ['user', 'namespace', 'organization'].includes(row.type) ? row.type : 'other'
-  const identityLabel = row.entityId
-    ? t(`${text}.identifier`, { id: row.entityId })
-    : row.memberId !== undefined
-      ? t(`${text}.grantIdentifier`, { id: row.memberId })
-      : null
-  const typeLabel = t(`${text}.types.${type}`)
-  const objectLabel = `${row.name} (${typeLabel}${identityLabel ? `, ${identityLabel}` : ''})`
   const editable = canManage && row.memberId !== undefined && row.role !== 'Owner'
   const label = row.role
-    ? t(`document.permission.role.${row.role}`)
+    ? t(`document.navigation.permissionResult.${row.role}`)
     : t(`${text}.${row.inheritedType === 'organization' ? 'organizationRole' : 'groupRole'}`)
   return (
-    <tr
-      className="border-b border-border"
-      data-testid="collaborator-item"
-      data-authorization-id={row.key}
-    >
+    <tr className="border-b border-border" data-testid="collaborator-item">
       <td className="min-w-32 px-3 py-3">
         <div className="flex items-center gap-2">
           <Icon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
@@ -69,15 +56,7 @@ export function KnowledgeAuthorizationRow({
             <p className="break-words text-text-primary">
               {row.type === 'user' ? <KnowledgeMemberName name={row.name} /> : row.name}
             </p>
-            <p className="text-xs text-text-muted">
-              {typeLabel}
-              {identityLabel && (
-                <>
-                  {' '}
-                  · <span>{identityLabel}</span>
-                </>
-              )}
-            </p>
+            <p className="text-xs text-text-muted">{t(`${text}.types.${type}`)}</p>
           </div>
         </div>
       </td>
@@ -93,7 +72,7 @@ export function KnowledgeAuthorizationRow({
             <SelectTrigger
               className="min-h-11 min-w-28"
               data-testid={`permission-role-${row.memberId}`}
-              aria-label={t(`${text}.objectPermission`, { name: objectLabel })}
+              aria-label={t(`${text}.objectPermission`, { name: row.name })}
             >
               <SelectValue />
             </SelectTrigger>
@@ -125,7 +104,7 @@ export function KnowledgeAuthorizationRow({
               size="icon"
               className="min-h-11 min-w-11 text-error"
               data-testid={`permission-delete-${row.memberId}`}
-              aria-label={t(`${text}.removeObject`, { name: objectLabel })}
+              aria-label={t('document.permission.remove')}
               title={t('document.permission.remove')}
               disabled={loading}
               onClick={() => {

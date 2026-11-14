@@ -695,7 +695,7 @@ it.each(
 )
 
 it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
-  'searches collaborators and adds registered targets through the full list page (%p)',
+  'lists authorized objects and adds registered targets through the full list page (%p)',
   async Page => {
     const { registerAuthSection } =
       await import('@/features/knowledge/document/auth-section-registry')
@@ -740,11 +740,8 @@ it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
     if (Page === KnowledgeDocumentPageMobile) await user.click(screen.getByTestId('more-kb-7'))
     await user.click(screen.getByTestId('permission-kb-7'))
     await screen.findByText('Granted user')
-    await user.type(screen.getByTestId('knowledge-member-search'), 'missing')
-    expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('0')
-    expect(screen.getByText('document.permission.noMatchingMembers')).toBeInTheDocument()
-    expect(screen.queryByText('Granted user')).not.toBeInTheDocument()
-    await user.clear(screen.getByTestId('knowledge-member-search'))
+    expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('1')
+    expect(screen.getAllByTestId('collaborator-item')).toHaveLength(1)
     expect(screen.getByText('Granted user')).toBeInTheDocument()
     await user.click(screen.getByTestId('permission-add-collaborator'))
     await user.click(screen.getByRole('button', { name: 'Select department' }))

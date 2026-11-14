@@ -242,7 +242,7 @@ it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
   }
 )
 
-it('keeps approvals independent of member filtering and displays registered members', async () => {
+it('keeps approvals independent of the authorization table and displays registered members', async () => {
   const { registerPermissionTab } =
     await import('@/features/knowledge/permission/permission-tab-registry')
   registerPermissionTab({
@@ -274,13 +274,10 @@ it('keeps approvals independent of member filtering and displays registered memb
   render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
   const user = userEvent.setup()
   await user.click(await screen.findByTestId('knowledge-detail-permissions-tab'))
-  await user.type(await screen.findByTestId('knowledge-member-search'), 'absent')
+  await screen.findByTestId('knowledge-authorization-objects')
   expect(screen.getByText('Pending user')).toBeInTheDocument()
   expect(screen.getByTestId('permission-approve-55')).toBeEnabled()
   expect(screen.getByTestId('permission-reject-55')).toBeEnabled()
-  expect(screen.queryByText('Department A')).not.toBeInTheDocument()
-  expect(screen.getByText('document.permission.noMatchingMembers')).toBeInTheDocument()
-  await user.clear(screen.getByTestId('knowledge-member-search'))
   expect(screen.getByText('Department A')).toBeInTheDocument()
   expect(screen.getByTestId('knowledge-member-count')).toHaveTextContent('1')
   expect(screen.getByTestId('permission-role-91')).toBeEnabled()
@@ -411,7 +408,7 @@ it.each([KnowledgeDocumentPageDesktop, KnowledgeDocumentPageMobile])(
     await user.click(screen.getByTestId('submit-create-kb'))
     await screen.findByTestId('retry-created-list')
     expect(screen.getAllByRole('heading', { name: 'document.creation.created' })).toHaveLength(1)
-    await screen.findByTestId('knowledge-member-search')
+    await screen.findByTestId('knowledge-authorization-objects')
     expect(screen.queryByTestId('created-knowledge-authorization')).not.toBeInTheDocument()
     expect(screen.queryByTestId('submit-created-permissions')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('permission-add-collaborator'))

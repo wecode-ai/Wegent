@@ -259,7 +259,7 @@ Knowledge bases support fine-grained access control through the Share Service ar
 
 The library list's **Permission Details**, ordinary library details, CodeWiki document management, and the **Library created** entry use one permission dialog. Opening it preserves the document list and its position; closing it restores focus to the entry. On mobile, open permission details from the list's **More** menu.
 
-1. Search existing collaborators to see members and roles. Pending requests remain visible independently of the search.
+1. View authorization objects and their permissions. Managers can also view pending requests.
 2. Click **Add collaborator**, select people by username or email, or search for groups.
 3. Choose Maintainer, Developer, Reporter, or RestrictedAnalyst for each selected target. Owner cannot be assigned through this flow.
 4. Click **Authorize**. Partial success leaves only failed targets for retry; uncertain results are checked against existing grants first.
