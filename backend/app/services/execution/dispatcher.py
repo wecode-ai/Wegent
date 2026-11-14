@@ -19,6 +19,7 @@ OpenAI Responses API compatible endpoint.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
@@ -26,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
+from app.services.chat.storage.db import TerminalPersistenceError
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -83,6 +85,9 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         device_id: Optional[str] = None,
         emitter: Optional[ResultEmitter] = None,
+        *,
+        already_running: bool = False,
+        on_accepted: Callable[[bool], None] | None = None,
     ) -> None:
         """Unified dispatch entry point for task execution.
 
@@ -113,6 +118,14 @@ class ExecutionDispatcher:
             emitter: Optional custom emitter, defaults to WebSocketResultEmitter
         """
         wrapped_emitter = None
+        recoverable = on_accepted is not None
+
+        def accept(executor_owns_execution: bool = False) -> None:
+            nonlocal on_accepted
+            if on_accepted is not None:
+                on_accepted(executor_owns_execution)
+                on_accepted = None
+
         try:
             if device_id:
                 user_id = request.user.get("id") if request.user else None
@@ -158,10 +171,21 @@ class ExecutionDispatcher:
 
             # Update subtask status to RUNNING before dispatching
             # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-            await self._update_subtask_to_running(request.subtask_id)
+            if not already_running:
+                await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
-                await self._dispatch_sse(request, target, wrapped_emitter)
+                if on_accepted is None:
+                    await self._dispatch_sse(request, target, wrapped_emitter)
+                else:
+                    await dispatch_sse(
+                        request,
+                        target,
+                        wrapped_emitter,
+                        self.event_parser,
+                        self._build_start_event_data(request),
+                        on_accepted=accept,
+                    )
             elif target.mode == CommunicationMode.WEBSOCKET:
                 await self._dispatch_websocket(request, target, wrapped_emitter)
             elif target.mode == CommunicationMode.POLLING:
@@ -169,12 +193,25 @@ class ExecutionDispatcher:
             elif target.mode == CommunicationMode.INPROCESS:
                 await self._dispatch_inprocess(request, target, wrapped_emitter)
             else:
-                await self._dispatch_http_callback(request, target, wrapped_emitter)
+                if on_accepted is None:
+                    await self._dispatch_http_callback(request, target, wrapped_emitter)
+                else:
+                    await self._dispatch_http_callback(
+                        request,
+                        target,
+                        wrapped_emitter,
+                        on_accepted=lambda: accept(True),
+                    )
+            accept()
         except asyncio.CancelledError:
             # A cancelled SSE owner has already closed its stream. Persist the
-            # terminal state before closing the emitter, including lease loss.
-            # Remote dispatch modes retain their executor-owned lifecycle.
-            if wrapped_emitter is not None and target.mode == CommunicationMode.SSE:
+            # terminal state before closing the emitter. Recoverable pipeline
+            # jobs keep their handoff on worker cancellation or lease loss.
+            if (
+                not recoverable
+                and wrapped_emitter is not None
+                and target.mode == CommunicationMode.SSE
+            ):
                 logger.info(
                     "[ExecutionDispatcher] SSE dispatch task cancelled: "
                     "task_id=%s, subtask_id=%s",
@@ -194,13 +231,15 @@ class ExecutionDispatcher:
                         request.subtask_id,
                     )
             raise
+        except TerminalPersistenceError:
+            raise
         except Exception as e:
             logger.exception(
                 f"[ExecutionDispatcher] Dispatch error: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, error={e}"
             )
             # Try to emit error to frontend if emitter is available
-            if wrapped_emitter is not None:
+            if wrapped_emitter is not None and not recoverable:
                 try:
                     from shared.utils.error_classifier import (
                         classify_error,
@@ -696,6 +735,8 @@ class ExecutionDispatcher:
         request: ExecutionRequest,
         target: ExecutionTarget,
         emitter: ResultEmitter,
+        *,
+        on_accepted: Callable[[], None] | None = None,
     ) -> None:
         """Dispatch task via HTTP+Callback using OpenAI background mode.
 
@@ -757,6 +798,9 @@ class ExecutionDispatcher:
                     "model_config": openai_request.get("model_config", {}),
                 },
             )
+
+        if on_accepted is not None:
+            on_accepted()
 
         logger.info(
             f"[ExecutionDispatcher] HTTP+Callback dispatch (OpenAI background): "

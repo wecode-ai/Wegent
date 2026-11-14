@@ -297,6 +297,9 @@ class LoopItemService:
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         values["badges"] = issue_badges(metadata) if can_view_detail else []
+        values["resource_participants"] = (
+            metadata.get("resource_participants", []) if can_view_detail else []
+        )
         group = metadata.get("collaboration_group")
         if item.assignee_user_id or item.assignee_agent_id or item.assignee_team_id:
             group = None
@@ -390,8 +393,9 @@ class LoopItemService:
         user_id: int,
         *,
         access: CloudProjectAccess,
+        read_context: LoopItemReadContext | None = None,
     ) -> list[dict[str, object]]:
-        context = LoopItemReadContext.load(db, items, user_id, access)
+        context = read_context or LoopItemReadContext.load(db, items, user_id, access)
         return [
             self.response_values(db, item, user_id, access, read_context=context)
             for item in items
@@ -596,6 +600,7 @@ class LoopItemService:
         db.delete(collaborator)
         db.commit()
 
+    @trace_sync("loop_items.create", tracer_name="backend")
     def create(
         self,
         db: Session,
@@ -615,8 +620,10 @@ class LoopItemService:
             user_id,
             BaseRole.Developer,
         )
+        parent = None
         if values.parent_id is not None:
-            self._require_parent(db, values.parent_id, cloud_project_id)
+            parent = self._require_parent(db, values.parent_id, cloud_project_id)
+            self._require_item_access(db, parent, user_id)
         project = (
             db.query(CloudProject)
             .filter(CloudProject.id == cloud_project_id)
@@ -624,10 +631,34 @@ class LoopItemService:
             .populate_existing()
             .one()
         )
+        if values.request_id:
+            existing = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == cloud_project_id,
+                    LoopItem.created_by_user_id == user_id,
+                    LoopItem.metadata_json["creation_request_id"].as_string()
+                    == values.request_id,
+                )
+                .with_for_update()
+                .first()
+            )
+            if existing is not None:
+                self._require_item_access(db, existing, user_id)
+                if not loop_datetime_value_is_unset(existing.deleted_at):
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "Created TODO has been archived"
+                    )
+                return existing
         sequence = project.next_item_number
         project.next_item_number += 1
         payload = values.model_dump(
-            exclude={"notify_assignee", "runner_selection", "personal_task"}
+            exclude={
+                "notify_assignee",
+                "runner_selection",
+                "personal_task",
+                "request_id",
+            }
         )
         runner_selection = (
             values.runner_selection.model_dump(exclude_none=True)
@@ -648,9 +679,15 @@ class LoopItemService:
         collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
         task_metadata: dict[str, Any] = {}
+        if values.request_id:
+            task_metadata["creation_request_id"] = values.request_id
         if milestone_id is not None:
             task_metadata["milestone_id"] = milestone_id
-        task_metadata["security_level"] = default_issue_security(project)
+        task_metadata["security_level"] = (
+            "related"
+            if parent is not None and item_security(parent, project) == "related"
+            else default_issue_security(project)
+        )
         if explicit_workflow is not None:
             task_metadata["workflow"] = explicit_workflow.model_dump()
         elif values.parent_id is None and apply_project_workflow:
@@ -3190,13 +3227,17 @@ class LoopItemService:
         limit: int = MY_WORK_ITEM_LIMIT,
         cursor: str | None = None,
         assigned_only: bool = False,
+        created_only: bool = False,
         include_completed: bool = True,
         attention: bool = False,
         order: str | None = None,
     ) -> tuple[list[dict[str, object]], str | None]:
         if limit < 1 or limit > MY_WORK_ITEM_LIMIT:
             raise ValueError(f"limit must be between 1 and {MY_WORK_ITEM_LIMIT}")
-        from app.services.cloud_project_visibility import accessible_cloud_projects
+        from app.services.cloud_project_visibility import ROLES_BY_PRIORITY
+        from app.services.collaboration_permissions import (
+            collaboration_permission_service,
+        )
         from app.services.loop_items.my_work_cursor import (
             decode_my_work_cursor,
             encode_my_work_cursor,
@@ -3215,15 +3256,24 @@ class LoopItemService:
                 cast(LoopItem.updated_at, String),
             )
         )
-        projects = accessible_cloud_projects(db, user_id).all()
-        if not projects:
+        project_roles = collaboration_permission_service.filter(db, user_id).all()
+        if not project_roles:
             return [], None
-        project_by_id = {project.id: project for project in projects}
+        access_by_project = {
+            project.id: CloudProjectAccess(project, ROLES_BY_PRIORITY[priority])
+            for project, priority in project_roles
+        }
+        project_by_id = {
+            project_id: access.project
+            for project_id, access in access_by_project.items()
+        }
         my_work_filters = [
             LoopItem.cloud_project_id.in_(project_by_id),
             loop_datetime_is_unset(LoopItem.deleted_at),
             related_item_filter(user_id),
         ]
+        if created_only:
+            my_work_filters.append(LoopItem.created_by_user_id == user_id)
         if assigned_only:
             my_work_filters.append(LoopItem.assignee_user_id == user_id)
         if not include_completed:
@@ -3333,14 +3383,45 @@ class LoopItemService:
             }
             for issue_id, assignment in personal_assignments.items()
         }
+        external_index_rows = [
+            item
+            for item in items
+            if isinstance(item.metadata_json, dict)
+            and (
+                item.metadata_json.get("external_index") is True
+                or item.metadata_json.get("external_shadow") is True
+            )
+        ]
+        external_item_ids = {item.id for item in external_index_rows}
+        ordinary_items = [item for item in items if item.id not in external_item_ids]
+        ordinary_by_project: dict[str, list[LoopItem]] = {}
+        for item in ordinary_items:
+            ordinary_by_project.setdefault(item.cloud_project_id, []).append(item)
+        ordinary_views: dict[str, dict[str, object]] = {}
+        if ordinary_items:
+            read_context = LoopItemReadContext.load_for_projects(
+                db,
+                ordinary_items,
+                user_id,
+                [access_by_project[project_id] for project_id in ordinary_by_project],
+            )
+            for project_id, project_items in ordinary_by_project.items():
+                for view in self.response_values_many(
+                    db,
+                    project_items,
+                    user_id,
+                    access=access_by_project[project_id],
+                    read_context=read_context,
+                ):
+                    ordinary_views[str(view["id"])] = view
         executions_by_item: dict[str, object] = {}
-        if item_ids:
+        if external_item_ids:
             from app.models.loop_item_execution import LoopItemExecution
 
             execution_rows = (
                 db.query(LoopItemExecution)
                 .filter(
-                    LoopItemExecution.loop_item_id.in_(item_ids),
+                    LoopItemExecution.loop_item_id.in_(external_item_ids),
                 )
                 .order_by(LoopItemExecution.id.desc())
                 .all()
@@ -3366,15 +3447,6 @@ class LoopItemService:
             if team_ids
             else {}
         )
-        external_index_rows = [
-            item
-            for item in items
-            if isinstance(item.metadata_json, dict)
-            and (
-                item.metadata_json.get("external_index") is True
-                or item.metadata_json.get("external_shadow") is True
-            )
-        ]
         external_views: dict[str, dict[str, object]] = {}
         # External provider index rows are local pointers only; batch their live
         # provider reads per project so My Work does not serialize remote calls.
@@ -3460,74 +3532,14 @@ class LoopItemService:
                     }
                 )
                 continue
-            assignment_history = metadata.get(ASSIGNMENT_HISTORY_KEY)
-            status_history = metadata.get(STATUS_HISTORY_KEY)
-            cached_ai_state = self._present_cached_ai_state(
-                db, item, metadata.get(TASK_AI_STATE_KEY)
-            )
-            projected_ai_state = (
-                execution_ai_state_from_resources(
-                    execution,
-                    existing=cached_ai_state,
-                    agent=agents.get(execution.agent_id),
-                    team=teams.get(execution.team_id),
-                )
-                if execution is not None
-                else cached_ai_state
-            )
             result.append(
                 {
-                    **item.__dict__,
+                    **ordinary_views[item.id],
                     "project_key": project_by_id[item.cloud_project_id].project_key,
                     "project_name": project_by_id[item.cloud_project_id].name,
                     "has_active_task": item.id in active_task_items,
                     "task_bindings": bindings_by_item.get(item.id, []),
                     "assignment_context": contexts.get(item.id),
-                    "assignment_history": (
-                        assignment_history
-                        if isinstance(assignment_history, list)
-                        else []
-                    ),
-                    "status_history": (
-                        status_history if isinstance(status_history, list) else []
-                    ),
-                    "content_revision": content_revision(metadata),
-                    "is_unread": is_unread(metadata, user_id),
-                    "execution_id": getattr(execution, "id", None),
-                    "execution_state": (
-                        execution_display_state(execution)
-                        if execution is not None
-                        else (
-                            projected_ai_state.get("status")
-                            if isinstance(projected_ai_state, dict)
-                            else None
-                        )
-                    ),
-                    "execution_control_state": getattr(execution, "status", None),
-                    "execution_observed_state": getattr(
-                        execution, "observed_state", None
-                    ),
-                    "execution_sync_state": getattr(execution, "sync_state", None),
-                    "execution_attempt_no": getattr(execution, "attempt_no", None),
-                    "execution_last_event_seq": getattr(
-                        execution, "last_event_seq", None
-                    ),
-                    "ai_state": projected_ai_state,
-                    "processing_actor": execution_processing_actor(
-                        execution, projected_ai_state
-                    ),
-                    "human_waiting_since": execution_human_waiting_since(execution),
-                    "queued_at": getattr(execution, "queued_at", None),
-                    "execution_note": (
-                        getattr(execution, "execution_note", "") or None
-                    ),
-                    "execution_error": (
-                        getattr(execution, "error_message", "") or None
-                    ),
-                    "can_approve": self._can_approve_run(
-                        db, item=item, execution=execution, user_id=user_id
-                    ),
-                    "approval": self._approval_view(execution),
                 }
             )
         if attention:

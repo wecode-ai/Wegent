@@ -23,19 +23,31 @@ import type {
   ChatToolBlock,
 } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { isRequestUserInputBlock, requestUserInputPayloadKey } from '@/domain/requestUserInput'
+import { RequestUserInputCard, type RequestUserInputHandlers } from './RequestUserInputCard'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
-export function ProcessingTimeline({ message }: { message: ChatMessage }) {
+interface UserInputPresentation extends RequestUserInputHandlers {
+  pendingInputKeys?: ReadonlySet<string>
+}
+
+export function ProcessingTimeline({
+  message,
+  ...userInput
+}: { message: ChatMessage } & UserInputPresentation) {
   const segments = buildMessageDisplaySegments(message.blocks, message.content)
   const rows = segments.flatMap(segment => segment.rows)
   const images = generatedImagesFromBlocks(message.blocks)
   const [expanded, setExpanded] = useState(false)
   if (!rows.length && !images.length) return null
 
-  const collapsed = shouldCollapseCompletedProcessing(message.blocks, message.content, rows)
+  const collapsed =
+    !rows.some(isRequestUserInputRow) &&
+    shouldCollapseCompletedProcessing(message.blocks, message.content, rows)
   const timeline = !rows.length ? null : !collapsed ? (
     <View style={styles.timeline} testID={`processing-timeline-${message.id}`}>
       {segments.map(segment => (
-        <ProcessingSegment key={segment.id} segment={segment} />
+        <ProcessingSegment key={segment.id} segment={segment} {...userInput} />
       ))}
     </View>
   ) : (
@@ -54,7 +66,7 @@ export function ProcessingTimeline({ message }: { message: ChatMessage }) {
       {expanded ? (
         <View style={styles.completedContent} testID={`completed-processing-content-${message.id}`}>
           {segments.map(segment => (
-            <ProcessingSegment key={segment.id} segment={segment} />
+            <ProcessingSegment key={segment.id} segment={segment} {...userInput} />
           ))}
         </View>
       ) : null}
@@ -69,8 +81,42 @@ export function ProcessingTimeline({ message }: { message: ChatMessage }) {
   )
 }
 
-function ProcessingSegment({ segment }: { segment: MessageDisplaySegment }) {
-  if (segment.kind === 'tool') return <ToolProcessingSegment rows={segment.rows} />
+function ProcessingSegment({
+  segment,
+  ...userInput
+}: { segment: MessageDisplaySegment } & UserInputPresentation) {
+  if (segment.kind === 'tool') {
+    const groups: MessageDisplayRow[][] = []
+    for (const row of segment.rows) {
+      if (
+        isRequestUserInputRow(row) ||
+        !groups.length ||
+        groups.at(-1)?.some(isRequestUserInputRow)
+      )
+        groups.push([row])
+      else groups.at(-1)!.push(row)
+    }
+    return (
+      <>
+        {groups.map((rows, index) => {
+          const first = rows[0]!
+          if (first.type === 'tool' && isRequestUserInputBlock(first.block)) {
+            const key = requestUserInputPayloadKey(first.block.renderPayload)
+            return (
+              <RequestUserInputCard
+                key={key ?? first.id}
+                block={first.block}
+                active={Boolean(key && userInput.pendingInputKeys?.has(key))}
+                onRequestUserInputSubmit={userInput.onRequestUserInputSubmit}
+                onRequestUserInputSkip={userInput.onRequestUserInputSkip}
+              />
+            )
+          }
+          return <ToolProcessingSegment key={`${segment.id}:${index}`} rows={rows} />
+        })}
+      </>
+    )
+  }
   return (
     <View style={styles.narrativeSegment}>
       {segment.rows.map(row => (
@@ -85,8 +131,7 @@ function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
   const [expanded, setExpanded] = useState(false)
   const stats = processingActivityStats(rows)
   const running = rows.some(isProcessingRowRunning)
-  const lockedOpen = rows.some(isRequestUserInputRow)
-  const contentExpanded = lockedOpen || expanded
+  const contentExpanded = expanded
   const color = theme.colors.onSurfaceVariant
   const details = (
     <View style={styles.segmentDetails} testID="processing-segment-details">
@@ -99,8 +144,8 @@ function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
   return (
     <View style={styles.toolSegment} testID="processing-tool-segment">
       <Pressable
-        accessibilityRole={lockedOpen || running ? undefined : 'button'}
-        disabled={lockedOpen || running}
+        accessibilityRole={running ? undefined : 'button'}
+        disabled={running}
         onPress={() => setExpanded(current => !current)}
         style={styles.segmentHeader}
         testID="processing-segment-toggle"
@@ -167,21 +212,55 @@ function isProcessingRowRunning(row: MessageDisplayRow): boolean {
 }
 
 function isRequestUserInputRow(row: MessageDisplayRow): boolean {
-  return row.type === 'tool' && asRecord(row.block.renderPayload).kind === 'request_user_input'
+  return row.type === 'tool' && isRequestUserInputBlock(row.block)
 }
 
 function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  const preview = useMobileFilePreview()
+  const theme = useTheme()
   return (
     <View style={styles.generatedImageGallery} testID="generated-image-gallery">
-      {images.map(image => (
-        <Image
-          accessibilityLabel={image.alt}
+      {images.map((image, index) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`预览 ${image.alt}`}
+          disabled={!preview}
           key={image.id}
-          resizeMode="contain"
-          source={{ uri: image.uri }}
-          style={styles.generatedImage}
-          testID="generated-image"
-        />
+          onPress={() => {
+            const name = `generated-image-${index + 1}${image.fileExtension}`
+            if (image.workspaceFile)
+              preview?.openAttachment({
+                id: index + 1,
+                filename: name,
+                file_size: image.size,
+                mime_type: image.mimeType,
+                status: 'ready',
+                file_extension: image.fileExtension,
+                created_at: '',
+                workspace_file: image.workspaceFile,
+                image_width: image.width,
+                image_height: image.height,
+              })
+            else if (image.src) preview?.openFile({ kind: 'image', dataUri: image.src, name })
+          }}
+          testID={`generated-image-preview-${image.id}`}
+        >
+          {image.src ? (
+            <Image
+              accessibilityLabel={image.alt}
+              resizeMode="contain"
+              source={{ uri: image.src }}
+              style={styles.generatedImage}
+              testID="generated-image"
+            />
+          ) : (
+            <View style={[styles.generatedImage, styles.generatedImagePlaceholder]}>
+              <Ionicons color={theme.colors.onSurfaceVariant} name="image-outline" size={36} />
+              <Text numberOfLines={2}>{image.alt}</Text>
+              <Text variant="labelMedium">查看生成图片</Text>
+            </View>
+          )}
+        </Pressable>
       ))}
     </View>
   )
@@ -257,8 +336,6 @@ function ToolActivity({ block, kind }: { block: ChatToolBlock; kind: ToolActivit
   const theme = useTheme()
   const running = block.status !== 'done' && block.status !== 'error'
   const color = block.status === 'error' ? theme.colors.error : theme.colors.onSurfaceVariant
-  const payload = asRecord(block.renderPayload)
-  const requestQuestion = requestUserInputQuestion(payload)
   if (isContextCompactionName(block.toolName)) return <ContextCompactionActivity block={block} />
   return (
     <View style={styles.standaloneTool} testID={`tool-block-${block.id}`}>
@@ -276,20 +353,6 @@ function ToolActivity({ block, kind }: { block: ChatToolBlock; kind: ToolActivit
           {toolStatusLabel(block, kind)}
         </Text>
       </View>
-      {requestQuestion ? (
-        <View
-          style={[styles.requestCard, { backgroundColor: theme.colors.elevation.level1 }]}
-          testID="request-user-input-card"
-        >
-          <Text variant="titleSmall">{requestQuestion.header}</Text>
-          <Text variant="bodyMedium">{requestQuestion.question}</Text>
-          {requestQuestion.options.map(option => (
-            <View key={option} style={styles.requestOption}>
-              <Text variant="bodyMedium">{option}</Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
     </View>
   )
 }
@@ -311,6 +374,8 @@ function ContextCompactionActivity({ block }: { block: ChatToolBlock }) {
 
 function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
+  const paths = toolFilePaths(block)
   const error = block.status === 'error'
   return (
     <View style={styles.activityDetailRow}>
@@ -319,15 +384,39 @@ function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
         name={error ? 'alert-circle-outline' : 'checkmark-circle-outline'}
         size={16}
       />
-      <Text numberOfLines={3} style={{ color: theme.colors.onSurfaceVariant }} variant="bodyMedium">
-        {toolDetail(block)}
-      </Text>
+      {paths.length ? (
+        <View style={{ flex: 1, gap: 4 }}>
+          {paths.map(path => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${path}`}
+              disabled={!preview?.target}
+              key={path}
+              onPress={() => preview?.openWorkspaceFile(path)}
+              testID={`tool-file-preview-${block.id}-${path}`}
+            >
+              <Text numberOfLines={3} style={{ color: theme.colors.onSurfaceVariant }}>
+                {path}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <Text
+          numberOfLines={3}
+          style={{ color: theme.colors.onSurfaceVariant }}
+          variant="bodyMedium"
+        >
+          {toolDetail(block)}
+        </Text>
+      )}
     </View>
   )
 }
 
 function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
   const [expanded, setExpanded] = useState(false)
   const running = block.status !== 'done' && block.status !== 'error'
   return (
@@ -353,7 +442,19 @@ function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
       </Pressable>
       {expanded
         ? block.fileChanges.files.map(file => (
-            <View style={styles.fileActivityRow} key={`${file.oldPath ?? ''}:${file.path}`}>
+            <Pressable
+              style={styles.fileActivityRow}
+              key={`${file.oldPath ?? ''}:${file.path}`}
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${file.path}`}
+              disabled={!preview || (!block.fileChanges.source && !preview.target)}
+              onPress={() =>
+                block.fileChanges.source
+                  ? preview?.openChanges(block.fileChanges.source, file.path)
+                  : preview?.openWorkspaceFile(file.path)
+              }
+              testID={`process-file-preview-${block.id}-${file.path}`}
+            >
               <Ionicons
                 color={theme.colors.onSurfaceVariant}
                 name="document-text-outline"
@@ -376,7 +477,7 @@ function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
                   </Text>
                 </View>
               ) : null}
-            </View>
+            </Pressable>
           ))
         : null}
     </View>
@@ -467,26 +568,6 @@ function toolFilePaths(block: ChatToolBlock): string[] {
   return [...paths]
 }
 
-function requestUserInputQuestion(payload: Record<string, unknown>): {
-  header: string
-  question: string
-  options: string[]
-} | null {
-  if (payload.kind !== 'request_user_input' || !Array.isArray(payload.questions)) return null
-  const question = asRecord(payload.questions[0])
-  const options = Array.isArray(question.options)
-    ? question.options.flatMap(value => {
-        const option = asRecord(value)
-        return typeof option.label === 'string' ? [option.label] : []
-      })
-    : []
-  return {
-    header: typeof question.header === 'string' ? question.header : '需要确认',
-    question: typeof question.question === 'string' ? question.question : '',
-    options,
-  }
-}
-
 function readableToolName(name: string): string {
   return (name.split(/\.|__/).filter(Boolean).at(-1) ?? name).replaceAll('_', ' ')
 }
@@ -500,12 +581,6 @@ function isContextCompactionName(name: string): boolean {
   const normalized = name.trim().toLowerCase()
   const suffix = normalized.split(/__|\./).at(-1)
   return suffix === 'context_compaction' || suffix === 'contextcompaction'
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
 }
 
 const styles = StyleSheet.create({
@@ -568,10 +643,14 @@ const styles = StyleSheet.create({
   fileStats: { flexDirection: 'row', gap: 7 },
   additions: { color: '#00a86b' },
   deletions: { color: '#ef4444' },
-  requestCard: { borderRadius: 12, padding: 12, gap: 8 },
-  requestOption: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 10 },
   generatedImageGallery: { width: '100%', gap: 10, marginBottom: 12 },
   generatedImage: { width: '100%', height: 280, borderRadius: 12 },
+  generatedImagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 16,
+  },
   contextCompaction: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 4 },
   contextDivider: { height: StyleSheet.hairlineWidth, flex: 1 },
   contextLabel: { flexShrink: 1, fontWeight: '600' },

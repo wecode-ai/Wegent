@@ -23,6 +23,8 @@ Wework 是面向 AI 协作的桌面工作台。你可以直接打开本地项目
 - [代码工作台](./workbench.md)
 - [内置浏览器](./browser.md)
 - [设备与云端工作](./devices.md)
+- [Wework 手机版](./mobile.md)：手机主页、设备筛选与远程会话操作
+- [移动端文件预览](./mobile-file-preview.md)：浏览云设备文件、查看附件与变更、查找和系统分享
 - [插件与 Skills](./plugins-and-skills.md)
 - [设置与数据](./settings.md)
 - [故障排查](./troubleshooting.md)

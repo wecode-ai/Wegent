@@ -57,6 +57,9 @@ mod runtime_rpc_tests;
 #[path = "text_generation_tests.rs"]
 mod text_generation_tests;
 
+#[path = "default_work_item_projection_tests.rs"]
+mod default_work_item_projection_tests;
+
 #[path = "local_history_tests.rs"]
 mod local_history_tests;
 #[path = "workspace_identity_tests.rs"]
@@ -322,40 +325,6 @@ async fn create_task_persists_collaboration_member_runtime_profiles() {
             .runtime_handle["collaborationMemberRuntimeProfiles"],
         profiles
     );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn default_work_item_binding_uses_the_handler_store_path() {
-    let root = temp_runtime_work_index_path("default-work-item-store").with_extension("directory");
-    let database_path = root.join("tasks.sqlite");
-    let handler = RuntimeWorkRpcHandler {
-        task_store_path: Arc::new(database_path.clone()),
-        ..RuntimeWorkRpcHandler::new("device-1", "/bin/false")
-    };
-
-    handler.track_default_work_item_async(
-        "runtime-task-1".to_owned(),
-        "Executor-owned Issue".to_owned(),
-        "Created after runtime acceptance".to_owned(),
-    );
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        if database_path.exists() {
-            let store = LocalTaskStore::open(&database_path).unwrap();
-            if let Ok(binding) = store.find_system_task_binding("device-1", "runtime-task-1") {
-                assert_eq!(binding.task_title.as_deref(), Some("Executor-owned Issue"));
-                break;
-            }
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "executor-owned binding was not written to the handler store"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-
     let _ = fs::remove_dir_all(root);
 }
 

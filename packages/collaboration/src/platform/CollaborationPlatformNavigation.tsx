@@ -3,21 +3,20 @@
 
 import { useMemo, useState } from "react";
 import {
-  Bot,
+  CloudOff,
   ChevronRight,
   Ellipsis,
   FolderOpen,
   FolderPlus,
-  Monitor,
   Plus,
   Settings,
   SquarePen,
-  UsersRound,
-  UserRound,
 } from "lucide-react";
 import { ActionMenu } from "../controls/ActionMenu";
-import { Tooltip } from "../issue-detail/Tooltip";
-import { StandInIcon } from "../StandInIcon";
+import {
+  CollaborationPrimaryNavigation,
+  CollaborationManagementNavigation,
+} from "./CollaborationPrimaryNavigation";
 import { canAccessCollaborationProjectView } from "../permissions";
 import type {
   CollaborationProject,
@@ -43,7 +42,6 @@ export function CollaborationPlatformNavigation({
   canCreateWorkspace,
   onCreateWorkspace,
   onCreateProject,
-  onNewConversation,
   onCreateStandaloneProject,
   onArchiveProject,
   footer,
@@ -63,7 +61,6 @@ export function CollaborationPlatformNavigation({
     mode: "blank" | "folder" | "existing",
   ): void;
   onCreateStandaloneProject(location: CollaborationDomain): void;
-  onNewConversation(project: CollaborationProject): void;
   onArchiveProject(project: CollaborationProject): void;
   footer?: React.ReactNode;
 }) {
@@ -73,14 +70,24 @@ export function CollaborationPlatformNavigation({
         workspaces,
         projects,
         workspaceNavigationContext,
+        host.capabilities.projectNavigation === "projects"
+          ? messages.defaultProjectWorkspace
+          : undefined,
       ),
-    [projects, workspaces, workspaceNavigationContext],
+    [
+      projects,
+      workspaces,
+      workspaceNavigationContext,
+      host.capabilities.projectNavigation,
+      messages.defaultProjectWorkspace,
+    ],
   );
-  const selectedProjectWorkspaceId = projects.find(
-    (project) => project.id === host.location.projectId,
-  )?.workspace_id;
+  const selectedProjectWorkspaceId = [...projectsByWorkspace].find(
+    ([, items]) =>
+      items.some((project) => project.id === host.location.projectId),
+  )?.[0];
   const selectedWorkspaceId =
-    host.location.workspaceId ?? selectedProjectWorkspaceId ?? null;
+    selectedProjectWorkspaceId ?? host.location.workspaceId ?? null;
   const autoExpandedWorkspaceId =
     selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id ?? null;
   const [workspaceExpansion, setWorkspaceExpansion] = useState<
@@ -128,8 +135,10 @@ export function CollaborationPlatformNavigation({
       return next;
     });
   };
+  const allowLocalProjects =
+    host.capabilities.workspaceLocations?.includes("local") ?? true;
   const localWorkspace = workspaces.find(
-    (workspace) => workspace.location === "local",
+    (workspace) => allowLocalProjects && workspace.location === "local",
   );
   const createWorkspaceButton = canCreateWorkspace ? (
     <button
@@ -149,6 +158,8 @@ export function CollaborationPlatformNavigation({
     candidate: ReturnType<
       typeof buildWorkspaceNavigation
     >["workspaces"][number]["workspace"],
+    isDefault = false,
+    canOpen = true,
   ) => (
     <ActionMenu
       ariaLabel={messages.settings}
@@ -158,52 +169,74 @@ export function CollaborationPlatformNavigation({
           label: messages.addProject,
           icon: Plus,
           testId: "collaboration-workspace-nav-create-project",
-          children: [
-            {
-              label: messages.blankProject,
-              icon: SquarePen,
-              testId: "collaboration-workspace-nav-create-blank-project",
-              onSelect: () => onCreateProject(candidate.id, "blank"),
-            },
-            ...(candidate.location === "local" && host.renderProjectImporter
-              ? [
+          disabled:
+            isDefault &&
+            (host.capabilities.projectLocation ?? domain) === "local" &&
+            !localWorkspace,
+          ...(isDefault
+            ? {
+                onSelect: () =>
+                  onCreateStandaloneProject(
+                    host.capabilities.projectLocation ?? domain,
+                  ),
+              }
+            : {
+                children: [
                   {
-                    label: messages.addFolder,
-                    icon: FolderPlus,
-                    testId: "collaboration-workspace-nav-add-folder",
-                    onSelect: () => onCreateProject(candidate.id, "folder"),
+                    label: messages.blankProject,
+                    icon: SquarePen,
+                    testId: "collaboration-workspace-nav-create-blank-project",
+                    onSelect: () => onCreateProject(candidate.id, "blank"),
                   },
-                  {
-                    label: messages.importExistingProject,
-                    icon: FolderOpen,
-                    testId:
-                      "collaboration-workspace-nav-import-existing-project",
-                    onSelect: () => onCreateProject(candidate.id, "existing"),
-                  },
-                ]
-              : []),
-          ],
+                  ...(candidate.location === "local" &&
+                  localWorkspace &&
+                  host.renderProjectImporter
+                    ? [
+                        {
+                          label: messages.addFolder,
+                          icon: FolderPlus,
+                          testId: "collaboration-workspace-nav-add-folder",
+                          onSelect: () =>
+                            onCreateProject(localWorkspace!.id, "folder"),
+                        },
+                        {
+                          label: messages.importExistingProject,
+                          icon: FolderOpen,
+                          testId:
+                            "collaboration-workspace-nav-import-existing-project",
+                          onSelect: () =>
+                            onCreateProject(localWorkspace!.id, "existing"),
+                        },
+                      ]
+                    : []),
+                ],
+              }),
         },
-        {
-          separator: true,
-          label: "",
-          testId: "collaboration-workspace-nav-project-separator",
-        },
-        {
-          label: messages.settings,
-          icon: Settings,
-          testId: "collaboration-workspace-nav-settings",
-          onSelect: () => {
-            host.navigate({
-              platformView: "spaces",
-              workspaceId: candidate.id,
-              workspaceView: "settings",
-              projectId: null,
-              projectView: "board",
-              issueId: null,
-            });
-          },
-        },
+        ...(canOpen
+          ? [
+              {
+                separator: true,
+                label: "",
+                testId: "collaboration-workspace-nav-project-separator",
+              },
+              {
+                label: messages.settings,
+                icon: Settings,
+                testId: "collaboration-workspace-nav-settings",
+                onSelect: () => {
+                  host.navigate({
+                    platformView: "spaces",
+                    workspaceId: candidate.id,
+                    collaborationDomain: candidate.location,
+                    workspaceView: "settings",
+                    projectId: null,
+                    projectView: "board",
+                    issueId: null,
+                  });
+                },
+              },
+            ]
+          : []),
       ]}
       placement="bottom-end"
       showTriggerTooltip={false}
@@ -218,21 +251,23 @@ export function CollaborationPlatformNavigation({
   const renderWorkspaceGroup = ({
     workspace: candidate,
     canOpen,
+    isDefault,
   }: ReturnType<typeof buildWorkspaceNavigation>["workspaces"][number]) => {
     const expanded = workspaceExpansion.get(candidate.id) ?? projectFirst;
     const candidateProjects = projectsByWorkspace.get(candidate.id) ?? [];
     const workspaceActive =
       host.location.workspaceId === candidate.id && !host.location.projectId;
     const canManageWorkspace =
-      canOpen &&
-      "access_role" in candidate &&
-      (candidate.access_role === "Owner" ||
-        candidate.access_role === "Maintainer");
+      isDefault ||
+      (canOpen &&
+        "access_role" in candidate &&
+        (candidate.access_role === "Owner" ||
+          candidate.access_role === "Maintainer"));
     return (
       <section
         className="collaboration-workspace-group"
         data-testid={`collaboration-workspace-tree-${candidate.id}`}
-        key={candidate.id}
+        key={isDefault ? "personal-group" : candidate.id}
       >
         <div
           className={`collaboration-workspace-row${
@@ -291,7 +326,7 @@ export function CollaborationPlatformNavigation({
           )}
           {canManageWorkspace ? (
             <div className="collaboration-workspace-actions">
-              {renderWorkspaceActions(candidate)}
+              {renderWorkspaceActions(candidate, isDefault, canOpen)}
             </div>
           ) : null}
           {candidateProjects.length > 0 ? (
@@ -320,7 +355,6 @@ export function CollaborationPlatformNavigation({
                 project={project}
                 host={host}
                 messages={messages}
-                onNewConversation={onNewConversation}
                 onArchiveProject={onArchiveProject}
               />
             ))}
@@ -339,377 +373,98 @@ export function CollaborationPlatformNavigation({
           <div className="collaboration-platform-brand">
             {messages.collaborationHome}
           </div>
-          <nav
-            className="collaboration-primary-navigation"
-            aria-label={messages.collaborationSpaces}
-          >
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId &&
-                (host.location.rootView ?? "home") === "home"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId &&
-                (host.location.rootView ?? "home") === "home"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-home"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "home",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              {host.renderPersonalHome ? <UserRound aria-hidden="true" /> : <Plus aria-hidden="true" />}
-              <span>{host.renderPersonalHome ? messages.personalHome : messages.home}</span>
-            </button>
-            {host.renderStandInPage && (
-              <button
-                type="button"
-                data-testid="collaboration-primary-stand-in"
-                className={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "stand-in"
-                    ? "active"
-                    : undefined
-                }
-                aria-current={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "stand-in"
-                    ? "page"
-                    : undefined
-                }
-                onClick={() =>
-                  host.navigate({
-                    platformView: "spaces",
-                    collaborationDomain: domain,
-                    rootView: "stand-in",
-                    workspaceId: null,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                <StandInIcon />
-                <span>{messages.standIn}</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId &&
-                host.location.rootView === "agents"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId &&
-                host.location.rootView === "agents"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-agents"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "agents",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <Bot aria-hidden="true" />
-              <span>{messages.agents}</span>
-            </button>
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId && host.location.rootView === "teams"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId && host.location.rootView === "teams"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-teams"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "teams",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <UsersRound aria-hidden="true" />
-              <span>{messages.teams}</span>
-            </button>
-            <button
-              type="button"
-              className={
-                !host.location.workspaceId &&
-                host.location.rootView === "devices"
-                  ? "active"
-                  : undefined
-              }
-              aria-current={
-                !host.location.workspaceId &&
-                host.location.rootView === "devices"
-                  ? "page"
-                  : undefined
-              }
-              data-testid="collaboration-primary-devices"
-              onClick={() =>
-                host.navigate({
-                  platformView: "spaces",
-                  collaborationDomain: domain,
-                  rootView: "devices",
-                  workspaceId: null,
-                  workspaceView: "home",
-                  projectId: null,
-                  projectView: "board",
-                  issueId: null,
-                })
-              }
-            >
-              <Monitor aria-hidden="true" />
-              <span>{messages.devices}</span>
-            </button>
-            {host.templateStore && host.templateNavigation && (
-              <button
-                type="button"
-                className={
-                  !host.location.workspaceId &&
-                  host.location.rootView === "templates"
-                    ? "active"
-                    : undefined
-                }
-                aria-current={
-                  host.location.rootView === "templates" ? "page" : undefined
-                }
-                data-testid="collaboration-primary-templates"
-                onClick={() =>
-                  host.navigate({
-                    ...host.location,
-                    platformView: "spaces",
-                    rootView: "templates",
-                    workspaceId: null,
-                    workspaceView: "home",
-                    projectId: null,
-                    projectView: "board",
-                    issueId: null,
-                  })
-                }
-              >
-                <UsersRound aria-hidden="true" />
-                <span>{messages.templates}</span>
-              </button>
-            )}
-          </nav>
+          <CollaborationPrimaryNavigation
+            domain={domain}
+            host={host}
+            messages={messages}
+          />
         </>
       ) : null}
-      {!projectFirst ? (
-        <div className="collaboration-workspace-section-heading">
-          {fullSidebar ? (
-            <span
-              className="collaboration-workspace-section-title"
-              data-testid="collaboration-workspaces-section-title"
-            >
-              {messages.collaborationSpaces}
-            </span>
-          ) : (
+      <div
+        className="collaboration-projects-scroll"
+        data-testid="collaboration-projects-scroll"
+      >
+        {!projectFirst ? (
+          <div className="collaboration-workspace-section-heading">
+            {fullSidebar ? (
+              <span
+                className="collaboration-workspace-section-title"
+                data-testid="collaboration-workspaces-section-title"
+              >
+                {messages.collaborationSpaces}
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="collaboration-workspace-section-toggle"
+                aria-expanded={workspacesExpanded}
+                data-testid="collaboration-workspaces-section-toggle"
+                onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
+              >
+                <span>{messages.collaborationSpaces}</span>
+                <ChevronRight aria-hidden="true" />
+              </button>
+            )}
+            <div className="collaboration-workspace-section-actions">
+              {createWorkspaceButton}
+            </div>
+          </div>
+        ) : null}
+        {navigationIncomplete ? (
+          <div
+            className="collaboration-navigation-error"
+            role="alert"
+            data-testid="collaboration-navigation-error"
+          >
+            <span>{messages.navigationLoadFailed}</span>
             <button
               type="button"
-              className="collaboration-workspace-section-toggle"
-              aria-expanded={workspacesExpanded}
-              data-testid="collaboration-workspaces-section-toggle"
-              onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
-            >
-              <span>{messages.collaborationSpaces}</span>
-              <ChevronRight aria-hidden="true" />
-            </button>
-          )}
-          <div className="collaboration-workspace-section-actions">
-            {createWorkspaceButton}
-          </div>
-        </div>
-      ) : null}
-      {navigationIncomplete ? (
-        <div
-          className="collaboration-navigation-error"
-          role="alert"
-          data-testid="collaboration-navigation-error"
-        >
-          <span>{messages.navigationLoadFailed}</span>
-          <button
-            type="button"
-            className="collaboration-link-button"
-            data-testid="collaboration-navigation-retry"
-            disabled={retryingNavigation}
-            onClick={async () => {
-              setRetryingNavigation(true);
-              try {
-                await onRetryNavigation();
-              } finally {
-                setRetryingNavigation(false);
-              }
-            }}
-          >
-            {messages.retryNavigation}
-          </button>
-        </div>
-      ) : null}
-      {projectFirst
-        ? (["local", "cloud"] as const).map((location) => (
-            <section
-              key={location}
-              className={`collaboration-project-group-${location}`}
-              data-testid={`collaboration-project-group-${location}`}
-            >
-              <div
-                data-testid={
-                  location === "local" && localWorkspace
-                    ? `collaboration-workspace-tree-${localWorkspace.id}`
-                    : undefined
+              className="collaboration-link-button"
+              data-testid="collaboration-navigation-retry"
+              disabled={retryingNavigation}
+              onClick={async () => {
+                setRetryingNavigation(true);
+                try {
+                  await onRetryNavigation();
+                } finally {
+                  setRetryingNavigation(false);
                 }
-              >
-                <div className="collaboration-workspace-section-heading">
-                  {location === "local" && localWorkspace ? (
-                    <button
-                      type="button"
-                      className="collaboration-workspace-identity collaboration-local-projects-heading"
-                      data-testid={
-                        host.location.workspaceId === localWorkspace.id
-                          ? "collaboration-workspace-nav-projects"
-                          : `collaboration-workspace-home-${localWorkspace.id}`
-                      }
-                      aria-current={
-                        host.location.workspaceId === localWorkspace.id &&
-                        !host.location.projectId
-                          ? "page"
-                          : undefined
-                      }
-                      onClick={() =>
-                        openWorkspaceHome(localWorkspace.id, "local")
-                      }
-                    >
-                      <span
-                        data-testid={`collaboration-workspace-${localWorkspace.id}`}
-                      >
-                        {messages.localProjects}
-                      </span>
-                    </button>
-                  ) : (
-                    <span className="collaboration-workspace-section-title">
-                      {location === "local"
-                        ? messages.localProjects
-                        : messages.remoteProjects}
-                    </span>
-                  )}
-                  <div className="collaboration-workspace-section-actions">
-                    {location === "cloud" ? createWorkspaceButton : null}
-                    {location === "local" &&
-                    localWorkspace &&
-                    ["Owner", "Maintainer"].includes(localWorkspace.access_role)
-                      ? renderWorkspaceActions(localWorkspace)
-                      : null}
-                    <button
-                      type="button"
-                      className="collaboration-workspace-section-create"
-                      aria-label={
-                        location === "local"
-                          ? messages.createLocalProject
-                          : messages.createRemoteProject
-                      }
-                      title={
-                        location === "local"
-                          ? messages.createLocalProject
-                          : messages.createRemoteProject
-                      }
-                      data-testid={`collaboration-project-create-${location}`}
-                      onClick={() => onCreateStandaloneProject(location)}
-                      disabled={
-                        location === "local" &&
-                        !workspaces.some(
-                          (workspace) => workspace.location === "local",
-                        )
-                      }
-                    >
-                      <Plus aria-hidden="true" />
-                    </button>
-                  </div>
-                </div>
-                <nav
-                  className="collaboration-workspace-project-list"
-                  aria-label={
-                    location === "local"
-                      ? messages.localProjects
-                      : messages.remoteProjects
-                  }
-                >
-                  {projects
-                    .filter(
-                      (project) =>
-                        (location === "local" ||
-                          !project.workspace_id ||
-                          !navigationWorkspaces.some(
-                            ({ workspace }) =>
-                              workspace.id === project.workspace_id,
-                          )) &&
-                        (project.project_store === "local"
-                          ? "local"
-                          : "cloud") === location,
-                    )
-                    .map((project) => (
-                      <ProjectNavigationRow
-                        key={project.id}
-                        project={project}
-                        host={host}
-                        messages={messages}
-                        onNewConversation={onNewConversation}
-                        onArchiveProject={onArchiveProject}
-                      />
-                    ))}
-                </nav>
-                <div className="collaboration-workspace-tree">
-                  {navigationWorkspaces
-                    .filter(
-                      ({ workspace }) =>
-                        location === "cloud" && workspace.location === "cloud",
-                    )
-                    .map(renderWorkspaceGroup)}
-                </div>
+              }}
+            >
+              {messages.retryNavigation}
+            </button>
+          </div>
+        ) : null}
+        {projectFirst ? (
+          <>
+            <div className="collaboration-workspace-section-heading">
+              <span className="collaboration-workspace-section-title">
+                {messages.projects}
+              </span>
+              <div className="collaboration-workspace-section-actions">
+                {createWorkspaceButton}
               </div>
-            </section>
-          ))
-        : null}
-      {!projectFirst && (fullSidebar || workspacesExpanded) ? (
-        <div className="collaboration-workspace-tree">
-          {navigationWorkspaces.map(renderWorkspaceGroup)}
-        </div>
+            </div>
+            <div
+              className="collaboration-workspace-tree"
+              data-testid="collaboration-project-tree"
+            >
+              {navigationWorkspaces.map(renderWorkspaceGroup)}
+            </div>
+          </>
+        ) : null}
+        {!projectFirst && (fullSidebar || workspacesExpanded) ? (
+          <div className="collaboration-workspace-tree">
+            {navigationWorkspaces.map(renderWorkspaceGroup)}
+          </div>
+        ) : null}
+      </div>
+      {fullSidebar ? (
+        <CollaborationManagementNavigation
+          domain={domain}
+          host={host}
+          messages={messages}
+        />
       ) : null}
       {footer ? (
         <div className="collaboration-platform-sidebar-footer">{footer}</div>
@@ -722,17 +477,18 @@ function ProjectNavigationRow({
   project,
   host,
   messages,
-  onNewConversation,
   onArchiveProject,
 }: {
   project: CollaborationProject;
   host: CollaborationPlatformHostAdapter;
   messages: PlatformMessages;
-  onNewConversation(project: CollaborationProject): void;
   onArchiveProject(project: CollaborationProject): void;
 }) {
   return (
-    <div className="collaboration-workspace-project-row" key={project.id}>
+    <div
+      className={`collaboration-workspace-project-row${project.project_store === "local" ? " has-offline-project" : ""}`}
+      key={project.id}
+    >
       <button
         type="button"
         className={`collaboration-workspace-project${
@@ -759,27 +515,53 @@ function ProjectNavigationRow({
         {host.renderProjectSidebarBadge?.(project)}
         <span>{project.name}</span>
       </button>
-      <div className="collaboration-project-row-actions">
-        <Tooltip
-          label={messages.newConversation}
-          className="collaboration-project-action-anchor"
-        >
+      {project.project_store === "local" ? (
+        host.convertLocalProjectToCloud ? (
           <button
             type="button"
-            className="collaboration-project-new-conversation"
-            aria-label={`${messages.newConversation} · ${project.name}`}
-            data-testid={`collaboration-project-new-conversation-${project.id}`}
-            onClick={() => onNewConversation(project)}
+            className="collaboration-project-offline"
+            data-testid={`collaboration-project-convert-${project.id}`}
+            aria-label={messages.convertProjectToCloud}
+            title={messages.convertProjectToCloud}
+            onClick={() => host.convertLocalProjectToCloud?.(project)}
           >
-            <SquarePen aria-hidden="true" />
+            <CloudOff aria-hidden="true" />
           </button>
-        </Tooltip>
+        ) : (
+          <span
+            className="collaboration-project-offline"
+            title={messages.offlineProject}
+            role="img"
+            aria-label={messages.offlineProject}
+          >
+            <CloudOff aria-hidden="true" />
+          </span>
+        )
+      ) : null}
+      <div className="collaboration-project-row-actions">
         {canAccessCollaborationProjectView(project, "manage") && (
           <ActionMenu
             ariaLabel={`${messages.projectActions} · ${project.name}`}
             testId={`collaboration-project-menu-${project.id}`}
             triggerClassName="collaboration-project-new-conversation"
             items={[
+              {
+                label: messages.projectSettings,
+                icon: Settings,
+                testId: `collaboration-project-settings-${project.id}`,
+                onSelect: () =>
+                  host.navigate({
+                    platformView: "spaces",
+                    collaborationDomain:
+                      project.project_store === "local" ? "local" : "cloud",
+                    workspaceId: project.workspace_id ?? null,
+                    workspaceView: "projects",
+                    projectId: project.id,
+                    projectView: "manage",
+                    projectSettingsSection: "project",
+                    issueId: null,
+                  }),
+              },
               {
                 label: messages.archiveProject,
                 testId: `collaboration-project-archive-${project.id}`,

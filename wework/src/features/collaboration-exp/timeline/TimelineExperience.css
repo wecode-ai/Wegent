@@ -1,0 +1,454 @@
+[data-testid='collaboration-exp-app'] .experience-task-timeline {
+  --experience-row-inset: max(24px, calc((100% - 720px) / 2));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: rgb(var(--color-bg-base));
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-context {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-document {
+  width: 100%;
+  margin: 0;
+  padding: 12px 0 32px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-background {
+  margin: 0 var(--experience-row-inset) 28px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.8;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-background summary {
+  cursor: pointer;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-background p {
+  margin: 12px 0;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-background ul {
+  padding-left: 20px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 var(--experience-row-inset) 28px;
+  font-size: var(--text-sm);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-tools > div {
+  display: flex;
+  gap: 4px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-tools button {
+  height: auto;
+  min-height: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: rgb(var(--color-text-secondary));
+  background: transparent;
+  font-size: var(--text-xs);
+  font-weight: 400;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-tools button[aria-pressed='true'] {
+  color: rgb(var(--color-text-primary));
+  background: rgb(var(--color-bg-quiet));
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  margin: 0;
+  padding: 16px var(--experience-row-inset) 24px calc(var(--experience-row-inset) + 24px);
+  border: 0;
+  border-radius: 0;
+  scroll-margin-block: 24px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node::after {
+  position: absolute;
+  top: 42px;
+  bottom: 0;
+  left: calc(var(--experience-row-inset) + 9px);
+  width: 1px;
+  background: rgb(var(--color-border));
+  content: '';
+  pointer-events: none;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-matter-events
+  > .experience-timeline-node:last-child::after {
+  display: none;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-rail {
+  position: absolute;
+  top: 16px;
+  left: var(--experience-row-inset);
+  display: grid;
+  width: 19px;
+  height: 23px;
+  place-items: center;
+  color: rgb(var(--color-text-muted));
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-rail svg {
+  width: 14px;
+  height: 14px;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-state='recorded']
+  .experience-timeline-rail
+  svg {
+  width: 10px;
+  height: 10px;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-state='completed']
+  .experience-timeline-rail {
+  color: rgb(var(--color-success-text));
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-state='failed']
+  .experience-timeline-rail {
+  color: rgb(var(--color-destructive));
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-state='running']
+  .experience-timeline-rail {
+  color: rgb(var(--color-focus));
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-state='running']
+  .experience-timeline-rail
+  svg {
+  animation: experience-timeline-running 1.6s linear infinite;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 23px;
+  font-size: var(--text-xs);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node > header strong {
+  font-weight: 600;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node-state,
+[data-testid='collaboration-exp-app'] .experience-timeline-node time {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node time {
+  margin-left: auto;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-state='running']
+  .experience-timeline-node-state {
+  color: rgb(var(--color-accent-text));
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-summary {
+  margin: 8px 0 0;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.85;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-summary p {
+  margin: 0;
+}
+
+[data-testid='collaboration-exp-app']
+  .experience-timeline-node[data-self]
+  > .experience-timeline-summary {
+  color: rgb(var(--color-text-primary));
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node[data-linked] {
+  overflow: clip;
+  background: rgb(var(--color-bg-quiet));
+  box-shadow: inset 2px 0 rgb(var(--color-text-secondary));
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-node[data-linked]::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 32%,
+    color-mix(in srgb, rgb(var(--color-text-primary)) 7%, transparent) 50%,
+    transparent 68%
+  );
+  animation: experience-timeline-selection-wave 7s linear infinite;
+  content: '';
+  pointer-events: none;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-attachments button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  height: auto;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  background: rgb(var(--color-bg-surface));
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-attachments button:hover {
+  background: rgb(var(--color-bg-hover));
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-attachments button > svg {
+  flex-shrink: 0;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-attachments span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-attachments small {
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-caption);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-private-link {
+  height: auto;
+  min-height: 40px;
+  margin-top: 12px;
+  padding: 0;
+  color: rgb(var(--color-text-muted));
+  background: transparent;
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-private-link:hover {
+  color: rgb(var(--color-text-primary));
+  background: transparent;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-source-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 8px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-source-note svg {
+  flex-shrink: 0;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-execution {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-execution-link {
+  justify-content: flex-start;
+  width: 100%;
+  height: auto;
+  padding: 8px 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-execution-link > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+[data-testid='collaboration-exp-app'] .experience-timeline-execution-link small {
+  font-size: var(--experience-text-caption);
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-attachment-index {
+  margin: 20px var(--experience-row-inset);
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-attachment-index h2 {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-turn {
+  margin: 0;
+  padding: 20px var(--experience-row-inset);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-turn-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-turn h2 {
+  margin: 12px 0 8px;
+  font-size: var(--text-h3);
+  line-height: 1.5;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-turn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-process {
+  height: auto;
+  min-height: 44px;
+  padding: 0 15px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: rgb(var(--color-primary-contrast));
+  background: rgb(var(--color-primary));
+  font-size: var(--text-sm);
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-process:hover {
+  background: color-mix(in srgb, rgb(var(--color-primary)) 88%, rgb(var(--color-text-secondary)));
+}
+
+[data-testid='collaboration-exp-app'] .experience-matter-turn > small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 12px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--experience-text-label);
+}
+
+@keyframes experience-timeline-selection-wave {
+  from {
+    transform: translateX(-75%);
+  }
+  to {
+    transform: translateX(75%);
+  }
+}
+
+@keyframes experience-timeline-running {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (width <= 767px) {
+  [data-testid='collaboration-exp-app'] .experience-task-timeline {
+    --experience-row-inset: 16px;
+    --experience-turn-title-mobile: 17px;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-matter-context {
+    padding: 10px 16px;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-matter-document {
+    padding-bottom: 24px;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-matter-background summary,
+  [data-testid='collaboration-exp-app'] .experience-timeline-tools button,
+  [data-testid='collaboration-exp-app'] .experience-timeline-attachments button,
+  [data-testid='collaboration-exp-app'] .experience-timeline-execution-link,
+  [data-testid='collaboration-exp-app'] .experience-timeline-private-link,
+  [data-testid='collaboration-exp-app'] .experience-matter-process {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-matter-process {
+    width: 100%;
+  }
+
+  [data-testid='collaboration-exp-app'] .experience-matter-turn h2 {
+    font-size: var(--experience-turn-title-mobile);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-testid='collaboration-exp-app'] .experience-timeline-node[data-linked]::before {
+    animation: none;
+    background: transparent;
+  }
+
+  [data-testid='collaboration-exp-app']
+    .experience-timeline-node[data-state='running']
+    .experience-timeline-rail
+    svg {
+    animation: none;
+  }
+}

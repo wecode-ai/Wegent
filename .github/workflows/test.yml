@@ -231,12 +231,14 @@ jobs:
           echo 'cargo test --locked' > ../.ci-artifacts/backend-rs-tests/command.txt
           cargo test --locked 2>&1 | tee ../.ci-artifacts/backend-rs-tests/cargo-test.log
 
-      - name: Verify Socket.IO device heartbeat with Redis
+      - name: Verify Socket.IO device registration and heartbeat
         working-directory: backend-rs
         env:
           REDIS_URL: redis://127.0.0.1:6379/0
           WEGENT_BACKEND_RS_ENV_FILE: /dev/null
           SECRET_KEY: heartbeat-e2e-signing-key
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+          WEGENT_RS_UNIQUE_APP_DEVICE_NAMES: "1"
         run: |
           set -o pipefail
           cargo test --locked --test device_heartbeat_redis -- --ignored --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-heartbeat-redis.log
@@ -272,6 +274,13 @@ jobs:
           set -o pipefail
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
+
+      - name: Verify dispatch readiness with a lagging MySQL reader
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib running_transition_commits_before_dispatch_when_replica_has_no_subtask -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/running-transition-mysql.log
 
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
@@ -334,6 +343,13 @@ jobs:
           set -o pipefail
           cargo test --locked --lib project_coordination::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-coordination-mysql.log
+
+      - name: Verify independent Issue invitations and transactions with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked -p wegent-backend-rs --lib personal_issues::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/personal-issues-mysql.log
 
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
@@ -568,6 +584,9 @@ jobs:
         run: |
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
+          cargo test -p wegent-plugin-packages --all-features --lib services::workbench::recovery::tests
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::plugin_sync_protocol::tests::package_recovery_tests
+          cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::journal::tests
           cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
           cargo test --all-features --lib effective_instructions_tests
@@ -799,7 +818,7 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1
@@ -820,18 +839,27 @@ jobs:
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
-        run: node --test wework/scripts/ci-test-sequencer.test.mjs
+        run: node --test wework/scripts/ci-test-sequencer.test.mjs .github/scripts/node-async-resource-diagnostics.test.mjs
 
       - name: Verify delegated work command and history contracts
         if: matrix.shard == 1
         run: node --test wework/scripts/dots-command-result.test.mjs wework/scripts/dots-history-navigation.test.mjs
+
+      - name: Verify collaboration experiment desktop contracts
+        if: matrix.shard == 1
+        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs
 
       - name: Run Wework tests
         env:
           TZ: Asia/Shanghai
           WEWORK_CI_BALANCED_SHARDS: "true"
           WEWORK_TEST_TIMING_FILE: ${{ runner.temp }}/wework-unit-timings.json
+          WEWORK_ELECTRON_TRACE_OPTIONS: >-
+            --trace-event-categories=node.fs.async,node.fs.sync,node.perf
+            --trace-event-file-pattern=${{ github.workspace }}/.ci-artifacts/wework-tests/electron-trace-${pid}-${rotation}.json
+            --import=${{ github.workspace }}/.github/scripts/node-async-resource-diagnostics.mjs
         run: |
+          mkdir -p .ci-artifacts/wework-tests
           WEWORK_TEST_REPORT_FILE=../.ci-artifacts/wework-tests/renderer.xml \
           pnpm --filter wework exec vitest run \
             --passWithNoTests \
@@ -841,7 +869,11 @@ jobs:
           electron_pid=
           if [[ "${{ matrix.shard }}" == "1" ]]; then
             WEWORK_TEST_REPORT_FILE=../../.ci-artifacts/wework-tests/electron.xml \
-            pnpm --dir wework/electron test &
+            NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$WEWORK_ELECTRON_TRACE_OPTIONS" \
+            WEWORK_NODE_DIAGNOSTIC_DIR="${{ github.workspace }}/.ci-artifacts/wework-tests/async-resources" \
+            RUNNER_RESOURCE_SAMPLE_INTERVAL_MS=1000 \
+            RUNNER_RESOURCE_LOG_PATH=.ci-artifacts/wework-tests/electron-resources.jsonl \
+            node .github/scripts/run-with-resource-logging.mjs pnpm --dir wework/electron test &
             electron_pid=$!
           fi
 

@@ -646,6 +646,7 @@ async def persist_completed_result(
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
     expected_status: Optional[str] = None,
+    expected_device: tuple[int, str] | None = None,
 ) -> bool:
     """Persist a terminal result and clean up streaming state.
 
@@ -670,8 +671,9 @@ async def persist_completed_result(
         normalized_status,
         **update_kwargs,
         expected_status=expected_status,
+        **({"expected_device": expected_device} if expected_device is not None else {}),
     )
-    if expected_status is not None and not persisted:
+    if not persisted:
         return False
     if normalized_status == "COMPLETED":
         await _persist_standalone_workspace_path(task_id, result)

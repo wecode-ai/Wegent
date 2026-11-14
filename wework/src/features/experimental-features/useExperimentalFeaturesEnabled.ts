@@ -1,68 +1,12 @@
-import { useEffect, useState } from 'react'
 import {
-  APP_PREFERENCES_CHANGED_EVENT,
-  getAppPreferences,
-  type AppPreferences,
-} from '@/desktop/appPreferences'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+  useAppPreferenceFeatureState,
+  type AppPreferenceFeatureState,
+} from './useAppPreferenceFeatureState'
 
-export interface ExperimentalFeaturesState {
-  enabled: boolean
-  loaded: boolean
-}
+export type ExperimentalFeaturesState = AppPreferenceFeatureState
 
 export function useExperimentalFeaturesState(): ExperimentalFeaturesState {
-  const appPreferences = useAppPreferencesState()
-  const [fallbackState, setFallbackState] = useState<ExperimentalFeaturesState>({
-    enabled: false,
-    loaded: false,
-  })
-
-  useEffect(() => {
-    if (appPreferences) return undefined
-
-    let cancelled = false
-    let preferenceChanged = false
-
-    void getAppPreferences()
-      .then(preferences => {
-        if (!cancelled && !preferenceChanged) {
-          setFallbackState({
-            enabled: preferences.experimentalFeaturesEnabled,
-            loaded: true,
-          })
-        }
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to load experimental feature preference', error)
-        if (!cancelled && !preferenceChanged) {
-          setFallbackState({ enabled: false, loaded: true })
-        }
-      })
-
-    const handlePreferencesChanged = (event: Event) => {
-      preferenceChanged = true
-      setFallbackState({
-        enabled: (event as CustomEvent<AppPreferences>).detail.experimentalFeaturesEnabled,
-        loaded: true,
-      })
-    }
-    window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
-
-    return () => {
-      cancelled = true
-      window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
-    }
-  }, [appPreferences])
-
-  if (appPreferences) {
-    return {
-      enabled: appPreferences.preferences.experimentalFeaturesEnabled,
-      loaded: appPreferences.loaded,
-    }
-  }
-
-  return fallbackState
+  return useAppPreferenceFeatureState('experimentalFeaturesEnabled')
 }
 
 export function useExperimentalFeaturesEnabled(): boolean {

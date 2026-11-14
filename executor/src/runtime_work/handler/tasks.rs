@@ -894,16 +894,11 @@ impl RuntimeWorkRpcHandler {
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
         }
-        if !self
-            .local_task_link(&local_task_id)
-            .is_some_and(|link| link.ephemeral)
-        {
-            self.track_default_work_item_async(
-                local_task_id.clone(),
-                title.clone(),
-                string_field(&payload, "message").unwrap_or_default(),
-            );
-        }
+        let _ = self.track_default_work_item_async(
+            local_task_id.clone(),
+            title.clone(),
+            string_field(&payload, "message").unwrap_or_default(),
+        );
         match payload
             .get("friendlyTitleExecutionRequest")
             .cloned()
@@ -1448,7 +1443,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.queue_turn(turn).await?;
+            self.submit_continuation(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
         }
@@ -1980,6 +1975,10 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
+        if let Some(failure) = self.guidance_conversation_context_failure(&local_task_id, &payload)
+        {
+            return Ok(failure);
+        }
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
@@ -2015,6 +2014,11 @@ impl RuntimeWorkRpcHandler {
                         &turn_id,
                         error,
                     ));
+                }
+                if let Some(failure) =
+                    self.guidance_conversation_context_failure(&local_task_id, &payload)
+                {
+                    return Ok(failure);
                 }
                 log_executor_event(
                     "runtime guidance active turn corrected",
@@ -2066,6 +2070,17 @@ impl RuntimeWorkRpcHandler {
                 error,
             )),
         }
+    }
+
+    fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {
+        let private = self.runtime_task_is_private_discussion(task);
+        (private != (payload["conversationContext"] == "private_discussion")).then(|| {
+            json!({
+                "success":false,"accepted":false,"taskId":task,"runtime":"codex",
+                "code":"conversation_context_mismatch",
+                "error":"This message has a different conversation context from the active turn. Queue it or interrupt to start a new turn."
+            })
+        })
     }
 
     pub(super) async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {

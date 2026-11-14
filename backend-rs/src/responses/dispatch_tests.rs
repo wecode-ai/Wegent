@@ -9,361 +9,23 @@
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use brz_mysql::{
-    FromMysqlRow, Mysql, MysqlArgs, MysqlExecution, MysqlResult, MysqlRouteKey, MysqlRouting,
-    MysqlService, MysqlTransaction,
-};
-use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, SetOptions};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tracing::instrument::WithSubscriber;
 
 use super::*;
 use crate::executor_manager::ExecutorManager;
 use crate::internal_callback::completion::Tables;
 use crate::responses::create::dispatch::ExecutionRequest;
-use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
-use crate::task_store_statements::{subtask_column_index, task_column_index};
 
-const TASK_ID: i64 = 424_242;
-const SUBTASK_ID: i64 = 424_243;
+use crate::responses::test_mysql::{RecordingMysql, SUBTASK_ID, TASK_ID, TASK_OWNER_ID};
+use crate::responses::test_redis::RecordingRedis;
 
 fn tables() -> Tables {
     Tables {
         tasks: "tasks_0424",
         subtasks: "subtasks_0424",
-    }
-}
-
-/// Records every statement the completion path issues. Reads return no row,
-/// so the terminal update stops after its first read (the production code's
-/// own missing-row branch).
-///
-/// This is why the lifecycle test asserts the routed by-id SELECT instead of a
-/// literal UPDATE: `brz_mysql::MysqlRow` has no public constructor and the
-/// existing fake server only returns parse errors, so the recorder cannot
-/// produce the row that would reach `execute`.
-#[derive(Clone, Default)]
-struct RecordingMysql {
-    statements: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingMysql {
-    fn record(&self, sql: &str) {
-        self.statements
-            .lock()
-            .unwrap()
-            .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-    }
-
-    fn statements(&self) -> Vec<String> {
-        self.statements.lock().unwrap().clone()
-    }
-}
-
-impl Mysql for RecordingMysql {
-    type Transaction = RecordingTransaction;
-
-    fn with_route<R: MysqlRouting + 'static>(&self, _: R) -> MysqlService {
-        panic!("the consumer must reuse the configured handle")
-    }
-
-    fn route<K: MysqlRouteKey>(&self, _: K) -> Self {
-        self.clone()
-    }
-
-    async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(None)
-    }
-
-    async fn fetch_all<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Vec<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(Vec::new())
-    }
-
-    async fn execute<S, A>(&self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(MysqlExecution {
-            rows_affected: 1,
-            last_insert_id: 0,
-        })
-    }
-
-    async fn fetch_one<S, A, T>(&self, _: S, _: A) -> MysqlResult<T>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        Err(brz_mysql::MysqlError::RowNotFound)
-    }
-
-    fn fetch<'a, S, A, T>(
-        &'a self,
-        _: S,
-        _: A,
-    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-    where
-        S: AsRef<str> + Send + 'a,
-        A: MysqlArgs + Send + 'a,
-        T: FromMysqlRow + Send + 'a,
-    {
-        futures_util::stream::empty()
-    }
-
-    async fn with_transaction<T, F>(&self, operation: F) -> MysqlResult<T>
-    where
-        T: Send,
-        F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
-    {
-        let mut transaction = RecordingTransaction {
-            statements: Arc::clone(&self.statements),
-        };
-        operation(&mut transaction).await
-    }
-}
-
-/// The consumer transaction: records its reads and executes every write.
-struct RecordingTransaction {
-    statements: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingTransaction {
-    fn record(&self, sql: &str) {
-        self.statements
-            .lock()
-            .unwrap()
-            .push(sql.split_whitespace().collect::<Vec<_>>().join(" "));
-    }
-}
-
-impl MysqlTransaction for RecordingTransaction {
-    async fn execute<S, A>(&mut self, sql: S, _: A) -> MysqlResult<MysqlExecution>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(MysqlExecution {
-            rows_affected: 1,
-            last_insert_id: 0,
-        })
-    }
-
-    async fn fetch_optional<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Option<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(None)
-    }
-
-    async fn fetch_one<S, A, T>(&mut self, _: S, _: A) -> MysqlResult<T>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        Err(brz_mysql::MysqlError::RowNotFound)
-    }
-
-    async fn fetch_all<S, A, T>(&mut self, sql: S, _: A) -> MysqlResult<Vec<T>>
-    where
-        S: AsRef<str> + Send,
-        A: MysqlArgs + Send,
-        T: FromMysqlRow + Send,
-    {
-        self.record(sql.as_ref());
-        Ok(Vec::new())
-    }
-
-    fn fetch<'a, S, A, T>(
-        &'a mut self,
-        _: S,
-        _: A,
-    ) -> impl futures_util::Stream<Item = MysqlResult<T>> + Send + 'a
-    where
-        S: AsRef<str> + Send + 'a,
-        A: MysqlArgs + Send + 'a,
-        T: FromMysqlRow + Send + 'a,
-    {
-        futures_util::stream::empty()
-    }
-}
-
-/// Records every Redis command the consumer issues, in call order.
-#[derive(Clone, Default)]
-struct RecordingRedis {
-    calls: Arc<Mutex<Vec<String>>>,
-}
-
-impl RecordingRedis {
-    fn key<K: EncodeRedisArg>(key: &K) -> String {
-        key.as_encoded_bytes()
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default()
-    }
-
-    fn record(&self, call: String) {
-        self.calls.lock().unwrap().push(call);
-    }
-
-    fn calls(&self) -> Vec<String> {
-        self.calls.lock().unwrap().clone()
-    }
-
-    fn count(&self, prefix: &str) -> usize {
-        self.calls()
-            .iter()
-            .filter(|call| call.starts_with(prefix))
-            .count()
-    }
-}
-
-impl brz_redis::Redis for RecordingRedis {
-    async fn get<K, R>(&self, key: K) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        self.record(format!("GET {}", Self::key(&key)));
-        Ok(None)
-    }
-
-    async fn set<K, V>(&self, key: K, _: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("SET {}", Self::key(&key)));
-        Ok(())
-    }
-
-    async fn set_with<K, V>(&self, key: K, _: V, _: SetOptions) -> RedisResult<bool>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("SET {}", Self::key(&key)));
-        Ok(true)
-    }
-
-    async fn append<K, V>(&self, key: K, _: V) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("APPEND {}", Self::key(&key)));
-        Ok(0)
-    }
-
-    async fn expire<K>(&self, key: K, _: u64) -> RedisResult<bool>
-    where
-        K: EncodeRedisArg + Send,
-    {
-        self.record(format!("EXPIRE {}", Self::key(&key)));
-        Ok(true)
-    }
-
-    async fn del<K>(&self, key: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-    {
-        self.record(format!("DEL {}", Self::key(&key)));
-        Ok(1)
-    }
-
-    async fn del_many<K>(&self, _: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        self.record("DEL keys".to_string());
-        Ok(1)
-    }
-
-    async fn mget<K, R>(&self, _: K) -> RedisResult<Vec<Option<R>>>
-    where
-        K: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        self.record("MGET".to_string());
-        Ok(Vec::new())
-    }
-
-    async fn lset<K, V>(&self, key: K, _: i64, _: V) -> RedisResult<()>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArg + Send,
-    {
-        self.record(format!("LSET {}", Self::key(&key)));
-        Ok(())
-    }
-
-    async fn publish<C, M>(&self, channel: C, payload: M) -> RedisResult<i64>
-    where
-        C: EncodeRedisArg + Send,
-        M: EncodeRedisArg + Send,
-    {
-        self.record(format!(
-            "PUBLISH {} {}",
-            Self::key(&channel),
-            Self::key(&payload)
-        ));
-        Ok(1)
-    }
-
-    async fn rpush<K, V>(&self, key: K, _: V) -> RedisResult<i64>
-    where
-        K: EncodeRedisArg + Send,
-        V: EncodeRedisArgs + Send,
-    {
-        self.record(format!("RPUSH {}", Self::key(&key)));
-        Ok(1)
-    }
-
-    async fn pfcount<K>(&self, _: K) -> RedisResult<i64>
-    where
-        K: EncodeRedisArgs + Send,
-    {
-        Ok(0)
-    }
-
-    async fn hget<K, F, R>(&self, _: K, _: F) -> RedisResult<Option<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArg + Send,
-        R: FromRedisBulk + Send,
-    {
-        Ok(None)
-    }
-
-    async fn hmget<K, F, R>(&self, _: K, _: F) -> RedisResult<brz_redis::RedisValues<R>>
-    where
-        K: EncodeRedisArg + Send,
-        F: EncodeRedisArgs + Send,
-        R: FromRedisBulk + Send,
-    {
-        Err(brz_redis::RedisError::new(
-            brz_redis::ErrorKind::ClientError,
-            "stub does not serve HMGET",
-        ))
     }
 }
 
@@ -374,6 +36,14 @@ struct LogCapture {
 }
 
 impl LogCapture {
+    async fn capture<F: Future>(&self, future: F) -> F::Output {
+        // With one registered dispatcher, another test can cache a callsite's
+        // interest using its unscoped default. Keep a second dispatcher alive
+        // so registration consults both dispatchers.
+        let _inactive = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        future.with_subscriber(self.clone()).await
+    }
+
     fn messages(&self) -> Vec<String> {
         self.messages.lock().unwrap().clone()
     }
@@ -573,7 +243,10 @@ fn the_executor_start_carries_the_created_task_identity() {
     );
 }
 
-fn consumer<M: Mysql>(mysql: M, redis: RecordingRedis) -> ConsumerState<M, RecordingRedis> {
+fn consumer(
+    mysql: RecordingMysql,
+    redis: RecordingRedis,
+) -> ConsumerState<RecordingMysql, RecordingRedis> {
     ConsumerState {
         mysql,
         redis: Some(redis),
@@ -581,43 +254,6 @@ fn consumer<M: Mysql>(mysql: M, redis: RecordingRedis) -> ConsumerState<M, Recor
         executor_manager: ExecutorManager::new("http://127.0.0.1:1").expect("client"),
         app: Weak::new(),
     }
-}
-
-async fn executor_failure_fixture(status: &'static str) -> MysqlRows {
-    MysqlRows::start_results(move |sql| {
-        if sql.starts_with("UPDATE ") {
-            return (vec![], vec![]);
-        }
-        let mut row: Row;
-        if sql.contains("FROM subtasks_0424") {
-            row = vec![("unused", SqlValue::Null); 23];
-            for (column, value) in [
-                ("id", SqlValue::I64(SUBTASK_ID)),
-                ("user_id", SqlValue::I32(7)),
-                ("task_id", SqlValue::I64(TASK_ID)),
-                ("message_id", SqlValue::I64(2)),
-                ("status", SqlValue::Text("FAILED".into())),
-            ] {
-                row[subtask_column_index(column).unwrap()] = (column, value);
-            }
-        } else if sql.contains("FROM tasks_0424") || sql.contains("FROM `tasks_0424`") {
-            row = vec![("unused", SqlValue::Null); 12];
-            for (column, value) in [
-                ("id", SqlValue::I64(TASK_ID)),
-                ("user_id", SqlValue::I32(7)),
-                (
-                    "json",
-                    SqlValue::Text(json!({"status":{"status":status}}).to_string()),
-                ),
-            ] {
-                row[task_column_index(column).unwrap()] = (column, value);
-            }
-        } else {
-            return (vec![("id", SqlValue::I64(0))], vec![]);
-        }
-        (row.clone(), vec![row])
-    })
-    .await
 }
 
 fn chat_job(
@@ -638,34 +274,27 @@ fn chat_job(
     }
 }
 
-async fn wait_for_cancel_dels(redis: &RecordingRedis, expected: usize) {
+async fn wait_for_cancel_cleanup(redis: &RecordingRedis) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if redis.count("DEL chat:cancel:") >= expected {
+            if redis.count("DEL-MANY chat:cancel:") >= 1 {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("the expected chat:cancel DELs arrive within the bound");
+    .expect("the atomic chat:cancel cleanup arrives within the bound");
 }
 
-/// The real worker path runs the real SSE consumer: the cancel key is cleared
-/// before the stream (the early DEL), polled during it, content is persisted,
-/// and the key is deleted in the finally (the late DEL).
-///
-/// Persistence limitation: this asserts the routed by-id SELECT that starts the
-/// completion persistence, not a literal UPDATE. `brz_mysql::MysqlRow` has no
-/// public constructor and the existing fake server only returns parse errors,
-/// so the recorder's missing-row branch stops before `execute`; the
-/// APPEND/SET/DEL evidence plus this read prove the consumer ran and reached
-/// persistence.
+/// The background dispatch stores streamed content and commits its terminal state.
 #[tokio::test]
 async fn background_job_runs_the_real_consumer_lifecycle() {
     let server = spawn_server(200, vec![CREATED, DELTA, COMPLETED], vec![]).await;
     let redis = RecordingRedis::default();
-    let mysql = RecordingMysql::default();
+    let mysql = RecordingMysql::default()
+        .with_terminal_rows("COMPLETED")
+        .await;
     let dispatch = ResponsesDispatch::<RecordingMysql, RecordingRedis>::spawn();
     assert!(dispatch.submit(DispatchJob::ChatShell(Box::new(chat_job(
         &server.url,
@@ -673,18 +302,26 @@ async fn background_job_runs_the_real_consumer_lifecycle() {
         redis.clone()
     )))));
 
-    wait_for_cancel_dels(&redis, 2).await;
+    wait_for_cancel_cleanup(&redis).await;
 
     let cancel_key = format!("chat:cancel:{SUBTASK_ID}");
+    let intent_key = format!("chat:cancel-intent:{SUBTASK_ID}");
+    let calls = redis.calls();
     assert_eq!(
-        redis
-            .calls()
+        calls
             .iter()
-            .filter(|call| **call == format!("DEL {cancel_key}"))
+            .filter(|call| **call == format!("EVAL {cancel_key} {intent_key}"))
             .count(),
-        2,
-        "register and unregister each delete the same key: {:?}",
-        redis.calls()
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| **call == format!("DEL-MANY {cancel_key} {intent_key}"))
+            .count(),
+        1,
+        "{calls:?}"
     );
     assert!(
         redis.count(&format!("GET {cancel_key}")) >= 1,
@@ -699,14 +336,7 @@ async fn background_job_runs_the_real_consumer_lifecycle() {
         "stream content is persisted: {:?}",
         redis.calls()
     );
-    assert!(
-        mysql
-            .statements()
-            .iter()
-            .any(|statement| statement.contains("subtasks_0424")),
-        "the terminal event reaches the completion persistence read: {:?}",
-        mysql.statements()
-    );
+    assert_terminal_commit(&mysql);
 }
 
 /// Admission returns before the consumer finishes: the supervisor must not
@@ -725,14 +355,20 @@ async fn acceptance_returns_before_the_consumer_finishes() {
     // The server saw the request and the consumer is blocked on the gate.
     let _ = server.started.await;
     assert_eq!(
-        redis.count("DEL chat:cancel:"),
+        redis.count("EVAL chat:cancel:"),
         1,
-        "only the registration DEL is issued while the stream is still open: {:?}",
+        "only intent-guarded registration is issued while the stream is open: {:?}",
         redis.calls()
     );
 
+    assert_eq!(
+        redis.count("DEL-MANY chat:cancel:"),
+        0,
+        "{:?}",
+        redis.calls()
+    );
     server.release.expect("gated server").send(()).unwrap();
-    wait_for_cancel_dels(&redis, 2).await;
+    wait_for_cancel_cleanup(&redis).await;
 }
 
 /// A chat-shell 500 is surfaced (and logged with the job identity), never
@@ -746,9 +382,7 @@ async fn chat_shell_500_is_observable() {
         RecordingRedis::default(),
     );
     let capture = LogCapture::default();
-    let guard = tracing::subscriber::set_default(capture.clone());
-    let result = run_chat_shell(job).await;
-    drop(guard);
+    let result = capture.capture(run_chat_shell(job, None)).await;
 
     let error = result.expect_err("a 500 is not a completion");
     assert!(error.contains("HTTP status code: 500"), "{error}");
@@ -778,9 +412,7 @@ async fn mid_stream_error_is_observable() {
         RecordingRedis::default(),
     );
     let capture = LogCapture::default();
-    let guard = tracing::subscriber::set_default(capture.clone());
-    let result = run_chat_shell(job).await;
-    drop(guard);
+    let result = capture.capture(run_chat_shell(job, None)).await;
 
     let error = result.expect_err("a stream without a terminal frame is not a completion");
     assert!(error.contains("without terminal event"), "{error}");
@@ -801,27 +433,33 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
     drop(refused);
     let http = HttpClient::builder().build().unwrap();
     for url in [server.url, refused_url] {
-        let fixture = executor_failure_fixture("RUNNING").await;
+        let mysql = RecordingMysql::default().with_terminal_rows("FAILED").await;
         let redis = RecordingRedis::default();
         run(
             &http,
             DispatchJob::Executor {
                 url,
-                body: ExecutorDispatchBody::Prepared(json!({})),
+                body: ExecutorDispatchBody::Prepared(Ok(
+                    crate::executor_binding::DispatchRequest {
+                        body: json!({}),
+                        binding_token: "test-binding".into(),
+                    },
+                )),
                 start: Some(start_event(redis.clone(), &execution_request(), None)),
-                consumer: Box::new(consumer(fixture.mysql.clone(), redis.clone())),
+                consumer: Box::new(consumer(mysql.clone(), redis.clone())),
                 task_id: TASK_ID,
                 subtask_id: SUBTASK_ID,
-                user_id: 7,
+                user_id: TASK_OWNER_ID,
                 message_id: Some(2),
             },
         )
         .await;
-        assert!(
-            fixture
-                .queries()
-                .iter()
-                .any(|sql| sql.starts_with("UPDATE subtasks_0424"))
+        assert_terminal_commit(&mysql);
+        assert_eq!(
+            redis.count(&format!("DEL chat:task_streaming:{TASK_ID}")),
+            1,
+            "missing task streaming cleanup in {:?}",
+            redis.calls()
         );
         let frames: Vec<Value> = redis
             .calls()
@@ -837,6 +475,12 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
             .unwrap_or_else(|| panic!("missing chat:error in {:?}", redis.calls()));
         assert_eq!(error["data"][0]["subtask_id"], SUBTASK_ID);
         assert_eq!(error["data"][0]["type"], "EXECUTOR_DISPATCH_FAILED");
+        let status = frames
+            .iter()
+            .find(|frame| frame["event"] == "task:status")
+            .unwrap_or_else(|| panic!("missing task:status in {:?}", redis.calls()));
+        assert_eq!(status["room"], format!("user:{TASK_OWNER_ID}"));
+        assert_eq!(status["data"][0]["status"], "FAILED");
         let callback = frames
             .iter()
             .find(|frame| frame["type"] == "error" && frame["subtask_id"] == SUBTASK_ID)
@@ -846,52 +490,63 @@ async fn executor_dispatch_failure_runs_terminal_cleanup_and_emits_chat_error() 
     }
 }
 
+fn assert_terminal_commit(mysql: &RecordingMysql) {
+    let statements = mysql.statements();
+    let subtask = statements
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE subtasks_0424 "));
+    let task = statements
+        .iter()
+        .position(|sql| sql.starts_with("UPDATE tasks_0424 "));
+    let commit = statements.iter().position(|sql| sql == "COMMIT");
+    assert!(
+        matches!((subtask, task, commit), (Some(subtask), Some(task), Some(commit)) if subtask < task && task < commit),
+        "both terminal writes must precede COMMIT: {statements:?}"
+    );
+}
+
 #[tokio::test]
 async fn executor_failure_reaches_mysql_without_redis() {
-    let fixture = executor_failure_fixture("PENDING").await;
-    let mut consumer = consumer(fixture.mysql.clone(), RecordingRedis::default());
+    let mysql = RecordingMysql::default().with_terminal_rows("FAILED").await;
+    let mut consumer = consumer(mysql.clone(), RecordingRedis::default());
     consumer.redis = None;
     finalize_executor_failure(
         &consumer,
         TASK_ID,
         SUBTASK_ID,
-        7,
+        TASK_OWNER_ID,
         Some(2),
         ("Executor preparation failed", "container_error"),
     )
     .await;
-    assert!(
-        fixture
-            .queries()
-            .iter()
-            .any(|sql| sql.starts_with("UPDATE tasks_0424")),
-        "the terminal write must update the task even when Redis is unavailable"
-    );
+    assert_terminal_commit(&mysql);
 }
 
 #[tokio::test]
 async fn executor_failure_does_not_write_or_publish_after_cancellation() {
     for status in ["CANCELLING", "CANCELLED"] {
-        let fixture = executor_failure_fixture(status).await;
+        let mysql = RecordingMysql::default()
+            .with_task_status("FAILED", status)
+            .await;
         let redis = RecordingRedis::default();
         finalize_executor_failure(
-            &consumer(fixture.mysql.clone(), redis.clone()),
+            &consumer(mysql.clone(), redis.clone()),
             TASK_ID,
             SUBTASK_ID,
-            7,
+            TASK_OWNER_ID,
             Some(2),
             ("Executor preparation failed", "container_error"),
         )
         .await;
         assert!(
-            fixture
-                .queries()
+            mysql
+                .statements()
                 .iter()
                 .any(|sql| sql.ends_with("FOR UPDATE"))
         );
         assert!(
-            !fixture
-                .queries()
+            !mysql
+                .statements()
                 .iter()
                 .any(|sql| sql.starts_with("UPDATE"))
         );

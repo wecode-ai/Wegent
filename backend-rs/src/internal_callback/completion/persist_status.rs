@@ -5,36 +5,18 @@
 //! The task-status update `_update_task_status_sync` performs after a
 //! completion callback (`app/services/chat/storage/db.py`). Split from
 //! [`persist`](super) so the file stays within the source-size bound.
-use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction};
-use serde_json::{Value, json};
+use brz_mysql::{Json, MysqlError, MysqlResult, MysqlRow, MysqlTransaction};
+use serde_json::{Map, Value, json};
 
 use super::sql;
 use super::{
-    collaboration_status, complete_task_model, local_datetime, local_isoformat, render_task_crd,
-    subtask_column, task_column,
+    CollaborationStatus, Delivery, collaboration_status, complete_task_model, delivery,
+    local_datetime, local_isoformat, render_task_crd, subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
 use wegent_task_store::task_store_subscription_reads::{
     assistant_membership_statement, latest_assistant_statement,
 };
-
-/// `_update_task_status_sync`'s `try/except` around the status reads
-/// (`app/services/chat/storage/db.py:207,285-287`): a store failure logs the
-/// failing read and the caller returns before performing any write. The failure
-/// never propagates into the callback response path.
-pub(crate) fn read_status<T>(
-    result: MysqlResult<T>,
-    task_id: i64,
-    read: &'static str,
-) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            tracing::error!(%error, task_id, read, "callback task status read failed");
-            None
-        }
-    }
-}
 
 pub(super) async fn read_assistants<T: MysqlTransaction>(
     mysql: &mut T,
@@ -58,162 +40,185 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
     mysql: &mut T,
     task_id: i64,
     changed_subtask_id: i64,
-) -> bool {
-    write_derived_task_status(tables, mysql, task_id, changed_subtask_id, None)
-        .await
-        .unwrap_or_default()
+) -> MysqlResult<Option<bool>> {
+    let Some(task) = lock_task(mysql, tables.tasks, task_id).await? else {
+        return Ok(None);
+    };
+    Ok(update_locked_task_status(
+        tables,
+        mysql,
+        task,
+        task_id,
+        changed_subtask_id,
+        None,
+        false,
+        None,
+        None,
+    )
+    .await?
+    .map(|task| task.auto_advance))
 }
 
-pub(super) async fn write_derived_task_status<T: MysqlTransaction>(
+pub(super) async fn lock_task<T: MysqlTransaction>(
+    mysql: &mut T,
+    task_table: &str,
+    task_id: i64,
+) -> MysqlResult<Option<MysqlRow>> {
+    let sql = format!(
+        "{} FOR UPDATE",
+        sql::active_task_projection_statement(task_table)
+    );
+    mysql.fetch_optional(sql, (task_id,)).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     tables: sql::Tables,
     mysql: &mut T,
+    task: MysqlRow,
     task_id: i64,
     changed_subtask_id: i64,
+    pending_delivery: Option<(Delivery, Option<&Value>)>,
+    terminal: bool,
     required_status: Option<&str>,
-) -> Option<bool> {
-    // `task_store.get_task_by_states(...).first()`: the active two-state task
-    // read through the ORM's labeled projection, with no row lock.
-    let task = read_status(
-        mysql
-            .fetch_optional::<_, _, MysqlRow>(
-                sql::active_task_projection_statement(tables.tasks),
-                (task_id,),
-            )
-            .await,
-        task_id,
-        "task",
-    )
-    .flatten()?;
-    let owner_user_id = task_column::<i64>(&task, "user_id").unwrap_or(0);
+    terminal_result: Option<&Value>,
+) -> MysqlResult<Option<CollaborationStatus>> {
+    let task_table = tables.tasks;
+    let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
     let is_subscription = task_column::<i64>(&task, "is_active") == Some(2);
 
-    // `list_assistant_by_task`'s owner guard, then the ordered listing.
-    // `_update_task_status_sync` wraps the whole block in `try/except`: a
-    // failed read logs and aborts before any later write.
-    read_status::<Vec<MysqlRow>>(
-        mysql
-            .fetch_all(
-                sql::owner_matches_task_id_statement(tables.tasks),
-                (task_id, owner_user_id),
-            )
-            .await,
-        task_id,
-        "owner_guard",
+    let _owner: Vec<MysqlRow> = mysql
+        .fetch_all(
+            sql::owner_matches_task_id_statement(task_table),
+            (task_id, owner_user_id),
+        )
+        .await?;
+    let subtasks = crate::task_store_listing::order_assistant_subtasks(
+        read_assistants(mysql, tables, task_id, is_subscription).await?,
     )?;
-    let subtasks = read_status(
-        read_assistants(mysql, tables, task_id, is_subscription).await,
-        task_id,
-        "assistant_subtasks",
-    )?;
-    let last = subtasks.last()?;
-    let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
-    if let Some(required) = required_status
-        && (last_status != required
-            || subtask_column::<i64>(last, "id") != Some(changed_subtask_id))
-    {
-        return None;
-    }
-    // `list_assistant_by_task` labels its columns too, so the last subtask's
-    // result — the payload `_apply_status_update` writes into the task CRD's
-    // `status.result` — is decoded positionally.
-    let mut last_result: Option<Value> =
-        subtask_column::<Json<Value>>(last, "result").map(|json| json.0);
-
-    let mut found = subtasks
-        .iter()
-        .any(|row| subtask_column::<i64>(row, "id") == Some(changed_subtask_id));
-    if is_subscription && !found && last_result.is_none() {
-        let Some(row) = read_status(
-            mysql
-                .fetch_optional::<_, _, (i64,)>(
-                    assistant_membership_statement(tables.subtasks),
-                    (changed_subtask_id, task_id),
-                )
-                .await,
-            task_id,
-            "changed_assistant_membership",
-        ) else {
-            return None;
-        };
-        found = row.is_some();
-    }
-    let changed: Option<MysqlRow> = if !found && last_result.is_none() {
-        // `read_status` returns `None` on a store failure; abort before writing
-        // rather than treating the failure as "no row".
-        read_status(
-            mysql
-                .fetch_optional(sql::subtask_by_id(tables), (changed_subtask_id,))
-                .await,
-            task_id,
-            "changed_subtask",
-        )?
-    } else {
-        None
+    let Some(last) = subtasks.last() else {
+        return Ok(None);
     };
-    if let Some(row) = changed {
-        last_result = subtask_column::<Json<Value>>(&row, "result").map(|json| json.0);
+    let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
+    let mut is_latest = subtask_column::<i64>(last, "id") == Some(changed_subtask_id);
+    if is_subscription && !is_latest {
+        is_latest = mysql
+            .fetch_optional::<_, _, (i64,)>(
+                assistant_membership_statement(tables.subtasks),
+                (changed_subtask_id, task_id),
+            )
+            .await?
+            .is_some();
     }
+    if !is_latest && !terminal {
+        return Ok(None);
+    }
+    if required_status.is_some_and(|required| {
+        last_status != required || subtask_column::<i64>(last, "id") != Some(changed_subtask_id)
+    }) {
+        return Ok(None);
+    }
+    let last_result = subtask_column::<Json<Value>>(last, "result").map(|json| json.0);
 
     let Some(Value::Object(mut payload)) = task_json else {
-        return None;
+        return Err(MysqlError::InvalidQuery {
+            reason: "Task JSON must be an object".into(),
+        });
     };
     let Some(Value::Object(status_object)) = payload.get("status").cloned() else {
-        return None;
+        return Err(MysqlError::InvalidQuery {
+            reason: "Task status must be an object".into(),
+        });
     };
-    let decision =
-        collaboration_status(tables, mysql, task_id, &payload, last, &last_status).await?;
-    let new_status = decision.status;
+    let previous_status = status_object.get("status").and_then(Value::as_str);
+    let preserve_parent = !is_latest || matches!(previous_status, Some("CANCELLED" | "DELETE"));
+    let decision = if preserve_parent {
+        CollaborationStatus {
+            status: previous_status.unwrap_or(&last_status).to_owned(),
+            progress: status_object.get("progress").and_then(Value::as_i64),
+            auto_advance: false,
+        }
+    } else {
+        collaboration_status(
+            mysql,
+            task_table,
+            task_id,
+            &payload,
+            last,
+            &last_status,
+            previous_status == Some("CANCELLING"),
+        )
+        .await?
+    };
+    let new_status = &decision.status;
     let progress = decision.progress;
 
-    let now = local_isoformat();
-    let mut updated = status_object;
-    updated.insert("status".into(), Value::String(new_status.clone()));
-    if let Some(result) = last_result {
-        updated.insert("result".into(), result);
-    }
-    if let Some(progress) = progress {
-        updated.insert("progress".into(), json!(progress));
-    }
-    if matches!(
-        new_status.as_str(),
-        "COMPLETED" | "CANCELLED" | "PENDING_CONFIRMATION"
-    ) {
-        updated.insert("completedAt".into(), Value::String(now.clone()));
-    }
-    if last_status == "FAILED" {
-        updated.insert(
-            "errorMessage".into(),
-            subtask_column::<String>(last, "error_message").map_or(Value::Null, Value::String),
-        );
-    }
-    updated.insert("updatedAt".into(), Value::String(now.clone()));
-    payload.insert("status".into(), Value::Object(updated));
-
-    complete_task_model(&mut payload);
-    let json_text = python_dumps(&Value::Object(render_task_crd(payload)));
-    let row_updated_at = local_datetime();
-    let mut sql = sql::update_task_json_statement(tables.tasks);
-    if last_status == "RUNNING" {
-        // A concurrent cancel can persist its intent after the status read.
-        sql.push_str(
-            " AND JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) NOT IN ('CANCELLING', 'CANCELLED')",
-        );
-    }
-    // A single statement runs on the pooled connection's autocommit; no
-    // explicit transaction or COMMIT is needed. A failed write aborts the
-    // source's `try/except` before it can hand back an advance intent.
-    match mysql
-        .execute(sql, (json_text, row_updated_at, task_id))
-        .await
+    if new_status == "RUNNING"
+        && matches!(
+            status_object.get("status").and_then(Value::as_str),
+            Some("CANCELLING" | "CANCELLED")
+        )
     {
-        Ok(result) if required_status.is_none() || result.rows_affected != 0 => {
-            Some(decision.auto_advance)
+        return Ok(None);
+    }
+    let now = local_isoformat();
+    if !preserve_parent {
+        let mut updated = status_object;
+        updated.insert("status".into(), Value::String(new_status.clone()));
+        if let Some(result) = last_result {
+            updated.insert("result".into(), result);
         }
-        Ok(_) => None,
-        Err(failure) => {
-            tracing::warn!(%failure, "callback task update failed");
-            None
+        if let Some(progress) = progress {
+            updated.insert("progress".into(), json!(progress));
+        }
+        if matches!(
+            new_status.as_str(),
+            "COMPLETED" | "CANCELLED" | "PENDING_CONFIRMATION"
+        ) {
+            updated.insert("completedAt".into(), Value::String(now.clone()));
+        }
+        if last_status == "FAILED" {
+            updated.insert(
+                "errorMessage".into(),
+                subtask_column::<String>(last, "error_message").map_or(Value::Null, Value::String),
+            );
+        }
+        updated.insert("updatedAt".into(), Value::String(now.clone()));
+        payload.insert("status".into(), Value::Object(updated));
+
+        if last_status == "COMPLETED"
+            && let Some(path) = terminal_result
+                .and_then(|result| result.get("standalone_chat_workspace_path"))
+                .filter(|path| !path.is_null())
+            && let Value::Object(spec) = payload
+                .entry("spec")
+                .or_insert_with(|| Value::Object(Map::new()))
+        {
+            spec.insert("standaloneChatWorkspacePath".into(), path.clone());
         }
     }
+    complete_task_model(&mut payload);
+    let mut document = Value::Object(render_task_crd(payload));
+    if terminal {
+        wegent_task_store::settle_pipeline_handoff(&mut document, changed_subtask_id);
+    }
+    if let Some((pending, payload)) = pending_delivery {
+        let marker = if decision.auto_advance {
+            "advance"
+        } else {
+            "notify"
+        };
+        delivery::labels(&mut document)[pending.label(changed_subtask_id)] = match payload {
+            Some(payload) => json!({"kind": marker, "event": payload}).to_string().into(),
+            None => json!(marker),
+        };
+    }
+    let json_text = python_dumps(&document);
+    let row_updated_at = local_datetime();
+    let sql = sql::update_task_json_statement(task_table);
+    let written = mysql
+        .execute(sql, (json_text, row_updated_at, task_id))
+        .await?;
+    Ok((required_status.is_none() || written.rows_affected != 0).then_some(decision))
 }

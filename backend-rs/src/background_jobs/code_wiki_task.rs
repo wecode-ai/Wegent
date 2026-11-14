@@ -165,26 +165,20 @@ pub(super) async fn create(
     super::super::execution::mark_running(app, setup.task_id, setup.assistant_subtask_id, runner)
         .await?;
     if let Err(error) = super::super::super::project::managed::dispatch(app, &request).await {
-        if let Some(redis) = app.redis.as_ref() {
-            let ctx = crate::internal_callback::completion::Completion {
-                app: Some(app),
-                mysql: &app.mysql,
-                redis,
-                tables: crate::internal_callback::tables(app),
-                executor_manager: &app.executor_manager,
-            };
-            crate::internal_callback::completion::complete_terminal(
-                &ctx,
-                setup.task_id,
-                setup.assistant_subtask_id,
-                "FAILED",
-                None,
-                Some(&error.to_string()),
-                None,
-                None,
-                None,
-            )
-            .await;
+        use crate::internal_callback::event::{EventType, ExecutionEvent};
+        let mut event =
+            ExecutionEvent::new(EventType::Error, setup.task_id, setup.assistant_subtask_id);
+        event.error = Some(error.to_string());
+        if let Err(failure) = Box::pin(crate::internal_callback::process_dispatch_failure(
+            app, event,
+        ))
+        .await
+        {
+            tracing::warn!(
+                ?failure,
+                task_id = setup.task_id,
+                "Code Wiki failure awaits terminal recovery"
+            );
         }
         return Err(error);
     }

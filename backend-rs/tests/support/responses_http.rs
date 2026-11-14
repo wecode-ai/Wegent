@@ -4,8 +4,8 @@
 
 //! Real HTTP gateway, application, authentication, MySQL and Redis coverage.
 
-use brz_mysql::MysqlService;
-use brz_redis::Redis;
+use brz_mysql::{Json, MysqlService};
+use brz_redis::{Redis, RedisSubscription};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use wegent_backend_rs::{
@@ -86,15 +86,7 @@ pub async fn assert_http_reads(
     long_conversation: bool,
     history_tables: &[&str],
 ) {
-    // Require explicitly configured disposable services, never local dotenv defaults.
-    for name in ["DATABASE_URL", "REDIS_URL"] {
-        let url = url::Url::parse(&std::env::var(name).expect("explicit E2E service URL")).unwrap();
-        assert_eq!(
-            url.host_str(),
-            Some("127.0.0.1"),
-            "loopback fixture required"
-        );
-    }
+    require_loopback_services();
     let mut state = build_app_state().await.unwrap();
     state.mysql = mysql.clone();
     state.task_store = store;
@@ -236,6 +228,213 @@ pub async fn assert_http_reads(
     gateway_task.await.unwrap();
     api_stop.send(()).unwrap();
     api_task.await.unwrap();
+}
+
+pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64, subtask_id: i64) {
+    require_loopback_services();
+    let mut state = build_app_state().await.unwrap();
+    state.mysql = mysql.clone();
+    state.task_store = Arc::new(wegent_backend_rs::task_store::DefaultTaskStore::new(
+        mysql.clone(),
+    ));
+    let redis = state.redis.clone().expect("real Redis is required for E2E");
+    let state = Arc::new(state);
+    let application = Application::build(Arc::clone(&state)).await.unwrap();
+    let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
+        "127.0.0.1:0".parse().unwrap(),
+        application.routes,
+        AppAuthenticator::new(state.authentication_services()),
+    )
+    .await
+    .unwrap();
+    let url = format!(
+        "http://{}/api/internal/callback",
+        server.local_addr().unwrap()
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        server
+            .serve_until(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+    });
+    let client = brz_http::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let send = async |event_type: &str, data: Value| {
+        client
+            .post(&url)
+            .unwrap()
+            .json(&json!({
+                "event_type": event_type, "data": data,
+                "task_id": task_id, "subtask_id": subtask_id,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    };
+    let statuses = async || {
+        let subtask: String = mysql
+            .fetch_one("SELECT status FROM subtasks WHERE id = ?", (subtask_id,))
+            .await
+            .unwrap();
+        let task: Json<Value> = mysql
+            .fetch_one("SELECT json FROM tasks WHERE id = ?", (task_id,))
+            .await
+            .unwrap();
+        let task_status = task.0["status"]["status"]
+            .as_str()
+            .expect("task status")
+            .to_owned();
+        (task_status, subtask)
+    };
+    let completed = json!({
+        "response": {"output": [{"type": "message", "content": [{"type":"output_text", "text":"saved result"}]}]}
+    });
+    let channel = format!("callback:channel:{subtask_id}");
+    let mut subscription = redis.subscribe(channel.as_str()).await.unwrap();
+    let mut socket_events = redis.subscribe("socketio").await.unwrap();
+    // Publications on the same channel are ordered. A barrier sent after the
+    // HTTP response detects an unwanted callback without waiting for silence.
+    let barrier = json!({"type": "fixture-barrier"});
+    let assert_no_callback = async |subscription: &mut RedisSubscription| {
+        redis
+            .publish(channel.as_str(), barrier.to_string())
+            .await
+            .unwrap();
+        assert_eq!(next_callback(subscription).await, barrier);
+    };
+    let marker = format!("chat:task_streaming:{task_id}");
+    redis.set(marker.as_str(), "true").await.unwrap();
+    mysql
+        .execute(
+            "ALTER TABLE tasks ADD CONSTRAINT reject_terminal_update \
+         CHECK (JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) <> 'COMPLETED')",
+            (),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(send("response.completed", completed.clone()).await, 500);
+    assert_eq!(statuses().await, ("RUNNING".into(), "RUNNING".into()));
+    assert_eq!(
+        redis
+            .get::<_, String>(marker.as_str())
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("true")
+    );
+
+    assert_no_callback(&mut subscription).await;
+
+    mysql
+        .execute("ALTER TABLE tasks DROP CHECK reject_terminal_update", ())
+        .await
+        .unwrap();
+    // A MySQL trigger fails only the post-commit acknowledgement, preserving
+    // the committed result and pending delivery across the failed request.
+    let label_path = format!("$.metadata.labels.\"terminal-delivery-callback-{subtask_id}\"");
+    mysql.execute(
+        format!("CREATE TRIGGER reject_delivery_ack BEFORE UPDATE ON tasks FOR EACH ROW
+            BEGIN
+                IF JSON_CONTAINS_PATH(OLD.json, 'one', '{label_path}')
+                    AND NOT JSON_CONTAINS_PATH(NEW.json, 'one', '{label_path}') THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected delivery acknowledgement failure';
+                END IF;
+            END"),
+        (),
+    ).await.unwrap();
+    assert_eq!(send("response.completed", completed).await, 500);
+    assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
+    let first_delivery = next_callback(&mut subscription).await;
+    assert_eq!(first_delivery["result"]["value"], "saved result");
+
+    let stored: (Json<Value>, chrono::NaiveDateTime) = mysql
+        .fetch_one(
+            "SELECT result, completed_at FROM subtasks WHERE id = ?",
+            (subtask_id,),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.0.0["value"], "saved result");
+    assert_eq!(redis.get::<_, String>(marker.as_str()).await.unwrap(), None);
+    mysql
+        .execute("DROP TRIGGER reject_delivery_ack", ())
+        .await
+        .unwrap();
+
+    // Concurrent retries only acknowledge the original publication, even
+    // when the retried callback contains a different result.
+    let retry = json!({
+        "response": {"output": [{"type":"message","content":[{"type":"output_text","text":"retry payload"}]}]}
+    });
+    let (first, second) = tokio::join!(
+        send("response.completed", retry.clone()),
+        send("response.completed", retry),
+    );
+    assert_eq!((first, second), (200, 200));
+    assert_eq!(first_delivery["type"], "done");
+    assert_eq!(first_delivery["subtask_id"], subtask_id);
+    let after_retry: (Json<Value>, chrono::NaiveDateTime) = mysql
+        .fetch_one(
+            "SELECT result, completed_at FROM subtasks WHERE id = ?",
+            (subtask_id,),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.0.0, after_retry.0.0);
+    assert_eq!(stored.1, after_retry.1);
+    assert_eq!(send("error", json!({"message": "late error"})).await, 200);
+    assert_eq!(statuses().await, ("COMPLETED".into(), "COMPLETED".into()));
+
+    redis
+        .publish("socketio", barrier.to_string())
+        .await
+        .unwrap();
+    let mut done_count = 0;
+    loop {
+        let frame = next_callback(&mut socket_events).await;
+        if frame == barrier {
+            break;
+        }
+        if frame["event"] == "chat:done" && frame["data"][0]["subtask_id"] == subtask_id {
+            done_count += 1;
+        }
+    }
+    assert_eq!(done_count, 1);
+    socket_events.close().await.unwrap();
+    assert_no_callback(&mut subscription).await;
+    subscription.close().await.unwrap();
+    stop.send(()).unwrap();
+    server.await.unwrap();
+}
+
+async fn next_callback(subscription: &mut RedisSubscription) -> Value {
+    let message = tokio::time::timeout(Duration::from_secs(5), subscription.next_message())
+        .await
+        .expect("callback publication")
+        .unwrap()
+        .expect("callback subscription is open");
+    serde_json::from_slice(&message.payload).unwrap()
+}
+
+fn require_loopback_services() {
+    // Require explicitly configured disposable services, never local dotenv defaults.
+    for name in ["DATABASE_URL", "REDIS_URL"] {
+        let url = url::Url::parse(&std::env::var(name).expect("explicit E2E service URL")).unwrap();
+        assert_eq!(
+            url.host_str(),
+            Some("127.0.0.1"),
+            "loopback fixture required"
+        );
+    }
 }
 
 pub fn runtime_config() -> HybridConfig {

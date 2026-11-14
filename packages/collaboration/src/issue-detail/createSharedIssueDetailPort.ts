@@ -100,6 +100,7 @@ export interface SharedIssueDetailAgent {
 }
 
 export interface SharedIssueDetailCreateInput {
+  request_id?: string;
   milestone_id?: string | null;
   title: string;
   description?: string;
@@ -338,6 +339,9 @@ export function createSharedIssueDetailPort(
       get: api.issues.get,
       create: (projectId, input) =>
         api.issues.create(projectId, {
+          ...(input.request_id !== undefined
+            ? { requestId: input.request_id }
+            : {}),
           milestoneId: input.milestone_id,
           title: input.title,
           ...(input.description !== undefined

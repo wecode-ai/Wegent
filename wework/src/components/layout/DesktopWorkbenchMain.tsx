@@ -85,8 +85,7 @@ import {
   isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
-  isCloudDevice,
-  isRemoteDevice,
+  isRemoteTaskDevice,
 } from '@/lib/device-capabilities'
 import {
   applyProjectEnvironmentPatch,
@@ -2270,9 +2269,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const conversationImageDevice = findWorkbenchDevice(devices, conversationImageTarget?.deviceId)
   const remoteImageTarget =
     conversationImageTarget &&
-    (!isElectronRuntime() ||
-      (conversationImageDevice?.device_type !== 'local' &&
-        conversationImageDevice?.device_type !== 'app'))
+    (!isElectronRuntime() || conversationImageDevice?.device_type !== 'local')
       ? conversationImageTarget
       : null
   const selectedFileWorkspaceTarget =
@@ -2301,8 +2298,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? devices.find(device => device.device_id === composerWorkspaceTarget.deviceId)
     : undefined
   const centralHarnessUsesRemoteDevice = Boolean(
-    centralHarnessTargetDevice &&
-    (isCloudDevice(centralHarnessTargetDevice) || isRemoteDevice(centralHarnessTargetDevice))
+    centralHarnessTargetDevice && isRemoteTaskDevice(centralHarnessTargetDevice)
   )
   const centralHarnessUsesRemoteSource = composerWorkspaceTarget?.workspaceSource === 'remote'
   const centralHarnessCwd = composerWorkspaceTarget?.path?.trim() || devWorkspacePath
@@ -6149,7 +6145,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }
         />
         <TaskForkDialog
-          key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
+          key={forkDialogOpen ? `fork-open-${currentRuntimeTask?.taskId ?? 'none'}` : 'fork-closed'}
           open={forkDialogOpen}
           source={currentRuntimeTask}
           runtimeWork={runtimeWork}
@@ -6202,8 +6198,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskBoardAssociationDialog
           key={
             taskBoardAssociation
-              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
-              : 'closed'
+              ? `board-association-${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'board-association-closed'
           }
           project={taskBoardAssociation?.project ?? null}
           currentProject={boundCloudProject}

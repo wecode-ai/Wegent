@@ -327,6 +327,14 @@ fn hook_user_id(value: &Value) -> Option<String> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TurnAdmission {
+    Normal,
+    Forced,
+    Queue,
+    Continuation,
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn persist_turn_queue(
         &self,
@@ -398,6 +406,13 @@ impl RuntimeWorkRpcHandler {
         for (task, owner) in &owner_admissions {
             self.record_stand_in_owner_admission(task, owner);
         }
+        // Only admitted turns replace the current request. Queued follow-ups
+        // retain their own context without changing the active native turn.
+        for turn in starting {
+            self.store.update_task(&turn.local_task_id, |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+            });
+        }
         if let Some((previous, current)) = admissions {
             self.sync_native_queue_admissions(previous, current);
         }
@@ -408,30 +423,50 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn spawn_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, false, false).await.map(|_| ())
+        self.schedule_turn(turn, TurnAdmission::Normal)
+            .await
+            .map(|_| ())
     }
 
     pub(super) async fn spawn_forced_turn(
         &self,
         turn: SpawnTurnRequest,
     ) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, true, false).await.map(|_| ())
+        self.schedule_turn(turn, TurnAdmission::Forced)
+            .await
+            .map(|_| ())
     }
 
     pub(super) async fn queue_turn(&self, turn: SpawnTurnRequest) -> Result<(), AppIpcError> {
-        self.schedule_turn(turn, false, true).await.map(|_| ())
+        self.schedule_turn(turn, TurnAdmission::Queue)
+            .await
+            .map(|_| ())
+    }
+
+    pub(super) async fn submit_continuation(
+        &self,
+        turn: SpawnTurnRequest,
+    ) -> Result<(), AppIpcError> {
+        self.schedule_turn(turn, TurnAdmission::Continuation)
+            .await
+            .map(|_| ())
     }
 
     async fn schedule_turn(
         &self,
         mut turn: SpawnTurnRequest,
-        force_start: bool,
-        queue_only: bool,
+        admission: TurnAdmission,
     ) -> Result<bool, AppIpcError> {
         turn.bind_task_kind(&self.store);
         self.apply_project_workspace_roots(&mut turn.request);
         let local_task_id = turn.local_task_id.clone();
         let _operation = self.turn_queue_operation.lock().await;
+        // Request preparation can overlap the previous turn's queue drain.
+        // Use the live ownership state while holding the admission lock.
+        let queue_only = admission == TurnAdmission::Queue
+            || (admission == TurnAdmission::Continuation
+                && (self.is_busy_local_task(&local_task_id)
+                    || self.native_task_holds_capacity(&local_task_id)));
         if self.existing_command(&turn)?.is_some() {
             return Ok(false);
         }
@@ -549,7 +584,7 @@ impl RuntimeWorkRpcHandler {
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
-            } else if force_start {
+            } else if admission == TurnAdmission::Forced {
                 Some(scheduler.enqueue_forced(turn))
             } else {
                 scheduler.enqueue(turn)
@@ -802,7 +837,7 @@ impl RuntimeWorkRpcHandler {
             .insert(RESUME_GOAL_ONLY_MARKER.to_owned(), Value::Bool(true));
         // A native Goal mutation may update only disk state when its session
         // has unloaded. Resume it through the existing owner and admission flow.
-        self.schedule_turn(turn, false, false).await
+        self.schedule_turn(turn, TurnAdmission::Normal).await
     }
 
     pub(super) async fn persist_current_turn_state(&self) -> Result<(), AppIpcError> {
@@ -1556,7 +1591,8 @@ impl RuntimeWorkRpcHandler {
                     ) {
                         return;
                     }
-                    active_turn_handler.start_queue_run(&active_turn_local_task_id);
+                    active_turn_handler
+                        .start_queue_run(&active_turn_local_task_id, &active_turn_request);
                     *callback_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned") =
@@ -1640,6 +1676,8 @@ impl RuntimeWorkRpcHandler {
             });
             let mut result = async {
                 execution_context?;
+                let mut request = request.clone();
+                handler.recall_stand_in_context(&mut request).await;
                 handler
                     .validate_project_coordinator_request(&request)
                     .await?;
@@ -1766,11 +1804,13 @@ impl RuntimeWorkRpcHandler {
                 {
                     handler.finish_automation_run(
                         &turn_local_task_id,
+                        &event_request,
                         AutomationRunStatus::Cancelled,
                         Some("cancelled".to_owned()),
                     );
                     handler.finish_queue_run(
                         &turn_local_task_id,
+                        &event_request,
                         AutomationRunStatus::Cancelled,
                         Some("cancelled".to_owned()),
                         None,
@@ -2221,8 +2261,14 @@ impl RuntimeWorkRpcHandler {
             }
         }
         if let Some((status, error)) = automation_result {
-            self.finish_automation_run(local_task_id, status, error.clone());
-            self.finish_queue_run(local_task_id, status, error, queue_result_content);
+            self.finish_automation_run(local_task_id, &event_request, status, error.clone());
+            self.finish_queue_run(
+                local_task_id,
+                &event_request,
+                status,
+                error,
+                queue_result_content,
+            );
         }
     }
 

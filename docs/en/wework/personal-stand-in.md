@@ -13,7 +13,7 @@ You can mention yourself: eligible stand-ins receive the event without a human s
 The same stand-in reuses its conversation for the same Issue. Reassignment retains history but still requires fresh authorization.
 Reassignment, unassignment, deletion of the original mention or pausing automatic intake still allows continuing and retrying the conversation, including synchronizing public replies.
 Manually starting a stand-in does not require assigning the Issue to yourself and never changes its assignee. Automatic intake settings select new work without restricting explicit user actions. Current project and Issue access and execution permissions still apply.
-Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
+Substantial assigned work runs in native subagents without requiring an extra delegation request. The primary stand-in coordinates, verifies and replies concisely; simple questions are answered directly. Normally only a brief acknowledgment and the verified result appear as comments, with material blockers, questions or native approvals surfaced when needed. Routine tool and subagent progress stays internal. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
 
 Stand-in replies on an Issue show the owning user followed by the role in parentheses, for example “Alex (Assistant)”, so participants can distinguish different users' stand-ins. A user ID appears while the member name is unavailable and updates to the name when member information loads.
@@ -31,7 +31,7 @@ Keep sending requests when the previous reply ends or a background result starts
 
 This presentation applies to primary and role conversations on the **My Stand-in** page and the embedded primary conversation on the collaboration home. Each native AI message has its own bubble; acknowledgements before background execution and results afterward are not merged. Internal guidance blocks and execution timers are hidden here. Ordinary task and coding conversations retain their execution presentation.
 
-Only stand-in identity conversations enable native subagent v2 for mailbox waits that wake on new user input. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents, including when resuming an existing v2 conversation. Native permission, source-scope and approval constraints remain unchanged.
+Stand-in identity conversations and collaborative Issue stand-in conversations enable native subagent v2, including resumed conversations. Ordinary tasks retain their default configuration, and explicit single collaboration mode still disables subagents. Native permission, source-scope and approval constraints remain unchanged.
 
 Open **Left sidebar → My Stand-in**, then select the primary identity or a scenario role. AI replies use left-aligned bubbles and your messages appear on the right. While native subagents work in the background, send another message in the same main conversation without cancelling the children or waiting in the ordinary task queue. Failed sends retain their content and attachments. Resolve pending questions and permission requests through their original cards; chat messages never substitute for authorization. Independently tracked tasks are reserved for work that actually needs a separate conversation, workspace or lifecycle, not merely to keep chat available.
 
@@ -167,6 +167,10 @@ Search by app name or configured scope name at the top, or select the configured
 Open a source to install its plugin or sign in, then choose the receive scope and handling. Sources on remote execution devices require authorization on that device. Existing scopes remain visible and removable when a source is unavailable. Scope and handling changes take effect after saving stand-in settings; verifying a mailbox account also requires saving those settings before receiving new mail.
 
 Select DingTalk in the profile's connection sources. By default, intake includes mentions from all groups and direct messages from all contacts accessible to the selected account, including future groups and contacts. Switch to filtered sources to search and select individual sources in a batch. Each source remains bound to the DingTalk account used when selecting it. Complete any required plugin installation or authentication before choosing sources.
+
+<a id="dingtalk-blacklist"></a>
+
+In these DingTalk source settings, both all-group mentions and all-contact direct messages offer **Blacklist → Add to blacklist**. Search for groups or contacts, select them, click **Add selected**, then **Save** in settings to apply; cancelling settings discards changes. Remove an entry and save to resume intake. Messages collected while the blacklist is active are filtered and the collection checkpoint advances. If the device is offline or collection fails during that period, messages not yet collected may still be received after the entry is removed. Each blacklist applies only to the current identity, account and source kind, including dispatch of messages that have not been handled. It does not delete existing work or change conversation read or operation permissions.
 
 <a id="dingtalk-group-message-scope"></a>
 

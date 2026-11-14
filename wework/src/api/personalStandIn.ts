@@ -19,6 +19,8 @@ export interface StandInSourceConnection {
   name: string
   kind: string
   scope?: 'all'
+  /** Resources excluded from this account and kind's continuous intake. */
+  excludedResources?: { id: string; name: string }[]
   /** Plugin-owned collection configuration, separate from resource access identity. */
   collectionKey?: string
   configurationSummary?: string
@@ -113,8 +115,12 @@ export function standInPolicy(
   )
 }
 
-export function standInConversationTaskId(userId: number, roleId?: string): string {
-  return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}`
+export function standInConversationTaskId(
+  userId: number,
+  roleId?: string,
+  scope?: 'collaboration'
+): string {
+  return `stand-in-chat-${userId}-${roleId ? `role-${roleId}` : 'primary'}${scope ? `-${scope}` : ''}`
 }
 
 export function newStandInRole(deviceId: string, id: string = crypto.randomUUID()): StandInRole {

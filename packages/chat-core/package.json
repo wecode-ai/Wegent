@@ -347,6 +347,26 @@
     "./conversation-search": {
       "types": "./src/conversation-search.ts",
       "import": "./src/conversation-search.ts"
+    },
+    "./runtime-device-identity": {
+      "types": "./src/runtime-device-identity.ts",
+      "import": "./src/runtime-device-identity.ts"
+    },
+    "./workspace-file-types": {
+      "types": "./src/workspace-file-types.ts",
+      "import": "./src/workspace-file-types.ts"
+    },
+    "./workspace-file-paths": {
+      "types": "./src/workspace-file-paths.ts",
+      "import": "./src/workspace-file-paths.ts"
+    },
+    "./generated-images": {
+      "types": "./src/generated-images.ts",
+      "import": "./src/generated-images.ts"
+    },
+    "./workspace-git": {
+      "types": "./src/workspace-git.ts",
+      "import": "./src/workspace-git.ts"
     }
   },
   "scripts": {

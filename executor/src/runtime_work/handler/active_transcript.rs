@@ -157,6 +157,7 @@ impl RuntimeWorkRpcHandler {
         thread_id: &str,
         turn_id: &str,
     ) {
+        let private_discussion = self.runtime_task_is_private_discussion(local_task_id);
         let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
             return;
         };
@@ -165,6 +166,7 @@ impl RuntimeWorkRpcHandler {
             ActiveCodexTranscriptItems {
                 thread_id: thread_id.to_owned(),
                 turn_id: turn_id.to_owned(),
+                private_discussion,
                 items: Vec::new(),
                 user_input_requests: HashMap::new(),
             },
@@ -472,9 +474,10 @@ impl RuntimeWorkRpcHandler {
                 .collect::<Vec<_>>()
                 .join("\n\n")
         });
+        let private_discussion = transcript.private_discussion;
         drop(active_items);
         if let Some(progress) = progress.filter(|text| !text.is_empty()) {
-            self.project_queue_progress(local_task_id, &progress);
+            self.project_queue_progress(local_task_id, &progress, private_discussion);
         }
     }
 

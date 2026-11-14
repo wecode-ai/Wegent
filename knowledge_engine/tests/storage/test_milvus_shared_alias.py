@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 from llama_index.core.schema import TextNode
+from milvus_contract_stubs import parent_insert_request
 
 from knowledge_engine.storage.milvus_backend import MilvusBackend
 
@@ -89,8 +90,19 @@ class SharedAliasMilvusClient:
     def create_collection(self, **kwargs: Any) -> None:
         self._check_connection()
 
-    def insert(self, **kwargs: Any) -> None:
+    def _get_connection(self) -> "SharedAliasMilvusClient":
         self._check_connection()
+        return self
+
+    def _prepare_row_insert_request(
+        self, collection_name, rows, partition_name=None, **kwargs
+    ):
+        self._check_connection()
+        return parent_insert_request(collection_name, rows, partition_name)
+
+    def insert(self, **kwargs: Any) -> Dict[str, Any]:
+        self._check_connection()
+        return {"insert_count": len(kwargs["data"]), "ids": []}
 
     def _check_connection(self) -> None:
         if not self._registry().is_connected(self._using):

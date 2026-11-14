@@ -38,6 +38,7 @@ import {
 } from '@/features/collaboration/defaultLocalAgent'
 import { sha256Hex } from '@/api/fileHash'
 import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
+import { createProjectChatComments } from '@/features/collaboration/projectChatComments'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
 function assertValidCollaborationGroup(
@@ -269,12 +270,12 @@ export function createLocalWorkspaceApi(
     return {
       id: LOCAL_WORKSPACE_ID,
       location: 'local',
-      name: locale === 'zh-CN' ? '本地空间' : 'Local space',
+      name: locale === 'zh-CN' ? '个人分组' : 'Personal group',
       namespace: 'default',
       description:
         locale === 'zh-CN'
-          ? '保存在当前设备上的项目、Issue 与执行资源。'
-          : 'Projects, issues, and execution resources stored on this device.',
+          ? '你的个人项目、Issue 与执行资源。'
+          : 'Your personal projects, issues, and execution resources.',
       access_role: 'Owner',
       member_count: 1,
       agent_count: agents.length,
@@ -289,9 +290,7 @@ export function createLocalWorkspaceApi(
   }
   const unavailable = async (): Promise<never> => {
     throw new Error(
-      locale === 'zh-CN'
-        ? '本地空间不支持此操作'
-        : 'This operation is not available in the local space'
+      locale === 'zh-CN' ? '当前分组不支持此操作' : 'This operation is not available in this group'
     )
   }
   const currentMember = async (): Promise<CollaborationMember[]> => [
@@ -343,7 +342,7 @@ export function createLocalWorkspaceApi(
       defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
         ? [...listedAgents, defaultAgent]
         : listedAgents
-    const ownerName = locale === 'zh-CN' ? '本地空间' : 'Local space'
+    const ownerName = locale === 'zh-CN' ? '个人分组' : 'Personal group'
     return agents.map(agent => ({
       id: agent.id,
       agent_id: agent.name,
@@ -729,41 +728,7 @@ export function createLocalWorkspaceApi(
       },
     },
     comments: projectChatClient
-      ? {
-          async list(issueId) {
-            const { snapshot, unsubscribe } = await projectChatClient.subscribe(
-              await issueProjectId(issueId),
-              issueId,
-              0,
-              () => undefined
-            )
-            unsubscribe()
-            return snapshot.messages.map(message => ({
-              id: message.messageId,
-              body: message.content,
-              author: message.sender.name,
-              web_url: null,
-              created_at: message.createdAt,
-              updated_at: message.updatedAt,
-            }))
-          },
-          async create(issueId, body) {
-            const message = await projectChatClient.send({
-              projectId: await issueProjectId(issueId),
-              taskId: issueId,
-              clientMessageId: crypto.randomUUID(),
-              text: body,
-            })
-            return {
-              id: message.messageId,
-              body: message.content,
-              author: message.sender.name,
-              web_url: null,
-              created_at: message.createdAt,
-              updated_at: message.updatedAt,
-            }
-          },
-        }
+      ? createProjectChatComments(projectChatClient, issueProjectId)
       : {
           list: async () => [],
           create: unavailable,

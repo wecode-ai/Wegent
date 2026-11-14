@@ -589,7 +589,9 @@ mod tests {
     use tokio::net::TcpListener;
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn disconnect_invalidates_the_installer_held_by_in_flight_http_work() {
+        let _guard = crate::test_env::lock();
         use super::super::CapabilitySyncRpcHandler;
         use std::sync::{
             atomic::{AtomicBool, Ordering},
@@ -621,7 +623,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn explicit_disconnect_is_distinct_from_a_fresh_executor_and_resets_on_connect() {
+        let _guard = crate::test_env::lock();
         let controller = LocalBackendConnectionController::start(DeviceConfig::default()).await;
         assert_eq!(
             controller.backend_status().await.unwrap()["explicitly_disconnected"],
@@ -658,7 +662,9 @@ mod tests {
     };
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn publishes_the_initial_connection_to_the_shared_snapshot() {
+        let _guard = crate::test_env::lock();
         let config = DeviceConfig {
             connection: ConnectionConfig {
                 backend_url: "https://backend.example.com".to_owned(),
@@ -691,7 +697,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn changing_backend_profile_invalidates_the_previous_plugin_route() {
+        let _guard = crate::test_env::lock();
         let controller = LocalBackendConnectionController::start(DeviceConfig {
             connection: ConnectionConfig {
                 backend_url: "http://127.0.0.1:9".to_owned(),
@@ -731,7 +739,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn rotating_runtime_credentials_preserves_the_running_device_route() {
+        let _guard = crate::test_env::lock();
         let controller = LocalBackendConnectionController::start(DeviceConfig {
             connection: ConnectionConfig {
                 backend_url: "http://127.0.0.1:9".to_owned(),
@@ -777,7 +787,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Serialize process-wide broker state across test runtimes.
     async fn reads_backend_quota_without_exposing_the_auth_token() {
+        let _guard = crate::test_env::lock();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {

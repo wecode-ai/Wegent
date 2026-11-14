@@ -9,7 +9,7 @@
 //! part of the UPDATE: a FAILED completion without a payload collects `None`
 //! and leaves the stored value untouched. `updated_at` and `completed_at` are
 //! independent wall-clock reads, `completed_at` first (`db.py:181-184`).
-use brz_mysql::{Json, MysqlRow, MysqlTransaction};
+use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlTransaction};
 use serde_json::Value;
 
 use super::{local_datetime, sql, subtask_column};
@@ -68,31 +68,44 @@ fn sanitize_result_for_storage(result: &Value) -> Value {
     Value::Object(copy)
 }
 
+pub(super) async fn lock_subtask<T: MysqlTransaction>(
+    mysql: &mut T,
+    tables: sql::Tables,
+    subtask_id: i64,
+) -> MysqlResult<Option<MysqlRow>> {
+    let sql = format!("{} FOR UPDATE", sql::subtask_by_id(tables));
+    mysql.fetch_optional(sql, (subtask_id,)).await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
     tables: sql::Tables,
     mysql: &mut T,
+    row: MysqlRow,
     subtask_id: i64,
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
-    require_pending: bool,
-) -> Option<(i64, MysqlRow, Option<String>)> {
-    let row: MysqlRow = mysql
-        .fetch_optional(sql::subtask_by_id(tables), (subtask_id,))
-        .await
-        .ok()
-        .flatten()?;
-    // `SubtaskStore.get_by_id` (`sqlalchemy_subtask_store.py:321-330`)
-    // eager-loads `Subtask.contexts` with `subqueryload`, so the source issues
-    // this read even though the update never consumes it.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
-        .await
-        .unwrap_or_default();
-    let owner_task_id = subtask_column::<i64>(&row, "task_id").unwrap_or(0);
+    device_attempt: Option<&super::DeviceAttempt<'_>>,
+) -> MysqlResult<Option<(MysqlRow, Option<String>)>> {
+    let current_status = subtask_column::<String>(&row, "status");
+    if matches!(
+        current_status.as_deref(),
+        Some("COMPLETED" | "FAILED" | "CANCELLED" | "DELETE")
+    ) {
+        return Ok(None);
+    }
+    if let Some(attempt) = device_attempt
+        && (current_status.as_deref() != Some("RUNNING")
+            || subtask_column::<i64>(&row, "user_id") != Some(attempt.owner_id)
+            || subtask_column::<String>(&row, "executor_name").as_deref() != Some(attempt.name)
+            || subtask_column::<String>(&row, "executor_namespace").as_deref()
+                != Some(attempt.namespace))
+    {
+        return Ok(None);
+    }
     let existing_executor_name = subtask_column::<String>(&row, "executor_name");
     // The ORM projection labels every column `{table}_{column}`, so the stored
     // result is read by its position in that projection.
@@ -122,10 +135,7 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
     let namespace = executor_namespace.unwrap_or_default();
     let name = executor_name.unwrap_or_default();
     let error = error.unwrap_or_default();
-    let mut sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
-    if require_pending {
-        sql.push_str(" AND status IN ('PENDING', 'RUNNING')");
-    }
+    let sql = sql::update_subtask_terminal(tables, with_result, with_error, with_executor);
 
     // Read and write on the same writer transaction; metrics publish after commit.
     let outcome = match (with_executor, with_error, with_result) {
@@ -227,16 +237,10 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
                 .await
         }
     };
-    match outcome {
-        Ok(result) if !require_pending || result.rows_affected != 0 => {
-            Some((owner_task_id, row, metrics_message))
-        }
-        Ok(_) => None,
-        Err(failure) => {
-            tracing::warn!(%failure, "callback subtask update failed");
-            None
-        }
+    if outcome?.rows_affected == 0 {
+        return Ok(None);
     }
+    Ok(Some((row, metrics_message)))
 }
 
 #[cfg(test)]

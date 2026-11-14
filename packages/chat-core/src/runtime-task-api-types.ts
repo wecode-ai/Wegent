@@ -176,6 +176,8 @@ export interface RuntimeSendRequest {
   message: string
   clientUserMessageId?: string
   queueIfBusy?: boolean
+  /** Private discussion retains the task identity without automatic Issue writeback. */
+  conversationContext?: 'private_discussion'
   startNewSession?: boolean
   expectedThreadId?: string
   retrySourceTurnId?: string
@@ -212,6 +214,7 @@ export interface RuntimeSendResponse {
 export interface RuntimeGuidanceRequest {
   address: RuntimeTaskAddress
   message: string
+  conversationContext?: RuntimeSendRequest['conversationContext']
   attachmentIds?: number[]
   attachments?: Attachment[]
   clientGuidanceId?: string

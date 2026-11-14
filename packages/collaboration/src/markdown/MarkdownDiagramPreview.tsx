@@ -150,7 +150,12 @@ export function MarkdownDiagramPreview({
         >
           <p className="text-sm text-text-secondary">
             {failed
-              ? t('workbench.diagram_render_failed', '图表渲染失败，源码如下')
+              ? diagramType === 'plantuml' && !plantumlServerUrl
+                ? t(
+                    'workbench.plantuml_unconfigured',
+                    'PlantUML 预览需要配置渲染服务，当前可查看源码'
+                  )
+                : t('workbench.diagram_render_failed', '图表渲染失败，源码如下')
               : t('workbench.diagram_loading', '正在渲染图表…')}
           </p>
           {failed && (

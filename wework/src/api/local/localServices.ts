@@ -3072,6 +3072,7 @@ export function createRuntimeWorkApiFromIpc(
           ...(data.attachments ? { attachments: data.attachments } : {}),
           ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
           ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
+          ...(data.conversationContext ? { conversationContext: data.conversationContext } : {}),
           ...(data.additionalContext ? { additionalContext: data.additionalContext } : {}),
           ...(data.additional_context ? { additional_context: data.additional_context } : {}),
         },

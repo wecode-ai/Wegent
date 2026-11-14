@@ -317,6 +317,283 @@ async function openSkillManagement(dialog: Locator): Promise<Locator> {
 }
 
 test.describe('Agent skill management scope', () => {
+  test('cloning from a group through personal space uses each creation target', async ({
+    browser,
+    request,
+  }) => {
+    const prefix = `e2e-clone-skills-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createSkillScopeFixture(request, prefix)
+    const { context, page } = await openUserContext(browser, fixture.userToken)
+    const targetGroup = DataBuilders.group()
+    const clones: Array<{ id: number; name: string; namespace: string }> = []
+    try {
+      const group = await fixture.adminApi.createGroup(targetGroup)
+      expect(group.status, JSON.stringify(group.data)).toBe(201)
+      const userId = await findUserId(fixture.adminApi, REGULAR_USER.username)
+      const member = await fixture.adminApi.addGroupMember(targetGroup.name, {
+        user_id: userId,
+        role: 'Developer',
+      })
+      expect([200, 201], JSON.stringify(member.data)).toContain(member.status)
+      const targetSkillName = `${prefix}-target-skill`
+      const upload = await fixture.adminApi.uploadSkill({
+        name: targetSkillName,
+        namespace: targetGroup.name,
+        file: await buildSkillZip(targetSkillName, '1.0.0'),
+      })
+      expect(upload.status, JSON.stringify(upload.data)).toBe(201)
+      const targetSkill = await findUploadedSkill(fixture.adminApi, {
+        scope: 'group',
+        groupName: targetGroup.name,
+        name: targetSkillName,
+      })
+      fixture.createdSkillIds.push(targetSkill.id)
+
+      const source = await fixture.adminApi.put(`/api/bots/${fixture.botId}`, {
+        shell_name: 'ClaudeCode',
+      })
+      expect(source.status, JSON.stringify(source.data)).toBe(200)
+      const team = await fixture.adminApi.put(`/api/teams/${fixture.teamId}`, {
+        workflow: { mode: 'pipeline', leader_bot_id: fixture.botId },
+        bind_mode: ['code'],
+      })
+      expect(team.status, JSON.stringify(team.data)).toBe(200)
+      // Compare the same read projection and viewer before and after cloning.
+      const sourceBeforeClone = await fixture.userApi.get(`/api/bots/${fixture.botId}`)
+      expect(sourceBeforeClone.status).toBe(200)
+
+      const cloneBot = async (
+        dialog: Locator,
+        sourceId: number,
+        namespace: string,
+        name: string,
+        skillId: number,
+        skillName: string
+      ) => {
+        const [options] = await Promise.all([
+          page.waitForRequest(request => {
+            const url = new URL(request.url())
+            return (
+              url.pathname.endsWith('/v1/kinds/skills') && url.searchParams.has('binding_namespace')
+            )
+          }),
+          dialog.getByTestId(`copy-bot-button-${sourceId}`).click(),
+        ])
+        const query = new URL(options.url()).searchParams
+        expect(query.get('binding_namespace')).toBe(namespace)
+        expect(query.has('binding_bot_id')).toBe(false)
+        expect((await options.response())?.status()).toBe(200)
+        const drawer = page.locator('[data-team-edit-drawer="true"]')
+        await drawer.getByPlaceholder(/^(Code Assistant|输入机器人名称)$/).fill(name)
+        await drawer.getByTestId('skill-selector-trigger').click()
+        await expect(page.getByTestId(`skill-selector-option-${skillId}`)).toBeVisible()
+        await expect(page.getByTestId(`skill-selector-option-${fixture.teamSkillId}`)).toHaveCount(
+          0
+        )
+        await page.getByTestId(`skill-selector-option-${skillId}`).click()
+        const [saved] = await Promise.all([
+          page.waitForResponse(
+            response =>
+              response.request().method() === 'POST' &&
+              new URL(response.url()).pathname === '/api/bots'
+          ),
+          drawer.getByTestId('save-button').click(),
+        ])
+        expect(saved.status(), await saved.text()).toBe(201)
+        const created = (await saved.json()) as { id: number; name: string; namespace: string }
+        clones.push(created)
+        expect(created.id).not.toBe(sourceId)
+        expect(saved.request().postDataJSON().namespace || 'default').toBe(namespace)
+        expect(saved.request().postDataJSON().skill_refs[skillName].skill_id).toBe(skillId)
+        await expect(drawer).toBeHidden()
+        const persisted = await fixture.userApi.get(`/api/bots/${created.id}`)
+        expect(persisted.status, JSON.stringify(persisted.data)).toBe(200)
+        expect(persisted.data).toMatchObject({
+          name,
+          namespace,
+          shell_type: 'ClaudeCode',
+          skill_refs: { [skillName]: { skill_id: skillId } },
+        })
+        return created
+      }
+
+      // The library's all-sources editor clones into personal space.
+      await page.goto('/resource-library?tab=mine&type=agent&source=all')
+      await page.getByTestId(`edit-team-button-${fixture.teamId}`).click()
+      const dialog = page.getByTestId('team-edit-dialog')
+      await expect(dialog.getByTestId('select-mode-radio-pipeline')).toBeChecked()
+      const personal = await cloneBot(
+        dialog,
+        fixture.botId,
+        'default',
+        `${prefix}-personal-clone`,
+        fixture.personalSkillId,
+        fixture.personalSkillName
+      )
+
+      // Group creation loads personal source Bots while saving into the selected group.
+      await page.goto('/resource-library?tab=mine&type=agent&source=all')
+      await page.getByTestId('new-capability-button').click()
+      await page.getByTestId('new-capability-type-agent').click()
+      const scope = dialog.getByTestId('capability-scope-team')
+      await scope.focus()
+      await scope.press('Enter')
+      const target = dialog.getByTestId(`capability-scope-group-${targetGroup.name}`)
+      await expect(target).toBeVisible()
+      if (!(await target.isChecked())) {
+        await target.focus()
+        await target.press('Space')
+      }
+      const groupChoices = dialog.locator('[data-testid^="capability-scope-group-"]')
+      for (const choice of await groupChoices.all()) {
+        if (
+          (await choice.getAttribute('data-testid')) !==
+            `capability-scope-group-${targetGroup.name}` &&
+          (await choice.isChecked())
+        ) {
+          await choice.focus()
+          await choice.press('Space')
+        }
+      }
+      await expect(
+        dialog.locator('[data-testid^="capability-scope-group-"][data-state="checked"]')
+      ).toHaveCount(1)
+      await expect(target).toBeChecked()
+      await dialog.getByTestId('simple-section-advanced-trigger').click()
+      await dialog.getByTestId('select-mode-label-pipeline').click()
+      await expect(dialog.getByTestId('select-mode-radio-pipeline')).toBeChecked()
+      await cloneBot(
+        dialog,
+        personal.id,
+        targetGroup.name,
+        `${prefix}-group-clone`,
+        targetSkill.id,
+        targetSkillName
+      )
+      const unchanged = await fixture.userApi.get(`/api/bots/${fixture.botId}`)
+      expect(unchanged.status).toBe(200)
+      expect(unchanged.data).toEqual(sourceBeforeClone.data)
+    } finally {
+      await context.close()
+      for (const clone of clones.reverse()) {
+        await fixture.userApi.delete(`/api/bots/${clone.id}?force=true`)
+        await fixture.userApi.delete(
+          `/api/v1/namespaces/${clone.namespace}/models/${clone.name}-model`
+        )
+      }
+      await fixture.cleanup()
+      await fixture.adminApi.deleteGroup(targetGroup.name)
+    }
+  })
+
+  test('binding choices match save permissions across independent groups', async ({
+    browser,
+    request,
+  }) => {
+    const prefix = `e2e-binding-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const fixture = await createSkillScopeFixture(request, prefix)
+    const { context, page } = await openUserContext(browser, fixture.userToken)
+    const otherGroup = DataBuilders.group()
+    const skillName = `${prefix}-shared`
+    try {
+      const created = await fixture.adminApi.createGroup(otherGroup)
+      expect(created.status, JSON.stringify(created.data)).toBe(201)
+      const userId = await findUserId(fixture.adminApi, REGULAR_USER.username)
+      const member = await fixture.adminApi.addGroupMember(otherGroup.name, {
+        user_id: userId,
+        role: 'Owner',
+      })
+      expect([200, 201], JSON.stringify(member.data)).toContain(member.status)
+      const upload = await fixture.adminApi.uploadSkill({
+        name: skillName,
+        namespace: 'default',
+        file: await buildSkillZip(skillName, '1.0.0'),
+      })
+      expect(upload.status, JSON.stringify(upload.data)).toBe(201)
+      const shared = await findUploadedSkill(fixture.adminApi, {
+        scope: 'personal',
+        name: skillName,
+      })
+      fixture.createdSkillIds.push(shared.id)
+      // MySQL PAD SPACE comparisons must not turn default-space into group access.
+      const paddedDefault = await fixture.userApi.get<{
+        items: Array<{ metadata: { labels: { id: string } } }>
+      }>('/api/v1/kinds/skills?binding_namespace=default%20')
+      expect(paddedDefault.status, JSON.stringify(paddedDefault.data)).toBe(200)
+      const optionIds = paddedDefault.data!.items.map(item => Number(item.metadata.labels.id))
+      expect(optionIds).toContain(fixture.personalSkillId)
+      expect(optionIds).not.toContain(shared.id)
+      const share = async (groups: string[]) => {
+        const response = await fixture.adminApi.post(
+          `/api/v1/kinds/skills/${shared.id}/bindings/groups`,
+          { group_names: groups }
+        )
+        expect(response.status, JSON.stringify(response.data)).toBe(200)
+      }
+      await share([otherGroup.name])
+      const browse = await fixture.userApi.get<UnifiedSkill[]>(
+        '/api/v1/kinds/skills/unified?scope=all'
+      )
+      expect(browse.status).toBe(200)
+      expect(browse.data?.some(skill => skill.id === shared.id)).toBe(true)
+
+      const openEditor = async () => {
+        await page.goto('/resource-library?tab=mine&type=agent&source=all')
+        const card = page.getByTestId(`team-card-${fixture.teamId}`)
+        await expect(card).toBeVisible({ timeout: 20000 })
+        const options = page.waitForResponse(response => {
+          const url = new URL(response.url())
+          return (
+            url.pathname.endsWith('/v1/kinds/skills') &&
+            url.searchParams.get('binding_bot_id') === String(fixture.botId)
+          )
+        })
+        await card.getByTestId(`edit-team-button-${fixture.teamId}`).click()
+        expect((await options).status()).toBe(200)
+        const dialog = page.getByTestId('team-edit-dialog')
+        await dialog.getByTestId('simple-additional-capabilities-toggle').click()
+        await dialog.getByTestId('skill-selector-trigger').click()
+        return dialog
+      }
+      await openEditor()
+      await expect(
+        page.getByTestId(`skill-selector-option-${fixture.personalSkillId}`)
+      ).toBeVisible()
+      await expect(page.getByTestId(`skill-selector-option-${fixture.teamSkillId}`)).toBeVisible()
+      await expect(page.getByTestId(`skill-selector-option-${shared.id}`)).toHaveCount(0)
+      const denied = await fixture.userApi.put(`/api/bots/${fixture.botId}`, {
+        skills: [skillName],
+        skill_refs: {
+          [skillName]: { skill_id: shared.id, namespace: 'default', is_public: false },
+        },
+      })
+      expect(denied.status).toBe(403)
+
+      await share([otherGroup.name, fixture.groupName])
+      const dialog = await openEditor()
+      await page.getByTestId(`skill-selector-option-${shared.id}`).click()
+      const saved = page.waitForResponse(
+        response =>
+          response.request().method() === 'PUT' &&
+          new URL(response.url()).pathname.endsWith(`/bots/${fixture.botId}`)
+      )
+      await dialog.getByRole('button', { name: /^(Save|保存)$/ }).click()
+      const response = await saved
+      expect(response.status()).toBe(200)
+      expect(response.request().postDataJSON().skill_refs[skillName].skill_id).toBe(shared.id)
+      const persisted = await fixture.userApi.get<{
+        skill_refs: Record<string, { skill_id: number }>
+      }>(`/api/bots/${fixture.botId}`)
+      expect(persisted.status).toBe(200)
+      expect(persisted.data?.skill_refs[skillName].skill_id).toBe(shared.id)
+    } finally {
+      await context.close()
+      await fixture.userApi.put(`/api/bots/${fixture.botId}`, { skills: [], preload_skills: [] })
+      await fixture.cleanup()
+      await fixture.adminApi.deleteGroup(otherGroup.name)
+    }
+  })
+
   test('regular user sees personal and team skills in the editor and management list', async ({
     browser,
     request,

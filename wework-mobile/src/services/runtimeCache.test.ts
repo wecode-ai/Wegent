@@ -13,9 +13,31 @@ vi.mock('expo-file-system/legacy', () => ({
 }))
 
 import { MobileRuntimeCache } from './runtimeCache'
+import { writeAsStringAsync } from 'expo-file-system/legacy'
 
 describe('MobileRuntimeCache', () => {
-  beforeEach(() => files.clear())
+  beforeEach(() => {
+    files.clear()
+    vi.clearAllMocks()
+  })
+
+  it('coalesces a burst of updates into the newest snapshot', async () => {
+    const cache = new MobileRuntimeCache('https://wegent.example/api', 7)
+    const snapshot = {
+      allDevicesSelected: false,
+      devices: [],
+      models: [],
+      selectedDeviceId: null as string | null,
+      workByDevice: {},
+    }
+    await Promise.all([
+      cache.write({ ...snapshot, selectedDeviceId: 'old' }),
+      cache.write({ ...snapshot, selectedDeviceId: 'middle' }),
+      cache.write({ ...snapshot, selectedDeviceId: 'latest' }),
+    ])
+    expect(writeAsStringAsync).toHaveBeenCalledOnce()
+    expect(await cache.read()).toMatchObject({ selectedDeviceId: 'latest' })
+  })
 
   it('persists the selected device and each device work independently', async () => {
     const cache = new MobileRuntimeCache('https://wegent.example/api', 7)

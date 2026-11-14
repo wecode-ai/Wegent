@@ -798,7 +798,12 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
         return query.first()
 
     def list_assistant_by_task(
-        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: Optional[int] = None,
+        include_contexts: bool = True,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(
             Subtask.task_id == task_id,
@@ -806,7 +811,9 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         rows = query.order_by(Subtask.message_id.asc()).all()
-        return self._load_ordered(db, [row[0] for row in rows])
+        return self._load_ordered(
+            db, [row[0] for row in rows], include_contexts=include_contexts
+        )
 
     def list_recent_executor_sessions_by_task(
         self,
@@ -1616,20 +1623,19 @@ class SqlAlchemySubtaskStore(SubtaskRuntimeReads):
         subtasks = query.all()
         return self._delete_subtasks(db, subtasks)
 
-    def _load_ordered(self, db: Session, subtask_ids: list[int]) -> list[Subtask]:
+    def _load_ordered(
+        self, db: Session, subtask_ids: list[int], *, include_contexts: bool = True
+    ) -> list[Subtask]:
         if not subtask_ids:
             return []
-        subtasks = (
-            db.query(Subtask)
-            .options(
-                subqueryload(Subtask.contexts),
-                undefer(Subtask.prompt),
-                undefer(Subtask.result),
-                undefer(Subtask.error_message),
-            )
-            .filter(Subtask.id.in_(subtask_ids))
-            .all()
+        query = db.query(Subtask).options(
+            undefer(Subtask.prompt),
+            undefer(Subtask.result),
+            undefer(Subtask.error_message),
         )
+        if include_contexts:
+            query = query.options(subqueryload(Subtask.contexts))
+        subtasks = query.filter(Subtask.id.in_(subtask_ids)).all()
         id_to_subtask = {subtask.id: subtask for subtask in subtasks}
         return [
             id_to_subtask[subtask_id]

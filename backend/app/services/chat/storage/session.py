@@ -24,14 +24,14 @@ from typing import Any, Dict, List, Optional
 
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.services.chat.storage.response_cancel import (
+    CANCEL_FLAG_TTL,
+    CANCEL_KEY_PREFIX,
+    ResponseCancelCoordinator,
+)
 from shared.models.blocks import BlockStatus, create_text_block, create_tool_block
 
 logger = logging.getLogger(__name__)
-
-# Redis key prefix for cancellation flags
-CANCEL_KEY_PREFIX = "chat:cancel:"
-# Cancellation flag TTL in seconds (5 minutes should be enough for any chat)
-CANCEL_FLAG_TTL = 300
 
 # Redis key prefix for streaming content cache
 STREAMING_KEY_PREFIX = "chat:streaming:"
@@ -270,12 +270,28 @@ class SessionManager:
         """Generate Redis key for cancellation flag."""
         return f"{CANCEL_KEY_PREFIX}{subtask_id}"
 
+    @property
+    def response_cancel(self) -> ResponseCancelCoordinator:
+        return ResponseCancelCoordinator(self._cache)
+
+    async def finish_response_cancel(self, subtask_id: int, token: str | None) -> bool:
+        """Notify only after the caller commits its terminal database state."""
+        success = (
+            await self.response_cancel.finalize(subtask_id, token)
+            if token is not None
+            else False
+        )
+        local_event = self._local_events.get(subtask_id)
+        if local_event:
+            local_event.set()
+        return success
+
     async def register_stream(self, subtask_id: int) -> asyncio.Event:
         """
         Register a new streaming request and return its cancellation event.
 
         Creates a local asyncio.Event for in-process signaling and
-        clears any existing cancellation flag in Redis.
+        clears a previous cancellation flag unless its producer is committing.
 
         Args:
             subtask_id: The subtask ID for the stream
@@ -287,12 +303,7 @@ class SessionManager:
         cancel_event = asyncio.Event()
         self._local_events[subtask_id] = cancel_event
 
-        # Clear any existing cancellation flag in Redis (in case of retry)
-        cancel_key = self._get_cancel_key(subtask_id)
-        try:
-            await self._cache.delete(cancel_key)
-        except Exception as e:
-            logger.warning(f"Failed to clear cancel flag for subtask {subtask_id}: {e}")
+        await self.response_cancel.register(subtask_id)
 
         return cancel_event
 
@@ -340,14 +351,7 @@ class SessionManager:
         if subtask_id in self._local_events:
             del self._local_events[subtask_id]
 
-        # Clean up Redis cancellation flag
-        cancel_key = self._get_cancel_key(subtask_id)
-        try:
-            await self._cache.delete(cancel_key)
-        except Exception as e:
-            logger.warning(
-                f"Failed to delete cancel flag for subtask {subtask_id}: {e}"
-            )
+        await self.response_cancel.unregister(subtask_id)
 
     async def is_cancelled(self, subtask_id: int) -> bool:
         """

@@ -4,7 +4,6 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from './workbenchServices'
 
-const projectStoreByRuntimeTask = new Map<string, 'backend' | 'local'>()
 const cloudRuntimeApis = new WeakMap<WeworkWorkspaceRuntimePort, ProjectTaskRuntimeApi>()
 
 export interface ProjectTaskRuntimeContext {
@@ -22,10 +21,6 @@ export interface ProjectTaskRuntimeApi {
     title: string,
     description: string
   ): Promise<{ item: CloudLoopItem }>
-}
-
-function runtimeTaskKey(address: RuntimeTaskAddress) {
-  return `${address.deviceId}:${address.taskId}`
 }
 
 function toCloudProject(
@@ -113,14 +108,4 @@ export function projectTaskRuntimeApiForProject(
   return project.project_store === 'local' || project.task_provider === 'dingtalk_aitable'
     ? localProjectTaskRuntimeApi(services)
     : cloudProjectTaskRuntimeApi(services)
-}
-
-export function rememberProjectTaskStore(
-  address: RuntimeTaskAddress,
-  projectStore: 'backend' | 'local'
-) {
-  const key = runtimeTaskKey(address)
-  if (projectStoreByRuntimeTask.get(key) === projectStore) return false
-  projectStoreByRuntimeTask.set(key, projectStore)
-  return true
 }

@@ -409,7 +409,7 @@ class SqlAlchemyTaskStore:
     ) -> Optional[TaskResource]:
         query = db.query(TaskResource).filter(TaskResource.id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        return query.with_for_update().one_or_none()
+        return query.populate_existing().with_for_update().one_or_none()
 
     def get_active_task(
         self,
