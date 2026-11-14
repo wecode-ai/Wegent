@@ -19,6 +19,7 @@ from chat_shell.agents.graph_builder import (
     TRUNCATION_REASONS,
 )
 from chat_shell.services.streaming.core import (
+    REFUSAL_WARNING_MESSAGE,
     TRUNCATED_END,
     TRUNCATED_START,
     TRUNCATION_WARNING_MESSAGE,
@@ -37,6 +38,10 @@ class TestTruncationConstants:
         assert "max_tokens" in TRUNCATION_REASONS
         # Gemini (Google)
         assert "MAX_TOKENS" in TRUNCATION_REASONS
+
+    def test_truncation_reasons_contains_refusal(self):
+        """Model refusal can follow partial output and must be surfaced."""
+        assert "refusal" in TRUNCATION_REASONS
 
     def test_marker_format_consistency(self):
         """Test that truncation marker format is consistent between modules."""
@@ -84,6 +89,13 @@ class TestStreamingStateTruncation:
         assert streaming_state.is_truncated is True
         assert streaming_state.truncation_reason == "MAX_TOKENS"
 
+    def test_set_truncated_refusal(self, streaming_state):
+        """Model refusal can follow partial output."""
+        streaming_state.set_truncated("refusal")
+
+        assert streaming_state.is_truncated is True
+        assert streaming_state.truncation_reason == "refusal"
+
     def test_get_current_result_without_truncation(self, streaming_state):
         """Test that result does not include truncation info when not truncated."""
         streaming_state.append_content("Hello World")
@@ -121,6 +133,16 @@ class TestStreamingStateTruncation:
             result = state.get_current_result()
             assert result["truncated"] is True
             assert result["truncation_reason"] == reason
+
+    def test_get_current_result_with_refusal(self, streaming_state):
+        """Refusal is persisted with the same truncation fields."""
+        streaming_state.append_content("Partial")
+        streaming_state.set_truncated("refusal")
+
+        result = streaming_state.get_current_result()
+
+        assert result["truncated"] is True
+        assert result["truncation_reason"] == "refusal"
 
 
 class TestTruncationMarkerFormat:

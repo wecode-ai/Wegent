@@ -71,8 +71,10 @@ In your final response:
 Do NOT attempt to call any more tools. Provide the best final response you can with the information already collected."""
 
 # Truncation detection constants
-# These finish_reason values indicate content was truncated due to max_token limit
-TRUNCATION_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
+# These finish_reason values indicate that model output ended before it was
+# complete. ``refusal`` is included because partial content can already have
+# been streamed before the model reports it.
+TRUNCATION_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS", "refusal"})
 
 # Special marker format for truncation info (similar to reasoning content markers)
 TRUNCATED_MARKER_START = "__TRUNCATED__"
@@ -1512,6 +1514,7 @@ class LangGraphAgentBuilder:
         # Truncation detection state
         truncation_detected = False
         truncation_reason = ""
+        model_termination_reason = ""
 
         # Collect the complete LangGraph state messages for history persistence
         _collected_state_messages: list[BaseMessage] = []
@@ -1805,6 +1808,11 @@ class LangGraphAgentBuilder:
                         content_tool_use_count,
                         invalid_tool_calls_count,
                     )
+                    current_stop_reason = (
+                        metadata.get("finish_reason") or metadata.get("stop_reason")
+                    )
+                    if current_stop_reason:
+                        model_termination_reason = current_stop_reason
                     last_model_end_tool_calls = parsed_tool_calls_count
                     input_tokens = _extract_model_input_tokens(output)
                     if (
@@ -2020,6 +2028,9 @@ class LangGraphAgentBuilder:
             termination_log = logger.info
             if _has_unexecuted_tool_calls(final_message, last_model_end_tool_calls):
                 termination_reason = "completed_with_unexecuted_tool_calls"
+                termination_log = logger.warning
+            elif model_termination_reason == "refusal":
+                termination_reason = "model_refusal"
                 termination_log = logger.warning
 
             self._finalize_turn_history(authoritative, turn_ctx, termination_reason)
