@@ -6,10 +6,17 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::responses::test_mysql::SUBTASK_ID;
+use crate::responses::test_mysql::{SUBTASK_ID, TASK_ID};
 use brz_redis::{
     EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, FromRedisValue, RedisResult, SetOptions,
 };
+
+/// The existing activity protocol is independent of cancellation registration.
+const TOUCH_ACTIVITY_SCRIPT: &str = "\n\
+if (redis.call('GET', KEYS[1]) or '') ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+";
 
 /// One-shot gate for the cancellation GET: `started` fires once the read is
 /// admitted, and the read does not return until `release` fires.
@@ -91,6 +98,23 @@ impl brz_redis::Redis for RecordingRedis {
         A: EncodeRedisArgs + Send,
         R: FromRedisValue + Send,
     {
+        if script.as_encoded_bytes() == Some(TOUCH_ACTIVITY_SCRIPT.as_bytes()) {
+            assert_eq!(keys.num_args(), 1);
+            assert_eq!(arguments.num_args(), 3);
+            let mut command = brz_redis::cmd("EVAL");
+            keys.encode_args(&mut command)?;
+            arguments.encode_args(&mut command)?;
+            assert_eq!(
+                command.arg_at(1),
+                Some(format!("chat:task_streaming:{TASK_ID}").as_bytes())
+            );
+            assert_eq!(command.arg_at(2), Some(b"".as_slice()));
+            assert_eq!(command.arg_at(4), Some(b"3600".as_slice()));
+            self.record(format!("EVAL chat:task_streaming:{TASK_ID}"));
+            // This double does not persist task activity. Serve a CAS miss,
+            // preserving that existing boundary without accepting unknown Lua.
+            return R::from_redis_value(&brz_redis::Value::Int(0));
+        }
         assert_eq!(
             script.as_encoded_bytes(),
             Some(crate::responses::stream_state::REGISTER_SCRIPT.as_bytes())
