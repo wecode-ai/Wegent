@@ -100,8 +100,8 @@ export interface UseKnowledgeSidebarReturn {
   // View mode
   viewMode: ViewMode
   selectAll: () => void
-  filterGroupId: string | null
-  setFilterGroupId: (groupId: string | null) => void
+  filterLevel: string | null
+  setFilterLevel: (level: string | null) => void
 
   // Raw KBs for navigation and ID lookups
   allKnowledgeBases: KnowledgeBase[]
@@ -239,7 +239,7 @@ export function useKnowledgeSidebar({
 
   // View mode state
   const [viewMode, setViewMode] = useState<ViewMode>('all')
-  const [filterGroupId, setFilterGroupId] = useState<string | null>(null)
+  const [filterLevel, setFilterLevel] = useState<string | null>(null)
 
   if (stateScope !== scope) {
     latestSelectedKbIdRef.current = null
@@ -252,7 +252,7 @@ export function useKnowledgeSidebar({
     setSelectedGroupId(null)
     setSelectedSourceViewId(null)
     setViewMode('all')
-    setFilterGroupId(null)
+    setFilterLevel(null)
     setFavorites([])
     setRecentAccessItems(loadRecentAccess(recentKey))
     setIsLoading(true)
@@ -642,7 +642,7 @@ export function useKnowledgeSidebar({
     setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('group')
-    setFilterGroupId(groupId.startsWith('group-') ? groupId : null)
+    setFilterLevel(groupId.startsWith('group-') ? groupId : null)
   }, [])
 
   const selectAll = useCallback(() => {
@@ -652,7 +652,7 @@ export function useKnowledgeSidebar({
     setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('all')
-    setFilterGroupId(null)
+    setFilterLevel(null)
   }, [])
 
   const selectGroups = useCallback(() => {
@@ -662,7 +662,7 @@ export function useKnowledgeSidebar({
     setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('groups')
-    setFilterGroupId(null)
+    setFilterLevel(null)
   }, [])
 
   const selectSourceView = useCallback((sourceViewId: string) => {
@@ -672,7 +672,7 @@ export function useKnowledgeSidebar({
     setSelectedSourceViewId(sourceViewId)
     setSelectedKb(null)
     setViewMode('source')
-    setFilterGroupId(null)
+    setFilterLevel(null)
   }, [])
 
   const clearSelection = useCallback(() => {
@@ -682,7 +682,7 @@ export function useKnowledgeSidebar({
     setSelectedGroupId(null)
     setSelectedSourceViewId(null)
     setViewMode('all')
-    setFilterGroupId(null)
+    setFilterLevel(null)
   }, [])
 
   const removeInaccessibleKnowledgeBase = useCallback(
@@ -767,8 +767,8 @@ export function useKnowledgeSidebar({
     // View mode
     viewMode,
     selectAll,
-    filterGroupId,
-    setFilterGroupId,
+    filterLevel,
+    setFilterLevel,
 
     // Raw KBs for navigation and ID lookups
     allKnowledgeBases,

@@ -323,11 +323,11 @@ it('filters only the real owning space and keeps an empty relationship empty', a
       groupType: 'group' as const,
     }),
   }
-  const { rerender } = render(<KnowledgeGroupListPage {...props} filterGroupId="group-origin" />)
+  const { rerender } = render(<KnowledgeGroupListPage {...props} filterLevel="group-origin" />)
   expect(screen.getByTestId('kb-row-88')).toHaveTextContent('Real space')
   expect(screen.getByRole('heading')).toHaveTextContent('Shared with me')
   expect(screen.getByTestId('knowledge-result-count')).toHaveTextContent('1')
-  rerender(<KnowledgeGroupListPage {...props} filterGroupId="group-beta" />)
+  rerender(<KnowledgeGroupListPage {...props} filterLevel="group-beta" />)
   expect(screen.queryByTestId('kb-row-88')).not.toBeInTheDocument()
   rerender(
     <KnowledgeGroupListPage {...props} knowledgeBases={[shared]} knowledgeBasesWithGroupInfo={[]} />
@@ -373,8 +373,8 @@ it('counts teams from the deduplicated current scope and recovers filtered empty
         isLoading={false}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
-        filterGroupId={team}
-        onFilterGroupChange={setTeam}
+        filterLevel={team}
+        onFilterLevelChange={setTeam}
         availableGroups={[
           { id: 'group-alpha', name: 'alpha', displayName: 'Alpha' },
           { id: 'group-beta', name: 'beta', displayName: 'Beta' },
@@ -436,7 +436,7 @@ it('applies the current type to team counts before applying the team selection',
       isLoading={false}
       onSelectKb={jest.fn()}
       showAdvancedKnowledge
-      onFilterGroupChange={jest.fn()}
+      onFilterLevelChange={jest.fn()}
       availableGroups={[
         { id: 'group-alpha', name: 'alpha', displayName: 'Alpha' },
         { id: 'group-beta', name: 'beta', displayName: 'Beta' },
@@ -542,8 +542,8 @@ it('filters same-name teams by identity, clears the filter, and sorts through sh
         }))}
         isLoading={false}
         onSelectKb={jest.fn()}
-        filterGroupId={team}
-        onFilterGroupChange={value => {
+        filterLevel={team}
+        onFilterLevelChange={value => {
           onFilter(value)
           setTeam(value)
         }}
@@ -668,8 +668,8 @@ it('filters personal provenance independently of the creator and sharing destina
         isLoading={false}
         onSelectKb={jest.fn()}
         onCreateKb={jest.fn()}
-        filterGroupId={filter}
-        onFilterGroupChange={setFilter}
+        filterLevel={filter}
+        onFilterLevelChange={setFilter}
         availableGroups={[{ id: 'group-alpha', name: 'alpha', displayName: 'Alpha' }]}
       />
     )
@@ -705,8 +705,8 @@ it.each([false, true])('ignores stale space filters on the company page (mobile=
       isLoading={false}
       onSelectKb={jest.fn()}
       onCreateKb={jest.fn()}
-      filterGroupId="space:personal"
-      onFilterGroupChange={jest.fn()}
+      filterLevel="personal"
+      onFilterLevelChange={jest.fn()}
     />
   )
   expect(screen.queryByTestId('knowledge-team-filter')).not.toBeInTheDocument()
@@ -746,8 +746,8 @@ it('counts company space after type filtering and deduplicates its rows on deskt
         knowledgeBasesWithGroupInfo={rows}
         isLoading={false}
         onSelectKb={jest.fn()}
-        filterGroupId={filter}
-        onFilterGroupChange={setFilter}
+        filterLevel={filter}
+        onFilterLevelChange={setFilter}
       />
     )
   }
@@ -855,8 +855,8 @@ it('filters all organizations and unknown ownership without reclassifying shared
         )}
         isLoading={false}
         onSelectKb={jest.fn()}
-        filterGroupId={filter}
-        onFilterGroupChange={setFilter}
+        filterLevel={filter}
+        onFilterLevelChange={setFilter}
         availableGroups={[
           { id: 'group-alpha', name: 'alpha', displayName: 'Alpha' },
           { id: 'group-beta', name: 'beta', displayName: 'Beta' },

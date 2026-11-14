@@ -190,7 +190,7 @@ it('retains the created library identity and does not recreate when list refresh
 it('rechecks the selected team before creating even through a previously captured submit callback', async () => {
   const sidebar = {
     groups: [{ id: 'group-team', name: 'team', displayName: 'Team', type: 'group' }],
-    filterGroupId: 'group-team',
+    filterLevel: 'group-team',
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,
@@ -288,14 +288,15 @@ it('does not send the deferred document create when its account scope has alread
 })
 
 it.each([
-  ['space:personal', 'personal'],
-  ['space:organization', 'personal'],
-  ['space:unknown', 'personal'],
-  ['organization', 'organization'],
+  ['personal', 'personal'],
+  ['organization', 'personal'],
+  ['unknown', 'personal'],
+  ['company', 'organization'],
+  ['group-team', 'group-team'],
 ])('opens creation in the selected space %s', (filter, expected) => {
   const sidebar = {
     groups: [],
-    filterGroupId: filter,
+    filterLevel: filter,
     selectedGroupId: null,
     currentUser: { id: 1 },
     selectedKbId: null,

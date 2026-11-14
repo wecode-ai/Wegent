@@ -16,12 +16,7 @@ import {
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  COMPANY_SPACE_FILTER,
-  PERSONAL_SPACE_FILTER,
-  ORGANIZATION_SPACE_FILTER,
-  UNKNOWN_SPACE_FILTER,
-} from '../navigation'
+import type { KnowledgeLevel } from '@/types/knowledge'
 
 export interface KnowledgeTeamOption {
   id: string
@@ -55,16 +50,14 @@ export function KnowledgeLibraryFilter({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const query = search.trim().toLocaleLowerCase()
-  const spaces = [
+  const levels: { id: KnowledgeLevel | 'unknown'; displayName: string; kbCount: number }[] = [
     {
-      id: PERSONAL_SPACE_FILTER,
-      key: 'personal',
+      id: 'personal',
       displayName: t('document.navigation.personalSpace'),
       kbCount: personalCount,
     },
     {
-      id: ORGANIZATION_SPACE_FILTER,
-      key: 'organization',
+      id: 'organization',
       displayName: t('document.navigation.allOrganizations'),
       kbCount: organizationCount,
     },
@@ -72,20 +65,18 @@ export function KnowledgeLibraryFilter({
       ? []
       : [
           {
-            id: COMPANY_SPACE_FILTER,
-            key: 'company',
+            id: 'company' as const,
             displayName: t('document.navigation.companySpace'),
             kbCount: companyCount,
           },
         ]),
     {
-      id: UNKNOWN_SPACE_FILTER,
-      key: 'unknown',
+      id: 'unknown',
       displayName: t('document.navigation.unknownSpace'),
       kbCount: unknownCount,
     },
   ]
-  const selected = [...spaces, ...groups].find(option => option.id === value)
+  const selected = [...levels, ...groups].find(option => option.id === value)
   const anyScope = t('document.navigation.anyScope')
   const visibleGroups = groups.filter(group =>
     query
@@ -167,13 +158,13 @@ export function KnowledgeLibraryFilter({
                   {anyScope}
                 </CommandItem>
               )}
-              {spaces
+              {levels
                 .filter(space => !query || space.displayName.toLocaleLowerCase().includes(query))
                 .map(space => (
                   <CommandItem
                     key={space.id}
                     value={space.id}
-                    data-testid={`knowledge-space-option-${space.key}`}
+                    data-testid={`knowledge-space-option-${space.id}`}
                     data-current={value === space.id}
                     className="min-h-11"
                     onSelect={() => select(space.id)}
@@ -182,7 +173,7 @@ export function KnowledgeLibraryFilter({
                     <span className="min-w-0 flex-1">{space.displayName}</span>
                     <span
                       className="shrink-0 text-xs tabular-nums text-text-muted"
-                      data-testid={`knowledge-space-count-${space.key}`}
+                      data-testid={`knowledge-space-count-${space.id}`}
                     >
                       {space.kbCount}
                     </span>

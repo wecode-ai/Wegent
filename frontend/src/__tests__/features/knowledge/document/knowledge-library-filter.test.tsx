@@ -123,7 +123,7 @@ it('selects personal space with its count, including zero, and clears the filter
   await user.type(screen.getByTestId('knowledge-team-search'), 'personalSpace')
   expect(screen.queryByTestId('knowledge-team-option-group-core')).not.toBeInTheDocument()
   await user.click(screen.getByTestId('knowledge-space-option-personal'))
-  expect(changed).toHaveBeenLastCalledWith('space:personal')
+  expect(changed).toHaveBeenLastCalledWith('personal')
   expect(screen.getByTestId('knowledge-team-filter')).toHaveTextContent(
     'document.navigation.personalSpace0'
   )
@@ -201,9 +201,29 @@ it('keeps aggregate ownership options searchable and selectable alongside concre
   await user.type(screen.getByTestId('knowledge-team-search'), 'allOrganizations')
   expect(screen.queryByTestId('knowledge-team-option-group-core')).not.toBeInTheDocument()
   await user.keyboard('{ArrowDown}{Enter}')
-  expect(changed).toHaveBeenLastCalledWith('space:organization')
+  expect(changed).toHaveBeenLastCalledWith('organization')
   await user.click(screen.getByTestId('knowledge-team-filter'))
   await user.type(screen.getByTestId('knowledge-team-search'), 'unknownSpace')
   await user.click(screen.getByTestId('knowledge-space-option-unknown'))
-  expect(changed).toHaveBeenLastCalledWith('space:unknown')
+  expect(changed).toHaveBeenLastCalledWith('unknown')
+})
+
+it('emits the shared company level while retaining the company option identity', async () => {
+  const changed = jest.fn()
+  render(
+    <KnowledgeLibraryFilter
+      groups={[]}
+      personalCount={0}
+      organizationCount={0}
+      companyCount={1}
+      unknownCount={0}
+      value={null}
+      mobile={false}
+      onValueChange={changed}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.click(screen.getByTestId('knowledge-space-option-company'))
+  expect(changed).toHaveBeenLastCalledWith('company')
 })

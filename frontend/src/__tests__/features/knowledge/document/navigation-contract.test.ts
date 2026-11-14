@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  collectNavigationKnowledge,
-  matchesKnowledgeOwnershipFilter,
-} from '@/features/knowledge/document/navigation'
+import { collectNavigationKnowledge } from '@/features/knowledge/document/navigation'
+import { matchesKnowledgeOwnershipFilter } from '@/features/knowledge/document/library-level'
 import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 
 const row = (id: number, namespace: string): KnowledgeBaseWithGroupInfo => ({
@@ -107,10 +105,10 @@ it('separates actual ownership from receiving teams and leaves unresolved namesp
       .filter(kb => matchesKnowledgeOwnershipFilter(kb, filter))
       .map(kb => kb.id)
       .sort()
-  expect(ids('space:personal')).toEqual([1])
-  expect(ids('space:organization')).toEqual([2])
-  expect(ids('organization')).toEqual([3])
-  expect(ids('space:unknown')).toEqual([5])
+  expect(ids('personal')).toEqual([1])
+  expect(ids('organization')).toEqual([2])
+  expect(ids('company')).toEqual([3])
+  expect(ids('unknown')).toEqual([5])
   expect(ids('group-receiving')).toEqual([])
   expect(ids('group-not-in-directory')).toEqual([])
   expect(rows.every(kb => kb.effective_role === null)).toBe(true)
@@ -128,7 +126,7 @@ it('changes owning-space classification only when the library actually moves', (
     })),
   }
   const row = collectNavigationKnowledge(migrated).find(kb => kb.id === personal.id)!
-  expect(matchesKnowledgeOwnershipFilter(row, 'space:organization')).toBe(true)
+  expect(matchesKnowledgeOwnershipFilter(row, 'organization')).toBe(true)
   expect(matchesKnowledgeOwnershipFilter(row, 'group-source')).toBe(true)
-  expect(matchesKnowledgeOwnershipFilter(row, 'space:personal')).toBe(false)
+  expect(matchesKnowledgeOwnershipFilter(row, 'personal')).toBe(false)
 })

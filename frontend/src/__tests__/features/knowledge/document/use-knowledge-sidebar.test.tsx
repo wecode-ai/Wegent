@@ -176,10 +176,10 @@ describe('relationship navigation and scoped requests', () => {
     expect(result.current.getKbGroupInfo(result.current.allKnowledgeBases[2]).groupName).toBe(
       'Real origin'
     )
-    act(() => result.current.setFilterGroupId('group-beta'))
+    act(() => result.current.setFilterLevel('group-beta'))
     expect(result.current.summary?.total_count).toBe(4)
     act(() => result.current.selectGroup('shared'))
-    expect(result.current.filterGroupId).toBeNull()
+    expect(result.current.filterLevel).toBeNull()
     expect(result.current.groups.find(group => group.id === 'group-gamma')?.kbCount).toBe(0)
   })
   it('applies the advanced switch consistently to identity and relationship counts', async () => {
