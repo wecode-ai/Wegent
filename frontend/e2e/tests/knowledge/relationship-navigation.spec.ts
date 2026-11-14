@@ -313,6 +313,114 @@ async function createLibraryInDialog(page: Page, creation: CreationSession, owne
 }
 
 creationTest(
+  'filters real ownership while shared and search-only grants retain their original boundaries',
+  async ({ page, request, browser, baseURL, creation }) => {
+    const namespace = fixtureName('e2e-owner-space')
+    const prefix = fixtureName('e2e-owner-kb')
+    creation.groups.add(namespace)
+    const group = await creation.api.post<{ id: number }>('/api/groups', {
+      name: namespace,
+      display_name: namespace,
+      visibility: 'private',
+    })
+    expect(group.status).toBe(201)
+    const create = async (suffix: string, space: string) => {
+      const response = await creation.api.post<{ id: number }>('/api/knowledge-bases', {
+        name: prefix + suffix,
+        namespace: space,
+        summary_enabled: false,
+      })
+      if (response.data?.id) creation.libraries.set(response.data.id, creation.api)
+      expect(response.status).toBe(201)
+      return response.data!.id
+    }
+    const personal = await create('-personal', 'default')
+    const native = await create('-native', namespace)
+    const restricted = await create('-restricted', 'default')
+    expect(
+      (
+        await creation.api.post('/api/share/KnowledgeBase/' + personal + '/members', {
+          user_id: 0,
+          entity_type: 'namespace',
+          entity_id: String(group.data!.id),
+          role: 'Reporter',
+        })
+      ).status
+    ).toBe(200)
+    await page.goto('/knowledge?type=document')
+    await page.getByTestId('knowledge-search').fill(prefix)
+    await page.getByTestId('knowledge-team-filter').click()
+    await expect(page.getByTestId('knowledge-space-count-personal')).toHaveText('2')
+    await expect(page.getByTestId('knowledge-space-count-organization')).toHaveText('1')
+    await page.getByTestId('knowledge-space-option-organization').click()
+    await expect(page.getByTestId('kb-row-' + native)).toHaveCount(1)
+    await expect(page.getByTestId('kb-row-' + personal)).toHaveCount(0)
+    await selectKnowledgeTeam(page, 'group-' + namespace)
+    await expect(page.getByTestId('kb-row-' + native)).toHaveCount(1)
+    await page.getByTestId('knowledge-team-filter').click()
+    await page.getByTestId('knowledge-space-option-personal').click()
+    await expect(page.getByTestId('kb-row-' + personal)).toHaveCount(1)
+    await expect(page.getByTestId('kb-row-' + restricted)).toHaveCount(1)
+    await expect(page.getByTestId('kb-row-' + native)).toHaveCount(0)
+    await page.getByTestId('nav-personal-item').click()
+    await page.getByTestId('knowledge-team-filter').click()
+    await expect(page.getByTestId('knowledge-team-option-all')).toHaveAttribute(
+      'data-current',
+      'true'
+    )
+    await page.keyboard.press('Escape')
+
+    const reader = createApiClient(request)
+    const login = await reader.login(REGULAR_USER.username, REGULAR_USER.password, 1)
+    expect(login.status).toBe(200)
+    const identity = await reader.get<{ id: number }>('/api/users/me')
+    expect(identity.status).toBe(200)
+    for (const [id, role] of [
+      [native, 'Reporter'],
+      [restricted, 'RestrictedAnalyst'],
+    ] as const) {
+      expect(
+        (
+          await creation.api.post('/api/share/KnowledgeBase/' + id + '/members', {
+            user_id: identity.data!.id,
+            role,
+          })
+        ).status
+      ).toBe(200)
+    }
+    const readerLibraries = await reader.get<{
+      groups: { group_name: string }[]
+      personal: { shared_with_me: { id: number; namespace: string }[] }
+    }>('/api/knowledge-bases/all-grouped')
+    expect(readerLibraries.status).toBe(200)
+    expect(readerLibraries.data!.groups.some(group => group.group_name === namespace)).toBe(false)
+    expect(readerLibraries.data!.personal.shared_with_me).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: native, namespace })])
+    )
+    const context = await browser.newContext({
+      baseURL,
+      storageState: buildStorageState(
+        baseURL!,
+        login.data!.access_token,
+        getJwtExpiryMs(login.data!.access_token)
+      ),
+    })
+    creation.contexts.add(context)
+    const colleague = await context.newPage()
+    await colleague.goto('/knowledge?type=document&group=shared')
+    await colleague.getByTestId('knowledge-search').fill(prefix)
+    await expect(colleague.getByTestId('kb-row-' + native)).toHaveCount(1)
+    await expect(colleague.getByTestId('kb-row-' + restricted)).toHaveCount(0)
+    await colleague.getByTestId('knowledge-team-filter').click()
+    await expect(colleague.getByTestId('knowledge-space-count-organization')).toHaveText('0')
+    await expect(colleague.getByTestId('knowledge-space-count-unknown')).toHaveText('1')
+    await colleague.getByTestId('knowledge-space-option-unknown').click()
+    await expect(colleague.getByTestId('kb-row-' + native)).toHaveCount(1)
+    await expect(colleague.getByTestId('kb-row-' + restricted)).toHaveCount(0)
+  }
+)
+
+creationTest(
   'creates once, grants a colleague, and finds the same library in relationship navigation',
   async ({ page, request, browser, baseURL, creation }) => {
     await page.goto('/knowledge?type=document')

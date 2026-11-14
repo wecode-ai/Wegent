@@ -289,7 +289,10 @@ it('does not send the deferred document create when its account scope has alread
 
 it.each([
   ['space:personal', 'personal'],
+  ['space:organization', 'personal'],
+  ['space:unknown', 'personal'],
   ['organization', 'organization'],
+  ['group-team', 'group-team'],
 ])('opens creation in the selected space %s', (filter, expected) => {
   const sidebar = {
     groups: [],

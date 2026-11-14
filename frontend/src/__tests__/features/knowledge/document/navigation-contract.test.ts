@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { collectNavigationKnowledge } from '@/features/knowledge/document/navigation'
+import { matchesKnowledgeOwnershipFilter } from '@/features/knowledge/document/library-level'
 import type { AllGroupedKnowledgeResponse, KnowledgeBaseWithGroupInfo } from '@/types/knowledge'
 
 const row = (id: number, namespace: string): KnowledgeBaseWithGroupInfo => ({
@@ -95,4 +96,37 @@ it('derives real namespaces without mutating the grouped contract or merging per
   expect(
     collectNavigationKnowledge({ ...response, groups: [...response.groups].reverse() })
   ).toEqual(rows)
+})
+
+it('separates actual ownership from receiving teams and leaves unresolved namespaces unknown', () => {
+  const rows = collectNavigationKnowledge(response)
+  const ids = (filter: string) =>
+    rows
+      .filter(kb => matchesKnowledgeOwnershipFilter(kb, filter))
+      .map(kb => kb.id)
+      .sort()
+  expect(ids('space:personal')).toEqual([1])
+  expect(ids('space:organization')).toEqual([2])
+  expect(ids('organization')).toEqual([3])
+  expect(ids('space:unknown')).toEqual([5])
+  expect(ids('group-receiving')).toEqual([])
+  expect(ids('group-not-in-directory')).toEqual([])
+  expect(rows.every(kb => kb.effective_role === null)).toBe(true)
+})
+
+it('changes owning-space classification only when the library actually moves', () => {
+  const migrated = {
+    ...response,
+    personal: { ...response.personal, created_by_me: [{ ...personal, namespace: 'source' }] },
+    groups: response.groups.map(group => ({
+      ...group,
+      knowledge_bases: group.knowledge_bases.map(kb =>
+        kb.id === personal.id ? { ...kb, namespace: 'source' } : kb
+      ),
+    })),
+  }
+  const row = collectNavigationKnowledge(migrated).find(kb => kb.id === personal.id)!
+  expect(matchesKnowledgeOwnershipFilter(row, 'space:organization')).toBe(true)
+  expect(matchesKnowledgeOwnershipFilter(row, 'group-source')).toBe(true)
+  expect(matchesKnowledgeOwnershipFilter(row, 'space:personal')).toBe(false)
 })

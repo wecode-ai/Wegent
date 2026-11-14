@@ -421,6 +421,7 @@ it('applies the current type to team counts before applying the team selection',
     },
   ].map(kb => ({
     ...kb,
+    namespace_level: 'group',
     group_id: 'default',
     group_name: 'Personal',
     group_type: 'personal' as const,
@@ -534,6 +535,7 @@ it('filters same-name teams by identity, clears the filter, and sorts through sh
         knowledgeBases={[]}
         knowledgeBasesWithGroupInfo={libraries.map(kb => ({
           ...kb,
+          namespace_level: 'group',
           group_id: 'default',
           group_name: 'Personal',
           group_type: 'personal',
@@ -806,4 +808,79 @@ it('hands off focus from the mobile menu before opening an action dialog', async
   await user.click(screen.getByTestId('permission-kb-502'))
   await user.click(await screen.findByRole('button', { name: 'Done viewing' }))
   expect(origin).toBe(screen.getByTestId('more-kb-502'))
+})
+
+it('filters all organizations and unknown ownership without reclassifying shared personal libraries', async () => {
+  const personal = {
+    ...createKnowledgeBase(601, 'Shared personal', 'notebook'),
+    namespace_level: 'personal',
+    team_ids: ['alpha', 'beta'],
+  }
+  const alpha = {
+    ...createKnowledgeBase(602, 'Alpha guide', 'notebook'),
+    namespace: 'alpha',
+    namespace_level: 'group',
+  }
+  const beta = {
+    ...createKnowledgeBase(603, 'Beta guide', 'notebook'),
+    namespace: 'beta',
+    namespace_level: 'group',
+  }
+  const unknown = {
+    ...createKnowledgeBase(604, 'Unknown guide', 'notebook'),
+    namespace: 'unresolved',
+    namespace_level: null,
+  }
+  const company = {
+    ...createKnowledgeBase(605, 'Company guide', 'notebook'),
+    namespace: 'company',
+    namespace_level: 'organization',
+  }
+  function ScopedPage() {
+    const [filter, setFilter] = useState<string | null>(null)
+    return (
+      <KnowledgeGroupListPage
+        groupId={null}
+        groupName="All"
+        isAllMode
+        showCompanySpace
+        knowledgeBases={[]}
+        knowledgeBasesWithGroupInfo={[personal, personal, alpha, beta, unknown, company].map(
+          kb => ({
+            ...kb,
+            group_id: 'default',
+            group_name: 'Personal',
+            group_type: 'personal' as const,
+          })
+        )}
+        isLoading={false}
+        onSelectKb={jest.fn()}
+        filterGroupId={filter}
+        onFilterGroupChange={setFilter}
+        availableGroups={[
+          { id: 'group-alpha', name: 'alpha', displayName: 'Alpha' },
+          { id: 'group-beta', name: 'beta', displayName: 'Beta' },
+        ]}
+      />
+    )
+  }
+  render(<ScopedPage />)
+  const user = userEvent.setup()
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(5)
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  expect(screen.getByTestId('knowledge-space-count-personal')).toHaveTextContent('1')
+  expect(screen.getByTestId('knowledge-space-count-organization')).toHaveTextContent('2')
+  expect(screen.getByTestId('knowledge-space-count-unknown')).toHaveTextContent('1')
+  await user.click(screen.getByTestId('knowledge-space-option-organization'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(2)
+  for (const id of [602, 603]) expect(screen.getByTestId(`kb-row-${id}`)).toBeInTheDocument()
+  for (const id of [601, 604, 605])
+    expect(screen.queryByTestId(`kb-row-${id}`)).not.toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.click(screen.getByTestId('knowledge-space-option-unknown'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(1)
+  expect(screen.getByTestId('kb-row-604')).toBeInTheDocument()
+  await user.click(screen.getByTestId('knowledge-team-filter'))
+  await user.click(screen.getByTestId('knowledge-team-option-all'))
+  expect(screen.getAllByTestId(/^kb-row-/)).toHaveLength(5)
 })

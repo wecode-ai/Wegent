@@ -23,7 +23,11 @@ import type {
   KnowledgeBaseType,
   KnowledgeBaseUpdate,
 } from '@/types/knowledge'
-import { PERSONAL_SPACE_FILTER } from '../navigation'
+import {
+  PERSONAL_SPACE_FILTER,
+  ORGANIZATION_SPACE_FILTER,
+  UNKNOWN_SPACE_FILTER,
+} from '../library-level'
 import type { MigrationTargetGroup } from '../components/MigrateKnowledgeBaseDialog'
 
 interface SidebarLike {
@@ -392,7 +396,11 @@ export function useKnowledgeBaseDialogs({
   const handleCreateKbFromAll = useCallback(
     (kbType: KnowledgeBaseType) => {
       const filter = latest.current.sidebar.filterGroupId
-      setDefaultCreateGroupId(filter === PERSONAL_SPACE_FILTER ? 'personal' : filter || 'personal')
+      const aggregateFilter =
+        filter === PERSONAL_SPACE_FILTER ||
+        filter === ORGANIZATION_SPACE_FILTER ||
+        filter === UNKNOWN_SPACE_FILTER
+      setDefaultCreateGroupId(aggregateFilter ? 'personal' : filter || 'personal')
       dismissCreatedKb()
       setCreateScope('personal')
       setCreateGroupName(undefined)
