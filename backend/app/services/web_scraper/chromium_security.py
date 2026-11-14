@@ -10,11 +10,14 @@ therefore required for every page and out-of-process iframe target.
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 from weakref import WeakKeyDictionary, WeakValueDictionary
 
 from app.services.web_scraper.security import WebScraperUrlGuard
+
+logger = logging.getLogger(__name__)
 
 BLOCK_WORKER_WEBSOCKETS = """(() => {
   const key = Symbol.for('wegent.scraper.workerWebSocketsBlocked');
@@ -204,6 +207,14 @@ class ChromiumRequestGuard:
     async def _browser_worker_attached(self, event: dict[str, Any]) -> None:
         session = self._browser_session
         info = event["targetInfo"]
+        logger.debug(
+            "[DEBUG-worker-guard] browser attached type=%s target=%s session=%s waiting=%s owned=%s",
+            info["type"],
+            info["targetId"],
+            event["sessionId"],
+            event["waitingForDebugger"],
+            info.get("browserContextId") == self._browser_context_id,
+        )
         if info.get("browserContextId") != self._browser_context_id:
             # Detaching releases only this observer's startup barrier reference.
             await session.send(
@@ -243,6 +254,11 @@ class ChromiumRequestGuard:
         raise RuntimeError("Worker started before scraper protection was installed")
 
     async def _configure_target(self, session: Any, info: dict[str, Any]) -> None:
+        logger.debug(
+            "[DEBUG-worker-guard] configuring type=%s target=%s",
+            info["type"],
+            info["targetId"],
+        )
         self._listen_for_targets(session)
         if info["type"] in {"worker", "shared_worker"}:
             await self._disable_worker_websockets(session)
@@ -260,6 +276,11 @@ class ChromiumRequestGuard:
                 {"patterns": [{"urlPattern": "*", "requestStage": "Request"}]},
             )
         await session.send("Target.setAutoAttach", self._auto_attach_params())
+        logger.debug(
+            "[DEBUG-worker-guard] configured type=%s target=%s",
+            info["type"],
+            info["targetId"],
+        )
 
     @staticmethod
     async def _disable_worker_websockets(session: Any) -> None:
@@ -293,6 +314,14 @@ class ChromiumRequestGuard:
     def _listen_for_targets(self, parent: Any) -> None:
         async def attached(event: dict[str, Any]) -> None:
             info = event["targetInfo"]
+            logger.debug(
+                "[DEBUG-worker-guard] child attached type=%s target=%s session=%s waiting=%s protected=%s",
+                info["type"],
+                info["targetId"],
+                event["sessionId"],
+                event["waitingForDebugger"],
+                info["targetId"] in self._protected_workers,
+            )
             if (
                 info["type"] in {"worker", "shared_worker"}
                 and not event["waitingForDebugger"]

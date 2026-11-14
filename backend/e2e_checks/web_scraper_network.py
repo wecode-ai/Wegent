@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import threading
@@ -304,6 +305,9 @@ async def check_crawler(cdp_url: str, guard: WebScraperUrlGuard) -> None:
 
 
 async def main() -> None:
+    guard_logger = logging.getLogger("app.services.web_scraper.chromium_security")
+    guard_logger.setLevel(logging.DEBUG)
+    guard_logger.addHandler(logging.StreamHandler())
     ip = "11.255.255.254"
     guard = WebScraperUrlGuard()
     for target in ("http://127.0.0.1/", "http://10.1.2.3/", "http://169.254.169.254/"):
