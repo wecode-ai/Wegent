@@ -230,6 +230,7 @@
   justify-content: center;
   gap: 2px;
   height: 52px;
+  padding: 0 8px;
   font-size: var(--text-xs);
 }
 .experience-navigation[data-mobile='true'] .experience-navigation-footer {
@@ -241,6 +242,7 @@
   flex-direction: column;
   justify-content: center;
   height: 52px;
+  padding: 0 8px;
   gap: 2px;
 }
 .experience-account {

@@ -191,6 +191,7 @@ export async function verifyCollaborationExpIssueCreateAndEdit({
 export async function verifyCollaborationExpPrivateMessage({
   control,
   conversation,
+  localProject,
   localIssue,
   cloudIssue,
   cloudProject,
@@ -213,17 +214,15 @@ export async function verifyCollaborationExpPrivateMessage({
     conversation.taskId,
     uiTimeoutMs
   )
-  const beforePrivateLocal = await rpc('todos.get', { task_id: localIssue.id })
+  const localIssueAddress = { project_id: localProject.id, task_id: localIssue.id }
+  const beforePrivateLocal = await rpc('todos.get', localIssueAddress)
   const beforePrivateCloud = await request(`/api/v1/loop-items/${cloudIssue.id}`)
   const beforePrivateComments = await comments()
   const beforePrivateCloudComments = await request(
     `/api/v1/cloud-projects/${cloudProject.id}/loop-items/${cloudIssue.id}/activity-comments`
   )
   const assertPrivateLeavesSharedUnchanged = async () => {
-    assert.equal(
-      (await rpc('todos.get', { task_id: localIssue.id })).status,
-      beforePrivateLocal.status
-    )
+    assert.equal((await rpc('todos.get', localIssueAddress)).status, beforePrivateLocal.status)
     assert.equal(
       (await request(`/api/v1/loop-items/${cloudIssue.id}`)).status,
       beforePrivateCloud.status

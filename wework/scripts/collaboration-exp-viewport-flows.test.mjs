@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { assertDesktopPanes } from '../e2e/desktop/modules/collaboration-exp-pane-verification.mjs'
-import { assertReducedPlanMotion } from '../e2e/desktop/modules/collaboration-exp-state-motion.mjs'
+import {
+  assertMobileAssistantPriority,
+  assertMobileNavigation,
+  assertReducedPlanMotion,
+} from '../e2e/desktop/modules/collaboration-exp-state-motion.mjs'
 import {
   selectCollaborationExpAppearance,
   verifyCollaborationExpViewports,
@@ -87,6 +91,97 @@ test('viewport appearance still rejects a settings selection that fails to updat
     /Root theme did not change/
   )
   assert.equal(control.state.route, '/settings/appearance')
+})
+
+function mobilePriorityControl(change = {}) {
+  const first = {
+    ...box,
+    top: 250,
+    bottom: 400,
+    height: 150,
+    visibleIntersection: { height: 150 },
+    ...change.first,
+  }
+  return {
+    async command(action, selector) {
+      if (action === 'waitFor') return ''
+      assert.equal(action, 'getElementMetrics')
+      if (selector === testId('collaboration-exp-assistant-input'))
+        return JSON.stringify([{ ...box, top: 500 }])
+      if (selector === 'running-role')
+        return JSON.stringify([
+          { ...box, top: 150, bottom: 210, visibleIntersection: { height: 60 } },
+        ])
+      if (
+        selector === `${testId('collaboration-exp-assistant-decisions')} .assistant-decision-card`
+      )
+        return JSON.stringify(
+          change.noDecisions
+            ? []
+            : [first, { ...first, top: 600, bottom: 750, visibleIntersection: { height: 0 } }]
+        )
+      if (selector === testId('collaboration-exp-assistant-snapshot'))
+        return JSON.stringify([{ ...box, height: change.snapshotHeight ?? 0 }])
+      assert.fail(`Unexpected mobile priority selector: ${selector}`)
+    },
+  }
+}
+
+test('mobile assistant priority verifies the first displayed decision while later decisions may scroll', async () => {
+  await assertMobileAssistantPriority(mobilePriorityControl(), testId, 'running-role')
+})
+
+test('mobile assistant priority still rejects a clipped first decision or an expanded desktop snapshot', async () => {
+  for (const [change, message] of [
+    [{ first: { bottom: 520 } }, /must precede the composer/],
+    [{ first: { visibleIntersection: { height: 100 } } }, /must fit in the first screen/],
+    [{ snapshotHeight: 100 }, /desktop work snapshot must collapse/],
+    [{ noDecisions: true }, /requires a real visible state control/],
+  ])
+    await assert.rejects(
+      () => assertMobileAssistantPriority(mobilePriorityControl(change), testId, 'running-role'),
+      message
+    )
+})
+
+function mobileNavigationControl(change = {}) {
+  return {
+    async command(action, selector) {
+      if (action === 'waitFor') return ''
+      assert.equal(action, 'getElementMetrics')
+      const label = selector.endsWith(' .truncate')
+      return JSON.stringify([
+        label
+          ? {
+              ...box,
+              text: 'Account',
+              height: 16,
+              clientHeight: change.labelClientHeight ?? 16,
+              scrollHeight: 16,
+              visibleIntersection: { height: change.labelIntersection ?? 16 },
+            }
+          : {
+              ...box,
+              height: change.buttonHeight ?? 52,
+              visibleIntersection: { height: change.buttonIntersection ?? 52 },
+            },
+      ])
+    },
+  }
+}
+
+test('mobile navigation keeps controls and their full text visible', async () => {
+  await assertMobileNavigation(mobileNavigationControl(), testId)
+  for (const [change, message] of [
+    [{ labelClientHeight: 8 }, /labels must not clip vertically/],
+    [{ labelIntersection: 8 }, /labels must fit in the viewport/],
+    [{ buttonHeight: 40 }, /navigation must remain usable/],
+    [{ buttonIntersection: 40 }, /controls must fit in the viewport/],
+  ])
+    await assert.rejects(
+      () => assertMobileNavigation(mobileNavigationControl(change), testId),
+      message
+    )
 })
 
 function paneControl(change = {}) {

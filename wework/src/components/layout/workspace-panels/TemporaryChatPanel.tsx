@@ -1489,6 +1489,7 @@ export function TemporaryChatPanel({
                     setError(null)
                   }}
                   onSubmit={send}
+                  clearOnSubmit={!(nativeConversation && address && draft?.beginSubmission)}
                   disabled={
                     (!modelControls && taskModelIdentityPending) || (nativeConversation && sending)
                   }

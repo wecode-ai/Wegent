@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { CollaborationProject } from '@wegent/collaboration'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { canStartWorkOnCollaborationIssue } from '@wegent/collaboration'
+import type { CollaborationProject, WorkspaceMyWorkItem } from '@wegent/collaboration'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
+import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 import { usePersonalHomeIssues } from '@/features/todo/usePersonalHomeIssues'
 import {
+  projectSpaceForRuntimeTask,
+  rememberProjectSpaceTaskBinding,
+  sameProjectSpace,
   subscribeProjectSpaceTaskBindingChanged,
   subscribeProjectSpaceTaskContextChanged,
 } from '@/features/todo/projectSpaceSelection'
@@ -29,6 +35,82 @@ interface AllIssuesSnapshot {
 }
 
 const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
+
+interface VerifiedBinding {
+  task: RuntimeTaskAddress
+  project: RuntimeProjectSpaceRef
+  fresh: boolean
+}
+
+function rememberVerifiedBindings(bindings: VerifiedBinding[]) {
+  const groups = new Map<string, VerifiedBinding[]>()
+  for (const binding of bindings) {
+    const key = JSON.stringify([binding.task.deviceId, binding.task.taskId])
+    groups.set(key, [...(groups.get(key) ?? []), binding])
+  }
+  for (const candidates of groups.values()) {
+    const current = projectSpaceForRuntimeTask(candidates[0].task)
+    const userProjects = candidates.filter(
+      row => row.project.projectId !== DEFAULT_WORK_ITEM_PROJECT_ID
+    )
+    const preferred =
+      userProjects.find(row => sameProjectSpace(current, row.project)) ?? userProjects[0]
+    const selected =
+      preferred ??
+      (current?.projectId !== DEFAULT_WORK_ITEM_PROJECT_ID && current
+        ? undefined
+        : (candidates.find(row => sameProjectSpace(current, row.project)) ?? candidates[0]))
+    if (selected?.fresh) rememberProjectSpaceTaskBinding(selected.task, selected.project)
+  }
+}
+
+function useVerifiedTaskBindings(
+  sources: ExperienceSource[],
+  projects: readonly { source: ExperienceSource; project: CollaborationProject }[],
+  snapshots: ReturnType<typeof usePersonalHomeIssues>['sourceSnapshots'],
+  active: boolean
+) {
+  const consumed = useRef(new WeakMap<ExperienceSource, WeakMap<WorkspaceMyWorkItem, string>>())
+  useEffect(() => {
+    if (!active) return
+    const bindings: VerifiedBinding[] = []
+    for (const source of sources) {
+      const snapshot = snapshots.find(row => row.api === source.api)
+      if (!snapshot || snapshot.loading || snapshot.error) continue
+      const seen = consumed.current.get(source) ?? new WeakMap<WorkspaceMyWorkItem, string>()
+      consumed.current.set(source, seen)
+      for (const issue of snapshot.items) {
+        const owner = projects.find(
+          row => row.source === source && row.project.id === issue.cloud_project_id
+        )
+        if (
+          !owner ||
+          owner.project.project_store !== source.store ||
+          !issue.task_bindings ||
+          !canStartWorkOnCollaborationIssue(issue)
+        )
+          continue
+        const fresh = seen.get(issue) !== snapshot.queryKey
+        seen.set(issue, snapshot.queryKey)
+        for (const binding of issue.task_bindings) {
+          if (
+            binding.projectId !== owner.project.id ||
+            binding.issueId !== issue.id ||
+            !binding.deviceId ||
+            !binding.taskId
+          )
+            continue
+          bindings.push({
+            fresh,
+            task: { deviceId: binding.deviceId, taskId: binding.taskId },
+            project: { projectStore: source.store, projectId: owner.project.id },
+          })
+        }
+      }
+    }
+    rememberVerifiedBindings(bindings)
+  }, [sources, projects, snapshots, active])
+}
 
 function useExperienceCatalog(sources: ExperienceSource[], active: boolean, revision: number) {
   const [snapshots, setSnapshots] = useState<CatalogSnapshot[]>([])
@@ -184,6 +266,22 @@ export function useExperienceTasks(
       })),
     [catalog, hydrated]
   )
+  const verifiedProjects = useMemo(
+    () => [
+      ...catalog.flatMap(row =>
+        row.loading || row.error
+          ? []
+          : row.projects.map(project => ({ source: row.source, project }))
+      ),
+      ...hydrated.flatMap(row =>
+        !row.loading && !row.error && row.project
+          ? [{ source: row.source, project: row.project }]
+          : []
+      ),
+    ],
+    [catalog, hydrated]
+  )
+  useVerifiedTaskBindings(sources, verifiedProjects, related.sourceSnapshots, active)
   const all = useAllProjectIssues(completeCatalog, active && relevance === 'all', revision)
   const sharing = useExperienceSharing(
     sources,

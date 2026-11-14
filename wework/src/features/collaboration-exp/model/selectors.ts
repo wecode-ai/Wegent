@@ -1,4 +1,4 @@
-export { selectAssistantSummary } from './assistantSelectors'
+export { selectAssistantSummary, selectAssistantDecisions } from './assistantSelectors'
 export {
   selectPrivateConversations,
   type ExperienceConversationInput,

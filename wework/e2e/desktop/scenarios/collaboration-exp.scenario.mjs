@@ -143,7 +143,9 @@ export function createDesktopScenario({
     assert.ok(metrics.scrollWidth <= metrics.clientWidth + 1, `${selector} overflowed horizontally`)
   }
   async function openPrivate(control) {
-    await click(control, testId(`collaboration-exp-task-discussion-${conversation.taskId}`))
+    const discussion = testId(`collaboration-exp-task-discussion-${conversation.taskId}`)
+    await control.command('scrollIntoView', discussion)
+    await click(control, discussion)
     await control.command('waitFor', PRIVATE_INPUT, { visible: true })
   }
   return {
@@ -691,6 +693,7 @@ export function createDesktopScenario({
         await verifyCollaborationExpPrivateMessage({
           control,
           conversation,
+          localProject,
           localIssue,
           cloudIssue,
           cloudProject,
@@ -801,7 +804,7 @@ export function createDesktopScenario({
         await click(control, '[data-testid="workspace-tab-select-fixed-board"]')
         assert.equal(await control.command('getRoute', 'body'), '/todo')
         await control.command('navigate', 'body', {
-          value: `/todo?projectStore=local&projectId=${localProject.id}&issueId=${localIssue.id}`,
+          value: `/todo?projectStore=local&projectId=${localProject.id}&itemId=${localIssue.id}`,
         })
         await control.command('waitFor', `${ACTIVE} [data-testid="collaboration-issue-detail"]`, {
           text: PUBLIC,
@@ -811,11 +814,25 @@ export function createDesktopScenario({
         await control.command('setAppPreferences', 'body', {
           value: JSON.stringify({ collaborationExperienceEnabled: true }),
         })
+        await control.command('scrollIntoView', TAB)
         await click(control, TAB)
         await control.command('waitFor', PRIVATE_INPUT, { visible: true })
         assert.equal(await control.command('getValue', PRIVATE_INPUT), DRAFT)
       } catch (error) {
         const diagnostics = await Promise.allSettled([
+          control.command('getWorkbenchDebugSnapshot', 'body').then(value => {
+            const snapshot = JSON.parse(value)
+            const previewEvents = (snapshot.logs ?? []).filter(entry =>
+              entry.args?.some(
+                argument =>
+                  typeof argument === 'string' && argument.includes('collaboration-exp-preview-')
+              )
+            )
+            return writeFile(
+              join(resultDir, 'collaboration-exp-preview-diagnostics.json'),
+              JSON.stringify(previewEvents, null, 2)
+            )
+          }),
           control
             .command('snapshot', 'body')
             .then(value =>

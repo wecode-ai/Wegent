@@ -6,6 +6,7 @@ import {
 import { assertDesktopPanes } from './collaboration-exp-pane-verification.mjs'
 import {
   assertMobileAssistantPriority,
+  assertMobileNavigation,
   assertNativeWorkOpened,
   assertReducedPlanMotion,
   assertReducedStateMotion,
@@ -96,13 +97,8 @@ export async function verifyCollaborationExpViewports({
     )
     await assertStableStateGeometry(control, relay)
     if (width === 390) {
-      await assertMobileAssistantPriority(
-        control,
-        testId,
-        runningRole,
-        localProject.id,
-        localIssue.id
-      )
+      await assertMobileNavigation(control, testId)
+      await assertMobileAssistantPriority(control, testId, runningRole)
       await assertNoOverflow(control, testId('collaboration-exp-assistant-home'), width)
     }
     await captureScreenshot(control, `collaboration-exp-team-${name}.png`, APP)
@@ -197,6 +193,10 @@ export async function verifyCollaborationExpViewports({
         await control.command('waitFor', testId('collaboration-exp-task-rhythm-current'), {
           visible: true,
           text: runningIssue.title,
+        })
+        await click(control, testId('collaboration-exp-search-toggle'))
+        await control.command('waitFor', testId('collaboration-exp-task-search'), {
+          visible: false,
         })
         await verifyCollaborationExpTeamManagement({
           control,

@@ -12,6 +12,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ExperiencePrivateConversation } from '../model'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useConclusionPublication } from './useConclusionPublication'
@@ -123,6 +124,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
     }
   }, [])
   useEffect(() => {
+    logRuntimeTaskCreateStage('collaboration-exp-preview-commit', { showConclusion }, 'debug')
     onConclusionViewChange?.(showConclusion)
     return () => onConclusionViewChange?.(false)
   }, [onConclusionViewChange, showConclusion])
@@ -282,7 +284,22 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                       ref={reviewButton}
                       type="button"
                       data-testid="collaboration-exp-conclusion-open"
-                      onClick={() => setPreview({ identity, key: conclusionKey })}
+                      onClick={event => {
+                        logRuntimeTaskCreateStage(
+                          'collaboration-exp-preview-open',
+                          {
+                            eventType: event.type,
+                            isTrusted: event.isTrusted,
+                            detail: event.detail,
+                            targetTestId:
+                              event.target instanceof Element
+                                ? event.target.getAttribute('data-testid')
+                                : null,
+                          },
+                          'debug'
+                        )
+                        setPreview({ identity, key: conclusionKey })
+                      }}
                     >
                       {t('private.reviewConclusion')}
                       <ArrowRight size={15} aria-hidden="true" />
@@ -329,7 +346,22 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                 <button
                   type="button"
                   data-testid="collaboration-exp-conclusion-back"
-                  onClick={() => setPreview({ identity, key: null })}
+                  onClick={event => {
+                    logRuntimeTaskCreateStage(
+                      'collaboration-exp-preview-back',
+                      {
+                        eventType: event.type,
+                        isTrusted: event.isTrusted,
+                        detail: event.detail,
+                        targetTestId:
+                          event.target instanceof Element
+                            ? event.target.getAttribute('data-testid')
+                            : null,
+                      },
+                      'debug'
+                    )
+                    setPreview({ identity, key: null })
+                  }}
                 >
                   {t('private.continueDiscussion')}
                 </button>

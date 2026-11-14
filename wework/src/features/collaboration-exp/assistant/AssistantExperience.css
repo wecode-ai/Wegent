@@ -626,6 +626,11 @@
   [data-testid='collaboration-exp-app'] .assistant-dashboard-intro h2 {
     max-width: none;
     font-size: var(--text-market-title);
+    margin: 0;
+  }
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro .private-eyebrow,
+  [data-testid='collaboration-exp-app'] .assistant-dashboard-intro > .assistant-dashboard-copy > p {
+    display: none;
   }
   [data-testid='collaboration-exp-app'] .assistant-live-snapshot {
     display: none;

@@ -30,7 +30,11 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) =>
+      key === 'assistant.liveSummary' ? `${key}: ${values?.waiting}/${values?.running}` : key,
+    i18n: { language: 'en' },
+  }),
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({ useWorkbench: () => mocks.workbench }))
 vi.mock('./useAssistantSources', () => ({ useAssistantSources: () => mocks.source }))
@@ -200,6 +204,116 @@ afterEach(() => {
 })
 
 describe('AssistantHome', () => {
+  it.each(['backend', 'local'] as const)(
+    'uses the same authorized Issue decisions for all homepage counts in %s projects',
+    store => {
+      const project = experienceProjectFixture({ project_store: store })
+      const source = {
+        project,
+        issues: [
+          experienceIssueFixture({ human_requests: [experienceHumanRequestFixture()] }),
+          experienceIssueFixture({
+            id: 'EXP-2',
+            assignee_user_id: 8,
+            human_requests: [experienceHumanRequestFixture({ recipient_user_id: 8 })],
+          }),
+          experienceIssueFixture({
+            id: 'EXP-3',
+            can_view_detail: false,
+            human_requests: [experienceHumanRequestFixture()],
+          }),
+        ],
+      }
+      render(<AssistantHome active projects={[source, source]} onOpenIssue={vi.fn()} />)
+      expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent(
+        /^1$/
+      )
+      expect(screen.getByText('assistant.liveSummary: 1/0')).toBeInTheDocument()
+      expect(
+        within(screen.getByTestId('collaboration-exp-assistant-decisions')).getByRole('heading')
+      ).toHaveTextContent('assistant.needsDecision1')
+      expect(document.querySelectorAll('.assistant-decision-card')).toHaveLength(1)
+      expect(screen.getByTestId('collaboration-exp-team-relay-node-@primary')).toHaveAttribute(
+        'data-state',
+        'idle'
+      )
+    }
+  )
+
+  it('counts a native waiting task once when its original Issue already supplies the decision', () => {
+    const { state, reminders } = setupWorkbench()
+    state.runtimeWork = runningCatalog(true)
+    state.runtimeWork.chats[0].tasks[0].interactionStatus = 'awaitingUserReply'
+    reminders.items = collectRuntimeTaskReminderItems(state.runtimeWork)
+    const project = experienceProjectFixture({ id: 'real-project', project_store: 'local' })
+    const source = {
+      project,
+      issues: [
+        experienceIssueFixture({
+          id: 'real-issue',
+          cloud_project_id: project.id,
+          human_requests: [experienceHumanRequestFixture()],
+        }),
+      ],
+    }
+    const view = render(<AssistantHome active projects={[source]} onOpenIssue={vi.fn()} />)
+    expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent(/^1$/)
+    expect(document.querySelectorAll('.assistant-decision-card')).toHaveLength(1)
+    expect(
+      screen.queryByTestId(/collaboration-exp-assistant-pending-work-/)
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-exp-team-relay-node-@primary')).toHaveAttribute(
+      'data-state',
+      'waiting'
+    )
+    view.rerender(<AssistantHome active projects={[]} />)
+    expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent(/^1$/)
+    expect(screen.getByText('assistant.liveSummary: 1/0')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId(/collaboration-exp-assistant-pending-work-/))
+    expect(mocks.workbench.openRuntimeTask).toHaveBeenCalledWith(reminders.items[0].address)
+  })
+
+  it('deduplicates owned proposals and uses the same ordered collection for cards and counts', () => {
+    const proposal = {
+      id: 'proposal-one',
+      roleId: null,
+      summary: 'Connect the release calendar',
+      settings,
+      status: 'pending' as const,
+    }
+    mocks.source.proposals = [
+      proposal,
+      proposal,
+      { ...proposal, id: 'foreign', settings: { ...settings, userId: 8 } },
+    ]
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture(),
+            issues: [experienceIssueFixture({ human_requests: [experienceHumanRequestFixture()] })],
+          },
+        ]}
+        onOpenIssue={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('collaboration-exp-assistant-count-waiting')).toHaveTextContent(/^2$/)
+    expect(screen.getByText('assistant.liveSummary: 2/0')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('collaboration-exp-assistant-decisions')).getByRole('heading')
+    ).toHaveTextContent('assistant.needsDecision2')
+    expect(
+      [...document.querySelectorAll('.assistant-decision-card')].map(card => card.textContent)
+    ).toEqual([
+      expect.stringContaining('Connect the release calendar'),
+      expect.stringContaining('Choose the scope'),
+    ])
+    expect(
+      screen.queryByTestId('collaboration-exp-assistant-proposal-foreign')
+    ).not.toBeInTheDocument()
+  })
+
   it('opens recent discussions and team management only through the shared header actions', () => {
     const { api, createIssue } = setupWorkbench()
     const openConversation = vi.fn()

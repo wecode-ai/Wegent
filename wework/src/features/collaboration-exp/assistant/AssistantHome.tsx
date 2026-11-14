@@ -11,6 +11,7 @@ import { formatNotificationTime } from '@/features/notifications/notificationTim
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import {
   selectAssistantSummary,
+  selectAssistantDecisions,
   selectTaskRows,
   type ExperiencePrivateConversation,
 } from '../model'
@@ -83,6 +84,16 @@ export function AssistantHome({
   const pendingTasks = selectTaskRows({ projects, viewer: [source.userId, ownerId] }).filter(
     row => row.needsUser
   )
+  const decisions = selectAssistantDecisions({
+    proposals: summary.pendingDecisions,
+    tasks: pendingTasks,
+    items: snapshot.items,
+    work,
+  })
+  const homeSnapshot = {
+    ...snapshot,
+    counts: { ...snapshot.counts, waiting: decisions.length },
+  }
   const selectedProposal = source.proposals?.find(
     proposal => proposal.id === selectedProposalId && proposal.settings.userId === ownerId
   )
@@ -212,13 +223,13 @@ export function AssistantHome({
               <h2 className="heading-lg">{t('assistant.headline')}</h2>
               <p className="text-sm">
                 {ready
-                  ? t('assistant.liveSummary', { ...snapshot.counts })
+                  ? t('assistant.liveSummary', { ...homeSnapshot.counts })
                   : t('assistant.introduction')}
               </p>
             </div>
             {(source.settings || work.length > 0) && (
               <AssistantWorkSnapshot
-                snapshot={snapshot}
+                snapshot={homeSnapshot}
                 ready={ready}
                 onOpen={item => {
                   if (item.address) openWork(item.address, item.title)
@@ -278,9 +289,9 @@ export function AssistantHome({
             <div className="assistant-section-heading">
               <h3 className="text-sm font-semibold">
                 {t('assistant.needsDecision')}
-                <span>{summary.pendingDecisions.length + pendingTasks.length}</span>
+                <span>{decisions.length}</span>
               </h3>
-              {summary.pendingDecisions.length + pendingTasks.length > 2 && (
+              {decisions.length > 2 && (
                 <button
                   type="button"
                   className="assistant-text-button text-xs"
@@ -294,69 +305,60 @@ export function AssistantHome({
               )}
             </div>
             <div className="assistant-decision-grid">
-              {summary.pendingDecisions.slice(0, allDecisions ? undefined : 2).map(decision => (
-                <button
-                  type="button"
-                  key={decision.id}
-                  data-testid={`collaboration-exp-assistant-proposal-${decision.id}`}
-                  onClick={() => {
-                    const proposal = source.proposals?.find(proposal => proposal.id === decision.id)
-                    if (proposal && proposal.settings.executionDeviceId !== source.deviceId)
-                      configure(proposal.roleId ?? undefined, proposal.settings.executionDeviceId)
-                    else setSelectedProposalId(decision.id)
-                  }}
-                  className="experience-assistant-decision assistant-decision-card"
-                  data-state="waiting"
-                >
-                  <span className="assistant-decision-kicker text-xs">
-                    <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
-                    <span>{t('assistant.reviewProposal')}</span>
-                  </span>
-                  <strong className="text-lg">{decision.summary}</strong>
-                  <span className="assistant-decision-footer text-xs">
-                    <small>{t('assistant.reviewProposal')}</small>
-                    <span className="assistant-action-arrow">
-                      <ArrowRight size={15} aria-hidden="true" />
-                    </span>
-                  </span>
-                </button>
-              ))}
-              {pendingTasks
-                .slice(
-                  0,
-                  allDecisions ? undefined : Math.max(0, 2 - summary.pendingDecisions.length)
-                )
-                .map(task => {
-                  const projectSource = projects.find(
-                    row =>
-                      row.project.id === task.project.id &&
-                      row.project.project_store === task.project.store
-                  )
-                  const issue = projectSource?.issues.find(issue => issue.id === task.id)
-                  const question = issue
-                    ? pendingIssueHumanRequests(issue).find(request =>
-                        issueNeedsUser(
-                          { ...issue, human_requests: [request] },
-                          projectSource?.project.current_user_id ?? [source.userId, ownerId]
-                        )
-                      )?.question
-                    : null
+              {decisions.slice(0, allDecisions ? undefined : 2).map(entry => {
+                if (entry.kind === 'proposal') {
+                  const decision = entry.proposal
                   return (
                     <button
                       type="button"
-                      key={task.key}
-                      data-testid={`collaboration-exp-assistant-pending-${task.key}`}
-                      onClick={() => onOpenIssue?.(task.project, task.id)}
-                      disabled={!onOpenIssue}
+                      key={decision.id}
+                      data-testid={`collaboration-exp-assistant-proposal-${decision.id}`}
+                      onClick={() => {
+                        const proposal = source.proposals?.find(
+                          proposal => proposal.id === decision.id
+                        )
+                        if (proposal && proposal.settings.executionDeviceId !== source.deviceId)
+                          configure(
+                            proposal.roleId ?? undefined,
+                            proposal.settings.executionDeviceId
+                          )
+                        else setSelectedProposalId(decision.id)
+                      }}
                       className="experience-assistant-decision assistant-decision-card"
                       data-state="waiting"
                     >
                       <span className="assistant-decision-kicker text-xs">
                         <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
-                        <span>{task.title}</span>
+                        <span>{t('assistant.reviewProposal')}</span>
                       </span>
-                      <strong className="text-lg">{question ?? task.title}</strong>
-                      <p className="text-xs">{task.project.name}</p>
+                      <strong className="text-lg">{decision.summary}</strong>
+                      <span className="assistant-decision-footer text-xs">
+                        <small>{t('assistant.reviewProposal')}</small>
+                        <span className="assistant-action-arrow">
+                          <ArrowRight size={15} aria-hidden="true" />
+                        </span>
+                      </span>
+                    </button>
+                  )
+                }
+                if (entry.kind === 'work') {
+                  const item = entry.item
+                  return (
+                    <button
+                      type="button"
+                      key={item.key}
+                      data-testid={`collaboration-exp-assistant-pending-work-${item.key}`}
+                      onClick={() => {
+                        if (item.address) openWork(item.address, item.title)
+                      }}
+                      className="experience-assistant-decision assistant-decision-card"
+                      data-state="waiting"
+                    >
+                      <span className="assistant-decision-kicker text-xs">
+                        <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
+                        <span>{t('assistant.status.waiting')}</span>
+                      </span>
+                      <strong className="text-lg">{item.title}</strong>
                       <span className="assistant-decision-footer text-xs">
                         <small>{t('assistant.openTask')}</small>
                         <span className="assistant-action-arrow">
@@ -365,9 +367,49 @@ export function AssistantHome({
                       </span>
                     </button>
                   )
-                })}
+                }
+                const task = entry.task
+                const projectSource = projects.find(
+                  row =>
+                    row.project.id === task.project.id &&
+                    row.project.project_store === task.project.store
+                )
+                const issue = projectSource?.issues.find(issue => issue.id === task.id)
+                const question = issue
+                  ? pendingIssueHumanRequests(issue).find(request =>
+                      issueNeedsUser(
+                        { ...issue, human_requests: [request] },
+                        projectSource?.project.current_user_id ?? [source.userId, ownerId]
+                      )
+                    )?.question
+                  : null
+                return (
+                  <button
+                    type="button"
+                    key={task.key}
+                    data-testid={`collaboration-exp-assistant-pending-${task.key}`}
+                    onClick={() => onOpenIssue?.(task.project, task.id)}
+                    disabled={!onOpenIssue}
+                    className="experience-assistant-decision assistant-decision-card"
+                    data-state="waiting"
+                  >
+                    <span className="assistant-decision-kicker text-xs">
+                      <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
+                      <span>{task.title}</span>
+                    </span>
+                    <strong className="text-lg">{question ?? task.title}</strong>
+                    <p className="text-xs">{task.project.name}</p>
+                    <span className="assistant-decision-footer text-xs">
+                      <small>{t('assistant.openTask')}</small>
+                      <span className="assistant-action-arrow">
+                        <ArrowRight size={15} aria-hidden="true" />
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
             </div>
-            {!summary.pendingDecisions.length && !pendingTasks.length && source.proposalsReady && (
+            {!decisions.length && source.proposalsReady && (
               <p className="px-4 py-3 text-sm text-text-muted">{t('assistant.noDecisions')}</p>
             )}
             {selectedProposal && source.settings && (

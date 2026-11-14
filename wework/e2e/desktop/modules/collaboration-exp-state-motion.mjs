@@ -124,20 +124,13 @@ export async function assertReducedPlanMotion(control, scope) {
   await assertStableStateGeometry(control, scope, '[data-testid^="cloud-todo-card-status-"]')
 }
 
-export async function assertMobileAssistantPriority(
-  control,
-  testId,
-  runningRole,
-  projectId,
-  issueId
-) {
-  const decision = testId(
-    `collaboration-exp-assistant-pending-${JSON.stringify(['local', projectId, issueId])}`
-  )
+export async function assertMobileAssistantPriority(control, testId, runningRole) {
+  const decision = `${testId('collaboration-exp-assistant-decisions')} .assistant-decision-card`
   const [input] = await metrics(control, testId('collaboration-exp-assistant-input'))
   for (const selector of [runningRole, decision]) {
     await control.command('waitFor', selector, { visible: true })
     const [box] = await metrics(control, selector)
+    assert.ok(box, 'Mobile priority requires a real visible state control')
     assert.ok(box.width > 0 && box.height >= 44, 'Mobile state controls must remain usable')
     assert.ok(box.top >= 0 && box.bottom <= input.top + 1, `${selector} must precede the composer`)
     assert.ok(
@@ -147,6 +140,35 @@ export async function assertMobileAssistantPriority(
   }
   const [snapshot] = await metrics(control, testId('collaboration-exp-assistant-snapshot'))
   assert.equal(snapshot?.height ?? 0, 0, 'The desktop work snapshot must collapse on mobile')
+}
+
+export async function assertMobileNavigation(control, testId) {
+  const navigation = testId('collaboration-exp-mobile-navigation')
+  for (const id of ['navigation-assistant', 'navigation-tasks', 'account']) {
+    const selector = `${navigation} [data-testid="collaboration-exp-${id}"]`
+    await control.command('waitFor', selector, { visible: true })
+    const [button] = await metrics(control, selector)
+    assert.ok(button?.width >= 44 && button.height >= 44, 'Mobile navigation must remain usable')
+    assert.ok(
+      button.visibleIntersection?.height >= button.height - 1,
+      'Mobile navigation controls must fit in the viewport'
+    )
+    const [label] = await metrics(control, `${selector} .truncate`)
+    assert.ok(label?.text.trim().length > 0, 'Mobile navigation needs its visible label')
+    assert.ok(
+      label.clientHeight > 0 && label.scrollHeight <= label.clientHeight + 1,
+      `Mobile navigation labels must not clip vertically: ${JSON.stringify({
+        selector,
+        height: label.height,
+        clientHeight: label.clientHeight,
+        scrollHeight: label.scrollHeight,
+      })}`
+    )
+    assert.ok(
+      label.visibleIntersection?.height >= label.height - 1,
+      'Mobile navigation labels must fit in the viewport'
+    )
+  }
 }
 
 export async function assertNativeWorkOpened(control, address, timeoutMs) {

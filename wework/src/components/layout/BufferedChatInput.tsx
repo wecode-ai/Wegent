@@ -407,6 +407,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       const submittedDraft = valueOverride ?? draftRef.current
       const submittedDraftEditVersion = draftEditVersionRef.current
       const submittedScopeKey = scopeKey
+      if (!clearOnSubmit) {
+        cancelPendingFlushFrame()
+        flushDraft(submittedDraft, 'submit')
+      }
       const submission =
         options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
       if (clearOnSubmit && submittedDraft.trim()) {
@@ -432,7 +436,16 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         restoreSubmittedDraft()
       }, restoreSubmittedDraft)
     },
-    [cancelPendingFlush, clearOnSubmit, onSubmit, publishDraft, scopeKey, setComposerValue]
+    [
+      cancelPendingFlush,
+      cancelPendingFlushFrame,
+      clearOnSubmit,
+      flushDraft,
+      onSubmit,
+      publishDraft,
+      scopeKey,
+      setComposerValue,
+    ]
   )
 
   return (

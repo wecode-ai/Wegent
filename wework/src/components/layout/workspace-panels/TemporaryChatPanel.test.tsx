@@ -1,6 +1,6 @@
 import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { StrictMode, type ComponentProps } from 'react'
@@ -57,7 +57,13 @@ const address: RuntimeTaskAddress = {
   workspacePath: '/tmp/workspace',
 }
 
-function TransactionalDraftPanel({ scope }: { scope: string }) {
+function TransactionalDraftPanel({
+  scope,
+  submittedValue,
+}: {
+  scope: string
+  submittedValue?: string
+}) {
   const draft = useExperienceDraftInput({
     accountKey: scope,
     scopeKey: 'private-native-draft',
@@ -70,6 +76,14 @@ function TransactionalDraftPanel({ scope }: { scope: string }) {
       <button data-testid="restore-original-draft" onClick={() => draft.setValue('发送附件')}>
         Edit back to original
       </button>
+      {submittedValue && (
+        <button
+          data-testid="restore-submitted-draft"
+          onClick={() => draft.setValue(submittedValue)}
+        >
+          Edit back to submitted text
+        </button>
+      )}
       <TemporaryChatPanel
         currentProject={null}
         source={address}
@@ -617,6 +631,61 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  it.each(['accepted', 'newer-edit', 'edited-back', 'failed', 'rejected'] as const)(
+    'submits an immediate buffered native edit transactionally: %s',
+    async outcome => {
+      mocks.realComposer = true
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      let resolve!: (sent: boolean) => void
+      let reject!: (cause: Error) => void
+      mocks.sendRuntimePaneMessage.mockReturnValueOnce(
+        new Promise<boolean>((done, fail) => {
+          resolve = done
+          reject = fail
+        })
+      )
+      const message = 'Immediately submitted private message'
+      render(
+        <TransactionalDraftPanel
+          scope={`real-buffered-native-${outcome}`}
+          submittedValue={message}
+        />
+      )
+      await userEvent.click(screen.getByTestId('restore-original-draft'))
+      await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
+      const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+      await act(async () => {
+        editor.value = message
+        fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+      })
+      expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ message, clientUserMessageId: expect.any(String), address }),
+        expect.any(Object)
+      )
+      expect(editor).toHaveValue(message)
+      if (outcome === 'newer-edit' || outcome === 'edited-back') {
+        fireEvent.click(screen.getByTestId('write-new-draft'))
+        expect(editor).toHaveValue('newer draft')
+        if (outcome === 'edited-back')
+          fireEvent.click(screen.getByTestId('restore-submitted-draft'))
+      }
+      await act(async () => {
+        if (outcome === 'rejected') reject(new Error('Native connection lost'))
+        else resolve(outcome !== 'failed')
+      })
+      expect(editor).toHaveValue(
+        outcome === 'accepted' ? '' : outcome === 'newer-edit' ? 'newer draft' : message
+      )
+      if (outcome === 'failed' || outcome === 'rejected') {
+        const firstId = mocks.sendRuntimePaneMessage.mock.calls[0][0].clientUserMessageId
+        fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+        await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+        expect(mocks.sendRuntimePaneMessage.mock.calls[1][0].clientUserMessageId).toBe(firstId)
+        await waitFor(() => expect(editor).toHaveValue(''))
+      }
+    }
+  )
+
   it.each(['rejected', 'failed'] as const)(
     'keeps a new private draft after remount when the old native send %s',
     async failure => {
