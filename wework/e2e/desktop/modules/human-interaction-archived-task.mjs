@@ -63,6 +63,7 @@ export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
   )
   const taskId = state.workbench.currentRuntimeTask.taskId
   await control.command('click', '[data-testid="workspace-tab-select-pending-interactions"]')
+  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-history"]`)
   await control.command('waitFor', `${PAGE} [data-testid="interaction-list-item"]`, {
     text: QUESTION,
     timeoutMs,

@@ -26,14 +26,21 @@ function fixture(state: 'ready' | 'loading', failure?: Error) {
   const refreshed = createBarrier()
   let archived = false
   let historyReady = false
+  let historyMode = false
   let refreshClicks = 0
   const control = {
     readyCount: 1,
     awaitReadyAfter: vi.fn(async () => ({})),
     command: vi.fn(async (action: string, selector: string, options?: unknown) => {
-      if (action === 'waitFor' && selector.includes('interactions-history-count'))
+      if (action === 'clickWhenEnabled' && selector.includes('interactions-history'))
+        historyMode = !historyMode
+      if (action === 'waitFor' && selector.includes('interactions-history-count')) {
+        expect(historyMode).toBe(true)
         historyReady = true
+      }
       if (selector.includes('interaction-open-original')) expect(historyReady).toBe(true)
+      if (action === 'waitFor' && selector.includes('interaction-list-item'))
+        expect(historyMode).toBe(false)
       if (selector.includes('interactions-refresh')) {
         expect(archived).toBe(true)
         expect(action).toBe('clickWhenEnabled')
