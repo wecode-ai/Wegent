@@ -13,6 +13,7 @@ import {
   issueHumanInteraction,
   issueQuestionIdentity,
   issueQuestionHandoff,
+  hasRecordedIssueResolution,
 } from './issueHumanInteractions'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
@@ -149,10 +150,13 @@ export function RuntimeInteractionsPage({
       requests.length > 0 &&
       requests.every(request => {
         const interaction = issueHumanInteraction(request, row.store)
-        return interactions?.isDismissed?.(
-          interaction.id,
-          issueQuestionIdentity(interaction),
-          issueQuestionHandoff(interaction)
+        return (
+          interactions?.isDismissed?.(
+            interaction.id,
+            issueQuestionIdentity(interaction),
+            issueQuestionHandoff(interaction)
+          ) ||
+          (interactions && hasRecordedIssueResolution(interaction, interactions.history))
         )
       })
     )
@@ -256,13 +260,7 @@ export function RuntimeInteractionsPage({
       setDismissing(false)
     }
   }
-  const historical = interactions.history.find(item => item.id === selected)
-  const row: PendingWorkRow | undefined = selected
-    ? (rows.find(item => item.id === selected) ??
-      (historical
-        ? { ...historical, source: interactionSource(historical), timestamp: historical.answeredAt }
-        : undefined))
-    : rows[0]
+  const row = selected ? rows.find(item => item.id === selected) : rows[0]
   const liveQuestion = row ? pending.find(item => item.id === row.id && !item.cached) : undefined
   return (
     <main

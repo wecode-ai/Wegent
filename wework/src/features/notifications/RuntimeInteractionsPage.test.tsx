@@ -11,6 +11,7 @@ import type { RuntimeInteraction } from './runtimeInteractions'
 import { openWeworkScheme } from './schemeEvents'
 import { QuestionDiscussionContext } from './questionDiscussion'
 import type { PendingProjectIssue } from './usePendingProjectIssues'
+import { issueHumanInteraction, issueQuestionIdentity } from './issueHumanInteractions'
 
 const projectWork = vi.hoisted(() => ({
   items: [] as PendingProjectIssue[],
@@ -47,6 +48,47 @@ function projectQuestionWork(): PendingProjectIssue {
     userId: 0,
   }
 }
+
+it.each(['same-questions', 'another-question', 'another-issue', 'another-store'])(
+  'does not resurrect settled questions from stale project-work data (%s)',
+  scenario => {
+    const project = projectQuestionWork()
+    projectWork.items = [project]
+    const history = project.item.human_requests!.map(request => {
+      const interaction = issueHumanInteraction(request, project.store)
+      return {
+        id: interaction.id,
+        title: interaction.task.task.title,
+        question: interaction.question,
+        address: interaction.task.address,
+        answeredAt: Date.now(),
+        resolvedIssueQuestion: {
+          questionIdentity: issueQuestionIdentity({
+            ...interaction,
+            project: {
+              ...interaction.project!,
+              issueId: scenario === 'another-issue' ? 'OTHER' : project.item.id,
+              store: scenario === 'another-store' ? ('backend' as const) : project.store,
+            },
+          })!,
+          nativeInteractionId: interaction.id,
+        },
+      }
+    })
+    if (scenario === 'another-question') {
+      project.item.human_requests!.push({
+        ...project.item.human_requests![0],
+        id: 'new-question',
+        item_id: 'new-question',
+      })
+    }
+    const reportProjectPendingCount = vi.fn()
+    view(undefined, {}, { pending: [], history, reportProjectPendingCount })
+    const expected = scenario === 'same-questions' ? 0 : 1
+    expect(screen.queryAllByTestId('interaction-list-item')).toHaveLength(expected)
+    expect(reportProjectPendingCount).toHaveBeenLastCalledWith(expected)
+  }
+)
 
 it.each([false, true])(
   'ignores the actual questions represented by a project row (partial failure: %s)',
@@ -166,6 +208,48 @@ function view(
   )
   return value.registerView
 }
+
+it.each([true, false])(
+  'removes a selected handled question from pending details and preserves history (desktop: %s)',
+  desktop => {
+    viewport.twoPanes = desktop
+    const value = interactionValue()
+    const page = (current: RuntimeInteractionsValue) => (
+      <RuntimeInteractionsContext.Provider value={current}>
+        <RuntimeInteractionsPage selectedId={approval.id} />
+      </RuntimeInteractionsContext.Provider>
+    )
+    const rendered = render(page(value))
+    expect(screen.getByTestId('interaction-question-heading')).toHaveTextContent(approval.question)
+
+    rendered.rerender(
+      page({
+        ...value,
+        pending: [],
+        history: [
+          {
+            id: approval.id,
+            title: approval.task.task.title,
+            question: approval.question,
+            address: approval.task.address,
+            answeredAt: Date.now(),
+          },
+        ],
+      })
+    )
+
+    expect(screen.getByTestId('interactions-pending-count')).toHaveTextContent('0')
+    expect(screen.queryByTestId('interaction-list-item')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('interaction-question-heading')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('test-original-entity')).not.toBeInTheDocument()
+
+    if (!desktop) fireEvent.click(screen.getByTestId('interactions-back-to-list'))
+    fireEvent.click(screen.getByTestId('interactions-history'))
+    fireEvent.click(screen.getByTestId('interaction-list-item'))
+    expect(screen.getByTestId('interaction-question-heading')).toHaveTextContent(approval.question)
+    expect(screen.getByTestId('test-original-entity')).toBeInTheDocument()
+  }
+)
 
 it('opens ordinary project work in the original Issue and reports the project count', () => {
   projectWork.items = [
