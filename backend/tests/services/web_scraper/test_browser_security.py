@@ -671,3 +671,45 @@ async def test_browser_worker_configuration_failure_keeps_startup_barrier(
     assert "Target.detachFromTarget" not in [
         call.args[0] for call in root.send.await_args_list
     ]
+
+
+@pytest.mark.parametrize("kind", ["service_worker", "shared_worker"])
+async def test_browser_worker_restart_is_protected_again(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    import app.services.web_scraper.chromium_security as module
+
+    context = make_context()
+    guard = ChromiumRequestGuard(make_guard())
+    await guard.begin_navigation(context, Page(), BrowserNavigation())
+    root = context.browser.new_browser_cdp_session.return_value
+    root.send.reset_mock()
+    root.send.return_value = {"sessionId": "manual", "success": True}
+    child = SimpleNamespace(
+        on=Mock(), send=AsyncMock(return_value={"result": {"value": True}})
+    )
+    factory = Mock(return_value=child)
+    monkeypatch.setattr(module, "_TargetSession", factory)
+    listener = root.on.call_args.args[1]
+    for index in range(2):
+        await listener(
+            {
+                "sessionId": f"automatic-{index}",
+                "waitingForDebugger": True,
+                "targetInfo": {
+                    "type": kind,
+                    "targetId": "same-worker-target",
+                    "browserContextId": "owned",
+                },
+            }
+        )
+    if kind == "service_worker":
+        assert [call.args[0] for call in root.send.await_args_list] == [
+            "Target.closeTarget",
+            "Target.closeTarget",
+        ]
+    else:
+        assert factory.call_count == 2
+        assert [call.args[0] for call in child.send.await_args_list].count(
+            "Runtime.evaluate"
+        ) == 2

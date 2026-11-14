@@ -211,20 +211,20 @@ class ChromiumRequestGuard:
             )
             return
         target_id = info["targetId"]
-        if target_id in self._browser_targets:
-            if event["waitingForDebugger"]:
-                await session.send(
-                    "Target.detachFromTarget", {"sessionId": event["sessionId"]}
-                )
-            return
-        self._browser_targets.add(target_id)
-        if not event["waitingForDebugger"]:
-            await self._reject_late_worker()
         if info["type"] == "service_worker":
+            if not event["waitingForDebugger"]:
+                await self._reject_late_worker()
             result = await session.send("Target.closeTarget", {"targetId": target_id})
             if result.get("success") is not True:
                 raise RuntimeError("Unprotected worker could not be closed")
             return
+        # Ignore only notifications for our own manual attachment. A worker
+        # restart may reuse its target ID and must install the policy again.
+        if target_id in self._browser_targets and not event["waitingForDebugger"]:
+            return
+        self._browser_targets.add(target_id)
+        if not event["waitingForDebugger"]:
+            await self._reject_late_worker()
         # Browser auto-attach must be flattened. Hold its barrier while adding
         # the message-based child session used by the same recursive guard.
         legacy = await session.send(
