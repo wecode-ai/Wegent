@@ -128,6 +128,9 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
       )
       if (!current) return
       const rejected = results.find(result => result.status === 'rejected')
+      const invalidated = results.some(
+        result => result.status === 'rejected' && invalidatesExperienceRead(result.reason)
+      )
       setData(previous =>
         previous?.scope === scope &&
         previous.ownerId === ownerId &&
@@ -138,6 +141,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
               ...previous,
               proposals: results.flatMap((result, index) => {
                 if (result.status === 'rejected') {
+                  if (invalidatesExperienceRead(result.reason)) return []
                   const [roleId] = locations[index]
                   return previous.proposals.filter(
                     proposal => (proposal.roleId ?? undefined) === roleId
@@ -148,7 +152,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
                   ? [result.value]
                   : []
               }),
-              proposalsReady: previous.proposalsReady || !rejected,
+              proposalsReady: !rejected || (previous.proposalsReady && !invalidated),
             }
           : previous
       )

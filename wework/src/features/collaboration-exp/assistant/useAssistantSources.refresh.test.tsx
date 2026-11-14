@@ -1,5 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { newStandInRole } from '@/api/personalStandIn'
+import type { StandInProposal } from '@/api/standIn'
 import { experienceStandInFixture } from '../model/fixtures'
 import { useAssistantSources } from './useAssistantSources'
 
@@ -35,6 +37,75 @@ afterEach(() => {
 })
 
 describe('assistant source refresh ownership', () => {
+  it.each([
+    { error: { status: 403 }, deniedRole: undefined },
+    { error: { code: 'permission_denied' }, deniedRole: undefined },
+    { error: { code: 'wrong_device' }, deniedRole: undefined },
+    { error: { status: 403 }, deniedRole: 'reviewer' },
+    { error: { code: 'permission_denied' }, deniedRole: 'reviewer' },
+    { error: { code: 'wrong_device' }, deniedRole: 'reviewer' },
+  ])(
+    'invalidates only a denied proposal role and recovers from fresh reads: %j',
+    async ({ error, deniedRole }) => {
+      const { api, settings } = fixture()
+      settings.roles = [newStandInRole('specialist-device', 'reviewer')]
+      const primary: StandInProposal = {
+        id: 'primary-proposal',
+        summary: 'Primary decision',
+        roleId: null,
+        settings,
+        status: 'pending',
+      }
+      const reviewer: StandInProposal = { ...primary, id: 'reviewer-proposal', roleId: 'reviewer' }
+      let failure: unknown
+      api.proposal.mockImplementation(
+        async (_ownerId: number, _deviceId: string, roleId?: string) => {
+          if (roleId === deniedRole && failure) throw failure
+          return roleId === 'reviewer' ? reviewer : primary
+        }
+      )
+      const view = renderHook(() => useAssistantSources(true))
+      await waitFor(() => expect(view.result.current.proposalsReady).toBe(true))
+      expect(view.result.current.proposals).toEqual([primary, reviewer])
+
+      failure = error
+      await act(async () => view.result.current.refresh())
+      expect(view.result.current.proposals).toEqual(deniedRole ? [primary] : [reviewer])
+      expect(view.result.current.proposalsReady).toBe(false)
+      expect(view.result.current.settings).toBe(settings)
+      expect(view.result.current.error).toBeTruthy()
+
+      failure = new Error('Network unavailable after denial')
+      await act(async () => view.result.current.refresh())
+      expect(view.result.current.proposals).toEqual(deniedRole ? [primary] : [reviewer])
+      expect(view.result.current.proposalsReady).toBe(false)
+
+      failure = undefined
+      await act(async () => view.result.current.refresh())
+      expect(view.result.current.proposals).toEqual([primary, reviewer])
+      expect(view.result.current.proposalsReady).toBe(true)
+      expect(view.result.current.error).toBeNull()
+    }
+  )
+
+  it('keeps a verified proposal and readiness on a transient proposal read failure', async () => {
+    const { api, settings } = fixture()
+    const proposal: StandInProposal = {
+      id: 'verified-proposal',
+      summary: 'Private decision',
+      settings,
+      status: 'pending',
+    }
+    api.proposal.mockResolvedValue(proposal)
+    const view = renderHook(() => useAssistantSources(true))
+    await waitFor(() => expect(view.result.current.proposalsReady).toBe(true))
+    api.proposal.mockRejectedValueOnce(new Error('Network unavailable'))
+    await act(async () => view.result.current.refresh())
+    expect(view.result.current.proposals).toEqual([proposal])
+    expect(view.result.current.proposalsReady).toBe(true)
+    expect(view.result.current.error).toBeTruthy()
+  })
+
   it('keeps verified settings and a visible error when network refresh fails despite successful proposal reads', async () => {
     const { api, settings } = fixture()
     const view = renderHook(() => useAssistantSources(true))

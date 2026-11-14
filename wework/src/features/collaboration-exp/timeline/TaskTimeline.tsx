@@ -123,7 +123,12 @@ export function TaskTimeline(props: Props) {
     (issue.assignee_user_id == null ? null : t('tasks.unnamedUser', { id: issue.assignee_user_id }))
   const security = issue.security_level ?? props.data.project.default_issue_security
   return (
-    <div className="experience-task-timeline" data-testid="collaboration-exp-timeline">
+    <div
+      className="experience-task-timeline"
+      data-testid="collaboration-exp-timeline"
+      data-read-state={timeline.state}
+      aria-busy={loading}
+    >
       <div className="experience-matter-context">
         <span>
           {t(

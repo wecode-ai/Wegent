@@ -144,6 +144,11 @@ export function createDesktopScenario({
   }
   async function openPrivate(control) {
     const discussion = testId(`collaboration-exp-task-discussion-${conversation.taskId}`)
+    await control.command(
+      'waitFor',
+      `${testId('collaboration-exp-timeline')}[data-read-state="ready"][aria-busy="false"]`,
+      { visible: true }
+    )
     await control.command('scrollIntoView', discussion)
     await click(control, discussion)
     await control.command('waitFor', PRIVATE_INPUT, { visible: true })
