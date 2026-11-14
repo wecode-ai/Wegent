@@ -349,7 +349,7 @@ function ProjectTaskComposer({
       if (!address) return false
       const statusError = await updateIssueWhenPersonalTaskStarts(api.issues, issue.id, {
         projectStore: project.project_store,
-        dispatch: issue.human_task_binding,
+        dispatchRoundId: issue.human_task_binding?.dispatchRoundId,
       })
       if (statusError !== null) setError(statusError || t('task_board_status_update_failed'))
       draft.onTaskCreated?.(issue, toWorkspaceRuntimeTaskAddress(address))

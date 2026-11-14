@@ -3921,7 +3921,7 @@ export function CloudTodoWorkspace({
           latest.id,
           {
             projectStore: 'backend',
-            dispatch: dispatch ?? latest.human_task_binding,
+            dispatchRoundId: dispatch?.roundId ?? latest.human_task_binding?.dispatchRoundId,
           }
         )
         if (statusError !== null) setBoardError(statusError || cloudWorkspaceMessages.saveFailed)

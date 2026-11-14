@@ -413,6 +413,41 @@ describe('Wework Issue conversation drawers', () => {
     expect(runtimePort.unbindTask).toHaveBeenCalledOnce()
   })
 
+  it.each([false, true])(
+    'starts an ordinary cloud task after acceptance, including direct human assignment: %s',
+    async direct => {
+      if (direct)
+        issue.human_task_binding = {
+          humanAssignmentId: 'human',
+          dispatchId: 'direct-human:assignment',
+          dispatchRoundId: 'direct',
+          assignmentId: 'assignment',
+        }
+      const source = { ...issue, tags: [], version: 3 }
+      const issues = {
+        get: vi.fn(async () => source),
+        update: vi.fn(async (_id, update) => ({ ...source, ...update, version: 4 })),
+      }
+      const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
+      render(<Project issues={issues} runtimePort={runtimePort} />)
+      await userEvent.click(screen.getByText('Open Issue'))
+      await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+      const address = { deviceId: 'device', taskId: 'prepared-task' }
+      await act(async () => {
+        await chatPreparations.get('new')!(address, null)
+      })
+      expect(runtimePort.bindTask).toHaveBeenCalledOnce()
+      expect(issues.update).not.toHaveBeenCalled()
+      await act(async () => {
+        await chatCompletions.get('new')!(address, null, null)
+      })
+      expect(issues.update).toHaveBeenCalledExactlyOnceWith(issue.id, {
+        version: 3,
+        status: 'in_progress',
+      })
+    }
+  )
+
   it('leaves the Issue untouched when a prepared execution is rolled back without acceptance', async () => {
     const issues = { get: vi.fn(), update: vi.fn() }
     const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }

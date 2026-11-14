@@ -41,10 +41,12 @@ export async function updateIssueWhenPersonalTaskStarts(
   issueId: string,
   context: {
     projectStore: CollaborationProject['project_store']
-    dispatch?: { dispatchId: string } | null
+    dispatchRoundId?: string | null
   }
 ): Promise<string | null> {
-  if (context.projectStore === 'local' || context.dispatch) return null
+  // The reserved direct round is a personal assignment, without a group manager.
+  const managedRound = context.dispatchRoundId && context.dispatchRoundId !== 'direct'
+  if (context.projectStore === 'local' || managedRound) return null
   try {
     const latest = await issues.get(issueId)
     if (['inbox', 'pending', 'in_review'].includes(latest.status)) {

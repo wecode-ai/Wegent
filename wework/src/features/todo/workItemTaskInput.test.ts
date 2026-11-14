@@ -20,7 +20,7 @@ describe('personal task project association', () => {
 describe('personal task Issue status ownership', () => {
   it.each([
     { projectStore: 'local' as const },
-    { projectStore: 'backend' as const, dispatch: { dispatchId: 'human-round' } },
+    { projectStore: 'backend' as const, dispatchRoundId: 'human-round' },
   ])('leaves lifecycle and manager-owned status untouched: %j', async context => {
     const issues = { get: vi.fn(), update: vi.fn() }
     await expect(updateIssueWhenPersonalTaskStarts(issues, 'issue', context)).resolves.toBeNull()
@@ -45,6 +45,23 @@ describe('personal task Issue status ownership', () => {
       })
     }
   )
+
+  it('starts a direct human assignment without treating it as a manager round', async () => {
+    const issues = {
+      get: vi.fn().mockResolvedValue({ id: 'issue', status: 'pending', tags: [], version: 3 }),
+      update: vi.fn().mockResolvedValue({}),
+    }
+    await expect(
+      updateIssueWhenPersonalTaskStarts(issues, 'issue', {
+        projectStore: 'backend',
+        dispatchRoundId: 'direct',
+      })
+    ).resolves.toBeNull()
+    expect(issues.update).toHaveBeenCalledExactlyOnceWith('issue', {
+      version: 3,
+      status: 'in_progress',
+    })
+  })
 
   it('reports a cloud permission denial without rejecting the accepted task', async () => {
     const issues = {

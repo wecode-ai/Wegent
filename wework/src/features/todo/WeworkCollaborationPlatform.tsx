@@ -1199,7 +1199,8 @@ export function WeworkSharedProject({
             taskComposer.issue.id,
             {
               projectStore: project.project_store,
-              dispatch: taskComposer.dispatch ?? taskComposer.humanTaskBinding,
+              dispatchRoundId:
+                taskComposer.dispatch?.roundId ?? taskComposer.humanTaskBinding?.dispatchRoundId,
             }
           )
           if (statusError !== null)
