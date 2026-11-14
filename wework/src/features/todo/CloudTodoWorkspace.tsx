@@ -230,7 +230,8 @@ import {
 import {
   shouldPrepareWorkItemTask,
   workItemComposerReference,
-  workItemStartedUpdate,
+  workItemAssociationUpdate,
+  updateIssueWhenPersonalTaskStarts,
   workItemTaskInput,
 } from './workItemTaskInput'
 import {
@@ -3910,8 +3911,18 @@ export function CloudTodoWorkspace({
       }
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
-      // Finish UI-owned writes before the runtime can mutate the same Issue version.
-      await updateSelectedItemWhenTaskStarts(localProject)
+      if (selectedItemProject.location === 'cloud') {
+        const statusError = await updateIssueWhenPersonalTaskStarts(
+          cloudWorkspaceApi!.issues,
+          latest.id,
+          {
+            projectStore: 'backend',
+            dispatchRoundId: dispatch?.roundId ?? latest.human_task_binding?.dispatchRoundId,
+          }
+        )
+        if (statusError !== null) setBoardError(statusError || cloudWorkspaceMessages.saveFailed)
+      }
+      await associateSelectedItemWithProject(localProject)
       setBoardRefreshNonce(value => value + 1)
       return async () => {
         await runtimeBindingApi.unbindTask(latest.id, address)
@@ -3939,8 +3950,8 @@ export function CloudTodoWorkspace({
     }
   }
 
-  async function updateSelectedItemWhenTaskStarts(localProject: ProjectWithTasks | null) {
-    if (!selectedItem || !selectedItemProject) return
+  async function associateSelectedItemWithProject(localProject: ProjectWithTasks | null) {
+    if (!selectedItem || !selectedItemProject || !isMyTasksBoard || !localProject) return
     const localApi = apiForProject(selectedItemProject)
     if (selectedItemProject.location === 'cloud' ? !cloudWorkspaceApi : !localApi) return
     try {
@@ -3951,16 +3962,17 @@ export function CloudTodoWorkspace({
               return toCloudLoopItem(item)
             })
           : await localApi!.getLoopItem(selectedItem.id)
-      const associatedTags =
-        isMyTasksBoard && localProject ? associateLoopItemTags(latest, localProject) : latest.tags
-      const startUpdate = workItemStartedUpdate(latest, associatedTags)
-      const updated = startUpdate
+      const associatedTags = associateLoopItemTags(latest, localProject)
+      const associationUpdate = workItemAssociationUpdate(latest, associatedTags)
+      const updated = associationUpdate
         ? selectedItemProject.location === 'cloud'
-          ? await cloudWorkspace.commands.updateIssue(latest.id, startUpdate).then(updated => {
-              if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
-              return toCloudLoopItem(updated)
-            })
-          : await localApi!.updateLoopItem(latest.id, startUpdate)
+          ? await cloudWorkspace.commands
+              .updateIssue(latest.id, associationUpdate)
+              .then(updated => {
+                if (!updated) throw new Error(cloudWorkspaceMessages.saveFailed)
+                return toCloudLoopItem(updated)
+              })
+          : await localApi!.updateLoopItem(latest.id, associationUpdate)
         : latest
       const locatedUpdated = {
         ...updated,
