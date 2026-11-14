@@ -36,6 +36,7 @@ import {
 } from '@/domain/conversationSelector'
 import type { NewConversationOptions } from '@/hooks/useMobileRuntime'
 import type { RuntimePermissionMode } from '@/services/runtimePermissionPreference'
+import type { RuntimeApi } from '@/services/runtimeApi'
 import type {
   ChatMessage,
   DeviceInfo,
@@ -51,7 +52,10 @@ import type {
 } from '@/types/runtime'
 import { ChatComposer, type ComposerSendOptions } from './ChatComposer'
 import { ConversationEdgeMask } from './ConversationEdgeMask'
+import { ConversationChangesPill } from './ConversationChangesPill'
+import { ConversationAgentsPill } from './ConversationAgentsPill'
 import { ConversationHeader, CONVERSATION_HEADER_HEIGHT } from './ConversationHeader'
+import { ConversationMenu, type ConversationMenuActions } from './ConversationMenu'
 import { MessageList } from './MessageList'
 import { QuickModelDismissLayer, QuickModelSelector } from './QuickModelSelector'
 import { groupModelsByFamily } from '../../../packages/collaboration/src/controls/model-ui'
@@ -62,6 +66,7 @@ export interface ConversationWorkspaceChoice {
 }
 
 interface ConversationScreenProps {
+  api: Pick<RuntimeApi, 'getSubagentTranscript'>
   composerFocusRequest?: number
   currentAddress: RuntimeTaskAddress | null
   currentTitle: string
@@ -86,7 +91,7 @@ interface ConversationScreenProps {
   onBack: () => void
   onLoadApps: () => Promise<RuntimeComposerApp[]>
   onLoadMoreMessagesBefore: () => Promise<void>
-  onMore: () => void
+  conversationActions: ConversationMenuActions
   onNewConversation: () => void
   onOpenAdvancedModel: () => void
   onSelectDevice: (deviceId: string) => void
@@ -114,6 +119,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
   const [useWorktree, setUseWorktree] = useState(false)
   const [bottomControlHeight, setBottomControlHeight] = useState(0)
   const [headerHeight, setHeaderHeight] = useState(CONVERSATION_HEADER_HEIGHT)
+  const [menuVisible, setMenuVisible] = useState(false)
 
   const onlineDevices = mobileCreatableDevices(props.devices)
   const configurationDevice =
@@ -367,12 +373,22 @@ export function ConversationScreen(props: ConversationScreenProps) {
           else props.onBack()
         }}
         onLayout={handleHeaderLayout}
-        onMore={props.onMore}
+        onMore={() => {
+          Keyboard.dismiss()
+          setMenuVisible(true)
+        }}
         onNewConversation={props.onNewConversation}
         canCreateConversation={onlineDevices.length > 0}
         projectName={conversationProjectName}
         style={[styles.headerOverlay, { top: headerTop }]}
         title={props.currentTitle}
+      />
+      <ConversationMenu
+        {...props.conversationActions}
+        address={props.currentAddress}
+        title={props.currentTitle}
+        visible={menuVisible}
+        onDismiss={() => setMenuVisible(false)}
       />
 
       <KeyboardStickyView
@@ -394,6 +410,18 @@ export function ConversationScreen(props: ConversationScreenProps) {
             quickModelVisible && styles.collapsedComposer,
           ]}
         >
+          {!props.isNew ? (
+            <View style={styles.contextPills} testID="conversation-context-pills">
+              <ConversationChangesPill
+                revision={`${conversationKey}:${props.entryRevision}:${props.running}:${props.messages.at(-1)?.completedAt ?? ''}`}
+              />
+              <ConversationAgentsPill
+                messages={props.messages}
+                address={props.currentAddress}
+                api={props.api}
+              />
+            </View>
+          ) : null}
           <ChatComposer
             focusRequest={props.composerFocusRequest}
             disabled={props.sending}
@@ -759,6 +787,7 @@ const styles = StyleSheet.create({
   headerOverlay: { position: 'absolute', left: 0, right: 0 },
   bottomControlDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   composerLayer: { width: '100%' },
+  contextPills: { flexDirection: 'row', justifyContent: 'center', gap: 8, paddingBottom: 8 },
   collapsedComposer: { display: 'none' },
   configuration: {
     paddingHorizontal: 24,

@@ -220,11 +220,22 @@ classify_path() {
       changed[wework]=true
       changed[wework_e2e]=true
       ;;
+    # Mobile subagent views reuse the existing runtime lifecycle/history checkpoint.
+    wework-mobile/src/components/ConversationAgentsPill* | \
+      wework-mobile/src/domain/mobileSubagents* | \
+      wework-mobile/src/domain/mobileProcessingBlocks* | \
+      wework-mobile/src/services/mobileTranscriptTransfer*)
+      changed[wework_e2e]=true
+      ;;
     # Mobile file browsing reuses the real cloud-device file protocol checkpoint.
     wework-mobile/src/components/files/* | wework-mobile/src/domain/mobileFile* | \
       wework-mobile/src/services/mobileFile* | wework-mobile/src/services/mobilePreviewRuntime* | \
       wework-mobile/src/services/runtimeFilesApi* | wework-mobile/src/services/runtimeApi* | \
-      wework-mobile/src/types/files.ts | wework-mobile/preview/*)
+      wework-mobile/src/types/files.ts | wework-mobile/src/types/workspaceGit.ts | \
+      wework-mobile/src/domain/mobileWorkspaceGit* | wework-mobile/src/services/mobileWorkspaceGit* | \
+      wework-mobile/src/components/ConversationChangesPill* | wework-mobile/preview/* | \
+      wework-mobile/src/components/ConversationMenu* | wework-mobile/src/hooks/useConversationActions* | \
+      wework-mobile/src/domain/conversationActions* | wework-mobile/src/services/mobileConversationArchive*)
       changed[wework_e2e]=true
       ;;
     wework/*)

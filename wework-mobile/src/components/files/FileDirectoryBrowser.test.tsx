@@ -8,12 +8,30 @@ import { FileDirectoryBrowser } from './FileDirectoryBrowser'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
+vi.mock('../LiquidGlass', () => ({
+  LiquidGlassButton: 'GlassButton',
+  LiquidGlassSurface: 'GlassSurface',
+}))
 vi.mock('react-native', () => ({
-  FlatList: 'FlatList',
+  Platform: { OS: 'ios' },
+  FlatList: (props: {
+    data: unknown[]
+    renderItem: (item: { item: unknown }) => React.ReactNode
+  }) =>
+    React.createElement(
+      'FlatList',
+      props,
+      props.data.map((item, index) => (
+        <React.Fragment key={index}>{props.renderItem({ item })}</React.Fragment>
+      ))
+    ),
   Pressable: 'Pressable',
   TextInput: 'TextInput',
+  ScrollView: 'ScrollView',
   View: 'View',
-  StyleSheet: { create: (styles: unknown) => styles },
+  Alert: { alert: vi.fn() },
+  useWindowDimensions: () => ({ width: 393, height: 852 }),
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 0.5 },
 }))
 vi.mock('react-native-keyboard-controller', () => ({
   KeyboardAvoidingView: 'KeyboardAvoidingView',
@@ -21,10 +39,43 @@ vi.mock('react-native-keyboard-controller', () => ({
 vi.mock('react-native-paper', () => ({
   ActivityIndicator: 'ActivityIndicator',
   Text: 'Text',
+  Menu: Object.assign(
+    ({
+      visible,
+      anchor,
+      children,
+    }: {
+      visible: boolean
+      anchor: React.ReactNode
+      children: React.ReactNode
+    }) => (
+      <>
+        {anchor}
+        {visible ? children : null}
+      </>
+    ),
+    { Item: 'MenuItem' }
+  ),
   useTheme: () => ({
-    colors: { onSurface: '#111', onSurfaceVariant: '#777', surfaceVariant: '#eee', error: '#f00' },
+    fonts: {
+      bodyMedium: { fontSize: 15 },
+      bodyLarge: { fontSize: 17 },
+      titleMedium: { fontSize: 17 },
+    },
+    colors: {
+      background: '#fff',
+      onSurface: '#111',
+      onSurfaceVariant: '#777',
+      surfaceVariant: '#eee',
+      outlineVariant: '#ddd',
+      error: '#f00',
+      primary: '#181818',
+      onPrimary: '#fff',
+      elevation: { level2: '#f7f7f7' },
+    },
   }),
 }))
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn().mockResolvedValue(undefined) }))
 
 const target = { deviceId: 'device-a', path: '/repo', taskId: 'task-a' }
 const file = (name: string, isDirectory = false) => ({
@@ -52,6 +103,13 @@ describe('FileDirectoryBrowser', () => {
   const element = (testID: string) =>
     renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID)[0]!
   const rows = () => element('file-directory-list').props.data
+  async function changeSearch(value: string) {
+    await act(() => element('files-search').props.onChangeText(value))
+  }
+  async function menuAction(testID: string) {
+    await act(() => element('file-preview-more').props.onPress())
+    await act(async () => element(testID).props.onPress())
+  }
   const tree = (overrides: Partial<React.ComponentProps<typeof FileDirectoryBrowser>> = {}) => (
     <FileDirectoryBrowser
       api={api as unknown as RuntimeApi}
@@ -59,6 +117,8 @@ describe('FileDirectoryBrowser', () => {
       recent={[]}
       onNavigate={onNavigate}
       onPath={onPath}
+      onBack={vi.fn()}
+      onClose={vi.fn()}
       {...overrides}
     />
   )
@@ -87,21 +147,106 @@ describe('FileDirectoryBrowser', () => {
     vi.useRealTimers()
   })
 
-  it('sorts directories before files and keeps the owning device when opening either', async () => {
+  it('sorts directories before files, lazily expands folders, and preserves the file owner', async () => {
     await render()
     expect(api.listWorkspaceDirectory).toHaveBeenCalledWith('device-a', '/repo')
     expect(rows().map((item: { name: string }) => item.name)).toEqual(['docs', 'a.md', 'z.md'])
-    const list = element('file-directory-list')
-    await act(() => list.props.renderItem({ item: rows()[0] }).props.onPress())
-    expect(onNavigate).toHaveBeenLastCalledWith({
-      kind: 'directory',
-      target: { ...target, path: '/repo/docs' },
+    api.listWorkspaceDirectory.mockResolvedValueOnce({
+      entries: [{ ...file('child.md'), path: '/repo/docs/child.md' }],
     })
-    await act(() => list.props.renderItem({ item: rows()[1] }).props.onPress())
+    await act(() => element('file-entry-/repo/docs').props.onPress())
+    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-a', '/repo/docs')
+    expect(onNavigate).not.toHaveBeenCalled()
+    expect(rows().map((item: { name: string; depth: number }) => [item.name, item.depth])).toEqual([
+      ['docs', 0],
+      ['child.md', 1],
+      ['a.md', 0],
+      ['z.md', 0],
+    ])
+    await act(() => element('file-entry-/repo/docs/child.md').props.onPress())
     expect(onNavigate).toHaveBeenLastCalledWith({
       kind: 'file',
-      request: { kind: 'workspace', target, path: '/repo/a.md' },
+      request: { kind: 'workspace', target, path: '/repo/docs/child.md' },
     })
+    await act(() => element('file-entry-/repo/docs').props.onPress())
+    expect(element('file-entry-/repo/docs/child.md')).toBeUndefined()
+    await act(() => element('file-entry-/repo/docs').props.onPress())
+    expect(element('file-entry-/repo/docs/child.md')).toBeDefined()
+    expect(api.listWorkspaceDirectory).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps search in a bottom glass pill and path editing inside the filename menu', async () => {
+    await render()
+    expect(element('files-path')).toBeUndefined()
+    expect(element('files-search').props.placeholder).toBe('搜索文件')
+    expect(element('files-search-surface').props.style).toMatchObject({
+      position: 'absolute',
+      bottom: 0,
+      height: 48,
+    })
+    await act(() => element('file-preview-more').props.onPress())
+    expect(element('file-preview-full-path').props.children).toBe(target.path)
+    await act(() => element('files-edit-path').props.onPress())
+    expect(element('files-path').props.value).toBe(target.path)
+  })
+
+  it('does not show invented zero-byte sizes for search results', async () => {
+    await render()
+    api.searchWorkspaceEntries.mockResolvedValueOnce({
+      files: [{ fileName: 'result.pdf', path: '/repo/result.pdf', matchType: 'file' }],
+    })
+    await changeSearch('result')
+    await act(async () => {
+      vi.advanceTimersByTime(250)
+    })
+    const row = element('file-directory-list').props.renderItem({ item: rows()[0] })
+    expect(JSON.stringify(row)).not.toContain('0 B')
+  })
+
+  it('isolates a child directory failure and retries that directory without discarding its siblings', async () => {
+    await render()
+    api.listWorkspaceDirectory
+      .mockRejectedValueOnce(new Error('Child unavailable'))
+      .mockResolvedValueOnce({ entries: [{ ...file('child.md'), path: '/repo/docs/child.md' }] })
+    await act(() => element('file-entry-/repo/docs').props.onPress())
+    expect(element('files-retry-/repo/docs')).toBeDefined()
+    expect(element('file-entry-/repo/a.md')).toBeDefined()
+    expect(element('files-error')).toBeUndefined()
+    await act(() => element('files-retry-/repo/docs').props.onPress())
+    expect(element('file-entry-/repo/docs/child.md')).toBeDefined()
+    expect(element('files-retry-/repo/docs')).toBeUndefined()
+    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-a', '/repo/docs')
+  })
+
+  it('ignores child results after switching devices and clears expansions on refresh', async () => {
+    await render()
+    let resolve!: (value: { entries: ReturnType<typeof file>[] }) => void
+    api.listWorkspaceDirectory.mockReturnValueOnce(
+      new Promise(done => {
+        resolve = done
+      })
+    )
+    await act(() => element('file-entry-/repo/docs').props.onPress())
+    const newer = { ...target, deviceId: 'device-b' }
+    await act(() => renderer.update(tree({ target: newer })))
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+    await act(async () =>
+      resolve({ entries: [{ ...file('obsolete.md'), path: '/repo/docs/obsolete.md' }] })
+    )
+    expect(element('file-entry-/repo/docs/obsolete.md')).toBeUndefined()
+    api.listWorkspaceDirectory.mockResolvedValueOnce({
+      entries: [{ ...file('child.md'), path: '/repo/docs/child.md' }],
+    })
+    await act(() => element('file-entry-/repo/docs').props.onPress())
+    expect(element('file-entry-/repo/docs/child.md')).toBeDefined()
+    await menuAction('files-refresh')
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(element('file-entry-/repo/docs/child.md')).toBeUndefined()
+    expect(element('file-entry-/repo/docs').props.accessibilityState.expanded).toBe(false)
   })
 
   it('debounces search and ignores a late response after a newer query', async () => {
@@ -118,7 +263,7 @@ describe('FileDirectoryBrowser', () => {
       .mockResolvedValueOnce({
         files: [{ fileName: 'new.md', path: '/repo/new.md', matchType: 'file' }],
       })
-    await act(() => element('files-search').props.onChangeText('old'))
+    await changeSearch('old')
     expect(rows()).toEqual([])
     await act(async () => {
       vi.advanceTimersByTime(249)
@@ -127,7 +272,7 @@ describe('FileDirectoryBrowser', () => {
     await act(async () => {
       vi.advanceTimersByTime(1)
     })
-    await act(() => element('files-search').props.onChangeText('new'))
+    await changeSearch('new')
     await act(async () => {
       vi.advanceTimersByTime(250)
     })
@@ -151,7 +296,7 @@ describe('FileDirectoryBrowser', () => {
       })
     )
     await render()
-    await act(() => element('files-search').props.onChangeText('query'))
+    await changeSearch('query')
     const newer = { ...target, deviceId: 'device-b', path: '/other' }
     await act(() => renderer.update(tree({ target: newer })))
     await act(async () => {
@@ -160,6 +305,7 @@ describe('FileDirectoryBrowser', () => {
     await act(async () => resolve({ entries: [file('obsolete.md')] }))
     expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-b', '/other')
     expect(element('files-search').props.value).toBe('')
+    await menuAction('files-edit-path')
     expect(element('files-path').props.value).toBe('/other')
     expect(rows().some((item: { name: string }) => item.name === 'obsolete.md')).toBe(false)
   })
@@ -179,7 +325,7 @@ describe('FileDirectoryBrowser', () => {
       .mockResolvedValueOnce({
         files: [{ fileName: 'result', path: '/repo/result', matchType: 'directory' }],
       })
-    await act(() => element('files-search').props.onChangeText('result'))
+    await changeSearch('result')
     await act(async () => {
       vi.advanceTimersByTime(250)
     })
@@ -198,19 +344,20 @@ describe('FileDirectoryBrowser', () => {
     api.listWorkspaceDirectory
       .mockRejectedValueOnce(new Error('Directory refresh unavailable'))
       .mockResolvedValueOnce({ entries: [file('updated.md')] })
-    await act(() => element('files-refresh').props.onPress())
+    await menuAction('files-refresh')
     expect(rows()).toEqual(previous)
     await act(async () => {
       vi.advanceTimersByTime(0)
     })
     expect(rows()).toEqual(previous)
+    await act(() => element('files-error-details-toggle').props.onPress())
     expect(JSON.stringify(renderer.toJSON())).toContain('Directory refresh unavailable')
     expect(element('files-retry')).toBeDefined()
     await act(() => element('files-retry').props.onPress())
     await act(async () => {
       vi.advanceTimersByTime(0)
     })
-    expect(rows()).toEqual([file('updated.md')])
+    expect(rows()).toMatchObject([file('updated.md')])
     expect(element('files-retry')).toBeUndefined()
     expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-a', '/repo')
   })
@@ -223,24 +370,26 @@ describe('FileDirectoryBrowser', () => {
       })
       .mockRejectedValueOnce(new Error('Search refresh unavailable'))
       .mockRejectedValueOnce(new Error('New search unavailable'))
-    await act(() => element('files-search').props.onChangeText('result'))
+    await changeSearch('result')
     await act(async () => {
       vi.advanceTimersByTime(250)
     })
     const previous = rows()
     expect(previous).toHaveLength(1)
-    await act(() => element('files-refresh').props.onPress())
+    await menuAction('files-refresh')
     await act(async () => {
       vi.advanceTimersByTime(250)
     })
     expect(rows()).toEqual(previous)
+    await act(() => element('files-error-details-toggle').props.onPress())
     expect(JSON.stringify(renderer.toJSON())).toContain('Search refresh unavailable')
-    await act(() => element('files-search').props.onChangeText('different'))
+    await changeSearch('different')
     expect(rows()).toEqual([])
     await act(async () => {
       vi.advanceTimersByTime(250)
     })
     expect(rows()).toEqual([])
+    await act(() => element('files-error-details-toggle').props.onPress())
     expect(JSON.stringify(renderer.toJSON())).toContain('New search unavailable')
   })
 
@@ -320,7 +469,7 @@ describe('FileDirectoryBrowser', () => {
         nativeFile,
       ].map(recentFile),
     })
-    await act(() => element('files-tab-recent').props.onPress())
+    await menuAction('files-tab-recent')
     const list = element('recent-file-list')
     expect(list.props.data.map((item: RecentMobileFile) => item.request)).toEqual([
       workspace,
@@ -333,10 +482,11 @@ describe('FileDirectoryBrowser', () => {
 
   it('submits user paths and navigates to the parent without replacing owner metadata', async () => {
     await render({ target: { ...target, path: '/repo/src' } })
+    await menuAction('files-edit-path')
     await act(() => element('files-path').props.onChangeText('/outside/readme.md'))
     await act(() => element('files-path').props.onSubmitEditing())
     expect(onPath).toHaveBeenCalledWith('/outside/readme.md')
-    await act(() => element('files-parent').props.onPress())
+    await menuAction('files-parent')
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'directory', target })
   })
 
@@ -349,7 +499,7 @@ describe('FileDirectoryBrowser', () => {
     'keeps mobile parent navigation for %s within the device filesystem root',
     async (path, parent) => {
       await render({ target: { ...target, path } })
-      await act(() => element('files-parent').props.onPress())
+      await menuAction('files-parent')
       expect(onNavigate).toHaveBeenCalledWith({
         kind: 'directory',
         target: { ...target, path: parent },

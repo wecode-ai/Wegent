@@ -49,17 +49,38 @@ export interface DeviceListResponse {
   items: DeviceInfo[]
 }
 
-export interface RuntimeTaskAddress {
+export type RuntimeTaskAddress =
+  import('../../../packages/chat-core/src/runtime').RuntimeTaskAddress
+
+export interface RuntimeTaskPinRequest {
   deviceId: string
+  threadId: string
+  pinned: boolean
+  beforeThreadId?: string | null
+}
+
+export interface RuntimeSidebarMutationResponse {
+  accepted: boolean
+  deviceId: string
+  error?: string | null
+}
+
+export interface RuntimeTaskRenameRequest {
+  address: RuntimeTaskAddress
+  title: string
+}
+
+export interface RuntimeTaskArchiveResponse {
+  accepted: boolean
   taskId: string
-  runtime?: string
   workspacePath?: string | null
-  workspaceKind?: string | null
-  worktreeId?: string | null
+  error?: string | null
 }
 
 export interface RuntimeTaskSummary {
   taskId: string
+  runtimeHandle?: Record<string, unknown> | null
+  optimistic?: boolean
   threadId?: string | null
   title: string
   runtime: string
@@ -141,6 +162,7 @@ export interface RuntimeTranscriptMessage {
 
 export interface RuntimeTranscriptResponse {
   taskId: string
+  threadId?: string | null
   workspacePath: string
   runtime: string
   title?: string | null
@@ -320,6 +342,7 @@ export type ChatBlockStatus = 'generating_arguments' | 'pending' | 'streaming' |
 interface ChatProcessingBlockBase {
   id: string
   subtaskId: string
+  parentToolUseId?: string
   status: ChatBlockStatus
   createdAt: number
   completedAt?: number
@@ -344,7 +367,11 @@ export interface ChatFileChangesBlock extends ChatProcessingBlockBase {
   fileChanges: ChatFileChangesSummary
 }
 
-export type ChatProcessingBlock = ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock
+export type ChatSubagentBlock =
+  import('../../../packages/chat-core/src/runtime-conversation').SubagentBlock
+
+export type ChatProcessingBlock =
+  ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock | ChatSubagentBlock
 
 export interface ChatFileChangeItem {
   path: string

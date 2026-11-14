@@ -1,3 +1,11 @@
+import {
+  WORKSPACE_GIT_COMPARISON_BRANCH_ARGS,
+  workspaceGitBranches,
+  workspaceGitCommandOutput,
+  workspaceGitDiffCommand,
+  type WorkspaceGitDiffMode,
+  type WorkspaceGitSelection,
+} from '../../../packages/chat-core/src/workspace-git'
 import type { DeviceCommandRequest, DeviceCommandResponse, ProjectWithTasks } from '@/types/api'
 import type {
   ChangeRequest,
@@ -49,7 +57,7 @@ interface EnvironmentLoadDiagnostics {
   startedAt: number
 }
 
-export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
+export type EnvironmentDiffMode = WorkspaceGitDiffMode
 export type GitPatchAction = 'stage' | 'unstage' | 'revert'
 
 export interface EnvironmentInfoLoadOptions {
@@ -59,12 +67,6 @@ export interface EnvironmentInfoLoadOptions {
   shareInflight?: boolean
 }
 
-const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
-  branch: 'git_branch_diff',
-  unstaged: 'git_diff_unstaged',
-  staged: 'git_diff_staged',
-  commit: 'git_diff_last_commit',
-}
 const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 
 type EnvironmentInfoCacheEntry = {
@@ -662,21 +664,6 @@ export async function removeGitWorktree(
   })
 }
 
-function prioritizeBranches(
-  branches: string[],
-  preferredBranches: Array<string | null | undefined>
-): string[] {
-  const preferred = preferredBranches
-    .map(branch => branch?.trim())
-    .filter((branch): branch is string => Boolean(branch))
-
-  const uniqueBranches = [...new Set(branches)].filter(Boolean)
-  const preferredSet = new Set(preferred)
-  const orderedPreferred = preferred.filter(branch => uniqueBranches.includes(branch))
-  const remaining = uniqueBranches.filter(branch => !preferredSet.has(branch))
-  return [...orderedPreferred, ...remaining]
-}
-
 async function runGitCommand(
   api: DeviceCommandApi,
   deviceId: string,
@@ -700,13 +687,7 @@ async function runGitCommand(
 
   const response = await api.executeCommand(deviceId, request)
 
-  if (!response.success || (response.exit_code != null && response.exit_code !== 0)) {
-    throw new Error(
-      [response.error, response.stderr].filter(Boolean).join('\n') || `${commandKey} failed`
-    )
-  }
-
-  return outputAsString(response.stdout).trim()
+  return workspaceGitCommandOutput(response, commandKey)
 }
 
 async function probeGitRepository(
@@ -1073,10 +1054,13 @@ export async function loadProjectEnvironmentDiff(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null,
-  mode: EnvironmentDiffMode = 'branch'
+  mode: EnvironmentDiffMode = 'branch',
+  baseRef?: string
 ): Promise<string> {
+  const command = workspaceGitDiffCommand({ mode, baseRef } as WorkspaceGitSelection)
   const { deviceId, path } = await commandContext(api, project, target)
-  return runGitCommand(api, deviceId, ENVIRONMENT_DIFF_COMMANDS[mode], path, {
+  return runGitCommand(api, deviceId, command.commandKey, path, {
+    ...(command.args ? { args: command.args } : {}),
     timeoutSeconds: 30,
     maxOutputBytes: 5 * 1024 * 1024,
   })
@@ -1173,20 +1157,34 @@ export async function listProjectBranches(
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null
 ): Promise<string[]> {
+  return listProjectGitRefs(api, project, target)
+}
+
+export async function listProjectComparisonBranches(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<string[]> {
+  return listProjectGitRefs(api, project, target, WORKSPACE_GIT_COMPARISON_BRANCH_ARGS)
+}
+
+async function listProjectGitRefs(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null,
+  args?: string[]
+): Promise<string[]> {
   const { deviceId, path } = await commandContext(api, project, target)
   const [output, currentBranch] = await Promise.all([
     runGitCommand(api, deviceId, 'git_branch_list', path, {
+      ...(args && { args }),
       timeoutSeconds: 15,
       maxOutputBytes: 1024 * 64,
     }),
     runGitCommand(api, deviceId, 'git_branch', path).catch(() => ''),
   ])
 
-  const branches = output
-    .split('\n')
-    .map(branch => branch.trim())
-    .filter(Boolean)
-  return prioritizeBranches(branches, [currentBranch])
+  return workspaceGitBranches(output, currentBranch)
 }
 
 export async function checkoutProjectBranch(

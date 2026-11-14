@@ -12,28 +12,65 @@ import { FileBrowserModal } from './FileBrowserModal'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
+vi.mock('../LiquidGlass', () => ({
+  LiquidGlassButton: 'GlassButton',
+  LiquidGlassSurface: 'GlassSurface',
+}))
 vi.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
   Alert: { alert: vi.fn() },
   Modal: 'Modal',
   Pressable: 'Pressable',
   TextInput: 'TextInput',
+  ScrollView: 'ScrollView',
   View: 'View',
-  StyleSheet: { create: (styles: unknown) => styles },
+  useWindowDimensions: () => ({ width: 393, height: 852 }),
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 0.5 },
 }))
 vi.mock('react-native-keyboard-controller', () => ({
   KeyboardAvoidingView: 'KeyboardAvoidingView',
 }))
-vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView' }))
+vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaProvider: 'SafeAreaProvider',
+  SafeAreaView: 'SafeAreaView',
+}))
 vi.mock('react-native-paper', () => ({
   ActivityIndicator: 'ActivityIndicator',
   Text: 'Text',
+  Portal: { Host: 'PortalHost' },
+  Menu: Object.assign(
+    ({
+      visible,
+      anchor,
+      children,
+    }: {
+      visible: boolean
+      anchor: React.ReactNode
+      children: React.ReactNode
+    }) => (
+      <>
+        {anchor}
+        {visible ? children : null}
+      </>
+    ),
+    { Item: 'MenuItem' }
+  ),
   useTheme: () => ({
+    fonts: {
+      bodyMedium: { fontSize: 15 },
+      bodyLarge: { fontSize: 17 },
+      titleMedium: { fontSize: 17 },
+    },
     colors: {
       background: '#fff',
       onSurface: '#111',
       onSurfaceVariant: '#777',
       surfaceVariant: '#eee',
+      outlineVariant: '#ddd',
       error: '#f00',
+      primary: '#181818',
+      onPrimary: '#fff',
+      elevation: { level2: '#f7f7f7' },
     },
   }),
 }))
@@ -73,6 +110,10 @@ describe('FileBrowserModal', () => {
   const element = (testID: string) =>
     renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID)[0]!
   const preview = () => renderer.root.findByType('MobileDocumentPreview' as never)
+  async function menuAction(testID: string) {
+    if (!element(testID)) await act(() => element('file-preview-more').props.onPress())
+    await act(async () => element(testID).props.onPress())
+  }
   const tree = (overrides: Partial<React.ComponentProps<typeof FileBrowserModal>> = {}) => (
     <FileBrowserModal {...props} {...overrides} />
   )
@@ -129,6 +170,83 @@ describe('FileBrowserModal', () => {
     expect(props.onLoaded).toHaveBeenCalledWith(next, nextDocument)
   })
 
+  it('establishes safe-area and portal boundaries inside the native modal', async () => {
+    await render()
+    const modal = renderer.root.findByType('Modal' as never)
+    expect(modal.props.presentationStyle).toBe('pageSheet')
+    expect(modal.props.allowSwipeDismissal).toBe(true)
+    const provider = modal.findByType('SafeAreaProvider' as never)
+    const host = provider.findByType('PortalHost' as never)
+    expect(host.findByType('SafeAreaView' as never).props.edges).toEqual([
+      'right',
+      'bottom',
+      'left',
+    ])
+    expect(
+      renderer.root.findAll(
+        node => typeof node.type === 'string' && node.props.testID === 'file-browser-header'
+      )
+    ).toHaveLength(1)
+    const back = element('file-preview-back')
+    const style = Object.assign({}, ...back.props.contentStyle.filter(Boolean))
+    expect(style).toMatchObject({ minHeight: 44, minWidth: 44 })
+  })
+
+  it('keeps long filenames compact and exposes the full path and secondary commands in the menu', async () => {
+    const path = '/repo/a-very-long-directory-name/another-directory/a-very-long-file-name.md'
+    store.acquire.mockResolvedValueOnce({
+      document: { ...document, name: 'a-very-long-file-name.md', path },
+      release: releasePreview,
+    })
+    await render()
+    expect(element('file-preview-title').props).toMatchObject({
+      numberOfLines: 1,
+      ellipsizeMode: 'middle',
+    })
+    expect(element('file-preview-share')).toBeDefined()
+    expect(element('file-preview-copy-path')).toBeUndefined()
+    await act(() => element('file-preview-more').props.onPress())
+    expect(element('file-preview-full-path').props.children).toBe(path)
+    expect(element('file-preview-full-path').props.numberOfLines).toBeUndefined()
+    expect(element('file-preview-share')).toBeDefined()
+    expect(element('file-preview-close')).toBeDefined()
+  })
+
+  it('shows neutral recoverable errors with technical details only on demand', async () => {
+    store.acquire.mockRejectedValueOnce(new Error('HTTP 403: internal renderer request failed'))
+    await render()
+    expect(element('file-preview-error')).toBeDefined()
+    expect(element('file-preview-error-details')).toBeUndefined()
+    expect(element('file-find')).toBeUndefined()
+    expect(element('file-mode-preview')).toBeUndefined()
+    expect(element('file-mode-source')).toBeUndefined()
+    await act(() => element('file-preview-error-details-toggle').props.onPress())
+    expect(element('file-preview-error-details').props.children).toContain('HTTP 403')
+    expect(element('file-preview-error-details').props.style.color).toBe('#777')
+    await act(() => element('file-preview-retry').props.onPress())
+    expect(preview().props.document).toEqual(document)
+  })
+
+  it('omits source and search controls for an image-only preview', async () => {
+    store.acquire.mockResolvedValueOnce({
+      document: {
+        ...document,
+        kind: 'binary',
+        name: 'image.png',
+        mimeType: 'image/png',
+        text: undefined,
+      },
+      release: releasePreview,
+    })
+    await render()
+    expect(element('file-find')).toBeUndefined()
+    expect(element('file-mode-preview')).toBeUndefined()
+    expect(element('file-mode-source')).toBeUndefined()
+    await act(() => element('file-preview-more').props.onPress())
+    expect(element('file-wrap')).toBeUndefined()
+    expect(element('file-preview-share')).toBeDefined()
+  })
+
   it('shares a truncated preview only after a complete native load', async () => {
     const truncated = { ...document, truncated: true }
     const complete = { ...document, uri: 'file:///complete/readme.md', size: 1000, text: undefined }
@@ -136,7 +254,7 @@ describe('FileBrowserModal', () => {
     store.acquire.mockResolvedValueOnce({ document: complete, release })
     await render()
     expect(element('file-truncated-notice')).toBeDefined()
-    await act(async () => element('file-preview-share').props.onPress())
+    await menuAction('file-preview-share')
     expect(store.acquire).toHaveBeenLastCalledWith(
       request,
       expect.objectContaining({ complete: true, signal: expect.any(AbortSignal) })
@@ -157,7 +275,7 @@ describe('FileBrowserModal', () => {
         resolve = done
       })
     )
-    await act(async () => element('file-preview-share').props.onPress())
+    await menuAction('file-preview-share')
     const signal: AbortSignal = store.acquire.mock.calls.at(-1)![1].signal
     await act(() => renderer.unmount())
     expect(signal.aborted).toBe(true)
@@ -215,10 +333,11 @@ describe('FileBrowserModal', () => {
   it('reports unavailable sharing without downloading and keeps previewing usable', async () => {
     vi.mocked(Sharing.isAvailableAsync).mockResolvedValue(false)
     await render()
-    await act(async () => element('file-preview-share').props.onPress())
+    await menuAction('file-preview-share')
     expect(Alert.alert).toHaveBeenCalledWith('无法分享文件', '此设备暂不支持系统文件分享')
     expect(store.acquire).toHaveBeenCalledTimes(1)
     expect(preview().props.document).toEqual(document)
+    await act(() => element('file-preview-more').props.onPress())
     expect(element('file-preview-share').props.disabled).toBe(false)
   })
 
@@ -231,17 +350,17 @@ describe('FileBrowserModal', () => {
     await render({ location: { kind: 'file', request: lineRequest } })
     expect(preview().props.mode).toBe('source')
     expect(preview().props.document).toMatchObject({ lineStart: 12, lineEnd: 18 })
-    await act(() => element('file-mode-preview').props.onPress())
+    await menuAction('file-mode-preview')
     expect(preview().props.mode).toBe('preview')
-    await act(() => element('file-find').props.onPress())
+    await menuAction('file-find')
     await act(() => element('file-find-input').props.onChangeText('needle'))
-    await act(() => element('file-wrap').props.onPress())
+    await menuAction('file-wrap')
     await act(() => element('file-line-input').props.onChangeText('23'))
     await act(() => element('file-line-go').props.onPress())
     expect(preview().props).toMatchObject({
       mode: 'source',
       search: 'needle',
-      wrap: true,
+      wrap: false,
       document: { lineStart: 23 },
     })
     expect(preview().props.document.lineEnd).toBeUndefined()
@@ -317,7 +436,7 @@ describe('FileBrowserModal', () => {
       release: releasePreview,
     })
     await render({ location: { kind: 'file', request: diff } })
-    await act(() => element('file-diff-open-source').props.onPress())
+    await menuAction('file-diff-open-source')
     expect(props.onNavigate).toHaveBeenCalledWith({
       kind: 'file',
       request: {
@@ -345,13 +464,13 @@ describe('FileBrowserModal', () => {
 
   it('copies paths and exposes separate back, close, and native back callbacks', async () => {
     await render()
-    await act(() => element('file-preview-copy-path').props.onPress())
+    await menuAction('file-preview-copy-path')
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(document.path)
     await act(() => element('file-preview-back').props.onPress())
-    await act(() => element('file-preview-close').props.onPress())
+    await menuAction('file-preview-close')
     await act(() => renderer.root.findByType('Modal' as never).props.onRequestClose())
-    expect(props.onBack).toHaveBeenCalledTimes(2)
-    expect(props.onClose).toHaveBeenCalledTimes(1)
+    expect(props.onBack).toHaveBeenCalledTimes(1)
+    expect(props.onClose).toHaveBeenCalledTimes(2)
   })
 
   it('keeps the displayed file leased until navigation or close', async () => {
@@ -369,7 +488,7 @@ describe('FileBrowserModal', () => {
     await render()
     await act(() => preview().props.onError('PlantUML service unavailable'))
     expect(element('file-preview-error')).toBeDefined()
-    await act(() => element('file-mode-source').props.onPress())
+    await menuAction('file-mode-source')
     expect(preview().props.mode).toBe('source')
     expect(element('file-preview-error')).toBeUndefined()
     expect(store.acquire).toHaveBeenCalledTimes(1)
@@ -389,7 +508,7 @@ describe('FileBrowserModal', () => {
     await render()
     expect(element('file-mode-source')).toBeUndefined()
     expect(element('file-wrap')).toBeUndefined()
-    await act(() => element('file-find').props.onPress())
+    await menuAction('file-find')
     await act(() => element('file-find-input').props.onChangeText('summary'))
     expect(preview().props.search).toBe('summary')
     expect(element('file-line-input')).toBeUndefined()
@@ -402,6 +521,54 @@ describe('FileBrowserModal', () => {
     expect(browser.props.target).toEqual(target)
     await act(() => browser.props.onPath('/other/file.md'))
     expect(props.onLink).toHaveBeenCalledWith('/other/file.md', target)
+    expect(store.acquire).not.toHaveBeenCalled()
+  })
+
+  it('opens the floating folder and history from the original workspace root, preserving metadata', async () => {
+    await render()
+    expect(preview().props.wrap).toBe(true)
+    await act(() => element('file-preview-folder').props.onPress())
+    expect(props.onNavigate).toHaveBeenLastCalledWith({ kind: 'directory', target })
+    await act(() => element('file-preview-history').props.onPress())
+    expect(props.onNavigate).toHaveBeenLastCalledWith({ kind: 'directory', target, tab: 'recent' })
+  })
+
+  it('opens a Git comparison source and folder using the comparison owner, not the selected session', async () => {
+    const original = {
+      deviceId: 'original-device',
+      path: '/original/repo',
+      taskId: 'original-task',
+      workspaceSource: 'worktree',
+    }
+    const gitDiff: MobileFileRequest = {
+      kind: 'git-diff',
+      target: original,
+      selection: { mode: 'branch', baseRef: 'origin/release' },
+      path: 'src/old.ts',
+    }
+    store.acquire.mockResolvedValueOnce({
+      document: { ...document, kind: 'diff', name: 'old.ts.diff' },
+      release: releasePreview,
+    })
+    await render({ location: { kind: 'file', request: gitDiff } })
+    await menuAction('file-diff-open-source')
+    expect(props.onNavigate).toHaveBeenLastCalledWith({
+      kind: 'file',
+      request: { kind: 'workspace', target: original, path: '/original/repo/src/old.ts' },
+    })
+    await act(() => element('file-preview-folder').props.onPress())
+    expect(props.onNavigate).toHaveBeenLastCalledWith({ kind: 'directory', target: original })
+  })
+
+  it('routes a changes location to the workspace tabs with its requested Git selection', async () => {
+    const selection = { mode: 'branch', baseRef: 'origin/main' } as const
+    await render({ location: { kind: 'changes', target, selection } })
+    const browser = renderer.root.findByType('FileDirectoryBrowser' as never)
+    expect(browser.props).toMatchObject({
+      target,
+      initialTab: 'changes',
+      initialSelection: selection,
+    })
     expect(store.acquire).not.toHaveBeenCalled()
   })
 })

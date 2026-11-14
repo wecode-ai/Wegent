@@ -27,6 +27,9 @@ export interface MobileRuntimeState {
   messages: ChatMessage[]
   currentAddress: RuntimeTaskAddress | null
   currentTitle: string
+  setConversationPinned: (address: RuntimeTaskAddress, pinned: boolean) => Promise<void>
+  renameConversation: (address: RuntimeTaskAddress, title: string) => Promise<void>
+  archiveConversation: (address: RuntimeTaskAddress) => Promise<void>
   selectedWorkspace: RuntimeDeviceWorkspace | null
   selectedDeviceId: string | null
   allDevicesSelected: boolean

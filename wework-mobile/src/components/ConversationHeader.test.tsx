@@ -3,11 +3,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationHeader } from './ConversationHeader'
-import type { MobileFilePreviewActions } from './files/FilePreviewContext'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-const preview = vi.hoisted(() => ({ current: null as MobileFilePreviewActions | null }))
-vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => preview.current }))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
@@ -29,7 +26,6 @@ describe('ConversationHeader', () => {
   let renderer: ReactTestRenderer
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
-    preview.current = null
   })
 
   const elements = (testID: string) =>
@@ -59,37 +55,18 @@ describe('ConversationHeader', () => {
     expect(elements('conversation-header-project')[0]!.props.children).toBe('Wegent')
   })
 
-  it.each([true, false])(
-    'opens the browser only when a workspace is available (%s)',
-    async available => {
-      const openBrowser = vi.fn()
-      preview.current = {
-        target: available ? { deviceId: 'storage', path: '/worktree' } : null,
-        openBrowser,
-      } as unknown as MobileFilePreviewActions
-      await render()
-      expect(elements('conversation-files')[0]!.props.disabled).toBe(!available)
-      if (available) await act(() => elements('conversation-files')[0]!.props.onPress())
-      expect(openBrowser).toHaveBeenCalledTimes(available ? 1 : 0)
-    }
-  )
-
-  it('omits file browsing outside the preview provider', async () => {
+  it('keeps the capsule to new conversation and more, with files in the menu', async () => {
     await render()
     expect(elements('conversation-files')).toHaveLength(0)
+    expect(elements('new-conversation')).toHaveLength(1)
+    expect(elements('more-actions')).toHaveLength(1)
   })
 
-  it('also exposes the selected workspace browser before sending the first message', async () => {
-    const openBrowser = vi.fn()
-    preview.current = {
-      target: { deviceId: 'storage', path: '/selected' },
-      openBrowser,
-    } as unknown as MobileFilePreviewActions
-    await render({ minimal: true })
-    await act(() => elements('conversation-files')[0]!.props.onPress())
-    expect(openBrowser).toHaveBeenCalledOnce()
+  it('exposes the menu before sending the first message', async () => {
+    const props = await render({ minimal: true })
+    await act(() => elements('more-actions')[0]!.props.onPress())
+    expect(props.onMore).toHaveBeenCalledOnce()
     expect(elements('new-conversation')).toHaveLength(0)
-    expect(elements('more-actions')).toHaveLength(0)
   })
 
   it('omits unavailable context without inventing a project', async () => {
@@ -98,10 +75,10 @@ describe('ConversationHeader', () => {
     expect(elements('conversation-header-project')).toHaveLength(0)
   })
 
-  it('keeps only back navigation in the new-conversation header', async () => {
+  it('keeps back navigation in the new-conversation header', async () => {
     const props = await render({ minimal: true })
     expect(elements('new-conversation')).toHaveLength(0)
-    expect(elements('more-actions')).toHaveLength(0)
+    expect(elements('more-actions')).toHaveLength(1)
     await act(() => elements('open-drawer')[0]!.props.onPress())
     expect(props.onBack).toHaveBeenCalledOnce()
   })

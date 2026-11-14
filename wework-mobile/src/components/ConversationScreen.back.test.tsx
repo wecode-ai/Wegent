@@ -69,10 +69,13 @@ vi.mock('./ChatComposer', async () => {
   }
 })
 vi.mock('./ConversationEdgeMask', () => ({ ConversationEdgeMask: 'EdgeMask' }))
+vi.mock('./ConversationChangesPill', () => ({ ConversationChangesPill: 'ChangesPill' }))
+vi.mock('./ConversationAgentsPill', () => ({ ConversationAgentsPill: 'AgentsPill' }))
 vi.mock('./ConversationHeader', () => ({
   ConversationHeader: 'Header',
   CONVERSATION_HEADER_HEIGHT: 44,
 }))
+vi.mock('./ConversationMenu', () => ({ ConversationMenu: 'ConversationMenu' }))
 vi.mock('react-native-keyboard-controller', () => ({
   KeyboardGestureArea: 'KeyboardGestureArea',
   KeyboardStickyView: 'KeyboardStickyView',
@@ -108,6 +111,7 @@ describe('conversation keyboard layout and model navigation', () => {
   })
 
   const props = (): React.ComponentProps<typeof ConversationScreen> => ({
+    api: { getSubagentTranscript: vi.fn() },
     currentAddress: null,
     currentTitle: '',
     devices: [],
@@ -131,7 +135,14 @@ describe('conversation keyboard layout and model navigation', () => {
     onBack: vi.fn(),
     onLoadApps: vi.fn(),
     onLoadMoreMessagesBefore: vi.fn(),
-    onMore: vi.fn(),
+    conversationActions: {
+      threadId: null,
+      canPin: false,
+      pinned: false,
+      onPin: vi.fn(),
+      onRename: vi.fn(),
+      onArchive: vi.fn(),
+    },
     onNewConversation: vi.fn(),
     onOpenAdvancedModel: vi.fn(),
     onSelectDevice: vi.fn(),

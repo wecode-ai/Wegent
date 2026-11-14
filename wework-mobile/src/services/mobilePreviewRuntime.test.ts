@@ -147,6 +147,8 @@ describe('mobile preview server lifecycle', () => {
     )
     expect(native.configs[0]?.extraConfig).not.toContain('/remote')
     const config = String(native.configs[0]?.extraConfig)
+    // A global symlink ban also rejects valid OS-managed roots before serving index.html.
+    expect(config).not.toContain('server.follow-symlink = "disable"')
     const untrustedFiles = config.indexOf('$HTTP["url"] =~ "^/nonce-1/(document|resources)/"')
     expect(untrustedFiles).toBeGreaterThan(0)
     expect(config.slice(0, untrustedFiles)).not.toContain('Content-Security-Policy')

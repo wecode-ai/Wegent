@@ -363,6 +363,10 @@
     "./generated-images": {
       "types": "./src/generated-images.ts",
       "import": "./src/generated-images.ts"
+    },
+    "./workspace-git": {
+      "types": "./src/workspace-git.ts",
+      "import": "./src/workspace-git.ts"
     }
   },
   "scripts": {

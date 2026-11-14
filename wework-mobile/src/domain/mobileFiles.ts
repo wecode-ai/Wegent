@@ -56,6 +56,15 @@ export function mobileFileKey(request: MobileFileRequest): string {
         request.summary.artifact_id,
         request.path,
       ])
+    case 'git-diff':
+      return JSON.stringify([
+        'git-diff',
+        request.target.deviceId,
+        request.target.path,
+        request.selection.mode,
+        request.selection.baseRef,
+        request.path,
+      ])
   }
 }
 
@@ -85,7 +94,8 @@ export function resolveMobileFileLink(href: string, target: MobileWorkspaceFileT
 export function mobileFileName(request: MobileFileRequest): string {
   if (request.kind === 'attachment') return request.attachment.filename
   if (request.kind === 'local' || request.kind === 'image') return request.name
-  if (request.kind === 'diff') return request.path?.split(/[\\/]/).at(-1) || '文件变更.diff'
+  if (request.kind === 'diff' || request.kind === 'git-diff')
+    return request.path?.split(/[\\/]/).at(-1) || '文件变更.diff'
   return request.path.split(/[\\/]/).at(-1) || request.path
 }
 

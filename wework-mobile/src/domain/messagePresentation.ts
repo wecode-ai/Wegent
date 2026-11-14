@@ -108,6 +108,7 @@ export function buildMessageDisplayRows(
   }
 
   for (const block of source) {
+    if (block.type === 'subagent') continue
     if (block.type === 'thinking') continue
     if (block.type === 'tool' && isHiddenTool(block)) continue
     if (hasFileChanges && block.type === 'tool' && isCompletedPatchTool(block)) continue

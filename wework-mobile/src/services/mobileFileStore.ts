@@ -5,6 +5,7 @@ import {
   workspaceFilePreviewKind,
 } from '../../../packages/chat-core/src/workspace-file-types'
 import { resolveWorkspaceFilePath } from '../../../packages/chat-core/src/workspace-file-paths'
+import { parseUnifiedDiff } from '../../../packages/collaboration/src/conversation/parseUnifiedDiff'
 import { mobileFileKey, mobileFileName } from '@/domain/mobileFiles'
 import type { LoadedMobileFile, MobileFileRequest } from '@/types/files'
 import type { RuntimeApi } from './runtimeApi'
@@ -42,6 +43,24 @@ type FileReadResult = Pick<NativeFileRead, 'document' | 'complete'>
 
 function throwIfAborted(signal: AbortSignal) {
   if (signal.aborted) throw new Error('文件读取已取消')
+}
+
+function selectFileDiff(
+  text: string,
+  request: Extract<MobileFileRequest, { kind: 'diff' | 'git-diff' }>
+): string {
+  if (request.path === undefined) return text
+  const target =
+    request.kind === 'git-diff' ? request.target : { path: request.summary.workspace_path }
+  const path = resolveWorkspaceFilePath(target, request.path)
+  if (!path) throw new Error('文件差异路径无效')
+  const sections = parseUnifiedDiff(text)
+  const section =
+    sections.find(file => resolveWorkspaceFilePath(target, file.path) === path) ??
+    sections.find(file => file.oldPath && resolveWorkspaceFilePath(target, file.oldPath) === path)
+  if (!section) throw new Error('当前更改中没有该文件的差异')
+  const patch = section.lines.join('\n')
+  return patch.endsWith('\n') ? patch : `${patch}\n`
 }
 
 /** Streams verified chunks to the native file handle without buffering a whole file in JS. */
@@ -157,7 +176,11 @@ export class MobileFileStore {
       `${Date.now()}-${Math.random().toString(36).slice(2)}`
     )
     directory.create()
-    const name = mobileFileName(request)
+    const displayName = mobileFileName(request)
+    const name =
+      (request.kind === 'diff' || request.kind === 'git-diff') && !displayName.endsWith('.diff')
+        ? `${displayName}.diff`
+        : displayName
     const file = new File(directory, name.replace(/[\\/\0]/g, '_') || 'file')
     try {
       const result = await this.read(request, file, options)
@@ -278,9 +301,18 @@ export class MobileFileStore {
     options: FileLoadOptions
   ): Promise<FileReadResult> {
     let name = mobileFileName(request)
-    if (request.kind === 'diff') {
-      const text = await this.api.readFileChangesDiff(request.summary)
+    if (request.kind === 'diff' || request.kind === 'git-diff') {
+      const patch =
+        request.kind === 'diff'
+          ? await this.api.readFileChangesDiff(request.summary)
+          : await this.api.getWorkspaceGitDiff(
+              request.target.deviceId,
+              request.target.path,
+              request.selection,
+              options.signal
+            )
       throwIfAborted(options.signal)
+      const text = selectFileDiff(patch, request)
       file.write(text)
       return {
         complete: true,

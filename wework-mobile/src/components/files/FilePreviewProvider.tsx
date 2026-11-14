@@ -4,6 +4,7 @@ import { workspaceParentPath } from '../../../../packages/chat-core/src/workspac
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import { mobileAttachmentRequest, mobileFileKey, resolveMobileFileLink } from '@/domain/mobileFiles'
 import { MobileFileStore } from '@/services/mobileFileStore'
+import { loadMobileWorkspaceChanges } from '@/services/mobileWorkspaceGit'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import type { LoadedMobileFile, MobileFileRequest, RecentMobileFile } from '@/types/files'
 import { FilePreviewContext, type MobileFilePreviewActions } from './FilePreviewContext'
@@ -44,11 +45,15 @@ export function FilePreviewProvider({
   const showError = useCallback((cause: unknown) => {
     Alert.alert('无法打开文件', cause instanceof Error ? cause.message : String(cause))
   }, [])
-  const openFile = useCallback((request: MobileFileRequest) => {
-    Keyboard.dismiss()
-    opening.current += 1
-    setLocations([{ kind: 'file', request }])
-  }, [])
+  const openFile = useCallback(
+    (request: MobileFileRequest) => {
+      Keyboard.dismiss()
+      opening.current += 1
+      if (request.kind === 'git-diff') store.invalidate(request)
+      setLocations([{ kind: 'file', request }])
+    },
+    [store]
+  )
   const openLinkWithTarget = useCallback(
     async (href: string, owner: MobileWorkspaceFileTarget | null, withinBrowser = false) => {
       const sequence = ++opening.current
@@ -95,6 +100,10 @@ export function FilePreviewProvider({
     () => ({
       target,
       openFile,
+      loadChanges: (selection, signal) => {
+        if (!target) return Promise.reject(new Error('当前会话尚无可访问的文件目录'))
+        return loadMobileWorkspaceChanges(api, target, selection, signal)
+      },
       openBrowser: () => {
         Keyboard.dismiss()
         opening.current += 1
@@ -103,6 +112,15 @@ export function FilePreviewProvider({
           return
         }
         setLocations([{ kind: 'directory', target }])
+      },
+      openChangesBrowser: (selection = { mode: 'branch' }) => {
+        Keyboard.dismiss()
+        opening.current += 1
+        if (!target) {
+          showError(new Error('当前会话尚无可访问的文件目录'))
+          return
+        }
+        setLocations([{ kind: 'changes', target, selection }])
       },
       openLink: href => {
         void openLinkWithTarget(href, target)
@@ -123,7 +141,7 @@ export function FilePreviewProvider({
       openAttachment: attachment => openFile({ kind: 'attachment', attachment }),
       openChanges: (summary, path) => openFile({ kind: 'diff', summary, path }),
     }),
-    [target, openFile, openLinkWithTarget, showError]
+    [api, target, openFile, openLinkWithTarget, showError]
   )
 
   const remember = useCallback((request: MobileFileRequest, document: LoadedMobileFile) => {
@@ -165,6 +183,8 @@ export function FilePreviewProvider({
           }}
           onNavigate={location => {
             opening.current += 1
+            if (location.kind === 'file' && location.request.kind === 'git-diff')
+              store.invalidate(location.request)
             setLocations(current => [...current, location])
           }}
           onLoaded={remember}

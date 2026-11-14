@@ -42,6 +42,14 @@ import { useMobileTranscript } from './useMobileTranscript'
 import { useWorkspaceGitRef } from './useWorkspaceGitRef'
 import { useDeviceModels } from './useDeviceModels'
 import { useMobileUserInput } from './useMobileUserInput'
+import { useConversationActions } from './useConversationActions'
+import {
+  runtimeTaskRunning,
+  sameRuntimeAddress,
+  createRuntimeTaskId,
+  titleFrom,
+  messageFrom,
+} from './mobileRuntimeHelpers'
 import type { MobileRuntimeState, NewConversationOptions } from './mobileRuntimeTypes'
 export type { MobileRuntimeState, NewConversationOptions } from './mobileRuntimeTypes'
 import type {
@@ -910,10 +918,24 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     () => flattenConversations(work, taskRunningByKey),
     [work, taskRunningByKey]
   )
+  const conversationActions = useConversationActions({
+    api,
+    work,
+    currentAddress: currentAddressRef,
+    reloadWork,
+    setCurrentTitle,
+    clearCurrentConversation: startNewConversation,
+    setError,
+  })
+  const fileTarget = useMemo(
+    () => resolveMobileWorkspaceFileTarget(currentAddress, work, selectedWorkspace),
+    [currentAddress, work, selectedWorkspace]
+  )
 
   return {
+    ...conversationActions,
     api,
-    fileTarget: resolveMobileWorkspaceFileTarget(currentAddress, work, selectedWorkspace),
+    fileTarget,
     work,
     devices,
     conversations,
@@ -958,41 +980,4 @@ export function useMobileRuntime(config: RuntimeSessionConfig, userId: number): 
     createProject,
     clearError: () => setError(null),
   }
-}
-
-function runtimeTaskRunning(
-  address: RuntimeTaskAddress,
-  work: RuntimeWorkListResponse,
-  runningByTask: ReadonlyMap<string, boolean>
-): boolean {
-  const projected = runningByTask.get(runtimeTaskKey(address))
-  if (typeof projected === 'boolean') return projected
-  return allWorkspaces(work).some(
-    workspace =>
-      workspace.deviceId === address.deviceId &&
-      workspace.tasks.some(task => task.taskId === address.taskId && task.running === true)
-  )
-}
-
-function sameRuntimeAddress(
-  current: RuntimeTaskAddress | null,
-  candidate: RuntimeTaskAddress
-): boolean {
-  return current?.deviceId === candidate.deviceId && current.taskId === candidate.taskId
-}
-
-function createRuntimeTaskId(): string {
-  const seed = `codex-${Crypto.randomUUID()}`
-  let hash = 0
-  for (const character of seed) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
-  return `runtime-${(hash % 1_000_000_000) + 1}`
-}
-
-function titleFrom(message: string): string {
-  const normalized = message.replace(/\s+/g, ' ').trim()
-  return Array.from(normalized).slice(0, 48).join('') || '新会话'
-}
-
-function messageFrom(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }

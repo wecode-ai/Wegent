@@ -8,10 +8,11 @@ import { FilePreviewProvider } from './FilePreviewProvider'
 import { useMobileFilePreview, type MobileFilePreviewActions } from './FilePreviewContext'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-const store = vi.hoisted(() => ({ dispose: vi.fn() }))
+const store = vi.hoisted(() => ({ dispose: vi.fn(), invalidate: vi.fn() }))
 vi.mock('@/services/mobileFileStore', () => ({
   MobileFileStore: class {
     dispose = store.dispose
+    invalidate = store.invalidate
   },
 }))
 vi.mock('./FileBrowserModal', () => ({ FileBrowserModal: 'FileBrowserModal' }))
@@ -102,6 +103,26 @@ describe('FilePreviewProvider', () => {
     await act(() => actions.openFile(newer))
     await act(async () => resolve({ entries: [] }))
     expect(modal().props.location).toEqual({ kind: 'file', request: newer })
+  })
+
+  it('opens live changes for the selected device and invalidates a revisited Git preview', async () => {
+    await act(() => actions.openChangesBrowser({ mode: 'unstaged' }))
+    expect(modal().props.location).toEqual({
+      kind: 'changes',
+      target,
+      selection: { mode: 'unstaged' },
+    })
+    const diff: MobileFileRequest = {
+      kind: 'git-diff',
+      target,
+      selection: { mode: 'unstaged' },
+      path: 'a.ts',
+    }
+    await act(() => modal().props.onNavigate({ kind: 'file', request: diff }))
+    expect(store.invalidate).toHaveBeenCalledWith(diff)
+    await act(() => renderer.update(tree({ ...target, deviceId: 'device-b' })))
+    await act(() => actions.openChangesBrowser())
+    expect(modal().props.location.target.deviceId).toBe('device-b')
   })
 
   it('cancels pending link navigation when navigating within the browser or closing it', async () => {

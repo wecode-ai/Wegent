@@ -25,7 +25,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { GitPatchAction } from '@/api/environment'
-import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
+import {
+  getDiffStats,
+  getSectionsDiffStats,
+  parseUnifiedDiff,
+  type DiffFileSection,
+} from './parseUnifiedDiff'
 import { DiffCommentComposer, ReviewPatchActionButton } from './fileChangesReviewInteractions'
 import {
   ensureTrailingNewline,
@@ -871,30 +876,4 @@ function getPierrePatchChunks(sections: DiffFileSection[]) {
 
     return chunks.map(chunk => chunk.join('\n')).filter(Boolean)
   })
-}
-
-function getDiffStats(lines: string[]) {
-  return lines.reduce(
-    (stats, line) => {
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        stats.additions += 1
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        stats.deletions += 1
-      }
-      return stats
-    },
-    { additions: 0, deletions: 0 }
-  )
-}
-
-function getSectionsDiffStats(sections: DiffFileSection[]) {
-  return sections.reduce(
-    (total, section) => {
-      const stats = getDiffStats(section.lines)
-      total.additions += stats.additions
-      total.deletions += stats.deletions
-      return total
-    },
-    { additions: 0, deletions: 0 }
-  )
 }

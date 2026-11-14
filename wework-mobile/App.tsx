@@ -20,6 +20,7 @@ import { useMobileRuntime } from '@/hooks/useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
 import { darkTheme, lightTheme } from '@/theme'
+import { conversationPinTarget } from '@/domain/conversationActions'
 
 type RuntimeStackParamList = {
   conversationList: undefined
@@ -101,6 +102,9 @@ function RuntimeApplication({
     [runtime.work.projects]
   )
   const isNewConversation = !runtime.currentAddress && runtime.messages.length === 0
+  const pinTarget = runtime.currentAddress
+    ? conversationPinTarget(runtime.work, runtime.currentAddress)
+    : null
   const selectedProjectName = useMemo(
     () =>
       workspaces.find(
@@ -179,6 +183,7 @@ function RuntimeApplication({
                   style={[styles.app, { backgroundColor: theme.colors.background }]}
                 >
                   <ConversationScreen
+                    api={runtime.api}
                     composerFocusRequest={isNewConversation ? composerFocusRequest : 0}
                     currentAddress={runtime.currentAddress}
                     currentTitle={runtime.currentTitle}
@@ -196,7 +201,27 @@ function RuntimeApplication({
                     onBack={navigation.goBack}
                     onLoadApps={runtime.loadComposerApps}
                     onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
-                    onMore={openSettings}
+                    conversationActions={{
+                      threadId: pinTarget?.threadId ?? null,
+                      canPin: Boolean(pinTarget),
+                      pinned: pinTarget?.pinned ?? false,
+                      onPin: async () => {
+                        if (runtime.currentAddress)
+                          await runtime.setConversationPinned(
+                            runtime.currentAddress,
+                            !pinTarget?.pinned
+                          )
+                      },
+                      onRename: async title => {
+                        if (runtime.currentAddress)
+                          await runtime.renameConversation(runtime.currentAddress, title)
+                      },
+                      onArchive: async () => {
+                        if (!runtime.currentAddress) return
+                        await runtime.archiveConversation(runtime.currentAddress)
+                        navigation.goBack()
+                      },
+                    }}
                     onNewConversation={() => {
                       runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
                       setComposerFocusRequest(current => current + 1)

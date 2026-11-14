@@ -64,6 +64,7 @@ body {
   min-height: 0;
   overflow: auto;
   padding: 20px;
+  padding-bottom: 80px;
   line-height: 1.75;
   overflow-wrap: anywhere;
 }
@@ -79,6 +80,16 @@ body {
 .binary-preview {
   display: flex;
   overflow: hidden;
+}
+.code-preview {
+  --mobile-code-gutter: #e8e8ea;
+  --mobile-code-number: #8e8e93;
+  background: #f8f8f8;
+}
+:root.dark .code-preview {
+  --mobile-code-gutter: #242428;
+  --mobile-code-number: #9a9aa0;
+  background: #0d1117;
 }
 .file-viewer {
   overflow: auto;

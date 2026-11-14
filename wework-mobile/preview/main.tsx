@@ -28,6 +28,7 @@ import {
 } from './protocol'
 import { createPreviewResourceBridge } from './resourceBridge'
 import { createCodeItems, findCodeMatch, initialCodeTarget } from './codeNavigation'
+import { codeItemMetrics, codeLayout, codeStyles, codeTheme } from './codePresentation'
 import { HtmlPreview } from './HtmlPreview'
 import { readSourcePreview } from './sourcePreview'
 import './style.css'
@@ -53,9 +54,8 @@ const workerOptions = {
   poolSize: 2,
   totalASTLRUCacheSize: 30,
 }
-const codeTheme = { light: 'github-light', dark: 'github-dark' }
 const highlighterOptions = {
-  preferredHighlighter: 'highlights' as const,
+  preferredHighlighter: 'shiki-js' as const,
   theme: codeTheme,
   langs: ['typescript', 'javascript', 'css', 'html', 'python'],
 }
@@ -175,12 +175,14 @@ function TextPreview({ state }: { state: PreviewState }) {
         diffStyle: 'unified',
         theme: codeTheme,
         themeType: state.theme,
+        preferredHighlighter: 'shiki-js',
         overflow: state.wrap ? 'wrap' : 'scroll',
         disableFileHeader: state.kind !== 'diff',
         stickyHeaders: false,
         enableLineSelection: true,
-        unsafeCSS:
-          ':host { --diffs-font-size: 13px; --diffs-line-height: 22px; --diffs-font-family: ui-monospace, Menlo, monospace; }',
+        itemMetrics: codeItemMetrics,
+        layout: codeLayout,
+        unsafeCSS: codeStyles,
       }}
     />
   )

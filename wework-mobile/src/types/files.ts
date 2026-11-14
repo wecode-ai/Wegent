@@ -1,5 +1,6 @@
 import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
+import type { WorkspaceGitSelection } from '@/types/workspaceGit'
 
 export type MobileFileRequest =
   | {
@@ -13,6 +14,12 @@ export type MobileFileRequest =
   | { kind: 'local'; uri: string; name: string; mimeType: string }
   | { kind: 'image'; dataUri: string; name: string }
   | { kind: 'diff'; summary: TurnFileChangesSummary; path?: string }
+  | {
+      kind: 'git-diff'
+      target: MobileWorkspaceFileTarget
+      selection: WorkspaceGitSelection
+      path?: string
+    }
 
 export interface LoadedMobileFile {
   name: string

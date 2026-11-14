@@ -1,10 +1,9 @@
-import Ionicons from '@expo/vector-icons/Ionicons'
 import * as Clipboard from 'expo-clipboard'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Alert, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native'
-import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
+import { useEffect, useRef, useState } from 'react'
+import { Alert, Modal, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native'
+import { ActivityIndicator, Portal, Text, useTheme } from 'react-native-paper'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import {
   resolveWorkspaceFilePath,
   workspaceParentPath,
@@ -22,11 +21,21 @@ import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
 import type { MobileFileStore } from '@/services/mobileFileStore'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import type { LoadedMobileFile, MobileFileRequest, RecentMobileFile } from '@/types/files'
+import type { WorkspaceGitSelection } from '@/types/workspaceGit'
 import { FileDirectoryBrowser } from './FileDirectoryBrowser'
 import { MobileDocumentPreview } from './MobileDocumentPreview'
+import {
+  FileAction,
+  FileBrowserHeader,
+  FileErrorState,
+  FileGlassAction,
+  FileTextAction,
+  type FileMenuAction,
+} from './FileBrowserChrome'
 
 export type FileLocation =
-  | { kind: 'directory'; target: MobileWorkspaceFileTarget }
+  | { kind: 'directory'; target: MobileWorkspaceFileTarget; tab?: 'files' | 'recent' }
+  | { kind: 'changes'; target: MobileWorkspaceFileTarget; selection?: WorkspaceGitSelection }
   | { kind: 'file'; request: MobileFileRequest }
 
 interface FileBrowserModalProps {
@@ -49,48 +58,51 @@ export function FileBrowserModal(props: FileBrowserModalProps) {
   return (
     <Modal
       visible
-      presentationStyle="fullScreen"
+      presentationStyle="pageSheet"
       animationType="slide"
-      onRequestClose={props.onBack}
+      allowSwipeDismissal
+      onRequestClose={Platform.OS === 'ios' ? props.onClose : props.onBack}
     >
-      <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.background }]}>
-        <View style={styles.header}>
-          <FileAction
-            label="返回"
-            icon="chevron-back"
-            testID="file-preview-back"
-            onPress={props.onBack}
-          />
-          <Text style={styles.title} numberOfLines={1} variant="titleMedium">
-            {location.kind === 'directory'
-              ? '文件'
-              : (props.recent.find(item => item.key === mobileFileKey(location.request))?.name ??
-                mobileFileName(location.request))}
-          </Text>
-          <FileAction
-            label="关闭文件预览"
-            icon="close"
-            testID="file-preview-close"
-            onPress={props.onClose}
-          />
-        </View>
-        {location.kind === 'directory' ? (
-          <FileDirectoryBrowser
-            key={`${location.target.deviceId}:${location.target.path}`}
-            api={props.api}
-            target={location.target}
-            recent={props.recent}
-            onNavigate={props.onNavigate}
-            onPath={path => props.onLink(path, location.target)}
-          />
-        ) : (
-          <FilePreviewContent
-            key={`${mobileFileKey(location.request)}:${location.request.kind === 'workspace' ? (location.request.lineStart ?? '') : ''}`}
-            {...props}
-            request={location.request}
-          />
-        )}
-      </SafeAreaView>
+      <SafeAreaProvider style={styles.screen}>
+        <Portal.Host>
+          <SafeAreaView
+            testID="file-browser-safe-area"
+            edges={
+              Platform.OS === 'ios'
+                ? ['right', 'bottom', 'left']
+                : ['top', 'right', 'bottom', 'left']
+            }
+            style={[
+              styles.screen,
+              {
+                backgroundColor:
+                  location.kind === 'file' && !theme.dark ? '#f8f8f8' : theme.colors.background,
+              },
+            ]}
+          >
+            {location.kind !== 'file' ? (
+              <FileDirectoryBrowser
+                key={`${location.target.deviceId}:${location.target.path}`}
+                api={props.api}
+                target={location.target}
+                initialTab={location.kind === 'changes' ? 'changes' : location.tab}
+                initialSelection={location.kind === 'changes' ? location.selection : undefined}
+                recent={props.recent}
+                onNavigate={props.onNavigate}
+                onPath={path => props.onLink(path, location.target)}
+                onBack={props.onBack}
+                onClose={props.onClose}
+              />
+            ) : (
+              <FilePreviewContent
+                key={`${mobileFileKey(location.request)}:${location.request.kind === 'workspace' ? (location.request.lineStart ?? '') : ''}`}
+                {...props}
+                request={location.request}
+              />
+            )}
+          </SafeAreaView>
+        </Portal.Host>
+      </SafeAreaProvider>
     </Modal>
   )
 }
@@ -104,6 +116,8 @@ function FilePreviewContent({
   onPositionChange,
   onLink,
   onNavigate,
+  onBack,
+  onClose,
 }: FileBrowserModalProps & { request: MobileFileRequest }) {
   const theme = useTheme()
   const [document, setDocument] = useState<LoadedMobileFile | null>(null)
@@ -117,7 +131,7 @@ function FilePreviewContent({
   )
   const [search, setSearch] = useState('')
   const [searchVisible, setSearchVisible] = useState(false)
-  const [wrap, setWrap] = useState(false)
+  const [wrap, setWrap] = useState(true)
   const [sharing, setSharing] = useState(false)
   const [lineDraft, setLineDraft] = useState('')
   const initialPosition = useRef(
@@ -200,9 +214,22 @@ function FilePreviewContent({
       : attachmentReference && attachmentPath
         ? { deviceId: attachmentReference.device_id, path: workspaceParentPath(attachmentPath) }
         : null
+  const workspaceTarget =
+    request.kind === 'workspace' || request.kind === 'git-diff'
+      ? request.target
+      : request.kind === 'diff'
+        ? { deviceId: request.summary.device_id, path: request.summary.workspace_path }
+        : attachmentReference
+          ? { deviceId: attachmentReference.device_id, path: attachmentReference.workspace_path }
+          : null
   const openDiffSource = () => {
-    if (request.kind !== 'diff' || !request.path) return
-    const target = { deviceId: request.summary.device_id, path: request.summary.workspace_path }
+    if (
+      (request.kind !== 'diff' && request.kind !== 'git-diff') ||
+      !request.path ||
+      !workspaceTarget
+    )
+      return
+    const target = workspaceTarget
     const path = resolveWorkspaceFilePath(target, request.path)
     if (!path) {
       Alert.alert('无法打开文件', '文件路径无效')
@@ -217,170 +244,205 @@ function FilePreviewContent({
     setRendererError(null)
     setMode(value)
   }
-  const copyPath = () => {
-    if (document)
-      void Clipboard.setStringAsync(document.path).catch(cause =>
-        Alert.alert('复制失败', String(cause))
-      )
+  const displayPath =
+    document?.path ||
+    (request.kind === 'workspace' || request.kind === 'diff' || request.kind === 'git-diff'
+      ? request.path
+      : undefined) ||
+    mobileFileName(request)
+  const sourceAvailable = Boolean(document && canPreviewSource(document))
+  const canFind = Boolean(document && !rendererError && canSearchPreview(document, mode))
+  const shareAction: FileMenuAction = {
+    label: '分享或存储文件',
+    icon: 'share-outline',
+    testID: 'file-preview-share',
+    disabled: !document || sharing,
+    onPress: () => {
+      void share()
+    },
+  }
+  const menuActions: FileMenuAction[] = [
+    {
+      label: '复制文件路径',
+      icon: 'copy-outline',
+      testID: 'file-preview-copy-path',
+      onPress: () => {
+        void Clipboard.setStringAsync(displayPath).catch(cause =>
+          Alert.alert('复制失败', String(cause))
+        )
+      },
+    },
+    {
+      label: '刷新文件',
+      icon: 'refresh',
+      testID: 'file-preview-refresh',
+      disabled: loading,
+      onPress: refresh,
+    },
+  ]
+  if (sourceAvailable && !rendererError)
+    menuActions.push({
+      label: '自动换行',
+      icon: 'return-down-back-outline',
+      testID: 'file-wrap',
+      selected: wrap,
+      onPress: () => {
+        changeMode('source')
+        setWrap(value => !value)
+      },
+    })
+  if ((request.kind === 'diff' || request.kind === 'git-diff') && request.path)
+    menuActions.push({
+      label: '打开当前文件',
+      icon: 'document-outline',
+      testID: 'file-diff-open-source',
+      onPress: openDiffSource,
+    })
+  const toggleFind = () => {
+    setSearchVisible(value => !value)
+    setSearch('')
+  }
+  if (canFind)
+    menuActions.push({
+      label: '查找文件内容',
+      icon: 'search-outline',
+      testID: 'file-find',
+      selected: searchVisible,
+      onPress: toggleFind,
+    })
+  if (canRender && sourceAvailable)
+    menuActions.push(
+      {
+        label: '预览',
+        icon: 'eye-outline',
+        testID: 'file-mode-preview',
+        selected: mode === 'preview',
+        onPress: () => changeMode('preview'),
+      },
+      {
+        label: '源码',
+        icon: 'code-slash-outline',
+        testID: 'file-mode-source',
+        selected: mode === 'source',
+        onPress: () => changeMode('source'),
+      }
+    )
+  const goToLine = () => {
+    const lineStart = Number(lineDraft)
+    if (!Number.isSafeInteger(lineStart) || lineStart <= 0) {
+      Alert.alert('请输入有效行号')
+      return
+    }
+    changeMode('source')
+    setDocument(value => (value ? { ...value, lineStart, lineEnd: undefined } : value))
   }
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior="height" automaticOffset>
-      <View style={styles.toolbar}>
-        <Text
-          numberOfLines={1}
-          style={[styles.path, { color: theme.colors.onSurfaceVariant }]}
-          variant="bodySmall"
-        >
-          {document
-            ? `${document.path} · ${formatFileSize(document.size)}`
-            : mobileFileName(request)}
-        </Text>
-        <FileAction
-          label="复制文件路径"
-          icon="copy-outline"
-          testID="file-preview-copy-path"
-          disabled={!document}
-          onPress={copyPath}
-        />
-        <FileAction
-          label="刷新文件"
-          icon="refresh"
-          testID="file-preview-refresh"
-          disabled={loading}
-          onPress={refresh}
-        />
-        <FileAction
-          label="分享或存储文件"
-          icon="share-outline"
-          testID="file-preview-share"
-          disabled={!document || sharing}
-          onPress={() => {
-            void share()
-          }}
-        />
-      </View>
-      {sharing ? <ActivityIndicator size="small" testID="file-sharing" /> : null}
-      {document?.truncated ? (
-        <Text style={styles.notice} testID="file-truncated-notice">
-          预览显示文件的前 256 KB。分享或存储会读取完整文件。
-        </Text>
-      ) : null}
-      {document ? (
-        <View style={styles.toolbar}>
-          {canRender ? (
-            <>
-              <TextAction
-                label="预览"
-                testID="file-mode-preview"
-                selected={mode === 'preview'}
-                onPress={() => changeMode('preview')}
-              />
-              {canPreviewSource(document) ? (
-                <TextAction
-                  label="源码"
-                  testID="file-mode-source"
-                  selected={mode === 'source'}
-                  onPress={() => changeMode('source')}
-                />
-              ) : null}
-            </>
-          ) : null}
-          {canSearchPreview(document, mode) ? (
-            <TextAction
-              label="查找"
-              testID="file-find"
-              selected={searchVisible}
-              onPress={() => {
-                setSearchVisible(value => !value)
-                setSearch('')
-              }}
-            />
-          ) : null}
-          {canPreviewSource(document) ? (
-            <TextAction
-              label="换行"
-              testID="file-wrap"
-              selected={wrap}
-              onPress={() => setWrap(value => !value)}
-            />
-          ) : null}
-          {request.kind === 'diff' && request.path ? (
-            <TextAction label="当前文件" testID="file-diff-open-source" onPress={openDiffSource} />
-          ) : null}
+      <FileBrowserHeader
+        title={
+          document?.name ??
+          recent.find(item => item.key === mobileFileKey(request))?.name ??
+          mobileFileName(request)
+        }
+        path={displayPath}
+        detail={document ? formatFileSize(document.size) : undefined}
+        onBack={onBack}
+        onClose={onClose}
+        actions={menuActions}
+        share={shareAction}
+      />
+      {sharing ? (
+        <View style={styles.statusRow}>
+          <ActivityIndicator size="small" testID="file-sharing" />
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            正在准备分享…
+          </Text>
         </View>
       ) : null}
-      {searchVisible ? (
-        <View style={styles.toolbar}>
-          <TextInput
-            testID="file-find-input"
-            accessibilityLabel="查找文件内容"
-            value={search}
-            onChangeText={setSearch}
-            autoFocus
-            style={[
-              styles.input,
-              styles.path,
-              { color: theme.colors.onSurface, backgroundColor: theme.colors.surfaceVariant },
-            ]}
-            placeholder="查找内容"
-            placeholderTextColor={theme.colors.onSurfaceVariant}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {canPreviewSource(document!) ? (
-            <>
+      {document?.truncated ? (
+        <Text
+          variant="bodySmall"
+          style={[styles.notice, { color: theme.colors.onSurfaceVariant }]}
+          testID="file-truncated-notice"
+        >
+          仅预览前 256 KB，分享或存储可获取完整文件。
+        </Text>
+      ) : null}
+      {searchVisible && canFind ? (
+        <View style={styles.searchPanel}>
+          <View style={styles.searchRow}>
+            <TextInput
+              testID="file-find-input"
+              accessibilityLabel="查找文件内容"
+              value={search}
+              onChangeText={setSearch}
+              autoFocus
+              style={[
+                styles.input,
+                styles.grow,
+                theme.fonts.bodyMedium,
+                { color: theme.colors.onSurface, backgroundColor: theme.colors.surfaceVariant },
+              ]}
+              placeholder="查找内容"
+              placeholderTextColor={theme.colors.onSurfaceVariant}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            <FileAction
+              label="关闭查找"
+              icon="close"
+              testID="file-find-close"
+              onPress={toggleFind}
+            />
+          </View>
+          {sourceAvailable ? (
+            <View style={styles.searchRow}>
               <TextInput
                 testID="file-line-input"
                 accessibilityLabel="跳转行号"
                 value={lineDraft}
                 onChangeText={setLineDraft}
                 keyboardType="number-pad"
-                placeholder="行号"
+                placeholder="跳转到行…"
                 placeholderTextColor={theme.colors.onSurfaceVariant}
                 style={[
                   styles.input,
-                  {
-                    width: 68,
-                    color: theme.colors.onSurface,
-                    backgroundColor: theme.colors.surfaceVariant,
-                  },
+                  styles.grow,
+                  theme.fonts.bodyMedium,
+                  { color: theme.colors.onSurface, backgroundColor: theme.colors.surfaceVariant },
                 ]}
+                onSubmitEditing={goToLine}
               />
-              <TextAction
-                label="跳转"
-                testID="file-line-go"
-                onPress={() => {
-                  const lineStart = Number(lineDraft)
-                  if (!Number.isSafeInteger(lineStart) || lineStart <= 0) {
-                    Alert.alert('请输入有效行号')
-                    return
-                  }
-                  changeMode('source')
-                  setDocument(value =>
-                    value ? { ...value, lineStart, lineEnd: undefined } : value
-                  )
-                }}
-              />
-            </>
+              <FileTextAction label="跳转" testID="file-line-go" onPress={goToLine} />
+            </View>
           ) : null}
         </View>
       ) : null}
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator />
-          <Text>
+          <ActivityIndicator color={theme.colors.onSurfaceVariant} />
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
             {progress.total
-              ? `正在读取 ${formatFileSize(progress.loaded)} / ${formatFileSize(progress.total)}`
+              ? '正在读取 ' +
+                formatFileSize(progress.loaded) +
+                ' / ' +
+                formatFileSize(progress.total)
               : '正在读取文件…'}
           </Text>
         </View>
       ) : null}
       {error || rendererError ? (
-        <View style={styles.center} testID="file-preview-error">
-          <Text style={{ color: theme.colors.error }}>{error || rendererError}</Text>
-          <TextAction label="重试" testID="file-preview-retry" onPress={refresh} />
-        </View>
+        <ScrollView style={styles.screen} contentContainerStyle={styles.errorContent}>
+          <FileErrorState
+            title={error ? '暂时无法读取文件' : '暂时无法显示预览'}
+            message={error || rendererError!}
+            testID="file-preview-error"
+            retryTestID="file-preview-retry"
+            onRetry={refresh}
+          />
+        </ScrollView>
       ) : null}
       {document && !rendererError ? (
         <MobileDocumentPreview
@@ -407,83 +469,55 @@ function FilePreviewContent({
           onError={setRendererError}
         />
       ) : null}
+      <View pointerEvents="box-none" style={styles.floatingActions}>
+        <FileGlassAction
+          label="浏览工作区文件"
+          icon="folder-outline"
+          testID="file-preview-folder"
+          large
+          disabled={!workspaceTarget}
+          onPress={() =>
+            workspaceTarget && onNavigate({ kind: 'directory', target: workspaceTarget })
+          }
+        />
+        <FileGlassAction
+          label="最近打开的文件"
+          icon="time-outline"
+          testID="file-preview-history"
+          large
+          disabled={!workspaceTarget}
+          onPress={() =>
+            workspaceTarget &&
+            onNavigate({ kind: 'directory', target: workspaceTarget, tab: 'recent' })
+          }
+        />
+      </View>
     </KeyboardAvoidingView>
-  )
-}
-
-export function FileAction({
-  label,
-  icon,
-  testID,
-  disabled,
-  onPress,
-}: {
-  label: string
-  icon: React.ComponentProps<typeof Ionicons>['name']
-  testID: string
-  disabled?: boolean
-  onPress: () => void
-}) {
-  const theme = useTheme()
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: Boolean(disabled) }}
-      disabled={disabled}
-      onPress={onPress}
-      testID={testID}
-      style={[styles.action, disabled && { opacity: 0.35 }]}
-    >
-      <Ionicons name={icon} size={22} color={theme.colors.onSurface} />
-    </Pressable>
-  )
-}
-
-function TextAction({
-  label,
-  testID,
-  selected,
-  onPress,
-}: {
-  label: ReactNode
-  testID: string
-  selected?: boolean
-  onPress: () => void
-}) {
-  const theme = useTheme()
-  return (
-    <Pressable
-      testID={testID}
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      onPress={onPress}
-      style={[
-        styles.action,
-        styles.textAction,
-        selected && { backgroundColor: theme.colors.surfaceVariant },
-      ]}
-    >
-      <Text>{label}</Text>
-    </Pressable>
   )
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  header: { minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8 },
-  title: { flex: 1, textAlign: 'center' },
-  toolbar: {
+  grow: { flex: 1, minWidth: 0 },
+  floatingActions: {
+    position: 'absolute',
+    left: 27,
+    right: 27,
+    bottom: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  searchPanel: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    gap: 4,
-    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
   },
-  path: { flex: 1 },
-  action: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  textAction: { paddingHorizontal: 12, borderRadius: 8 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, gap: 16 },
-  notice: { paddingHorizontal: 16, paddingVertical: 8, fontSize: 13 },
-  input: { minHeight: 44, borderRadius: 8, paddingHorizontal: 10, fontSize: 15 },
+  errorContent: { flexGrow: 1, justifyContent: 'center' },
+  notice: { paddingHorizontal: 16, paddingBottom: 8 },
+  input: { minHeight: 44, borderRadius: 10, paddingHorizontal: 12 },
 })

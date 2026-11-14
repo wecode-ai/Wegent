@@ -1,8 +1,16 @@
 import type { RuntimeSessionConfig } from './backendConfig'
+import type {
+  RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeMutationResponse,
+} from '@/types/runtimeWorktree'
 import { requestUserInputResponseText } from '../../../packages/chat-core/src/runtime-user-input'
 import type { RuntimeGuidanceResponse } from '../../../packages/chat-core/src/runtime-task-api-types'
 import { loadRuntimeFileChangesDiff } from '../../../packages/chat-core/src/runtime-file-changes'
 import type { TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+import type { RuntimeTranscriptResponse as CoreTranscript } from '../../../packages/chat-core/src/runtime'
+import { readRuntimeTranscript } from '../../../packages/chat-core/src/runtime-transcript-transport'
+import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
+import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
 import {
   normalizeAbsoluteWorkspacePath,
   normalizeWorkspaceFileChunk,
@@ -16,6 +24,13 @@ import type {
   WorkspaceTreeResponse,
 } from '../../../packages/chat-core/src/workspace-files'
 import type { RuntimeWorkspaceSearchResponse } from '../../../packages/chat-core/src/runtime-workspace-search'
+import {
+  workspaceGitBranches,
+  WORKSPACE_GIT_COMPARISON_BRANCH_ARGS,
+  workspaceGitCommandOutput,
+  workspaceGitDiffCommand,
+  type WorkspaceGitSelection,
+} from '../../../packages/chat-core/src/workspace-git'
 import type {
   DeviceListResponse,
   RuntimeCreateRequest,
@@ -26,6 +41,11 @@ import type {
   RuntimeSendResponse,
   RuntimeTaskCancelResponse,
   RuntimeTaskAddress,
+  RuntimeTaskPinRequest,
+  RuntimeSidebarMutationResponse,
+  RuntimeTaskRenameRequest,
+  RuntimeTaskArchiveResponse,
+  RuntimeTranscriptResponse,
   RuntimeWorktreePreflightResponse,
   RuntimeWorkspaceOpenResponse,
   ModelSelectionConfig,
@@ -57,9 +77,14 @@ export interface RuntimeAttachmentDownload {
 
 interface RuntimeDeviceCommandResponse {
   success: boolean
+  exit_code?: number | null
   stdout: string | Record<string, unknown> | unknown[]
   stderr?: string
   error?: string | null
+  duration?: number
+  timed_out?: boolean
+  stdout_truncated?: boolean
+  stderr_truncated?: boolean
 }
 
 type RuntimeFileUploader = (input: {
@@ -167,6 +192,71 @@ export class RuntimeApi {
     })
     assertDeviceCommandSucceeded(response, '无法读取设备目录')
     return normalizeWorkspaceTree(response.stdout, normalizedPath)
+  }
+
+  getWorkspaceGitBranch(deviceId: string, path: string, signal?: AbortSignal): Promise<string> {
+    return this.readWorkspaceGitCommand(deviceId, path, 'git_branch', { signal })
+  }
+
+  async listWorkspaceGitBranches(
+    deviceId: string,
+    path: string,
+    signal?: AbortSignal
+  ): Promise<string[]> {
+    const [output, currentBranch] = await Promise.all([
+      this.readWorkspaceGitCommand(deviceId, path, 'git_branch_list', {
+        args: WORKSPACE_GIT_COMPARISON_BRANCH_ARGS,
+        signal,
+        timeoutSeconds: 15,
+        maxOutputBytes: 64 * 1024,
+      }),
+      // Current-branch discovery only affects ordering, as in PC comparison branches.
+      this.getWorkspaceGitBranch(deviceId, path, signal).catch(error => {
+        if (signal?.aborted) throw error
+        return ''
+      }),
+    ])
+    signal?.throwIfAborted()
+    return workspaceGitBranches(output, currentBranch)
+  }
+
+  async getWorkspaceGitDiff(
+    deviceId: string,
+    path: string,
+    selection: WorkspaceGitSelection,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const command = workspaceGitDiffCommand(selection)
+    return this.readWorkspaceGitCommand(deviceId, path, command.commandKey, {
+      args: command.args,
+      signal,
+      timeoutSeconds: 30,
+      maxOutputBytes: 5 * 1024 * 1024,
+    })
+  }
+
+  private async readWorkspaceGitCommand(
+    deviceId: string,
+    path: string,
+    commandKey: string,
+    options: {
+      args?: string[]
+      signal?: AbortSignal
+      timeoutSeconds?: number
+      maxOutputBytes?: number
+    } = {}
+  ): Promise<string> {
+    options.signal?.throwIfAborted()
+    if (!deviceId.trim()) throw new Error('Workspace target device is required')
+    const normalizedPath = normalizeAbsoluteWorkspacePath(path, 'Workspace path must be absolute')
+    const response = await this.executeDeviceCommand(deviceId, {
+      commandKey,
+      path: normalizedPath,
+      ...options,
+      timeoutSeconds: options.timeoutSeconds ?? 10,
+    })
+    options.signal?.throwIfAborted()
+    return workspaceGitCommandOutput(response, commandKey)
   }
 
   async readWorkspaceTextFile(
@@ -394,6 +484,58 @@ export class RuntimeApi {
     })
   }
 
+  setRuntimeTaskPinned(input: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
+    return this.request('/runtime-work/sidebar/tasks/pin', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  renameRuntimeTask(input: RuntimeTaskRenameRequest): Promise<RuntimeTaskArchiveResponse> {
+    return this.request('/runtime-work/rename', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  archiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+    return this.request('/runtime-work/archived-conversations/archive', {
+      method: 'POST',
+      body: JSON.stringify(address),
+    })
+  }
+
+  /** An isolated child-thread read never changes the parent's active conversation. */
+  async getSubagentTranscript(
+    address: RuntimeTaskAddress,
+    threadId: string,
+    signal?: AbortSignal
+  ): Promise<RuntimeTranscriptResponse> {
+    if (!threadId.trim()) throw new Error('A thread view requires an explicit thread identity')
+    signal?.throwIfAborted()
+    const response = await readRuntimeTranscript<CoreTranscript & { taskId: string }>(
+      { ...address, threadId, includeFullContent: true },
+      query =>
+        this.request('/runtime-work/transcript', {
+          method: 'POST',
+          body: JSON.stringify(query),
+          signal,
+        }),
+      decodeMobileTranscriptGzip
+    )
+    signal?.throwIfAborted()
+    if (response.threadId !== threadId)
+      throw new Error('Runtime returned a different thread for the requested view')
+    return projectMobileRuntimeTranscript(response)
+  }
+
+  deleteWorktree(input: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+    return this.request('/runtime-work/worktrees/delete', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
   private async request<T>(
     path: string,
     init: RequestInit = {},
@@ -434,12 +576,14 @@ export class RuntimeApi {
       args?: string[]
       timeoutSeconds: number
       maxOutputBytes?: number
+      signal?: AbortSignal
     }
   ): Promise<RuntimeDeviceCommandResponse> {
     const response = await this.request<RuntimeDeviceCommandResponse>(
       `/devices/${encodeURIComponent(deviceId)}/commands`,
       {
         method: 'POST',
+        signal: input.signal,
         body: JSON.stringify({
           command_key: input.commandKey,
           ...(input.path !== undefined ? { path: input.path } : {}),

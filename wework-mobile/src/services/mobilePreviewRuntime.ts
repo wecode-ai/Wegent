@@ -146,6 +146,8 @@ function localPath(uri: string): string {
 }
 
 function serverConfig(assets: string, nonce: string): string {
+  // Keep default symlink handling: OS-managed roots may use system symlinks such as iOS /var.
+  // Isolation comes from the private session root, copied files, and bundled asset aliases.
   const aliases = ['assets', 'vendor', 'wasm'].map(
     name => `${quoteConfig(`/${nonce}/${name}/`)} => ${quoteConfig(`${assets}/${name}/`)}`
   )
@@ -153,7 +155,6 @@ function serverConfig(assets: string, nonce: string): string {
     'server.modules += ("mod_alias", "mod_setenv")',
     `alias.url = (${aliases.join(', ')})`,
     'dir-listing.activate = "disable"',
-    'server.follow-symlink = "disable"',
     'mimetype.assign = (".html" => "text/html", ".js" => "text/javascript", ".mjs" => "text/javascript", ".css" => "text/css", ".wasm" => "application/wasm", ".json" => "application/json", ".svg" => "image/svg+xml", ".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", ".avif" => "image/avif", ".mp4" => "video/mp4", ".webm" => "video/webm", ".ogv" => "video/ogg", ".mp3" => "audio/mpeg", ".wav" => "audio/wav", ".ogg" => "audio/ogg", ".woff" => "font/woff", ".woff2" => "font/woff2", ".ttf" => "font/ttf", ".otf" => "font/otf", "" => "application/octet-stream")',
     'setenv.add-response-header = ("Referrer-Policy" => "no-referrer", "X-Content-Type-Options" => "nosniff")',
     `$HTTP["url"] =~ ${quoteConfig(`^/${nonce}/(document|resources)/`)} {`,

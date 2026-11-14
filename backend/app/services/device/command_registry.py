@@ -12,6 +12,10 @@ from app.services.device.git_credential_paths import managed_git_cli_command
 from app.services.device.git_credentials_command import (
     SYNC_GIT_CREDENTIALS_COMMAND,
 )
+from app.services.device.git_diff_commands import (
+    GIT_BRANCH_DIFF_COMMAND,
+    GIT_BRANCH_DIFF_SHORTSTAT_COMMAND,
+)
 
 
 class CommandRegistryError(ValueError):
@@ -26,24 +30,6 @@ class LocalDeviceCommandDefinition:
     post_processor: str | None = None
 
 
-GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
-    'bash -c \'base=""; '
-    "for candidate in "
-    '"$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" '
-    "upstream/main upstream/master "
-    '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
-    "origin/main origin/master main master; do "
-    '[ -n "$candidate" ] || continue; '
-    'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
-    'base="$candidate"; break; '
-    "fi; "
-    "done; "
-    '[ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; '
-    'merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); '
-    '[ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; '
-    'git diff --shortstat "$merge_base" --\''
-)
-
 GIT_WORKSPACE_DIFF_COMMAND = (
     "bash -c "
     "'if git rev-parse --verify --quiet HEAD >/dev/null; then "
@@ -55,27 +41,6 @@ GIT_WORKSPACE_DIFF_COMMAND = (
     'while IFS= read -r -d "" file; do '
     'git diff --binary --no-index -- /dev/null "$file" || true; '
     "done'"
-)
-
-GIT_BRANCH_DIFF_COMMAND = (
-    "bash -c "
-    '\'base=""; '
-    "for candidate in "
-    '"$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" '
-    "upstream/main upstream/master "
-    '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
-    "origin/main origin/master main master; do "
-    '[ -n "$candidate" ] || continue; '
-    'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
-    'base="$candidate"; break; '
-    "fi; "
-    "done; "
-    'if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; '
-    'if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; '
-    "elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; "
-    "else git diff --binary --; fi; "
-    "git ls-files --others --exclude-standard -z | "
-    'while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done\''
 )
 
 GIT_PUSH_COMMAND = (
@@ -1462,6 +1427,9 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
     "git_diff": LocalDeviceCommandDefinition(command=GIT_WORKSPACE_DIFF_COMMAND),
     "git_branch_diff": LocalDeviceCommandDefinition(command=GIT_BRANCH_DIFF_COMMAND),
+    "git_compare_branch_diff": LocalDeviceCommandDefinition(
+        command=GIT_BRANCH_DIFF_COMMAND
+    ),
     "git_diff_unstaged": LocalDeviceCommandDefinition(command="git diff --binary --"),
     "git_diff_staged": LocalDeviceCommandDefinition(
         command="git diff --binary --cached --"

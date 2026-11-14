@@ -188,6 +188,7 @@ function setup() {
     }),
     readWorkspaceFileChunk: vi.fn().mockResolvedValue(chunk('abc')),
     readFileChangesDiff: vi.fn(),
+    getWorkspaceGitDiff: vi.fn(),
     downloadAttachment: vi.fn(
       async (_id: number, destination: string, _options?: { signal?: AbortSignal }) => {
         native.files.set(destination, new TextEncoder().encode('pdf'))
@@ -210,6 +211,154 @@ beforeEach(() => {
   native.opened = 0
   native.closed = 0
   native.text.mockReset()
+})
+
+describe('live workspace diffs', () => {
+  it('keeps device, worktree and baseline identity and cancels a stale live diff on refresh', async () => {
+    const { api, store } = setup()
+    const request: MobileFileRequest = {
+      kind: 'git-diff',
+      target: { deviceId: 'device-a', path: '/worktree' },
+      selection: { mode: 'branch', baseRef: 'origin/main' },
+      path: 'src/a.ts',
+    }
+    api.getWorkspaceGitDiff.mockResolvedValue('diff --git a/src/a.ts b/src/a.ts\n+first')
+    const first = await store.acquire(request, options())
+    expect(first.document).toMatchObject({
+      kind: 'diff',
+      name: 'a.ts',
+      path: 'src/a.ts',
+      text: expect.stringContaining('+first'),
+    })
+    expect(api.getWorkspaceGitDiff).toHaveBeenCalledWith(
+      'device-a',
+      '/worktree',
+      request.selection,
+      expect.any(AbortSignal)
+    )
+    store.invalidate(request)
+    expect(native.files.has(first.document.uri)).toBe(true)
+    api.getWorkspaceGitDiff.mockResolvedValue('diff --git a/src/a.ts b/src/a.ts\n+second')
+    const next = await store.acquire(request, options())
+    expect(next.document.text).toContain('+second')
+    first.release()
+    expect(native.files.has(first.document.uri)).toBe(false)
+    next.release()
+    store.dispose()
+  })
+
+  it.each(['git-diff', 'diff'] as const)(
+    'writes only the selected file to the native share file for %s requests',
+    async kind => {
+      const { api, store } = setup()
+      const selected =
+        'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+selected\n'
+      const unrelated =
+        'diff --git a/private/b.ts b/private/b.ts\n--- a/private/b.ts\n+++ b/private/b.ts\n@@ -1 +1 @@\n-old\n+unrelated\n'
+      api.getWorkspaceGitDiff.mockResolvedValue(selected + unrelated)
+      api.readFileChangesDiff.mockResolvedValue(selected + unrelated)
+      const request: MobileFileRequest =
+        kind === 'git-diff'
+          ? {
+              kind,
+              target: { deviceId: 'device', path: '/repo' },
+              selection: { mode: 'branch' },
+              path: '/repo/src/a.ts',
+            }
+          : {
+              kind,
+              path: '/repo/src/a.ts',
+              summary: {
+                version: 1,
+                status: 'active',
+                device_id: 'device',
+                workspace_path: '/repo',
+                artifact_id: 'turn-1',
+                file_count: 2,
+                additions: 2,
+                deletions: 2,
+                files: [],
+              },
+            }
+      const preview = await store.acquire(request, options())
+      const complete = await store.acquire(request, { ...options(), complete: true })
+      expect(complete.document.name).toBe('a.ts')
+      expect(complete.document.uri).toMatch(/\/a\.ts\.diff$/)
+      expect(complete.document.text).toBe(selected)
+      expect(new TextDecoder().decode(native.files.get(complete.document.uri))).toBe(selected)
+      expect(complete.document.uri).toBe(preview.document.uri)
+      preview.release()
+      complete.release()
+      store.dispose()
+    }
+  )
+
+  it.each([
+    ['/repo', 'src/old.ts'],
+    ['/repo', '/repo/src/old.ts'],
+    ['/repo', 'src/new.ts'],
+    ['C:\\repo', 'C:\\repo\\src\\old.ts'],
+  ])('selects exact renamed paths against workspace %s for %s', async (root, path) => {
+    const { api, store } = setup()
+    const renamed =
+      'diff --git a/src/old.ts b/src/new.ts\nsimilarity index 100%\nrename from src/old.ts\nrename to src/new.ts\n'
+    api.getWorkspaceGitDiff.mockResolvedValue(
+      renamed + 'diff --git a/other/src/old.ts b/other/src/old.ts\n+unrelated\n'
+    )
+    const value = await load(
+      store,
+      {
+        kind: 'git-diff',
+        target: { deviceId: 'device', path: root },
+        selection: { mode: 'unstaged' },
+        path,
+      },
+      options()
+    )
+    expect(value.text).toBe(renamed)
+    expect(new TextDecoder().decode(native.files.get(value.uri))).toBe(renamed)
+    store.dispose()
+  })
+
+  it.each(['missing.ts', '/outside/src/a.ts', 'a.ts', ''])(
+    'rejects missing selected diff %j instead of sharing the whole workspace',
+    async path => {
+      const { api, store } = setup()
+      api.getWorkspaceGitDiff.mockResolvedValue('diff --git a/src/a.ts b/src/a.ts\n+selected\n')
+      await expect(
+        store.acquire(
+          {
+            kind: 'git-diff',
+            target: { deviceId: 'device', path: '/repo' },
+            selection: { mode: 'unstaged' },
+            path,
+          },
+          options()
+        )
+      ).rejects.toThrow(path ? '当前更改中没有该文件的差异' : '文件差异路径无效')
+      expect(native.files.size).toBe(0)
+      expect(native.deleted).toHaveLength(1)
+      store.dispose()
+    }
+  )
+
+  it('preserves a complete workspace patch when no file was selected', async () => {
+    const { api, store } = setup()
+    const patch = 'diff --git a/a.ts b/a.ts\n+a\ndiff --git a/b.ts b/b.ts\n+b\n'
+    api.getWorkspaceGitDiff.mockResolvedValue(patch)
+    const value = await load(
+      store,
+      {
+        kind: 'git-diff',
+        target: { deviceId: 'device', path: '/repo' },
+        selection: { mode: 'branch' },
+      },
+      { ...options(), complete: true }
+    )
+    expect(value.text).toBe(patch)
+    expect(value.uri).toMatch(/文件变更\.diff$/)
+    store.dispose()
+  })
 })
 
 describe('copyWorkspaceFileChunks', () => {
