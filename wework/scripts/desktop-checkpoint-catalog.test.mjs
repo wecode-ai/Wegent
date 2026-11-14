@@ -17,7 +17,7 @@ import { UPGRADE_CHECKPOINTS } from '../e2e/desktop/upgrade-suite.mjs'
 const root = new URL('../../', import.meta.url)
 const definitions = readDesktopCheckpointDefinitions()
 
-test('literal CI targets resolve to retained checkpoints or groups', () => {
+test('literal CI targets and segment lists resolve to retained checkpoints or groups', () => {
   const catalog = loadDesktopCheckpointCatalog()
   const known = new Set([
     'all',
@@ -36,6 +36,12 @@ test('literal CI targets resolve to retained checkpoints or groups', () => {
     const source = readFileSync(script, 'utf8')
     for (const match of source.matchAll(/select_target "(?:core|cloud|plugins):([a-z0-9-]+)"/g)) {
       assert.ok(known.has(match[1]), `${script.pathname}: ${match[1]}`)
+    }
+  }
+  const workflow = readFileSync(new URL('.github/workflows/wework-e2e.yml', root), 'utf8')
+  for (const match of workflow.matchAll(/^\s*segments\+?=,?([a-z][a-z0-9,-]*)$/gm)) {
+    for (const checkpoint of match[1].split(',')) {
+      assert.ok(known.has(checkpoint), `Wework E2E workflow: ${checkpoint}`)
     }
   }
 })
