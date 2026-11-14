@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import signal
 import socket
 import subprocess
 import time
@@ -347,4 +348,12 @@ def gateway(fixture: ReplicaFixture, report: Path) -> Iterator[httpx.Client]:
                 yield client
         finally:
             process.terminate()
-            process.wait(timeout=30)
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                # Graceful shutdown can stall on background work under CI load.
+                # The fixture owns this disposable session, so reap the whole
+                # process group instead of failing a scenario whose assertions
+                # already passed.
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=30)
