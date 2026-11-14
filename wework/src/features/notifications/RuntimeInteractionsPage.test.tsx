@@ -49,46 +49,78 @@ function projectQuestionWork(): PendingProjectIssue {
   }
 }
 
-it.each(['same-questions', 'another-question', 'another-issue', 'another-store'])(
-  'does not resurrect settled questions from stale project-work data (%s)',
-  scenario => {
-    const project = projectQuestionWork()
-    projectWork.items = [project]
-    const history = project.item.human_requests!.map(request => {
-      const interaction = issueHumanInteraction(request, project.store)
-      return {
-        id: interaction.id,
-        title: interaction.task.task.title,
-        question: interaction.question,
-        address: interaction.task.address,
-        answeredAt: Date.now(),
-        resolvedIssueQuestion: {
-          questionIdentity: issueQuestionIdentity({
-            ...interaction,
-            project: {
-              ...interaction.project!,
-              issueId: scenario === 'another-issue' ? 'OTHER' : project.item.id,
-              store: scenario === 'another-store' ? ('backend' as const) : project.store,
-            },
-          })!,
-          nativeInteractionId: interaction.id,
-        },
-      }
-    })
-    if (scenario === 'another-question') {
-      project.item.human_requests!.push({
-        ...project.item.human_requests![0],
-        id: 'new-question',
-        item_id: 'new-question',
-      })
+it.each([
+  'same-questions',
+  'another-question',
+  'another-issue',
+  'another-store',
+  'later-assignment',
+  'earlier-assignment',
+  'same-time-assignment',
+  'other-viewer-assignment',
+])('does not resurrect settled questions from stale project-work data (%s)', scenario => {
+  const project = projectQuestionWork()
+  projectWork.items = [project]
+  const history = project.item.human_requests!.map(request => {
+    const interaction = issueHumanInteraction(request, project.store)
+    return {
+      id: interaction.id,
+      title: interaction.task.task.title,
+      question: interaction.question,
+      address: interaction.task.address,
+      answeredAt: Date.now(),
+      resolvedIssueQuestion: {
+        questionIdentity: issueQuestionIdentity({
+          ...interaction,
+          project: {
+            ...interaction.project!,
+            issueId: scenario === 'another-issue' ? 'OTHER' : project.item.id,
+            store: scenario === 'another-store' ? ('backend' as const) : project.store,
+          },
+        })!,
+        nativeInteractionId: interaction.id,
+      },
     }
-    const reportProjectPendingCount = vi.fn()
-    view(undefined, {}, { pending: [], history, reportProjectPendingCount })
-    const expected = scenario === 'same-questions' ? 0 : 1
-    expect(screen.queryAllByTestId('interaction-list-item')).toHaveLength(expected)
-    expect(reportProjectPendingCount).toHaveBeenLastCalledWith(expected)
+  })
+  if (scenario === 'another-question') {
+    project.item.human_requests!.push({
+      ...project.item.human_requests![0],
+      id: 'new-question',
+      item_id: 'new-question',
+    })
   }
-)
+  const offset =
+    scenario === 'earlier-assignment' ? -60_000 : scenario === 'same-time-assignment' ? 0 : 60_000
+  const assignmentTime = new Date(
+    Math.max(...history.map(entry => entry.answeredAt)) + offset
+  ).toISOString()
+  if (scenario.endsWith('assignment')) {
+    project.item.assignee_user_id = scenario === 'other-viewer-assignment' ? 7 : 0
+    project.item.assignment_history = [
+      { to_type: 'user', to_id: String(project.item.assignee_user_id), at: assignmentTime },
+    ]
+  }
+  const reportProjectPendingCount = vi.fn()
+  const dismiss = vi.fn().mockResolvedValue(undefined)
+  view(undefined, {}, { pending: [], history, reportProjectPendingCount, dismiss })
+  const expected = [
+    'same-questions',
+    'earlier-assignment',
+    'same-time-assignment',
+    'other-viewer-assignment',
+  ].includes(scenario)
+    ? 0
+    : 1
+  expect(screen.queryAllByTestId('interaction-list-item')).toHaveLength(expected)
+  expect(reportProjectPendingCount).toHaveBeenLastCalledWith(expected)
+  if (scenario === 'later-assignment') {
+    fireEvent.click(screen.getByTestId('interaction-dismiss'))
+    expect(dismiss).toHaveBeenCalledWith(
+      expect.objectContaining({ id: `project-issue:local:12:ISSUE-1:${assignmentTime}` })
+    )
+    expect(dismiss.mock.calls[0][0]).not.toHaveProperty('task')
+  }
+})
 
 it.each([false, true])(
   'ignores the actual questions represented by a project row (partial failure: %s)',

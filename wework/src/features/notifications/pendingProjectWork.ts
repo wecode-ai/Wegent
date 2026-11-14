@@ -13,13 +13,26 @@ export function projectIssueNeedsInput(
   if (!issueNeedsUser(item, viewer)) return false
   if (pendingIssueHumanRequests(item).length || !item.human_requests?.length) return true
 
-  // A later explicit assignment is new work; edits and execution completion are not.
+  return projectIssueAssignedAfter(
+    item,
+    viewer,
+    Math.max(...item.human_requests.map(request => Date.parse(request.updated_at)))
+  )
+}
+
+/** A later explicit assignment is new work; edits and execution completion are not. */
+export function projectIssueAssignedAfter(
+  item: IssueParticipationSource,
+  viewer: IssueParticipationViewer,
+  handledAt: number
+): boolean {
   const assignment = item.assignment_history?.at(-1)
   if (
     assignment?.to_type !== 'user' ||
     String(assignment.to_id) !== String(item.assignee_user_id ?? item.created_by_user_id)
   )
     return false
-  const assignedAt = Date.parse(assignment.at)
-  return item.human_requests.every(request => assignedAt > Date.parse(request.updated_at))
+  return (
+    issueNeedsUser({ ...item, human_requests: [] }, viewer) && Date.parse(assignment.at) > handledAt
+  )
 }

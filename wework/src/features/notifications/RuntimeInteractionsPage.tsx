@@ -9,6 +9,7 @@ import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { issueWaitingSince, issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import { IssueWaitingTime } from './IssueWaitingTime'
 import { usePendingProjectIssues } from './usePendingProjectIssues'
+import { projectIssueAssignedAfter, projectIssueNeedsInput } from './pendingProjectWork'
 import {
   issueHumanInteraction,
   issueQuestionIdentity,
@@ -143,20 +144,42 @@ export function RuntimeInteractionsPage({
       : ''
     return `${projectItemId(row)}:${issueWaitingSince(row.item, row.userId) ?? 'untracked'}${scope}`
   }
-  const projectRows = projectIssues.items.filter(row => {
+  const projectItems = projectIssues.items.map(row => {
+    let handledAt: number | undefined
+    const requests = row.item.human_requests?.filter(request => {
+      if (request.status !== 'pending' && request.status !== 'answering') return true
+      const question = issueHumanInteraction(request, row.store)
+      const resolution = interactions?.history.find(entry =>
+        hasRecordedIssueResolution(question, [entry])
+      )
+      if (!resolution) return true
+      handledAt = Math.max(handledAt ?? 0, resolution.answeredAt)
+      return false
+    })
+    return {
+      ...row,
+      item: requests ? { ...row.item, human_requests: requests } : row.item,
+      handledAt,
+    }
+  })
+  const projectRows = projectItems.filter(row => {
+    if (
+      row.handledAt !== undefined &&
+      !pendingIssueHumanRequests(row.item).length &&
+      (!projectIssueAssignedAfter(row.item, row.userId, row.handledAt) ||
+        !projectIssueNeedsInput(row.item, row.userId))
+    )
+      return false
     if (interactions?.isDismissed?.(projectDismissalId(row))) return false
     const requests = projectRequests(row)
     if (
       requests.length > 0 &&
       requests.every(request => {
         const interaction = issueHumanInteraction(request, row.store)
-        return (
-          interactions?.isDismissed?.(
-            interaction.id,
-            issueQuestionIdentity(interaction),
-            issueQuestionHandoff(interaction)
-          ) ||
-          (interactions && hasRecordedIssueResolution(interaction, interactions.history))
+        return interactions?.isDismissed?.(
+          interaction.id,
+          issueQuestionIdentity(interaction),
+          issueQuestionHandoff(interaction)
         )
       })
     )

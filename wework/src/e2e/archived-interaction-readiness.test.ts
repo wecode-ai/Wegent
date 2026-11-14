@@ -5,12 +5,21 @@ import { verifyArchivedTaskInteractionCleanup } from '../../e2e/desktop/modules/
 import { DEFAULT_MODEL_LABEL, MODEL_PROVIDER_ID } from '../../e2e/desktop/modules/shared.mjs'
 import { requestExecutor } from '../../e2e/desktop/modules/executor-rpc.mjs'
 import { createBarrier } from '../test/async-barrier'
+import { loadDesktopCheckpointCatalog } from '../../e2e/desktop/checkpoint-catalog.mjs'
 
 vi.mock('../../e2e/desktop/modules/executor-rpc.mjs', () => ({
   requestExecutor: vi.fn(async () => ({ code: 'task_archived' })),
 }))
 
 beforeEach(() => vi.clearAllMocks())
+
+test('the archive verifier regression selects its existing CI checkpoint', () => {
+  expect(
+    loadDesktopCheckpointCatalog().PATH_TARGETS.get(
+      'wework/src/e2e/archived-interaction-readiness.test.ts'
+    )
+  ).toEqual(['core:human-interactions'])
+})
 
 function fixture(state: 'ready' | 'loading', failure?: Error) {
   const waiting = createBarrier()
