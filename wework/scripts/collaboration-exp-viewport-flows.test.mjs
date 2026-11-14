@@ -2,10 +2,92 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { assertDesktopPanes } from '../e2e/desktop/modules/collaboration-exp-pane-verification.mjs'
 import { assertReducedPlanMotion } from '../e2e/desktop/modules/collaboration-exp-state-motion.mjs'
-import { verifyCollaborationExpViewports } from '../e2e/desktop/modules/collaboration-exp-viewport-flows.mjs'
+import {
+  selectCollaborationExpAppearance,
+  verifyCollaborationExpViewports,
+} from '../e2e/desktop/modules/collaboration-exp-viewport-flows.mjs'
 
 const testId = id => `app [data-testid="${id}"]`
 const box = { left: 0, top: 0, width: 300, height: 60 }
+
+const experimentRoute =
+  '/collaboration-exp?view=tasks&projectScope=%5B%22local%22%2C%22project%22%5D&projectStore=local&projectId=project&issueId=issue&discussion=owned-task&future=keep'
+
+function appearanceControl({ mode = 'light', ignoreSelection = false } = {}) {
+  const calls = []
+  const state = {
+    mode,
+    nativeMode: mode,
+    route: experimentRoute,
+  }
+  return {
+    calls,
+    state,
+    async command(action, selector, options) {
+      calls.push({ action, selector, options })
+      if (action === 'setAppPreferences') {
+        state.nativeMode = JSON.parse(options.value).appearanceMode
+      } else if (action === 'navigate') {
+        state.route = options.value
+      } else if (action === 'clickWhenEnabled') {
+        assert.equal(state.route, '/settings/appearance')
+        assert.match(selector, /^\[data-testid="appearance-mode-(light|dark)"\]$/)
+        if (!ignoreSelection) state.mode = selector.includes('mode-dark') ? 'dark' : 'light'
+      } else if (action === 'waitFor' && selector.startsWith('html')) {
+        assert.equal(selector, `html[data-theme="${state.mode}"]`, 'Root theme did not change')
+      } else if (action === 'waitFor') {
+        assert.equal(selector, '[data-testid="appearance-settings-page"]')
+        assert.equal(state.route, '/settings/appearance')
+      } else assert.fail(`Unexpected appearance operation: ${action} ${selector}`)
+      return ''
+    },
+  }
+}
+
+test('viewport appearance uses the enabled settings control and returns the complete experiment query', async () => {
+  for (const mode of ['light', 'dark']) {
+    const control = appearanceControl({ mode: mode === 'dark' ? 'light' : 'dark' })
+    await selectCollaborationExpAppearance(control, mode, experimentRoute)
+    assert.equal(control.state.mode, mode)
+    assert.equal(control.state.route, experimentRoute)
+    assert.deepEqual(control.calls, [
+      { action: 'navigate', selector: 'body', options: { value: '/settings/appearance' } },
+      {
+        action: 'waitFor',
+        selector: '[data-testid="appearance-settings-page"]',
+        options: { visible: true },
+      },
+      {
+        action: 'clickWhenEnabled',
+        selector: `[data-testid="appearance-mode-${mode}"]`,
+        options: undefined,
+      },
+      { action: 'waitFor', selector: `html[data-theme="${mode}"]`, options: undefined },
+      { action: 'navigate', selector: 'body', options: { value: experimentRoute } },
+    ])
+  }
+})
+
+test('native preference persistence cannot stand in for the main window appearance setting', async () => {
+  const control = appearanceControl()
+  await control.command('setAppPreferences', 'body', {
+    value: JSON.stringify({ appearanceMode: 'dark' }),
+  })
+  assert.equal(control.state.nativeMode, 'dark')
+  assert.equal(control.state.mode, 'light')
+  await assert.rejects(() => control.command('waitFor', 'html[data-theme="dark"]'))
+  await selectCollaborationExpAppearance(control, 'dark', experimentRoute)
+  assert.equal(control.state.mode, 'dark')
+})
+
+test('viewport appearance still rejects a settings selection that fails to update the root theme', async () => {
+  const control = appearanceControl({ ignoreSelection: true })
+  await assert.rejects(
+    () => selectCollaborationExpAppearance(control, 'dark', experimentRoute),
+    /Root theme did not change/
+  )
+  assert.equal(control.state.route, '/settings/appearance')
+})
 
 function paneControl(change = {}) {
   const calls = []

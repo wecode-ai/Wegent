@@ -13,6 +13,16 @@ import {
   readTeam,
 } from './collaboration-exp-state-motion.mjs'
 
+export async function selectCollaborationExpAppearance(control, mode, returnRoute) {
+  await control.command('navigate', 'body', { value: '/settings/appearance' })
+  await control.command('waitFor', '[data-testid="appearance-settings-page"]', {
+    visible: true,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="appearance-mode-${mode}"]`)
+  await control.command('waitFor', `html[data-theme="${mode}"]`)
+  await control.command('navigate', 'body', { value: returnRoute })
+}
+
 /** Native role settings are a body portal, outside workspace tab content. */
 export async function verifyCollaborationExpTeamManagement({
   control,
@@ -66,11 +76,7 @@ export async function verifyCollaborationExpViewports({
       value: JSON.stringify({ width, height }),
     })
     onWindowSizeCaptured(oldSize)
-    await control.command('setAppPreferences', 'body', {
-      value: JSON.stringify({ appearanceMode }),
-    })
-    await control.command('waitFor', `html[data-theme="${appearanceMode}"]`)
-    await control.command('navigate', 'body', { value: route() })
+    await selectCollaborationExpAppearance(control, appearanceMode, route())
     await click(control, testId('collaboration-exp-navigation-assistant'))
     await control.command('setReducedMotion', 'body', { value: 'no-preference' })
     const relay = testId('collaboration-exp-team-relay')
