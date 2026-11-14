@@ -1,4 +1,4 @@
-import { CLOUD_DEVICE_ID, assert } from './shared.mjs'
+import { CLOUD_DEVICE_ID, DEFAULT_STEP_TIMEOUT_MS, assert, fetchJson } from './shared.mjs'
 import { withCloudRuntimeRequest } from './cloud-runtime-request.mjs'
 import { findOwnedRuntimeProject, findOwnedRuntimeTask } from './workspace-attachment-evidence.mjs'
 
@@ -76,14 +76,18 @@ export async function verifyCloudConversationMenu({ cloudEnvironment, address, w
       undefined,
       'Archived conversations must leave the active work list'
     )
-    const catalog = await runtimeRequest(
-      'runtime.archived_conversations.list',
+    // PC reads the cloud archive catalog through Backend's cross-device aggregation.
+    const catalog = await fetchJson(
+      `${cloudEnvironment.backendUrl}/api/runtime-work/archived-conversations/list`,
       {
-        deviceId: address.deviceId,
-        workspacePath,
-        source: 'cloud',
-      },
-      address.deviceId
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${cloudEnvironment.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+        body: JSON.stringify({ deviceId: address.deviceId, workspacePath, source: 'cloud' }),
+      }
     )
     const item = catalog.items.find(
       value => value.deviceId === address.deviceId && value.taskId === address.taskId
