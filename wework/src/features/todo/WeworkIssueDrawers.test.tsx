@@ -366,6 +366,12 @@ function Project({
 
 describe('Wework Issue conversation drawers', () => {
   it('binds before execution and preserves a completed human round when task creation is accepted', async () => {
+    issue.human_task_binding = {
+      humanAssignmentId: 'human',
+      dispatchId: 'dispatch',
+      dispatchRoundId: 'round',
+      assignmentId: 'assignment',
+    }
     const source = { ...issue, tags: [], version: 3 }
     const issues = {
       get: vi.fn(async () => source),

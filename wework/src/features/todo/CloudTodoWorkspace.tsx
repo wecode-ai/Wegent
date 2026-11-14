@@ -234,6 +234,7 @@ import {
   shouldPrepareWorkItemTask,
   workItemComposerReference,
   workItemAssociationUpdate,
+  updateIssueWhenPersonalTaskStarts,
   workItemTaskInput,
 } from './workItemTaskInput'
 import {
@@ -3914,6 +3915,17 @@ export function CloudTodoWorkspace({
       rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
+      if (selectedItemProject.location === 'cloud') {
+        const statusError = await updateIssueWhenPersonalTaskStarts(
+          cloudWorkspaceApi!.issues,
+          latest.id,
+          {
+            projectStore: 'backend',
+            dispatch: dispatch ?? latest.human_task_binding,
+          }
+        )
+        if (statusError !== null) setBoardError(statusError || cloudWorkspaceMessages.saveFailed)
+      }
       await associateSelectedItemWithProject(localProject)
       setBoardRefreshNonce(value => value + 1)
       return async () => {

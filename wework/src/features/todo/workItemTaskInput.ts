@@ -1,4 +1,9 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import {
+  persistIssueDetailFields,
+  type CollaborationProject,
+  type SharedWorkspaceApi,
+} from '@wegent/collaboration'
 
 export function workItemComposerReference(
   project: Pick<CloudProject, 'id' | 'project_key'>,
@@ -27,6 +32,27 @@ export function workItemAssociationUpdate(
   return {
     version: item.version,
     tags: associatedTags,
+  }
+}
+
+/** Local lifecycle projection and collaboration managers own their Issue states. */
+export async function updateIssueWhenPersonalTaskStarts(
+  issues: Pick<SharedWorkspaceApi['issues'], 'get' | 'update'>,
+  issueId: string,
+  context: {
+    projectStore: CollaborationProject['project_store']
+    dispatch?: { dispatchId: string } | null
+  }
+): Promise<string | null> {
+  if (context.projectStore === 'local' || context.dispatch) return null
+  try {
+    const latest = await issues.get(issueId)
+    if (['inbox', 'pending', 'in_review'].includes(latest.status)) {
+      await persistIssueDetailFields(latest, { status: 'in_progress' }, issues)
+    }
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : ''
   }
 }
 

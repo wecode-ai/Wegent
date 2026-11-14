@@ -2027,7 +2027,17 @@ describe('CloudTodoWorkspace', () => {
 
   it('binds a task without overwriting the executor Issue status', async () => {
     const workbenchServices = services()
-    const reviewedItem = { ...item, tags: [], status: 'in_review' as const }
+    const reviewedItem = {
+      ...item,
+      tags: [],
+      status: 'in_review' as const,
+      human_task_binding: {
+        humanAssignmentId: 'human',
+        dispatchId: 'dispatch',
+        dispatchRoundId: 'round',
+        assignmentId: 'assignment',
+      },
+    }
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => reviewedItem)
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [reviewedItem] }))
     render(
