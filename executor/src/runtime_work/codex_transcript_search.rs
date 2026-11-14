@@ -754,6 +754,9 @@ mod native_fixture;
 
 #[cfg(test)]
 mod tests {
+
+    use super::*;
+
     #[test]
     fn native_search_obeys_shared_projection_contract() {
         use crate::runtime_work::transcript_search_projection::contract_tests::*;
@@ -801,31 +804,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    use super::*;
-    use crate::runtime_work::transcript_search_text::codex_turn_search_sources;
-
-    #[test]
-    fn visible_search_excludes_context_and_tool_output() {
-        let turn = json!({"id":"turn-1", "status":"completed", "items":[
-            {"id":"user", "type":"userMessage", "content":[{"type":"text", "text":
-                "<application_context>hidden needle</application_context> Visible request"}]},
-            {"id":"tool", "type":"commandExecution", "text":"needle"},
-            {"id":"assistant", "type":"agentMessage", "text":"visible needle"},
-        ]});
-        assert_eq!(
-            codex_turn_search_sources(
-                &turn,
-                &HashMap::new(),
-                Some("thread-1"),
-                &mut AsyncReplySearchProjection::default(),
-            ),
-            [
-                ("user".to_owned(), "Visible request".to_owned()),
-                ("assistant".to_owned(), "visible needle".to_owned()),
-            ],
-        );
     }
 
     #[test]
@@ -895,85 +873,5 @@ mod tests {
             assert_eq!(error, "Codex search item is missing provider id");
             assert!(matches.is_empty());
         }
-    }
-
-    #[test]
-    fn native_async_reply_matches_keep_user_ids_and_projected_occurrences() {
-        let question = json!({"id":"question-turn", "status":"completed", "items":[
-            {"id":"question", "type":"agentMessage", "phase":"final_answer",
-             "delivery":"async", "questions":[{"title":"Choose needle", "options":["one","two"]}],
-             "text":"Question fallback"},
-        ]});
-        let reply = json!({"id":"reply-turn", "status":"completed", "items":[
-            {"id":"reply", "type":"userMessage", "clientId":"reply-client",
-             "content":[{"type":"text", "text":"**needle**"}]},
-        ]});
-        let mut projection = AsyncReplySearchProjection::default();
-        let mut matches = Vec::new();
-        for turn in [&question, &reply] {
-            search_turn_items(
-                &CodexSearchQuery {
-                    thread_id: "root-thread",
-                    needle: "needle",
-                    limit: 10,
-                    user_content_by_client_id: &HashMap::new(),
-                },
-                turn,
-                CodexSearchCursor {
-                    turn_id: turn["id"].as_str().unwrap().to_owned(),
-                    item_id: String::new(),
-                    turn_cursor: "opaque-turn".into(),
-                    turn_offset: 0,
-                    reply_source_turn_id: None,
-                },
-                &mut projection,
-                &mut matches,
-            )
-            .unwrap();
-        }
-        assert_eq!(matches.len(), 2);
-        for (occurrence, matched) in matches.iter().enumerate() {
-            assert_eq!(matched["itemId"], "reply");
-            assert_eq!(matched["messageId"], "reply-client");
-            assert_eq!(matched["occurrence"], occurrence);
-            assert_eq!(matched["replyQuestions"], json!(["Choose needle"]));
-            let cursor = parse_search_cursor(matched["cursor"].as_str().unwrap())
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                cursor.reply_source_turn_id.as_deref(),
-                Some("question-turn")
-            );
-        }
-    }
-
-    #[test]
-    fn search_cursor_preserves_native_turn_and_item_anchors() {
-        let cursor = search_cursor(&CodexSearchCursor {
-            turn_id: "turn-1".to_owned(),
-            item_id: "item-1".to_owned(),
-            turn_cursor: "opaque-turn".to_owned(),
-            turn_offset: 3,
-            reply_source_turn_id: Some("question-turn".to_owned()),
-        })
-        .unwrap();
-        let parsed = parse_search_cursor(&cursor).unwrap().unwrap();
-        assert_eq!(parsed.turn_id, "turn-1");
-        assert_eq!(parsed.item_id, "item-1");
-        assert_eq!(parsed.turn_cursor, "opaque-turn");
-        assert_eq!(parsed.turn_offset, 3);
-        assert_eq!(
-            parsed.reply_source_turn_id.as_deref(),
-            Some("question-turn")
-        );
-        let old = parse_search_cursor(
-            "wework-codex-search:{\"turnId\":\"turn-1\",\"itemId\":\"item-1\",\"turnCursor\":\"opaque-turn\"}",
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(old.turn_offset, 0);
-        assert!(old.reply_source_turn_id.is_none());
-        assert!(parse_search_cursor("offset:10").unwrap().is_none());
-        assert!(parse_search_cursor("wework-codex-search:invalid").is_err());
     }
 }

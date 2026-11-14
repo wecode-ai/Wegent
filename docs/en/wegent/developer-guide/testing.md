@@ -13,7 +13,7 @@ Pre-push checks run the complete frontend unit suite with two Jest workers by de
 The project includes comprehensive unit testing support across all modules:
 
 - **Backend** (FastAPI): pytest + pytest-asyncio + pytest-cov + pytest-mock
-- **Executor** (AI Agent Engine): pytest + pytest-mock + pytest-asyncio
+- **Executor** (Rust workspace): Cargo unit tests and protocol integration tests
 - **Executor Manager** (Task Management): pytest + pytest-mock + pytest-cov
 - **Shared** (Utilities): pytest + pytest-cov
 - **Frontend** (Next.js + React 19): Jest + @testing-library/react
@@ -38,9 +38,8 @@ Prioritize behavior coverage for task creation and sending, permissions and reso
 
 ### Executor (`executor/`)
 
-- ✅ Agent factory
-- ✅ Base agent classes
-- ✅ Mocked AI client interactions (Anthropic, OpenAI)
+- Unit tests for permissions, credential isolation, task state, persistence, and failure recovery
+- Process, HTTP, and runtime protocol integration tests in `executor/tests/`
 
 ### Executor Manager (`executor_manager/`)
 
@@ -141,24 +140,18 @@ markers =
 
 ```bash
 cd executor
-pytest tests/ --cov=agents
+cargo test --locked -p wegent-executor --lib <module-or-test-name>
+cargo test --locked -p <workspace-package> --lib
+cargo test --locked --test <integration-test-file>
 ```
 
-### Test Structure
+### Maintaining Tests
 
-```
-executor/tests/
-├── conftest.py              # Executor-specific fixtures
-└── agents/                  # Agent tests
-```
+Workspace unit tests live in `executor/src/` and `executor/crates/*/src/`; integration tests live in `executor/tests/`. Tests embedded in source files can also exercise real processes or HTTP integrations, so determine their role from their behavior.
 
-### Key Fixtures
+Prioritize independent tests of ordinary parameter mapping, display formatting, catalog metadata, and text projection when trimming unit tests. Removing distinct cases accepts reduced coverage and must not be described as equivalent deduplication. Preserve critical boundaries for permissions and ownership, credential isolation, concurrency, persistence, recovery, and upgrade or rollback. A fixed reduction ratio does not replace coverage judgment. Remove unused test helpers and empty modules together; do not reduce counts through `ignore`, merged cases, or discovery changes.
 
-- `mock_anthropic_client`: Mocked Anthropic API client for testing Claude models
-- `mock_openai_client`: Mocked OpenAI API client for testing GPT models
-- `mock_callback_client`: Mocked callback HTTP client for agent responses
-- `suppress_resource_warnings`: Session-scoped fixture to suppress ResourceWarning messages
-- `cleanup_logging`: Session-scoped fixture to clean up logging handlers and prevent daemon thread errors
+Check compilation and unit tests for affected packages after cleanup, and retain independent protocol integration and E2E coverage. Push hooks and CI run full checks according to repository rules.
 
 ## Executor Manager Tests
 

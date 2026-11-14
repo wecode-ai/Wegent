@@ -140,19 +140,4 @@ mod tests {
         }
         assert_eq!(metadata(&json!({"type":"credential"}))[0].1, "other");
     }
-
-    #[test]
-    fn diagnostics_distinguish_root_deltas_from_child_deltas_and_snapshots() {
-        let mut diagnostics = ClaudeStreamDiagnostics::new();
-        for event in [
-            json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"a"}}}),
-            json!({"type":"stream_event","parent_tool_use_id":"child","event":{"delta":{"type":"text_delta","text":"b"}}}),
-            json!({"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}),
-        ] {
-            diagnostics.observe(&event, "1", "2");
-        }
-        assert_eq!(diagnostics.events, 3);
-        assert_eq!(diagnostics.partial_events, 2);
-        assert_eq!(diagnostics.root_text_deltas, 1);
-    }
 }

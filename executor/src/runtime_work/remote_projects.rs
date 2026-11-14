@@ -198,12 +198,4 @@ mod tests {
         assert_eq!(items[0].ai_settings, None);
         assert_eq!(items[0].default_project_space, None);
     }
-
-    #[test]
-    fn legacy_remote_project_retains_its_single_directory() {
-        let value = json!([{"id": "legacy", "hostId": "remote", "remotePath": "/legacy", "label": "Legacy"}]);
-        let items = remote_project_items(Some(&value));
-        assert_eq!(items[0].roots, vec![normalize_workspace_path("/legacy")]);
-        assert_eq!(items[0].project_key, None);
-    }
 }

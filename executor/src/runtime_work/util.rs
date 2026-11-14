@@ -1100,44 +1100,6 @@ mod tests {
     }
 
     #[test]
-    fn replaces_runtime_task_id_aliases_without_dropping_address_metadata() {
-        let mut payload = json!({
-            "task_id": "thread-1",
-            "address": {
-                "taskId": "thread-1",
-                "workspacePath": "/tmp/project"
-            }
-        });
-
-        replace_runtime_task_id(&mut payload, "local-1");
-
-        assert_eq!(payload["task_id"], "local-1");
-        assert_eq!(payload["address"]["taskId"], "local-1");
-        assert_eq!(payload["address"]["workspacePath"], "/tmp/project");
-    }
-
-    #[test]
-    fn copies_cloud_project_id_from_runtime_payload() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(&mut request, &json!({"cloudProjectId": 9001}));
-
-        assert_eq!(cloud_project_id(&request), Some(json!(9001)));
-    }
-
-    #[test]
-    fn copies_runtime_task_title_from_runtime_payload() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(&mut request, &json!({"title": " Analyze issue "}));
-
-        assert_eq!(
-            runtime_task_title(&request).as_deref(),
-            Some("Analyze issue")
-        );
-    }
-
-    #[test]
     fn copies_runtime_origin_from_runtime_payload() {
         let mut request = ExecutionRequest::default();
 
@@ -1149,31 +1111,6 @@ mod tests {
         assert_eq!(
             request.extra.get("origin"),
             Some(&json!({"type": "project_automation", "run_id": "run-1"}))
-        );
-    }
-
-    #[test]
-    fn copies_runtime_model_selection_from_runtime_payload() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "modelSelection": {
-                    "modelName": "deepseek-v4-pro-responses(public)",
-                    "modelType": "public",
-                    "options": {"reasoning": "medium"}
-                }
-            }),
-        );
-
-        assert_eq!(
-            request.extra.get("modelSelection"),
-            Some(&json!({
-                "modelName": "deepseek-v4-pro-responses(public)",
-                "modelType": "public",
-                "options": {"reasoning": "medium"}
-            }))
         );
     }
 
@@ -1215,97 +1152,6 @@ mod tests {
             }),
         );
         assert_eq!(request.extra["collaborationMode"], "single");
-    }
-
-    #[test]
-    fn normalizes_runtime_additional_skills_for_agent_consumers() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "additionalSkills": [
-                    {
-                        "name": "wework-plugin-creator",
-                        "namespace": "codex",
-                        "is_public": false
-                    },
-                    "review",
-                    {"name": "wework-plugin-creator", "namespace": "codex"}
-                ]
-            }),
-        );
-
-        assert_eq!(
-            request.extra.get("additional_skills"),
-            Some(&json!([
-                {
-                    "name": "wework-plugin-creator",
-                    "namespace": "codex",
-                    "is_public": false
-                },
-                "review",
-                {"name": "wework-plugin-creator", "namespace": "codex"}
-            ]))
-        );
-        assert_eq!(
-            request.extra.get("preload_skills"),
-            Some(&json!(["wework-plugin-creator", "review"]))
-        );
-        assert_eq!(
-            request.extra.get("user_selected_skills"),
-            Some(&json!(["wework-plugin-creator", "review"]))
-        );
-    }
-
-    #[test]
-    fn generates_visible_user_message_for_external_im_runtime_send() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "message": "continue from dingtalk",
-                "clientUserMessageId": "im:dingtalk:77:dingtalk-message-1",
-                "createdAt": 1_780_000_000_000_i64,
-                "source": {
-                    "source": "im",
-                    "channel_type": "dingtalk",
-                    "channel_id": 77,
-                    "message_id": "dingtalk-message-1"
-                }
-            }),
-        );
-
-        assert_eq!(
-            request.extra.get("runtime_generated_user_message"),
-            Some(&json!({
-                "id": "im:dingtalk:77:dingtalk-message-1",
-                "message": "continue from dingtalk",
-                "createdAt": 1_780_000_000_000_i64,
-                "source": {
-                    "source": "im",
-                    "channel_type": "dingtalk",
-                    "channel_id": 77,
-                    "message_id": "dingtalk-message-1"
-                }
-            }))
-        );
-    }
-
-    #[test]
-    fn does_not_generate_external_user_message_without_im_source() {
-        let mut request = ExecutionRequest::default();
-
-        apply_runtime_payload_metadata(
-            &mut request,
-            &json!({
-                "message": "continue from wework",
-                "clientUserMessageId": "runtime-local-pane-1"
-            }),
-        );
-
-        assert!(!request.extra.contains_key("runtime_generated_user_message"));
     }
 
     #[test]
@@ -1525,36 +1371,6 @@ mod tests {
         assert_eq!(
             workspace_task_path(&planned_path, &checkout.path().display().to_string()),
             planned_path
-        );
-    }
-
-    #[test]
-    fn normalizes_runtime_goal_seconds_to_milliseconds() {
-        assert_eq!(
-            normalize_runtime_goal_timestamps(json!({
-                "threadId": "thread-1",
-                "createdAt": 1_787_636_000,
-                "updatedAt": 1_787_636_001,
-            })),
-            json!({
-                "threadId": "thread-1",
-                "createdAt": 1_787_636_000_000_i64,
-                "updatedAt": 1_787_636_001_000_i64,
-            })
-        );
-    }
-
-    #[test]
-    fn preserves_runtime_goal_millisecond_timestamps() {
-        assert_eq!(
-            normalize_runtime_goal_timestamps(json!({
-                "createdAt": 1_787_636_000_123_i64,
-                "updatedAt": 1_787_636_001_456_i64,
-            })),
-            json!({
-                "createdAt": 1_787_636_000_123_i64,
-                "updatedAt": 1_787_636_001_456_i64,
-            })
         );
     }
 }

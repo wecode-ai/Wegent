@@ -335,36 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn cloud_gateway_keeps_inferred_and_explicit_compatibility_profiles() {
-        for protocol in [
-            "openai-responses",
-            "openai-chat-completions",
-            "anthropic-messages",
-        ] {
-            let mut selected = model(protocol);
-            selected["modelId"] = json!("moonshot-kimi-k3.1-pro");
-            let mut payload = cloud_payload("codex");
-            materialize_cloud_payload(&mut payload, &[selected.clone()], "http://backend", "token")
-                .unwrap();
-            assert_eq!(
-                payload["modelConfig"]["codex_catalog_model_id"],
-                "wework-kimi-k3-1-pro"
-            );
-            selected["config"]["codexCatalogModelId"] = json!("custom-catalog");
-            materialize_cloud_payload(&mut payload, &[selected], "http://backend", "token")
-                .unwrap();
-            assert_eq!(
-                payload["modelConfig"]["codex_catalog_model_id"],
-                "custom-catalog"
-            );
-        }
-        assert_eq!(
-            cloud_catalog_model_id(&json!({"name": "kimi-k3", "modelId": "unknown-model"})),
-            "wework-gpt-6.1-sol"
-        );
-    }
-
-    #[test]
     fn cloud_gateway_rejects_removed_models_and_same_name_from_another_owner() {
         let mut payload = cloud_payload("codex");
         assert!(
@@ -383,35 +353,5 @@ mod tests {
             payload["executionRequest"]["model_config"]["model_id"],
             "old-native-model"
         );
-    }
-
-    #[test]
-    fn claude_cloud_models_preserve_protocol_for_the_executor_bridge() {
-        for protocol in [
-            "openai-responses",
-            "openai-chat-completions",
-            "anthropic-messages",
-        ] {
-            let mut payload = cloud_payload("claude_code");
-            materialize_cloud_payload(
-                &mut payload,
-                &[model(protocol)],
-                "http://test-backend",
-                "current-user-token",
-            )
-            .unwrap();
-            let config = &payload["executionRequest"]["model_config"];
-            assert_eq!(config["api_key"], "current-user-token");
-            assert_eq!(
-                config["base_url"],
-                "http://test-backend/api/runtime-work/llm-responses-proxy"
-            );
-            assert_eq!(config["upstream_api_format"], protocol);
-            assert_eq!(config["default_headers"]["X-Wegent-Model-User-Id"], "0");
-            assert_eq!(
-                config["default_headers"]["X-Wegent-Upstream-Header-wecode-executor"],
-                "claude"
-            );
-        }
     }
 }

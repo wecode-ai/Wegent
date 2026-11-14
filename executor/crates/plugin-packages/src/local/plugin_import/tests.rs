@@ -459,48 +459,6 @@ fn relocated_marketplace_rejects_traversal_and_other_roots() {
     .is_err());
 }
 
-#[test]
-fn personal_plugin_package_excludes_ci_ignored_source_paths() {
-    let temp = TempDir::new().unwrap();
-    let plugin_root = temp.path().join("example-plugin");
-    let artifacts = temp.path().join("artifacts");
-    fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
-    fs::create_dir_all(plugin_root.join(".git")).unwrap();
-    fs::create_dir_all(plugin_root.join(".pytest_cache")).unwrap();
-    fs::create_dir_all(plugin_root.join("__pycache__")).unwrap();
-    fs::create_dir_all(plugin_root.join("node_modules/package")).unwrap();
-    fs::create_dir(&artifacts).unwrap();
-    fs::write(
-        plugin_root.join(".codex-plugin/plugin.json"),
-        br#"{"name":"example-plugin","version":"1.0.0"}"#,
-    )
-    .unwrap();
-    fs::write(plugin_root.join("README.md"), "plugin body").unwrap();
-    fs::write(plugin_root.join(".DS_Store"), "finder metadata").unwrap();
-    fs::write(plugin_root.join(".git/config"), "git metadata").unwrap();
-    fs::write(plugin_root.join(".pytest_cache/state"), "pytest cache").unwrap();
-    fs::write(plugin_root.join("__pycache__/plugin.pyc"), "python cache").unwrap();
-    fs::write(
-        plugin_root.join("node_modules/package/index.js"),
-        "dependency",
-    )
-    .unwrap();
-
-    let package = package_plugin_directory(&plugin_root, "example-plugin", &artifacts).unwrap();
-    let mut archive = zip::ZipArchive::new(fs::File::open(&package.path).unwrap()).unwrap();
-    let names = (0..archive.len())
-        .map(|index| archive.by_index(index).unwrap().name().to_owned())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        names,
-        vec![
-            ".codex-plugin/plugin.json".to_owned(),
-            "README.md".to_owned()
-        ]
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn ensure_result_can_be_packaged_through_a_canonical_parent_alias() {

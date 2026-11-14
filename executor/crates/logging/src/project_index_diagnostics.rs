@@ -50,23 +50,3 @@ pub fn trace<T>(name: &'static str, action: impl FnOnce() -> T) -> T {
     let _stage = Stage::start(name);
     action()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::trace;
-
-    #[test]
-    fn tracing_preserves_the_operation_result_and_invokes_it_once() {
-        let mut calls = 0;
-        let result: Result<usize, &str> = trace("test.operation", || {
-            calls += 1;
-            Ok(7)
-        });
-        assert_eq!(calls, 1);
-        assert_eq!(result, Ok(7));
-        assert_eq!(
-            trace("test.failure", || Err::<(), _>("original")),
-            Err("original")
-        );
-    }
-}

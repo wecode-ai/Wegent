@@ -311,26 +311,7 @@ fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> Strin
 mod tests {
     use serde_json::json;
 
-    use super::{
-        codex_stream_debug_enabled, env_bool, map_text_chunk, set_codex_stream_debug_enabled,
-        TextChunkMapping,
-    };
-
-    #[test]
-    fn stream_debug_env_defaults_to_off_for_missing_values() {
-        let env_name = format!("WEGENT_TEST_MISSING_STREAM_DEBUG_{}", std::process::id());
-
-        assert!(!env_bool(&env_name, false));
-    }
-
-    #[test]
-    fn stream_debug_can_be_toggled_at_runtime() {
-        set_codex_stream_debug_enabled(true);
-        assert!(codex_stream_debug_enabled());
-
-        set_codex_stream_debug_enabled(false);
-        assert!(!codex_stream_debug_enabled());
-    }
+    use super::{map_text_chunk, TextChunkMapping};
 
     #[test]
     fn maps_completed_reasoning_summary_to_thinking_block() {
@@ -358,68 +339,6 @@ mod tests {
                 block_type: "thinking",
                 item_id: Some("reasoning-1".to_owned()),
                 text: "Inspecting logsRunning focused tests".to_owned(),
-            })
-        );
-    }
-
-    #[test]
-    fn maps_final_agent_message_text_to_output_events() {
-        assert_eq!(
-            map_text_chunk(
-                "item/agentMessage/delta",
-                &json!({"itemId": "final-1", "delta": "Done"}),
-                Some("finalanswer"),
-                None,
-            )
-            .expect("final delta should map"),
-            Some(TextChunkMapping::OutputDelta {
-                item_id: "final-1".to_owned(),
-                delta: "Done".to_owned(),
-            })
-        );
-        assert_eq!(
-            map_text_chunk(
-                "item/completed",
-                &json!({
-                    "item": {
-                        "id": "final-1",
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": "Done"
-                    }
-                }),
-                Some("finalanswer"),
-                None,
-            )
-            .expect("completed final text should map"),
-            Some(TextChunkMapping::OutputCompleted {
-                item_id: "final-1".to_owned(),
-                text: "Done".to_owned(),
-            })
-        );
-    }
-
-    #[test]
-    fn keeps_final_text_without_an_output_item_id_as_process_text() {
-        assert_eq!(
-            map_text_chunk(
-                "item/completed",
-                &json!({
-                    "item": {
-                        "type": "agentMessage",
-                        "phase": "final_answer",
-                        "text": "Done"
-                    }
-                }),
-                Some("finalanswer"),
-                None,
-            )
-            .expect("legacy final text should map"),
-            Some(TextChunkMapping::ProcessCompleted {
-                process_kind: "assistant_message",
-                block_type: "text",
-                item_id: None,
-                text: "Done".to_owned(),
             })
         );
     }

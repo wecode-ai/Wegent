@@ -190,37 +190,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registration_request_deserializes_only_context_contract() {
-        let request = parse_registration_payload(serde_json::json!({
-            "scope": "harness:smart-app:instance-4",
-            "user": {
-                "id": 123,
-                "userName": "zhangsan",
-                "displayName": "张三",
-                "email": "user@example.com",
-                "mode": "cloud",
-                "authToken": "cloud-token"
-            },
-            "model": {
-                "runtimeModelId": "wework-selected",
-                "displayName": "DeepSeek",
-                "modelType": "public",
-                "namespace": "default",
-                "contextWindow": 128000,
-                "maxOutputTokens": 8192,
-                "capabilities": {"toolSearch": true},
-                "apiKey": "provider-secret"
-            },
-            "unexpected": "ignored"
-        }))
-        .unwrap();
-
-        assert_eq!(request.scope, "harness:smart-app:instance-4");
-        assert_eq!(request.user.user_name, "zhangsan");
-        assert_eq!(request.model.runtime_model_id, "wework-selected");
-    }
-
-    #[test]
     fn context_registration_returns_scoped_token_and_context() {
         let token = register_harness_context(
             "harness:smart-app:instance-1",

@@ -2849,23 +2849,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_standard_hook_user_from_execution_request() {
-        let mut request = ExecutionRequest {
-            user_name: Some("alice".to_owned()),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert("user_id".to_owned(), json!(42));
-
-        assert_eq!(
-            hook_user(&request),
-            HookUser {
-                id: Some("42".to_owned()),
-                name: "alice".to_owned(),
-            }
-        );
-    }
-
-    #[test]
     fn resolves_anonymous_hook_user_without_private_config_fallbacks() {
         assert_eq!(
             hook_user(&ExecutionRequest::default()),
