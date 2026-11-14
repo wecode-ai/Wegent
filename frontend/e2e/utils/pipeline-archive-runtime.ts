@@ -1,4 +1,4 @@
-import { APIRequestContext, expect } from '@playwright/test'
+import { APIRequestContext, APIResponse, expect } from '@playwright/test'
 import { createBackendRequestHeaders } from './api-client'
 
 export type Runtime = { base_url: string; container_name: string; executor_namespace: string }
@@ -90,6 +90,29 @@ export async function runtimeProcess<T>(
   return (stdout.trim() ? JSON.parse(stdout) : undefined) as T
 }
 
+/**
+ * The manager closes idle keep-alive sockets, and a client that reuses one can
+ * observe a reset before the request is served. The manager records no failed
+ * request and keeps serving, so retry this idempotent metadata lookup the same
+ * way other E2E polling helpers treat transport errors.
+ */
+async function getRuntimeMetadata(
+  request: APIRequestContext,
+  url: string,
+  options: { headers: Record<string, string>; params?: Record<string, string> }
+): Promise<APIResponse> {
+  const deadline = Date.now() + 30_000
+  for (;;) {
+    try {
+      return await request.get(url, options)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!/socket hang up|ECONNRESET/i.test(message) || Date.now() >= deadline) throw error
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  }
+}
+
 export async function resolveRuntime(
   request: APIRequestContext,
   manager: string,
@@ -99,7 +122,7 @@ export async function resolveRuntime(
 ): Promise<Runtime> {
   const managerHeaders = createBackendRequestHeaders()
   if (mode === 'sandbox') {
-    const sandbox = await request.get(`${manager}/sandboxes/${taskId}`, {
+    const sandbox = await getRuntimeMetadata(request, `${manager}/sandboxes/${taskId}`, {
       headers: managerHeaders,
     })
     expect(sandbox.ok(), await sandbox.text()).toBe(true)
@@ -118,7 +141,7 @@ export async function resolveRuntime(
   ).subtasks
   const executor = subtasks.find(subtask => subtask.executor_name)
   expect(executor?.executor_name).toBeTruthy()
-  const address = await request.get(`${manager}/executor/address`, {
+  const address = await getRuntimeMetadata(request, `${manager}/executor/address`, {
     headers: managerHeaders,
     params: {
       executor_name: executor!.executor_name!,
