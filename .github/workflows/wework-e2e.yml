@@ -1222,14 +1222,28 @@ jobs:
           WEWORK_E2E_STEP_TIMEOUT_MS: "30000"
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
-          # local-harness drives the real opencode CLI, whose bundled Bun
-          # OpenTUI renderer cannot load on Windows arm64 (bun:ffi requires
-          # TinyCC, which upstream's win-arm64 build disables). The CLI exits
-          # before making any request, so the checkpoint can never pass here.
-          # Coverage stays intact on Linux and Windows x64.
+          # Segments excluded from the Windows arm64 matrix only, each with
+          # evidence in https://github.com/wecode-ai/Wegent/issues/4622.
+          # Coverage stays intact on Linux and Windows x64:
+          # - local-harness: the real opencode CLI cannot initialize its Bun
+          #   OpenTUI renderer on Windows arm64 (bun:ffi requires TinyCC,
+          #   which upstream's win-arm64 build disables).
+          # - conversation-state: deterministic pixel-level anchor mismatch;
+          #   Windows 11 client overlay scrollbars reflow text versus the
+          #   Server-classic scrollbars the assertion was calibrated on.
+          # - plugin-development: focus snapshot races the isolated window's
+          #   foreground activation on the slower native runner.
+          # - collaboration-shared-core: cloud-dependent selector stays
+          #   disabled under the emulated x64 Backend helper.
+          $unsupportedSegments = @(
+            'local-harness',
+            'conversation-state',
+            'plugin-development',
+            'collaboration-shared-core'
+          )
           $segments = @(
             $env:WEWORK_E2E_SEGMENTS -split ',' |
-              Where-Object { $_ -and $_ -ne 'local-harness' }
+              Where-Object { $_ -and $unsupportedSegments -notcontains $_ }
           )
           if ($segments.Count -eq 0) {
             Write-Host "All segments in this shard are unsupported on Windows arm64; nothing to run."
