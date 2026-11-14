@@ -91,9 +91,9 @@ fn the_executor_probe_skips_blank_and_device_bindings() {
     assert!(!probes_executor_binding(" device-abc "));
 }
 
-/// `remote_workspace_service.executor_alive`: only a terminal phase or the
-/// "No pod found" error reports the executor as missing. The recorded create
-/// case answered `200 status=success phase=Running`, which is alive.
+/// `remote_workspace_service.executor_alive`: only a terminal phase or a
+/// missing-runtime error reports the executor as gone. Kubernetes and Docker
+/// use different missing-runtime messages.
 #[test]
 fn only_terminal_or_missing_pods_report_the_executor_as_gone() {
     assert!(!payload_reports_missing(
@@ -116,6 +116,9 @@ fn only_terminal_or_missing_pods_report_the_executor_as_gone() {
     ));
     assert!(payload_reports_missing(
         &json!({"status": "error", "error_msg": "No pod found for executor x/y"})
+    ));
+    assert!(payload_reports_missing(
+        &json!({"status": "error", "error_msg": "Container 'runtime' not found or not owned by executor_manager"})
     ));
 }
 

@@ -113,10 +113,11 @@ pub(crate) fn probes_executor_binding(executor_name: &str) -> bool {
 
 /// `remote_workspace_service.executor_alive`'s payload interpretation
 /// (`remote_workspace_service.py:604-625`): only a terminal phase
-/// (`Succeeded`/`Failed`) or the executor-manager "No pod found for executor"
-/// error reports the pod as missing. A `status: success` payload, any other
-/// phase/error, and a `None` payload (transport failure, non-200, empty or
-/// non-object body) are all treated as alive.
+/// (`Succeeded`/`Failed`) or an executor-manager missing-runtime error reports
+/// the runtime as gone. Kubernetes returns "No pod found for executor"; Docker
+/// returns "Container ... not found or not owned by executor_manager". A
+/// `status: success` payload, any other phase/error, and a `None` payload
+/// (transport failure, non-200, empty or non-object body) are all alive.
 pub(crate) fn payload_reports_missing(payload: &Value) -> bool {
     let status = payload
         .get("status")
@@ -131,10 +132,13 @@ pub(crate) fn payload_reports_missing(payload: &Value) -> bool {
     ) {
         return true;
     }
-    payload
+    let error_msg = payload
         .get("error_msg")
         .and_then(Value::as_str)
-        .is_some_and(|message| message.contains("No pod found for executor"))
+        .map(str::trim)
+        .unwrap_or_default();
+    error_msg.contains("No pod found for executor")
+        || error_msg.contains("not found or not owned by executor_manager")
 }
 
 #[tracing::instrument(skip_all, fields(task_id = request.task_id, subtask_id = request.subtask_id))]
