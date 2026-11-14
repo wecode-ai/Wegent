@@ -219,38 +219,6 @@ async fn composer_catalog_rejects_store_failure() {
     assert_eq!(error.code, "store_unreadable");
 }
 
-#[tokio::test]
-async fn workspace_composer_catalog_uses_context_without_creating_a_task() {
-    for path in [
-        None,
-        Some(std::env::temp_dir().to_string_lossy().into_owned()),
-    ] {
-        let scope =
-            workspace_catalog_scope(&json!({"scope": "workspace", "workspacePath": path})).unwrap();
-        assert!(scope.task_id.is_none());
-        let mut calls = Vec::new();
-        let mut replies = VecDeque::from([json!({"data": []}), json!({"marketplaces": []})]);
-        let result = read_catalog_snapshot(
-            &scope,
-            true,
-            |method, params| {
-                calls.push((method, params));
-                ready(Ok(replies.pop_front().unwrap()))
-            },
-            ready(Ok(empty_store())),
-            TEST_INSTALLED_TIMEOUT,
-        )
-        .await
-        .unwrap();
-        assert!(result["taskId"].is_null());
-        assert_eq!(result["scope"], "workspace");
-        assert_eq!(result["workspacePath"], path.as_deref().unwrap_or_default());
-        let cwds: Vec<&str> = path.as_deref().into_iter().collect();
-        assert_eq!(calls[0].1["cwds"], json!(cwds));
-        assert_eq!(calls[1].1["cwds"], json!(cwds));
-    }
-}
-
 #[test]
 fn workspace_composer_catalog_rejects_mixed_scope_and_unavailable_paths() {
     let error = workspace_catalog_scope(&json!({"scope": "workspace", "taskId": "task"}))

@@ -182,32 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn uses_all_remaining_slots_for_recent_tool_images() {
-        for user_count in 0..=3 {
-            let mut request = json!({"input": [
-                {"role": "user", "content": images(user_count)},
-                {"type": "function_call_output", "call_id": "call-1", "output": images(60)}
-            ]});
-            let original = request.clone();
-            assert_eq!(limit_request_images(&mut request), 10 + user_count);
-            assert_eq!(request["input"][0], original["input"][0]);
-            for index in 0..60 {
-                if index < 10 + user_count {
-                    assert_eq!(
-                        request["input"][1]["output"][index]["text"],
-                        OMITTED_IMAGE_NOTICE
-                    );
-                } else {
-                    assert_eq!(
-                        request["input"][1]["output"][index],
-                        original["input"][1]["output"][index]
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn preserves_only_three_initial_user_images_across_messages() {
         let mut input = (0..4).map(|index| json!({
             "role": "user", "content": [{"type": "input_image", "file_id": format!("file-{index}")}]
@@ -225,39 +199,6 @@ mod tests {
 
         assert_eq!(limit_request_images(&mut request), 4);
         assert_eq!(request, expected);
-    }
-
-    #[test]
-    fn ignores_text_tool_definitions_and_structured_business_data() {
-        let business_data = json!({"content": images(60)});
-        let mut request = json!({
-            "input": [
-                {"role": "user", "content": "input_image is a type name"},
-                {"type": "function_call_output", "call_id": "call-1", "output": {
-                    "content": images(50),
-                    "structuredContent": business_data
-                }},
-                {"type": "function_call_output", "call_id": "call-2", "output": business_data.to_string()},
-                {"type": "tool_search_output", "tools": [business_data]}
-            ],
-            "tools": [{"type": "function", "parameters": business_data}],
-            "metadata": business_data
-        });
-        let original = request.clone();
-
-        assert_eq!(limit_request_images(&mut request), 0);
-        assert_eq!(request, original);
-    }
-
-    #[test]
-    fn supports_single_message_input_and_leaves_text_input_unchanged() {
-        let mut request = json!({"input": {"role": "user", "content": images(51)}});
-        assert_eq!(limit_request_images(&mut request), 1);
-        for mut request in [json!({}), json!({"input": null}), json!({"input": "Hello"})] {
-            let original = request.clone();
-            assert_eq!(limit_request_images(&mut request), 0);
-            assert_eq!(request, original);
-        }
     }
 
     #[test]

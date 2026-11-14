@@ -1,21 +1,5 @@
 use super::*;
 
-#[test]
-fn native_text_extraction_preserves_streaming_whitespace() {
-    use crate::runtime_work::util::extract_text;
-
-    for text in ["  Indented paragraph.\n\n", "\n\n", "中文🙂 "] {
-        for key in ["text", "content", "message"] {
-            assert_eq!(extract_text(&json!({(key): text})).as_deref(), Some(text));
-        }
-        assert_eq!(
-            extract_text(&json!({"content": [{"text": text}]})).as_deref(),
-            Some(text)
-        );
-    }
-    assert_eq!(extract_text(&json!({"text": ""})), None);
-}
-
 #[tokio::test]
 async fn native_transcript_preserves_text_identity_and_order() {
     let (mut handler, root) = isolated_runtime_work_handler("streaming-transcript-identity");

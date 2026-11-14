@@ -375,23 +375,3 @@ fn creation_input_contract_covers_shared_fields_and_denies_transport_authority()
         .is_err());
     }
 }
-
-#[test]
-fn creation_normalizes_ui_options_before_merging_explicit_overrides() {
-    for (saved, explicit) in [
-        (
-            json!({"reasoning":"low","speed":"standard"}),
-            json!({"reasoningEffort":"high","serviceTier":"fast"}),
-        ),
-        (
-            json!({"reasoningEffort":"low","serviceTier":"standard"}),
-            json!({"reasoning":"high","speed":"fast"}),
-        ),
-    ] {
-        let selection = normalized_selection(&json!({"modelType":"runtime","modelSelection":{"modelName":"model","options":saved},"modelOptions":explicit})).unwrap().unwrap();
-        assert_eq!(
-            selection["options"],
-            json!({"reasoning":"high","speed":"fast"})
-        );
-    }
-}

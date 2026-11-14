@@ -1513,8 +1513,6 @@ mod file_change_projection;
 
 pub(crate) use file_change_projection::codex_file_change_content;
 
-#[cfg(test)]
-use file_change_projection::diff_stats;
 use file_change_projection::{
     file_changes, file_changes_from_file_change_item, file_changes_from_patch_apply_end,
     file_changes_from_patch_updated, merge_file_changes, patch_updated_item, patch_updated_item_id,

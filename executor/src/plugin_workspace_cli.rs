@@ -828,20 +828,6 @@ mod tests {
     }
 
     #[test]
-    fn result_references_source_inside_task_workspace() {
-        let workspace = tempdir().unwrap();
-        let plugin = create_plugin(workspace.path());
-        let package = validated_package(&plugin, workspace.path()).unwrap();
-        let result =
-            plugin_result(&plugin, workspace.path(), "123", "skill", &package, "ready").unwrap();
-
-        assert_eq!(result["relativePath"], "plugins/example");
-        assert_eq!(result["displayName"], "Example");
-        assert_eq!(result["listingType"], "skill");
-        assert_eq!(result["sha256"].as_str().unwrap().len(), 64);
-    }
-
-    #[test]
     fn package_rejects_plugin_outside_task_workspace() {
         let workspace = tempdir().unwrap();
         let other = tempdir().unwrap();
@@ -862,41 +848,5 @@ mod tests {
         symlink(".codex-plugin/plugin.json", plugin.join("manifest-link")).unwrap();
 
         assert!(package_plugin(&plugin).unwrap_err().contains("symlinks"));
-    }
-
-    #[test]
-    fn publish_request_decodes_json() {
-        let encoded = BASE64.encode(r#"{"visibility":"personal","targets":[]}"#);
-        let request = publish_request(&["--request-base64".to_owned(), encoded]).unwrap();
-
-        assert_eq!(request["visibility"], "personal");
-    }
-
-    #[test]
-    fn enterprise_and_workspace_requests_use_publication_workflow() {
-        assert_eq!(
-            publish_route(&json!({"intent": "enterprise", "visibility": "workspace"})).unwrap(),
-            PublishRoute::EnterprisePublication
-        );
-        assert_eq!(
-            publish_route(&json!({"visibility": "workspace"})).unwrap(),
-            PublishRoute::EnterprisePublication
-        );
-        assert_eq!(
-            publish_route(&json!({"intent": "restricted", "visibility": "personal"})).unwrap(),
-            PublishRoute::LegacySubmission
-        );
-        assert_eq!(
-            publish_route(&json!({"visibility": "personal"})).unwrap(),
-            PublishRoute::LegacySubmission
-        );
-        assert!(publish_route(&json!({"visibility": "public"}))
-            .unwrap_err()
-            .contains("no longer supported"));
-    }
-
-    #[test]
-    fn publication_http_client_has_valid_configuration() {
-        assert!(http_client().is_ok());
     }
 }

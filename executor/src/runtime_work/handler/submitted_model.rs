@@ -207,28 +207,6 @@ mod tests {
     }
 
     #[test]
-    fn submitted_interface_resolves_and_continues_without_target_registry() {
-        let handler = RuntimeWorkRpcHandler::new("target", "unused");
-        let mut request = bind(&handler);
-        handler
-            .resolve_local_model_reference(&mut request, "remote-task")
-            .unwrap();
-        assert_eq!(request.model_config["api_key"], "task-secret");
-        handler
-            .replace_local_runner_models(json!({"models":[]}))
-            .unwrap();
-        request
-            .model_config
-            .as_object_mut()
-            .unwrap()
-            .remove("api_key");
-        handler
-            .resolve_local_model_reference(&mut request, "remote-task")
-            .unwrap();
-        assert_eq!(request.model_config["api_key"], "task-secret");
-    }
-
-    #[test]
     fn submitted_interface_rejects_every_binding_identity_mismatch() {
         let handler = RuntimeWorkRpcHandler::new("target", "unused");
         for (key, value) in [

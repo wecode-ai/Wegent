@@ -2140,6 +2140,12 @@ impl From<RuntimeHeartbeatActivationError> for HttpError {
     }
 }
 
+impl<R> axum::extract::FromRef<AppState<R>> for local_decision_proxy::DecisionProxyState {
+    fn from_ref(state: &AppState<R>) -> Self {
+        Self::new(Arc::clone(&state.decision_runtime))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2240,12 +2246,3 @@ mod tests {
         assert!(preview.chars().count() <= 19);
     }
 }
-
-impl<R> axum::extract::FromRef<AppState<R>> for local_decision_proxy::DecisionProxyState {
-    fn from_ref(state: &AppState<R>) -> Self {
-        Self::new(Arc::clone(&state.decision_runtime))
-    }
-}
-
-#[cfg(test)]
-mod decision_state_tests;

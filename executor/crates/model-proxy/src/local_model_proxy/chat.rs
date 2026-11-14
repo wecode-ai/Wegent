@@ -788,6 +788,4 @@ use tool_schema::bridged_tool_search_description;
 use tool_schema::bridged_tool_search_parameters;
 use tool_schema::build_tool_context;
 use tool_schema::chat_tools;
-#[cfg(test)]
-use tool_schema::is_kimi_k3_model;
 use tool_schema::request_uses_kimi_k3;

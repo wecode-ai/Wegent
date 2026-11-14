@@ -51,18 +51,6 @@ pub const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
 #[cfg(test)]
 pub const DEEPSEEK_V4_PRO_MODEL: &str = "wework-deepseek-v4-pro";
 pub const VISION_SIDECAR_CATALOG_SUFFIX: &str = "-vision-sidecar";
-#[cfg(test)]
-const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
-#[cfg(test)]
-const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
-#[cfg(test)]
-const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
-#[cfg(test)]
-const WEWORK_GPT_56_SOL_MODEL: &str = "wework-gpt-5.6-sol";
-#[cfg(test)]
-const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
-#[cfg(test)]
-const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 // Only exact retired defaults are inherited; user-authored instructions remain explicit.
 const LEGACY_BASE_INSTRUCTIONS_SHA256: &[&str] = &[

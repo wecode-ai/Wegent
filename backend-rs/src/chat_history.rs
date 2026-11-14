@@ -117,8 +117,11 @@ fn apply_checkpoint_limit(
     let Some(limit) = limit else {
         return subtasks.to_vec();
     };
-    if limit <= 0 || subtasks.is_empty() {
-        return subtasks.to_vec();
+    if limit <= 0 {
+        return Vec::new();
+    }
+    if subtasks.is_empty() {
+        return Vec::new();
     }
     let limit = limit as usize;
     if from_latest_compaction {
@@ -211,7 +214,7 @@ async fn resolve_history_subtasks(
     limit: Option<i64>,
     from_latest_compaction: bool,
 ) -> Result<Vec<ForkHistoryItem>, HttpError> {
-    if let Some(limit) = limit.filter(|limit| *limit > 0) {
+    if let Some(limit) = limit {
         return crate::chat_history_window::resolve_bounded_history(
             repository,
             task_id,

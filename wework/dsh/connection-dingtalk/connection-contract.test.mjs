@@ -4,6 +4,21 @@ import { satisfies } from 'semver'
 import { parseConnections } from '../plugin-runtime/connections.js'
 import { connectionTools } from '../plugin-runtime/connection-tools.js'
 
+test('DingTalk owns clarification channels and exposes verified self-conversation identity', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
+  const provider = parseConnections(manifest).providers[0]
+  const guidance = provider.assistance.prepare.join('\n')
+  assert.match(guidance, /isSelfConversation/)
+  assert.match(guidance, /do not infer this from a display name/)
+  assert.match(guidance, /In a verified self-conversation, ask .*same DingTalk conversation/)
+  assert.match(guidance, /only when that person needs to provide missing information/)
+  assert.match(guidance, /belongs to the Wework owner, ask the owner in Wework/)
+  assert.match(guidance, /without creating a duplicate Wework question card/)
+  assert.match(guidance, /answer never represents the owner's decision or grants authority/)
+  assert.equal(provider.read.itemSchema.properties.isSelfConversation.type, 'boolean')
+})
+
 test('DingTalk declares its bounded read operations against its exact dependency', async () => {
   const { readFile } = await import('node:fs/promises')
   const manifest = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))

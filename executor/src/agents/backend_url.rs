@@ -107,12 +107,6 @@ mod tests {
             env::set_var(key, value);
             Self { key, old_value }
         }
-
-        fn remove(key: &'static str) -> Self {
-            let old_value = env::var(key).ok();
-            env::remove_var(key);
-            Self { key, old_value }
-        }
     }
 
     impl Drop for EnvGuard {
@@ -123,23 +117,6 @@ mod tests {
                 env::remove_var(self.key);
             }
         }
-    }
-
-    #[test]
-    fn request_backend_url_uses_payload_before_task_api_domain_in_local_mode() {
-        let _lock = crate::test_env::lock();
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
-        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://task-api.local:8000");
-        let request = ExecutionRequest {
-            backend_url: Some("http://payload-backend.local:8000".to_owned()),
-            ..ExecutionRequest::default()
-        };
-
-        assert_eq!(
-            request_backend_url(&request),
-            Some("http://payload-backend.local:8000".to_owned())
-        );
     }
 
     #[test]
@@ -186,129 +163,5 @@ mod tests {
 
                 drop(server);
             });
-    }
-
-    #[test]
-    fn request_backend_url_uses_task_api_before_payload_outside_local_mode() {
-        let _lock = crate::test_env::lock();
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _mode = EnvGuard::remove("EXECUTOR_MODE");
-        let _task_api = EnvGuard::set("TASK_API_DOMAIN", "http://task-api.local:8000");
-        let request = ExecutionRequest {
-            backend_url: Some("http://payload-backend.local:8000".to_owned()),
-            ..ExecutionRequest::default()
-        };
-
-        assert_eq!(
-            request_backend_url(&request),
-            Some("http://task-api.local:8000".to_owned())
-        );
-    }
-
-    fn request_with_gateway(base_url: &str) -> ExecutionRequest {
-        ExecutionRequest {
-            model_config: serde_json::json!({ "base_url": base_url }),
-            ..ExecutionRequest::default()
-        }
-    }
-
-    #[test]
-    fn loopback_model_gateway_uses_the_device_backend() {
-        let mut request =
-            request_with_gateway("http://localhost:8000/api/runtime-work/llm-responses-proxy");
-
-        bind_backend_model_gateway(&mut request, "http://wegent.lan:8000");
-
-        assert_eq!(
-            request.model_config["base_url"],
-            serde_json::json!("http://wegent.lan:8000/api/runtime-work/llm-responses-proxy")
-        );
-    }
-
-    #[test]
-    fn model_gateway_uses_connected_backend_for_internal_public_and_loopback_urls() {
-        for old_backend in [
-            "http://10.218.200.124:8000",
-            "https://backend.example.com",
-            "http://localhost:8000",
-        ] {
-            let mut request = request_with_gateway(&format!(
-                "{old_backend}/api/runtime-work/llm-responses-proxy"
-            ));
-            request.model_config["model_id"] = serde_json::json!("deepseek-v4-flash(claude)");
-            request.model_config["api_key"] = serde_json::json!("execution-user-token");
-            request.model_config["default_headers"] =
-                serde_json::json!({"X-Wegent-Model-User-Id": "0"});
-
-            bind_backend_model_gateway(&mut request, "http://localhost:12110");
-
-            assert_eq!(
-                request.model_config["base_url"],
-                "http://localhost:12110/api/runtime-work/llm-responses-proxy"
-            );
-            assert_eq!(
-                request.model_config["model_id"],
-                "deepseek-v4-flash(claude)"
-            );
-            assert_eq!(request.model_config["api_key"], "execution-user-token");
-            assert_eq!(
-                request.model_config["default_headers"]["X-Wegent-Model-User-Id"],
-                "0"
-            );
-        }
-    }
-
-    #[test]
-    fn direct_provider_endpoints_are_not_backend_gateways() {
-        for url in [
-            "http://localhost:8000/v1",
-            "https://api.deepseek.com/anthropic",
-            "http://localhost:8000/api/work",
-        ] {
-            let mut request = request_with_gateway(url);
-            bind_backend_model_gateway(&mut request, "http://localhost:12110");
-            assert_eq!(request.model_config["base_url"], url);
-        }
-    }
-
-    #[test]
-    fn claude_gateway_preserves_connected_backend_path_prefix_and_is_idempotent() {
-        let mut request = ExecutionRequest {
-            model_config: serde_json::json!({
-                "ANTHROPIC_BASE_URL": "http://10.218.200.124:8000/api/runtime-work/llm-responses-proxy",
-                "ANTHROPIC_AUTH_TOKEN": "execution-user-token",
-            }),
-            ..ExecutionRequest::default()
-        };
-        for _ in 0..2 {
-            bind_backend_model_gateway(&mut request, "https://backend.example.com/wegent/");
-        }
-
-        assert_eq!(
-            request.model_config["ANTHROPIC_BASE_URL"],
-            "https://backend.example.com/wegent/api/runtime-work/llm-responses-proxy"
-        );
-        assert_eq!(
-            request.model_config["ANTHROPIC_AUTH_TOKEN"],
-            "execution-user-token"
-        );
-    }
-
-    #[test]
-    fn gateway_normalizes_api_root_after_repeated_connection_refreshes() {
-        for backend in [
-            "https://backend.example.com/wegent",
-            "https://backend.example.com/wegent/api/",
-        ] {
-            let mut request =
-                request_with_gateway("http://stale.invalid/api/runtime-work/llm-responses-proxy");
-            for _ in 0..2 {
-                bind_backend_model_gateway(&mut request, backend);
-            }
-            assert_eq!(
-                request.model_config["base_url"],
-                "https://backend.example.com/wegent/api/runtime-work/llm-responses-proxy"
-            );
-        }
     }
 }

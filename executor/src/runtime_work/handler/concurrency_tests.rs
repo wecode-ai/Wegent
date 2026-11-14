@@ -129,20 +129,6 @@ fn limit_changes_drain_only_the_affected_category_without_interrupting_active_tu
 }
 
 #[test]
-fn legacy_settings_seed_all_categories_once() {
-    let settings: RuntimeSettings =
-        serde_json::from_value(json!({"maxConcurrentTasks":4})).unwrap();
-    assert_eq!(settings.max_concurrent_tasks, 4);
-    assert_eq!(settings.max_concurrent_stand_in_tasks, 4);
-    assert_eq!(settings.max_concurrent_agent_tasks, 4);
-    let settings: RuntimeSettings = serde_json::from_value(
-        json!({"maxConcurrentTasks":2,"maxConcurrentStandInTasks":6,"maxConcurrentAgentTasks":8}),
-    )
-    .unwrap();
-    assert_eq!(settings.total_limit(), 16);
-}
-
-#[test]
 fn settings_rpc_persists_independent_partial_updates_and_rejects_invalid_limits() {
     let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();

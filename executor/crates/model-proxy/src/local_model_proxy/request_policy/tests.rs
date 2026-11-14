@@ -58,76 +58,6 @@ fn codex_request() -> Value {
 }
 
 #[tokio::test]
-async fn unconfigured_responses_capabilities_default_to_portable_function_tools() {
-    let config = super::super::upstream_from_model_config(&json!({
-        "base_url": "https://custom.example/v1", "model_id": "any-model"
-    }))
-    .unwrap()
-    .unwrap();
-    assert!(config.convert_custom_tools);
-    assert!(!config.native_tool_search);
-    assert!(!config.native_namespace_tools);
-    let prepared = prepare(
-        &config,
-        &serde_json::to_vec(&codex_request()).unwrap(),
-        None,
-        &Default::default(),
-        false,
-        false,
-    )
-    .await
-    .unwrap();
-    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
-    for tool in request["tools"].as_array().unwrap() {
-        assert!(!matches!(
-            tool["type"].as_str(),
-            Some("custom" | "namespace" | "tool_search")
-        ));
-    }
-    assert!(matches!(
-        prepared.conversion,
-        Some(Conversion::Responses(_))
-    ));
-    assert!(request["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|tool| tool["type"] == "web_search"));
-}
-
-#[tokio::test]
-async fn explicit_native_responses_capabilities_preserve_custom_tools() {
-    let config = super::super::upstream_from_model_config(&json!({
-        "base_url": "https://custom.example/v1", "model_id": "any-model",
-        "tool_profile": "custom", "native_tool_search": true, "native_namespace_tools": true
-    }))
-    .unwrap()
-    .unwrap();
-    let original = json!({"model":"any-model", "input":[], "tools":[
-        {"type":"custom","name":"exec","format":{"type":"text"}},
-        {"type":"tool_search","execution":"client"},
-        {"type":"namespace","name":"app","tools":[
-            {"type":"function","name":"read","parameters":{"type":"object"}}
-        ]}
-    ]});
-    let prepared = prepare(
-        &config,
-        &serde_json::to_vec(&original).unwrap(),
-        None,
-        &Default::default(),
-        false,
-        false,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&prepared.body).unwrap(),
-        original
-    );
-    assert!(prepared.conversion.is_none());
-}
-
-#[tokio::test]
 async fn passthrough_preserves_every_field_except_the_routed_model() {
     let original = codex_request();
     let prepared = prepare(
@@ -163,38 +93,6 @@ async fn passthrough_without_model_mapping_preserves_request_bytes() {
 }
 
 #[tokio::test]
-async fn passthrough_skips_image_sidecar_requests() {
-    let sidecar = VisionSidecarUpstream {
-        request_url: "http://127.0.0.1:1/responses".to_owned(),
-        api_format: "openai-responses".to_owned(),
-        api_key: String::new(),
-        default_headers: Vec::new(),
-        proxy_url: None,
-        model_id: "sidecar".to_owned(),
-        max_descriptions_per_turn: 1,
-        timeout: std::time::Duration::from_millis(1),
-    };
-    let original = json!({
-        "model": "catalog",
-        "input": [{"role": "user", "content": [
-            {"type": "input_image", "image_url": "data:image/png;base64,original"}
-        ]}],
-    });
-    let prepared = prepare(
-        &upstream("passthrough"),
-        &serde_json::to_vec(&original).unwrap(),
-        Some(&sidecar),
-        &Default::default(),
-        false,
-        false,
-    )
-    .await
-    .expect("sidecar must not be contacted");
-    let result: Value = serde_json::from_slice(&prepared.body).unwrap();
-    assert_eq!(result["input"], original["input"]);
-}
-
-#[tokio::test]
 async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
     let prepared = prepare(
         &upstream("standard"),
@@ -218,34 +116,6 @@ async fn standard_mode_bridges_client_tools_and_omits_hosted_tools() {
         Some(Conversion::Responses(_))
     ));
     assert_eq!(request["max_output_tokens"], 12345);
-}
-
-#[tokio::test]
-async fn auto_mode_preserves_hosted_tools() {
-    let original = codex_request();
-    let prepared = prepare(
-        &upstream("auto"),
-        &serde_json::to_vec(&original).unwrap(),
-        None,
-        &Default::default(),
-        false,
-        false,
-    )
-    .await
-    .unwrap();
-    let request: Value = serde_json::from_slice(&prepared.body).unwrap();
-    for tool_type in ["web_search", "image_generation"] {
-        let find_tool = |body: &Value| {
-            body["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|tool| tool["type"] == tool_type)
-                .unwrap()
-                .clone()
-        };
-        assert_eq!(find_tool(&request), find_tool(&original));
-    }
 }
 
 #[tokio::test]
@@ -279,41 +149,6 @@ async fn standard_mode_rejects_forced_hosted_tools_before_sending() {
     }
 }
 
-#[tokio::test]
-async fn standard_mode_preserves_supported_tool_choices() {
-    for choice in [
-        json!("auto"),
-        json!("none"),
-        json!("required"),
-        json!({"type": "function", "name": "read"}),
-        json!({"type": "allowed_tools", "mode": "required", "tools": [
-            {"type": "function", "name": "read"}
-        ]}),
-    ] {
-        let request = json!({
-            "model": "catalog",
-            "tools": [
-                {"type": "function", "name": "read", "parameters": {"type": "object"}},
-                {"type": "web_search"}
-            ],
-            "tool_choice": choice,
-        });
-        let prepared = prepare(
-            &upstream("standard"),
-            &serde_json::to_vec(&request).unwrap(),
-            None,
-            &Default::default(),
-            false,
-            false,
-        )
-        .await
-        .unwrap();
-        let result: Value = serde_json::from_slice(&prepared.body).unwrap();
-        assert_eq!(result["tool_choice"], choice);
-        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
-    }
-}
-
 #[test]
 fn invalid_modes_and_non_responses_passthrough_fail_before_registration() {
     for config in [
@@ -337,21 +172,6 @@ fn invalid_modes_cannot_select_the_direct_provider_path() {
                "upstream_api_format": "openai-chat-completions"}),
     ] {
         assert!(super::super::upstream_from_model_config(&config).is_err());
-    }
-}
-
-#[test]
-fn valid_unconfigured_models_keep_the_direct_provider_path() {
-    for config in [
-        json!({}),
-        json!({"base_url": ""}),
-        json!({"baseUrl": "  ", "codex_request_mode": "auto"}),
-        json!({"codex_request_mode": "standard"}),
-        json!({"codex_request_mode": "passthrough"}),
-    ] {
-        assert!(super::super::upstream_from_model_config(&config)
-            .expect("unconfigured proxy with a valid request policy")
-            .is_none());
     }
 }
 

@@ -72,6 +72,16 @@ fn limit_without_checkpoint_returns_most_recent() {
 }
 
 #[test]
+fn limit_zero_returns_no_history() {
+    let items = vec![
+        item(1, "COMPLETED", "USER", false),
+        item(2, "COMPLETED", "USER", false),
+    ];
+    assert!(apply_checkpoint_limit(&items, Some(0), false).is_empty());
+    assert!(apply_checkpoint_limit(&items, Some(-1), true).is_empty());
+}
+
+#[test]
 fn limit_with_checkpoint_never_drops_checkpoint() {
     let items = vec![
         item(1, "COMPLETED", "ASSISTANT", true),

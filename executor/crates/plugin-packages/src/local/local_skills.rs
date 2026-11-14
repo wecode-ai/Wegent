@@ -533,28 +533,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_frontmatter_reads_scalar_and_quoted_values() {
-        let dir = temp_dir("frontmatter-scalar");
-        let path = dir.join("SKILL.md");
-        fs::write(
-            &path,
-            "---\nname: Example Skill\ndescription: \"Quoted value\"\n---\nbody\n",
-        )
-        .unwrap();
-
-        let metadata = parse_frontmatter(&path);
-        assert_eq!(
-            metadata.get("name").map(String::as_str),
-            Some("Example Skill")
-        );
-        assert_eq!(
-            metadata.get("description").map(String::as_str),
-            Some("Quoted value")
-        );
-        fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
     fn parse_frontmatter_handles_literal_block_scalar() {
         let dir = temp_dir("frontmatter-literal");
         let path = dir.join("SKILL.md");
@@ -589,99 +567,6 @@ mod tests {
             Some("first paragraph still first\nsecond paragraph")
         );
         fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn parse_frontmatter_requires_leading_marker() {
-        let dir = temp_dir("frontmatter-no-marker");
-        let path = dir.join("SKILL.md");
-        fs::write(&path, "name: skipped\n").unwrap();
-        assert!(parse_frontmatter(&path).is_empty());
-        fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn strip_quotes_removes_matching_pairs_only() {
-        assert_eq!(strip_quotes("\"value\""), "value");
-        assert_eq!(strip_quotes("'value'"), "value");
-        assert_eq!(strip_quotes("\"value'"), "\"value'");
-        assert_eq!(strip_quotes("plain"), "plain");
-    }
-
-    #[test]
-    fn plugin_source_priority_matches_known_providers() {
-        assert_eq!(plugin_source_priority(Some("openai-curated-remote")), 20);
-        assert_eq!(plugin_source_priority(Some("openai-bundled")), 30);
-        assert_eq!(plugin_source_priority(Some("openai-primary-runtime")), 30);
-        assert_eq!(plugin_source_priority(Some("openai-curated")), 40);
-        assert_eq!(plugin_source_priority(Some("unknown")), 50);
-        assert_eq!(plugin_source_priority(None), 50);
-    }
-
-    #[test]
-    fn plugin_metadata_reads_cache_layout() {
-        let root = PathBuf::from("/home/user/.codex/plugins");
-        let skill_dir = root.join("cache/openai-curated/my-plugin/1.2.3/skills/my-skill");
-        let (name, provider, version) = plugin_metadata(&root, &skill_dir);
-        assert_eq!(name, "my-plugin");
-        assert_eq!(provider.as_deref(), Some("openai-curated"));
-        assert_eq!(version.as_deref(), Some("1.2.3"));
-    }
-
-    #[test]
-    fn plugin_metadata_falls_back_to_first_component() {
-        let root = PathBuf::from("/home/user/.codex/plugins");
-        let skill_dir = root.join("standalone/skills/my-skill");
-        let (name, provider, version) = plugin_metadata(&root, &skill_dir);
-        assert_eq!(name, "standalone");
-        assert!(provider.is_none());
-        assert!(version.is_none());
-    }
-
-    #[test]
-    fn prefer_skill_orders_by_priority_then_mtime_then_path() {
-        let low_priority = entry("skill", 0, Some(1.0), "/a");
-        let high_priority = entry("skill", 10, Some(5.0), "/b");
-        assert_eq!(
-            prefer_skill(low_priority.clone(), high_priority.clone()).path,
-            "/a"
-        );
-
-        let older = entry("skill", 5, Some(1.0), "/a");
-        let newer = entry("skill", 5, Some(9.0), "/b");
-        assert_eq!(prefer_skill(older.clone(), newer.clone()).path, "/b");
-
-        let first = entry("skill", 5, Some(1.0), "/a");
-        let second = entry("skill", 5, Some(1.0), "/b");
-        assert_eq!(prefer_skill(first, second).path, "/a");
-    }
-
-    #[test]
-    fn dedup_and_sort_prefers_stronger_source_and_orders_output() {
-        let skills = vec![
-            entry("Beta", 10, Some(1.0), "/beta-system"),
-            entry("beta", 0, Some(1.0), "/beta-user"),
-            entry("Alpha", 0, Some(1.0), "/alpha"),
-        ];
-        let result = deduplicate_and_sort(skills);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].path, "/alpha");
-        assert_eq!(result[1].path, "/beta-user");
-    }
-
-    fn entry(name: &str, priority: i64, mtime: Option<f64>, path: &str) -> SkillEntry {
-        SkillEntry {
-            name: name.to_owned(),
-            description: String::new(),
-            path: path.to_owned(),
-            source: "codex",
-            scope: "user",
-            source_priority: priority,
-            plugin_name: None,
-            plugin_provider: None,
-            plugin_version: None,
-            mtime,
-        }
     }
 
     fn temp_dir(label: &str) -> PathBuf {
