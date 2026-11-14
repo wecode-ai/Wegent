@@ -11,7 +11,6 @@ use brz_mysql::{Mysql, MysqlRow};
 use brz_redis::Redis;
 
 use super::Completion;
-use super::Tables;
 use super::TaskCompletedEvent;
 use super::handlers;
 use super::sql;
@@ -23,12 +22,12 @@ use super::task_column;
 /// published so every handler receives it.
 pub(super) async fn resolve_owner_user_id<M: Mysql>(
     mysql: &M,
-    tables: Tables,
+    task_table: &str,
     task_id: i64,
 ) -> Option<i64> {
     let row: MysqlRow = mysql
         .route(crate::task_routing::ByTaskId(task_id as u64))
-        .fetch_optional(sql::resolve_owner_statement(tables.tasks), (task_id,))
+        .fetch_optional(sql::resolve_owner_statement(task_table), (task_id,))
         .await
         .ok()
         .flatten()?;
@@ -47,7 +46,14 @@ pub(crate) async fn publish_task_completed<M: Mysql, R: Redis>(
     result: Option<&serde_json::Value>,
     error: Option<&str>,
 ) {
-    let Some(user_id) = resolve_owner_user_id(ctx.mysql, ctx.tables, task_id).await else {
+    let task_table = match super::resolve_tables(ctx.app, ctx.tables, task_id).await {
+        Ok((task_table, _)) => task_table,
+        Err(error) => {
+            tracing::warn!(%error, task_id, "task completion table read failed");
+            return;
+        }
+    };
+    let Some(user_id) = resolve_owner_user_id(ctx.mysql, &task_table, task_id).await else {
         tracing::warn!(task_id, "no task owner; TaskCompletedEvent not published");
         return;
     };

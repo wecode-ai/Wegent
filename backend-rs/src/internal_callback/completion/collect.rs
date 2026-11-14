@@ -9,7 +9,6 @@ use brz_redis::Redis;
 use serde_json::{Map, Value, json};
 
 use super::Completion;
-use super::sql;
 use super::text_value::terminal_text_value;
 use crate::internal_callback::session;
 use crate::task_store::subtask_column_index;
@@ -30,11 +29,17 @@ async fn existing_subtask_result<M: Mysql, R: Redis>(
     task_id: i64,
     subtask_id: i64,
 ) -> Option<Value> {
+    let (_, subtask_table) = super::resolve_tables(ctx.app, ctx.tables, task_id)
+        .await
+        .ok()?;
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
     let row: MysqlRow = mysql
-        .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
+        .fetch_optional(
+            crate::task_store_statements::subtask_by_id_statement(&subtask_table),
+            (subtask_id,),
+        )
         .await
         .ok()
         .flatten()?;

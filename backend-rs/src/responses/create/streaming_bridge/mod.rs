@@ -620,9 +620,25 @@ impl Bridge {
     }
 
     async fn finish_committed_winner(&mut self) {
+        let app = self.app.upgrade();
+        let (_, subtask_table) = match completion::resolve_tables(
+            app.as_deref(),
+            self.tables,
+            self.task_id,
+        )
+        .await
+        {
+            Ok(tables) => tables,
+            Err(error) => {
+                tracing::warn!(%error, task_id = self.task_id, "terminal result table read failed");
+                self.finish_persistence_error("Could not read the committed execution result")
+                    .await;
+                return;
+            }
+        };
         match completion::read_terminal_result(
             &self.mysql,
-            self.tables,
+            &subtask_table,
             self.task_id,
             self.subtask_id,
         )

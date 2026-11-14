@@ -25,7 +25,8 @@ pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
         return Ok(None);
     };
     Ok(update_locked_task_status(
-        tables,
+        tables.tasks,
+        tables.subtasks,
         mysql,
         task,
         task_id,
@@ -53,7 +54,8 @@ pub(super) async fn lock_task<T: MysqlTransaction>(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
-    tables: sql::Tables,
+    task_table: &str,
+    subtask_table: &str,
     mysql: &mut T,
     task: MysqlRow,
     task_id: i64,
@@ -63,7 +65,6 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
     required_status: Option<&str>,
     terminal_result: Option<&Value>,
 ) -> MysqlResult<Option<CollaborationStatus>> {
-    let task_table = tables.tasks;
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
 
@@ -75,7 +76,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
         .await?;
     let subtasks = crate::task_store_listing::order_assistant_subtasks(
         mysql
-            .fetch_all(sql::assistant_subtasks(tables), (task_id,))
+            .fetch_all(sql::assistant_subtasks(subtask_table), (task_id,))
             .await?,
     )?;
     let Some(last) = subtasks.last() else {

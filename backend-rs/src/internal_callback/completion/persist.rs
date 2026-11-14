@@ -230,16 +230,17 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
     delivery: Option<(Delivery, Option<&Value>)>,
 ) -> MysqlResult<Option<Transition>> {
     let normalized_status = status.to_uppercase();
+    let (task_table, subtask_table) = super::resolve_tables(ctx.app, ctx.tables, task_id).await?;
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
     let ready_to_commit = std::sync::atomic::AtomicBool::new(false);
     let operation = async |transaction: &mut M::Transaction| {
         // Message edits and pipeline claims lock the task before its subtasks.
-        let Some(task) = lock_task(transaction, ctx.tables.tasks, task_id).await? else {
+        let Some(task) = lock_task(transaction, &task_table, task_id).await? else {
             return Ok(None);
         };
-        let Some(row) = lock_subtask(transaction, ctx.tables, subtask_id).await? else {
+        let Some(row) = lock_subtask(transaction, &subtask_table, subtask_id).await? else {
             return Ok(None);
         };
         if subtask_column::<i64>(&row, "task_id") != Some(task_id)
@@ -287,12 +288,12 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
                     | "EXECUTOR_DISPATCH_FAILED"
                     | "container_error"
             )
-        ) && !can_fail_dispatch(ctx.tables, transaction, &task, task_id, subtask_id).await?
+        ) && !can_fail_dispatch(&subtask_table, transaction, &task, task_id, subtask_id).await?
         {
             return Ok(None);
         }
         let Some((row, metrics_message)) = update_subtask_status_on(
-            ctx.tables,
+            &subtask_table,
             transaction,
             row,
             subtask_id,
@@ -308,7 +309,8 @@ pub(super) async fn persist_terminal_transition<M: Mysql, R: Redis>(
             return Ok(None);
         };
         let task_status = update_locked_task_status(
-            ctx.tables,
+            &task_table,
+            &subtask_table,
             transaction,
             task,
             task_id,
@@ -367,12 +369,13 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
     subtask_id: i64,
     delivery: Delivery,
 ) -> MysqlResult<()> {
+    let (task_table, _) = super::resolve_tables(ctx.app, ctx.tables, task_id).await?;
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(task_id as u64));
     mysql
         .with_transaction(async |transaction| {
-            let Some(task) = lock_task(transaction, ctx.tables.tasks, task_id).await? else {
+            let Some(task) = lock_task(transaction, &task_table, task_id).await? else {
                 return Ok(());
             };
             let Some(Json(mut task)) = task_column::<Json<Value>>(&task, "json") else {
@@ -383,7 +386,7 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
             {
                 transaction
                     .execute(
-                        format!("UPDATE {} SET json=? WHERE id=?", ctx.tables.tasks),
+                        format!("UPDATE {task_table} SET json=? WHERE id=?"),
                         (python_dumps(&task), task_id),
                     )
                     .await?;
@@ -394,7 +397,7 @@ pub(super) async fn acknowledge_delivery<M: Mysql, R: Redis>(
 }
 
 async fn can_fail_dispatch<T: MysqlTransaction>(
-    tables: sql::Tables,
+    subtask_table: &str,
     tx: &mut T,
     task: &MysqlRow,
     task_id: i64,
@@ -402,13 +405,13 @@ async fn can_fail_dispatch<T: MysqlTransaction>(
 ) -> MysqlResult<bool> {
     let can_fail = task_column::<Json<Value>>(task, "json")
         .is_some_and(|json| sql::dispatchable_task_status(&json.0).is_some());
-    Ok(can_fail
-        && sql::latest_assistant_id(tx, tables.subtasks, task_id).await? == Some(subtask_id))
+    Ok(can_fail && sql::latest_assistant_id(tx, subtask_table, task_id).await? == Some(subtask_id))
 }
 
 pub(super) async fn persist_executor_failure<M: Mysql>(
     mysql: &M,
-    tables: sql::Tables,
+    task_table: &str,
+    subtask_table: &str,
     task_id: i64,
     subtask_id: i64,
     result: &Value,
@@ -417,13 +420,13 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
     mysql
         .route(crate::task_routing::ByTaskId(task_id as u64))
         .with_transaction(async |transaction| {
-            let Some(task) = lock_task(transaction, tables.tasks, task_id).await? else {
+            let Some(task) = lock_task(transaction, task_table, task_id).await? else {
                 return Ok(None);
             };
-            if !can_fail_dispatch(tables, transaction, &task, task_id, subtask_id).await? {
+            if !can_fail_dispatch(subtask_table, transaction, &task, task_id, subtask_id).await? {
                 return Ok(None);
             }
-            let Some(row) = lock_subtask(transaction, tables, subtask_id).await? else {
+            let Some(row) = lock_subtask(transaction, subtask_table, subtask_id).await? else {
                 return Ok(None);
             };
             if subtask_column::<i64>(&row, "task_id") != Some(task_id)
@@ -435,7 +438,7 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
                 return Ok(None);
             }
             let Some(settled) = update_subtask_status_on(
-                tables,
+                subtask_table,
                 transaction,
                 row,
                 subtask_id,
@@ -451,7 +454,8 @@ pub(super) async fn persist_executor_failure<M: Mysql>(
                 return Ok(None);
             };
             update_locked_task_status(
-                tables,
+                task_table,
+                subtask_table,
                 transaction,
                 task,
                 task_id,

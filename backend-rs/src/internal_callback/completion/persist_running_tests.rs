@@ -484,7 +484,71 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     std::sync::Arc::get_mut(&mut app).unwrap().redis = Some(redis);
 
     verify_cancel_callback_order(writer, &app).await?;
-    verify_terminal_callback_retry(writer, &app).await
+    verify_terminal_callback_retry(writer, &app).await?;
+    verify_terminal_storage_selection(writer, &app).await
+}
+
+async fn verify_terminal_storage_selection(
+    writer: &MysqlService,
+    app: &crate::AppState,
+) -> anyhow::Result<()> {
+    use crate::internal_callback::completion::{self, Delivery};
+    use serde_json::{Value, json};
+
+    let ctx = Completion {
+        app: Some(app),
+        mysql: writer,
+        redis: app.redis.as_ref().unwrap(),
+        tables: Tables {
+            tasks: "unused_tasks",
+            subtasks: "unused_subtasks",
+        },
+        executor_manager: &app.executor_manager,
+    };
+    reset_callback_state(writer, "RUNNING").await?;
+    let event = crate::internal_callback::event::ExecutionEvent::new(
+        crate::internal_callback::event::EventType::Done,
+        12,
+        43,
+    );
+    let delivery = Delivery::Callback;
+    let terminal =
+        completion::complete_with_delivery(&ctx, &event, "COMPLETED", None, None, delivery, None)
+            .await?
+            .expect("completion uses the task store's tables");
+    assert_eq!(terminal.user_id, Some(7));
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("COMPLETED".into(), "COMPLETED".into())
+    );
+    let label = delivery.label(43);
+    let task_json = "SELECT json FROM tasks WHERE id = 12";
+    let stored: brz_mysql::Json<Value> = writer.fetch_one(task_json, ()).await?;
+    assert!(stored.0["metadata"]["labels"].get(&label).is_some());
+    completion::acknowledge_delivery(&ctx, 12, 43, delivery).await?;
+    let stored: brz_mysql::Json<Value> = writer.fetch_one(task_json, ()).await?;
+    assert!(stored.0["metadata"]["labels"].get(&label).is_none());
+
+    reset_callback_state(writer, "RUNNING").await?;
+    let failure = completion::complete_executor_failure(
+        writer,
+        ctx.tables,
+        Some(&ctx),
+        12,
+        43,
+        "dispatch failed",
+        "EXECUTOR_DISPATCH_FAILED",
+    )
+    .await;
+    assert_eq!(
+        failure.expect("dispatch failure was persisted")["error_type"],
+        json!("EXECUTOR_DISPATCH_FAILED")
+    );
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("FAILED".into(), "FAILED".into())
+    );
+    Ok(())
 }
 
 async fn reset_callback_state(writer: &MysqlService, parent_status: &str) -> anyhow::Result<()> {
