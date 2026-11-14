@@ -1581,6 +1581,49 @@ describe('composer cancellation rollback', () => {
     )
   })
 
+  test.each([true, false])(
+    'settles an optimistic prompt before a native turn starts (accepted=%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: {
+            id: 'cancelled-before-start',
+            role: 'user',
+            content: 'Old prompt',
+            status: 'done',
+          },
+        })
+      })
+      await waitFor(() =>
+        expect(result.current.messages).toContainEqual(
+          expect.objectContaining({ id: 'cancelled-before-start' })
+        )
+      )
+      mocks.cancel.mockResolvedValue(accepted)
+
+      await act(async () => {
+        await result.current.pauseCurrentResponse()
+      })
+
+      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address)
+      if (accepted) {
+        await waitFor(() =>
+          expect(result.current.messages).not.toContainEqual(
+            expect.objectContaining({ id: 'cancelled-before-start' })
+          )
+        )
+      } else {
+        await waitFor(() =>
+          expect(result.current.messages).toContainEqual(
+            expect.objectContaining({ id: 'cancelled-before-start' })
+          )
+        )
+      }
+    }
+  )
+
   test.each([
     { pendingResume: false, outcome: 'rejected' },
     { pendingResume: true, outcome: 'rejected' },
