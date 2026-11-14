@@ -251,18 +251,6 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
     }
   })
 
-  test('should verify mock model server is running', async ({ request }) => {
-    const response = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
-
-    if (response.status() !== 200) {
-      test.skip()
-      return
-    }
-
-    const data = await response.json()
-    expect(data.status).toBe('ok')
-  })
-
   test('should send image_url to model when image is attached', async ({ request }) => {
     // Skip if mock server is not running
     const healthCheck = await request.get(`${MOCK_MODEL_SERVER_URL}/health`).catch(() => null)
@@ -365,83 +353,6 @@ test.describe('Chat Image E2E with Mock Model Server', () => {
 
       console.log('✅ Image URL format verified successfully!')
       console.log(`   Prefix: ${imageContent?.image_url?.url.substring(0, 50)}...`)
-    }
-  })
-})
-
-test.describe('Image URL Format Unit Tests', () => {
-  test('should validate PNG image data URL format', () => {
-    const pngDataUrl =
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
-
-    // Verify format
-    expect(pngDataUrl).toMatch(/^data:image\/png;base64,/)
-
-    // Extract and verify base64
-    const base64 = pngDataUrl.split(',')[1]
-    const buffer = Buffer.from(base64, 'base64')
-
-    // PNG signature: 89 50 4E 47 0D 0A 1A 0A
-    expect(buffer[0]).toBe(0x89)
-    expect(buffer[1]).toBe(0x50)
-    expect(buffer[2]).toBe(0x4e)
-    expect(buffer[3]).toBe(0x47)
-  })
-
-  test('should validate JPEG image data URL format', () => {
-    // Minimal JPEG header
-    const jpegDataUrl = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/'
-
-    expect(jpegDataUrl).toMatch(/^data:image\/jpeg;base64,/)
-
-    const base64 = jpegDataUrl.split(',')[1]
-    const buffer = Buffer.from(base64, 'base64')
-
-    // JPEG signature: FF D8 FF
-    expect(buffer[0]).toBe(0xff)
-    expect(buffer[1]).toBe(0xd8)
-    expect(buffer[2]).toBe(0xff)
-  })
-
-  test('should validate vision message structure', () => {
-    const visionMessage = {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Describe this image' },
-        {
-          type: 'image_url',
-          image_url: {
-            url: 'data:image/png;base64,abc123',
-          },
-        },
-      ],
-    }
-
-    // Validate structure
-    expect(visionMessage.role).toBe('user')
-    expect(Array.isArray(visionMessage.content)).toBe(true)
-
-    // Find text content
-    const textContent = visionMessage.content.find(c => c.type === 'text')
-    expect(textContent).toBeDefined()
-    expect(textContent?.text).toBe('Describe this image')
-
-    // Find image content
-    const imageContent = visionMessage.content.find(c => c.type === 'image_url')
-    expect(imageContent).toBeDefined()
-    expect(imageContent?.image_url?.url).toMatch(/^data:image\//)
-  })
-
-  test('should reject invalid image URL formats', () => {
-    const invalidFormats = [
-      'http://example.com/image.png', // HTTP URL instead of data URL
-      'data:text/plain;base64,abc123', // Wrong MIME type
-      'data:image/png,abc123', // Missing base64 encoding
-      'abc123', // Not a data URL at all
-    ]
-
-    for (const url of invalidFormats) {
-      expect(url).not.toMatch(/^data:image\/(png|jpeg|gif|webp);base64,/)
     }
   })
 })

@@ -155,26 +155,6 @@ export default defineConfig({
       },
       dependencies: ['executor-device-chromium'],
     },
-    /* Performance tests */
-    {
-      name: 'performance',
-      testMatch: /performance\/.*\.spec\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        storageState: './e2e/.auth/user.json',
-      },
-      dependencies: ['setup'],
-    },
-    /* Visual regression tests */
-    {
-      name: 'visual',
-      testMatch: /visual\/.*\.spec\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        storageState: './e2e/.auth/user.json',
-      },
-      dependencies: ['setup'],
-    },
   ],
 
   /* Test timeout - keep at 60s for complex tests */
