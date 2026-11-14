@@ -22,11 +22,19 @@ export function windowsStaticCrtEnvironment(environment, target) {
   return { ...environment, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f') }
 }
 
+// PE32+ binaries for both supported Windows architectures share the same
+// optional-header and import-directory layout; only the machine type differs
+// (0x8664 for x64, 0xaa64 for ARM64).
+const WINDOWS_PE_MACHINE_TYPES = new Set([0x8664, 0xaa64])
+
 /** Read normal and delay imports without executing an unprepared Windows binary. */
 export function windowsPeImports(buffer) {
   const pe = buffer.readUInt32LE(0x3c)
-  if (buffer.toString('ascii', pe, pe + 4) !== 'PE\0\0' || buffer.readUInt16LE(pe + 4) !== 0x8664)
-    throw new Error('Windows native runtime verification requires an x64 PE binary')
+  if (
+    buffer.toString('ascii', pe, pe + 4) !== 'PE\0\0' ||
+    !WINDOWS_PE_MACHINE_TYPES.has(buffer.readUInt16LE(pe + 4))
+  )
+    throw new Error('Windows native runtime verification requires an x64 or ARM64 PE binary')
   const optional = pe + 24
   if (buffer.readUInt16LE(optional) !== 0x20b) throw new Error('Expected PE32+ binary')
   const sections = optional + buffer.readUInt16LE(pe + 20)
