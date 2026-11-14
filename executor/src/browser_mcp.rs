@@ -218,23 +218,6 @@ pub(crate) async fn handle_request_with_context(
     }
 }
 
-#[cfg(test)]
-async fn handle_request(
-    client: &reqwest::Client,
-    request: &Value,
-    sequence: u64,
-    started: Instant,
-) -> Option<Value> {
-    handle_request_with_context(
-        client,
-        request,
-        &BrowserMcpRequestContext::new(None, "browser-test-session".to_owned()),
-        sequence,
-        started,
-    )
-    .await
-}
-
 async fn execute_tool(
     client: &reqwest::Client,
     name: &str,

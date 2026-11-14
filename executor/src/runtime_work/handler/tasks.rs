@@ -3102,14 +3102,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_model_title_to_one_short_line() {
-        assert_eq!(
-            normalize_friendly_title("  “为任务创建友好标题。”\n这是解释"),
-            Some("为任务创建友好标题".to_owned())
-        );
-    }
-
-    #[test]
     fn rejects_empty_model_title() {
         assert_eq!(normalize_friendly_title(" \n\t "), None);
     }

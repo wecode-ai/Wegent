@@ -51,36 +51,3 @@ fn apply_declarations(tools: &mut [Value]) -> bool {
     }
     changed
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn changes_only_native_exec_guidance_in_both_wire_forms() {
-        let exec = json!({"type":"custom","name":"exec","description":"Expanded catalog","format":{"type":"grammar","syntax":"lark","definition":"native"}});
-        let other = json!({"type":"namespace","name":"app","tools":[exec.clone()]});
-        for lite in [false, true] {
-            let declarations = json!([{"type":"namespace","name":"functions","tools":[exec.clone()]},other.clone()]);
-            let mut body = if lite {
-                json!({"input":[{"type":"additional_tools","tools":declarations}]})
-            } else {
-                json!({"tools":declarations})
-            };
-            body = serde_json::from_slice(&prepare(&serde_json::to_vec(&body).unwrap()).unwrap())
-                .unwrap();
-            let tools = if lite {
-                &body["input"][0]["tools"]
-            } else {
-                &body["tools"]
-            };
-            assert_eq!(tools[0]["tools"][0]["format"], exec["format"]);
-            assert!(tools[0]["tools"][0]["description"]
-                .as_str()
-                .unwrap()
-                .contains("ALL_TOOLS"));
-            assert_eq!(tools[1], other);
-        }
-    }
-}

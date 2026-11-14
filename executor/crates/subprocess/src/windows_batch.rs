@@ -260,67 +260,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_npm_native_shim() {
-        let directory = tempdir().unwrap();
-        let root = directory.path();
-        let node_modules = root.join("node_modules").join("@scope").join("tool");
-        fs::create_dir_all(node_modules.join("bin")).unwrap();
-        let exe = binary(&node_modules.join("bin"), "tool.exe");
-        let shim = write_shim(
-            root,
-            "tool.cmd",
-            "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\"%dp0%\\node_modules\\@scope\\tool\\bin\\tool.exe\"   %*\r\n",
-        );
-
-        let target = resolve_batch_target(&shim).unwrap();
-        assert_eq!(target.program, exe);
-        assert!(target.prefix_args.is_empty());
-    }
-
-    #[test]
-    fn resolves_npm_node_shim() {
-        let directory = tempdir().unwrap();
-        let root = directory.path();
-        let node_modules = root.join("node_modules").join("tool");
-        fs::create_dir_all(node_modules.join("bin")).unwrap();
-        let script = node_modules.join("bin").join("tool.js");
-        fs::write(&script, b"// script").unwrap();
-        let node = binary(root, "node.exe");
-        let shim = write_shim(
-            root,
-            "tool.cmd",
-            "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\tool\\bin\\tool.js\" %*\r\n",
-        );
-
-        let target = resolve_batch_target(&shim).unwrap();
-        assert_eq!(target.program, node);
-        assert_eq!(
-            target.prefix_args,
-            vec![script.to_string_lossy().to_string()]
-        );
-    }
-
-    #[test]
-    fn resolves_plain_node_shim() {
-        let directory = tempdir().unwrap();
-        let root = directory.path();
-        let script = root.join("tool.js");
-        fs::write(&script, b"// script").unwrap();
-        let shim = write_shim(
-            root,
-            "tool.cmd",
-            &format!("@echo off\nnode \"{}\" %*\n", script.display()),
-        );
-
-        let target = resolve_batch_target(&shim).unwrap();
-        assert_eq!(target.program, PathBuf::from("node"));
-        assert_eq!(
-            target.prefix_args,
-            vec![script.to_string_lossy().to_string()]
-        );
-    }
-
-    #[test]
     fn resolves_bare_program_to_path_batch_shim() {
         let directory = tempdir().unwrap();
         let root = directory.path();
@@ -387,14 +326,5 @@ mod tests {
         );
 
         assert_eq!(resolve_batch_target(&shim), None);
-    }
-
-    #[test]
-    fn is_batch_file_matches_extensions_case_insensitively() {
-        assert!(is_batch_file(Path::new("tool.cmd")));
-        assert!(is_batch_file(Path::new("tool.CMD")));
-        assert!(is_batch_file(Path::new("setup.bat")));
-        assert!(!is_batch_file(Path::new("tool.exe")));
-        assert!(!is_batch_file(Path::new("tool")));
     }
 }

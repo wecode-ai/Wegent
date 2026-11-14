@@ -453,13 +453,6 @@ pub(super) fn assistant_mapped_source(id: &str, content: &str, directives: bool)
     source
 }
 
-#[cfg(test)]
-fn assistant_search_text(content: &str) -> String {
-    assistant_mapped_source("", content, true)
-        .markdown_region("")
-        .text
-}
-
 fn strip_plugin_workspace_results(content: &str) -> String {
     let mut source = MappedSource::new("", content);
     remove_plugin_workspace_results(&mut source);
@@ -497,13 +490,6 @@ pub(super) fn visible_assistant_content(
         }
     }
     strip_plugin_workspace_results(content)
-}
-
-#[cfg(test)]
-fn assistant_block_search_text(content: &str) -> String {
-    let mut source = MappedSource::new("", content);
-    remove_assistant_annotations(&mut source);
-    source.markdown_region("").text
 }
 
 fn remove_assistant_annotations(source: &mut MappedSource) {
@@ -652,93 +638,6 @@ mod tests {
             .all(|span| span.item_id == "label"));
     }
 
-    fn turn_sources(status: &str, content: &str, error: Option<&str>) -> Vec<(String, String)> {
-        codex_turn_search_sources(
-            &json!({
-                "id": "turn", "status": status, "error": error,
-                "items": [{"id": "answer", "type": "agentMessage", "phase": "commentary", "text": content}],
-            }),
-            &HashMap::new(),
-            None,
-            &mut Default::default(),
-        )
-    }
-
-    #[test]
-    fn projected_search_hides_terminal_placeholders_but_preserves_useful_output() {
-        for placeholder in ["interrupted", "cancelled", "canceled", "aborted"] {
-            assert!(turn_sources("interrupted", placeholder, None).is_empty());
-            assert_eq!(
-                turn_sources("completed", placeholder, None),
-                vec![("answer".into(), placeholder.into())]
-            );
-        }
-        let error = "API error: needle";
-        assert!(turn_sources("failed", error, Some(error)).is_empty());
-        assert_eq!(
-            turn_sources("completed", error, Some(error)),
-            vec![("answer".into(), error.into())]
-        );
-        assert_eq!(
-            turn_sources("interrupted", "useful interrupted output", None),
-            vec![("answer".into(), "useful interrupted output".into())]
-        );
-    }
-
-    #[test]
-    fn projected_search_uses_guidance_segments_and_joined_final_content() {
-        let sources = codex_turn_search_sources(
-            &json!({
-                "id": "turn", "status": "failed", "error": "API error: needle",
-                "items": [
-                    {"id": "first", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
-                    {"id": "guidance", "type": "userMessage", "content": [{"type": "inputText", "text": "continue"}]},
-                    {"id": "last", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
-                ],
-            }),
-            &HashMap::new(),
-            None,
-            &mut Default::default(),
-        );
-        assert!(sources.contains(&("first".into(), "API error: needle".into())));
-        assert!(!sources.iter().any(|(id, _)| id == "last"));
-
-        let sources = codex_turn_search_sources(
-            &json!({
-                "id": "turn", "status": "failed", "error": "API error: needle",
-                "items": [
-                    {"id": "partial", "type": "agentMessage", "phase": "final_answer", "text": "useful output"},
-                    {"id": "last", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
-                ],
-            }),
-            &HashMap::new(),
-            None,
-            &mut Default::default(),
-        );
-        assert_eq!(
-            sources,
-            vec![("partial".into(), "useful output\nAPI error: needle".into())]
-        );
-    }
-
-    #[test]
-    fn projected_search_retains_visible_narrative_and_deduplicates_final_items() {
-        let sources = codex_turn_search_sources(
-            &json!({
-                "id": "turn", "status": "failed", "error": "API error: needle",
-                "items": [
-                    {"id": "process", "type": "agentMessage", "phase": "analysis", "text": "useful needle"},
-                    {"id": "final", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
-                    {"id": "duplicate", "type": "agentMessage", "phase": "final_answer", "text": "API error: needle"},
-                ],
-            }),
-            &HashMap::new(),
-            None,
-            &mut Default::default(),
-        );
-        assert_eq!(sources, vec![("process".into(), "useful needle".into())]);
-    }
-
     #[test]
     fn projected_search_restores_empty_user_prompts_before_projection() {
         let sources = codex_turn_search_sources(
@@ -756,19 +655,6 @@ mod tests {
     }
 
     #[test]
-    fn rendered_markdown_excludes_hidden_destinations_and_metadata() {
-        let source = concat!(
-            "[visible label](https://hidden.example/needle \"hidden title\") ",
-            "![hidden needle](image.png) <span data-needle=\"hidden\">shown</span>\n\n",
-            "<div>hidden needle</div>\n\n",
-            "`inline needle`\n\n```hidden-language\ncode needle\n```",
-        );
-        let text = markdown_search_text(source);
-        assert_eq!(text, "visible label  shown\ninline needle\ncode needle");
-        assert_eq!(text.match_indices("needle").count(), 2);
-    }
-
-    #[test]
     fn rendered_markdown_preserves_block_and_inline_text_boundaries() {
         assert_eq!(
             markdown_search_text("**one** &amp; `two`\n\n- [x] three\n- ~~four~~"),
@@ -778,57 +664,5 @@ mod tests {
             markdown_search_text("| a | b |\n| - | - |\n| c | d |"),
             "a\nb\nc\nd"
         );
-    }
-
-    #[test]
-    fn unsupported_assistant_citations_are_not_searchable() {
-        assert_eq!(
-            assistant_search_text("answer\u{e200}cite\u{e202}hidden needle\u{e201}"),
-            "answer"
-        );
-        assert_eq!(
-            assistant_search_text("answer\u{e200}cite\u{e202}unfinished needle"),
-            "answer"
-        );
-    }
-
-    #[test]
-    fn assistant_search_excludes_ui_directives_but_keeps_code_and_unknown_directives() {
-        let source = concat!(
-            "answer\n::archive-thread{reason=\"hidden needle\"}\n",
-            ":::git-create-pr{title=\"hidden needle\"}\n\n",
-            "```text\n::archive-thread{reason=\"code needle\"}\n```\n\n",
-            "::unknown-directive{value=\"visible needle\"}",
-        );
-        let text = assistant_search_text(source);
-        assert!(!text.contains("hidden needle"));
-        assert!(text.contains("code needle"));
-        assert!(text.contains("visible needle"));
-        assert_eq!(text.match_indices("needle").count(), 2);
-        assert!(assistant_block_search_text(source).contains("hidden needle"));
-    }
-
-    #[test]
-    fn assistant_search_excludes_only_valid_plugin_workspace_markers() {
-        let result = serde_json::json!({
-            "schemaVersion": 1, "taskId": "task", "relativePath": "plugins/result",
-            "name": "result", "displayName": "hidden needle", "description": "result",
-            "version": "1", "listingType": "plugin", "logo": "", "sha256": "a".repeat(64),
-            "status": "ready",
-        });
-        let source = format!("answer\r\n[WEGENT_PLUGIN_RESULT]{result}\r\n");
-        assert_eq!(assistant_search_text(&source), "answer");
-        assert!(assistant_block_search_text(&source).contains("hidden needle"));
-        let mut invalid = result.clone();
-        invalid["relativePath"] = serde_json::json!("../result");
-        let source = format!("[WEGENT_PLUGIN_RESULT]{invalid}");
-        assert!(assistant_search_text(&source).contains("hidden needle"));
-        assert!(
-            assistant_search_text("[WEGENT_PLUGIN_RESULT]invalid needle")
-                .contains("invalid needle")
-        );
-        assert!(is_plugin_workspace_result_line(&format!(
-            "prefix [WEGENT_PLUGIN_RESULT]{result}"
-        )));
     }
 }

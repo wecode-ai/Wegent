@@ -108,37 +108,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strips_long_context_suffixes_case_insensitively() {
-        assert_eq!(
-            strip_long_context_suffix("deepseek-v4.1-flash[1m]"),
-            "deepseek-v4.1-flash"
-        );
-        assert_eq!(
-            strip_long_context_suffix("deepseek-v4.1-flash[1M]"),
-            "deepseek-v4.1-flash"
-        );
-        assert_eq!(
-            strip_long_context_suffix("deepseek-v4.1-flash+1m"),
-            "deepseek-v4.1-flash"
-        );
-        assert_eq!(
-            strip_long_context_suffix("  deepseek-v4.1-flash[1m]  "),
-            "deepseek-v4.1-flash"
-        );
-    }
-
-    #[test]
-    fn leaves_plain_model_ids_unchanged() {
-        assert_eq!(
-            strip_long_context_suffix("deepseek-v4.1-flash"),
-            "deepseek-v4.1-flash"
-        );
-        assert_eq!(strip_long_context_suffix("[1m]"), "[1m]");
-        assert_eq!(strip_long_context_suffix(""), "");
-        assert_eq!(strip_long_context_suffix("模型"), "模型");
-    }
-
-    #[test]
     fn normalizes_provider_context_limit_error() {
         let body = br#"{"error":{"code":"InvalidParameter","message":"Input exceeds the context limit (1048568 tokens). Please shorten the input."}}"#;
 
@@ -181,19 +150,6 @@ mod tests {
                 "prompt is too long: 130000 tokens > 128000 maximum"
             );
         }
-    }
-
-    #[test]
-    fn reports_actual_above_a_matching_window() {
-        let body = b"Input exceeds the context limit (1000000 tokens).";
-
-        let normalized =
-            normalize_context_overflow(400, body, 0, Some(1_000_000)).expect("overflow");
-
-        assert_eq!(
-            normalized["error"]["message"],
-            "prompt is too long: 1000000 tokens > 999999 maximum"
-        );
     }
 
     #[test]

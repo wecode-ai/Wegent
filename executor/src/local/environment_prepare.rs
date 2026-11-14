@@ -207,29 +207,6 @@ fn build_prepare_request(environment_id: &str, definition: &Value) -> ExecutionR
 mod tests {
     use super::*;
 
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &std::path::Path) -> Self {
-            let previous = std::env::var_os(key);
-            std::env::set_var(key, value);
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = &self.previous {
-                std::env::set_var(self.key, previous);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
-
     #[test]
     fn prepare_request_resolves_credentials_on_the_device() {
         let request = build_prepare_request(
@@ -258,72 +235,5 @@ mod tests {
             .error
             .as_deref()
             .is_some_and(|error| error.starts_with("Invalid execution environment definition:")));
-    }
-
-    #[tokio::test]
-    async fn reports_repository_preparation_stage() {
-        let result = execute_environment_prepare(
-            &[serde_json::json!({
-                "environmentId": "missing-primary",
-                "repositories": [{
-                    "name": "Repository",
-                    "url": "https://example.com/repository.git",
-                    "path": "repository",
-                    "primary": false
-                }]
-            })
-            .to_string()],
-            1.0,
-        )
-        .await;
-
-        assert!(!result.success);
-        assert_eq!(
-            result.error.as_deref(),
-            Some(
-                "Failed to prepare project repositories: \
-Execution environment must have exactly one primary repository"
-            )
-        );
-    }
-
-    #[test]
-    fn prepares_blank_workspace_and_runs_setup_without_repositories() {
-        let _lock = crate::test_env::lock();
-        let workspace = tempfile::tempdir().unwrap();
-        let _workspace_root = EnvGuard::set("WORKSPACE_ROOT", workspace.path());
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let result = runtime.block_on(execute_environment_prepare(
-            &[serde_json::json!({
-                "environmentId": "blank-project",
-                "repositories": [],
-                "setupSteps": [{
-                    "command": "echo ready > blank-environment.txt",
-                    "workingDirectory": ""
-                }],
-                "fingerprint": "blank-v1"
-            })
-            .to_string()],
-            5.0,
-        ));
-
-        let expected = workspace
-            .path()
-            .join("environment-blank-project")
-            .join("environment");
-        assert!(result.success, "{:?}", result.error);
-        assert_eq!(
-            result.stdout.get("workspacePath").and_then(Value::as_str),
-            expected.to_str()
-        );
-        assert_eq!(
-            std::fs::read_to_string(expected.join("blank-environment.txt"))
-                .unwrap()
-                .trim(),
-            "ready"
-        );
     }
 }

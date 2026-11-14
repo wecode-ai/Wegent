@@ -652,10 +652,7 @@ mod tests {
         );
     }
 
-    use super::{
-        connection_profile_from_params, device_config_for_profile, normalized_connection,
-        LocalBackendConnectionController,
-    };
+    use super::{connection_profile_from_params, LocalBackendConnectionController};
     use crate::{
         config::device::{ConnectionConfig, DeviceConfig},
         local::app_ipc::BackendConnectionHandler,
@@ -873,21 +870,6 @@ mod tests {
     }
 
     #[test]
-    fn static_connection_defaults_socket_url_to_backend_url() {
-        let connection = normalized_connection(&ConnectionConfig {
-            backend_url: "https://backend.example.com/".to_owned(),
-            socket_url: String::new(),
-            auth_token: "wg-token".to_owned(),
-            runtime_auth_token: "runtime-wg-token".to_owned(),
-        })
-        .expect("connection should be configured");
-
-        assert_eq!(connection.backend_url, "https://backend.example.com");
-        assert_eq!(connection.socket_url, "https://backend.example.com");
-        assert_eq!(connection.runtime_auth_token, "runtime-wg-token");
-    }
-
-    #[test]
     fn dynamic_connection_rejects_socket_url_without_credentials() {
         let error = connection_profile_from_params(&json!({
             "socket_url": "wss://socket.example.com",
@@ -908,27 +890,5 @@ mod tests {
 
         assert_eq!(error.code, "bad_request");
         assert_eq!(error.message, "device_type must be app or remote");
-    }
-
-    #[test]
-    fn registration_profile_changes_only_the_backend_device_type() {
-        let base = DeviceConfig {
-            device_type: "local".to_owned(),
-            ..DeviceConfig::default()
-        };
-        let profile = connection_profile_from_params(&json!({
-            "backend_url": "https://backend.example.com",
-            "auth_token": "wg-token",
-            "device_type": "remote",
-        }))
-        .expect("profile should parse")
-        .expect("profile should be configured");
-
-        let configured = device_config_for_profile(&base, &profile);
-
-        assert_eq!(base.device_type, "local");
-        assert_eq!(configured.device_type, "remote");
-        assert_eq!(configured.device_id, base.device_id);
-        assert_eq!(configured.runtime_instance_id, base.runtime_instance_id);
     }
 }

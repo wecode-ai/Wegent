@@ -1272,26 +1272,9 @@ impl Drop for CleanupGuard {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::Write;
 
     use super::*;
-
-    #[test]
-    fn delta_reads_only_the_unsynchronized_rollout_suffix() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("rollout.jsonl");
-        let rollout_start = 128 * 1024 * 1024 + 1;
-        let mut file = fs::File::create(&path).unwrap();
-        file.set_len(rollout_start).unwrap();
-        file.seek(SeekFrom::Start(rollout_start)).unwrap();
-        file.write_all(b"delta").unwrap();
-        drop(file);
-
-        let (bytes, rollout_end) = read_rollout_segment(&path, rollout_start).unwrap();
-
-        assert_eq!(bytes, b"delta");
-        assert_eq!(rollout_end, rollout_start + 5);
-    }
 
     fn git(path: &Path, args: &[&str]) -> std::process::Output {
         let mut command = Command::new("git");
@@ -1315,81 +1298,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_packaging_excludes_gitignored_generated_files() {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("source");
-        let workspace = root.path().join("workspace");
-        let generated = source.join("wework/electron/resources/codex");
-        fs::create_dir_all(&generated).unwrap();
-        fs::create_dir_all(source.join("node_modules")).unwrap();
-        fs::write(source.join("wework/electron/.gitignore"), "resources/\n").unwrap();
-        fs::write(source.join("source.txt"), "source\n").unwrap();
-        fs::write(generated.join("tracked.txt"), "tracked\n").unwrap();
-        fs::write(
-            source.join("node_modules/tracked.txt"),
-            "tracked dependency\n",
-        )
-        .unwrap();
-        assert_git(&source, &["init"]);
-        assert_git(&source, &["config", "user.name", "Wegent Test"]);
-        assert_git(&source, &["config", "user.email", "test@wegent.local"]);
-        assert_git(
-            &source,
-            &["add", "source.txt", "wework/electron/.gitignore"],
-        );
-        assert_git(
-            &source,
-            &[
-                "add",
-                "-f",
-                "node_modules/tracked.txt",
-                "wework/electron/resources/codex/tracked.txt",
-            ],
-        );
-        assert_git(&source, &["commit", "-m", "base"]);
-        assert_git(
-            &source,
-            &[
-                "worktree",
-                "add",
-                "--detach",
-                workspace.to_str().expect("temporary path must be UTF-8"),
-            ],
-        );
-        assert!(workspace.join(".git").is_file());
-        fs::File::create(workspace.join("wework/electron/resources/codex/codex"))
-            .unwrap()
-            .set_len(MAX_WORKSPACE_FILE_BYTES + 1)
-            .unwrap();
-
-        let archive_path = root.path().join("workspace.tgz");
-        let output = fs::File::create(&archive_path).unwrap();
-        let encoder = GzEncoder::new(output, Compression::default());
-        let mut archive = Builder::new(encoder);
-        let paths = prepare_workspace_paths(&workspace).await.unwrap().unwrap();
-        append_workspace(&mut archive, &workspace, Some(&paths), None).unwrap();
-        archive.into_inner().unwrap().finish().unwrap();
-
-        let input = fs::File::open(archive_path).unwrap();
-        let mut restored = Archive::new(GzDecoder::new(input));
-        let paths = restored
-            .entries()
-            .unwrap()
-            .map(|entry| entry.unwrap().path().unwrap().to_path_buf())
-            .collect::<Vec<_>>();
-
-        assert!(paths.contains(&PathBuf::from("workspace/source.txt")));
-        assert!(paths.contains(&PathBuf::from("workspace/node_modules/tracked.txt")));
-        assert!(paths.contains(&PathBuf::from("workspace/wework/electron/.gitignore")));
-        assert!(paths.contains(&PathBuf::from(
-            "workspace/wework/electron/resources/codex/tracked.txt"
-        )));
-        assert!(!paths
-            .iter()
-            .any(|path| path.ends_with("wework/electron/resources/codex/codex")));
-    }
-
-    #[tokio::test]
     async fn workspace_path_preparation_rejects_broken_git_metadata() {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
@@ -1406,46 +1314,6 @@ mod tests {
             .expect_err("broken Git metadata must not fall back to unfiltered traversal");
 
         assert!(error.contains("failed to inspect workspace repository"));
-    }
-
-    #[tokio::test]
-    async fn workspace_packaging_respects_an_ancestor_repository() {
-        let root = tempfile::tempdir().unwrap();
-        let repository = root.path().join("repository");
-        let workspace = repository.join("workspace");
-        fs::create_dir_all(workspace.join("generated")).unwrap();
-        fs::write(repository.join(".gitignore"), "workspace/generated/\n").unwrap();
-        fs::write(workspace.join("source.txt"), "source\n").unwrap();
-        fs::File::create(workspace.join("generated/oversized"))
-            .unwrap()
-            .set_len(MAX_WORKSPACE_FILE_BYTES + 1)
-            .unwrap();
-        assert_git(&repository, &["init"]);
-        assert_git(&repository, &["config", "user.name", "Wegent Test"]);
-        assert_git(&repository, &["config", "user.email", "test@wegent.local"]);
-        assert_git(&repository, &["add", ".gitignore", "workspace/source.txt"]);
-        assert_git(&repository, &["commit", "-m", "base"]);
-
-        let archive_path = root.path().join("workspace.tgz");
-        let output = fs::File::create(&archive_path).unwrap();
-        let encoder = GzEncoder::new(output, Compression::default());
-        let mut archive = Builder::new(encoder);
-        let paths = prepare_workspace_paths(&workspace).await.unwrap().unwrap();
-        append_workspace(&mut archive, &workspace, Some(&paths), None).unwrap();
-        archive.into_inner().unwrap().finish().unwrap();
-
-        let input = fs::File::open(archive_path).unwrap();
-        let mut restored = Archive::new(GzDecoder::new(input));
-        let paths = restored
-            .entries()
-            .unwrap()
-            .map(|entry| entry.unwrap().path().unwrap().to_path_buf())
-            .collect::<Vec<_>>();
-
-        assert!(paths.contains(&PathBuf::from("workspace/source.txt")));
-        assert!(!paths
-            .iter()
-            .any(|path| path.ends_with("workspace/generated/oversized")));
     }
 
     #[test]

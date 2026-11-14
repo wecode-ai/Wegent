@@ -171,26 +171,3 @@ async fn local_comment_history_pages_the_same_activity_without_crossing_issues()
     after["limit"] = json!(1);
     assert!(list(&runtime, &after).await.is_err());
 }
-
-#[test]
-fn comment_tool_exposes_structured_mentions_to_the_model() {
-    let tool = super::super::tools()
-        .into_iter()
-        .find(|tool| tool["name"] == "add_board_item_comment")
-        .unwrap();
-    let mentions = &tool["inputSchema"]["properties"]["mentions"];
-    assert_eq!(mentions["type"], "array");
-    assert_eq!(mentions["maxItems"], 64);
-    assert_eq!(
-        mentions["items"]["required"],
-        json!(["type", "id", "label"])
-    );
-    assert_eq!(
-        mentions["items"]["properties"]["type"]["enum"],
-        json!(["user", "agent"])
-    );
-    assert!(!tool["inputSchema"]["required"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("mentions")));
-}

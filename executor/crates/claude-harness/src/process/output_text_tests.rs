@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
-
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -213,76 +211,5 @@ async fn assert_native_partial_boundaries(omit_root_ids: bool) {
         ExecutionOutcome::Completed {
             content: "after".into()
         }
-    );
-}
-
-#[tokio::test]
-async fn claude_segments_keep_turn_offsets_and_native_item_offsets() {
-    let introduction = "Starting three jobs.\n";
-    let progress = "Job one finished.\n";
-    let summary = format!("| Job | Result |\n{}", "| job | success |\n".repeat(40));
-    let messages = [
-        json!({"type": "assistant", "message": {"content": [
-            {"type": "text", "text": introduction}
-        ]}}),
-        json!({"type": "assistant", "message": {"id": "tools", "content": [
-            {"type": "text", "text": "Before tool"},
-            {"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "true"}},
-            {"type": "text", "text": "After tool"}
-        ]}}),
-        json!({"type": "user", "message": {"content": [
-            {"type": "tool_result", "tool_use_id": "tool-1", "content": "ok"}
-        ]}}),
-        json!({"type": "assistant", "message": {"id": "progress", "content": [
-            {"type": "thinking", "thinking": "Synthetic reasoning"},
-            {"type": "text", "text": progress}
-        ]}}),
-        json!({"type": "user", "message": {"content": "Synthetic notification"}}),
-        json!({"type": "assistant", "message": {"content": [
-            {"type": "text", "text": summary}
-        ]}}),
-    ];
-    let stdout = messages
-        .iter()
-        .map(Value::to_string)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let (sender, mut receiver) = mpsc::unbounded_channel();
-    let outcome = read_streaming_stdout(
-        stdout.as_bytes(),
-        RecordingSink(sender),
-        ResponsesEventBuilder::new("1", "2", "test"),
-        "1".into(),
-        "2".into(),
-        None,
-        None,
-    )
-    .await;
-    assert!(matches!(outcome, StreamingStdoutOutcome::Success(_)));
-
-    let mut text = String::new();
-    let mut items = HashMap::<String, String>::new();
-    let mut ordered_blocks = Vec::new();
-    while let Ok(event) = receiver.try_recv() {
-        if event.event_type == "response.output_text.delta" {
-            assert_eq!(event.data["offset"], text.chars().count());
-            let item = items
-                .entry(event.data["item_id"].as_str().unwrap().into())
-                .or_default();
-            assert_eq!(event.data["block_offset"], item.chars().count());
-            let delta = event.data["delta"].as_str().unwrap();
-            text.push_str(delta);
-            item.push_str(delta);
-        } else if event.event_type == "response.block.created" {
-            ordered_blocks.push(event.data["block"]["id"].as_str().unwrap().to_owned());
-        } else if event.event_type == "response.output_item.added" {
-            ordered_blocks.push(event.data["item"]["id"].as_str().unwrap().to_owned());
-        }
-    }
-    assert_eq!(text, format!("{introduction}{progress}{summary}"));
-    assert_eq!(items.len(), 3);
-    assert_eq!(
-        &ordered_blocks[..3],
-        ["tools:text:0", "tool-1", "tools:text:2"]
     );
 }

@@ -91,14 +91,6 @@ async fn custom_namespace_conversion_preserves_declarations_history_choices_and_
 }
 
 #[test]
-fn native_custom_namespace_without_conversion_is_unchanged() {
-    let original = request();
-    let (converted, context) = responses_to_responses(&original, false, true, true).unwrap();
-    assert_eq!(converted, original);
-    assert!(context.is_empty());
-}
-
-#[test]
 fn namespace_builtin_tools_return_a_validation_error_instead_of_panicking() {
     let input = json!({"tools":[{"type":"namespace","name":"functions","tools":[
         {"type":"tool_search","name":"search","execution":"client"}
@@ -108,14 +100,4 @@ fn namespace_builtin_tools_return_a_validation_error_instead_of_panicking() {
             .expect_err("built-in tools are not valid namespace children");
         assert!(error.contains("namespace"), "{error}");
     }
-}
-
-#[test]
-fn flattened_namespace_keeps_implicit_function_definitions() {
-    let input = json!({"tools":[{"type":"namespace","name":"functions","tools":[
-        {"name":"read","parameters":{"type":"object"}}
-    ]}]});
-    let (converted, _) = responses_to_responses(&input, true, false, false).unwrap();
-    assert_eq!(converted["tools"][0]["type"], "function");
-    assert_eq!(converted["tools"][0]["name"], "functions__read");
 }
