@@ -3,7 +3,6 @@ import { createDesktopScenario as createExisting } from './collaboration-local-s
 import { createIssueDelegationModel } from '../modules/issue-delegation-model.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
-import { selectWorkspaceIssueAgent } from '../modules/workspace-agent-setup.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
 
@@ -41,6 +40,10 @@ export async function createDesktopScenario(options) {
         row => row.display_name === fixture.agent
       )
       assert.ok(source, 'Reuse the real workspace Agent')
+      const binding = (await rpc('chat_agents.list', { project_id: projectId })).find(
+        row => row.name === source.name && row.namespace === source.namespace
+      )
+      assert.ok(binding, 'Reuse the existing project Agent binding')
       active = true
       await control.command(
         'clickWhenEnabled',
@@ -56,12 +59,14 @@ export async function createDesktopScenario(options) {
       await control.command('fill', scoped('cloud-todo-detail-description'), {
         value: '检查项目并简洁汇报核实后的结果。',
       })
-      await selectWorkspaceIssueAgent(
-        control,
-        scoped('cloud-todo-create-assignee'),
-        source.id,
-        options.uiTimeoutMs,
-        'create'
+      await control.command('clickWhenEnabled', scoped('cloud-todo-create-assignee'))
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="cloud-todo-create-assignee-option-agent:${binding.id}"]`
+      )
+      await control.command(
+        'waitFor',
+        `${scoped('cloud-todo-create-assignee')}[data-value="agent:${binding.id}"]`
       )
       await control.command('clickWhenEnabled', scoped('cloud-todo-create-confirm'))
       await control.command('waitFor', scoped('collaboration-issue-detail'), { text: MARKER })
