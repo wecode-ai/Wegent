@@ -5,10 +5,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { publishedUpgradePolicies } from './lib/published-upgrade-policies.mjs'
-import { mirrorMacosUpgradePolicy } from './lib/upgrade-evidence.mjs'
+import { mirrorMacosUpgradePolicy, releasePublicationChannels } from './lib/upgrade-evidence.mjs'
 
 export async function mirrorMacosUpgradePolicies(
-  { assets, channel, repository },
+  { assets, channel, repository, policy = {} },
   execute = execFileSync
 ) {
   if (!assets || !['stable', 'beta'].includes(channel) || !repository)
@@ -18,7 +18,7 @@ export async function mirrorMacosUpgradePolicies(
     { repository, platform: 'macos', arch: 'x64' },
     execute
   )
-  for (const targetChannel of channel === 'stable' ? ['stable', 'beta'] : ['beta']) {
+  for (const targetChannel of releasePublicationChannels(channel, policy)) {
     const arm = JSON.parse(
       await readFile(join(assets, `upgrade-policy-${targetChannel}-macos-arm64.json`), 'utf8')
     )
@@ -41,5 +41,8 @@ export async function mirrorMacosUpgradePolicies(
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [assets, channel, repository] = process.argv.slice(2)
-  await mirrorMacosUpgradePolicies({ assets, channel, repository })
+  const policy = JSON.parse(
+    await readFile(new URL('../upgrade-policy.json', import.meta.url), 'utf8')
+  )
+  await mirrorMacosUpgradePolicies({ assets, channel, repository, policy })
 }

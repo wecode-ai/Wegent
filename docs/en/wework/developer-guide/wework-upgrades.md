@@ -356,7 +356,7 @@ assertion budget.
 
 `wework/upgrade-policy.json` declares only the product's minimum source constraint; no per-release source list is maintained. For each platform, architecture, and target channel, release jobs read the published catalog and retain the previous release's `minSourceVersion` as the fixed baseline X, bounded below by the repository constraint. Stable catalogs contain only Stable versions and floors. Beta catalogs may contain both Stable and Beta and can bootstrap from Stable when Beta has no history. Stable never imports Beta sources or edges.
 
-The 0.6.8 release permits upgrades from stable 0.6.7, with the repository minimum set to 0.6.7. Stable still selects only stable sources. Lowering the minimum does not establish compatibility: publication still requires real delivered-package upgrade and rollback verification.
+Stable 0.6.7 must first upgrade to the stable 0.6.8 bridge, which preserves the old session format, before entering the new runtime. The new target's repository minimum is 0.6.8; the bridge branch's minimum is 0.6.7. Stable still selects only stable sources, and both hops require real delivered-package upgrade and rollback evidence.
 
 Release preparation validates that the minimum source is no newer than the target before building,
 including explicit version overrides and tag triggers. A stable version sorts after its matching Beta,

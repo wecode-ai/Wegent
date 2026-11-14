@@ -5,7 +5,10 @@ import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { resolve } from 'node:path'
 import { compareWeworkVersions, parseWeworkVersion } from './update-channel-manifests.mjs'
-import { validateReleaseUpgradeTarget } from './lib/upgrade-evidence.mjs'
+import {
+  releasePublicationChannels,
+  validateReleaseUpgradeTarget,
+} from './lib/upgrade-evidence.mjs'
 
 const STABLE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 const BETA_VERSION_PATTERN = /^\d+\.\d+\.\d+-beta\.[1-9]\d*$/
@@ -137,6 +140,14 @@ async function main() {
     githubRefName: process.env.GITHUB_REF_NAME || '',
     publishRelease: process.env.PUBLISH_RELEASE === 'true',
   })
+  releasePublicationChannels(result.channel, policy)
+  if (policy.releasePurpose === 'bridge') {
+    const metadata = JSON.parse(
+      await readFile(new URL('../electron/package.json', import.meta.url), 'utf8')
+    )
+    if (metadata.weworkAfterStopPreparation !== undefined)
+      throw new Error('A bridge cannot require stopped migration')
+  }
   const output = [
     `value=${result.version}`,
     `release_tag=${result.releaseTag}`,

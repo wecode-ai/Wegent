@@ -1026,10 +1026,15 @@ jobs:
               --clobber
           }
 
-          publish_channel "$RELEASE_CHANNEL"
-          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
-            publish_channel beta
-          fi
+          channels="$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { releasePublicationChannels } from "./wework/scripts/lib/upgrade-evidence.mjs";
+            const policy = JSON.parse(readFileSync("wework/upgrade-policy.json", "utf8"));
+            console.log(releasePublicationChannels(process.env.RELEASE_CHANNEL, policy).join("\n"));
+          ')"
+          while IFS= read -r channel; do
+            publish_channel "$channel"
+          done <<< "$channels"
 
       - name: Promote stable release to latest
         if: needs.prepare-release.outputs.channel == 'stable'
