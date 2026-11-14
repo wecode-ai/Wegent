@@ -25,7 +25,7 @@ const expectedCounts: Record<string, number> = {
   'tasks/executor-workspace-recovery.spec.ts': 1,
   'tasks/pipeline-session-archive.spec.ts': 5,
   'tasks/claude-background-lifecycle.spec.ts': 5,
-  'tasks/provider-native-claudecode.spec.ts': 3,
+  'tasks/provider-native-claudecode.spec.ts': 4,
   'tasks/shell-reference-cancel.spec.ts': 1,
   'collaboration/collaboration-agent-execution.spec.ts': 1,
   'collaboration/issue-dispatch-executor.spec.ts': 4,
@@ -128,6 +128,11 @@ describe('Executor scheduling boundaries', () => {
     expect(
       identities.has(
         'tasks/provider-native-claudecode.spec.ts:cloud ClaudeCode discovers and invokes static and lazy connector tools without keywords'
+      )
+    ).toBe(true)
+    expect(
+      identities.has(
+        'tasks/provider-native-claudecode.spec.ts:cloud ClaudeCode retains compact access to a keyword-preloaded long lazy identity'
       )
     ).toBe(true)
     expect(
