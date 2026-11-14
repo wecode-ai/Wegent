@@ -37,7 +37,11 @@ export function handleArchivedTaskInteractionModel(body, response) {
 
 /** Exercise real archival after the inbox has cached an unanswered question. */
 export async function verifyArchivedTaskInteractionCleanup(control, timeoutMs) {
-  // The preceding multi-window flow can detach the initial fixed task tab.
+  // Open the preceding handled question through its history entry.
+  await control.command('clickWhenEnabled', `${PAGE} [data-testid="interactions-history"]`)
+  await control.command('waitFor', `${PAGE} [data-testid="interactions-history-count"]`, {
+    visible: true,
+  })
   await control.command('clickWhenEnabled', `${PAGE} [data-testid="interaction-open-original"]`)
   const newTask = `${ORIGINAL} [data-testid="new-chat-button"]`
   await control.command('waitFor', newTask, { visible: true })

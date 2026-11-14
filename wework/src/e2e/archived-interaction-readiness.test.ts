@@ -16,11 +16,15 @@ function fixture(state: 'ready' | 'loading', failure?: Error) {
   const waiting = createBarrier()
   const refreshed = createBarrier()
   let archived = false
+  let historyReady = false
   let refreshClicks = 0
   const control = {
     readyCount: 1,
     awaitReadyAfter: vi.fn(async () => ({})),
     command: vi.fn(async (action: string, selector: string, options?: unknown) => {
+      if (action === 'waitFor' && selector.includes('interactions-history-count'))
+        historyReady = true
+      if (selector.includes('interaction-open-original')) expect(historyReady).toBe(true)
       if (selector.includes('interactions-refresh')) {
         expect(archived).toBe(true)
         expect(action).toBe('clickWhenEnabled')
@@ -67,6 +71,10 @@ test.each(['ready', 'loading'] as const)(
       refreshed.release()
     }
     await verification
+    expect(control.command).toHaveBeenCalledWith(
+      'clickWhenEnabled',
+      expect.stringContaining('[data-testid="interactions-history"]')
+    )
     expect(refreshClicks()).toBe(1)
     expect(
       control.command.mock.calls.filter(
