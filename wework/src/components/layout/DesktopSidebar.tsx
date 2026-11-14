@@ -2598,17 +2598,15 @@ function ProjectItem({
                 <ChevronRight
                   data-testid={`project-collapsed-hover-indicator-${project.id}`}
                   className={cn(
-                    'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
-                    !expanded &&
-                      'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
+                    'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))]',
+                    !expanded && 'group-hover/project:block group-focus-within/project:block'
                   )}
                 />
                 <ChevronDown
                   data-testid={`project-expanded-hover-indicator-${project.id}`}
                   className={cn(
-                    'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
-                    expanded &&
-                      'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
+                    'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))]',
+                    expanded && 'group-hover/project:block group-focus-within/project:block'
                   )}
                 />
               </span>
@@ -2621,7 +2619,7 @@ function ProjectItem({
               className="pointer-events-auto absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right transition-opacity group-hover/project:opacity-0 group-focus-within/project:opacity-0"
             />
           )}
-          <div className="pointer-events-none absolute right-1 top-1/2 z-[70] flex w-[58px] shrink-0 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+          <div className="pointer-events-none absolute inset-y-0 right-1 flex w-[58px] shrink-0 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
             <ActionMenu
               ariaLabel={t('workbench.project_actions', '项目操作')}
               testId={`project-menu-${project.id}`}
