@@ -38,6 +38,10 @@ platform keychain/keystore; access tokens stay in memory.
 
 ## Development
 
+Keyboard and chat layout: [中文](../docs/zh/wework/mobile-keyboard-layout.md) ·
+[English](../docs/en/wework/mobile-keyboard-layout.md). Native keyboard dependencies require an
+application rebuild; a Metro reload or Expo export alone does not install native modules.
+
 ```bash
 cd wework-mobile
 pnpm install

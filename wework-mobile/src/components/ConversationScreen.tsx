@@ -1,4 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
+import { useKeyboardChatComposerInset } from '@legendapp/list/keyboard'
+import type { LegendListRef } from '@legendapp/list/react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
@@ -16,6 +18,7 @@ import {
   type LayoutChangeEvent,
 } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
+import { KeyboardGestureArea, KeyboardStickyView } from 'react-native-keyboard-controller'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { reduceModelControlLayer } from '@/domain/modelControlPresentation'
@@ -27,7 +30,6 @@ import {
   reasoningLabel,
   resolvedReasoningEffort,
 } from '@/domain/modelSelection'
-import { composerBottomSpacing } from '@/domain/conversationLayout'
 import {
   conversationSelectorVisible,
   type ConversationSelector,
@@ -50,7 +52,6 @@ import type {
 import { ChatComposer, type ComposerSendOptions } from './ChatComposer'
 import { ConversationEdgeMask } from './ConversationEdgeMask'
 import { ConversationHeader, CONVERSATION_HEADER_HEIGHT } from './ConversationHeader'
-import { KeyboardSafeView, useKeyboardVisible } from './KeyboardSafeInput'
 import { MessageList } from './MessageList'
 import { QuickModelDismissLayer, QuickModelSelector } from './QuickModelSelector'
 import { groupModelsByFamily } from '../../../packages/collaboration/src/controls/model-ui'
@@ -102,7 +103,12 @@ interface ConversationScreenProps {
 export function ConversationScreen(props: ConversationScreenProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
-  const keyboardVisible = useKeyboardVisible()
+  const listRef = useRef<LegendListRef>(null)
+  const composerRef = useRef<View>(null)
+  const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
+    listRef,
+    composerRef
+  )
   const [modelControlLayer, dispatchModelControl] = useReducer(reduceModelControlLayer, 'composer')
   const [selector, setSelector] = useState<ConversationSelector>(null)
   const [useWorktree, setUseWorktree] = useState(false)
@@ -134,9 +140,8 @@ export function ConversationScreen(props: ConversationScreenProps) {
     ? [modelLabel(props.model), reasoningLabel(selectedEffort)].filter(Boolean).join(' ')
     : '选择模型'
   const quickModelVisible = modelControlLayer === 'quick'
-  const composerBottom = composerBottomSpacing(insets.bottom, keyboardVisible)
+  const composerBottom = 8
   const headerTop = Math.max(insets.top, 8)
-  const messageBottomInset = bottomControlHeight + 20
   const messageTopInset = headerTop + headerHeight + 16
   const topMaskHeight = messageTopInset + 24
   const bottomMaskHeight = bottomControlHeight + 24
@@ -221,10 +226,18 @@ export function ConversationScreen(props: ConversationScreenProps) {
     closeModelControls()
     props.onOpenAdvancedModel()
   }, [closeModelControls, props.onOpenAdvancedModel])
-  const handleBottomControlLayout = useCallback((event: LayoutChangeEvent) => {
-    const height = event.nativeEvent.layout.height
-    setBottomControlHeight(current => (current === height ? current : height))
-  }, [])
+  const openSelector = (next: ConversationSelector) => {
+    Keyboard.dismiss()
+    setSelector(next)
+  }
+  const handleBottomControlLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onComposerLayout(event)
+      const height = event.nativeEvent.layout.height
+      setBottomControlHeight(current => (current === height ? current : height))
+    },
+    [onComposerLayout]
+  )
   const handleHeaderLayout = useCallback((event: LayoutChangeEvent) => {
     const height = event.nativeEvent.layout.height
     setHeaderHeight(current => (current === height ? current : height))
@@ -264,14 +277,23 @@ export function ConversationScreen(props: ConversationScreenProps) {
     )
 
   return (
-    <KeyboardSafeView style={[styles.screen, { backgroundColor: theme.colors.background }]}>
-      {props.isNew ? (
-        <View style={styles.emptyContent} />
-      ) : (
+    <View
+      style={[
+        styles.screen,
+        { backgroundColor: theme.colors.background, paddingBottom: insets.bottom },
+      ]}
+    >
+      <KeyboardGestureArea
+        interpolator="ios"
+        offset={bottomControlHeight}
+        style={styles.screen}
+        textInputNativeID="chat-input"
+      >
         <MessageList
-          bottomInset={messageBottomInset}
-          conversationId={conversationKey}
-          entryRevision={props.entryRevision}
+          dataKey={`${conversationKey}:${props.entryRevision}`}
+          contentInsetEndAdjustment={contentInsetEndAdjustment}
+          keyboardOffset={insets.bottom}
+          listRef={listRef}
           hasMoreBefore={props.hasMoreMessagesBefore}
           loading={props.loading}
           loadingMoreBefore={props.loadingMoreMessagesBefore}
@@ -279,54 +301,61 @@ export function ConversationScreen(props: ConversationScreenProps) {
           onRequestUserInputSubmit={props.onRequestUserInputSubmit}
           onRequestUserInputSkip={props.onRequestUserInputSkip}
           running={props.sending || props.running}
+          configuration={
+            props.isNew ? (
+              <View style={styles.configuration} testID="new-chat-configuration">
+                <ConfigurationRow
+                  icon="laptop-outline"
+                  label={configurationDevice?.name ?? '暂无在线 Executor'}
+                  onPress={() => openSelector('device')}
+                  testID="new-chat-device"
+                />
+                <ConfigurationRow
+                  disabled={!configurationDevice}
+                  icon={props.selectedWorkspace ? 'folder-outline' : 'chatbubbles-outline'}
+                  label={props.selectedProjectName ?? '选择项目'}
+                  onPress={() => openSelector('project')}
+                  testID="new-chat-project"
+                />
+                {props.selectedWorkspace ? (
+                  <>
+                    <ConfigurationRow
+                      icon="laptop-outline"
+                      label={useWorktree ? '创建 Git 工作树' : '在本地工作'}
+                      onPress={() => openSelector('workMode')}
+                      testID="new-chat-work-mode"
+                    />
+                    {branch ? (
+                      <ConfigurationRow
+                        disabled={!useWorktree}
+                        icon="git-branch-outline"
+                        label={branch}
+                        onPress={() => openSelector('workMode')}
+                        testID="new-chat-branch"
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+              </View>
+            ) : undefined
+          }
           onLoadMoreBefore={props.onLoadMoreMessagesBefore}
           topInset={messageTopInset}
         />
-      )}
+      </KeyboardGestureArea>
 
       {props.isNew ? null : (
         <>
           <ConversationEdgeMask edge="top" height={topMaskHeight} />
-          <ConversationEdgeMask edge="bottom" height={bottomMaskHeight} />
+          <KeyboardStickyView
+            pointerEvents="none"
+            offset={{ opened: insets.bottom }}
+            style={[styles.bottomControlDock, { bottom: insets.bottom }]}
+          >
+            <ConversationEdgeMask edge="bottom" height={bottomMaskHeight} />
+          </KeyboardStickyView>
         </>
       )}
-      {props.isNew ? (
-        <View style={[styles.configuration, { bottom: bottomControlHeight + 10 }]}>
-          <ConfigurationRow
-            icon="laptop-outline"
-            label={configurationDevice?.name ?? '暂无在线 Executor'}
-            onPress={() => setSelector('device')}
-            testID="new-chat-device"
-          />
-          <ConfigurationRow
-            disabled={!configurationDevice}
-            icon={props.selectedWorkspace ? 'folder-outline' : 'chatbubbles-outline'}
-            label={props.selectedProjectName ?? '选择项目'}
-            onPress={() => setSelector('project')}
-            testID="new-chat-project"
-          />
-          {props.selectedWorkspace ? (
-            <>
-              <ConfigurationRow
-                icon="laptop-outline"
-                label={useWorktree ? '创建 Git 工作树' : '在本地工作'}
-                onPress={() => setSelector('workMode')}
-                testID="new-chat-work-mode"
-              />
-              {branch ? (
-                <ConfigurationRow
-                  disabled={!useWorktree}
-                  icon="git-branch-outline"
-                  label={branch}
-                  onPress={() => setSelector('workMode')}
-                  testID="new-chat-branch"
-                />
-              ) : null}
-            </>
-          ) : null}
-        </View>
-      ) : null}
-
       {quickModelVisible ? <QuickModelDismissLayer onDismiss={closeModelControls} /> : null}
 
       <ConversationHeader
@@ -346,11 +375,14 @@ export function ConversationScreen(props: ConversationScreenProps) {
         title={props.currentTitle}
       />
 
-      <View
+      <KeyboardStickyView
         collapsable={false}
         onLayout={handleBottomControlLayout}
         pointerEvents="box-none"
-        style={styles.bottomControlDock}
+        ref={composerRef}
+        offset={{ opened: insets.bottom }}
+        style={[styles.bottomControlDock, { bottom: insets.bottom }]}
+        testID="conversation-composer-dock"
       >
         <View
           accessibilityElementsHidden={quickModelVisible}
@@ -395,7 +427,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
                 accessibilityLabel={`权限模式：${permissionModeLabel(props.permissionMode)}`}
                 accessibilityRole="button"
                 hitSlop={{ left: 6, right: 6 }}
-                onPress={() => setSelector('permission')}
+                onPress={() => openSelector('permission')}
                 style={({ pressed }) => [styles.permissionAction, pressed && styles.pressed]}
                 testID={props.isNew ? 'new-chat-permission' : 'conversation-permission'}
               >
@@ -437,7 +469,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
             onSelectEffort={reasoning => selectModelOptions({ ...props.modelOptions, reasoning })}
           />
         ) : null}
-      </View>
+      </KeyboardStickyView>
 
       <ChoiceSheet
         choices={choices}
@@ -446,7 +478,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
         title={selectorTitle(selector)}
         visible={conversationSelectorVisible(selector, props.isNew)}
       />
-    </KeyboardSafeView>
+    </View>
   )
 }
 
@@ -617,6 +649,7 @@ function ChoiceSheet({
           </Text>
           <ScrollView
             contentContainerStyle={styles.sheetContent}
+            keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
             {choices.map(choice => (
@@ -723,15 +756,11 @@ function selectorTitle(selector: ConversationSelector): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  emptyContent: { flex: 1 },
   headerOverlay: { position: 'absolute', left: 0, right: 0 },
   bottomControlDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   composerLayer: { width: '100%' },
   collapsedComposer: { display: 'none' },
   configuration: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
     paddingHorizontal: 24,
     gap: 2,
   },

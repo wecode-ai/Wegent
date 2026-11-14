@@ -1,3 +1,4 @@
+import { getDocumentAsync } from 'expo-document-picker'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +8,7 @@ import { ChatComposer } from './ChatComposer'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
-vi.mock('expo-document-picker', () => ({}))
+vi.mock('expo-document-picker', () => ({ getDocumentAsync: vi.fn() }))
 vi.mock('expo-image-picker', () => ({}))
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
@@ -16,6 +17,7 @@ vi.mock('react-native', () => ({
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
+  TextInput: 'TextInput',
   View: 'View',
 }))
 vi.mock('react-native-paper', () => ({
@@ -32,7 +34,6 @@ vi.mock('react-native-paper', () => ({
     },
   }),
 }))
-vi.mock('./KeyboardSafeInput', () => ({ KeyboardSafeTextInput: 'TextInput' }))
 vi.mock('./LiquidGlass', () => ({
   LiquidGlassGroup: 'LiquidGlassGroup',
   LiquidGlassSurface: 'LiquidGlassSurface',
@@ -45,6 +46,7 @@ describe('ChatComposer', () => {
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     focus.mockClear()
+    vi.mocked(getDocumentAsync).mockReset()
   })
 
   const element = (testID: string) =>
@@ -97,6 +99,47 @@ describe('ChatComposer', () => {
     expect(element('composer-model').props.accessibilityLabel).toContain('GPT-6 High')
     await act(() => element('composer-model').props.onPress())
     expect(props.onSelectModel).toHaveBeenCalledOnce()
+  })
+
+  it('allows attachment removal through its horizontal scroller while editing the draft', async () => {
+    vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        {
+          name: 'notes.txt',
+          uri: 'file:///notes.txt',
+          mimeType: 'text/plain',
+          size: 12,
+          lastModified: 1,
+        },
+      ],
+    })
+    const props = await render({
+      onUploadAttachment: vi.fn().mockResolvedValue({
+        id: 7,
+        filename: 'notes.txt',
+        fileSize: 12,
+        mimeType: 'text/plain',
+      }),
+    })
+    await act(async () => {
+      renderer.root.findByType('ComposerContextMenu' as never).props.onPickDocument()
+    })
+    await act(() => {
+      element('chat-input').props.onFocus()
+      element('chat-input').props.onChangeText('Keep this draft')
+    })
+    const strip = renderer.root.findByType('ScrollView' as never)
+    expect(strip.props.horizontal).toBe(true)
+    expect(strip.props.keyboardShouldPersistTaps).toBe('handled')
+    await act(() => strip.findByProps({ testID: 'composer-attachment-remove-7' }).props.onPress())
+    expect(renderer.root.findAllByProps({ testID: 'composer-attachment-remove-7' })).toHaveLength(0)
+    expect(element('chat-input').props.value).toBe('Keep this draft')
+    await act(() => element('chat-send').props.onPress())
+    expect(props.onSend).toHaveBeenCalledWith('Keep this draft', {
+      attachmentIds: [],
+      pursueGoal: false,
+    })
   })
 
   it.each([true, false])('clears the draft only after an accepted send (%s)', async accepted => {

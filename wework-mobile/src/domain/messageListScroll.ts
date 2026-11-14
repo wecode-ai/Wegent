@@ -1,67 +1,14 @@
-export interface MessageListScrollMetrics {
-  contentOffset: { y: number }
-  contentSize: { height: number }
-  layoutMeasurement: { height: number }
-}
+import type { ChatMessage } from '@/types/runtime'
 
-interface ResolveMessageListFollowOptions {
-  currentlyFollowing: boolean
-  metrics: MessageListScrollMetrics
-  userInitiated: boolean
-}
-
-export type MessageListFollowEvent =
-  | { type: 'conversation-entered' }
-  | {
-      type: 'scroll-position-changed'
-      metrics: MessageListScrollMetrics
-      userInitiated: boolean
-    }
-
-const BOTTOM_FOLLOW_THRESHOLD = 48
-const LOAD_EARLIER_THRESHOLD = 48
-
-export function messageListBottomOffset(contentHeight: number, viewportHeight: number): number {
-  return Math.max(0, contentHeight - viewportHeight)
-}
-
-export function isNearMessageListBottom(metrics: MessageListScrollMetrics): boolean {
-  const distance =
-    metrics.contentSize.height - metrics.layoutMeasurement.height - metrics.contentOffset.y
-  return distance <= BOTTOM_FOLLOW_THRESHOLD
-}
-
-export function shouldLoadEarlierMessages(
-  metrics: MessageListScrollMetrics,
-  hasMoreBefore: boolean,
-  loadingMoreBefore: boolean,
-  userInitiated: boolean
+/** Matches the PC follow-up contract without treating prepended history as a send. */
+export function hasAppendedUserMessage(
+  previous: readonly ChatMessage[],
+  messages: readonly ChatMessage[]
 ): boolean {
-  return (
-    userInitiated &&
-    hasMoreBefore &&
-    !loadingMoreBefore &&
-    metrics.contentOffset.y <= LOAD_EARLIER_THRESHOLD
-  )
-}
-
-export function resolveMessageListFollow({
-  currentlyFollowing,
-  metrics,
-  userInitiated,
-}: ResolveMessageListFollowOptions): boolean {
-  if (!userInitiated) return currentlyFollowing
-  return isNearMessageListBottom(metrics)
-}
-
-export function reduceMessageListFollow(
-  currentlyFollowing: boolean,
-  event: MessageListFollowEvent
-): boolean {
-  if (event.type === 'conversation-entered') return true
-  return resolveMessageListFollow({
-    currentlyFollowing,
-    metrics: event.metrics,
-    userInitiated: event.userInitiated,
-  })
+  if (previous === messages) return false
+  const previousTail = previous.at(-1)
+  if (!previousTail) return messages.at(-1)?.role === 'user'
+  const tailIndex = messages.findIndex(message => message.id === previousTail.id)
+  if (tailIndex < 0) return false
+  return messages.slice(tailIndex + 1).some(message => message.role === 'user')
 }

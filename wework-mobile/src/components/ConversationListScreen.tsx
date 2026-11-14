@@ -10,8 +10,10 @@ import {
   Pressable,
   RefreshControl,
   StyleSheet,
+  TextInput,
   View,
 } from 'react-native'
+import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-controller'
 import { ActivityIndicator, Portal, Text, useTheme, type MD3Theme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -30,7 +32,6 @@ import type {
 } from '@/types/runtime'
 import { LiquidGlassButton, LiquidGlassSurface } from './LiquidGlass'
 import { WorkbenchSidebar } from './WorkbenchSidebar'
-import { KeyboardSafeTextInput, KeyboardSafeView, useKeyboardVisible } from './KeyboardSafeInput'
 
 interface ConversationListScreenProps {
   userLabel?: string
@@ -82,7 +83,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
   const focused = useIsFocused()
-  const keyboardVisible = useKeyboardVisible()
+  const keyboardVisible = useKeyboardState(state => state.isVisible)
   const styles = useMemo(() => createStyles(theme.colors), [theme.colors])
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const [actionsVisible, setActionsVisible] = useState(false)
@@ -273,6 +274,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       contentContainerStyle={styles.deviceStrip}
       data={displayedDevices}
       horizontal
+      keyboardShouldPersistTaps="handled"
       keyExtractor={device => device.device_id}
       ListHeaderComponent={
         <Pressable
@@ -323,7 +325,13 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   )
 
   return (
-    <KeyboardSafeView style={[styles.panel, { paddingTop: drawerTopPadding(insets.top) }]}>
+    <KeyboardAvoidingView
+      automaticOffset
+      behavior="height"
+      enabled={focused}
+      style={[styles.panel, { paddingTop: drawerTopPadding(insets.top) }]}
+      testID="conversation-list-keyboard"
+    >
       <View style={styles.header}>
         {searchVisible ? (
           <LiquidGlassSurface
@@ -333,7 +341,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
           >
             <View style={styles.searchBox}>
               <Ionicons color={theme.colors.onSurfaceVariant} name="search-outline" size={25} />
-              <KeyboardSafeTextInput
+              <TextInput
                 accessibilityLabel="搜索聊天记录"
                 autoFocus
                 onChangeText={props.onSearch}
@@ -617,7 +625,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
           </LiquidGlassButton>
         </View>
       ) : null}
-    </KeyboardSafeView>
+    </KeyboardAvoidingView>
   )
 }
 

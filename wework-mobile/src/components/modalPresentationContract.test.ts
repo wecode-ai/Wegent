@@ -38,7 +38,7 @@ describe('modal presentation contract', () => {
   it('collapses the composer without unmounting its draft state', () => {
     const conversationSource = sourceModules['./ConversationScreen.tsx']
     const dockSource = conversationSource.slice(
-      conversationSource.indexOf('style={styles.bottomControlDock}'),
+      conversationSource.indexOf('testID="conversation-composer-dock"'),
       conversationSource.indexOf('<ChoiceSheet')
     )
     const composerIndex = dockSource.indexOf('<ChatComposer')

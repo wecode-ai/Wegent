@@ -3,14 +3,22 @@ import * as DocumentPicker from 'expo-document-picker'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import * as ImagePicker from 'expo-image-picker'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native'
+import {
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 
 import { composerLogoUrl, composerMessage } from '@/domain/composerApps'
 import { chatComposerPresentation } from '@/domain/chatComposerPresentation'
 import type { RuntimeAttachment, RuntimeComposerApp, RuntimeUploadAsset } from '@/types/runtime'
 import { ComposerContextMenu, type ComposerMenuAnchor } from './ComposerContextMenu'
-import { KeyboardSafeTextInput, type KeyboardSafeTextInputHandle } from './KeyboardSafeInput'
 import { LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
 
 export interface ComposerSendOptions {
@@ -98,7 +106,7 @@ export function ChatComposer({
   const [menuVisible, setMenuVisible] = useState(false)
   const [menuAnchor, setMenuAnchor] = useState(emptyMenuAnchor)
   const wrapperRef = useRef<View>(null)
-  const inputRef = useRef<KeyboardSafeTextInputHandle>(null)
+  const inputRef = useRef<TextInput>(null)
   const consumedFocusRequest = useRef(0)
   useEffect(() => {
     if (disabled || focusRequest <= consumedFocusRequest.current || !inputRef.current) return
@@ -331,6 +339,7 @@ export function ChatComposer({
             <ScrollView
               contentContainerStyle={styles.attachmentStrip}
               horizontal
+              keyboardShouldPersistTaps="handled"
               showsHorizontalScrollIndicator={false}
             >
               {attachments.map(attachment => (
@@ -414,7 +423,8 @@ export function ChatComposer({
             style={[styles.inputRow, expanded ? styles.expandedInputRow : styles.compactInputRow]}
           >
             {expanded ? null : attachmentButton}
-            <KeyboardSafeTextInput
+            <TextInput
+              nativeID="chat-input"
               accessibilityLabel="消息"
               editable={!disabled}
               multiline

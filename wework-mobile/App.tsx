@@ -2,8 +2,9 @@ import type { GlassColorScheme } from 'expo-glass-effect'
 import { StatusBar } from 'expo-status-bar'
 import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { useMemo, useRef, useState } from 'react'
-import { StyleSheet, useColorScheme } from 'react-native'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Keyboard, StyleSheet, useColorScheme } from 'react-native'
+import { KeyboardProvider } from 'react-native-keyboard-controller'
 import { Dialog, PaperProvider, Portal, Snackbar, Text, useTheme } from 'react-native-paper'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 
@@ -16,6 +17,7 @@ import { ModelPickerScreen } from '@/components/ModelPickerDialog'
 import { ProjectDialog } from '@/components/ProjectDialog'
 import { useMobileRuntime } from '@/hooks/useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
+import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
 import { darkTheme, lightTheme } from '@/theme'
 
 type RuntimeStackParamList = {
@@ -27,32 +29,37 @@ type RuntimeStackParamList = {
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
 
 export default function App() {
+  useEffect(() => {
+    recordChatLayoutDiagnostic(JSON.stringify({ event: 'appStart', timestamp: Date.now() }))
+  }, [])
   const auth = useWegentAuth()
   const colorScheme = useColorScheme()
   const theme = colorScheme === 'dark' ? darkTheme : lightTheme
 
   return (
     <SafeAreaProvider>
-      <PaperProvider theme={theme}>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-        {auth.status === 'authenticated' && auth.config ? (
-          <RuntimeApplication
-            key={`${auth.config.apiBaseUrl}:${auth.user?.id ?? 0}`}
-            config={auth.config}
-            onLogout={auth.logout}
-            userId={auth.user?.id ?? 0}
-            userLabel={auth.user?.full_name || auth.user?.user_name || ''}
-          />
-        ) : (
-          <AuthorizationScreen
-            backendUrl={auth.backendUrl}
-            error={auth.error}
-            onBackendUrlChange={auth.setBackendUrl}
-            onAuthorize={auth.login}
-            status={auth.status}
-          />
-        )}
-      </PaperProvider>
+      <KeyboardProvider>
+        <PaperProvider theme={theme}>
+          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          {auth.status === 'authenticated' && auth.config ? (
+            <RuntimeApplication
+              key={`${auth.config.apiBaseUrl}:${auth.user?.id ?? 0}`}
+              config={auth.config}
+              onLogout={auth.logout}
+              userId={auth.user?.id ?? 0}
+              userLabel={auth.user?.full_name || auth.user?.user_name || ''}
+            />
+          ) : (
+            <AuthorizationScreen
+              backendUrl={auth.backendUrl}
+              error={auth.error}
+              onBackendUrlChange={auth.setBackendUrl}
+              onAuthorize={auth.login}
+              status={auth.status}
+            />
+          )}
+        </PaperProvider>
+      </KeyboardProvider>
     </SafeAreaProvider>
   )
 }
@@ -77,6 +84,10 @@ function RuntimeApplication({
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const pendingComposerFocus = useRef(false)
+  const openSettings = () => {
+    Keyboard.dismiss()
+    setSettingsVisible(true)
+  }
 
   const workspaces = useMemo(
     () =>
@@ -116,7 +127,10 @@ function RuntimeApplication({
                   runtime.startNewConversation(workspace)
                   navigation.navigate('conversation')
                 }}
-                onNewProject={() => setProjectVisible(true)}
+                onNewProject={() => {
+                  Keyboard.dismiss()
+                  setProjectVisible(true)
+                }}
                 onSearch={setSearch}
                 onRefresh={runtime.refresh}
                 onSelectAllDevices={runtime.selectAllDevices}
@@ -129,7 +143,7 @@ function RuntimeApplication({
                 onSelectDevice={deviceId => {
                   runtime.selectDevice(deviceId)
                 }}
-                onSettings={() => setSettingsVisible(true)}
+                onSettings={openSettings}
                 search={search}
                 refreshing={runtime.refreshing}
                 selectedDeviceId={runtime.selectedDeviceId}
@@ -176,7 +190,7 @@ function RuntimeApplication({
                   onBack={navigation.goBack}
                   onLoadApps={runtime.loadComposerApps}
                   onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
-                  onMore={() => setSettingsVisible(true)}
+                  onMore={openSettings}
                   onNewConversation={() => {
                     runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
                     setComposerFocusRequest(current => current + 1)
