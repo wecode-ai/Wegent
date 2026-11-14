@@ -25,6 +25,7 @@ import type {
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { isRequestUserInputBlock, requestUserInputPayloadKey } from '@/domain/requestUserInput'
 import { RequestUserInputCard, type RequestUserInputHandlers } from './RequestUserInputCard'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
 interface UserInputPresentation extends RequestUserInputHandlers {
   pendingInputKeys?: ReadonlySet<string>
@@ -215,17 +216,51 @@ function isRequestUserInputRow(row: MessageDisplayRow): boolean {
 }
 
 function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  const preview = useMobileFilePreview()
+  const theme = useTheme()
   return (
     <View style={styles.generatedImageGallery} testID="generated-image-gallery">
-      {images.map(image => (
-        <Image
-          accessibilityLabel={image.alt}
+      {images.map((image, index) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`预览 ${image.alt}`}
+          disabled={!preview}
           key={image.id}
-          resizeMode="contain"
-          source={{ uri: image.uri }}
-          style={styles.generatedImage}
-          testID="generated-image"
-        />
+          onPress={() => {
+            const name = `generated-image-${index + 1}${image.fileExtension}`
+            if (image.workspaceFile)
+              preview?.openAttachment({
+                id: index + 1,
+                filename: name,
+                file_size: image.size,
+                mime_type: image.mimeType,
+                status: 'ready',
+                file_extension: image.fileExtension,
+                created_at: '',
+                workspace_file: image.workspaceFile,
+                image_width: image.width,
+                image_height: image.height,
+              })
+            else if (image.src) preview?.openFile({ kind: 'image', dataUri: image.src, name })
+          }}
+          testID={`generated-image-preview-${image.id}`}
+        >
+          {image.src ? (
+            <Image
+              accessibilityLabel={image.alt}
+              resizeMode="contain"
+              source={{ uri: image.src }}
+              style={styles.generatedImage}
+              testID="generated-image"
+            />
+          ) : (
+            <View style={[styles.generatedImage, styles.generatedImagePlaceholder]}>
+              <Ionicons color={theme.colors.onSurfaceVariant} name="image-outline" size={36} />
+              <Text numberOfLines={2}>{image.alt}</Text>
+              <Text variant="labelMedium">查看生成图片</Text>
+            </View>
+          )}
+        </Pressable>
       ))}
     </View>
   )
@@ -339,6 +374,8 @@ function ContextCompactionActivity({ block }: { block: ChatToolBlock }) {
 
 function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
+  const paths = toolFilePaths(block)
   const error = block.status === 'error'
   return (
     <View style={styles.activityDetailRow}>
@@ -347,15 +384,39 @@ function ToolActivityDetail({ block }: { block: ChatToolBlock }) {
         name={error ? 'alert-circle-outline' : 'checkmark-circle-outline'}
         size={16}
       />
-      <Text numberOfLines={3} style={{ color: theme.colors.onSurfaceVariant }} variant="bodyMedium">
-        {toolDetail(block)}
-      </Text>
+      {paths.length ? (
+        <View style={{ flex: 1, gap: 4 }}>
+          {paths.map(path => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${path}`}
+              disabled={!preview?.target}
+              key={path}
+              onPress={() => preview?.openWorkspaceFile(path)}
+              testID={`tool-file-preview-${block.id}-${path}`}
+            >
+              <Text numberOfLines={3} style={{ color: theme.colors.onSurfaceVariant }}>
+                {path}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <Text
+          numberOfLines={3}
+          style={{ color: theme.colors.onSurfaceVariant }}
+          variant="bodyMedium"
+        >
+          {toolDetail(block)}
+        </Text>
+      )}
     </View>
   )
 }
 
 function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
   const [expanded, setExpanded] = useState(false)
   const running = block.status !== 'done' && block.status !== 'error'
   return (
@@ -381,7 +442,19 @@ function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
       </Pressable>
       {expanded
         ? block.fileChanges.files.map(file => (
-            <View style={styles.fileActivityRow} key={`${file.oldPath ?? ''}:${file.path}`}>
+            <Pressable
+              style={styles.fileActivityRow}
+              key={`${file.oldPath ?? ''}:${file.path}`}
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${file.path}`}
+              disabled={!preview || (!block.fileChanges.source && !preview.target)}
+              onPress={() =>
+                block.fileChanges.source
+                  ? preview?.openChanges(block.fileChanges.source, file.path)
+                  : preview?.openWorkspaceFile(file.path)
+              }
+              testID={`process-file-preview-${block.id}-${file.path}`}
+            >
               <Ionicons
                 color={theme.colors.onSurfaceVariant}
                 name="document-text-outline"
@@ -404,7 +477,7 @@ function FileChangesActivityGroup({ block }: { block: ChatFileChangesBlock }) {
                   </Text>
                 </View>
               ) : null}
-            </View>
+            </Pressable>
           ))
         : null}
     </View>
@@ -572,6 +645,12 @@ const styles = StyleSheet.create({
   deletions: { color: '#ef4444' },
   generatedImageGallery: { width: '100%', gap: 10, marginBottom: 12 },
   generatedImage: { width: '100%', height: 280, borderRadius: 12 },
+  generatedImagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 16,
+  },
   contextCompaction: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 4 },
   contextDivider: { height: StyleSheet.hairlineWidth, flex: 1 },
   contextLabel: { flexShrink: 1, fontWeight: '600' },

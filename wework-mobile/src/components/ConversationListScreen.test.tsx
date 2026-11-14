@@ -1,5 +1,5 @@
 import React from 'react'
-import { View } from 'react-native'
+import { FlatList, Keyboard, StyleSheet, View } from 'react-native'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,7 +8,12 @@ import { ConversationListScreen } from './ConversationListScreen'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const environment = vi.hoisted(() => ({ platform: 'ios', backHandlers: new Set<() => boolean>() }))
+const environment = vi.hoisted(() => ({
+  platform: 'ios',
+  backHandlers: new Set<() => boolean>(),
+  keyboardVisible: false,
+  safeAreaBottom: 34,
+}))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('@react-navigation/native', () => ({ useIsFocused: () => true }))
@@ -17,7 +22,7 @@ vi.mock('expo-glass-effect', () => ({
   isGlassEffectAPIAvailable: () => false,
 }))
 vi.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, bottom: environment.safeAreaBottom, left: 0, right: 0 }),
 }))
 vi.mock('react-native', () => ({
   Platform: {
@@ -40,6 +45,7 @@ vi.mock('react-native', () => ({
   },
   processColor: () => null,
   View: 'View',
+  TextInput: 'TextInput',
   Pressable: 'Pressable',
   RefreshControl: 'RefreshControl',
   FlatList: ({
@@ -74,10 +80,10 @@ vi.mock('react-native-paper', () => ({
   }),
 }))
 vi.mock('./WorkbenchSidebar', () => ({ WorkbenchSidebar: 'WorkbenchSidebar' }))
-vi.mock('./KeyboardSafeInput', () => ({
-  KeyboardSafeView: 'KeyboardSafeView',
-  KeyboardSafeTextInput: 'KeyboardSafeTextInput',
-  useKeyboardVisible: () => false,
+vi.mock('react-native-keyboard-controller', () => ({
+  KeyboardAvoidingView: 'KeyboardAvoidingView',
+  useKeyboardState: (selector: (state: { isVisible: boolean }) => unknown) =>
+    selector({ isVisible: environment.keyboardVisible }),
 }))
 
 const computer: DeviceInfo = {
@@ -99,6 +105,8 @@ describe('new conversation controls', () => {
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     environment.platform = 'ios'
+    environment.keyboardVisible = false
+    vi.clearAllMocks()
   })
 
   async function render(
@@ -109,34 +117,37 @@ describe('new conversation controls', () => {
     const onNewConversation = vi.fn()
     const onSearch = vi.fn()
     const onSettings = vi.fn()
+    const onSelectDevice = vi.fn()
+    const element = (
+      <ConversationListScreen
+        devices={devices}
+        conversations={conversations}
+        workspaces={workspaces}
+        currentAddress={null}
+        selectedDeviceId="app-record-11"
+        allDevicesSelected={false}
+        search=""
+        loading={false}
+        refreshing={false}
+        onSearch={onSearch}
+        onRefresh={vi.fn()}
+        onSelectDevice={onSelectDevice}
+        onSelectAllDevices={vi.fn()}
+        onSelectConversation={vi.fn()}
+        onNewConversation={onNewConversation}
+        onNewProject={vi.fn()}
+        onSettings={onSettings}
+      />
+    )
     await act(() => {
-      renderer = create(
-        <ConversationListScreen
-          devices={devices}
-          conversations={conversations}
-          workspaces={workspaces}
-          currentAddress={null}
-          selectedDeviceId="app-record-11"
-          allDevicesSelected={false}
-          search=""
-          loading={false}
-          refreshing={false}
-          onSearch={onSearch}
-          onRefresh={vi.fn()}
-          onSelectDevice={vi.fn()}
-          onSelectAllDevices={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onNewConversation={onNewConversation}
-          onNewProject={vi.fn()}
-          onSettings={onSettings}
-        />
-      )
+      renderer = create(element)
     })
+    const rerender = () => act(() => renderer.update(React.cloneElement(element)))
     const pressable = (testID: string) =>
       renderer.root.findAll(
         node => node.type === ('Pressable' as React.ElementType) && node.props.testID === testID
       )[0]!
-    return { onNewConversation, onSearch, onSettings, pressable }
+    return { onNewConversation, onSearch, onSettings, onSelectDevice, pressable, rerender }
   }
 
   it('opens a new conversation with only the opted-in computer present', async () => {
@@ -197,7 +208,7 @@ describe('new conversation controls', () => {
     const { onSearch, pressable } = await render([computer])
     expect(renderer.root.findAllByProps({ testID: 'conversation-search' })).toHaveLength(0)
     await act(() => pressable('drawer-search-toggle').props.onPress())
-    const search = renderer.root.findByType('KeyboardSafeTextInput' as never)
+    const search = renderer.root.findByType('TextInput' as never)
     expect(search.props.autoFocus).toBe(true)
     expect(renderer.root.findAllByProps({ testID: 'drawer-new-conversation' })).toHaveLength(0)
     await act(() => search.props.onChangeText('project'))
@@ -205,7 +216,56 @@ describe('new conversation controls', () => {
     await act(() => pressable('drawer-search-toggle').props.onPress())
     expect(onSearch).toHaveBeenLastCalledWith('')
     expect(pressable('drawer-new-conversation')).toBeDefined()
+    expect(Keyboard.dismiss).toHaveBeenCalledOnce()
   })
+
+  it('allows device filtering through its horizontal list while the search keyboard is open', async () => {
+    environment.keyboardVisible = true
+    const otherDevice = { ...computer, id: 12, device_id: 'app-record-12' }
+    const { onSelectDevice, pressable } = await render([computer, otherDevice])
+    await act(() => pressable('drawer-search-toggle').props.onPress())
+    const deviceStrip = renderer.root
+      .findAllByType(FlatList)
+      .find(node => node.props.testID === 'device-carousel')!
+    expect(deviceStrip.props.horizontal).toBe(true)
+    expect(deviceStrip.props.keyboardShouldPersistTaps).toBe('handled')
+    await act(() => pressable('device-option-app-record-12').props.onPress())
+    expect(onSelectDevice).toHaveBeenCalledExactlyOnceWith('app-record-12')
+    expect(Keyboard.dismiss).not.toHaveBeenCalled()
+    expect(renderer.root.findByType('TextInput' as never).props.testID).toBe('conversation-search')
+  })
+
+  it.each(['ios', 'android'])(
+    'keeps search and its results inside one keyboard-resized viewport on %s',
+    async platform => {
+      environment.platform = platform
+      environment.keyboardVisible = true
+      const { pressable, rerender } = await render([computer])
+      await act(() => pressable('drawer-search-toggle').props.onPress())
+
+      const viewport = renderer.root.findByType('KeyboardAvoidingView' as never)
+      expect(viewport.props.behavior).toBe('height')
+      expect(viewport.props.automaticOffset).toBe(true)
+      expect(viewport.props.enabled).toBe(true)
+      expect(viewport.findByType('TextInput' as never).props.testID).toBe('conversation-search')
+      expect(viewport.findAllByProps({ testID: 'conversation-list' }).length).toBeGreaterThan(0)
+      expect(renderer.root.findAllByType('KeyboardAvoidingView' as never)).toHaveLength(1)
+
+      await act(() => pressable('drawer-search-toggle').props.onPress())
+      const dockBottom = () =>
+        StyleSheet.flatten(
+          renderer.root.find(
+            node =>
+              node.type === ('View' as never) &&
+              StyleSheet.flatten(node.props.style)?.bottom !== undefined
+          ).props.style
+        ).bottom
+      expect(dockBottom()).toBe(8)
+      environment.keyboardVisible = false
+      await rerender()
+      expect(dockBottom()).toBe(environment.safeAreaBottom)
+    }
+  )
 
   it('opens the Wework sidebar even before a conversation is selected', async () => {
     const { onSettings, pressable } = await render([computer])

@@ -1,5 +1,4 @@
 import { base64 } from '@scure/base'
-import { gunzipSync, strFromU8 } from 'fflate'
 import {
   createSocketClient,
   type AuthenticatedSocketClient,
@@ -20,12 +19,18 @@ import type {
   DeviceInfo,
 } from '@/types/runtime'
 import type { RuntimeSessionConfig } from './backendConfig'
+import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
+import { mobileAbortError, throwIfAborted } from './mobileAbort'
+import type {
+  RuntimeDeviceCommandRequest,
+  RuntimeDeviceCommandResponse,
+} from '@/types/runtimeCommand'
 
 const RUNTIME_NAMESPACE = '/wework-runtime'
 const RUNTIME_EVENT = 'runtime:event'
 const REQUEST_EVENT = 'runtime:request'
 const TRANSCRIPT_TIMEOUT_MS = 15_000
-const LIST_TIMEOUT_MS = 75_000
+const REQUEST_TIMEOUT_MS = 75_000
 export const TRANSCRIPT_PAGE_SIZE = 5
 const TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE = 1
 const COMPRESSED_ENCODING = 'gzip+base64+json'
@@ -145,9 +150,51 @@ export class RuntimeStream {
       'runtime.tasks.list',
       {},
       deviceId,
-      LIST_TIMEOUT_MS
+      REQUEST_TIMEOUT_MS
     )
     return adaptRuntimeWorkListResponse(response, deviceId, deviceName)
+  }
+
+  async executeCommand(
+    deviceId: string,
+    input: RuntimeDeviceCommandRequest,
+    signal?: AbortSignal
+  ): Promise<RuntimeDeviceCommandResponse> {
+    const requested = input.timeout_seconds
+    const timeoutSeconds =
+      typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+        ? Math.min(Math.ceil(requested), 600)
+        : 75
+    const startedAt = Date.now()
+    const details = { deviceId, commandKey: input.command_key }
+    console.info('[MobileRuntime] Device command started', details)
+    try {
+      const result = await this.request<RuntimeDeviceCommandResponse>(
+        'device.execute_command',
+        { ...input },
+        deviceId,
+        timeoutSeconds * 1000 + 10_000,
+        { signal, relayTimeoutSeconds: timeoutSeconds }
+      )
+      if (!result || typeof result.success !== 'boolean')
+        throw new Error('设备返回了无效的命令响应')
+      console.info('[MobileRuntime] Device command finished', {
+        ...details,
+        elapsedMs: Date.now() - startedAt,
+        success: result.success,
+        exitCode: result.exit_code,
+        truncated: result.stdout_truncated === true,
+      })
+      return result
+    } catch (error) {
+      console.warn('[MobileRuntime] Device command failed', {
+        ...details,
+        elapsedMs: Date.now() - startedAt,
+        code: isRecord(error) && typeof error.code === 'string' ? error.code : undefined,
+        name: error instanceof Error ? error.name : 'Error',
+      })
+      throw error
+    }
   }
 
   dispose(): void {
@@ -223,18 +270,42 @@ export class RuntimeStream {
     this.listener(event)
   }
 
-  private async request<T>(
+  async request<T>(
     method: string,
     params: Record<string, unknown>,
     deviceId: string,
-    timeoutMs: number
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+    options: { signal?: AbortSignal; relayTimeoutSeconds?: number } = {}
   ): Promise<T> {
+    const { signal } = options
+    throwIfAborted(signal)
     await this.client.ensureConnected()
+    throwIfAborted(signal)
     const requestId = `mobile-runtime-${nextRequestId++}`
     return new Promise<T>((resolve, reject) => {
+      let settled = false
+      const cleanup = () => {
+        clearTimeout(timeout)
+        signal?.removeEventListener('abort', onAbort)
+        this.client.socket.off('disconnect', onDisconnect)
+      }
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+      const onAbort = () => fail(mobileAbortError())
+      const onDisconnect = () => fail(new Error(`${method} 连接已断开`))
       const timeout = setTimeout(() => {
-        reject(new Error(`${method} 请求超时`))
+        fail(new Error(`${method} 请求超时`))
       }, timeoutMs)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.client.socket.on('disconnect', onDisconnect)
+      if (!this.client.socket.connected) {
+        onDisconnect()
+        return
+      }
 
       this.client.socket.emit(
         REQUEST_EVENT,
@@ -244,23 +315,24 @@ export class RuntimeStream {
           method,
           params,
           device_id: deviceId,
-          timeout_seconds: Math.ceil(timeoutMs / 1000),
+          timeout_seconds: options.relayTimeoutSeconds ?? Math.ceil(timeoutMs / 1000),
         },
         (ack: RuntimeRequestAck<T> | undefined) => {
-          clearTimeout(timeout)
+          if (settled) return
           if (!ack) {
-            reject(new Error(`${method} 返回了空响应`))
+            fail(new Error(`${method} 返回了空响应`))
             return
           }
           if (ack.ok === false || ack.error) {
-            reject(new Error(runtimeRequestError(ack)))
+            fail(Object.assign(new Error(runtimeRequestError(ack)), { code: ack.error?.code }))
             return
           }
-          try {
-            resolve(decodeRuntimeResult(ack.result))
-          } catch (error) {
-            reject(error)
-          }
+          void decodeRuntimeResult(ack.result).then(result => {
+            if (settled) return
+            settled = true
+            cleanup()
+            resolve(result)
+          }, fail)
         }
       )
     })
@@ -285,9 +357,9 @@ export class RuntimeStream {
   }
 }
 
-function decodeRuntimeResult<T>(result: T | undefined): T {
+async function decodeRuntimeResult<T>(result: T | undefined): Promise<T> {
   if (!isCompressedResult(result)) return result as T
-  const json = strFromU8(gunzipSync(base64.decode(result.payload)))
+  const json = await decodeMobileTranscriptGzip([base64.decode(result.payload)])
   return JSON.parse(json) as T
 }
 

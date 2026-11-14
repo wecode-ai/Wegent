@@ -1,4 +1,5 @@
 import React from 'react'
+import { Keyboard } from 'react-native'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatToolBlock, RequestUserInputPayload } from '@/types/runtime'
@@ -8,6 +9,7 @@ import { RequestUserInputCard } from './RequestUserInputCard'
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
   AccessibilityInfo: { setAccessibilityFocus: vi.fn() },
+  Keyboard: { dismiss: vi.fn() },
   findNodeHandle: (node: { testID?: string } | null) =>
     node?.testID === 'request-user-input-sheet-heading' ? 2 : node ? 1 : null,
   Platform: { OS: 'ios' },
@@ -16,6 +18,7 @@ vi.mock('react-native', () => ({
     visible ? <>{children}</> : null,
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
+  TextInput: 'TextInput',
   View: 'View',
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
   useWindowDimensions: () => ({ width: 393, height: 852 }),
@@ -38,10 +41,8 @@ vi.mock('react-native-paper', () => ({
     },
   }),
 }))
-vi.mock('./KeyboardSafeInput', () => ({
-  KeyboardSafeView: 'KeyboardSafeView',
-  KeyboardSafeTextInput: 'TextInput',
-  useKeyboardVisible: () => false,
+vi.mock('react-native-keyboard-controller', () => ({
+  KeyboardAwareScrollView: 'KeyboardAwareScrollView',
 }))
 vi.mock('./ModelControlSurface', () => ({ ModelControlSurface: 'ModelControlSurface' }))
 
@@ -77,6 +78,7 @@ describe('native request-user-input card', () => {
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     vi.useRealTimers()
+    vi.clearAllMocks()
   })
   async function render(
     overrides: Partial<React.ComponentProps<typeof RequestUserInputCard>> = {}
@@ -97,6 +99,7 @@ describe('native request-user-input card', () => {
   }
   async function open() {
     await act(() => find('request-user-input-open')[0]!.props.onPress())
+    expect(Keyboard.dismiss).toHaveBeenCalled()
   }
 
   it('opens a question sheet and selects a radio option without sending it automatically', async () => {
@@ -131,6 +134,30 @@ describe('native request-user-input card', () => {
     expect(props.onRequestUserInputSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ answers: { choice: { answers: ['Different direction'] } } })
     )
+  })
+
+  it('keeps every question and the submit actions in one keyboard-aware scroll area', async () => {
+    await render({
+      block: {
+        ...block,
+        renderPayload: {
+          ...payload,
+          questions: [
+            ...payload.questions!,
+            { id: 'details', question: 'Describe the details', is_other: true },
+          ],
+        },
+      },
+    })
+    await open()
+    const scroll = find('request-user-input-form-scroll')[0]!
+    expect(scroll.type).toBe('KeyboardAwareScrollView')
+    expect(scroll.props.keyboardShouldPersistTaps).toBe('handled')
+    expect(scroll.props.bottomOffset).toBeGreaterThan(0)
+    expect(scroll.findByProps({ testID: 'request-user-input-custom-choice' })).toBeDefined()
+    expect(scroll.findByProps({ testID: 'request-user-input-custom-details' })).toBeDefined()
+    expect(scroll.findByProps({ testID: 'request-user-input-submit' })).toBeDefined()
+    expect(scroll.findAllByType('ScrollView' as never)).toHaveLength(0)
   })
 
   it('keeps failed answers editable and exposes an explicit retry', async () => {

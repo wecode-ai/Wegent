@@ -445,6 +445,10 @@
     "./templates": {
       "types": "./src/templates/index.ts",
       "import": "./src/templates/index.ts"
+    },
+    "./files/XMindPreview": {
+      "types": "./src/files/XMindPreview.tsx",
+      "import": "./src/files/XMindPreview.tsx"
     }
   },
   "scripts": {
@@ -504,6 +508,7 @@
     "tailwind-merge": "^3.6.0",
     "unified": "^11.0.5",
     "yaml": "2.9.0",
-    "@pierre/highlights": "0.4.0"
+    "@pierre/highlights": "0.4.0",
+    "jszip": "3.10.1"
   }
 }

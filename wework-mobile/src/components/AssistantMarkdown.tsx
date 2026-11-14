@@ -4,8 +4,13 @@ import {
   type AccessibilityLabels,
   type MarkdownStyle,
 } from 'react-native-enriched-markdown'
-import { Linking, StyleSheet } from 'react-native'
-import { useTheme } from 'react-native-paper'
+import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native'
+import { Text, useTheme } from 'react-native-paper'
+import { useMobileFilePreview } from './files/FilePreviewContext'
+import {
+  classifyMarkdownLink,
+  extractMarkdownLinks,
+} from '../../../packages/collaboration/src/markdown/assistantMarkdownLinks'
 
 interface AssistantMarkdownProps {
   children: string
@@ -34,6 +39,19 @@ export function AssistantMarkdown({
   streaming = false,
 }: AssistantMarkdownProps) {
   const theme = useTheme()
+  const filePreview = useMobileFilePreview()
+  const imageFileLinks = useMemo(() => {
+    const images = new Map<string, { href: string; title: string }>()
+    for (const link of extractMarkdownLinks(children)) {
+      const target = classifyMarkdownLink(link.href)
+      if (
+        target.kind === 'file' &&
+        /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|tiff?|webp)(?:[?#]|$)/i.test(target.path)
+      )
+        images.set(link.href, link)
+    }
+    return [...images.values()]
+  }, [children])
   const markdownStyle = useMemo<MarkdownStyle>(() => {
     const textColor = muted ? theme.colors.onSurfaceVariant : theme.colors.onBackground
     const subtleSurface = theme.colors.elevation.level2
@@ -184,30 +202,56 @@ export function AssistantMarkdown({
   }, [muted, theme.colors, theme.dark])
 
   return (
-    <EnrichedMarkdownText
-      accessibilityLabels={ACCESSIBILITY_LABELS}
-      containerStyle={styles.container}
-      enableTaskListItemToggle={false}
-      flavor="github"
-      lineBreakStrategyIOS="standard"
-      markdown={children}
-      markdownStyle={markdownStyle}
-      md4cFlags={MARKDOWN_FLAGS}
-      onLinkPress={({ url }) => {
-        void Linking.openURL(url).catch(error =>
-          console.warn('Failed to open Markdown link', error)
-        )
-      }}
-      selectable={false}
-      streamingAnimation={streaming}
-      streamingConfig={STREAMING_CONFIG}
-      testID="assistant-markdown"
-      textBreakStrategy="highQuality"
-      writingDirection="first-strong"
-    />
+    <>
+      <EnrichedMarkdownText
+        accessibilityLabels={ACCESSIBILITY_LABELS}
+        containerStyle={styles.container}
+        enableTaskListItemToggle={false}
+        flavor="github"
+        lineBreakStrategyIOS="standard"
+        markdown={children}
+        markdownStyle={markdownStyle}
+        md4cFlags={MARKDOWN_FLAGS}
+        onLinkPress={({ url }) => {
+          if (filePreview) return filePreview.openLink(url)
+          if (!/^(https?:|mailto:|tel:)/i.test(url)) {
+            Alert.alert('无法打开文件', '当前页面没有可用的文件工作空间。')
+            return
+          }
+          void Linking.openURL(url).catch(error =>
+            Alert.alert('无法打开链接', error instanceof Error ? error.message : String(error))
+          )
+        }}
+        selectable={false}
+        streamingAnimation={streaming}
+        streamingConfig={STREAMING_CONFIG}
+        testID="assistant-markdown"
+        textBreakStrategy="highQuality"
+        writingDirection="first-strong"
+      />
+      {imageFileLinks.length ? (
+        <View style={styles.imageLinks}>
+          {imageFileLinks.map((link, index) => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`预览图片 ${link.title}`}
+              disabled={!filePreview?.target}
+              key={link.href}
+              onPress={() => filePreview?.openLink(link.href)}
+              style={[styles.imageLink, { backgroundColor: theme.colors.elevation.level1 }]}
+              testID={`markdown-image-preview-${index}`}
+            >
+              <Text numberOfLines={2}>预览图片 · {link.title}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </>
   )
 }
 
 const styles = StyleSheet.create({
   container: { width: '100%' },
+  imageLinks: { gap: 8, marginBottom: 12 },
+  imageLink: { borderRadius: 10, padding: 12 },
 })

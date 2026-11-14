@@ -1,8 +1,10 @@
+import { mergeFileChangesSummaries } from './mobileFileChanges'
 import type {
   ChatBlockStatus,
   ChatFileChangesSummary,
   ChatMessage,
   ChatProcessingBlock,
+  ChatSubagentBlock,
   ChatTextItem,
   RuntimeTranscriptMessage,
   RequestUserInputResponse,
@@ -16,6 +18,15 @@ import {
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
 import { runtimeAssistantViewId } from '../../../packages/chat-core/src/runtime-turn-projection'
+import { normalizeTurnFileChanges } from '../../../packages/chat-core/src/turn-file-changes'
+import { normalizeProcessingBlock } from '../../../packages/chat-core/src/runtime-transcript-blocks'
+import { mergeProcessingBlockUpdate } from '../../../packages/chat-core/src/workbench-message-reducer'
+import {
+  finalizeBlocks,
+  isActiveStatus,
+  isTerminalBlockStatus,
+  normalizeBlockStatus,
+} from './mobileProcessingBlocks'
 
 export interface RuntimeStreamEvent {
   name: string
@@ -26,7 +37,10 @@ export type ChatAction =
   | { type: 'replace'; messages: RuntimeTranscriptMessage[] }
   | { type: 'prepend'; messages: RuntimeTranscriptMessage[] }
   | { type: 'merge-latest'; messages: RuntimeTranscriptMessage[] }
-  | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
+  | ({ type: 'optimistic-user' } & Pick<
+      ChatMessage,
+      'id' | 'content' | 'createdAt' | 'attachments'
+    >)
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
   | { type: 'user-delivered'; id: string }
@@ -50,6 +64,10 @@ interface BlockUpdates {
   status?: ChatBlockStatus
   completedAt?: number
   durationMs?: number
+  output?: string
+  summary?: string
+  parentToolUseId?: string
+  agentStatus?: 'running' | 'done' | 'interrupted'
 }
 
 export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
@@ -80,6 +98,7 @@ function reduceChat(state: ChatMessage[], action: ChatAction): ChatMessage[] {
         id: action.id,
         role: 'user',
         content: visibleRuntimeUserMessage(action.content),
+        ...(action.attachments && { attachments: action.attachments }),
         status: 'completed',
         pendingDelivery: true,
         createdAt: action.createdAt,
@@ -122,6 +141,7 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
     ...(turnId && { turnId }),
     content:
       role === 'user' ? visibleRuntimeUserMessage(message.content ?? '') : (message.content ?? ''),
+    ...(message.attachments && { attachments: message.attachments }),
     ...(message.runtimeItems && {
       textItems: message.runtimeItems.flatMap(item =>
         item.type === 'assistant_text' ? [{ id: item.id, content: item.content }] : []
@@ -383,7 +403,16 @@ function blockUpdates(updates: Record<string, unknown>): BlockUpdates {
   const completedAt = finiteNumber(updates.completedAt ?? updates.completed_at)
   const durationMs = finiteNumber(updates.durationMs ?? updates.duration_ms)
   const fileChanges = normalizeFileChanges(updates.fileChanges ?? updates.file_changes)
+  const agentStatus = updates.agentStatus ?? updates.agent_status
   return {
+    ...(typeof updates.output === 'string' && { output: updates.output }),
+    ...(typeof updates.summary === 'string' && { summary: updates.summary }),
+    ...(typeof (updates.parentToolUseId ?? updates.parent_tool_use_id) === 'string' && {
+      parentToolUseId: String(updates.parentToolUseId ?? updates.parent_tool_use_id),
+    }),
+    ...((agentStatus === 'running' || agentStatus === 'done' || agentStatus === 'interrupted') && {
+      agentStatus,
+    }),
     ...(typeof updates.content === 'string' && { content: updates.content }),
     ...(typeof contentDelta === 'string' && { contentDelta }),
     ...(toolInput && { toolInput }),
@@ -408,8 +437,11 @@ function updateBlock(message: ChatMessage, blockId: string, updates: BlockUpdate
   if (!current) return message
   const blocks = (message.blocks ?? []).map(block => {
     if (block.id !== blockId) return block
+    if (block.type === 'subagent')
+      return mergeProcessingBlockUpdate(block, updates) as ChatSubagentBlock
     const status = updates.status ?? block.status
     const timing = {
+      ...(updates.parentToolUseId !== undefined && { parentToolUseId: updates.parentToolUseId }),
       ...(updates.durationMs !== undefined && { durationMs: Math.max(0, updates.durationMs) }),
       ...((updates.completedAt !== undefined || isTerminalBlockStatus(status)) && {
         completedAt:
@@ -533,6 +565,15 @@ function normalizeBlock(
 ): ChatProcessingBlock | null {
   const block = record(value)
   const type = stringValue(block.type)
+  if (type === 'subagent') {
+    const normalized = normalizeProcessingBlock(
+      subtaskId,
+      block,
+      0,
+      fallbackTimestamp || Date.now()
+    )
+    return normalized?.type === 'subagent' ? normalized : null
+  }
   const id = idValue(block.id) ?? idValue(block.tool_use_id) ?? idValue(block.toolUseId)
   if (!type || !id) return null
   const createdAt = timestamp(
@@ -549,6 +590,9 @@ function normalizeBlock(
         : undefined
   const status = normalizeBlockStatus(stringValue(block.status))
   const timing = {
+    ...(typeof (block.parentToolUseId ?? block.parent_tool_use_id) === 'string' && {
+      parentToolUseId: String(block.parentToolUseId ?? block.parent_tool_use_id),
+    }),
     status,
     createdAt,
     ...(durationMs !== undefined && { durationMs: Math.max(0, durationMs) }),
@@ -812,62 +856,7 @@ function fileChangesFromBlocks(
   )
   if (!summaries.length) return undefined
 
-  const files = new Map<string, ChatFileChangesSummary['files'][number]>()
-  for (const summary of summaries) {
-    for (const file of summary.files) {
-      const key = `${file.oldPath ?? ''}\0${file.path}`
-      const current = files.get(key)
-      files.set(
-        key,
-        current
-          ? {
-              ...file,
-              additions: current.additions + file.additions,
-              deletions: current.deletions + file.deletions,
-              binary: current.binary || file.binary,
-            }
-          : file
-      )
-    }
-  }
-  return {
-    fileCount: files.size,
-    additions: summaries.reduce((sum, summary) => sum + summary.additions, 0),
-    deletions: summaries.reduce((sum, summary) => sum + summary.deletions, 0),
-    files: [...files.values()],
-  }
-}
-
-function finalizeBlocks(
-  blocks: ChatProcessingBlock[] | undefined,
-  status: 'done' | 'error'
-): ChatProcessingBlock[] | undefined {
-  return blocks?.map(block =>
-    isTerminalBlockStatus(block.status)
-      ? block
-      : { ...block, status, completedAt: block.completedAt ?? Date.now() }
-  )
-}
-
-function normalizeBlockStatus(status?: string): ChatBlockStatus {
-  const normalized = status
-    ?.trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-  if (normalized === 'generating_arguments') return 'generating_arguments'
-  if (normalized === 'streaming') return 'streaming'
-  if (['done', 'completed', 'complete', 'success', 'succeeded'].includes(normalized ?? ''))
-    return 'done'
-  if (['error', 'failed', 'failure'].includes(normalized ?? '')) return 'error'
-  return 'pending'
-}
-
-function isActiveStatus(status: ChatBlockStatus): boolean {
-  return ['generating_arguments', 'pending', 'streaming'].includes(status)
-}
-
-function isTerminalBlockStatus(status: ChatBlockStatus): boolean {
-  return status === 'done' || status === 'error'
+  return mergeFileChangesSummaries(summaries)
 }
 
 function clearError(message: ChatMessage): ChatMessage {
@@ -882,7 +871,12 @@ function upsertMessage(state: ChatMessage[], message: ChatMessage): ChatMessage[
 }
 
 function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
-  return [...new Map(messages.map(message => [message.id, message])).values()]
+  const unique = new Map<string, ChatMessage>()
+  for (const message of messages) {
+    const attachments = message.attachments ?? unique.get(message.id)?.attachments
+    unique.set(message.id, attachments ? { ...message, attachments } : message)
+  }
+  return [...unique.values()]
 }
 
 export function appendDelta(current: string, delta: string, offset?: number): string {
@@ -942,7 +936,13 @@ function normalizeFileChanges(value: unknown): ChatFileChangesSummary | undefine
   const additions = finiteNumber(summary.additions) ?? 0
   const deletions = finiteNumber(summary.deletions) ?? 0
   if (!fileCount && !additions && !deletions && !files.length) return undefined
-  return { fileCount, additions, deletions, files }
+  return {
+    fileCount,
+    additions,
+    deletions,
+    files,
+    source: normalizeTurnFileChanges(summary.source ?? value),
+  }
 }
 
 function parseRecord(value: unknown): Record<string, unknown> | undefined {
