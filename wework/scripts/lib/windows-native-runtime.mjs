@@ -1,7 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 const VC_RUNTIME = /^(?:vcruntime|msvcp|concrt)\d+(?:_[a-z0-9_]+)?\.dll$/i
+
+/** VC++ runtime imports of a PE binary, lowercase. */
+export function windowsVcRuntimeImports(buffer) {
+  return windowsPeImports(buffer).filter(name => VC_RUNTIME.test(name))
+}
 
 /**
  * Add static CRT linking for a Windows Rust target.
@@ -72,11 +77,17 @@ export function windowsPeImports(buffer) {
 export async function assertWindowsNativeRuntimeIndependent(root) {
   const violations = []
   for (const executable of await windowsExecutables(root)) {
-    const runtimeImports = windowsPeImports(await readFile(executable)).filter(name =>
-      VC_RUNTIME.test(name)
+    const runtimeImports = windowsVcRuntimeImports(await readFile(executable))
+    if (!runtimeImports.length) continue
+    // App-local deployment does not depend on the machine-wide redist: the
+    // standard Windows DLL search order checks the executable's directory
+    // first. Imports satisfied there are accepted.
+    const siblings = new Set(
+      (await readdir(dirname(executable))).map(name => name.toLowerCase())
     )
-    if (runtimeImports.length) {
-      violations.push(`${relative(root, executable)} imports ${runtimeImports.join(', ')}`)
+    const missing = runtimeImports.filter(name => !siblings.has(name))
+    if (missing.length) {
+      violations.push(`${relative(root, executable)} imports ${missing.join(', ')}`)
     }
   }
   if (violations.length) {

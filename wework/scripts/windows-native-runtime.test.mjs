@@ -57,6 +57,17 @@ test('accepts Windows executables that do not import the VC runtime', async t =>
   await assert.doesNotReject(assertWindowsNativeRuntimeIndependent(root))
 })
 
+test('accepts VC runtime imports satisfied by an app-local DLL copy', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-native-runtime-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'bin'))
+  await writeFile(join(root, 'bin', 'dependent.exe'), peBinary(['VCRUNTIME140.dll']))
+  await writeFile(join(root, 'bin', 'vcruntime140.dll'), 'bundled runtime bytes')
+  await assert.doesNotReject(assertWindowsNativeRuntimeIndependent(root))
+  await rm(join(root, 'bin', 'vcruntime140.dll'))
+  await assert.rejects(assertWindowsNativeRuntimeIndependent(root), /machine-wide VC\+\+ runtime/)
+})
+
 test('rejects every executable that depends on the machine-wide VC runtime', async t => {
   const root = await mkdtemp(join(tmpdir(), 'wework-native-runtime-'))
   t.after(() => rm(root, { recursive: true, force: true }))

@@ -3,13 +3,14 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
-import { chmod, cp, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
 import { acquireProcessLock } from './lib/process-lock.mjs'
+import { windowsVcRuntimeImports } from './lib/windows-native-runtime.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -230,6 +231,48 @@ async function ensureExtractedTarget(tarballPath, targetRoot, binaryPath, codeMo
   }
 }
 
+/**
+ * The upstream win-arm64 package ships codex-path helpers (rg.exe) linked
+ * against the VC++ runtime while only its x64 siblings are static. Deploy the
+ * package's own hash-pinned vcruntime140.dll next to the importing
+ * executables; Windows searches the executable directory before the machine
+ * path, so no machine-wide redist is required.
+ */
+export async function ensureWindowsAppLocalCrt(targetRoot, target) {
+  if (!target.includes('windows')) return
+  const vendorRoot = join(targetRoot, 'vendor', target)
+  const pathDir = join(vendorRoot, 'codex-path')
+  if (!(await pathExists(pathDir))) return
+  const importing = []
+  for (const name of await readdir(pathDir)) {
+    if (!name.toLowerCase().endsWith('.exe')) continue
+    const runtimeImports = windowsVcRuntimeImports(await readFile(join(pathDir, name)))
+    if (runtimeImports.length) importing.push({ name, runtimeImports })
+  }
+  if (!importing.length) return
+  const voiceBin = join(vendorRoot, 'codex-resources', 'voice', 'bin')
+  const manifestPath = join(vendorRoot, 'codex-resources', 'voice', 'windows-crt.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  const expectedDllSha256 = manifest[target]?.dllSha256
+  if (!expectedDllSha256) {
+    throw new Error(`Codex windows-crt manifest does not pin ${target}`)
+  }
+  const present = new Set((await readdir(pathDir)).map(name => name.toLowerCase()))
+  const required = new Set(importing.flatMap(item => item.runtimeImports))
+  for (const dll of required) {
+    if (present.has(dll)) continue
+    const source = join(voiceBin, dll)
+    const digest = createHash('sha256').update(await readFile(source)).digest('hex')
+    if (digest !== expectedDllSha256) {
+      throw new Error(
+        `Bundled ${dll} does not match the Codex windows-crt manifest for ${target}`
+      )
+    }
+    await copyFile(source, join(pathDir, dll))
+    console.log(`Deployed app-local ${dll} for Codex ${target}`)
+  }
+}
+
 async function exposeTarget(targetRoot, outputTargetRoot) {
   await rm(outputTargetRoot, { recursive: true, force: true })
   await mkdir(dirname(outputTargetRoot), { recursive: true })
@@ -340,6 +383,7 @@ async function prepareTarget(target, entry) {
   await ensureTarballIntegrity(tarballPath, entry, target)
 
   await ensureExtractedTarget(tarballPath, targetRoot, binaryPath, codeModeHostPath)
+  await ensureWindowsAppLocalCrt(targetRoot, target)
   await exposeTarget(targetRoot, outputTargetRoot)
   await writeFile(
     join(outputTargetRoot, 'WEGENT_CODEX_BINARY.json'),
