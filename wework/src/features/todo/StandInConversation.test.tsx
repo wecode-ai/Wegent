@@ -44,6 +44,40 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
   },
 }))
 
+it('loads and creates collaboration history separately using the same assistant identity', async () => {
+  const conversation = vi.fn(async () => ({
+    deviceId: 'device',
+    taskId: 'stand-in-chat-7-primary-collaboration',
+  }))
+  const readTask = vi.fn(async () => ({ success: true }))
+  const api = { readTask, conversation } as unknown as StandInExecutorApi
+  render(<StandInConversation api={api} userId={7} deviceId="device" scope="collaboration" />)
+  await screen.findByTestId('conversation-pane')
+  expect(readTask).toHaveBeenCalledWith('device', 'stand-in-chat-7-primary-collaboration')
+  const message = 'Discuss collaboration'
+  const options: RuntimeTaskComposerCreateOptions = {
+    attachments: [],
+    executionModel: {},
+    optimisticUserMessage: createRuntimeUserMessage(message, []),
+    onError: vi.fn(),
+    onRuntimeTaskOptimisticOpen: vi.fn(),
+  }
+  await act(async () => {
+    await mocks.createTask!(message, options)
+  })
+  expect(conversation).toHaveBeenCalledWith(
+    7,
+    'device',
+    message,
+    undefined,
+    expect.objectContaining({ conversationScope: 'collaboration' })
+  )
+  expect(options.onRuntimeTaskOptimisticOpen).toHaveBeenCalledWith({
+    deviceId: 'device',
+    taskId: 'stand-in-chat-7-primary-collaboration',
+  })
+})
+
 it('loads the model catalogs only when the mounted conversation becomes active', async () => {
   const catalog = vi.fn(async () => ({
     models: [

@@ -647,7 +647,7 @@ async fn send_bridge_request(
     }
     let response = request.send().await.map_err(|error| BridgeRequestError {
         message: format!(
-            "Embedded browser bridge is unavailable at {}: {error}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
+            "Embedded browser bridge is unavailable at {}: {error:#}. The Wework built-in browser panel may be closed or restarting; ask the user to open the browser panel, then retry.",
             identity.base_url
         ),
         refresh_identity: true,

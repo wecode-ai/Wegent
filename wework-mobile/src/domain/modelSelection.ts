@@ -4,6 +4,11 @@ import type {
   ModelSelectionConfig,
   UnifiedModel,
 } from '@/types/runtime'
+import {
+  getControlsForModel,
+  getModelDisplayLabel,
+  normalizeModelOptions,
+} from '../../../packages/collaboration/src/controls/model-ui'
 
 const CLOUD_NAMESPACE = 'weworkCloudModelNamespace'
 const CLOUD_RESOURCE_USER = 'weworkCloudModelResourceUserId'
@@ -45,16 +50,7 @@ export function defaultModelOptions(model: UnifiedModel): ModelOptions {
 }
 
 export function modelLabel(model: UnifiedModel): string {
-  const ui = record(model.config?.ui)
-  const label = stringValue(ui.modelLabel) ?? model.displayName ?? model.modelId ?? model.name
-  const codexMatch = label.match(/^gpt[-\s]+(\d+(?:\.\d+)?)(?:[-\s]+(.+))?$/i)
-  if (!codexMatch) return label
-  const suffix = codexMatch[2]
-    ?.split(/[-\s]+/)
-    .filter(Boolean)
-    .map(word => word[0]?.toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ')
-  return [codexMatch[1], suffix].filter(Boolean).join(' ')
+  return getModelDisplayLabel(model)
 }
 
 export function reasoningEfforts(model: UnifiedModel): string[] {
@@ -95,8 +91,8 @@ export function reasoningLabel(value: string | undefined): string {
     low: '低',
     medium: '中',
     high: '高',
-    xhigh: '超高',
-    max: '最大',
+    xhigh: '极高',
+    max: 'Max',
     ultra: 'Ultra',
   }
   return value ? (labels[value] ?? value) : ''
@@ -109,14 +105,7 @@ export function speedLabel(value: string | undefined): string {
 }
 
 export function modelSupportsSpeed(model: UnifiedModel | null): boolean {
-  if (!model) return false
-  const ui = record(model.config?.ui)
-  const controls = ui.controls ?? ui.supportedControls
-  if (Array.isArray(controls)) return controls.includes('speed')
-  if (!controls || typeof controls !== 'object') return false
-  const speed = (controls as Record<string, unknown>).speed
-  if (typeof speed === 'boolean') return speed
-  return Boolean(speed && typeof speed === 'object' && !Array.isArray(speed))
+  return getControlsForModel(model).some(control => control.id === 'speed')
 }
 
 export function executionFields(
@@ -128,9 +117,15 @@ export function executionFields(
     ...selectedOptions,
     collaborationMode: selectedOptions.collaborationMode ?? 'default',
   }
+  const speed = normalizeModelOptions(model, selectedOptions).speed
+  if (speed) options.speed = speed
+  else delete options.speed
   copyStringConfig(model, options, 'codexProviderId')
   copyStringConfig(model, options, 'codexProviderName')
   copyStringConfig(model, options, 'codexProviderType')
+  if (model.type === 'runtime' && model.runtime?.family === 'codex' && model.runtime.provider) {
+    options.runnerModelProvider = model.runtime.provider
+  }
   if (model.namespace) options[CLOUD_NAMESPACE] = model.namespace
   if (typeof model.resourceUserId === 'number') {
     options[CLOUD_RESOURCE_USER] = String(model.resourceUserId)

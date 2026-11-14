@@ -40,6 +40,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
+from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
@@ -50,6 +51,7 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.ghost_capabilities import MergedGhostCapabilities
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
@@ -60,6 +62,7 @@ from app.services.loop_item_executions.service import (
     TaskContext,
     loop_item_execution_service,
 )
+from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import (
     bot_config,
@@ -3960,3 +3963,45 @@ def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(
         .all()
     )
     assert len(rows) == 1
+
+
+def test_invited_resource_projection_keeps_private_configuration_out_of_issue_responses(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    item = LoopItem(
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Invited Agent",
+        description="Work",
+        status="todo",
+        priority="medium",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "resource_participants": [
+                {
+                    "kind": "agent",
+                    "id": 12,
+                    "name": "Reviewer",
+                    "instructions": "Private configuration",
+                    "team_id": 12,
+                }
+            ]
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+    test_db.refresh(item)
+    values = loop_item_service.response_values(test_db, item, test_user.id)
+    response = LoopItemResponse.model_validate(values).model_dump()
+    assert response["resource_participants"] == [
+        {"kind": "agent", "id": 12, "name": "Reviewer"}
+    ]
+
+    access = require_cloud_project_role(test_db, project.id, test_user.id)
+    context = LoopItemReadContext.load(test_db, [item], test_user.id, access)
+    context.visible_ids.clear()
+    hidden = loop_item_service.response_values(
+        test_db, item, test_user.id, access, read_context=context
+    )
+    assert hidden["resource_participants"] == []

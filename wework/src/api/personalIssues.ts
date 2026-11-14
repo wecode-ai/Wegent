@@ -3,6 +3,16 @@ import type { CloudProject } from './deliveries'
 
 export type PersonalIssueOrder = 'attention' | 'activity' | 'assignment' | 'priority'
 export type PersonalIssueScope = 'assigned' | 'created' | 'participating'
+export interface IssueResourceInvitation {
+  kind: 'agent' | 'group'
+  id: number
+}
+export interface IssueResourceParticipant extends IssueResourceInvitation {
+  name: string
+  instructions?: string
+  team_id: number | null
+  human_ids: number[]
+}
 export interface IndependentIssue {
   id: string
   title: string
@@ -15,7 +25,15 @@ export interface IndependentIssue {
   created_at: string
   updated_at: string
   people: Record<string, string>
-  metadata: { standalone: true; participants: number[]; archived: boolean; due_at: string | null }
+  metadata: {
+    standalone: true
+    participants: number[]
+    direct_participants?: number[] | null
+    resource_participants?: IssueResourceParticipant[]
+    assignee_resource?: IssueResourceInvitation | null
+    archived: boolean
+    due_at: string | null
+  }
 }
 export interface IndependentIssueInput {
   title: string
@@ -24,6 +42,8 @@ export interface IndependentIssueInput {
   priority: IndependentIssue['priority']
   assignee_id: number | null
   participants: number[]
+  resource_participants?: IssueResourceInvitation[]
+  assignee_resource?: IssueResourceInvitation | null
   archived: boolean
   due_at: string | null
   version?: number
@@ -46,7 +66,12 @@ export function independentIssueInput(issue: IndependentIssue): IndependentIssue
     status: issue.status,
     priority: issue.priority,
     assignee_id: issue.assignee_id,
-    participants: issue.metadata.participants,
+    participants: issue.metadata.direct_participants ?? issue.metadata.participants,
+    resource_participants: (issue.metadata.resource_participants ?? []).map(({ kind, id }) => ({
+      kind,
+      id,
+    })),
+    assignee_resource: issue.metadata.assignee_resource ?? null,
     archived: issue.metadata.archived,
     due_at: issue.metadata.due_at,
     version: issue.version,
@@ -103,6 +128,15 @@ export function createPersonalIssuesApi(client: HttpClient) {
         version,
         status,
       })
+    },
+    processingResource(
+      issueId: string,
+      kind: 'agent' | 'group',
+      resourceId: number
+    ): Promise<{ name: string; team_id: number | null; instructions: string }> {
+      return client.get(
+        `/v1/personal-issues/${encodeURIComponent(issueId)}/resources/${kind}/${resourceId}`
+      )
     },
     searchUsers(query: string): Promise<{ users: Array<{ id: number; user_name: string }> }> {
       return client.get(`/users/search?q=${encodeURIComponent(query)}&limit=20`)

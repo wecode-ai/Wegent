@@ -7,6 +7,14 @@ import type { HttpClient } from './http'
 import { createRuntimeWorkApi } from './runtimeWork'
 
 describe('createRuntimeWorkApi', () => {
+  test('lists only the explicitly addressed computer and preserves cancellation', async () => {
+    const get = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+    const api = createRuntimeWorkApi({ get } as unknown as HttpClient)
+    const signal = new AbortController().signal
+    await api.listRuntimeWork({ deviceId: 'app-record-22', signal })
+    expect(get).toHaveBeenCalledExactlyOnceWith('/runtime-work?device_id=app-record-22', { signal })
+  })
+
   test('forwards cancellation separately from the serialized transcript request', async () => {
     const controller = new AbortController()
     const post = vi.fn().mockResolvedValue({ messages: [], turns: [] })

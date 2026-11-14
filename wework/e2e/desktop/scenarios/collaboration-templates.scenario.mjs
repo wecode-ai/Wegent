@@ -1,3 +1,4 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -26,9 +27,7 @@ export async function fillTemplateRoleBindings(control, count) {
   ) {
     await control.command('click', testId('template-customize-main'))
   }
-  await control.command('waitFor', testId('template-role-main-role-0'), {
-    text: '当前设备智能体',
-  })
+  await control.command('waitFor', testId('template-role-main-role-0') + ' option[value^="human:"]')
   // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
   const human = await control.command(
     'getAttribute',
@@ -37,12 +36,12 @@ export async function fillTemplateRoleBindings(control, count) {
   )
   await control.command('select', testId('template-role-main-role-0'), { value: human })
   for (let index = 1; index < count; index++) {
-    await control.command('waitFor', testId(`template-role-main-role-${index}`), {
-      text: '当前设备智能体',
-    })
+    await control.command(
+      'waitFor',
+      `${testId(`template-role-main-role-${index}`)} option[value="agent:template-agent:main-role-${index}"]`
+    )
     await control.command('select', testId(`template-role-main-role-${index}`), {
-      by: 'label',
-      value: '当前设备智能体',
+      value: `agent:template-agent:main-role-${index}`,
     })
   }
 }
@@ -312,6 +311,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await wait(control, 'collaboration-platform-root')
       await expandCollaborationSpaces(control, CONTENT)
+      await revealCollaborationSidebarElement(control, testId('collaboration-primary-templates'))
       await click(control, 'collaboration-primary-templates')
       await click(control, 'template-tab-available')
       await wait(

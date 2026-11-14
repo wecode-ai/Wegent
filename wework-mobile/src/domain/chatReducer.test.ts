@@ -1,12 +1,101 @@
 import { describe, expect, it } from 'vitest'
 
 import { appendDelta, chatReducer, type RuntimeStreamEvent } from './chatReducer'
+import { projectMobileRuntimeTranscript } from './runtimeTranscript'
+import { hydrateRuntimeTranscript } from './runtimeTranscriptHydration'
 
 function stream(state: ReturnType<typeof chatReducer>, event: RuntimeStreamEvent) {
   return chatReducer(state, { type: 'stream', event })
 }
 
 describe('chatReducer', () => {
+  it('joins a streamed reply to its canonical reconnect snapshot without duplicating it', () => {
+    const previous = stream([], {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn-1', data: { itemId: 'reply', delta: 'Hel', offset: 0 } },
+    })
+    const transcript = projectMobileRuntimeTranscript({
+      taskId: 'task-1',
+      workspacePath: '/work',
+      runtime: 'codex',
+      messages: [],
+      runtimeTurns: [],
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'inProgress',
+          items: [{ id: 'reply', type: 'assistant_text', content: 'Hel' }],
+        },
+      ],
+    })
+    const result = hydrateRuntimeTranscript(
+      previous,
+      transcript,
+      [
+        {
+          type: 'stream',
+          event: {
+            name: 'response.output_text.delta',
+            payload: { subtaskId: 'turn-1', data: { itemId: 'reply', delta: 'lo', offset: 3 } },
+          },
+        },
+      ],
+      true
+    )
+    expect(result.resetPagination).toBe(false)
+    expect(result.messages).toMatchObject([
+      {
+        id: previous[0].id,
+        subtaskId: 'turn-1',
+        content: 'Hello',
+        textItems: [{ id: 'reply', content: 'Hello' }],
+        status: 'streaming',
+      },
+    ])
+  })
+
+  it('continues the latest guidance view while late tool updates retain their original owner', () => {
+    const transcript = projectMobileRuntimeTranscript({
+      taskId: 'task-1',
+      workspacePath: '/work',
+      runtime: 'codex',
+      messages: [],
+      runtimeTurns: [],
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'inProgress',
+          items: [
+            { id: 'before', type: 'assistant_text', content: 'Inspect' },
+            {
+              id: 'command',
+              type: 'block',
+              block: { id: 'command', type: 'tool', tool_name: 'bash', status: 'pending' },
+            },
+            {
+              id: 'guide',
+              type: 'user_message',
+              message: { id: 'guide', role: 'user', content: 'Fix it', runtimeGuidance: true },
+            },
+            { id: 'after', type: 'assistant_text', content: 'Fi' },
+          ],
+        },
+      ],
+    })
+    const initial = chatReducer([], { type: 'replace', messages: transcript.messages })
+    const continued = stream(initial, {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn-1', data: { itemId: 'after', delta: 'xed', offset: 2 } },
+    })
+    const result = stream(continued, {
+      name: 'response.block.updated',
+      payload: { subtaskId: 'turn-1', data: { blockId: 'command', updates: { status: 'done' } } },
+    })
+    expect(result.map(message => message.content)).toEqual(['Inspect', 'Fix it', 'Fixed'])
+    expect(result[0].blocks?.find(block => block.id === 'command')?.status).toBe('done')
+    expect(result[2].blocks?.some(block => block.id === 'command')).toBe(false)
+  })
+
   it('hydrates canonical transcript identity, blocks, status, errors and timestamps', () => {
     const result = chatReducer([], {
       type: 'replace',
@@ -168,7 +257,7 @@ describe('chatReducer', () => {
     })
 
     expect(reasoning[0]).toMatchObject({
-      id: 'assistant-turn-1',
+      id: 'runtime-view:turn-1:assistant',
       streamingThinkingContent: '分析',
       status: 'streaming',
       blocks: [{ type: 'thinking', content: '分析' }],

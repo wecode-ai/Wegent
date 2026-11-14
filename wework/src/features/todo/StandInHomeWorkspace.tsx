@@ -22,6 +22,7 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import { StandInHomeSetupPrompt } from './StandInHomeSetup'
 import type { PersonalHomeCollaborationWork } from './WeworkPersonalHome'
 import { pendingIssueHumanRequests } from '@wegent/collaboration'
+import { StandInConversation } from './StandInConversation'
 
 type Props = {
   services: WorkbenchServices
@@ -35,13 +36,13 @@ type Props = {
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
 }
 
-/** The collaboration home lists only Issue-related assistant work. */
+/** Share the personal assistant identity while keeping collaboration history separate. */
 export function StandInHomeWorkspace(props: Props) {
   const { services, userId, deviceId, active, settings, projects } = props
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const inbox = useStandInInbox(services.standInApi, userId, deviceId, active)
-  const [view, setView] = useState('list')
+  const [view, setView] = useState('conversation')
+  const inbox = useStandInInbox(services.standInApi, userId, deviceId, active && view === 'list')
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
   >([])
@@ -91,7 +92,7 @@ export function StandInHomeWorkspace(props: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-home-workspace">
       <header className="flex min-h-11 items-center gap-2 border-b border-border px-4 py-2">
-        {view !== 'list' && (
+        {view !== 'list' && view !== 'conversation' && (
           <button
             type="button"
             data-testid="personal-home-work-back"
@@ -103,11 +104,21 @@ export function StandInHomeWorkspace(props: Props) {
           </button>
         )}
         <h2 className="min-w-0 flex-1 truncate font-medium">
-          {view === 'list'
-            ? t('personalHome.workList')
+          {view === 'list' || view === 'conversation'
+            ? t(view === 'conversation' ? 'personalHome.conversation' : 'personalHome.workList')
             : opened.find(item => item.key === view)?.title}
         </h2>
-        {view === 'list' && (
+        {(view === 'list' || view === 'conversation') && (
+          <button
+            type="button"
+            data-testid="personal-home-assistant-view-toggle"
+            onClick={() => setView(view === 'list' ? 'conversation' : 'list')}
+            className="inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm hover:bg-muted md:min-h-8"
+          >
+            {t(view === 'list' ? 'personalHome.conversation' : 'personalHome.workList')}
+          </button>
+        )}
+        {(view === 'list' || view === 'conversation') && (
           <button
             type="button"
             data-testid="personal-home-assistant-settings"
@@ -119,160 +130,186 @@ export function StandInHomeWorkspace(props: Props) {
           </button>
         )}
       </header>
-      <div
-        className={view === 'list' ? 'min-h-0 flex-1 overflow-auto' : 'hidden'}
-        inert={view !== 'list'}
-        data-testid="personal-home-work-list"
-      >
-        {!connected && <StandInHomeSetupPrompt />}
-        {!!props.collaborationWork?.pendingIssues.length && (
-          <section className="p-4" data-testid="personal-home-collaboration-pending">
-            <h3 className="mb-2 font-medium">{t('personalHome.needsInput')}</h3>
-            {props.collaborationWork.pendingIssues.map(issue => (
+      <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-home-work-list">
+        <div
+          className={view === 'conversation' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={view !== 'conversation'}
+          hidden={view !== 'conversation'}
+          data-testid="personal-home-general-chat"
+        >
+          {services.standInApi ? (
+            <StandInConversation
+              api={services.standInApi}
+              services={services}
+              userId={userId}
+              deviceId={deviceId}
+              settings={settings.primary}
+              scope="collaboration"
+              active={active && view === 'conversation'}
+              onOpenTask={props.onOpenTask}
+            />
+          ) : (
+            <p role="alert" className="p-5 text-sm text-error">
+              {t('personalHome.workUnavailable')}
+            </p>
+          )}
+        </div>
+        <div
+          className={view === 'list' ? 'min-h-0 flex-1 overflow-auto' : 'hidden'}
+          inert={view !== 'list'}
+          hidden={view !== 'list'}
+          data-testid="personal-home-assistant-work-items"
+        >
+          {!connected && <StandInHomeSetupPrompt />}
+          {!!props.collaborationWork?.pendingIssues.length && (
+            <section className="p-4" data-testid="personal-home-collaboration-pending">
+              <h3 className="mb-2 font-medium">{t('personalHome.needsInput')}</h3>
+              {props.collaborationWork.pendingIssues.map(issue => (
+                <button
+                  type="button"
+                  key={issue.id}
+                  data-testid={`personal-home-pending-${issue.id}`}
+                  onClick={() => props.collaborationWork?.onOpenIssue(issue)}
+                  className="block min-h-11 w-full border-b border-border/50 py-3 text-left transition-colors hover:bg-text-primary/[0.025]"
+                >
+                  <span className="block font-medium">{issue.title}</span>
+                  <span className="mt-1 line-clamp-3 block text-sm text-text-secondary">
+                    {pendingIssueHumanRequests(issue)[0]?.question}
+                  </span>
+                </button>
+              ))}
+            </section>
+          )}
+          {inbox.error && (
+            <div role="alert" className="p-4 text-sm text-error">
+              {inbox.error}
               <button
                 type="button"
-                key={issue.id}
-                data-testid={`personal-home-pending-${issue.id}`}
-                onClick={() => props.collaborationWork?.onOpenIssue(issue)}
-                className="block min-h-11 w-full border-b border-border/50 py-3 text-left transition-colors hover:bg-text-primary/[0.025]"
+                data-testid="personal-home-work-retry"
+                onClick={inbox.refresh}
+                className="ml-2 min-h-11 underline md:min-h-8"
               >
-                <span className="block font-medium">{issue.title}</span>
-                <span className="mt-1 line-clamp-3 block text-sm text-text-secondary">
-                  {pendingIssueHumanRequests(issue)[0]?.question}
-                </span>
+                {t('standIn.reload')}
               </button>
-            ))}
-          </section>
-        )}
-        {inbox.error && (
-          <div role="alert" className="p-4 text-sm text-error">
-            {inbox.error}
-            <button
-              type="button"
-              data-testid="personal-home-work-retry"
-              onClick={inbox.refresh}
-              className="ml-2 min-h-11 underline md:min-h-8"
+            </div>
+          )}
+          {!inbox.scope && !inbox.error && (
+            <p role="status" className="p-4 text-sm text-text-muted">
+              {t('standIn.loading')}
+            </p>
+          )}
+          {connected && inbox.scope && !items.length && !inbox.error && (
+            <div className="px-4 py-6">
+              <p className="text-base font-medium text-text-secondary">
+                {t('personalHome.assistantEmpty')}
+              </p>
+              <p className="mt-2 max-w-xs text-sm leading-5 text-text-muted">
+                {t('personalHome.assistantEmptyHint')}
+              </p>
+            </div>
+          )}
+          {roleIds.map(roleId => (
+            <section
+              key={roleId}
+              data-testid={`personal-home-role-${roleId}`}
+              className="border-b border-border/50 py-4 last:border-b-0"
             >
-              {t('standIn.reload')}
-            </button>
-          </div>
-        )}
-        {!inbox.scope && !inbox.error && (
-          <p role="status" className="p-4 text-sm text-text-muted">
-            {t('standIn.loading')}
-          </p>
-        )}
-        {connected && inbox.scope && !items.length && !inbox.error && (
-          <div className="px-4 py-6">
-            <p className="text-base font-medium text-text-secondary">
-              {t('personalHome.assistantEmpty')}
-            </p>
-            <p className="mt-2 max-w-xs text-sm leading-5 text-text-muted">
-              {t('personalHome.assistantEmptyHint')}
-            </p>
-          </div>
-        )}
-        {roleIds.map(roleId => (
-          <section
-            key={roleId}
-            data-testid={`personal-home-role-${roleId}`}
-            className="border-b border-border/50 py-4 last:border-b-0"
-          >
-            <h3 className="px-4 pb-2 text-sm font-medium text-text-secondary">
-              {roleName(roleId)}
-            </h3>
-            {(['processing', 'completed'] as const).map(group => {
-              const grouped = items.filter(
-                item =>
-                  standInWorkRole(item) === roleId &&
-                  ['completed', 'failed', 'cancelled'].includes(standInState(item).status) ===
-                    (group === 'completed')
-              )
-              return (
-                <div key={group} data-testid={`personal-home-role-${roleId}-${group}`}>
-                  <h4 className="flex items-center gap-2 px-4 py-2 text-sm font-medium">
-                    {t(`personalHome.${group}`)}
-                    <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
-                      {grouped.length}
-                    </span>
-                  </h4>
-                  {grouped.map(item => {
-                    const taskState = standInState(item).status
-                    const Icon =
-                      taskState === 'completed'
-                        ? CheckCircle2
-                        : taskState === 'running'
-                          ? LoaderCircle
-                          : taskState === 'failed'
-                            ? CircleAlert
-                            : Circle
-                    const work = inbox.items.find(work => work.taskId === item.task.taskId)
-                    const status =
-                      work && work.status !== 'sent'
-                        ? t(`standIn.workspace.inbox_${work.status}`)
-                        : standInState(item).status === 'waiting'
-                          ? t('personalHome.waitingInput')
-                          : t(`standIn.personal.activity_${standInState(item).status}`)
-                    return (
-                      <button
-                        type="button"
-                        key={item.key}
-                        data-testid={`personal-home-work-${item.task.taskId}`}
-                        onClick={() => openTask(item.address, item.task.title)}
-                        className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
-                      >
-                        <Icon
-                          aria-hidden="true"
-                          className={`mt-0.5 h-4 w-4 shrink-0 ${taskState === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} ${taskState === 'running' ? 'motion-safe:animate-spin' : ''}`}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium">{item.task.title}</span>
-                          <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
-                            <span className="shrink-0">{status}</span>
-                            {item.projectName && (
-                              <>
-                                <span aria-hidden="true">·</span>
-                                <span className="truncate">{item.projectName}</span>
-                              </>
-                            )}
+              <h3 className="px-4 pb-2 text-sm font-medium text-text-secondary">
+                {roleName(roleId)}
+              </h3>
+              {(['processing', 'completed'] as const).map(group => {
+                const grouped = items.filter(
+                  item =>
+                    standInWorkRole(item) === roleId &&
+                    ['completed', 'failed', 'cancelled'].includes(standInState(item).status) ===
+                      (group === 'completed')
+                )
+                return (
+                  <div key={group} data-testid={`personal-home-role-${roleId}-${group}`}>
+                    <h4 className="flex items-center gap-2 px-4 py-2 text-sm font-medium">
+                      {t(`personalHome.${group}`)}
+                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+                        {grouped.length}
+                      </span>
+                    </h4>
+                    {grouped.map(item => {
+                      const taskState = standInState(item).status
+                      const Icon =
+                        taskState === 'completed'
+                          ? CheckCircle2
+                          : taskState === 'running'
+                            ? LoaderCircle
+                            : taskState === 'failed'
+                              ? CircleAlert
+                              : Circle
+                      const work = inbox.items.find(work => work.taskId === item.task.taskId)
+                      const status =
+                        work && work.status !== 'sent'
+                          ? t(`standIn.workspace.inbox_${work.status}`)
+                          : standInState(item).status === 'waiting'
+                            ? t('personalHome.waitingInput')
+                            : t(`standIn.personal.activity_${standInState(item).status}`)
+                      return (
+                        <button
+                          type="button"
+                          key={item.key}
+                          data-testid={`personal-home-work-${item.task.taskId}`}
+                          onClick={() => openTask(item.address, item.task.title)}
+                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                        >
+                          <Icon
+                            aria-hidden="true"
+                            className={`mt-0.5 h-4 w-4 shrink-0 ${taskState === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : 'text-text-muted'} ${taskState === 'running' ? 'motion-safe:animate-spin' : ''}`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">{item.task.title}</span>
+                            <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+                              <span className="shrink-0">{status}</span>
+                              {item.projectName && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="truncate">{item.projectName}</span>
+                                </>
+                              )}
+                            </span>
                           </span>
-                        </span>
-                        <ArrowUpRight
-                          aria-hidden="true"
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-opacity group-hover/work:opacity-100 group-focus-visible/work:opacity-100"
-                        />
-                      </button>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </section>
+                          <ArrowUpRight
+                            aria-hidden="true"
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-opacity group-hover/work:opacity-100 group-focus-visible/work:opacity-100"
+                          />
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </section>
+          ))}
+        </div>
+        {opened.map(item => (
+          <div
+            key={item.key}
+            className={view === item.key ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+            inert={view !== item.key}
+          >
+            <TemporaryChatPanel
+              currentProject={null}
+              source={null}
+              instanceId={`stand-in-work:${item.key}`}
+              testId="personal-home-task-conversation"
+              initialAddress={item.address}
+              controlledAddress={item.address}
+              nativeConversation
+              sendEphemeral={false}
+              markReadWhenActive
+              coordinateUserInput
+              expanded
+              active={active && view === item.key}
+              onOpenRuntimeTask={props.onOpenTask}
+            />
+          </div>
         ))}
       </div>
-      {opened.map(item => (
-        <div
-          key={item.key}
-          className={view === item.key ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
-          inert={view !== item.key}
-        >
-          <TemporaryChatPanel
-            currentProject={null}
-            source={null}
-            instanceId={`stand-in-work:${item.key}`}
-            testId="personal-home-task-conversation"
-            initialAddress={item.address}
-            controlledAddress={item.address}
-            nativeConversation
-            sendEphemeral={false}
-            markReadWhenActive
-            coordinateUserInput
-            expanded
-            active={active && view === item.key}
-            onOpenRuntimeTask={props.onOpenTask}
-          />
-        </div>
-      ))}
     </div>
   )
 }

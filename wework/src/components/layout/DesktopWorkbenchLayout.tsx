@@ -1246,9 +1246,7 @@ export function DesktopWorkbenchLayout({
                         open
                         mode="existing"
                         preferNativeLocalPicker={shouldUseNativeProjectDirectoryPicker()}
-                        devices={state.devices.filter(
-                          device => device.device_type === 'local' || device.device_type === 'app'
-                        )}
+                        devices={state.devices.filter(device => device.device_type === 'local')}
                         preferredDeviceId={
                           state.standaloneDeviceId ??
                           state.user?.preferences?.default_execution_target

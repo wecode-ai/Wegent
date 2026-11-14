@@ -28,6 +28,14 @@ export class BrowserScriptEvaluator {
         }
         return result.value
       })
+    } catch (error) {
+      console.warn('[embedded-browser-evaluation]', {
+        contentsId: this.contents.id,
+        awaitPromise: options.awaitPromise ?? true,
+        pendingActions: this.actions.size,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
     } finally {
       if (action) {
         this.actions.delete(action)

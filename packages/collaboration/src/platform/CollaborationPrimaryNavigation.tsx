@@ -95,47 +95,46 @@ export function CollaborationPrimaryNavigation({
       className="collaboration-primary-navigation"
       aria-label={messages.collaborationHome}
     >
-      {host.createIndependentIssue ? (
-        <button
-          type="button"
-          onClick={host.createIndependentIssue}
-          data-testid="collaboration-primary-create-issue"
-        >
-          <FilePlus2 aria-hidden="true" />
-          <span>{messages.createIndependentIssue}</span>
-        </button>
-      ) : null}
       {link(
         "home",
         host.renderPersonalHome ? messages.personalHome : messages.home,
         host.renderPersonalHome ? CircleUserRound : FilePlus2,
         "collaboration-primary-home",
       )}
-      {host.renderIssueList ? (
+      {host.renderIssueList || host.createIndependentIssue ? (
         <>
-          <div className="collaboration-workspace-section-heading">
-            <span className="collaboration-workspace-section-title">
-              {messages.myIssues}
-            </span>
-          </div>
-          {link(
-            "issues-assigned",
-            messages.assignedIssues,
-            CircleUserRound,
-            "collaboration-primary-issues-assigned",
-          )}
-          {link(
-            "issues-created",
-            messages.createdIssues,
-            SquarePen,
-            "collaboration-primary-issues-created",
-          )}
-          {link(
-            "issues-participating",
-            messages.participatingIssues,
-            MessageSquare,
-            "collaboration-primary-issues-participating",
-          )}
+          {host.createIndependentIssue ? (
+            <button
+              type="button"
+              onClick={host.createIndependentIssue}
+              data-testid="collaboration-primary-create-issue"
+            >
+              <FilePlus2 aria-hidden="true" />
+              <span>{messages.createIndependentIssue}</span>
+            </button>
+          ) : null}
+          {host.renderIssueList ? (
+            <>
+              {link(
+                "issues-assigned",
+                messages.assignedIssues,
+                CircleUserRound,
+                "collaboration-primary-issues-assigned",
+              )}
+              {link(
+                "issues-created",
+                messages.createdIssues,
+                SquarePen,
+                "collaboration-primary-issues-created",
+              )}
+              {link(
+                "issues-participating",
+                messages.participatingIssues,
+                MessageSquare,
+                "collaboration-primary-issues-participating",
+              )}
+            </>
+          ) : null}
         </>
       ) : null}
     </nav>
@@ -147,7 +146,7 @@ export function CollaborationManagementNavigation({
   host,
   messages,
 }: NavigationProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const link = (
     view: CollaborationPlatformRootView,
     label: string,

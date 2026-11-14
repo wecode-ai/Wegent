@@ -11,6 +11,7 @@ from knowledge_engine.embedding.errors import (
     CollectionDimensionMismatchError,
     EmbeddingDimensionMismatchError,
 )
+from knowledge_engine.storage.milvus_batching import MilvusRowTooLargeError
 from knowledge_runtime.main import (
     embedding_dimension_mismatch_handler,
     value_error_handler,
@@ -98,3 +99,17 @@ async def test_value_error_handler_maps_request_errors_to_invalid_request() -> N
         "retryable": False,
         "details": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_oversized_milvus_row_is_explicit_and_nonretryable() -> None:
+    error = MilvusRowTooLargeError(
+        {"id": "node-1", "text": "private body"}, 12000, 8000
+    )
+    response = await value_error_handler(_index_request(), error)
+    payload = json.loads(response.body)
+    assert response.status_code == 400
+    assert payload["code"] == "milvus_row_too_large"
+    assert payload["retryable"] is False
+    assert payload["details"]["serialized_bytes"] == 12000
+    assert "private body" not in json.dumps(payload)

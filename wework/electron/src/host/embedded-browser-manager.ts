@@ -240,6 +240,10 @@ export class EmbeddedBrowserManager {
         return
       }
       event.preventDefault()
+      console.info('[embedded-browser-local-navigation]', {
+        contentsId: entry.contents.id,
+        stage: 'intercepted',
+      })
       const navigation = entry.navigationCompletion
       const request = Symbol('local-navigation')
       entry.pendingLocalNavigation = request
@@ -1252,6 +1256,13 @@ export class EmbeddedBrowserManager {
   }
 
   private async loadPage(entry: BrowserEntry, url: string): Promise<void> {
+    const localFile = url.startsWith('file:')
+    if (localFile) {
+      console.info('[embedded-browser-local-navigation]', {
+        contentsId: entry.contents.id,
+        stage: 'preparing',
+      })
+    }
     try {
       const navigation = await prepareLocalFileNavigation(url)
       if (navigation.kind === 'blocked') {
@@ -1272,7 +1283,20 @@ export class EmbeddedBrowserManager {
           navigation.displayUrl
         )
       }
+      if (localFile) {
+        console.info('[embedded-browser-local-navigation]', {
+          contentsId: entry.contents.id,
+          stage: 'loading',
+          preview: navigation.kind === 'preview',
+        })
+      }
       await entry.contents.loadURL(navigation.displayUrl)
+      if (localFile) {
+        console.info('[embedded-browser-local-navigation]', {
+          contentsId: entry.contents.id,
+          stage: 'completed',
+        })
+      }
     } catch (error) {
       if (!entry.navigationError) {
         const message = error instanceof Error ? error.message : String(error)

@@ -30,6 +30,7 @@ const EMPTY_SNAPSHOT: RuntimeCacheSnapshot = {
 
 export class MobileRuntimeCache {
   private writeQueue: Promise<void> = Promise.resolve()
+  private pendingEnvelope: RuntimeCacheEnvelope | null = null
 
   constructor(
     private readonly apiBaseUrl: string,
@@ -58,14 +59,18 @@ export class MobileRuntimeCache {
       updatedAt: Date.now(),
       ...snapshot,
     }
+    this.pendingEnvelope = envelope
     this.writeQueue = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
+        const latest = this.pendingEnvelope
+        this.pendingEnvelope = null
+        if (!latest) return
         const path = this.path()
         const directory = cacheDirectory()
         if (!path || !directory) return
         await FileSystem.makeDirectoryAsync(directory, { intermediates: true })
-        await FileSystem.writeAsStringAsync(path, JSON.stringify(envelope))
+        await FileSystem.writeAsStringAsync(path, JSON.stringify(latest))
       })
     return this.writeQueue
   }
