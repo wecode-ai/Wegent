@@ -84,9 +84,11 @@ class SkillBindingService:
             return False
 
         capability = self._get_capability(skill)
-        if skill.user_id in {user_id, 0} or (
-            capability.get("visibility") == "public"
-            and capability.get("publishStatus") == "published"
+        if self._has_direct_skill_access(
+            skill.user_id,
+            user_id,
+            capability.get("visibility"),
+            capability.get("publishStatus"),
         ):
             return True
 
@@ -415,24 +417,67 @@ class SkillBindingService:
             .order_by(Kind.created_at.desc())
             .all()
         )
-        accessible_bindings: list[Kind] = []
-        for binding in bindings:
-            if not self._is_user_default_binding(binding, target_id):
-                continue
+        bindings = [
+            binding
+            for binding in bindings
+            if self._is_user_default_binding(binding, target_id)
+        ]
+        skill_ids = {
+            skill_id
+            for binding in bindings
+            if (skill_id := self._extract_skill_id(binding)) is not None
+        }
+        accessible_ids = self._list_accessible_skill_ids(db, user_id, skill_ids)
+        return [
+            binding
+            for binding in bindings
+            if self._extract_skill_id(binding) in accessible_ids
+        ]
 
-            skill_id = self._extract_skill_id(binding)
-            if skill_id is None:
-                continue
+    def _list_accessible_skill_ids(
+        self, db: Session, user_id: int, skill_ids: set[int]
+    ) -> set[int]:
+        """Authorize installed Skills using metadata and distinct group checks."""
+        if not skill_ids:
+            return set()
 
-            skill = self._get_active_skill(db, skill_id)
-            if not skill or not self.can_user_access_skill(
-                db, skill=skill, user_id=user_id
-            ):
-                continue
-
-            accessible_bindings.append(binding)
-
-        return accessible_bindings
+        skills = (
+            db.query(
+                Kind.id,
+                Kind.user_id,
+                Kind.namespace,
+                Kind.json["spec"]["capability"]["visibility"]
+                .as_string()
+                .label("visibility"),
+                Kind.json["spec"]["capability"]["publishStatus"]
+                .as_string()
+                .label("publish_status"),
+            )
+            .filter(Kind.id.in_(skill_ids), Kind.kind == "Skill", Kind.is_active)
+            .all()
+        )
+        accessible_ids = {
+            skill.id
+            for skill in skills
+            if self._has_direct_skill_access(
+                skill.user_id, user_id, skill.visibility, skill.publish_status
+            )
+        }
+        group_skills = [
+            skill
+            for skill in skills
+            if skill.id not in accessible_ids and skill.namespace != "default"
+        ]
+        group_roles = {
+            namespace: get_effective_role_in_group(db, user_id, namespace)
+            for namespace in sorted({skill.namespace for skill in group_skills})
+        }
+        return accessible_ids | {
+            skill.id
+            for skill in group_skills
+            if (role := group_roles.get(skill.namespace)) is not None
+            and has_permission(role, GroupRole.Reporter)
+        }
 
     def list_user_default_skill_ids(self, db: Session, user_id: int) -> set[int]:
         """Return Skill ids for the user's default enabled Skills."""
@@ -662,6 +707,14 @@ class SkillBindingService:
         binding_json = deepcopy(binding.json) if isinstance(binding.json, dict) else {}
         spec = binding_json.get("spec", {})
         return spec if isinstance(spec, dict) else {}
+
+    @staticmethod
+    def _has_direct_skill_access(
+        owner_id: int, user_id: int, visibility: Any, publish_status: Any
+    ) -> bool:
+        return owner_id in {user_id, 0} or (
+            visibility == "public" and publish_status == "published"
+        )
 
     def _get_capability(self, skill: Kind) -> dict[str, Any]:
         payload = skill.json if isinstance(skill.json, dict) else {}

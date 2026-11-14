@@ -266,7 +266,7 @@ jobs:
           persist-credentials: false
 
       - name: Build shared real object storage for desktop E2E
-        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile')
+        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/build-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -1377,7 +1377,7 @@ jobs:
           setup-uv: "false"
 
       - name: Set up real object storage for plugin sync recovery E2E
-        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile')
+        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile') || contains(matrix.segments, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/setup-minio-e2e
 
       - name: Prepare real GitHub CLI for account authentication E2E

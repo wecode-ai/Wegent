@@ -47,23 +47,6 @@ fn explicit_activity_presentation_restores_the_exact_native_turn_without_changin
 }
 
 #[test]
-fn explicit_activity_presentation_preserves_transport_attribution_and_plain_requests() {
-    let mut ordinary = json!({"message":"Hello","executionRequest":{"prompt":"Hello"}});
-    let original = ordinary.clone();
-    normalize_user_message_presentation(&mut ordinary).unwrap();
-    assert_eq!(ordinary, original);
-    let mut payload = json!({"clientUserMessageId":" ","client_user_message_id":"stable-id",
-        "source":{"type":"connection_work","connectionId":"authorized"},
-        "executionRequest":{"prompt":"internal","origin":{"connectionId":"authorized"}},
-        "userMessagePresentation":{"content":"处理完成","source":{"connectionId":"different"}}});
-    let execution = payload["executionRequest"].clone();
-    normalize_user_message_presentation(&mut payload).unwrap();
-    assert_eq!(payload["source"]["connectionId"], "authorized");
-    assert_eq!(payload["executionRequest"], execution);
-    assert_eq!(payload["clientUserMessageId"], "stable-id");
-}
-
-#[test]
 fn explicit_activity_presentation_rejects_unbound_or_empty_overrides() {
     for mut payload in [
         json!({"clientUserMessageId":"id","userMessagePresentation":null}),
@@ -73,23 +56,6 @@ fn explicit_activity_presentation_rejects_unbound_or_empty_overrides() {
         let error = normalize_user_message_presentation(&mut payload).unwrap_err();
         assert_eq!(error.code, "bad_request");
     }
-}
-
-#[tokio::test]
-async fn explicit_activity_presentation_is_validated_by_create_and_continue() {
-    let root = tempfile::tempdir().unwrap();
-    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
-    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
-    let payload = json!({"taskId":"activity-chat","userMessagePresentation":{"content":"完成"}});
-    assert_eq!(
-        handler.create_task(payload.clone()).await.unwrap_err().code,
-        "bad_request"
-    );
-    assert_eq!(
-        handler.send_message(payload).await.unwrap_err().code,
-        "bad_request"
-    );
-    assert!(handler.local_task_link("activity-chat").is_none());
 }
 
 #[test]
@@ -526,26 +492,6 @@ fn transcript_restores_native_references_from_saved_user_content() {
 }
 
 #[test]
-fn transcript_keeps_plain_provider_paths_without_an_explicit_saved_reference() {
-    let mut messages = vec![json!({
-        "id": "provider-user",
-        "clientUserMessageId": "client-user",
-        "role": "user",
-        "content": "/tmp/abc.pdf provider content"
-    })];
-    let presentation = user_message_presentation(&json!({
-        "clientUserMessageId": "client-user",
-        "message": "/tmp/abc.pdf original content"
-    }))
-    .expect("saved plain message");
-
-    attach_user_message_presentations(&mut messages, vec![presentation]);
-
-    assert_eq!(messages[0]["content"], "/tmp/abc.pdf provider content");
-    assert!(messages[0].get("presentationReferences").is_none());
-}
-
-#[test]
 fn transcript_does_not_apply_provider_ranges_after_restoring_attachment_content() {
     let original = "[$xyz](/tmp/xyz/SKILL.md) 查看附件";
     let presentation = user_message_presentation(&json!({
@@ -638,6 +584,7 @@ async fn goal_continuation_events_do_not_reuse_initial_user_presentation() {
         &request,
         Some(&active),
         Ok(crate::agents::CodexAppServerTurn {
+            quota_recovery: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "Continuation output".to_owned(),

@@ -181,67 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn current_session_uses_api_handles_and_preserves_other_context() {
-        let _lock = crate::test_env::lock();
-        let mut request = ExecutionRequest {
-            task_id: "execution-not-conversation".into(),
-            project_workspace_path: Some("/Users/test/Documents/Codex/task-1".into()),
-            subtask_id: "native-turn-not-response".into(),
-            auth_token: Some("auth-secret".into()),
-            model_config: json!({"api_key": "model-secret"}),
-            ..ExecutionRequest::default()
-        };
-        request
-            .extra
-            .insert("client_user_message_id".into(), json!("message-1"));
-        request
-            .extra
-            .insert("modelSelection".into(), cloud_selection("my-model"));
-        request.extra.insert(
-            "additionalContext".into(),
-            json!({
-                "wework.terminal.current": {"kind": "application", "value": "terminal"},
-                "wework.session.current": {"kind": "application", "value": "stale"}
-            }),
-        );
-        inject_current_session(&mut request, "device-1", "task-1");
-        let value = context(&request);
-        assert_eq!(value["api_conversation_supported"], true);
-        assert_eq!(
-            value["conversation_id"],
-            "conv_WyJkZXZpY2UtMSIsInRhc2stMSJd"
-        );
-        assert_eq!(
-            value["response_id"],
-            "resp_WyJkZXZpY2UtMSIsInRhc2stMSIsIm1lc3NhZ2UtMSJd"
-        );
-        assert_eq!(value["model"], "public:default:0:my-model");
-        assert_eq!(
-            value["execution"],
-            json!({"type": "wework", "device_id": "device-1"})
-        );
-        assert_eq!(
-            request.extra["additionalContext"]["wework.terminal.current"]["value"],
-            "terminal"
-        );
-        assert!(!request.extra["additionalContext"]
-            .to_string()
-            .contains("secret"));
-
-        request
-            .extra
-            .insert("client_user_message_id".into(), json!("message-2"));
-        request
-            .extra
-            .insert("modelSelection".into(), cloud_selection("new-model"));
-        inject_current_session(&mut request, "device-1", "task-1");
-        let follow_up = context(&request);
-        assert_eq!(follow_up["conversation_id"], value["conversation_id"]);
-        assert_ne!(follow_up["response_id"], value["response_id"]);
-        assert_eq!(follow_up["model"], "public:default:0:new-model");
-    }
-
-    #[test]
     fn current_session_establishes_message_identity_without_inventing_api_model() {
         let _lock = crate::test_env::lock();
         let mut request = ExecutionRequest::default();

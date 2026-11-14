@@ -46,6 +46,10 @@ macro_rules! shared_runtime_tests {
 #[path = "codex_app_server_contract/skill_membership.rs"]
 mod skill_membership;
 
+#[cfg(unix)]
+#[path = "codex_app_server_contract/quota_recovery.rs"]
+mod quota_recovery;
+
 shared_runtime_tests! {
 async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let _lock = env_lock().await;

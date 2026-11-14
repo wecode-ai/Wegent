@@ -28,7 +28,7 @@ use brz_http::Client as HttpClient;
 use brz_mysql::{Mysql, MysqlService};
 use brz_redis::{Redis, RedisService};
 use serde_json::Value;
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::task::{Id, JoinSet};
 
 use crate::executor_manager::ExecutorManager;
@@ -141,13 +141,20 @@ pub(crate) fn start_event<R: Redis>(
     }
 }
 
+/// Input to an executor dispatch job.
+pub(crate) enum ExecutorDispatchBody {
+    #[cfg(test)]
+    Prepared(Result<crate::executor_binding::DispatchRequest, String>),
+    Recover(Box<ExecutionRequest>),
+}
+
 /// One background dispatch the create flow hands to the supervisor.
 pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `_dispatch_http_callback`: `POST {target}/v1/responses` with
     /// `stream=false, background=true`, then the `chat:start` emit.
     Executor {
         url: String,
-        body: Value,
+        body: ExecutorDispatchBody,
         start: Option<ExecutorStart<R>>,
         consumer: Box<ConsumerState<M, R>>,
         task_id: i64,
@@ -162,6 +169,8 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `chat_session.py:137-170`'s fire-and-forget memory save: the prepared
     /// context goes to the mem0 client off the request path.
     MemorySave(crate::responses::create::memory_context::SaveRequest),
+    /// An automatic handoff is acknowledged only after its destination accepts.
+    Pipeline(Box<DispatchJob<M, R>>, oneshot::Sender<Result<(), String>>),
 }
 
 /// The production job type (`AppState`'s specialization).
@@ -178,6 +187,7 @@ struct JobContext {
 impl<M: Mysql, R: Redis> DispatchJob<M, R> {
     fn context(&self) -> JobContext {
         match self {
+            Self::Pipeline(job, _) => job.context(),
             Self::Executor {
                 url,
                 task_id,
@@ -304,6 +314,10 @@ where
 }
 
 impl<M: Mysql, R: Redis> ResponsesDispatch<M, R> {
+    pub(crate) fn reserve(&self) -> Option<mpsc::Permit<'_, DispatchJob<M, R>>> {
+        self.sender.try_reserve().ok()
+    }
+
     /// Admit one background job.
     ///
     /// The bounded queue is admission. When it is full the job is rejected
@@ -375,6 +389,10 @@ where
     M: Mysql + 'static,
     R: Redis + Clone + 'static,
 {
+    let (job, accepted) = match job {
+        DispatchJob::Pipeline(job, sender) => (*job, Some(sender)),
+        job => (job, None),
+    };
     match job {
         DispatchJob::Executor {
             url,
@@ -385,29 +403,125 @@ where
             subtask_id,
             user_id,
             message_id,
-        } => match send_executor(http, &url, &body).await {
-            Ok(()) => {
-                if let Some(start) = start {
-                    emit_executor_start(start).await;
+        } => {
+            let body = match body {
+                #[cfg(test)]
+                ExecutorDispatchBody::Prepared(body) => body,
+                ExecutorDispatchBody::Recover(mut request) => {
+                    let Some(app) = consumer.app.upgrade() else {
+                        tracing::warn!(
+                            task_id,
+                            subtask_id,
+                            "application stopped before executor dispatch"
+                        );
+                        return;
+                    };
+                    let recovered = if accepted.is_some() {
+                        match super::create::recover_executor_if_needed(
+                            &app,
+                            &mut request,
+                            None,
+                            true,
+                        )
+                        .await
+                        {
+                            Ok(recovered) => recovered,
+                            Err(error) => {
+                                if let Some(accepted) = accepted {
+                                    let _ = accepted.send(Err(error.to_string()));
+                                }
+                                return;
+                            }
+                        }
+                    } else {
+                        let Ok(recovered) =
+                            super::create::seam::recover_before_dispatch(&app, &mut request, None)
+                                .await
+                        else {
+                            return;
+                        };
+                        recovered
+                    };
+                    if let Err(error) =
+                        super::create::seam::mark_subtask_running(&app, &request).await
+                    {
+                        if recovered {
+                            super::create::discard_recovered_executor(&app, &request).await;
+                        }
+                        if let Some(accepted) = accepted {
+                            let _ = accepted.send(Err(format!("{error:?}")));
+                            return;
+                        }
+                        if !error.status().is_server_error() {
+                            return;
+                        }
+                        finalize_executor_failure(
+                            &consumer,
+                            task_id,
+                            subtask_id,
+                            user_id,
+                            message_id,
+                            (
+                                "Could not commit executor startup state",
+                                "EXECUTOR_DISPATCH_FAILED",
+                            ),
+                        )
+                        .await;
+                        return;
+                    }
+                    crate::executor_binding::dispatch_request(&app, &request)
+                }
+            };
+            let outcome = match body {
+                Ok(body) => send_executor(http, &url, &body).await,
+                Err(error) => Err(error),
+            };
+            match outcome {
+                Ok(()) => {
+                    if let Some(accepted) = accepted {
+                        let _ = accepted.send(Ok(()));
+                    }
+                    if let Some(start) = start {
+                        emit_executor_start(start).await;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
+                    if let Some(accepted) = accepted {
+                        let _ = accepted.send(Err(error));
+                        return;
+                    }
+                    finalize_executor_failure(
+                        &consumer,
+                        task_id,
+                        subtask_id,
+                        user_id,
+                        message_id,
+                        (
+                            "Could not dispatch execution to the executor",
+                            "EXECUTOR_DISPATCH_FAILED",
+                        ),
+                    )
+                    .await;
                 }
             }
-            Err(error) => {
-                tracing::warn!(task_id, subtask_id, %error, "executor dispatch failed");
-                finalize_executor_failure(&consumer, task_id, subtask_id, user_id, message_id)
-                    .await;
-            }
-        },
-        DispatchJob::ChatShell(job) => {
-            let _ = run_chat_shell(*job).await;
         }
+        DispatchJob::ChatShell(job) => {
+            let _ = run_chat_shell(*job, accepted).await;
+        }
+        DispatchJob::Pipeline(..) => unreachable!("nested pipeline dispatch"),
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;
         }
     }
 }
 
-async fn send_executor(http: &HttpClient, url: &str, body: &Value) -> Result<(), String> {
-    let request = executor_request(http, url, body)
+async fn send_executor(
+    http: &HttpClient,
+    url: &str,
+    dispatch: &crate::executor_binding::DispatchRequest,
+) -> Result<(), String> {
+    let request = executor_request(http, url, dispatch)
         .ok_or_else(|| "Could not build executor dispatch request".to_owned())?;
     let response = request
         .timeout(DISPATCH_TIMEOUT)
@@ -418,6 +532,42 @@ async fn send_executor(http: &HttpClient, url: &str, body: &Value) -> Result<(),
         return Err(format!("Executor returned HTTP {}", response.status()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn test_dispatch_start_failure(
+    mysql: MysqlService,
+    task_id: i64,
+    subtask_id: i64,
+) {
+    let app = crate::app_test_support::app(mysql);
+    app.completion_app.set(Arc::downgrade(&app)).ok().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let request = ExecutionRequest {
+        task_id,
+        subtask_id,
+        ..Default::default()
+    };
+    let http = HttpClient::builder().build().unwrap();
+    Box::pin(run(
+        &http,
+        DispatchJob::Executor {
+            url: format!("http://{}", listener.local_addr().unwrap()),
+            body: ExecutorDispatchBody::Recover(Box::new(request)),
+            start: None,
+            consumer: Box::new(ConsumerState::from_app(&app)),
+            task_id,
+            subtask_id,
+            user_id: 7,
+            message_id: None,
+        },
+    ))
+    .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
 }
 
 async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
@@ -442,59 +592,65 @@ async fn emit_executor_start<R: Redis>(start: ExecutorStart<R>) {
     }
 }
 
-async fn finalize_executor_failure<M: Mysql, R: Redis>(
+pub(crate) async fn finalize_executor_failure<M: Mysql, R: Redis>(
     consumer: &ConsumerState<M, R>,
     task_id: i64,
     subtask_id: i64,
     user_id: i64,
     message_id: Option<i64>,
+    (message, code): (&str, &str),
 ) {
     use crate::internal_callback::{
         completion, emitter,
         event::{EventType, ExecutionEvent},
     };
-    let Some(redis) = consumer.redis.as_ref() else {
-        tracing::error!(
-            task_id,
-            subtask_id,
-            "executor failure cannot be finalized without Redis"
-        );
-        return;
-    };
     let app = consumer.app.upgrade();
-    let ctx = completion::Completion {
+    let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
+    event.message_id = message_id;
+    event.error = Some(message.to_owned());
+    event.error_code = Some(code.to_owned());
+    if let Some(app) = app.as_ref().filter(|app| app.redis.is_some()) {
+        if let Err(error) = Box::pin(crate::internal_callback::process_dispatch_failure(
+            app, event,
+        ))
+        .await
+        {
+            tracing::warn!(
+                ?error,
+                task_id,
+                subtask_id,
+                "executor failure awaits terminal recovery"
+            );
+        }
+        return;
+    }
+    let ctx = consumer.redis.as_ref().map(|redis| completion::Completion {
         app: app.as_deref(),
         mysql: &consumer.mysql,
         redis,
         tables: consumer.tables,
         executor_manager: &consumer.executor_manager,
-    };
-    let message = "Could not dispatch execution to the executor";
-    let code = "EXECUTOR_DISPATCH_FAILED";
-    let result = completion::complete_terminal_event(
-        &ctx,
+    });
+    let result = completion::complete_executor_failure(
+        &consumer.mysql,
+        consumer.tables,
+        ctx.as_ref(),
         task_id,
         subtask_id,
-        "FAILED",
-        None,
-        Some(message),
-        Some(code),
-        None,
-        None,
+        message,
+        code,
     )
     .await;
-    let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
-    event.message_id = message_id;
-    event.error = Some(message.to_owned());
-    event.error_code = Some(code.to_owned());
-    if let Err(error) = emitter::emit_terminal_frames(
-        redis,
-        &event,
-        Some(user_id),
-        result.as_ref().unwrap_or(&Value::Null),
-        None,
-    )
-    .await
+    let (Some(redis), Some(result)) = (consumer.redis.as_ref(), result) else {
+        return;
+    };
+    if let Err(error) =
+        crate::internal_callback::session::publish_callback_event(redis, subtask_id, &event).await
+    {
+        tracing::warn!(%error, task_id, subtask_id, "executor failure callback publish failed");
+    }
+    if let Err(error) =
+        emitter::emit_terminal_frames(redis, &event, Some(user_id), &result, None).await
     {
         tracing::warn!(%error, task_id, subtask_id, "executor failure notification failed");
     }
@@ -502,20 +658,25 @@ async fn finalize_executor_failure<M: Mysql, R: Redis>(
 
 /// Run the real chat-shell SSE consumer for one admitted job.
 ///
-/// `sse_sync::collect` owns the Source lifecycle: it clears
-/// `chat:cancel:{subtask}` before sending the request (the early DEL), polls
-/// the key while the stream runs, persists each event, and deletes the key in
-/// its finally (the late, strategy-ending DEL). A 500, a mid-stream error and a
+/// `sse_sync::collect` registers without erasing admitted cancel intents, polls
+/// the flag while the stream runs, persists each event, and atomically clears
+/// the intent and flag in its finally. A 500, a mid-stream error and a
 /// stream without a terminal frame all surface as an error here and are logged
 /// with the job identity; they are never reported as completion.
-async fn run_chat_shell<M, R>(job: ChatShellJob<M, R>) -> Result<Collected, String>
+async fn run_chat_shell<M, R>(
+    job: ChatShellJob<M, R>,
+    accepted: Option<oneshot::Sender<Result<(), String>>>,
+) -> Result<Collected, String>
 where
     M: Mysql,
     R: Redis + Clone,
 {
     let app = job.consumer.app.upgrade();
+    let package_mode = super::create::package_runtime::is_target(&job.target_url);
+    // Image retries reuse the subtask ID, so each attempt owns its own terminal frames.
+    let image_stream = super::create::package_runtime::is_image_target(&job.target_url);
     let consumer = sse_sync::ConsumerContext {
-        package_mode: super::create::package_runtime::is_target(&job.target_url),
+        package_mode,
         mysql: &job.consumer.mysql,
         redis: job.consumer.redis.as_ref(),
         tables: job.consumer.tables,
@@ -525,15 +686,72 @@ where
         start_data: job.start_data.clone(),
         created_task: job.created_task.clone(),
         owner_user_id: job.forward.then_some(job.request.user_id),
+        recover_terminal: accepted.is_some() || package_mode || (job.forward && !image_stream),
+        acceptance: accepted.map(|sender| std::sync::Mutex::new(Some(sender))),
     };
-    let result = sse_sync::collect(
+    // Keep the streaming state machine off the dispatch worker's stack.
+    let collect = Box::pin(sse_sync::collect(
         &consumer,
         &job.target_url,
         &job.request,
         &job.request_id,
         job.request.message_id,
-    )
-    .await;
+    ));
+    let result = if consumer.acceptance.is_some() {
+        let key =
+            crate::internal_callback::pipeline::execution_lease_key(job.task_id, job.subtask_id);
+        let Some(redis) = consumer.redis else {
+            return Err("Redis is required for pipeline dispatch".to_owned());
+        };
+        crate::internal_callback::completion::with_owned_lease(
+            redis,
+            &key,
+            || "Pipeline execution is already owned or Redis is unavailable".to_owned(),
+            async {
+                match crate::internal_callback::completion::read_terminal_result(
+                    consumer.mysql,
+                    consumer.tables,
+                    job.task_id,
+                    job.subtask_id,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                {
+                    Some(_) => {
+                        if let Some(sender) = consumer.acceptance.as_ref().and_then(|value| {
+                            value.lock().expect("dispatch acceptance lock").take()
+                        }) {
+                            let _ = sender.send(Ok(()));
+                        }
+                        Ok(Collected {
+                            content: String::new(),
+                        })
+                    }
+                    None => {
+                        crate::internal_callback::session::cleanup_streaming_state(
+                            redis,
+                            job.subtask_id,
+                            None,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                        collect.await
+                    }
+                }
+            },
+        )
+        .await
+    } else {
+        collect.await
+    };
+    if let Err(error) = &result
+        && let Some(sender) = consumer
+            .acceptance
+            .as_ref()
+            .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
+    {
+        let _ = sender.send(Err(error.clone()));
+    }
     match &result {
         Ok(collected) => tracing::info!(
             task_id = job.task_id,
@@ -558,7 +776,7 @@ where
 fn executor_request(
     http: &HttpClient,
     url: &str,
-    body: &Value,
+    dispatch: &crate::executor_binding::DispatchRequest,
 ) -> Option<brz_http::RequestBuilder> {
     Some(
         crate::responses::create::openai_client::apply_openai_client_headers(
@@ -571,10 +789,14 @@ fn executor_request(
                 )
                 .header(
                     "authorization",
-                    crate::responses::create::openai_client::OPENAI_DUMMY_AUTHORIZATION,
+                    format!(
+                        "{} {}",
+                        crate::executor_binding::AUTHORIZATION_SCHEME,
+                        dispatch.binding_token
+                    ),
                 ),
         )
-        .json(body),
+        .json(&dispatch.body),
     )
 }
 

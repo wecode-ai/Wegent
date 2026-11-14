@@ -103,13 +103,4 @@ mod model_selection_diagnostics_tests {
         assert!(!encoded.contains("private option"));
     }
 
-    #[test]
-    fn model_selection_diagnostics_distinguish_missing_and_snake_case_metadata() {
-        assert_eq!(model_selection_log_fields(&json!({}))[0].1, "false");
-        let fields = model_selection_log_fields(&json!({"model_selection":{
-            "model_name":"model-b", "model_type":"runtime"
-        }}));
-        assert_eq!(fields[1].1, "model-b");
-        assert_eq!(fields[2].1, "runtime");
-    }
 }

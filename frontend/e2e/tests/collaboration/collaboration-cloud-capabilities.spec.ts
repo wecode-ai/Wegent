@@ -1,3 +1,4 @@
+import { showAllProjectIssues } from '../../utils/collaboration-test-support'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -1147,6 +1148,7 @@ test.describe('Collaboration cloud capabilities', () => {
         )
 
         await page.goto(collaborationProjectPath(workspace.id, project.id))
+        await showAllProjectIssues(page)
         await expect(page.getByTestId(`collaboration-issue-${ownerIssue.id}`)).toBeVisible()
         await expect(page.getByTestId(`collaboration-issue-${regularIssue.id}`)).toBeVisible()
       } finally {

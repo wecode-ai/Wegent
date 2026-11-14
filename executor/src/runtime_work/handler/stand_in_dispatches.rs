@@ -34,7 +34,7 @@ impl RuntimeWorkRpcHandler {
         let matching = if manual {
             configs.iter().collect()
         } else {
-            super::personal_stand_in::matching_personal_roles(configs, issue)
+            super::personal_stand_in::automatic_assignment_roles(configs, issue)
         };
         let pending: Vec<&Value> = matching
             .into_iter()
@@ -249,7 +249,9 @@ impl RuntimeWorkRpcHandler {
         // Once accepted locally, never replay a model turn (including failed or
         // archived work) just because the process crashed before clearing intent.
         if self.stand_in_assignment_is_handled(&config, &task_id, &intent["binding"]) {
-            return Ok(());
+            return self
+                .reconcile_accepted_stand_in_binding(&config, &issue, &intent["binding"])
+                .await;
         }
         config["intakeRouted"] = intent["intakeRouted"].clone();
         // Recheck inside the normal task gate as well: another dispatcher may

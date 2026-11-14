@@ -1,0 +1,60 @@
+[data-testid='collaboration-exp-app'] .experience-issue-summary {
+  overflow-wrap: anywhere;
+  font-size: var(--text-base);
+  line-height: 1.9;
+}
+
+[data-testid='collaboration-exp-app'] .experience-issue-summary p {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+[data-testid='collaboration-exp-app'] .experience-issue-summary .assistant-markdown {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+[data-testid='collaboration-exp-app'] .experience-issue-summary h3 {
+  margin: 0;
+  font-size: revert;
+  font-weight: revert;
+  line-height: 1.9;
+  letter-spacing: -0.012em;
+}
+
+[data-testid='collaboration-exp-app'] .experience-issue-summary ul,
+[data-testid='collaboration-exp-app'] .experience-issue-summary ol {
+  margin: revert;
+  padding: revert;
+  list-style: revert;
+}
+
+[data-testid='collaboration-exp-app'] .experience-issue-summary li {
+  margin: revert;
+  padding: revert;
+  line-height: inherit;
+}
+
+[data-testid='collaboration-exp-app'] .experience-summary-link {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+[data-testid='collaboration-exp-app'] .experience-summary-link:hover {
+  color: rgb(var(--color-text-primary));
+}
+
+@media (max-width: 767px) {
+  [data-testid='collaboration-exp-app'] .experience-summary-link {
+    min-height: 44px;
+  }
+}

@@ -83,7 +83,11 @@ flowchart TD
 
 At execution time, `preferences.default_execution_target` applies only to unbound Issues manually invoking a `user_select` Agent without an explicit environment. Automations must persist all deferred choices in `runnerSelection` before being enabled. A collaboration group requires one runner satisfying every member's requirements, while members may use different fixed models.
 
-Sharing a personal environment preserves its owner and model account. Project pools intersect workspace and project Device grants. Revoking workspace sharing invalidates project access. Authorization always uses the triggering user; the creator's access is insufficient.
+Manual execution on the triggering user's specifically selected, active device uses current device ownership and requires no workspace sharing or project Device grant. This includes a fixed Agent policy and a fixed choice resolved from `user_select` or the personal default. Configuration does not share the device. Queue admission, notifications, claims and running permission checks retain the same owner-only boundary. Ownership changes, device deactivation and Issue execution permission revocation invalidate this authority; a saved routing snapshot grants nothing by itself.
+
+Device addresses written during a claim establish runtime affinity, not the caller's fixed selection. Unrouted legacy executions retain existing shared or valid legacy installation authorization.
+
+Other users' devices, project pools and automations still intersect workspace and project Device grants. Sharing a personal environment preserves its owner and model account. Revoking workspace sharing invalidates shared project use while retaining the owner's independent manual use. Authorization always uses the triggering user; the creator's access is insufficient.
 
 Cloud project device pickers distinguish **Add** from **Share and add**. Before sharing a personal environment, the UI explains workspace access and account/quota ownership. Clicking the action shares with the workspace before authorizing the project. Submission waits for known sharing status; already shared devices go directly to project authorization. Sharing failures stop the flow. If project authorization fails after sharing succeeds, the UI retains the actual sharing state and retries only project authorization.
 

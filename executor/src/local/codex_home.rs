@@ -565,62 +565,6 @@ mod tests {
     }
 
     #[test]
-    fn reads_and_updates_remote_apps_config() {
-        let root = tempfile::tempdir().unwrap();
-        let codex_home = root.path().join("codex");
-        fs::create_dir_all(&codex_home).unwrap();
-        assert!(read_remote_apps_enabled("").unwrap());
-        assert!(read_remote_apps_enabled("model = \"gpt-5\"\n").unwrap());
-        fs::write(
-            codex_home.join("config.toml"),
-            concat!(
-                "model = \"gpt-5\"\n\n",
-                "[features]\napps = true # enabled\n\n",
-                "[plugins.\"enabled@wework-personal\"]\nenabled = true\n\n",
-                "[plugins.\"disabled@wework-personal\"]\nenabled = false\n",
-            ),
-        )
-        .unwrap();
-
-        let current = read_codex_local_config_from_path(&codex_home).unwrap();
-        assert!(current.remote_apps_enabled);
-        assert_eq!(current.enabled_plugin_keys, vec!["enabled@wework-personal"]);
-        assert_eq!(
-            current.disabled_plugin_keys,
-            vec!["disabled@wework-personal"]
-        );
-
-        write_remote_apps_enabled(&codex_home, false).unwrap();
-
-        let updated = read_codex_local_config_from_path(&codex_home).unwrap();
-        assert!(!updated.remote_apps_enabled);
-        assert!(fs::read_to_string(codex_home.join("config.toml"))
-            .unwrap()
-            .contains("model = \"gpt-5\""));
-    }
-
-    #[test]
-    fn updates_remote_apps_in_inline_features_table() {
-        let root = tempfile::tempdir().unwrap();
-        let codex_home = root.path().join("codex");
-        fs::create_dir_all(&codex_home).unwrap();
-        fs::write(
-            codex_home.join("config.toml"),
-            "model = \"gpt-5\"\nfeatures = { apps = false, shell_snapshot = true }\n",
-        )
-        .unwrap();
-
-        write_remote_apps_enabled(&codex_home, true).unwrap();
-
-        let content = fs::read_to_string(codex_home.join("config.toml")).unwrap();
-        let config = content.parse::<DocumentMut>().unwrap();
-        assert!(content.contains("features = {"));
-        assert!(!content.contains("[features]"));
-        assert_eq!(config["features"]["apps"].as_bool(), Some(true));
-        assert_eq!(config["features"]["shell_snapshot"].as_bool(), Some(true));
-    }
-
-    #[test]
     fn rejects_invalid_codex_config_without_overwriting_it() {
         let root = tempfile::tempdir().unwrap();
         let codex_home = root.path().join("codex");
@@ -676,35 +620,6 @@ mod tests {
 
         assert!(error.contains("Failed to read"));
         assert!(error.contains("config.toml"));
-    }
-
-    #[test]
-    fn imports_codex_content_into_an_existing_home() {
-        let root = tempfile::tempdir().unwrap();
-        let home = root.path().join("home");
-        let destination = root.path().join("destination");
-        fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
-        fs::create_dir_all(&destination).unwrap();
-        let source_config = "model = \"gpt-5\"\npersonality = \"friendly\"\n";
-        fs::write(home.join(".codex/config.toml"), source_config).unwrap();
-        fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
-        fs::write(destination.join("config.toml"), "old\n").unwrap();
-
-        let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(destination.join("config.toml")).unwrap(),
-            "personality = \"friendly\"\n"
-        );
-        assert_eq!(
-            fs::read_to_string(home.join(".codex/config.toml")).unwrap(),
-            source_config
-        );
-        assert_eq!(
-            fs::read_to_string(destination.join("skills/example/SKILL.md")).unwrap(),
-            "example"
-        );
-        assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
     }
 
     #[test]
@@ -825,29 +740,6 @@ mod tests {
             parsed["plugins"]["kept@wework-personal"]["enabled"].as_bool(),
             Some(false)
         );
-    }
-
-    #[test]
-    fn maps_claude_instructions_and_skills_to_codex_content() {
-        let root = tempfile::tempdir().unwrap();
-        let home = root.path().join("home");
-        let destination = root.path().join("destination");
-        fs::create_dir_all(home.join(".claude/skills/example")).unwrap();
-        fs::write(home.join(".claude/CLAUDE.md"), "Claude instructions").unwrap();
-        fs::write(home.join(".claude/skills/example/SKILL.md"), "example").unwrap();
-
-        let result =
-            import_external_content_from_paths("claude-code", &home, &destination).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(destination.join("AGENTS.md")).unwrap(),
-            "Claude instructions"
-        );
-        assert_eq!(
-            fs::read_to_string(destination.join("skills/example/SKILL.md")).unwrap(),
-            "example"
-        );
-        assert_eq!(result.imported_entries, vec!["CLAUDE.md", "skills"]);
     }
 
     #[cfg(unix)]

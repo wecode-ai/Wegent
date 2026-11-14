@@ -1,4 +1,7 @@
+import { parseCollaborationExpDeepLink } from '@/features/collaboration-exp/integration/deepLinks'
+
 export type WeworkDestination =
+  | { kind: 'collaboration-exp'; contentRoute: string }
   | { kind: 'boards' }
   | {
       kind: 'board'
@@ -53,6 +56,10 @@ function segment(value: string, limit = 128): string | null {
 }
 
 export function parseWeworkScheme(input: string): WeworkDestination | null {
+  if (input.startsWith('wework://collaboration-exp')) {
+    const contentRoute = parseCollaborationExpDeepLink(input)
+    return contentRoute ? { kind: 'collaboration-exp', contentRoute } : null
+  }
   try {
     if (
       !input.startsWith('wework://') ||
@@ -126,6 +133,7 @@ export function weworkDestinationRoute(
   destination: WeworkDestination,
   focusRequest?: string
 ): string {
+  if (destination.kind === 'collaboration-exp') return destination.contentRoute
   if (destination.kind === 'boards') return '/todo'
   if (destination.kind === 'interaction') {
     return `/pending-interactions?${new URLSearchParams({ interaction: JSON.stringify([destination.deviceId, destination.taskId, destination.requestKey]) })}`

@@ -19,6 +19,9 @@ pub(super) fn codex_notification_resumes_turn(method: &str) -> bool {
 
 fn retry_reason(params: &Value) -> &'static str {
     let info = params.pointer("/error/codexErrorInfo");
+    if info.and_then(Value::as_str) == Some("serverOverloaded") {
+        return "overload";
+    }
     if info.and_then(Value::as_str) == Some("rateLimitExceeded")
         || info.is_some_and(|info| {
             info.as_object().is_some_and(|variants| {
@@ -73,6 +76,8 @@ impl CodexNotificationEventMapper {
             "model_kind": string_field(&context.request.model_config, "wework_model_kind")
                 .or_else(|| string_field(&context.request.model_config, "weworkModelKind")),
             "retry_reason": retry_reason(params),
+            "retry_at": params.get("retryAt"),
+            "retry_attempt": params.get("retryAttempt"),
         });
         let (event, data) = if let Some(id) = self.reconnecting_block_id.as_ref() {
             (
@@ -148,7 +153,6 @@ mod tests {
         }
         for info in [
             Value::Null,
-            json!("serverOverloaded"),
             json!({"httpConnectionFailed": {"httpStatusCode": 503}}),
         ] {
             assert_eq!(
@@ -156,6 +160,10 @@ mod tests {
                 "connection"
             );
         }
+        assert_eq!(
+            retry_reason(&json!({"error":{"codexErrorInfo":"serverOverloaded"}})),
+            "overload"
+        );
     }
 
     #[test]

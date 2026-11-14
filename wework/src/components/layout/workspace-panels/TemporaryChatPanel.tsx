@@ -1,8 +1,11 @@
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { conversationOutcomePresentation } from './conversationOutcomePresentation'
+import {
+  selectPrivateHistory,
+  type PrivateHistorySource,
+} from '@/features/collaboration-exp/private/privateConversationHistory'
 import { useRuntimeInteractionInputHost } from '@/features/notifications/useRuntimeInteractionInputHost'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
-import { deliverNativeConversationMessage } from './nativeConversationDelivery'
 import type { ConversationModelControls } from './conversationModelControls'
 import { modelSelectionKey } from '@wegent/collaboration/controls/model-ui'
 import { useStandInActiveModelProvider } from './useStandInActiveModelProvider'
@@ -14,7 +17,7 @@ import {
 import { runtimePaneQueue } from './runtimePaneQueues'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
 import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
-import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   runtimeQueuedMessageRequest,
   type RuntimeConversationQueuePort,
@@ -111,13 +114,24 @@ interface TemporaryChatPanelProps {
   autoSubmitInitialInput?: boolean
   initialAddress?: RuntimeTaskAddress | null
   controlledAddress?: RuntimeTaskAddress | null
-  draft?: { value: string; onChange(value: string): void }
+  draft?: {
+    value: string
+    onChange(value: string): void
+    beginSubmission?(value: string): {
+      clientMessageId: string
+      clearIfUnchanged(): void
+      release(): void
+    }
+  }
   createTask?: (
     message: string,
     options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
-  runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+  runtimeContext?: Pick<
+    RuntimeSendRequest,
+    'cloudProjectId' | 'origin' | 'additionalContext' | 'conversationContext'
+  >
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
@@ -147,6 +161,9 @@ interface TemporaryChatPanelProps {
   coordinateUserInput?: boolean
   focusedRequest?: RequestUserInputPayload | null
   sourceMessageIds?: string[]
+  historySource?: PrivateHistorySource
+  historySourceUnavailableText?: string
+  onHistorySourceAvailabilityChange?(available: boolean): void
   focusRequestKey?: string
 }
 
@@ -193,6 +210,9 @@ export function TemporaryChatPanel({
   coordinateUserInput = false,
   focusedRequest,
   sourceMessageIds,
+  historySource,
+  historySourceUnavailableText,
+  onHistorySourceAvailabilityChange,
   focusRequestKey,
   active = true,
 }: TemporaryChatPanelProps) {
@@ -223,7 +243,9 @@ export function TemporaryChatPanel({
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
   const catalogTranslate = useCallback((key: string) => String(t(key)), [t])
   const catalogAddress = address ?? source
-  const catalogDeviceId = resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
+  const catalogDeviceId =
+    findWorkbenchDevice(state.devices, catalogAddress?.deviceId)?.device_id ??
+    resolveLocalWorkbenchDeviceId(state.devices, catalogAddress?.deviceId)
   const composerCatalog = useRuntimeComposerCatalog(
     catalogAddress && catalogDeviceId ? { ...catalogAddress, deviceId: catalogDeviceId } : null,
     services,
@@ -400,9 +422,23 @@ export function TemporaryChatPanel({
   const [turns, setTurns] = useState<RuntimeConversationTurn[]>(() =>
     initialAddress ? getRuntimeConversationTurns(initialAddress) : []
   )
+  const [acceptedSourceMessageIds, setAcceptedSourceMessageIds] = useState<string[]>([])
+  const scopedHistory = useMemo(
+    () =>
+      historySource
+        ? selectPrivateHistory(turns, historySource, acceptedSourceMessageIds)
+        : { available: true, messages, turns },
+    [historySource, turns, messages, acceptedSourceMessageIds]
+  )
+  useEffect(() => {
+    onHistorySourceAvailabilityChange?.(scopedHistory.available)
+  }, [onHistorySourceAvailabilityChange, scopedHistory.available])
   const presentation = useMemo(
-    () => (hideProcessing ? conversationOutcomePresentation(messages, turns) : { messages, turns }),
-    [hideProcessing, messages, turns]
+    () =>
+      hideProcessing
+        ? conversationOutcomePresentation(scopedHistory.messages, scopedHistory.turns)
+        : scopedHistory,
+    [hideProcessing, scopedHistory]
   )
   const draftScopeKey = `pane:${instanceId}`
   const [initialDraftScope] = useState(draftScopeKey)
@@ -736,6 +772,59 @@ export function TemporaryChatPanel({
     })
   }, [address, globalSelectedModel, taskModelSelection])
 
+  const sendConversationMessage = useCallback(
+    async (message: RuntimePaneQueuedMessage, interrupt = false) => {
+      if (!address || !active || readOnly)
+        return { sent: false, error: t('workbench.project_chat_send_failed') }
+      const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
+      let error: string | null = null
+      let queued = false
+      const sendMessage = interrupt ? interruptAndSendRuntimePaneMessage : sendRuntimePaneMessage
+      const sent = await sendMessage(
+        runtimeQueuedMessageRequest(
+          {
+            address,
+            ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
+            ...(sendEphemeral ? { ephemeral: true } : {}),
+          },
+          message
+        ),
+        {
+          silentBusyRetry: nativeConversation,
+          onError: value => {
+            error = value
+          },
+          onQueued: () => {
+            queued = true
+          },
+        }
+      )
+      if (sent && !queued)
+        setMessages(
+          appendAcceptedRuntimeConversationMessage(
+            address,
+            createRuntimeUserMessage(message.content, message.attachments ?? [], {
+              id: message.id,
+            }),
+            lifecycleStore.getTask(address)?.turn.id ?? null,
+            turnIdsBeforeSend
+          )
+        )
+      return { sent, error }
+    },
+    [
+      address,
+      active,
+      readOnly,
+      interruptAndSendRuntimePaneMessage,
+      lifecycleStore,
+      nativeConversation,
+      sendEphemeral,
+      sendRuntimePaneMessage,
+      t,
+    ]
+  )
+
   const queuePort = useMemo<RuntimeConversationQueuePort<number>>(
     () => ({
       lifecycle: () => lifecycleStore.getTaskRevision(address),
@@ -743,85 +832,54 @@ export function TemporaryChatPanel({
       isBusyError: isRuntimeTaskBusyError,
       sendFailedText: t('workbench.project_chat_send_failed'),
       guidanceFailedText: t('workbench.project_chat_send_failed'),
-      async send(message) {
-        if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
-        const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
-        let error: string | null = null
-        let queued = false
-        const sent = await sendRuntimePaneMessage(
-          runtimeQueuedMessageRequest(
-            { address, ...(sendEphemeral ? { ephemeral: true } : {}), ...runtimeContext },
-            message
-          ),
-          {
-            silentBusyRetry: nativeConversation,
-            onError: value => {
-              error = value
-            },
-            onQueued: () => {
-              queued = true
-            },
-          }
-        )
-        if (sent && !queued)
-          setMessages(
-            appendAcceptedRuntimeConversationMessage(
-              address,
-              createRuntimeUserMessage(message.content, message.attachments ?? [], {
-                id: message.id,
-              }),
-              lifecycleStore.getTask(address)?.turn.id ?? null,
-              turnIdsBeforeSend
-            )
-          )
-        return { sent, error }
-      },
+      send: sendConversationMessage,
       async guide(message) {
-        if (!address) return { sent: false, error: t('workbench.project_chat_send_failed') }
+        if (!address || !active || readOnly)
+          return { sent: false, error: t('workbench.project_chat_send_failed') }
         const request = runtimeQueuedMessageRequest({ address }, message)
         return sendRuntimePaneGuidance({
           address,
           message: request.message,
+          ...(request.conversationContext
+            ? { conversationContext: request.conversationContext }
+            : {}),
           clientGuidanceId: message.id,
           ...(request.attachmentIds ? { attachmentIds: request.attachmentIds } : {}),
           ...(request.attachments ? { attachments: request.attachments } : {}),
         })
       },
     }),
-    [
-      address,
-      lifecycleStore,
-      runtimeContext,
-      sendEphemeral,
-      sendRuntimePaneMessage,
-      sendRuntimePaneGuidance,
-      nativeConversation,
-      t,
-    ]
+    [address, active, readOnly, lifecycleStore, sendConversationMessage, sendRuntimePaneGuidance, t]
   )
 
   useEffect(() => {
-    if (address) void conversationQueue.pump(queuePort, busy)
-  }, [address, busy, taskLifecycle, queuedMessages, conversationQueue, queuePort])
+    if (address && active && !readOnly) void conversationQueue.pump(queuePort, busy)
+  }, [address, active, readOnly, busy, taskLifecycle, queuedMessages, conversationQueue, queuePort])
 
   const sendQueuedMessageAsGuidance = useCallback(
-    (message: RuntimePaneQueuedMessage, forceActiveTurn = false) =>
-      conversationQueue.guide(
+    async (message: RuntimePaneQueuedMessage, forceActiveTurn = false) => {
+      if (!active || readOnly) return false
+      return conversationQueue.guide(
         message.id,
         queuePort,
         forceActiveTurn || Boolean(address && lifecycleStore.getTask(address)?.derived.isTurnActive)
-      ),
-    [address, conversationQueue, lifecycleStore, queuePort]
+      )
+    },
+    [address, active, readOnly, conversationQueue, lifecycleStore, queuePort]
   )
 
   const send = useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
-      const message = (valueOverride ?? input).trim()
+      if (!active || readOnly) return false
+      const draftValue = valueOverride ?? input
+      const message = draftValue.trim()
       if (!message) return false
+      if (historySource && !scopedHistory.available) return false
       if (nativeConversation && nativeSubmission.current) return false
       if (!canSendWithCurrentModel()) return false
       setError(null)
-      setInput('')
+      const transactionalDraft = nativeConversation && address ? draft?.beginSubmission : undefined
+      if (!transactionalDraft) setInput('')
       setTrialGuide(null)
 
       const currentAttachments = sideChatProjectChat.attachments
@@ -840,45 +898,64 @@ export function TemporaryChatPanel({
         attachments: persistAttachmentReferences(currentAttachments),
         ...selectedModelFields,
         ...sessionStartFields,
+        ...runtimeContext,
       }
       if (nativeConversation && address) {
         nativeSubmission.current = true
         setSending(true)
+        let submission: ReturnType<NonNullable<typeof transactionalDraft>> | undefined
         try {
-          const result = await deliverNativeConversationMessage({
-            busy: !queuedMessage.startNewSession && paneStatus.isBusy,
-            send: () => queuePort.send(queuedMessage),
-            guide: () =>
-              sendRuntimePaneGuidance({
+          if (transactionalDraft) {
+            submission = transactionalDraft(draftValue)
+            queuedMessage.id = submission.clientMessageId
+          }
+          const guideCurrentTurn =
+            !queuedMessage.startNewSession && paneStatus.isBusy && options.guideWhenBusy
+          const guidanceResult = guideCurrentTurn
+            ? await sendRuntimePaneGuidance({
                 address,
                 message,
+                ...(queuedMessage.conversationContext
+                  ? { conversationContext: queuedMessage.conversationContext }
+                  : {}),
                 clientGuidanceId: queuedMessage.id,
                 attachments: localRuntimeAttachments(currentAttachments),
                 attachmentIds: remoteAttachmentIds(currentAttachments),
-              }),
-            isBusyError: error => !queuedMessage.startNewSession && isRuntimeTaskBusyError(error),
-          })
+              })
+            : null
+          const result =
+            guidanceResult ??
+            (await sendConversationMessage(
+              queuedMessage,
+              !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
+            ))
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
-            setInput(current => current || message)
+            if (!transactionalDraft) setInput(current => current || message)
             return false
           }
           if (
-            result.delivery === 'guidance' &&
-            result.turnId &&
+            guidanceResult?.turnId &&
             !getRuntimeConversationMessages(address).some(item => item.id === queuedMessage.id)
           ) {
             setMessages(
-              appendOptimisticRuntimeConversationGuidance(address, result.turnId, queuedMessage)
+              appendOptimisticRuntimeConversationGuidance(
+                address,
+                guidanceResult.turnId,
+                queuedMessage
+              )
             )
           }
+          submission?.clearIfUnchanged()
           sideChatProjectChat.resetAttachments()
+          if (historySource) setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
           return true
         } catch (cause) {
           setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
-          setInput(current => current || message)
+          if (!transactionalDraft) setInput(current => current || message)
           return false
         } finally {
+          submission?.release()
           nativeSubmission.current = false
           setSending(false)
         }
@@ -1035,9 +1112,14 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      active,
+      readOnly,
       nativeConversation,
+      draft,
+      historySource,
+      scopedHistory.available,
       paneStatus.isBusy,
-      queuePort,
+      sendConversationMessage,
       sendRuntimePaneGuidance,
       t,
       goalDraftActive,
@@ -1064,6 +1146,7 @@ export function TemporaryChatPanel({
   )
 
   useEffect(() => {
+    if (!active || readOnly) return
     if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
       return
     }
@@ -1085,15 +1168,26 @@ export function TemporaryChatPanel({
       }, restoreInitialDraft)
     }, 0)
     return () => window.clearTimeout(timeoutId)
-  }, [autoSubmitInitialInput, initialInput, send, setInput, taskModelIdentityPending])
+  }, [
+    active,
+    readOnly,
+    autoSubmitInitialInput,
+    initialInput,
+    send,
+    setInput,
+    taskModelIdentityPending,
+  ])
 
   const cancelQueuedMessage = useCallback(
-    (id: string) => conversationQueue.cancel(id),
-    [conversationQueue]
+    (id: string) => {
+      if (active && !readOnly) conversationQueue.cancel(id)
+    },
+    [active, readOnly, conversationQueue]
   )
 
   const editQueuedMessage = useCallback(
     (id: string) => {
+      if (!active || readOnly) return
       const message = conversationQueue.take(id)
       if (!message) return
       draftEditVersionRef.current += 1
@@ -1102,7 +1196,7 @@ export function TemporaryChatPanel({
       sideChatProjectChat.resetAttachments()
       message.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
     },
-    [conversationQueue, setInput, sideChatProjectChat]
+    [active, readOnly, conversationQueue, setInput, sideChatProjectChat]
   )
 
   const guideQueuedMessage = useCallback(
@@ -1115,11 +1209,11 @@ export function TemporaryChatPanel({
   )
 
   const pause = useCallback(() => {
-    if (!address) return
+    if (!address || !active || readOnly) return
     void cancelRuntimePaneTask(address, {
       onError: message => setError(message),
     }).finally(() => setSending(false))
-  }, [address, cancelRuntimePaneTask])
+  }, [address, active, readOnly, cancelRuntimePaneTask])
 
   const openRuntimeTask = useCallback(() => {
     if (!address || !onOpenRuntimeTask) return
@@ -1151,7 +1245,7 @@ export function TemporaryChatPanel({
 
   const retryFailedMessage = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
-      if (!address || retryInFlightRef.current) return false
+      if (!address || !active || readOnly || retryInFlightRef.current) return false
       if (modelControls && !canSendWithCurrentModel()) return false
       retryInFlightRef.current = true
       setError(null)
@@ -1203,6 +1297,8 @@ export function TemporaryChatPanel({
     [
       address,
       presentation.messages,
+      active,
+      readOnly,
       runtimeContext,
       selectedModelFields,
       sendRuntimePaneMessage,
@@ -1216,7 +1312,7 @@ export function TemporaryChatPanel({
 
   const submitRequestUserInput = useCallback(
     async (response: RequestUserInputResponse): Promise<boolean> => {
-      if (!address) return false
+      if (!address || !active || readOnly) return false
       const payload = findRequestUserInputPayload(messages, requestUserInputResponseKey(response))
       const hosted = await requestUserInputHost?.submit(response, payload)
       if (hosted !== undefined) return hosted
@@ -1231,6 +1327,7 @@ export function TemporaryChatPanel({
           status: 'queued',
           createdAt: new Date().toISOString(),
           ...selectedModelFields,
+          ...runtimeContext,
         }
         conversationQueue.enqueue(answerMessage)
         return sendQueuedMessageAsGuidance(answerMessage)
@@ -1246,6 +1343,8 @@ export function TemporaryChatPanel({
       address,
       conversationQueue,
       messages,
+      active,
+      readOnly,
       queuedMessages.length,
       runtimeContext,
       selectedModelFields,
@@ -1257,7 +1356,7 @@ export function TemporaryChatPanel({
 
   const ignoreRequestUserInput = useCallback(
     async (payload: RequestUserInputPayload) => {
-      if (!address) return
+      if (!address || !active || readOnly) return
       const key = requestUserInputPayloadKey(payload)
       if (key) {
         setHiddenRequestUserInputIds(current => new Set(current).add(key))
@@ -1271,10 +1370,12 @@ export function TemporaryChatPanel({
         })
       }
     },
-    [address, cancelRuntimePaneTask]
+    [address, active, readOnly, cancelRuntimePaneTask]
   )
 
-  const sourceMessageId = messages.find(message => sourceMessageIds?.includes(message.id))?.id
+  const sourceMessageId = presentation.messages.find(message =>
+    sourceMessageIds?.includes(message.id)
+  )?.id
   const messageTarget = useMemo(
     () =>
       sourceMessageId && focusRequestKey
@@ -1285,9 +1386,8 @@ export function TemporaryChatPanel({
   useEffect(() => {
     if (
       active &&
-      focusRequestKey &&
-      sourceMessageIds?.length &&
-      !sourceMessageId &&
+      ((historySource && !scopedHistory.available) ||
+        (focusRequestKey && sourceMessageIds?.length && !sourceMessageId)) &&
       !historyLoading &&
       !historyLoadingMoreBefore &&
       historyBeforeCursor &&
@@ -1301,6 +1401,8 @@ export function TemporaryChatPanel({
     }
   }, [
     active,
+    historySource,
+    scopedHistory.available,
     focusRequestKey,
     sourceMessageIds,
     sourceMessageId,
@@ -1312,7 +1414,7 @@ export function TemporaryChatPanel({
   ])
   const pendingRequest =
     focusedRequest === undefined
-      ? pendingRequestUserInputPayload(messages, hiddenRequestUserInputIds)
+      ? pendingRequestUserInputPayload(presentation.messages, hiddenRequestUserInputIds)
       : focusedRequest &&
           !hiddenRequestUserInputIds.has(requestUserInputPayloadKey(focusedRequest) ?? '')
         ? focusedRequest
@@ -1324,14 +1426,18 @@ export function TemporaryChatPanel({
       loadError={historyError}
       onRetry={retryHistory}
       testId={testId}
-      emptyStateText={emptyStateText}
+      emptyStateText={
+        historySource && !scopedHistory.available
+          ? (historySourceUnavailableText ?? emptyStateText)
+          : emptyStateText
+      }
       expanded={expanded}
       wideComposer={wideComposer}
       showWorkbenchBackground={showWorkbenchBackground}
       onRestoreConversation={onRestoreConversation}
       translate={conversationTranslate}
       composer={
-        readOnly || !active ? null : (
+        readOnly || !active || !scopedHistory.available ? null : (
           <>
             {nativeConversation && !pendingRequest && (
               <StandInNotificationPrompt scopeKey={lifecycleStore.notificationScope} />
@@ -1357,7 +1463,7 @@ export function TemporaryChatPanel({
                     source={address}
                     disabled={requestUserInputHost?.isDisabled(pendingRequest)}
                     error={requestUserInputHost?.getError(pendingRequest)}
-                    messages={messages}
+                    messages={presentation.messages}
                     draftAnswers={requestUserInputHost?.getDraft(pendingRequest)}
                     onDraftAnswersChange={answers =>
                       requestUserInputHost?.setDraft(pendingRequest, answers)
@@ -1383,6 +1489,7 @@ export function TemporaryChatPanel({
                     setError(null)
                   }}
                   onSubmit={send}
+                  clearOnSubmit={!(nativeConversation && address && draft?.beginSubmission)}
                   disabled={
                     (!modelControls && taskModelIdentityPending) || (nativeConversation && sending)
                   }
@@ -1400,12 +1507,18 @@ export function TemporaryChatPanel({
                   showProjectWorkBar={showProjectWorkBar}
                   projectWorkBarMiddleContext={projectWorkBarMiddleContext}
                   projectWorkBarTrailingContext={projectWorkBarTrailingContext}
-                  queuedMessages={queuedMessages}
+                  queuedMessages={
+                    historySource
+                      ? queuedMessages.filter(message =>
+                          acceptedSourceMessageIds.includes(message.id)
+                        )
+                      : queuedMessages
+                  }
                   onCancelQueuedMessage={cancelQueuedMessage}
                   onSendQueuedAsGuidance={guideQueuedMessage}
                   onEditQueuedMessage={editQueuedMessage}
-                  isStreaming={nativeConversation ? false : busy}
-                  onPause={nativeConversation ? undefined : pause}
+                  isStreaming={busy}
+                  onPause={pause}
                   goalDraftActive={goalDraftActive}
                   onSetGoal={
                     allowInitialGoal && createTask && !address
@@ -1431,10 +1544,10 @@ export function TemporaryChatPanel({
         messages={presentation.messages}
         turns={presentation.turns}
         loading={historyLoading || historyLoadingMoreBefore}
-        hasMoreBefore={Boolean(historyBeforeCursor)}
+        hasMoreBefore={!historySource && Boolean(historyBeforeCursor)}
         beforeCursor={historyBeforeCursor}
         loadingMoreBefore={historyLoadingMoreBefore}
-        onLoadMoreBefore={loadMoreHistory}
+        onLoadMoreBefore={historySource ? undefined : loadMoreHistory}
         transcriptError={messages.length ? historyError : null}
         onRetryTranscript={retryHistory}
         isWaitingForAssistant={nativeConversation ? sending : busy}
@@ -1447,7 +1560,7 @@ export function TemporaryChatPanel({
         contentFooterClassName={DESKTOP_MESSAGE_LIST_CLASS}
         scrollTestId="right-workspace-chat-scroll-area"
         onRetryFailedMessage={
-          address && !readOnly
+          address && active && !readOnly
             ? message => {
                 void retryFailedMessage(message)
               }
@@ -1457,20 +1570,24 @@ export function TemporaryChatPanel({
         onLoadFileChangesDiff={
           address
             ? (subtaskId, fileChanges) =>
-                loadTurnFileChangesDiff(subtaskId, messages, fileChanges, address)
+                loadTurnFileChangesDiff(subtaskId, presentation.messages, fileChanges, address)
             : undefined
         }
         onRevertFileChanges={
-          address && !readOnly
+          address && active && !readOnly
             ? (subtaskId, fileChanges) =>
-                revertTurnFileChanges(subtaskId, messages, fileChanges, address)
+                revertTurnFileChanges(subtaskId, presentation.messages, fileChanges, address)
             : undefined
         }
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onOpenWorkspaceFile={onOpenRuntimeTask ? openWorkspaceFile : undefined}
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onRequestUserInputSubmit={address && !readOnly ? submitRequestUserInput : undefined}
-        onRequestUserInputIgnore={address && !readOnly ? ignoreRequestUserInput : undefined}
+        onRequestUserInputSubmit={
+          address && active && !readOnly ? submitRequestUserInput : undefined
+        }
+        onRequestUserInputIgnore={
+          address && active && !readOnly ? ignoreRequestUserInput : undefined
+        }
         onOpenAssistantPlan={onOpenRuntimeTask ? openRuntimeTask : undefined}
         hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         hideRequestUserInputBlocks={

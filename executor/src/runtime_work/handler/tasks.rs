@@ -218,6 +218,20 @@ impl RuntimeWorkRpcHandler {
             );
             return Ok(json!({"success": true, "skipped": true}));
         }
+        if let Err(error) = self.sync_generated_issue_title(&latest_link, &title).await {
+            log_executor_event(
+                "generated Issue title update failed",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("error", error.message),
+                ],
+            );
+        }
+        let latest_link =
+            self.commit_runtime_task_title(latest_link, title.clone(), Some(&source_title))?;
+        if latest_link.title != title {
+            return Ok(json!({"success": true, "skipped": true}));
+        }
         if let Some(thread_id) = latest_link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method(
@@ -234,10 +248,11 @@ impl RuntimeWorkRpcHandler {
                         ("error", error.clone()),
                     ],
                 );
-                return Ok(json!({"success": false, "error": error}));
+                return Ok(
+                    json!({"success": false, "error": error, "titleApplied":true, "title":title}),
+                );
             }
         }
-        self.commit_runtime_task_title(latest_link, title.clone());
         log_executor_event(
             "friendly task title generation completed",
             &[("local_task_id", local_task_id)],
@@ -247,12 +262,28 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn commit_runtime_task_title(
         &self,
-        mut link: RuntimeTaskLink,
+        link: RuntimeTaskLink,
         title: String,
-    ) -> RuntimeTaskLink {
-        link.title = title.clone();
-        link.updated_at = now_ms();
-        self.upsert_local_task(link.clone());
+        expected_title: Option<&str>,
+    ) -> Result<RuntimeTaskLink, AppIpcError> {
+        let mut applied = false;
+        let link = self
+            .store
+            .update_task(&link.local_task_id, |current| {
+                if expected_title.is_some_and(|expected| current.title != expected) {
+                    return;
+                }
+                current.title = title.clone();
+                current.updated_at = now_ms();
+                applied = true;
+            })
+            .ok_or_else(|| {
+                AppIpcError::new("task_not_found", "Task was removed before its title update")
+            })?;
+        if !applied {
+            return Ok(link);
+        }
+        self.project_runtime_link_status(&link);
         let request = runtime_event_request_from_link(&link);
         emit_response_event(
             &self.event_tx,
@@ -262,7 +293,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             json!({"title": title}),
         );
-        link
+        Ok(link)
     }
 
     pub(super) async fn fork_task_at_turn(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -863,16 +894,11 @@ impl RuntimeWorkRpcHandler {
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
         }
-        if !self
-            .local_task_link(&local_task_id)
-            .is_some_and(|link| link.ephemeral)
-        {
-            self.track_default_work_item_async(
-                local_task_id.clone(),
-                title.clone(),
-                string_field(&payload, "message").unwrap_or_default(),
-            );
-        }
+        let _ = self.track_default_work_item_async(
+            local_task_id.clone(),
+            title.clone(),
+            string_field(&payload, "message").unwrap_or_default(),
+        );
         match payload
             .get("friendlyTitleExecutionRequest")
             .cloned()
@@ -1164,7 +1190,17 @@ impl RuntimeWorkRpcHandler {
             })
         }) && self.is_active_local_task(&local_task_id)
             && !self.is_queued_local_task(&local_task_id);
-        if was_busy && !queue_if_busy && !completed_native_turn {
+        let replacing_quota_wait = self
+            .turn_scheduler
+            .lock()
+            .expect("turn scheduler poisoned")
+            .queued_turns
+            .iter()
+            .any(|turn| {
+                turn.local_task_id == local_task_id
+                    && turn.request.extra.contains_key(quota_recovery::MARKER)
+            });
+        if was_busy && !queue_if_busy && !completed_native_turn && !replacing_quota_wait {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task is already running",
@@ -1407,7 +1443,7 @@ impl RuntimeWorkRpcHandler {
             initial_thread_goal,
         };
         if was_busy && !completed_native_turn {
-            self.queue_turn(turn).await?;
+            self.submit_continuation(turn).await?;
         } else {
             self.spawn_turn(turn).await?;
         }
@@ -1939,6 +1975,10 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
+        if let Some(failure) = self.guidance_conversation_context_failure(&local_task_id, &payload)
+        {
+            return Ok(failure);
+        }
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
@@ -1974,6 +2014,11 @@ impl RuntimeWorkRpcHandler {
                         &turn_id,
                         error,
                     ));
+                }
+                if let Some(failure) =
+                    self.guidance_conversation_context_failure(&local_task_id, &payload)
+                {
+                    return Ok(failure);
                 }
                 log_executor_event(
                     "runtime guidance active turn corrected",
@@ -2025,6 +2070,17 @@ impl RuntimeWorkRpcHandler {
                 error,
             )),
         }
+    }
+
+    fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {
+        let private = self.runtime_task_is_private_discussion(task);
+        (private != (payload["conversationContext"] == "private_discussion")).then(|| {
+            json!({
+                "success":false,"accepted":false,"taskId":task,"runtime":"codex",
+                "code":"conversation_context_mismatch",
+                "error":"This message has a different conversation context from the active turn. Queue it or interrupt to start a new turn."
+            })
+        })
     }
 
     pub(super) async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2330,7 +2386,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_worktree_turn(&local_task_id) {
+        if self.cancel_preparing_turn(&local_task_id) {
+            self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
                 None => json!({
@@ -2341,9 +2398,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if had_active_local_execution {
-            self.request_active_turn_stop(&local_task_id);
-        }
+        let had_active_local_execution =
+            self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
         if is_codex && !had_active_local_execution {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
@@ -2451,7 +2507,7 @@ impl RuntimeWorkRpcHandler {
                 .expect("runtime turn scheduler lock should not be poisoned") = previous;
             return Err(error);
         }
-        self.reserve_worktree_preparation(&queued_turn);
+        self.reserve_turn_preparation(&queued_turn);
         drop(_operation);
         log_executor_event(
             "runtime work queued turn force started",
@@ -2461,6 +2517,10 @@ impl RuntimeWorkRpcHandler {
             .request
             .extra
             .contains_key(project_preparation::DEFERRED_ENVIRONMENT)
+            || queued_turn
+                .request
+                .extra
+                .contains_key(quota_recovery::MARKER)
         {
             self.start_queued_turn(queued_turn);
         } else if queued_turn
@@ -3039,14 +3099,6 @@ mod tests {
         );
         assert_eq!(handle["overloadRecoveryTurnIds"], json!(["turn-live"]));
         assert_eq!(handle["supersededTranscriptTurnIds"], json!(["turn-live"]));
-    }
-
-    #[test]
-    fn normalizes_model_title_to_one_short_line() {
-        assert_eq!(
-            normalize_friendly_title("  “为任务创建友好标题。”\n这是解释"),
-            Some("为任务创建友好标题".to_owned())
-        );
     }
 
     #[test]

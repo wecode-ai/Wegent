@@ -64,6 +64,19 @@ fn apply_local_execution_state(
     queue_position: Option<usize>,
 ) {
     if let Some(queue_position) = queue_position {
+        if link.runtime == "codex" {
+            // The durable queue owns admission even when history reconciliation
+            // has just projected the preceding failed turn as idle.
+            let recovering = crate::runtime_work::lifecycle::native_execution_state(link)
+                .is_some_and(|state| {
+                    state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Recovering
+                });
+            crate::runtime_work::lifecycle::queue_native_execution(
+                link,
+                queue_position,
+                recovering,
+            );
+        }
         link.running = false;
         link.status = "queued".to_owned();
         link.thread_status = if link.thread_id.is_some() {
@@ -500,6 +513,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
+                | "conversationContext"
                 | "modelSelection"
                 | "model_selection"
                 | "origin"
@@ -582,6 +596,7 @@ mod stand_in_request_snapshot_tests {
             ..Default::default()
         };
         let fields = json!({"user_id":7,"runtime_command_id":"command-1", "client_user_message_id":"message-1",
+            "conversationContext":"private_discussion",
             "standInReportTo":{"userId":7,"taskId":"stand-in-chat-7-primary"},
             "standInSourceBindings":[{"recordId":"record","source":{"id":"group","profile":"corp","kind":"group"}}]});
         request.extra.extend(fields.as_object().unwrap().clone());

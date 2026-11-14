@@ -1,13 +1,12 @@
 import { Button } from '@/components/ui/button'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { MessageSquare, Plus, Search, X } from 'lucide-react'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
 import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { MessageSquare } from 'lucide-react'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 type Connection = Pick<
@@ -43,6 +42,7 @@ export function StandInSourceConnections({
 }) {
   const { t, i18n } = useTranslation('common')
   const [adding, setAdding] = useState(false)
+  const [excluding, setExcluding] = useState<Connection | null>(null)
   const [newPolicy, setNewPolicy] = useState({
     automatic: true,
     askBeforeAct: true,
@@ -60,6 +60,8 @@ export function StandInSourceConnections({
   const [error, setError] = useState<{ message: string; code?: unknown } | null>(null)
   const [searched, setSearched] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
+  const authorizationRequired =
+    provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required'
   const latest = useRef({ role, onChange })
   useEffect(() => {
     latest.current = { role, onChange }
@@ -98,11 +100,14 @@ export function StandInSourceConnections({
         cursor
       )
       if (sequence !== searchSequence.current) return
+      const items = result.items.filter(
+        row => !excluding || (row.profile === excluding.profile && row.kind === excluding.kind)
+      )
       setResults(previous =>
         cursor
           ? [
               ...previous,
-              ...result.items.filter(
+              ...items.filter(
                 row =>
                   !previous.some(
                     value =>
@@ -112,7 +117,7 @@ export function StandInSourceConnections({
                   )
               ),
             ]
-          : result.items
+          : items
       )
       setNextCursor(result.hasMore ? result.nextCursor : undefined)
       setSearched(true)
@@ -123,12 +128,56 @@ export function StandInSourceConnections({
     }
   }
   const identity = (row: Connection) => JSON.stringify([row.profile, row.kind, row.id])
+  const closeExclusionEditor = () => {
+    searchSequence.current += 1
+    setExcluding(null)
+    setSelection([])
+    setResults([])
+    setNextCursor(undefined)
+    setSearched(false)
+    setError(null)
+  }
   const isConnected = (row: Connection) =>
-    rows.some(
-      value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
-    )
+    excluding
+      ? rows
+          .find(value => identity(value) === identity(excluding))
+          ?.excludedResources?.some(value => value.id === row.id) === true
+      : rows.some(
+          value => value.profile === row.profile && value.kind === row.kind && value.id === row.id
+        )
   const add = (items: Connection[]) => {
     const current = latest.current
+    if (excluding) {
+      if (
+        !current.role.connections?.some(
+          row =>
+            row.providerId === provider.id &&
+            row.scope === 'all' &&
+            identity(row) === identity(excluding)
+        )
+      ) {
+        closeExclusionEditor()
+        return
+      }
+      current.onChange({
+        ...current.role,
+        connections: current.role.connections?.map(row => {
+          if (row.providerId !== provider.id || identity(row) !== identity(excluding)) return row
+          const excludedResources = [...(row.excludedResources ?? [])]
+          for (const item of items) {
+            if (
+              item.profile === row.profile &&
+              item.kind === row.kind &&
+              !excludedResources.some(value => value.id === item.id)
+            )
+              excludedResources.push({ id: item.id, name: item.name })
+          }
+          return { ...row, excludedResources }
+        }),
+      })
+      closeExclusionEditor()
+      return
+    }
     let connections = [...(current.role.connections ?? [])]
     if (items.length && items.every(item => item.scope !== 'all')) {
       const covered = new Set(items.map(item => JSON.stringify([item.profile, item.kind])))
@@ -225,21 +274,112 @@ export function StandInSourceConnections({
               {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
             </p>
           </div>
+          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' &&
+            row.kind === 'group' &&
+            row.scope !== 'all' && (
+              <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
+                {t('standIn.workspace.group_message_scope')}
+                <select
+                  data-testid={`${prefix}-message-scope-${row.id}`}
+                  aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
+                  value={row.collectionKey ?? 'mentions'}
+                  disabled={disabled}
+                  onChange={event => {
+                    const allMessages = event.target.value === 'all-messages'
+                    updateRows(
+                      rows.map(value => {
+                        if (value !== row) return value
+                        const next = { ...value }
+                        if (allMessages) next.collectionKey = 'all-messages'
+                        else delete next.collectionKey
+                        next.configurationSummary = t(
+                          allMessages
+                            ? 'standIn.workspace.group_all_messages'
+                            : 'standIn.workspace.group_mentions'
+                        )
+                        return next
+                      })
+                    )
+                  }}
+                  className="min-h-11 rounded-md border border-border bg-background px-2 text-sm text-text-primary md:min-h-8 [&>option]:bg-background [&>option]:text-text-primary"
+                >
+                  <option value="mentions">{t('standIn.workspace.group_mentions')}</option>
+                  <option value="all-messages">{t('standIn.workspace.group_all_messages')}</option>
+                </select>
+              </label>
+            )}
           <button
             type="button"
             data-testid={`${prefix}-remove-${row.id}`}
             aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
             disabled={disabled}
-            onClick={() => updateRows(rows.filter(value => value !== row))}
+            onClick={() => {
+              if (excluding && identity(excluding) === identity(row)) closeExclusionEditor()
+              updateRows(rows.filter(value => value !== row))
+            }}
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
           </button>
+          {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' && row.scope === 'all' && (
+            <div className="w-full space-y-2">
+              <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
+              {row.excludedResources?.map(resource => (
+                <div key={resource.id} className="flex items-center gap-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{resource.name}</span>
+                  <button
+                    type="button"
+                    data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
+                    aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
+                    disabled={disabled}
+                    onClick={() =>
+                      updateRows(
+                        rows.map(value =>
+                          value === row
+                            ? {
+                                ...value,
+                                excludedResources: value.excludedResources?.filter(
+                                  item => item.id !== resource.id
+                                ),
+                              }
+                            : value
+                        )
+                      )
+                    }
+                    className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
+                disabled={disabled || busy || authorizationRequired}
+                onClick={() => {
+                  searchSequence.current += 1
+                  setAdding(false)
+                  setExcluding(row)
+                  setKind(row.kind)
+                  setScope('selected')
+                  setSelection([])
+                  setQuery('')
+                  setResults([])
+                  setNextCursor(undefined)
+                  setSearched(false)
+                  setError(null)
+                }}
+                className="min-h-11 text-sm underline md:min-h-8"
+              >
+                {t('standIn.workspace.blacklist_add')}
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>
   )
-  if (provider.availability.status === 'auth_required' || error?.code === 'connector_auth_required')
+  if (authorizationRequired)
     return (
       <section className="space-y-4" data-testid={`${prefix}-authorization`}>
         <StandInConnectionHeader
@@ -267,7 +407,7 @@ export function StandInSourceConnections({
         {authorization}
       </section>
     )
-  const showAdding = adding || rows.length === 0
+  const showAdding = excluding || adding || rows.length === 0
   return (
     <section className="space-y-4" data-testid={`${prefix}-connections`}>
       <StandInConnectionHeader
@@ -300,8 +440,23 @@ export function StandInSourceConnections({
           }}
           className="space-y-3"
         >
+          {excluding && (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm">
+                {t('standIn.workspace.blacklist_help', { name: excluding.name })}
+              </p>
+              <button
+                type="button"
+                data-testid={`${prefix}-blacklist-cancel`}
+                onClick={closeExclusionEditor}
+                className="min-h-11 text-sm underline md:min-h-8"
+              >
+                {t('standIn.workspace.blacklist_cancel')}
+              </button>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
-            {scope === 'selected' && (
+            {scope === 'selected' && !excluding && (
               <select
                 aria-label={t('standIn.workspace.message_kind')}
                 data-testid={`${prefix}-kind`}
@@ -352,7 +507,7 @@ export function StandInSourceConnections({
               </>
             )}
           </div>
-          {Boolean(provider.allResourceKinds?.length) && (
+          {!excluding && Boolean(provider.allResourceKinds?.length) && (
             <fieldset className="flex flex-wrap gap-4" disabled={disabled || busy}>
               <legend className="mb-2 w-full text-sm font-medium">
                 {t('standIn.workspace.connection_scope')}
@@ -462,7 +617,9 @@ export function StandInSourceConnections({
                       <span>
                         {t(
                           connected
-                            ? 'standIn.workspace.connected'
+                            ? excluding
+                              ? 'standIn.workspace.blacklisted'
+                              : 'standIn.workspace.connected'
                             : selected
                               ? 'standIn.workspace.resource_selected'
                               : 'standIn.workspace.select_resource'

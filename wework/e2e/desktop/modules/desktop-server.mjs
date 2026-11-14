@@ -38,6 +38,7 @@ import {
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
+import { createMcpElicitationModel } from './mcp-elicitation-model.mjs'
 
 import {
   assistantMessage,
@@ -208,13 +209,6 @@ import {
   MODEL_PROXY_RESTART_INITIAL_PROMPT,
   MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
-  MCP_ELICITATION_ACCEPTED_MARKER,
-  MCP_ELICITATION_CALL_ID,
-  MCP_ELICITATION_COMPLETION_TEXT,
-  MCP_ELICITATION_NAMESPACE,
-  MCP_ELICITATION_PROMPT,
-  MCP_ELICITATION_SEARCH_ID,
-  MCP_ELICITATION_TOOL_NAME,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
@@ -565,6 +559,7 @@ class DesktopE2EServer {
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.mcpElicitationModel = createMcpElicitationModel()
     this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
@@ -1261,7 +1256,12 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const { expectClientReplacement = false, exitProcessId, ...commandOptions } = options
+    const {
+      expectClientReplacement = false,
+      exitProcessId,
+      preserveResultAcrossClientReplacement = false,
+      ...commandOptions
+    } = options
     assert.ok(
       !expectClientReplacement || action === 'click',
       'Only clicks may expect client replacement'
@@ -1307,6 +1307,8 @@ class DesktopE2EServer {
         resolveDelivery,
         started: false,
         expectClientReplacement,
+        preserveResultAcrossClientReplacement,
+        windowLabel: this.controlWindowsByClient.get(clientId),
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -2107,6 +2109,10 @@ class DesktopE2EServer {
         })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
+          if (pending.preserveResultAcrossClientReplacement && pending.started) {
+            pending.clientReplacedAt = new Date().toISOString()
+            continue
+          }
           this.commandResults.delete(id)
           // A started refresh click may replace its renderer before reporting its result.
           if (pending.expectClientReplacement && pending.started) pending.resolve('')
@@ -2208,10 +2214,16 @@ class DesktopE2EServer {
         return true
       }
       const resultWindowLabel = this.controlWindowsByClient.get(result.clientId)
+      const acceptsRetiredClientResult =
+        pending.preserveResultAcrossClientReplacement &&
+        pending.started &&
+        result.clientId === pending.clientId &&
+        !resultWindowLabel
       if (
         result.clientId !== pending.clientId ||
-        !resultWindowLabel ||
-        this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId
+        (!acceptsRetiredClientResult &&
+          (!resultWindowLabel ||
+            this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId))
       ) {
         json(response, 409, {
           error: `Command ${result.id} belongs to a different desktop control client`,
@@ -2227,8 +2239,10 @@ class DesktopE2EServer {
       // Observations may check readiness during an input cooldown, but must
       // neither extend nor shorten the interval between state-changing actions.
       if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        const cooldownClientId =
+          this.controlClientsByWindow.get(pending.windowLabel) ?? result.clientId
         this.controlCommandAvailableAt.set(
-          result.clientId,
+          cooldownClientId,
           Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
         )
       }
@@ -4216,61 +4230,7 @@ class DesktopE2EServer {
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
-      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
-      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
-      const round = Math.ceil(requestNumber / 3)
-      const stage = ((requestNumber - 1) % 3) + 1
-      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
-      const requestText = JSON.stringify(body)
-      const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
-
-      if (stage === 1) {
-        assert.ok(
-          requestText.includes(MCP_ELICITATION_PROMPT),
-          'The real Codex request did not contain the MCP elicitation prompt'
-        )
-        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (stage === 2) {
-        const tool = selectMcpTool(
-          body,
-          MCP_ELICITATION_NAMESPACE,
-          MCP_ELICITATION_TOOL_NAME,
-          timeoutScenario ? { scenario: timeoutScenario } : {},
-          `${MCP_ELICITATION_SEARCH_ID}-${round}`
-        )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(callId, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      assert.ok(
-        requestContainsToolOutput(body, callId),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(
-          timeoutScenario
-            ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
-            : MCP_ELICITATION_ACCEPTED_MARKER
-        ),
-        'The MCP server did not return the expected answer or timeout cancellation to the model'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
-        responseCompleted(responseId),
-      ])
+      this.writeSse(response, this.mcpElicitationModel(body, responseId))
       return
     }
 
@@ -6473,4 +6433,9 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }
+export {
+  DesktopE2EServer,
+  hasUserReplyAfterToolOutput,
+  inputUserMessageTexts,
+  requestContainsSkillLocator,
+}

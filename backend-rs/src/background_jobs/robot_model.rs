@@ -61,6 +61,18 @@ impl Execution {
     pub fn routed(&self) -> bool {
         self.selection()["runner_routing"].is_object()
     }
+    pub fn automatic(&self) -> bool {
+        !self.automation_run_id.is_empty()
+            || super::super::project::authority::truthy(&self.context()["run_id"])
+    }
+    pub fn permits_personal_device(&self, owner: i64, device: i64) -> bool {
+        super::super::project::device_access::DeviceAccess {
+            actor: self.assigner_user_id,
+            automatic: self.automatic(),
+            selection: &self.selection(),
+        }
+        .permits_owner(owner, device)
+    }
     pub fn terminal(&self) -> bool {
         terminal(&self.status)
     }
@@ -106,6 +118,35 @@ pub(super) fn terminal(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_cannot_reuse_a_manual_owners_routing_snapshot() {
+        let mut row = execution("queued", None);
+        row.assigner_user_id = 7;
+        row.execution_payload = json!({"runtime_selection":{"runner_routing":{"execution_policy":{"mode":"fixed","environment_id":"42"}}}}).to_string();
+        assert!(row.permits_personal_device(7, 42));
+        row.automation_run_id = "run-1".into();
+        assert!(!row.permits_personal_device(7, 42));
+        row.automation_run_id.clear();
+        let mut intent = row.intent();
+        intent["origin_context"] = json!({"run_id":"run-1"});
+        row.execution_payload = intent.to_string();
+        assert!(!row.permits_personal_device(7, 42));
+    }
+
+    #[test]
+    fn claimed_unrouted_execution_does_not_gain_personal_authority() {
+        let mut row = execution("queued", None);
+        row.assigner_user_id = 7;
+        row.execution_payload = json!({"runtime_selection":{}}).to_string();
+        assert!(!row.permits_personal_device(7, 42));
+        row.status = "claimed".into();
+        row.execution_device_id = "app-record-42".into();
+        row.runtime_device_id = "app-record-42".into();
+        assert!(!row.permits_personal_device(7, 42));
+        row.status = "running".into();
+        assert!(!row.permits_personal_device(7, 42));
+    }
 
     #[test]
     fn only_undelivered_claims_can_release_capacity_without_runtime_truth() {

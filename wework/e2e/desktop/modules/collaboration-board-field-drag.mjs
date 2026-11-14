@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { showAllCollaborationIssues } from './collaboration-board-flows.mjs'
 
 import {
-  openProjectBoard,
+  openAllIssuesProjectBoard,
   selectProjectBoardGrouping,
   selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
@@ -63,7 +64,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
     body: JSON.stringify({ status: 'pending', parent_id: null, item_ids: manualOrder }),
   })
   await reloadMainWindow(control, 'The board field drag fixtures did not load')
-  await openProjectBoard(control, scoped, project)
+  await openAllIssuesProjectBoard(control, scoped, project)
   await selectProjectBoardGrouping(control, scoped, 'status')
   await selectProjectBoardSort(control, scoped, 'pending')
   await assertLaneOrder(control, scoped, 'pending', manualOrder)
@@ -87,7 +88,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
     'The status column only changed its visual order'
   )
   await reloadMainWindow(control, 'The status reorder did not reload')
-  await openProjectBoard(control, scoped, project)
+  await openAllIssuesProjectBoard(control, scoped, project)
   await assertLaneOrder(control, scoped, 'pending', [moving.id, anchor.id])
   console.log(
     '[desktop-e2e] PASS board-drag: status same-column order persisted and survived reload'
@@ -147,7 +148,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
       `The ${group} column only changed its visual order`
     )
     await reloadMainWindow(control, 'The same-column field drag did not reload')
-    await openProjectBoard(control, scoped, project)
+    await openAllIssuesProjectBoard(control, scoped, project)
     await assertLaneOrder(control, scoped, column, order)
     console.log(
       `[desktop-e2e] PASS board-drag: ${group} compound sort blocks manual drag; manual order persists without changing fields`
@@ -193,7 +194,7 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
       assert.deepEqual(after[field], field === move.field ? move.expected : before[field])
     }
     await reloadMainWindow(control, 'The cross-column field mutation did not reload')
-    await openProjectBoard(control, scoped, project)
+    await openAllIssuesProjectBoard(control, scoped, project)
     await control.command('scrollIntoView', scoped(card(move.target, moving.id)))
     await control.command('waitFor', scoped(card(move.target, moving.id)), { visible: true })
     await control.command('waitFor', scoped(card(move.source, moving.id)), { visible: false })
@@ -226,6 +227,7 @@ export async function verifyReadOnlyBoardDrag(
   control,
   { scoped, request, project, issues, reader, owner }
 ) {
+  await showAllCollaborationIssues(control, scoped('').trim())
   const [moving, anchor] = issues
   for (const [group, source, target] of [
     ['status', 'inbox', 'pending'],
@@ -257,7 +259,7 @@ export async function verifyReadOnlyBoardDrag(
     }
     await control.command('waitFor', scoped(card(target, moving.id)), { visible: false })
     await reloadMainWindow(control, 'The Viewer board drag attempt did not reload')
-    await openProjectBoard(control, scoped, project)
+    await openAllIssuesProjectBoard(control, scoped, project)
     await revealBoardCard(control, sourceCard)
     await control.command('waitFor', scoped(card(target, moving.id)), { visible: false })
     console.log(

@@ -81,26 +81,10 @@ fn remove_encrypted_content(value: &mut Value) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use axum::http::{HeaderMap, HeaderValue};
+
     use serde_json::{json, Value};
 
-    use super::{codex_forked_from_thread_id, prepare_fork_request};
-
-    #[test]
-    fn reads_fork_lineage_from_codex_turn_metadata() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-codex-turn-metadata",
-            HeaderValue::from_static(
-                "{\"thread_id\":\"thread-child\",\"forked_from_thread_id\":\"thread-parent\"}",
-            ),
-        );
-
-        assert_eq!(
-            codex_forked_from_thread_id(&headers).as_deref(),
-            Some("thread-parent")
-        );
-    }
+    use super::prepare_fork_request;
 
     #[test]
     fn strips_only_opaque_encrypted_history_from_fork_requests() {

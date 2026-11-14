@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { resolveDesktopPackageTargets } from '../../../scripts/lib/desktop-package-target.mjs'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
+import { windowsStaticCrtEnvironment } from '../../../scripts/lib/windows-native-runtime.mjs'
 
 import {
   closeBottomWorkspacePanel,
@@ -437,7 +438,10 @@ async function buildExecutor() {
     : join(repoDir, 'executor', 'target', 'desktop-e2e')
   await runChecked('cargo', ['build', '--locked', '--bin', 'wegent-executor'], {
     cwd: join(repoDir, 'executor'),
-    env: { ...process.env, CARGO_TARGET_DIR: targetDir },
+    env: windowsStaticCrtEnvironment(
+      { ...process.env, CARGO_TARGET_DIR: targetDir },
+      process.platform === 'win32' ? hostCodexTarget() : undefined
+    ),
   })
   const binaryName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
   const binaryPath = join(targetDir, 'debug', binaryName)

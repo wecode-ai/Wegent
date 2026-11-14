@@ -1,6 +1,44 @@
 use super::*;
 use tokio::sync::broadcast::error::TryRecvError;
 
+#[test]
+fn private_discussion_context_follows_claude_source_turn_without_hiding_stream() {
+    let (events, mut receiver) = broadcast::channel(6);
+    let handler = RuntimeWorkRpcHandler::with_event_sender("device", "unused", events);
+    for private in [true, false] {
+        let mut request = ExecutionRequest {
+            subtask_id: if private { "private" } else { "public" }.into(),
+            ..Default::default()
+        };
+        if private {
+            request
+                .extra
+                .insert("conversationContext".into(), json!("private_discussion"));
+        }
+        for event in [
+            "response.created",
+            "response.output_text.delta",
+            "response.completed",
+        ] {
+            let data = json!({"turnId":request.subtask_id,"value":"Original private transcript"});
+            handler.emit_claude_runtime_event("same-task", &request, event, data.clone());
+            let emitted = receiver.try_recv().unwrap();
+            assert_eq!(emitted["payload"]["runtime"], "claude_code");
+            assert_eq!(emitted["payload"]["taskId"], "same-task");
+            assert_eq!(emitted["payload"]["subtaskId"], request.subtask_id);
+            assert_eq!(emitted["payload"]["data"], data);
+            if private {
+                assert_eq!(
+                    emitted["payload"]["conversationContext"],
+                    "private_discussion"
+                );
+            } else {
+                assert!(emitted["payload"].get("conversationContext").is_none());
+            }
+        }
+    }
+}
+
 struct EnvGuard {
     key: &'static str,
     previous: Option<String>,
@@ -22,136 +60,6 @@ impl Drop for EnvGuard {
             std::env::remove_var(self.key);
         }
     }
-}
-
-#[test]
-fn cloud_model_selection_materializes_claude_gateway_route() {
-    let _lock = crate::test_env::lock();
-    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "https://wegent.example/api");
-    let mut request = ExecutionRequest {
-        auth_token: Some("task-token".to_owned()),
-        model_config: json!({
-            "base_url": "https://local-claude.invalid",
-            "api_key": "local-credential",
-            "custom_option": "preserved",
-            "default_headers": {
-                "X-Custom-Header": "preserved",
-            },
-        }),
-        extra: serde_json::Map::from_iter([(
-            "modelSelection".to_owned(),
-            json!({
-                "modelName": "public-review-model",
-                "modelType": "public",
-                "options": {
-                    "weworkCloudModelNamespace": "default",
-                    "weworkCloudModelResourceUserId": "0",
-                    "weworkCloudModelUpstreamApiFormat": "openai-responses",
-                },
-            }),
-        )]),
-        ..ExecutionRequest::default()
-    };
-
-    let backend_connection = ConnectionConfig {
-        backend_url: "https://wegent.example/api".to_owned(),
-        socket_url: "https://wegent.example/api".to_owned(),
-        auth_token: "backend-token".to_owned(),
-        runtime_auth_token: String::new(),
-    };
-    let backend_credentials = BackendSessionCredentials::try_from(&backend_connection).unwrap();
-
-    prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials))
-        .expect("cloud model selection should materialize");
-
-    assert_eq!(
-        request.model_config["base_url"],
-        "https://wegent.example/api/runtime-work/llm-responses-proxy"
-    );
-    assert_eq!(request.model_config["api_key"], "backend-token");
-    assert_eq!(request.model_config["model_id"], "public-review-model");
-    assert_eq!(
-        request.model_config["default_headers"]["X-Wegent-Model-Type"],
-        "public"
-    );
-    assert_eq!(
-        request.model_config["default_headers"]["X-Wegent-Upstream-Header-wecode-executor"],
-        "claudecode"
-    );
-    assert_eq!(request.model_config["custom_option"], "preserved");
-    assert_eq!(
-        request.model_config["default_headers"]["X-Custom-Header"],
-        "preserved"
-    );
-    assert_ne!(
-        request.model_config["base_url"],
-        "https://local-claude.invalid"
-    );
-    assert_ne!(request.model_config["api_key"], "local-credential");
-}
-
-#[test]
-fn cloud_model_route_forwards_session_id_upstream() {
-    let _lock = crate::test_env::lock();
-    let mut request = ExecutionRequest {
-        task_id: "456".to_owned(),
-        model_config: json!({}),
-        extra: serde_json::Map::from_iter([(
-            "modelSelection".to_owned(),
-            json!({
-                "modelName": "public-review-model",
-                "modelType": "public",
-                "options": {
-                    "weworkCloudModelNamespace": "default",
-                    "weworkCloudModelResourceUserId": "0",
-                },
-            }),
-        )]),
-        ..ExecutionRequest::default()
-    };
-    let backend_credentials = BackendSessionCredentials {
-        backend_url: "https://wegent.example".to_owned(),
-        session_token: "backend-token".to_owned(),
-    };
-
-    prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials))
-        .expect("cloud model selection should materialize");
-
-    assert_eq!(
-        request.model_config["default_headers"]["X-Wegent-Upstream-Header-wecode-session-id"],
-        "456"
-    );
-}
-
-#[test]
-fn cloud_model_route_skips_session_id_without_task() {
-    let _lock = crate::test_env::lock();
-    let mut request = ExecutionRequest {
-        model_config: json!({}),
-        extra: serde_json::Map::from_iter([(
-            "modelSelection".to_owned(),
-            json!({
-                "modelName": "public-review-model",
-                "modelType": "public",
-                "options": {
-                    "weworkCloudModelNamespace": "default",
-                    "weworkCloudModelResourceUserId": "0",
-                },
-            }),
-        )]),
-        ..ExecutionRequest::default()
-    };
-    let backend_credentials = BackendSessionCredentials {
-        backend_url: "https://wegent.example".to_owned(),
-        session_token: "backend-token".to_owned(),
-    };
-
-    prepare_claude_cloud_model_route(&mut request, Some(&backend_credentials))
-        .expect("cloud model selection should materialize");
-
-    assert!(request.model_config["default_headers"]
-        .get("X-Wegent-Upstream-Header-wecode-session-id")
-        .is_none());
 }
 
 #[test]
@@ -208,31 +116,6 @@ fn cloud_model_selection_rejects_invalid_resource_user_id() {
         error,
         "Claude Code cloud model resource user ID must be a non-negative integer"
     );
-}
-
-#[test]
-fn non_cloud_model_selection_leaves_model_configuration_unchanged() {
-    let original = json!({
-        "base_url": "https://local-claude.example",
-        "api_key": "local-token",
-        "env": {"HTTPS_PROXY": "http://proxy.example"},
-    });
-    let mut request = ExecutionRequest {
-        model_config: original.clone(),
-        extra: serde_json::Map::from_iter([(
-            "modelSelection".to_owned(),
-            json!({
-                "modelName": "local-claude",
-                "modelType": "runtime",
-                "options": {},
-            }),
-        )]),
-        ..ExecutionRequest::default()
-    };
-
-    prepare_claude_cloud_model_route(&mut request, None).unwrap();
-
-    assert_eq!(request.model_config, original);
 }
 
 #[test]

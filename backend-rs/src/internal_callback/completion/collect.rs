@@ -24,26 +24,23 @@ fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> MysqlResult<
     row.get_at::<Option<T>>(index)
 }
 
-/// `_get_existing_subtask_result`: the stored subtask result, preserving the
-/// `subqueryload(Subtask.contexts)` read the ORM issues alongside it.
+/// Read the stored subtask result without loading its unrelated contexts.
 async fn existing_subtask_result<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
+    task_id: i64,
     subtask_id: i64,
 ) -> Option<Value> {
     let mysql = ctx
         .mysql
-        .route(crate::task_routing::ByTaskId(subtask_id as u64));
+        .route(crate::task_routing::ByTaskId(task_id as u64));
     let row: MysqlRow = mysql
         .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
         .await
         .ok()
         .flatten()?;
-    // The ORM eager-loads `Subtask.contexts`, so the source issues this read
-    // even though the result merge never consumes it.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
-        .await
-        .unwrap_or_default();
+    if subtask_column::<i64>(&row, "task_id").ok().flatten() != Some(task_id) {
+        return None;
+    }
     let result: Option<Value> = subtask_column::<Json<Value>>(&row, "result")
         .ok()
         .flatten()
@@ -181,6 +178,7 @@ fn extract_embedded_result_blocks(blocks: Option<&Value>) -> Vec<Value> {
 /// `collect_completed_result`: the terminal result payload for one subtask.
 pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
+    task_id: i64,
     subtask_id: i64,
     status: &str,
     result: Option<&Value>,
@@ -189,7 +187,7 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
 ) -> Option<Value> {
     let normalized_status = status.to_uppercase();
     let accumulated_content = session::get_accumulated_content(ctx.redis, subtask_id).await;
-    let existing_result = existing_subtask_result(ctx, subtask_id)
+    let existing_result = existing_subtask_result(ctx, task_id, subtask_id)
         .await
         .unwrap_or_else(|| Value::Object(Map::new()));
 
@@ -295,13 +293,18 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     if normalized_status == "FAILED"
         && let Some(code) = error_code
     {
-        final_result.insert("error_type".into(), Value::String(code.to_string()));
-        if let Some(status_code) = extract_http_status_code(error_message.unwrap_or_default()) {
-            final_result.insert("error_code".into(), json!(status_code));
-        }
+        final_result.extend(failure_details(error_message.unwrap_or_default(), code));
     }
 
     Some(Value::Object(final_result))
+}
+
+pub(super) fn failure_details(message: &str, code: &str) -> Map<String, Value> {
+    let mut details = Map::from_iter([("error_type".into(), json!(code))]);
+    if let Some(status_code) = extract_http_status_code(message) {
+        details.insert("error_code".into(), json!(status_code));
+    }
+    details
 }
 
 /// `shared.utils.error_classifier.extract_http_status_code`: the first

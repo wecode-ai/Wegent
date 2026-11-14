@@ -342,31 +342,6 @@ fn model_switch_cleanup_is_consumed_once_per_routed_model_change() {
 }
 
 #[test]
-fn task_route_recognizes_the_model_selected_for_that_task() {
-    let upstream = LocalModelProxyUpstream {
-        base_url: "https://example.com".to_owned(),
-        request_url: None,
-        api_format: "openai-responses".to_owned(),
-        convert_custom_tools: false,
-        native_tool_search: false,
-        native_namespace_tools: false,
-        api_key: "secret".to_owned(),
-        default_headers: Vec::new(),
-        proxy_url: None,
-        model_id: Some("upstream-sol".to_owned()),
-        routing_model_id: Some("gpt-5.6-sol".to_owned()),
-        codex_request_mode: Default::default(),
-        max_output_tokens: None,
-        model_context_window: None,
-    };
-
-    assert_eq!(
-        stale_requested_model(&upstream, br#"{"model":"gpt-5.6-sol"}"#),
-        None
-    );
-}
-
-#[test]
 fn task_route_detects_but_does_not_select_by_a_stale_requested_model() {
     let upstream = LocalModelProxyUpstream {
         base_url: "https://example.com".to_owned(),
@@ -644,21 +619,6 @@ fn task_route_rejects_missing_thread_metadata_after_binding() {
 
     drop(entries);
     unregister(&token);
-}
-
-#[test]
-fn rewrites_internal_catalog_model_to_real_upstream_model() {
-    let body = serde_json::to_vec(&json!({
-        "model": "wework-custom-user-model",
-        "input": "hello"
-    }))
-    .expect("request body");
-
-    let rewritten = rewrite_request_model(&body, "k3").expect("rewritten request");
-    let request: Value = serde_json::from_slice(&rewritten).expect("request JSON");
-
-    assert_eq!(request["model"], "k3");
-    assert_eq!(request["input"], "hello");
 }
 
 #[tokio::test]

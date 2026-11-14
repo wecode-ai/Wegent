@@ -141,15 +141,16 @@ mod writer_diagnostics;
 use stand_in_approval::stand_in_mcp_approval_overrides;
 #[path = "codex/child.rs"]
 mod child;
-#[path = "codex/overload_recovery.rs"]
-mod overload_recovery;
 #[path = "codex/plugin_skills.rs"]
 mod plugin_skills;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "codex/process_exit.rs"]
 mod process_exit;
 mod startup;
+#[path = "codex/turn_recovery.rs"]
+mod turn_recovery;
 use child::CodexAppServerChild;
+pub(crate) use turn_recovery::same_goal_configuration;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 mod thread_resume;
@@ -169,6 +170,7 @@ pub(crate) use home::{
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
+mod collaboration;
 mod effective_instructions;
 #[cfg(test)]
 pub(crate) use effective_instructions::turn_context_for_test;
@@ -195,6 +197,8 @@ pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
+    pub recover_usage_limits: bool,
+    pub quota_resume: Option<CodexQuotaRecovery>,
     pub direct_thread_id: Option<String>,
     pub fork_thread_id: Option<String>,
     pub fork_thread_path: Option<String>,
@@ -290,8 +294,17 @@ impl CodexResponseValueOrigin {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexQuotaRecovery {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub goal: Option<Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexAppServerTurn {
+    pub quota_recovery: Option<CodexQuotaRecovery>,
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
     pub response_item_id: Option<String>,
@@ -1037,12 +1050,7 @@ impl CodexAppServerClient {
 
     async fn mark_thread_active_under_admission(&self, thread_id: &str) {
         let mut state = self.state.lock().await;
-        let generation = state.next_thread_generation;
-        state.next_thread_generation += 1;
-        state
-            .thread_generations
-            .insert(thread_id.to_owned(), generation);
-        state.idle_thread_generations.remove(thread_id);
+        state.renew_thread_generation(thread_id);
         *state
             .active_threads
             .entry(thread_id.to_owned())
@@ -2337,6 +2345,8 @@ async fn run_codex_app_server_turn_on_shared_client(
     // can be represented in active_threads by its native thread ID.
     let turn_preparation = client.state.lock().await.preparing_turns.begin();
     let CodexAppServerTurnOptions {
+        recover_usage_limits,
+        quota_resume,
         direct_thread_id,
         fork_thread_id,
         fork_thread_path,
@@ -2544,14 +2554,35 @@ async fn run_codex_app_server_turn_on_shared_client(
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
+        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
+        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let mut restored_quota_goal = false;
+        if let Some(goal) = quota_resume.as_ref().and_then(|recovery| recovery.goal.as_ref()) {
+            ensure_codex_turn_not_cancelled(&mut cancellation)?;
+            let (response, restored) = startup::wait_for_shared_startup(
+                client,
+                &thread_id,
+                &mut startup_deadline,
+                startup_timeout_seconds,
+                &mut cancellation,
+                turn_recovery::resume_goal(client, &thread_id, goal),
+            ).await?;
+            let runtime = client.existing_process().await?.notifications;
+            turn_recovery::sync_goal_snapshot(
+                &mut state, Some(&runtime), notifications.as_ref(),
+                &thread_id, &response,
+            ).await;
+            if !restored {
+                return Err("Quota recovery cancelled because the goal changed".to_owned());
+            }
+            restored_quota_goal = true;
+        }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
-        let mut startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let active_turn_id = if awaits_initial_goal_turn || resume_goal_only {
+        let active_turn_id = if awaits_initial_goal_turn || resume_goal_only || restored_quota_goal {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
         } else {
@@ -2568,7 +2599,13 @@ async fn run_codex_app_server_turn_on_shared_client(
                 turn_request_context.request(
                     client,
                     "turn/start",
-                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                    if quota_resume.is_some() {
+                        turn_recovery::continuation_params(turn_start_params(
+                            &thread_id, request, &launch_config, Vec::new(),
+                        ))
+                    } else {
+                        turn_start_params(&thread_id, request, &launch_config, turn_input)
+                    },
                     &launch_config,
                 ),
             )
@@ -2596,8 +2633,9 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
+                recover_usage_limits: recover_usage_limits && !request.uses_ephemeral_codex_thread(),
                 runtime_notifications: Some(client.existing_process().await?.notifications),
-                overload_continuation_params: overload_recovery::continuation_params(
+                overload_continuation_params: turn_recovery::continuation_params(
                     turn_start_params(&thread_id, request, &launch_config, Vec::new()),
                 ),
                 active_turn_id,
@@ -2644,6 +2682,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
+            quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
             response_item_id,
@@ -2749,6 +2788,8 @@ async fn run_codex_app_server_turn_with_runtime(
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
+        recover_usage_limits,
+        quota_resume,
         direct_thread_id,
         fork_thread_id,
         fork_thread_path,
@@ -2908,33 +2949,71 @@ async fn run_codex_app_server_turn_with_runtime(
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
         ensure_codex_turn_not_cancelled(&mut cancellation)?;
-        let turn_request_id = with_rpc_timeout(
-            "turn/start",
-            timeout_seconds,
-            rpc.send_request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
-            ),
-        )
-        .await?;
-        let read_turn = rpc.read_turn(
-            turn_request_id,
-            &mut state,
-            json_rpc::TurnReadOptions {
-                active_turn_started,
-                overload_turn_recovering,
-                overload_continuation_params: overload_recovery::continuation_params(
-                    turn_start_params(&thread_id, request, &launch_config, Vec::new()),
-                ),
-                notifications,
-                request_user_input_answers,
-                auto_approve_mcp_tool_calls,
-                defer_interactive_forms,
-                stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
-                    request,
-                ),
-            },
-        );
+        // Cancellation owns the complete admission/read sequence, including
+        // the Goal snapshot and restoration requests before a turn exists.
+        let read_turn = async {
+            let (turn_method, turn_params) = if let Some(goal) = quota_resume
+                .as_ref()
+                .and_then(|recovery| recovery.goal.as_ref())
+            {
+                let current = with_rpc_timeout(
+                    "thread/goal/get",
+                    timeout_seconds,
+                    rpc.request(
+                        "thread/goal/get",
+                        json!({"threadId": thread_id}),
+                        &mut state,
+                    ),
+                )
+                .await?;
+                let params = turn_recovery::goal_resume_params(goal, &current)?
+                    .ok_or("Quota recovery cancelled because the goal changed")?;
+                ("thread/goal/set", params)
+            } else if quota_resume.is_some() {
+                (
+                    "turn/start",
+                    turn_recovery::continuation_params(turn_start_params(
+                        &thread_id,
+                        request,
+                        &launch_config,
+                        Vec::new(),
+                    )),
+                )
+            } else {
+                (
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                )
+            };
+            let turn_request_id = with_rpc_timeout(
+                turn_method,
+                timeout_seconds,
+                rpc.send_request(turn_method, turn_params),
+            )
+            .await?;
+            rpc.read_turn(
+                turn_request_id,
+                &mut state,
+                json_rpc::TurnReadOptions {
+                    recover_usage_limits: recover_usage_limits
+                        && !request.uses_ephemeral_codex_thread(),
+                    wait_for_goal_continuation: turn_method == "thread/goal/set",
+                    active_turn_started,
+                    overload_turn_recovering,
+                    overload_continuation_params: turn_recovery::continuation_params(
+                        turn_start_params(&thread_id, request, &launch_config, Vec::new()),
+                    ),
+                    notifications,
+                    request_user_input_answers,
+                    auto_approve_mcp_tool_calls,
+                    defer_interactive_forms,
+                    stand_in_single_approval: crate::runtime_work::stand_in_requires_confirmation(
+                        request,
+                    ),
+                },
+            )
+            .await
+        };
         let outcome = if let Some(cancellation) = cancellation.as_mut() {
             tokio::select! {
                 biased;
@@ -2956,6 +3035,7 @@ async fn run_codex_app_server_turn_with_runtime(
         let (goal_status_observed, goal_status) = state.goal_status_snapshot();
         let (started_at_ms, completed_at_ms, duration_ms) = state.turn_timing();
         Ok(CodexAppServerTurn {
+            quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
             response_item_id,
@@ -2998,6 +3078,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 }
 
 struct SharedTurnNotificationOptions {
+    recover_usage_limits: bool,
     runtime_notifications: Option<CodexNotificationHub>,
     overload_turn_recovering: Option<CodexActiveTurnCallback>,
     overload_continuation_params: Value,
@@ -3032,10 +3113,11 @@ async fn read_shared_turn_notifications(
         .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     let mut cancellation_requested = false;
-    let mut overload_recovery = overload_recovery::OverloadRecovery::new(
+    let mut overload_recovery = turn_recovery::TurnRecovery::new(
         options.runtime_notifications.clone(),
         options.notifications.clone(),
     );
+    overload_recovery.recover_usage_limits = options.recover_usage_limits;
     let mut deferred_goal_snapshot: Option<Value> = None;
     loop {
         // A user can resume and finish a Goal while overload backoff is sleeping.
@@ -3048,7 +3130,7 @@ async fn read_shared_turn_notifications(
                 }
                 Err(_) => {
                     let response = deferred_goal_snapshot.take().unwrap();
-                    overload_recovery::sync_goal_snapshot(
+                    turn_recovery::sync_goal_snapshot(
                         state,
                         options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
@@ -3295,14 +3377,22 @@ async fn read_shared_turn_notifications(
         }
         if !cancellation_requested {
             match overload_recovery.observe(&message, state) {
-                overload_recovery::RecoveryAction::Forward => {}
-                overload_recovery::RecoveryAction::AwaitCompletion => {
+                turn_recovery::RecoveryAction::WaitForQuota(recovery) => {
+                    let _ = state.handle_message(&message);
+                    if let Some(callback) = options.active_turn_finished.as_ref() {
+                        callback();
+                    }
+                    state.quota_recovery = Some(recovery);
+                    return Ok(ExecutionOutcome::Running);
+                }
+                turn_recovery::RecoveryAction::Forward => {}
+                turn_recovery::RecoveryAction::AwaitCompletion => {
                     waiting_for_initial_progress = true;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
                     continue;
                 }
-                overload_recovery::RecoveryAction::Retry {
+                turn_recovery::RecoveryAction::Retry {
                     delay,
                     notification,
                     goal,
@@ -3323,14 +3413,14 @@ async fn read_shared_turn_notifications(
                         notification,
                     )
                     .await;
-                    overload_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
+                    turn_recovery::wait_for_retry(delay, &mut options.cancellation).await?;
                     ensure_codex_turn_not_cancelled(&mut options.cancellation)?;
                     startup_deadline =
                         Instant::now() + Duration::from_secs(startup_timeout_seconds);
                     let restoring_goal = goal.is_some();
                     let continuation = async {
                         if let Some(goal) = goal {
-                            overload_recovery::resume_goal(client, thread_id, &goal).await
+                            turn_recovery::resume_goal(client, thread_id, &goal).await
                         } else {
                             client
                                 .request("turn/start", options.overload_continuation_params.clone())
@@ -3355,7 +3445,7 @@ async fn read_shared_turn_notifications(
                             deferred_goal_snapshot = Some(response);
                             options.wait_for_goal_continuation = true;
                         } else {
-                            overload_recovery::sync_goal_snapshot(
+                            turn_recovery::sync_goal_snapshot(
                                 state,
                                 options.runtime_notifications.as_ref(),
                                 options.notifications.as_ref(),
@@ -3461,7 +3551,7 @@ async fn read_shared_turn_notifications(
                 options.wait_for_goal_continuation,
             ) {
                 if let Some(response) = deferred_goal_snapshot.take() {
-                    overload_recovery::sync_goal_snapshot(
+                    turn_recovery::sync_goal_snapshot(
                         state,
                         options.runtime_notifications.as_ref(),
                         options.notifications.as_ref(),
@@ -4207,7 +4297,7 @@ fn codex_app_server_command(
 }
 
 const WEWORK_HUMAN_INPUT_INSTRUCTIONS: &str = r#"Wework human participation:
-When a task needs a business judgment, missing requirement, or choice that only the user can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
+For connected-source work, use the current scoped provider assistance to distinguish questions for the source participant from decisions for the Wework owner and to choose the participant's reply channel. Provider guidance may route an owner's self-conversation back to that source. It never grants permission or changes approval requirements. Otherwise, when a task needs a business judgment, missing requirement, or choice that only the Wework owner can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
     [
@@ -6681,6 +6771,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6716,6 +6807,7 @@ fn thread_fork_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6784,6 +6876,7 @@ fn thread_resume_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }

@@ -36,6 +36,7 @@ from app.services.knowledge.processing_errors import (
     build_processing_error,
 )
 from app.tasks.knowledge_tasks import index_document_task
+from shared.event_reporting.catalogs.knowledge import loaded_scalar, observe
 from shared.knowledge_module import decide_conversion_completed
 from shared.telemetry.decorators import trace_sync
 
@@ -46,6 +47,53 @@ router = APIRouter(
     tags=["conversion-callback"],
     dependencies=[Depends(verify_internal_service_token)],
 )
+
+
+def _callback_fact(
+    request: ConversionStatusRequest | ConversionCompletedRequest,
+    status: str,
+    reason: str | None = None,
+    kb_id: int | str | None = None,
+) -> None:
+    observe(
+        "knowledge.conversion.callback.finished",
+        lambda: {
+            "kb_id": kb_id,
+            "document_id": request.document_id,
+            "status": status,
+            # error_code is only meaningful for non-success outcomes; the
+            # state machine reports action-like reasons even for success.
+            "error_code": reason if status in ("failure", "skipped") else None,
+            "data": {
+                "generation": request.generation,
+                "action": loaded_scalar(request, "action") or "conversion_completed",
+                # accepted = the callback took effect; validation failures and
+                # stale replays report false.
+                "accepted": status == "success",
+            },
+        },
+    )
+
+
+def _dispatch_fact(
+    request: ConversionCompletedRequest,
+    status: str,
+    task_id: str | None = None,
+    kb_id: int | str | None = None,
+) -> None:
+    observe(
+        "knowledge.index.dispatch.finished",
+        lambda: {
+            "kb_id": kb_id,
+            "document_id": request.document_id,
+            "status": status,
+            "data": {
+                "generation": request.generation,
+                "trigger": "conversion_callback",
+                "task_id": task_id,
+            },
+        },
+    )
 
 
 @trace_sync("conversion_status_callback", "conversion_callback.internal")
@@ -71,6 +119,12 @@ def conversion_status_callback(
             .filter(KnowledgeDocument.id == request.document_id)
             .first()
         )
+        _callback_fact(
+            request,
+            "success" if decision.should_execute else "skipped",
+            decision.reason,
+            kb_id=loaded_scalar(doc, "kind_id") if doc is not None else None,
+        )
         return ConversionStatusResponse(
             ok=decision.should_execute,
             document_exists=doc is not None,
@@ -82,6 +136,9 @@ def conversion_status_callback(
             .filter(KnowledgeDocument.id == request.document_id)
             .first()
         )
+        # Capture before mark_document_index_failed commits and expires the
+        # ORM instance; loaded_scalar never triggers a refresh afterwards.
+        doc_kb_id = loaded_scalar(doc, "kind_id") if doc is not None else None
         if doc:
             error = build_conversion_callback_error(
                 error_code=request.error_code,
@@ -93,12 +150,35 @@ def conversion_status_callback(
                 model=request.model,
                 request_id=request.request_id,
             )
-            mark_document_index_failed(
+            finalized = mark_document_index_failed(
                 db=db,
                 document_id=request.document_id,
                 generation=request.generation,
                 error=error,
             )
+            from shared.event_reporting.catalogs.knowledge import (
+                emit_conversion_event,
+            )
+
+            emit_conversion_event(
+                "knowledge.conversion.callback.finished",
+                kb_id=doc_kb_id,
+                document_id=request.document_id,
+                status="failure" if finalized else "skipped",
+                operation_id=request.generation,
+                data={
+                    "action": request.action,
+                    "generation": request.generation,
+                    "accepted": finalized,
+                },
+                error_code=(
+                    request.error_code or "conversion_failed"
+                    if finalized
+                    else "stale_conversion"
+                ),
+            )
+        else:
+            _callback_fact(request, "skipped", "document_missing")
         return ConversionStatusResponse(ok=True, document_exists=doc is not None)
 
     raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
@@ -129,6 +209,7 @@ def conversion_completed_callback(
     try:
         markdown_bytes = base64.b64decode(request.markdown_bytes, validate=True)
     except Exception:
+        _callback_fact(request, "failure", "invalid_payload")
         raise HTTPException(
             status_code=400,
             detail="Invalid base64 payload for markdown_bytes",
@@ -139,6 +220,7 @@ def conversion_completed_callback(
     try:
         attachment_id = payload["attachment_id"]
     except KeyError as e:
+        _callback_fact(request, "failure", "missing_attachment_id")
         raise HTTPException(
             status_code=400,
             detail=f"Missing key in index_dispatch_payload: {e}",
@@ -155,11 +237,17 @@ def conversion_completed_callback(
         .first()
     )
     if not doc:
+        _callback_fact(request, "failure", "document_missing")
         raise HTTPException(
             status_code=400,
             detail=f"Document {request.document_id} not found",
         )
+    # Capture before any later commit on this Session expires the ORM
+    # instance; loaded_scalar reads vars() only and returns None once the
+    # state-machine helpers have committed.
+    doc_kb_id = loaded_scalar(doc, "kind_id")
     if doc.attachment_id != attachment_id:
+        _callback_fact(request, "failure", "attachment_mismatch")
         logger.error(
             f"[ConversionCallback] attachment_id mismatch: "
             f"document_id={request.document_id} expects attachment_id={doc.attachment_id}, "
@@ -173,6 +261,7 @@ def conversion_completed_callback(
     payload_document_id = payload.get("document_id")
     payload_kb_id = payload.get("knowledge_base_id")
     if payload_document_id is not None and payload_document_id != doc.id:
+        _callback_fact(request, "failure", "document_mismatch")
         logger.error(
             f"[ConversionCallback] document_id mismatch in payload: "
             f"expected={doc.id}, got={payload_document_id}"
@@ -182,6 +271,7 @@ def conversion_completed_callback(
             detail="payload document_id does not match the target document",
         )
     if payload_kb_id is not None and str(doc.kind_id) != str(payload_kb_id):
+        _callback_fact(request, "failure", "knowledge_base_mismatch")
         logger.error(
             f"[ConversionCallback] knowledge_base_id mismatch in payload: "
             f"expected={doc.kind_id}, got={payload_kb_id}"
@@ -204,6 +294,7 @@ def conversion_completed_callback(
         .first()
     )
     if not original_attachment:
+        _callback_fact(request, "failure", "attachment_missing")
         raise HTTPException(
             status_code=400,
             detail="Original attachment not found",
@@ -240,6 +331,21 @@ def conversion_completed_callback(
             f"document_id={request.document_id}, generation={request.generation} "
             f"is not current ({decision.reason}); skipping attachment creation"
         )
+        from shared.event_reporting.catalogs.knowledge import emit_conversion_event
+
+        emit_conversion_event(
+            "knowledge.conversion.callback.finished",
+            kb_id=doc_kb_id,
+            document_id=request.document_id,
+            status="skipped",
+            operation_id=request.generation,
+            data={
+                "action": "conversion_completed",
+                "generation": request.generation,
+                "accepted": False,
+            },
+            error_code="stale_conversion",
+        )
         return ConversionCompletedResponse(
             ok=True, skipped=True, skip_reason="stale_conversion"
         )
@@ -258,6 +364,7 @@ def conversion_completed_callback(
             ),
         )
     except Exception:
+        _callback_fact(request, "failure", "attachment_creation_failed")
         logger.exception(
             f"[ConversionCallback] Failed to create converted attachment: "
             f"document_id={request.document_id}"
@@ -323,6 +430,21 @@ def conversion_completed_callback(
             f"document_id={request.document_id}, generation={request.generation}, "
             f"removed orphan attachment {converted_context.id}"
         )
+        from shared.event_reporting.catalogs.knowledge import emit_conversion_event
+
+        emit_conversion_event(
+            "knowledge.conversion.callback.finished",
+            kb_id=doc_kb_id,
+            document_id=request.document_id,
+            status="skipped",
+            operation_id=request.generation,
+            data={
+                "action": "conversion_completed",
+                "generation": request.generation,
+                "accepted": False,
+            },
+            error_code="stale_conversion",
+        )
         return ConversionCompletedResponse(
             ok=True, skipped=True, skip_reason="stale_conversion"
         )
@@ -332,6 +454,7 @@ def conversion_completed_callback(
     try:
         async_result = index_document_task.delay(**payload)
     except Exception:
+        _dispatch_fact(request, "failure", kb_id=doc_kb_id)
         logger.exception(
             f"[ConversionCallback] Failed to dispatch index task: "
             f"document_id={request.document_id}, compensating with FAILED status"
@@ -350,12 +473,45 @@ def conversion_completed_callback(
                 generation=request.generation,
             ),
         )
+        from shared.event_reporting.catalogs.knowledge import emit_conversion_event
+
+        emit_conversion_event(
+            "knowledge.conversion.callback.finished",
+            kb_id=doc_kb_id,
+            document_id=request.document_id,
+            status="failure",
+            operation_id=request.generation,
+            data={
+                "action": "conversion_completed",
+                "generation": request.generation,
+                # The callback itself was accepted (state moved, attachment
+                # created); only the downstream index dispatch failed.
+                "accepted": True,
+            },
+            error_code="index_dispatch_failed",
+        )
         raise
 
+    _dispatch_fact(request, "success", loaded_scalar(async_result, "id"), doc_kb_id)
     logger.info(
         f"[ConversionCallback] Completed: document_id={request.document_id}, "
         f"converted_attachment_id={converted_context.id}, "
         f"index_task_id={async_result.id}"
+    )
+    from shared.event_reporting.catalogs.knowledge import emit_conversion_event
+
+    emit_conversion_event(
+        "knowledge.conversion.callback.finished",
+        kb_id=doc_kb_id,
+        document_id=request.document_id,
+        status="success",
+        operation_id=request.generation,
+        data={
+            "action": "conversion_completed",
+            "generation": request.generation,
+            "index_task_id": async_result.id,
+            "accepted": True,
+        },
     )
     return ConversionCompletedResponse(
         ok=True, index_task_id=async_result.id, skipped=False

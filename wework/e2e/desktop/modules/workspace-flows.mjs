@@ -1,3 +1,4 @@
+import { requestExecutor } from './executor-rpc.mjs'
 import {
   COLLABORATION_SIDEBAR_SELECTOR,
   inCollaborationSidebar,
@@ -486,43 +487,54 @@ async function waitForNativeCollaborationPlatform(
 export async function enterLocalCollaborationWorkspace(control, contentSelector) {
   await waitForNativeCollaborationPlatform(control, contentSelector)
   await expandCollaborationSpaces(control, contentSelector)
-  const localWorkspaceTree = inCollaborationSidebar(
-    `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
+  const localIdentity = inCollaborationSidebar(
+    '[data-testid="collaboration-workspace-tree-wework-local-workspace"] .collaboration-workspace-identity',
     contentSelector
   )
-  const localWorkspaceIdentity = `${localWorkspaceTree} .collaboration-workspace-identity`
-  await revealCollaborationSidebarElement(control, localWorkspaceIdentity)
-  await control.command('click', localWorkspaceIdentity)
-  const activeWorkspaceHome = `${localWorkspaceTree} [data-testid="collaboration-workspace-nav-projects"]`
-  await revealCollaborationSidebarElement(control, `${activeWorkspaceHome}[aria-current="page"]`)
-  await control.command(
-    'waitFor',
-    `${contentSelector} [data-testid="collaboration-workspace-project-create"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+  if (Number(await control.command('getElementCount', localIdentity)) > 0)
+    await control.command('click', localIdentity)
+  const group = inCollaborationSidebar(
+    '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child',
+    contentSelector
   )
+  const toggle = `${group} .collaboration-workspace-toggle`
+  if (
+    Number(await control.command('getElementCount', toggle)) > 0 &&
+    (await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false'
+  )
+    await control.command('click', toggle)
 }
 
+/** Seed an existing offline project through production Native APIs; project-first-navigation covers creation UI. */
 export async function createLocalCollaborationProject(control, contentSelector, projectName) {
-  await enterLocalCollaborationWorkspace(control, contentSelector)
-  await control.command(
-    'click',
-    `${contentSelector} [data-testid="collaboration-workspace-project-create"]`
+  const workspacePath = join(
+    resultDir,
+    'local-collaboration-projects',
+    projectName.replace(/[^\p{L}\p{N}._-]+/gu, '-')
   )
-  await control.command('click', '[data-testid="collaboration-workspace-project-import-folder"]')
-  await completeLocalCollaborationFolderImport(control, projectName)
-  const projectTestId = await waitForTestIdByText(
+  await mkdir(workspacePath, { recursive: true })
+  await runChecked('git', ['init', workspacePath])
+  const projectKey = randomUUID()
+  await requestExecutor(
     control,
-    `${contentSelector} ${COLLABORATION_SIDEBAR_SELECTOR}`,
-    'collaboration-workspace-project-',
-    projectName
+    'runtime.projects.upsert_local',
+    { projectKey, name: projectName, roots: [workspacePath], runtime: 'codex' },
+    DEFAULT_STEP_TIMEOUT_MS
   )
-  await revealCollaborationSidebarElement(
+  const project = await requestExecutor(
     control,
-    inCollaborationSidebar(`[data-testid="${projectTestId}"]`, contentSelector)
+    'projects.import_code_project',
+    { project_key: projectKey, name: projectName, roots: [workspacePath] },
+    DEFAULT_STEP_TIMEOUT_MS
   )
+  await reloadMainWindow(control, 'The existing offline project did not appear after native import')
+  await waitForNativeCollaborationPlatform(control, contentSelector)
+  const selector = inCollaborationSidebar(
+    `[data-testid="collaboration-workspace-project-${project.id}"]`,
+    contentSelector
+  )
+  await revealCollaborationSidebarElement(control, selector)
+  await control.command('click', selector)
   await waitForLocalProjectNavigation(control, contentSelector, projectName)
 }
 
@@ -558,6 +570,10 @@ export async function completeLocalCollaborationFolderImport(control, projectNam
     value: projectName,
   })
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
+    visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 }
@@ -721,7 +737,7 @@ const HARNESS_MILESTONE_SCREENSHOTS = new Set([
   'harness-apps-16-experimental-disabled.png',
 ])
 
-async function captureVerificationScreenshot(control, name, selector = 'body') {
+async function captureVerificationScreenshot(control, name, selector = 'body', options = {}) {
   const conversationDiagnostics = await control.command(
     'getConversationDiagnosticsSnapshot',
     'body'
@@ -750,6 +766,11 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
     return null
   }
   const screenshotPath = join(resultDir, name)
+  if (options.surface === 'primary-view') {
+    const png = await capturePrimaryVerificationScreenshot(control, selector)
+    await writeFile(screenshotPath, png)
+    return screenshotPath
+  }
   if (process.platform === 'linux') {
     await runChecked('import', ['-window', 'root', screenshotPath])
     return screenshotPath
@@ -768,6 +789,34 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
   await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
   return screenshotPath
+}
+
+async function capturePrimaryVerificationScreenshot(control, selector) {
+  const [metrics] = JSON.parse(await control.command('getElementMetrics', selector))
+  assert.ok(metrics, `Primary-view screenshot selector is unavailable: ${selector}`)
+  const width = selector === 'body' ? metrics.viewportWidth : metrics.width
+  const height = selector === 'body' ? metrics.viewportHeight : metrics.height
+  assert.ok(width > 0 && height > 0, 'Primary-view screenshots require a visible rectangle')
+  const dataUrl = await control.command('capture', selector, { timeoutMs: 90_000 })
+  const prefix = 'data:image/png;base64,'
+  assert.ok(dataUrl.startsWith(prefix), 'Primary-view screenshot did not return PNG data')
+  const png = Buffer.from(dataUrl.slice(prefix.length), 'base64')
+  assert.ok(
+    png.length >= 24 &&
+      png.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) &&
+      png.toString('ascii', 12, 16) === 'IHDR',
+    'Primary-view screenshot has no valid PNG dimensions'
+  )
+  const actual = [png.readUInt32BE(16), png.readUInt32BE(20)]
+  // The existing host may return CSS pixels or device pixels; both axes must share one scale.
+  const scales = [1, metrics.devicePixelRatio].filter(scale => Number.isFinite(scale) && scale > 0)
+  assert.ok(
+    scales.some(
+      scale => actual[0] === Math.round(width * scale) && actual[1] === Math.round(height * scale)
+    ),
+    `Primary-view PNG ${actual.join('x')} does not match ${selector} ${width}x${height}`
+  )
+  return png
 }
 
 async function verifyWorkspaceDocumentTabs(control) {
@@ -2077,7 +2126,7 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"]`,
     firstBoardContent
   )
-  await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-row`)
+  await control.command('hover', `${firstWorkspaceTree} .collaboration-workspace-identity`)
   await control.command(
     'click',
     `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`

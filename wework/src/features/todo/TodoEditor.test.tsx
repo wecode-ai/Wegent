@@ -3,7 +3,7 @@ import '@/i18n'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
 
 function deferred<T>() {
@@ -47,6 +47,16 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+  })
+  afterEach(() => vi.unstubAllGlobals())
   it('clears a deleted draft milestone only after a successful catalog read', async () => {
     const key = 'wework-todo-draft:11:inbox'
     localStorage.setItem(key, JSON.stringify({ title: 'Keep this draft', milestoneId: 'deleted' }))
@@ -410,7 +420,50 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).not.toHaveBeenCalled()
   })
 
-  it('shows a private task action for an Issue assigned to the current user', async () => {
+  it('preserves creating another personal task when the Issue has been reassigned', async () => {
+    const onCreateTask = vi.fn()
+    const reassigned = { ...baseItem, assignee_user_id: 42, assignee_agent_id: null }
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={reassigned}
+        project={project}
+        allItems={[reassigned]}
+        api={api}
+        currentUserId={1}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+        initialTaskBindings={[
+          {
+            id: 1,
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'my-existing-task',
+            linked_at: '2026-10-08T08:00:00Z',
+          },
+        ]}
+      />
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(onCreateTask).toHaveBeenCalledOnce()
+  })
+
+  it('shows only the linked-task create button until that section scrolls above the viewport', async () => {
+    let onIntersection!: IntersectionObserverCallback
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          onIntersection = callback
+        }
+        observe = observe
+        disconnect = disconnect
+      }
+    )
     const onCreateTask = vi.fn()
     const assignedToCurrentUser = {
       ...baseItem,
@@ -436,14 +489,47 @@ describe('TodoEditor external item sync', () => {
       />
     )
 
+    const createTask = screen.getByTestId('cloud-todo-create-task')
+    expect(screen.getByTestId('cloud-todo-tasks')).toContainElement(createTask)
+    expect(createTask).toHaveTextContent('创建任务')
+    expect(screen.queryByTestId('cloud-todo-personal-task-action')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
+    expect(observe).toHaveBeenCalledWith(createTask)
+    await userEvent.click(createTask)
+    expect(onCreateTask).toHaveBeenCalledOnce()
+    onCreateTask.mockClear()
+
+    const reportPosition = (bottom: number) =>
+      act(() => {
+        onIntersection(
+          [
+            {
+              boundingClientRect: { bottom },
+              rootBounds: { top: 0 },
+            } as IntersectionObserverEntry,
+          ],
+          {} as IntersectionObserver
+        )
+      })
+    reportPosition(1000)
+    expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
+    reportPosition(-1)
     expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
       '让 AI 帮我处理'
     )
     expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
       '基于当前 Issue 创建任务，并在当前电脑上运行'
     )
+    const persistentAction = screen.getByTestId('issue-persistent-task-action')
+    expect(persistentAction).toContainElement(screen.getByTestId('cloud-todo-personal-task-start'))
+    expect(screen.getByTestId('cloud-todo-detail-scroll')).not.toContainElement(persistentAction)
+    expect(screen.getAllByTestId('cloud-todo-personal-task-start')).toHaveLength(1)
     await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()
+    reportPosition(20)
+    expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-tasks')).toContainElement(createTask)
+    vi.unstubAllGlobals()
   })
 
   it.each([
@@ -486,15 +572,14 @@ describe('TodoEditor external item sync', () => {
           initialTaskBindings={[taskBinding as unknown as LoopItemTaskBinding]}
         />
       )
-      if (binding.task_user_id === 1) {
-        await screen.findByTestId('cloud-todo-tasks')
-      } else {
-        expect(screen.queryByTestId('cloud-todo-tasks')).not.toBeInTheDocument()
+      await screen.findByTestId('cloud-todo-tasks')
+      if (binding.task_user_id !== 1) {
+        expect(screen.queryByTestId('cloud-todo-open-task-conversation-99')).not.toBeInTheDocument()
       }
-      await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+      await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
       expect(onCreateTask).toHaveBeenCalledOnce()
       expect(onOpenTaskConversation).not.toHaveBeenCalled()
-      expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveTextContent('创建任务')
+      expect(screen.getByTestId('cloud-todo-create-task')).toHaveTextContent('创建任务')
     }
   )
 
@@ -526,7 +611,7 @@ describe('TodoEditor external item sync', () => {
       />
     )
     expect(await screen.findByTestId('cloud-todo-open-task-conversation-99')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 
@@ -590,7 +675,8 @@ describe('TodoEditor external item sync', () => {
     expect(await screen.findByText('仍在运行的任务')).toBeInTheDocument()
     expect(screen.getByText('最近完成的任务')).toBeInTheDocument()
     expect(screen.queryByText('较早完成的任务')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-personal-task-action')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-personal-task-action')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-create-task')).toBeInTheDocument()
 
     const toggle = screen.getByTestId('cloud-todo-toggle-tasks')
     expect(toggle).toHaveTextContent('查看全部 3 个')
@@ -603,11 +689,11 @@ describe('TodoEditor external item sync', () => {
     expect(screen.getByText('较早完成的任务')).toBeInTheDocument()
     expect(toggle).toHaveTextContent('收起')
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-tasks')).toContainElement(
-      screen.getByTestId('cloud-todo-personal-task-start')
+      screen.getByTestId('cloud-todo-create-task')
     )
-    await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 

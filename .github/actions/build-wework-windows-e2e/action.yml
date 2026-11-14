@@ -95,6 +95,7 @@ runs:
     - name: Verify complete Windows desktop package
       shell: bash
       run: |
+        node --test wework/scripts/windows-native-runtime.test.mjs
         codex_target=x86_64-pc-windows-msvc
         if [[ "${{ inputs.arch }}" == "arm64" ]]; then
           codex_target=aarch64-pc-windows-msvc

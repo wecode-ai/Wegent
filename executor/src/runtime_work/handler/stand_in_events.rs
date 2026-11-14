@@ -80,11 +80,11 @@ impl RuntimeWorkRpcHandler {
             }));
             return Ok(());
         }
-        if super::personal_stand_in::matching_personal_roles(&configs, &issue).is_empty() {
+        if super::personal_stand_in::automatic_assignment_roles(&configs, &issue).is_empty() {
             self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }
-        if super::personal_stand_in::matching_personal_roles(&configs, &issue)
+        if super::personal_stand_in::automatic_assignment_roles(&configs, &issue)
             .iter()
             .all(|role| {
                 self.stand_in_assignment_is_handled(

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 
 import {
-  openProjectBoard,
+  openAllIssuesProjectBoard,
   selectProjectBoardGrouping,
   selectProjectBoardSort,
 } from './collaboration-board-personal-view.mjs'
@@ -79,7 +79,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
     }),
   })
   await reloadMainWindow(control, 'The multi-tag board fixture did not load')
-  await openProjectBoard(control, scoped, project)
+  await openAllIssuesProjectBoard(control, scoped, project)
   await selectProjectBoardGrouping(control, scoped, 'tag')
   await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2), uiTimeoutMs)
 
@@ -121,7 +121,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
     'The manual tag reorder did not move the Issue before its anchor'
   )
   await reloadMainWindow(control, 'The same-column tag drag did not reload')
-  await openProjectBoard(control, scoped, project)
+  await openAllIssuesProjectBoard(control, scoped, project)
   await assertLaneOrder(control, scoped, sameColumn, [moving.id, sameColumnAnchor.id])
   await assertIssueColumns(control, scoped, moving.id, TAGS.slice(0, 2), uiTimeoutMs)
   console.log(
@@ -164,7 +164,7 @@ async function verifyTagMoves(control, { scoped, request, project, uiTimeoutMs }
     assert.equal(after.assignee_user_id, before.assignee_user_id)
     await assertIssueColumns(control, scoped, movedIssue.id, move.expected, uiTimeoutMs)
     await reloadMainWindow(control, 'A cross-column tag drag did not reload')
-    await openProjectBoard(control, scoped, project)
+    await openAllIssuesProjectBoard(control, scoped, project)
     await assertIssueColumns(control, scoped, movedIssue.id, move.expected, uiTimeoutMs)
     console.log(
       `[desktop-e2e] PASS board-drag: tag ${sourceKey} -> ${targetKey}, expected tags=${JSON.stringify(move.expected)} persisted and survived reload`
@@ -197,7 +197,7 @@ export async function verifyMultiTagBoardDrag(control, options) {
         value: JSON.stringify(previousWindowSize),
       })
       await reloadMainWindow(control, 'The tag drag fixture cleanup did not reload')
-      await openProjectBoard(control, scoped, project)
+      await openAllIssuesProjectBoard(control, scoped, project)
     }
   }
 }

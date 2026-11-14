@@ -9,7 +9,8 @@ Electron 主进程和 Executor sidecar 协议。
 
 ## 环境准备
 
-安装 Node.js、pnpm、Git，以及构建 Executor 所需的 Rust 工具链。然后安装依赖：
+安装 Node.js、pnpm、Git、Visual Studio C++ 生成工具，以及构建 Executor 所需的
+Rust MSVC 工具链。然后安装依赖：
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -62,12 +63,35 @@ NSIS 安装器写入
 安装器使用 Electron Builder 的标准 NSIS 安装流程，不再处理旧 updater 的 `/P`
 参数或旧安装注册表迁移。
 
+### 自包含的原生二进制
+
+Windows 启动器和 Executor 使用静态 C 运行库
+（`-C target-feature=+crt-static`）。因此干净 Windows 环境不需要安装
+Visual C++ 运行库、Node.js，也不需要随应用放置 `vcruntime140.dll` 或
+`msvcp140.dll`。构建过程不从构建机复制运行库 DLL，不产生这些文件的再分发
+许可和安全维护义务。
+
+打包会读取资源目录中每个 `.exe` 的普通和延迟导入表；只要发现导入
+`vcruntime*`、`msvcp*` 或 `concrt*` 就判定失败。该检查同样覆盖外部传入的
+`WEWORK_EXECUTOR_PATH`，防止后续原生组件重新引入对机器级运行库的依赖。
+
+静态链接运行库的安全修复通过更新 MSVC 工具链后重新构建这些组件获得，不需要
+单独安装、维护或卸载可再发行包。
+
+构建通过 `CARGO_ENCODED_RUSTFLAGS` 传递静态链接参数，既保留已有参数，也避免
+`RUSTFLAGS` 覆盖目标配置。
+
+干净 Windows 沙箱验收仍应覆盖：不安装全局 VC++ 运行库，首次安装并启动应用，
+完成一次云端模型文字聊天，再验证组件升级和回滚。已安装运行库的托管构建机
+不能替代该验收，但打包检查可以证明交付的 EXE 不再请求该运行库。
+
 ## 验证
 
 ```powershell
 pnpm --filter wework typecheck
 pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
+node --test wework/scripts/windows-native-runtime.test.mjs
 pnpm --dir wework/electron build:release
 ```
 

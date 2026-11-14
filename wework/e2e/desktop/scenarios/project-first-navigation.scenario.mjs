@@ -1,3 +1,4 @@
+import { disconnectDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { inCollaborationSidebar } from '../modules/workspace-flows.mjs'
@@ -7,41 +8,52 @@ const projectName = `项目入口验收-${process.pid}`
 const sidebar = testId => inCollaborationSidebar(`[data-testid="${testId}"]`)
 
 // User stories: start a project without choosing a space, find it directly,
-// and opt into space administration without changing the project's identity.
+// and find each project once under its space without changing its identity.
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   let projectTestId
   return {
     async verify(control) {
+      await disconnectDesktopCloud(control)
+      await control.command('navigate', 'body', { value: '/' })
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      for (const location of ['local', 'cloud']) {
-        await control.command('waitFor', sidebar(`collaboration-project-group-${location}`), {
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        })
-      }
-      const toggle = sidebar('collaboration-workspaces-section-toggle')
-      assert.equal(
-        await control.command('getAttribute', toggle, { value: 'aria-expanded' }),
-        'false'
-      )
+      await control.command('waitFor', sidebar('collaboration-project-tree'), {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(
           await control.command(
             'getElementCount',
-            sidebar('collaboration-workspace-tree-wework-local-workspace')
+            sidebar('collaboration-workspaces-section-toggle')
           )
         ),
         0
       )
-      await captureScreenshot(control, 'project-first-01-default.png', active)
-
-      await control.command('clickWhenEnabled', sidebar('collaboration-project-create-local'), {
+      await control.command('waitFor', sidebar('collaboration-project-tree'), {
+        visible: true,
         timeoutMs: uiTimeoutMs,
       })
+      assert.equal(
+        Number(await control.command('getElementCount', sidebar('collaboration-project-tree'))),
+        1
+      )
+      await captureScreenshot(control, 'project-first-01-default.png', active)
+
+      // Project creation belongs to the personal-group menu; this story explicitly exercises offline creation.
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="collaboration-project-tree"] > .collaboration-workspace-group:first-child [data-testid^="collaboration-workspace-actions"]',
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="collaboration-workspace-nav-create-project"]',
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('waitFor', '[data-testid="collaboration-project-name-input"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -57,12 +69,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         '[data-testid="collaboration-project-create-confirm"]',
         { timeoutMs: uiTimeoutMs }
       )
-      await control.command('waitFor', sidebar('collaboration-project-group-local'), {
+      await control.command('waitFor', sidebar('collaboration-project-tree'), {
         text: projectName,
         timeoutMs: uiTimeoutMs,
       })
       const snapshot = JSON.parse(
-        await control.command('snapshot', sidebar('collaboration-project-group-local'))
+        await control.command('snapshot', sidebar('collaboration-project-tree'))
       )
       for (const testId of snapshot.testIds.filter(id =>
         id.startsWith('collaboration-workspace-project-')
@@ -73,6 +85,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         }
       }
       assert.ok(projectTestId, 'The created project must be directly accessible in Local projects')
+      assert.equal(
+        Number(await control.command('getElementCount', sidebar(projectTestId))),
+        1,
+        'A project must appear exactly once in the sidebar'
+      )
       await control.command('click', sidebar(projectTestId))
       await control.command('waitFor', sidebar(projectTestId), { timeoutMs: uiTimeoutMs })
       assert.equal(
@@ -80,20 +97,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'page'
       )
 
-      await control.command('click', toggle)
-      await control.command(
-        'waitFor',
-        sidebar('collaboration-workspace-tree-wework-local-workspace'),
-        { visible: true, timeoutMs: uiTimeoutMs }
-      )
-      await control.command('click', toggle)
       assert.equal(
-        await control.command('getAttribute', toggle, { value: 'aria-expanded' }),
-        'false'
+        Number(
+          await control.command(
+            'getElementCount',
+            sidebar('collaboration-workspace-toggle-wework-local-workspace')
+          )
+        ),
+        1
       )
       assert.equal(
-        await control.command('getAttribute', sidebar(projectTestId), { value: 'aria-current' }),
-        'page'
+        (await control.command('getText', sidebar('collaboration-project-tree'))).includes(
+          '本地空间'
+        ),
+        false
       )
       await captureScreenshot(control, 'project-first-02-created.png', active)
       await control.command('click', sidebar('collaboration-primary-home'))

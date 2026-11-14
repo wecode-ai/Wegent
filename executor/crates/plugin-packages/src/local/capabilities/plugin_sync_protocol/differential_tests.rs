@@ -298,7 +298,7 @@ async fn identity_version_and_component_changes_cannot_reuse_the_old_installatio
 
 #[tokio::test]
 async fn matching_runtime_does_not_hide_a_corrupted_shared_package() {
-    let (_root, handler) = shared_fixture(true);
+    let (root, handler) = shared_fixture(true);
     let desired = desired("alpha", 1);
     handler
         .apply_sync(complete(10, vec![desired.clone()]))
@@ -315,8 +315,26 @@ async fn matching_runtime_does_not_hide_a_corrupted_shared_package() {
         .apply_sync(complete(11, vec![desired]))
         .await
         .unwrap();
-    assert_eq!(result["success"], false);
-    assert_ne!(result["plugins"][0]["unchanged"], true);
+    assert_eq!(result["success"], true);
+    assert_eq!(result["plugins"][0]["unchanged"], true);
+    assert_eq!(
+        fs::read(package.join("payload.txt")).unwrap(),
+        b"valid plugin contents"
+    );
+    assert_eq!(handler.package_provider.0.load(Ordering::SeqCst), 2);
+    let history = root
+        .path()
+        .join("workbench/shared/recovery/plugins")
+        .join(package.file_name().unwrap());
+    let backups = fs::read_dir(history)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(
+        fs::read(backups[0].path().join("package/payload.txt")).unwrap(),
+        b"tampered package"
+    );
 }
 
 #[tokio::test]
@@ -420,4 +438,46 @@ async fn runtime_corruption_and_native_configuration_drift_are_not_hidden_by_mat
             "{damage}: {result}"
         );
     }
+}
+
+#[tokio::test]
+async fn native_metadata_probe_waits_for_publication_before_comparing() {
+    let (_root, handler) = shared_fixture(true);
+    let desired = desired("alpha", 1);
+    let installed = handler
+        .apply_sync(complete(10, vec![desired.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(installed["success"], true);
+    let handler = std::sync::Arc::new(handler);
+    let snapshot = handler.store.manifest.load().unwrap();
+    let spec = PluginSyncSpec::from_value(&desired).unwrap();
+    let lease = std::sync::Arc::new(plugin_preparation::PreparationLease {
+        _lane: None,
+        _slot: handler
+            .plugin_preparation
+            .slots
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap(),
+    });
+    let publication = handler.sync_lock.lock().await;
+    let worker = handler.clone();
+    let mut preparing = tokio::spawn(async move {
+        worker
+            .prepare_plugin(&spec, &snapshot, lease, Some(worker.sync_lock.clone()))
+            .await
+    });
+    // An active writer must exclude the complete metadata read/compare transaction.
+    let while_writing =
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut preparing).await;
+    assert!(
+        while_writing.is_err(),
+        "Metadata was inspected during publication"
+    );
+    drop(publication);
+    let prepared = preparing.await.unwrap().unwrap();
+    assert!(prepared.unchanged);
+    assert_eq!(handler.package_provider.0.load(Ordering::SeqCst), 1);
 }

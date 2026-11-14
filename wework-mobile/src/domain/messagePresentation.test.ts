@@ -258,8 +258,11 @@ describe('messagePresentation', () => {
     expect(generatedImagesFromBlocks(blocks)).toEqual([
       {
         id: 'image-1',
-        uri: 'data:image/png;base64,aW1hZ2U=',
+        src: 'data:image/png;base64,aW1hZ2U=',
         alt: 'A generated preview',
+        mimeType: 'image/png',
+        fileExtension: '.png',
+        size: 0,
       },
     ])
   })
@@ -308,5 +311,81 @@ describe('messagePresentation', () => {
         block: { fileChanges: { fileCount: 1, additions: 3, files: [{ additions: 3 }] } },
       },
     ])
+  })
+
+  it('keeps different diff artifacts separate so file actions retain their real source', () => {
+    const changes = (artifactId: string): ChatProcessingBlock => ({
+      id: artifactId,
+      type: 'file_changes',
+      subtaskId: 'turn',
+      status: 'done',
+      createdAt: 1,
+      fileChanges: {
+        fileCount: 1,
+        additions: 1,
+        deletions: 0,
+        files: [
+          { path: 'a.ts', changeType: 'modified', additions: 1, deletions: 0, binary: false },
+        ],
+        source: {
+          version: 1,
+          status: 'active',
+          artifact_id: artifactId,
+          device_id: 'original',
+          workspace_path: '/work',
+          file_count: 1,
+          additions: 1,
+          deletions: 0,
+          files: [
+            { path: 'a.ts', change_type: 'modified', additions: 1, deletions: 0, binary: false },
+          ],
+        },
+      },
+    })
+    const rows = buildMessageDisplayRows([changes('first'), changes('second')], '')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ block: { fileChanges: { source: { artifact_id: 'first' } } } })
+    expect(rows[1]).toMatchObject({ block: { fileChanges: { source: { artifact_id: 'second' } } } })
+    expect(buildMessageDisplayRows([changes('same'), changes('same')], '')).toMatchObject([
+      { block: { fileChanges: { source: { artifact_id: 'same' } } } },
+    ])
+  })
+
+  it('retains workspace image metadata and rejects incomplete references and unsupported image types', () => {
+    const image = tool('generated', 'image_generation')
+    image.renderPayload = {
+      mimeType: 'image/webp',
+      size: 70,
+      width: 20,
+      height: 30,
+      source: {
+        type: 'workspace_file',
+        deviceId: 'original',
+        workspacePath: '/work',
+        path: 'generated.webp',
+      },
+    }
+    expect(generatedImagesFromBlocks([image])).toEqual([
+      {
+        id: 'generated',
+        alt: 'Generated image',
+        mimeType: 'image/webp',
+        fileExtension: '.webp',
+        size: 70,
+        width: 20,
+        height: 30,
+        workspaceFile: { device_id: 'original', workspace_path: '/work', path: 'generated.webp' },
+      },
+    ])
+    expect(
+      generatedImagesFromBlocks([
+        { ...image, renderPayload: { source: { type: 'workspace_file', path: 'missing.png' } } },
+      ])
+    ).toEqual([])
+    expect(
+      generatedImagesFromBlocks([
+        { ...image, renderPayload: { mimeType: 'text/html', imageBase64: 'abcd' } },
+      ])
+    ).toEqual([])
   })
 })

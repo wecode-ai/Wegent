@@ -1743,6 +1743,7 @@ async def _create_streaming_response_unified(
     "/{response_id}/cancel", response_model=WeworkResponseObject | ResponseObject
 )
 @limiter.limit(settings.RATE_LIMIT_CANCEL_RESPONSE)
+@trace_async(span_name="openapi.cancel_response", tracer_name="backend.openapi")
 async def cancel_response(
     request: Request,
     response_id: str,
@@ -1845,41 +1846,65 @@ async def cancel_response(
                 f"[CANCEL] Got partial content from Redis: length={len(partial_content) if partial_content else 0}"
             )
 
-            # Cancel the stream (this sets the cancel event)
-            await session_manager.cancel_stream(running_subtask.id)
-            logger.info(f"[CANCEL] Stream cancelled for subtask {running_subtask.id}")
-
-            # Update subtask status to COMPLETED with partial content
-            subtask_store.update_fields(
-                db,
-                subtask=running_subtask,
-                status=SubtaskStatus.COMPLETED,
-                progress=100,
-                completed_at=datetime.now(),
-                result={"value": partial_content or ""},
+            # Match terminal persistence's lock order. A completion that won
+            # while Redis was being read must keep its committed result.
+            db.expire(task_kind)
+            task_store.get_by_id_for_update(db, task_id=task_id)
+            running_subtask_id = running_subtask.id
+            db.expire(running_subtask)
+            running_subtask = subtask_store.get_basic_by_id_for_update(
+                db, subtask_id=running_subtask_id
             )
+            if not running_subtask or running_subtask.status not in (
+                SubtaskStatus.PENDING,
+                SubtaskStatus.RUNNING,
+            ):
+                db.rollback()
+            else:
+                coordinator = session_manager.response_cancel
+                intent = coordinator.prepare(running_subtask_id)
+                try:
+                    task_crd = Task.model_validate(task_kind.json)
+                    # Update subtask status to COMPLETED with partial content
+                    subtask_store.update_fields(
+                        db,
+                        subtask=running_subtask,
+                        status=SubtaskStatus.COMPLETED,
+                        progress=100,
+                        completed_at=datetime.now(),
+                        result={"value": partial_content or ""},
+                    )
 
-            # Update task status to COMPLETED
-            if task_crd.status:
-                task_crd.status.status = "COMPLETED"
-                task_crd.status.errorMessage = ""
-                task_crd.status.updatedAt = datetime.now()
-                task_crd.status.completedAt = datetime.now()
-                task_crd.status.result = {"value": partial_content or ""}
+                    # Update task status to COMPLETED
+                    if task_crd.status:
+                        task_crd.status.status = "COMPLETED"
+                        task_crd.status.errorMessage = ""
+                        task_crd.status.updatedAt = datetime.now()
+                        task_crd.status.completedAt = datetime.now()
+                        task_crd.status.result = {"value": partial_content or ""}
 
-            task_store.update_json(
-                db,
-                task=task_kind,
-                payload=task_crd.model_dump(mode="json"),
-            )
+                    from app.services.chat.storage.db import settle_pipeline_handoff
 
-            db.commit()
-            db.refresh(task_kind)
-            db.refresh(running_subtask)
+                    document = task_crd.model_dump(mode="json")
+                    settle_pipeline_handoff(document, running_subtask_id)
+                    task_store.update_json(db, task=task_kind, payload=document)
 
-            logger.info(
-                f"[CANCEL] Chat Shell task cancelled: task_id={task_id}, subtask_id={running_subtask.id}"
-            )
+                    db.commit()
+                except BaseException:
+                    try:
+                        db.rollback()
+                    finally:
+                        if intent is not None:
+                            await coordinator.abort(running_subtask_id, intent)
+                    raise
+                # Cleanup can already have observed this committed winner.
+                await session_manager.finish_response_cancel(running_subtask_id, intent)
+                db.refresh(task_kind)
+                db.refresh(running_subtask)
+
+                logger.info(
+                    f"[CANCEL] Chat Shell task cancelled: task_id={task_id}, subtask_id={running_subtask.id}"
+                )
         else:
             logger.info(f"[CANCEL] No running subtask found for task {task_id}")
     else:

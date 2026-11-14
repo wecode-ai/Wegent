@@ -11,7 +11,15 @@ Supports Team, Task, and KnowledgeBase resource types.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Index, Integer, String
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Index,
+    Integer,
+    String,
+)
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -23,6 +31,8 @@ class ResourceType(str, PyEnum):
 
     TEAM = "Team"
     TASK = "Task"
+    TASK_SHARE = "TaskShare"
+    TASK_INVITE = "TaskInvite"
     KNOWLEDGE_BASE = "KnowledgeBase"
     PLUGIN = "Plugin"
     SMART_APP = "SmartApp"
@@ -47,7 +57,7 @@ class ShareLink(Base):
 
     Stores share link configurations including:
     - Target resource (type + id)
-    - Encrypted share token
+    - Persisted share token
     - Approval requirements
     - Default permission level
     - Expiration settings
@@ -57,6 +67,8 @@ class ShareLink(Base):
     """
 
     __tablename__ = "share_links"
+    LEGACY_TOKEN_VERSION = 1
+    OPAQUE_TOKEN_VERSION = 2
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
 
@@ -72,12 +84,26 @@ class ShareLink(Base):
         comment="Resource ID (kinds.id or tasks.id)",
     )
 
-    # Share link info
+    # Share link info. The token itself is only shown when it is issued;
+    # lookups use token_hash.
     share_token = Column(
         String(512),
         nullable=False,
         unique=True,
-        comment="AES encrypted share token",
+        comment="Opaque share token issued to the resource owner",
+    )
+    token_hash = Column(
+        String(64),
+        nullable=True,
+        unique=True,
+        comment="SHA-256 hash of the share token",
+    )
+    token_version = Column(
+        Integer,
+        nullable=False,
+        default=OPAQUE_TOKEN_VERSION,
+        server_default="1",
+        comment="1: legacy locator requiring resource access; 2: opaque bearer token",
     )
 
     # Share configuration

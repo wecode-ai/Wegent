@@ -47,6 +47,10 @@ async function isolatedConsumer(name) {
     join(wework, 'scripts/lib/desktop-package-target.mjs'),
     join(sharedScripts, 'desktop-package-target.mjs')
   )
+  await cp(
+    join(wework, 'scripts/lib/windows-native-runtime.mjs'),
+    join(sharedScripts, 'windows-native-runtime.mjs')
+  )
   const runtime = join(consumer, 'wework/electron/src/runtime')
   await mkdir(runtime, { recursive: true })
   await cp(

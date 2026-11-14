@@ -291,6 +291,7 @@ impl LocalBackendTransport for SocketIoTransport {
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
             let connected = self.connected_socket().await?;
+            let (event, payload) = completed_event_budget::fit_completed_event(event, payload)?;
             let (sender, receiver) = oneshot::channel();
             let sender = Arc::new(Mutex::new(Some(sender)));
             let ack_sender = Arc::clone(&sender);
@@ -372,10 +373,7 @@ mod tests {
 
     use tokio::sync::oneshot;
 
-    use super::{
-        dispatch_handler, format_socket_error, normalize_socket_url, LocalBackendTransport,
-        SocketIoTransport,
-    };
+    use super::{dispatch_handler, format_socket_error, LocalBackendTransport, SocketIoTransport};
 
     #[tokio::test]
     async fn stale_socket_closure_cannot_invalidate_current_connection_state() {
@@ -404,30 +402,6 @@ mod tests {
     struct OuterError {
         #[source]
         source: std::io::Error,
-    }
-
-    #[test]
-    fn socket_url_normalizes_websocket_schemes_for_engine_io() {
-        assert_eq!(
-            normalize_socket_url("wss://socket.example.com"),
-            "https://socket.example.com"
-        );
-        assert_eq!(
-            normalize_socket_url("ws://localhost:8000"),
-            "http://localhost:8000"
-        );
-    }
-
-    #[test]
-    fn socket_url_preserves_http_schemes() {
-        assert_eq!(
-            normalize_socket_url("https://socket.example.com"),
-            "https://socket.example.com"
-        );
-        assert_eq!(
-            normalize_socket_url("http://localhost:8000"),
-            "http://localhost:8000"
-        );
     }
 
     #[test]

@@ -54,9 +54,10 @@ import {
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum, type ModelCategoryType } from '@/apis/models'
 import { filterSelectableShells, shellApis, UnifiedShell } from '@/apis/shells'
-import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
+import type { UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useBotSkillOptions } from '@/hooks/useBotSkillOptions'
 import {
   adaptMcpConfigForShell,
   isMcpCapableShellType,
@@ -216,9 +217,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
     baseBot?.skill_refs || {}
   )
-  const [allSkills, setAllSkills] = useState<UnifiedSkill[]>([])
-  const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
-  const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
 
   const resetAgentDependentConfig = useCallback(() => {
@@ -436,40 +434,23 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     [scope]
   )
 
-  useEffect(() => {
-    // Only fetch skills when the selected runtime can deploy them.
-    if (!supportsSkills) {
-      setAllSkills([])
-      setAvailableSkills([])
-      setLoadingSkills(false)
-      return
-    }
-
-    const fetchSkills = async () => {
-      setLoadingSkills(true)
-      try {
-        // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-        const skillsData =
-          scope === 'public'
-            ? await fetchPublicSkillsList()
-            : await fetchUnifiedSkillsList({
-                scope: scope,
-                groupName: groupName,
-              })
-        setAllSkills(skillsData)
-        // Filter skills based on current shell type
-        setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:skills.loading_failed'),
-        })
-      } finally {
-        setLoadingSkills(false)
-      }
-    }
-    fetchSkills()
-  }, [supportsSkills, toast, t, filterSkillsByShellType, filterSelectableSkills, scope, groupName])
+  const {
+    skills: allSkills,
+    loading: loadingSkills,
+    error: skillsError,
+    reload: reloadSkills,
+  } = useBotSkillOptions(
+    {
+      botId: editingBotId > 0 ? editingBotId : undefined,
+      namespace: editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default',
+    },
+    supportsSkills,
+    scope === 'public'
+  )
+  const availableSkills = useMemo(
+    () => filterSkillsByShellType(filterSelectableSkills(allSkills)),
+    [allSkills, filterSkillsByShellType, filterSelectableSkills]
+  )
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -1582,15 +1563,25 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     </Button>
                   </div>
                   <div className="bg-base rounded-md p-2 min-h-[80px]">
-                    {loadingSkills ? (
+                    {skillsError ? (
+                      <Button variant="ghost" data-testid="bot-skills-retry" onClick={reloadSkills}>
+                        {t('common:skills.loading_failed')} · {t('common:actions.retry')}
+                      </Button>
+                    ) : null}
+                    {loadingSkills && (
                       <div className="text-sm text-text-muted">
                         {t('common:skills.loading_skills')}
                       </div>
-                    ) : availableSkills.length === 0 && selectedSkills.length === 0 ? (
-                      <div className="text-sm text-text-muted">
-                        {t('common:skills.no_skills_available')}
-                      </div>
-                    ) : (
+                    )}
+                    {!loadingSkills &&
+                      !skillsError &&
+                      availableSkills.length === 0 &&
+                      selectedSkills.length === 0 && (
+                        <div className="text-sm text-text-muted">
+                          {t('common:skills.no_skills_available')}
+                        </div>
+                      )}
+                    {(availableSkills.length > 0 || selectedSkills.length > 0) && (
                       <div className="space-y-2">
                         {availableSkills.length > 0 && (
                           <RichSkillSelector
@@ -1791,30 +1782,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         onClose={() => setSkillManagementModalOpen(false)}
         scope={scope}
         groupName={groupName}
-        onSkillsChange={() => {
-          // Reload skills list when skills are changed
-          const fetchSkills = async () => {
-            try {
-              // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-              const skillsData =
-                scope === 'public'
-                  ? await fetchPublicSkillsList()
-                  : await fetchUnifiedSkillsList({
-                      scope: scope,
-                      groupName: groupName,
-                    })
-              setAllSkills(skillsData)
-              // Filter skills based on current shell type
-              setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
-            } catch {
-              toast({
-                variant: 'destructive',
-                title: t('common:skills.loading_failed'),
-              })
-            }
-          }
-          fetchSkills()
-        }}
+        onSkillsChange={reloadSkills}
       />
 
       {/* Prompt Fine-tune Dialog */}

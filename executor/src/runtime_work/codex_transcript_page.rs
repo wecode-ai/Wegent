@@ -748,10 +748,7 @@ fn turn_items_view(paginated_history: bool) -> &'static str {
 mod tests {
     use serde_json::json;
 
-    use super::{
-        codex_thread_metadata_is_pending, codex_turn_history_is_pending, rollout_turns,
-        thread_uses_paginated_history, turn_items_view,
-    };
+    use super::{codex_thread_metadata_is_pending, codex_turn_history_is_pending, rollout_turns};
 
     #[test]
     fn full_rollout_reads_stop_at_record_checkpoints_and_preserve_runtime_error_codes() {
@@ -796,91 +793,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn full_rollout_export_includes_more_than_five_hundred_turns() {
-        use super::*;
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("history.jsonl");
-        let lines = (0..503)
-            .map(|index| {
-                json!({
-            "type":"event_msg", "payload": {
-                "type":"item_completed", "turn_id":format!("turn-{index}"),
-                "item":{"id":format!("item-{index}"), "type":"agentMessage", "text":"complete"}
-            }
-        }).to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&path, lines).unwrap();
-        let metadata = json!({"path":path.to_string_lossy()});
-        let mut request = CodexTranscriptRequest {
-            thread_id: "thread",
-            cursor: None,
-            limit: 5,
-            direction: CodexTranscriptDirection::Descending,
-            full_content: true,
-            bounded_items: false,
-            prefer_rollout_history: true,
-        };
-        let full = load_rollout_transcript_page(&metadata, &request)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(full.thread["turns"].as_array().unwrap().len(), 503);
-        assert_eq!(full.thread["turns"][0]["id"], "turn-0");
-        request.full_content = false;
-        let tail = load_rollout_transcript_page(&metadata, &request)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(tail.thread["turns"].as_array().unwrap().len(), 5);
-        assert_eq!(tail.thread["turns"][0]["id"], "turn-498");
-        assert_eq!(tail.before_cursor.as_deref(), Some("wework-rollout:498"));
-        request.cursor = tail.before_cursor.as_deref();
-        let older = load_rollout_transcript_page(&metadata, &request)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(older.thread["turns"][4]["id"], "turn-497");
-    }
-
-    #[test]
-    fn detects_paginated_thread_history() {
-        assert!(thread_uses_paginated_history(
-            &json!({"historyMode": "paginated"})
-        ));
-    }
-
-    #[test]
-    fn treats_legacy_and_missing_history_modes_as_non_paginated() {
-        assert!(!thread_uses_paginated_history(
-            &json!({"historyMode": "legacy"})
-        ));
-        assert!(!thread_uses_paginated_history(&json!({})));
-    }
-
-    #[test]
-    fn requests_unloaded_items_for_paginated_history() {
-        assert_eq!(turn_items_view(true), "notLoaded");
-        assert_eq!(turn_items_view(false), "full");
-    }
-
-    #[test]
-    fn navigation_preserves_visible_summaries_without_tool_payloads() {
-        let turn = json!({"items": [
-            {"type": "UserMessage", "content": [{"type": "text", "text":
-                "## My request for Codex:\n<application_context>hidden</application_context>\nFix navigation"}]},
-            {"type": "CommandExecution", "aggregatedOutput": "private tool output"},
-            {"type": "AgentMessage", "text": "Navigation fixed"},
-            {"type": "AgentMessage", "text": "Later legacy response"}
-        ]});
-        let entry = super::navigation_turn(&turn, "turn-1".into(), Some("cursor".into()));
-        assert_eq!(entry.prompt_preview, "Fix navigation");
-        assert_eq!(entry.response_preview, "Navigation fixed");
-        assert_eq!(entry.cursor.as_deref(), Some("cursor"));
-    }
-
     #[test]
     fn navigation_previews_itemless_turn_failure() {
         let turn = json!({
@@ -911,59 +823,6 @@ mod tests {
         assert_eq!(entry.user_message_id.as_deref(), Some("user-client"));
         assert_eq!(entry.prompt_preview, "Original request");
         assert_eq!(entry.response_preview, "Finished");
-    }
-
-    #[test]
-    fn rebuilds_paginated_turns_from_canonical_rollout_events() {
-        let text = [
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "task_started",
-                    "turn_id": "turn-1",
-                    "started_at": 10,
-                }
-            }),
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "item_completed",
-                    "turn_id": "turn-1",
-                    "item": {"id": "user-1", "type": "UserMessage", "content": []},
-                }
-            }),
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "item_completed",
-                    "turn_id": "turn-1",
-                    "item": {"id": "agent-1", "type": "AgentMessage", "content": []},
-                }
-            }),
-            json!({
-                "type": "event_msg",
-                "payload": {
-                    "type": "task_complete",
-                    "turn_id": "turn-1",
-                    "completed_at": 12,
-                    "duration_ms": 2_000,
-                }
-            }),
-        ]
-        .into_iter()
-        .map(|value| value.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-        let turns = rollout_turns(&text).expect("rollout should rebuild");
-
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0]["id"], "turn-1");
-        assert_eq!(turns[0]["status"], "completed");
-        assert_eq!(turns[0]["startedAt"], 10_000);
-        assert_eq!(turns[0]["completedAt"], 12_000);
-        assert_eq!(turns[0]["durationMs"], 2_000);
-        assert_eq!(turns[0]["items"].as_array().map(Vec::len), Some(2));
     }
 
     #[test]

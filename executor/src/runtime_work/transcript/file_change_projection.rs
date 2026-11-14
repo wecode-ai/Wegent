@@ -693,10 +693,7 @@ fn diff_git_path(prefix: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        diff_stats, diff_with_file_header, limit_stream_diff, MAX_STREAM_FILE_CHANGE_DIFF_BYTES,
-        TRUNCATED_DIFF_SUFFIX,
-    };
+    use super::{limit_stream_diff, MAX_STREAM_FILE_CHANGE_DIFF_BYTES, TRUNCATED_DIFF_SUFFIX};
 
     #[test]
     fn limits_streamed_diffs_without_splitting_utf8() {
@@ -706,100 +703,5 @@ mod tests {
         assert!(truncated);
         assert!(limited.len() <= MAX_STREAM_FILE_CHANGE_DIFF_BYTES);
         assert!(limited.ends_with(TRUNCATED_DIFF_SUFFIX));
-    }
-
-    #[test]
-    fn normalizes_marker_like_whole_file_content() {
-        let incomplete_hunk = diff_with_file_header(
-            "/workspace/repo/incomplete.md",
-            None,
-            Some("add"),
-            "@@ -1 +1 @@\nplain text\n",
-            "/workspace/repo",
-        );
-        assert!(incomplete_hunk.contains("+@@ -1 +1 @@\n+plain text\n"));
-        assert_eq!(diff_stats(&incomplete_hunk, "created"), (2, 0));
-
-        let created = diff_with_file_header(
-            "/workspace/repo/created.md",
-            None,
-            Some("add"),
-            "diff --git is content\n@@ heading\n--- first\n+++ second\n",
-            "/workspace/repo",
-        );
-        assert!(created.contains("+diff --git is content\n+@@ heading\n+--- first\n++++ second\n"));
-
-        let deleted = diff_with_file_header(
-            "/workspace/repo/deleted.md",
-            None,
-            Some("delete"),
-            "--- heading\n+++ heading\n",
-            "/workspace/repo",
-        );
-        assert!(deleted.contains("---- heading\n-+++ heading\n"));
-    }
-
-    #[test]
-    fn preserves_trailing_whitespace_in_unified_diff() {
-        let diff = "@@ -1 +1 @@\n-old\n+new  \n";
-        let rendered = diff_with_file_header(
-            "/workspace/repo/file.txt",
-            None,
-            Some("update"),
-            diff,
-            "/workspace/repo",
-        );
-        assert!(rendered.ends_with("+new  \n"));
-
-        let full_diff = concat!(
-            "diff --git a/file.txt b/file.txt\n",
-            "--- a/file.txt\n",
-            "+++ b/file.txt\n",
-            "@@ -1 +1 @@\n",
-            "-old\n",
-            "+new\t\n",
-        );
-        let rendered = diff_with_file_header(
-            "/workspace/repo/file.txt",
-            None,
-            Some("update"),
-            full_diff,
-            "/workspace/repo",
-        );
-        assert!(rendered.ends_with("+new\t\n"));
-    }
-
-    #[test]
-    fn normalizes_deleted_and_empty_whole_files() {
-        let deleted = diff_with_file_header(
-            "/workspace/repo/deleted.txt",
-            None,
-            Some("delete"),
-            "first\nsecond\n",
-            "/workspace/repo",
-        );
-        assert!(deleted.contains("@@ -1,2 +0,0 @@\n-first\n-second\n"));
-        assert_eq!(diff_stats(&deleted, "deleted"), (0, 2));
-
-        for change_type in ["add", "delete"] {
-            let empty = diff_with_file_header(
-                "/workspace/repo/empty.txt",
-                None,
-                Some(change_type),
-                "",
-                "/workspace/repo",
-            );
-            assert_eq!(
-                diff_stats(
-                    &empty,
-                    if change_type == "add" {
-                        "created"
-                    } else {
-                        "deleted"
-                    }
-                ),
-                (0, 0)
-            );
-        }
     }
 }

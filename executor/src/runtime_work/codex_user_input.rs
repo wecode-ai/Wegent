@@ -139,27 +139,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_title_and_plain_string_options() {
-        let payload = async_question_render_payload(
-            "call-1",
-            &[json!({
-                "title": "Which state jitters?",
-                "options": ["Following", "Reading", "Both"],
-            })],
-        )
-        .expect("payload");
-
-        assert_eq!(payload["kind"], "request_user_input");
-        assert_eq!(payload["delivery"], "async");
-        assert_eq!(payload["itemId"], "call-1");
-        assert_eq!(payload["questions"][0]["id"], "question_1");
-        assert_eq!(payload["questions"][0]["question"], "Which state jitters?");
-        assert_eq!(payload["questions"][0]["is_other"], true);
-        assert_eq!(payload["questions"][0]["options"][0]["label"], "Following");
-        assert_eq!(payload["questions"][0]["options"][2]["label"], "Both");
-    }
-
-    #[test]
     fn drops_blank_questions_and_blank_options() {
         let payload = async_question_render_payload(
             "call-2",

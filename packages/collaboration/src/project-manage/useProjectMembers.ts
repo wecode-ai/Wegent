@@ -237,7 +237,7 @@ export function useProjectMembers<
         member.inherited_role
           ? host.translate(
               'todo.reset_member_role_confirm',
-              '移除“{{name}}”的项目角色，恢复空间角色？',
+              '移除“{{name}}”的项目角色，恢复分组角色？',
               { name: member.user_name }
             )
           : host.translate('todo.remove_member_confirm', '从项目中移除“{{name}}”？', {
