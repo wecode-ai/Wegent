@@ -18,7 +18,7 @@ use chrono::{NaiveDateTime, Utc};
 use crate::sql_support::StatementArg;
 
 /// `CAPACITY_STATUSES`: the execution statuses that still accept events.
-pub(super) const CAPACITY_STATUSES: &str = "'running', 'claimed', 'cancel_requested'";
+pub(crate) const CAPACITY_STATUSES: &str = "'running', 'claimed', 'cancel_requested'";
 
 /// `PROJECT_CHAT_TERMINAL_RUN_STATUSES`.
 pub(super) const TERMINAL_RUN_STATUSES: [&str; 4] =

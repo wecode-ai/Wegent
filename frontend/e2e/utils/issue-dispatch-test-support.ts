@@ -233,7 +233,15 @@ export async function createProjectAgent(
   await page
     .getByTestId('web-agent-system-prompt')
     .fill('Execute only the assigned dispatch task and submit evidence through Delivery.')
+  const projectId = new URL(page.url()).pathname.split('/projects/')[1]?.split('/')[0]
+  if (!projectId) throw new Error('Unable to determine the current project')
+  const saved = page.waitForResponse(
+    response =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === `/api/v1/cloud-projects/${projectId}/chat-agents`
+  )
   await page.getByTestId('web-agent-resource-create').click()
+  expect((await saved).status()).toBe(201)
   await expect(page.getByTestId('web-agent-resource-creator')).toHaveCount(0)
   await expect(
     page.locator('[data-testid^="project-agent-row-"]').filter({ hasText: name })

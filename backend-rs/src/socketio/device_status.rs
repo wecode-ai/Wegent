@@ -65,27 +65,9 @@ pub async fn status(
     let Some(route_id) = snapshot.device.device_id.clone() else {
         return json!({"error": "Not authenticated"});
     };
-    // `get_device_online_info` (`cache_manager.get_or_raise`) then the socket
-    // identity check; a missing document or another live socket is stale.
-    let Some(redis) = state.redis.as_ref() else {
-        return json!({"error": "Stale device connection"});
-    };
-    let online = match crate::device_online_state::read_online_state_with(
-        redis,
-        snapshot.user_id,
-        &route_id,
-    )
-    .await
-    {
-        Ok(Some(document)) => document,
-        _ => return json!({"error": "Stale device connection"}),
-    };
-    if online.get("socket_id").and_then(Value::as_str) != Some(socket_id) {
+    if !device::update_online_status(state, snapshot.user_id, &route_id, socket_id, status).await {
         return json!({"error": "Stale device connection"});
     }
-    // `update_device_status_in_redis`: read the document, replace the status and
-    // heartbeat, then rewrite it with the online TTL.
-    device::update_online_status(state, snapshot.user_id, &route_id, status).await;
 
     let payload = json!({"device_id": route_id, "status": status});
     if let Err(error) = runtime

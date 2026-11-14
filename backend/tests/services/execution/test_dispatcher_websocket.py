@@ -394,3 +394,176 @@ async def test_dispatch_websocket_uses_git_credentials_configured_on_device() ->
     assert payload["git_auth_transport"] == GIT_AUTH_TRANSPORT_DEVICE_LOCAL
     assert "git_token" not in payload["user"]
     assert request.user["git_token"] == "encrypted-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("online", "failing_write", "initial_status", "terminal_status"),
+    [
+        (False, None, "PENDING", "FAILED"),
+        (True, None, "PENDING", "FAILED"),
+        (False, "subtask", "PENDING", "FAILED"),
+        (False, "task", "PENDING", "FAILED"),
+        (False, None, "CANCELLED", "CANCELLED"),
+    ],
+)
+async def test_device_dispatch_failure_persists_terminal_state(
+    test_db, online, failing_write, initial_status, terminal_status
+):
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
+
+    from app.models.subtask import Subtask, SubtaskStatus
+    from app.models.task import TaskResource
+    from app.stores.tasks import subtask_store, task_store
+
+    task = TaskResource(
+        user_id=9,
+        kind="Task",
+        name="device-turn",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {"name": "device-turn", "namespace": "default"},
+            "spec": {
+                "title": "Device turn",
+                "prompt": "Run on device",
+                "device_id": "device-1",
+                "teamRef": {"name": "device-test-team"},
+                "workspaceRef": {"name": "device-test-workspace"},
+            },
+            "status": {"status": initial_status},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    test_db.add(task)
+    test_db.flush()
+    subtask = Subtask(
+        user_id=9,
+        task_id=task.id,
+        team_id=1,
+        title="Device turn",
+        bot_ids=[],
+        status=SubtaskStatus(initial_status),
+    )
+    test_db.add(subtask)
+    test_db.commit()
+    subtask_id = subtask.id
+    task_id = task.id
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=task.id,
+        subtask_id=subtask_id,
+        message_id=1,
+        user={"id": 9},
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        namespace="/local-executor",
+        event="task:execute",
+        room="device:9:device-1",
+    )
+    delivery = AsyncMock(side_effect=RuntimeError("Redis publish failed"))
+    from types import SimpleNamespace
+
+    from app.schemas.device_chat_task import DeviceChatTaskRequest
+    from app.services.device_chat_task_service import _run_ai_response
+
+    async def dispatch_turn(**kwargs):
+        await dispatcher.dispatch(request, device_id=kwargs["device_id"])
+
+    update = subtask_store.update_fields_if_status
+    update_task = task_store.update_json
+    connection = test_db.get_bind()
+
+    def session():
+        return Session(bind=connection, join_transaction_mode="create_savepoint")
+
+    failed_once = False
+
+    def persist(db, **kwargs):
+        nonlocal failed_once
+        if failing_write == "subtask" and not failed_once:
+            failed_once = True
+            raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
+        return update(db, **kwargs)
+
+    def persist_task(db, **kwargs):
+        nonlocal failed_once
+        if failing_write == "task" and not failed_once:
+            failed_once = True
+            assert db.get(Subtask, subtask_id).status == SubtaskStatus.FAILED
+            raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
+        return update_task(db, **kwargs)
+
+    notifications = AsyncMock()
+    with (
+        patch.object(subtask_store, "update_fields_if_status", side_effect=persist),
+        patch.object(task_store, "update_json", side_effect=persist_task),
+        patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+            return_value=notifications,
+        ),
+        patch(
+            "app.services.device_chat_task_service.trigger_ai_response_unified",
+            side_effect=dispatch_turn,
+        ),
+        patch("app.services.execution.dispatcher.SessionLocal", side_effect=session),
+        patch("app.db.session.SessionLocal", side_effect=session),
+        patch(
+            "app.services.chat.storage.session_manager.cleanup_streaming_state",
+            AsyncMock(),
+        ),
+        patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()),
+        patch.object(
+            dispatcher, "_resolve_device_route_id", AsyncMock(return_value="device-1")
+        ),
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_emit_socketio_in_main_loop", delivery),
+        patch(
+            "app.services.execution.dispatcher.lock_online_device_for_binding",
+            return_value="device-1" if online else None,
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            AsyncMock(return_value={}),
+        ),
+    ):
+        await _run_ai_response(
+            task=task,
+            assistant_subtask=subtask,
+            team=SimpleNamespace(id=1),
+            user=SimpleNamespace(id=9),
+            message="Run on device",
+            payload=DeviceChatTaskRequest(teamId=1, message="Run on device"),
+            device_id="device-1",
+            user_subtask_id=0,
+            auth_token="",
+        )
+
+    test_db.expire_all()
+    subtask = test_db.get(Subtask, subtask_id)
+    assert subtask is not None
+    assert failed_once == (failing_write is not None)
+    assert subtask.status == SubtaskStatus(terminal_status)
+    assert (
+        test_db.get(TaskResource, task_id).json["status"]["status"] == terminal_status
+    )
+    if terminal_status == "FAILED":
+        notifications.emit_chat_error.assert_awaited_once()
+        assert notifications.emit_chat_error.await_args.kwargs["task_id"] == task_id
+        assert (
+            notifications.emit_chat_error.await_args.kwargs["subtask_id"] == subtask_id
+        )
+        notifications.emit_task_status.assert_awaited_once_with(
+            user_id=9, task_id=task_id, status="FAILED"
+        )
+    else:
+        notifications.emit_chat_error.assert_not_awaited()
+        notifications.emit_task_status.assert_not_awaited()
+    if online:
+        delivery.assert_awaited_once()
+    else:
+        delivery.assert_not_awaited()
+        assert subtask.executor_name is None

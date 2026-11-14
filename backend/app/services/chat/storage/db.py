@@ -169,7 +169,7 @@ class DatabaseHandler:
         error: str | None = None,
         executor_name: str | None = None,
         executor_namespace: str | None = None,
-        expected_status: str | None = None,
+        expected_status: str | tuple[str, ...] | None = None,
         expected_device: tuple[int, str] | None = None,
     ) -> bool:
         """Update subtask status asynchronously.
@@ -212,7 +212,7 @@ class DatabaseHandler:
         error: str | None = None,
         executor_name: str | None = None,
         executor_namespace: str | None = None,
-        expected_status: str | None = None,
+        expected_status: str | tuple[str, ...] | None = None,
         expected_device: tuple[int, str] | None = None,
     ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
@@ -246,6 +246,14 @@ class DatabaseHandler:
                         subtask is None
                         or subtask.task_id != task_id
                         or subtask.status == SubtaskStatus.DELETE
+                    ):
+                        return None
+
+                    if (
+                        status == "FAILED"
+                        and expected_status is not None
+                        and (task.json.get("status") or {}).get("status")
+                        in {"CANCELLING", "CANCELLED", "DELETE"}
                     ):
                         return None
 
@@ -335,10 +343,15 @@ class DatabaseHandler:
                     )
 
                 if expected_status is not None:
+                    statuses = (
+                        (expected_status,)
+                        if isinstance(expected_status, str)
+                        else expected_status
+                    )
                     changed = task_stores.subtask_store.update_fields_if_status(
                         db,
                         subtask=subtask,
-                        from_status=SubtaskStatus(expected_status),
+                        from_status=tuple(SubtaskStatus(value) for value in statuses),
                         **fields,
                     )
                     if not changed:

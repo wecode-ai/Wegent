@@ -26,8 +26,9 @@ from sqlalchemy.orm import Session
 
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskStatus
 from app.services.chat.storage.db import TerminalPersistenceError
+from app.services.device.identity import lock_online_device_for_binding
 from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
@@ -162,6 +163,11 @@ class ExecutionDispatcher:
                 wrapped=emitter,
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
+                expected_status=(
+                    (SubtaskStatus.PENDING.value, SubtaskStatus.RUNNING.value)
+                    if target.mode == CommunicationMode.WEBSOCKET
+                    else None
+                ),
             )
 
             logger.info(
@@ -169,9 +175,7 @@ class ExecutionDispatcher:
                 f"subtask_id={request.subtask_id}, mode={target.mode.value}"
             )
 
-            # Update subtask status to RUNNING before dispatching
-            # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-            if not already_running:
+            if not already_running and target.mode != CommunicationMode.WEBSOCKET:
                 await self._update_subtask_to_running(request.subtask_id)
 
             if target.mode == CommunicationMode.SSE:
@@ -253,7 +257,8 @@ class ExecutionDispatcher:
                         error=format_error_message(e),
                         error_code=error_code,
                     )
-                    setattr(e, _FRONTEND_ERROR_EMITTED_ATTR, True)
+                    if wrapped_emitter.failure_handled:
+                        setattr(e, _FRONTEND_ERROR_EMITTED_ATTR, True)
                 except Exception as emit_error:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to emit error: {emit_error}"
@@ -406,7 +411,9 @@ class ExecutionDispatcher:
         storage_key = workspace_archive.get("storageKey")
         return isinstance(storage_key, str) and bool(storage_key.strip())
 
-    async def _update_subtask_to_running(self, subtask_id: int) -> None:
+    async def _update_subtask_to_running(
+        self, subtask_id: int, *, expected_status: str | None = None
+    ) -> None:
         """Update subtask status to RUNNING in database.
 
         This is called before dispatching to any executor type to ensure
@@ -418,7 +425,9 @@ class ExecutionDispatcher:
         from app.services.chat.storage.db import db_handler
 
         try:
-            await db_handler.update_subtask_status(subtask_id, "RUNNING")
+            await db_handler.update_subtask_status(
+                subtask_id, "RUNNING", expected_status=expected_status
+            )
             logger.info(
                 f"[ExecutionDispatcher] Updated subtask {subtask_id} status to RUNNING"
             )
@@ -469,28 +478,42 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        db = SessionLocal()
-        try:
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-            if subtask:
-                subtask_store.update_executor_info(
+        if user_id is None:
+            raise ValueError("Device dispatch requires an authenticated user")
+
+        def bind() -> None:
+            with SessionLocal() as db:
+                if lock_online_device_for_binding(db, user_id, device_id) != device_id:
+                    raise RuntimeError("Selected device is offline")
+                subtask = subtask_store.get_basic_by_id_for_update(
+                    db, subtask_id=subtask_id, owner_user_id=user_id
+                )
+                if subtask is None or subtask.status not in {
+                    SubtaskStatus.PENDING,
+                    SubtaskStatus.RUNNING,
+                }:
+                    raise RuntimeError("Subtask is no longer dispatchable")
+                updated = subtask_store.update_fields_if_status(
                     db,
                     subtask=subtask,
+                    from_status=subtask.status,
                     executor_name=f"device-{device_id}",
-                    executor_namespace=f"user-{user_id}" if user_id else "",
+                    executor_namespace=f"user-{user_id}",
+                    executor_deleted_at=False,
+                    status=SubtaskStatus.RUNNING,
                 )
+                if not updated:
+                    raise RuntimeError("Subtask is no longer dispatchable")
                 db.commit()
                 logger.info(
                     f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
                     f"executor_name=device-{device_id}"
                 )
-        except Exception as e:
-            logger.error(
-                f"[ExecutionDispatcher] Failed to set executor on subtask {subtask_id}: {e}"
-            )
-            db.rollback()
-        finally:
-            db.close()
+
+        await asyncio.to_thread(bind)
+        await self._update_subtask_to_running(
+            subtask_id, expected_status=SubtaskStatus.RUNNING.value
+        )
 
     def supports_streaming(self, request: ExecutionRequest) -> bool:
         """Check if the request supports streaming.
@@ -634,6 +657,8 @@ class ExecutionDispatcher:
                 device_id = parts[2]
                 user_id = request.user.get("id") if request.user else None
                 await self._set_subtask_executor(request.subtask_id, device_id, user_id)
+                request.executor_name = f"device-{device_id}"
+                request.executor_namespace = f"user-{user_id}"
 
         # Send START event to frontend (creates AI message placeholder)
         await emitter.emit_start(

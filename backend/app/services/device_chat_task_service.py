@@ -35,13 +35,16 @@ from app.services.chat.task_device_resolution import (
     resolve_local_executor_device_id,
 )
 from app.services.chat.trigger import (
-    collect_completed_result,
-    persist_completed_result,
     should_trigger_ai_response,
     trigger_ai_response_unified,
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.device_service import device_service
+from app.services.execution.emitters import (
+    StatusUpdatingEmitter,
+    WebSocketResultEmitter,
+)
+from shared.utils.error_classifier import classify_error, format_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -350,33 +353,34 @@ async def _run_ai_response(
         )
         if getattr(exc, "_frontend_error_emitted", False):
             return
-        await _persist_failed_ai_trigger(
+        await _emit_failed_ai_trigger(
             task_id=task.id,
             assistant_subtask_id=assistant_subtask.id,
+            user_id=user.id,
             error=exc,
         )
 
 
-async def _persist_failed_ai_trigger(
+async def _emit_failed_ai_trigger(
     *,
     task_id: int,
     assistant_subtask_id: int,
+    user_id: int,
     error: Exception,
 ) -> None:
-    from shared.utils.error_classifier import classify_error, format_error_message
-
-    error_code = classify_error(error)
-    error_message = format_error_message(error)
-    final_result = await collect_completed_result(
-        assistant_subtask_id,
-        status="FAILED",
-        error_message=error_message,
-        error_code=error_code,
-    )
-    await persist_completed_result(
-        subtask_id=assistant_subtask_id,
+    emitter = StatusUpdatingEmitter(
+        wrapped=WebSocketResultEmitter(
+            task_id=task_id,
+            subtask_id=assistant_subtask_id,
+            user_id=user_id,
+        ),
         task_id=task_id,
-        status="FAILED",
-        result=final_result,
-        error=error_message,
+        subtask_id=assistant_subtask_id,
+        expected_status=("PENDING", "RUNNING"),
+    )
+    await emitter.emit_error(
+        task_id=task_id,
+        subtask_id=assistant_subtask_id,
+        error=format_error_message(error),
+        error_code=classify_error(error),
     )

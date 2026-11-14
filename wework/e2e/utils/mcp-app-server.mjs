@@ -1,5 +1,6 @@
 import readline from 'node:readline'
 import { createHash } from 'node:crypto'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 
 const uri = 'ui://counter/app.html'
 const manifest = [
@@ -7,6 +8,7 @@ const manifest = [
 ]
 const manifestDigest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex')
 let count = 0
+const countFile = process.argv[2]
 let heartbeats = 0
 let failedResource = false
 const tools = [
@@ -128,11 +130,32 @@ for await (const line of readline.createInterface({ input: process.stdin, crlfDe
         error = { code: -32602, message: 'Unknown tool' }
         break
       }
-      if (request.params.name === 'read_count') count++
+      if (countFile) {
+        try {
+          count = Number(await readFile(countFile, 'utf8'))
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+        }
+      }
+      if (request.params.name === 'read_count') {
+        count++
+        if (countFile) {
+          const nextCountFile = `${countFile}.${process.pid}.tmp`
+          await writeFile(nextCountFile, String(count))
+          await rename(nextCountFile, countFile)
+        }
+      }
       if (request.params.name === 'change_count') heartbeats++
       result = {
         content: [{ type: 'text', text: 'Counter ready' }],
-        structuredContent: { count: request.params.name === 'change_count' ? heartbeats : count },
+        structuredContent: {
+          count:
+            request.params.name === 'model_only'
+              ? 0
+              : request.params.name === 'change_count'
+                ? heartbeats
+                : count,
+        },
         _meta: {
           privateMarker: 'ui-only-marker',
           integrity: { manifest, sha256: manifestDigest },

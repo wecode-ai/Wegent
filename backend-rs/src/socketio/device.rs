@@ -506,29 +506,26 @@ pub async fn set_online(state: &AppState, user_id: i64, route_id: &str, data: &V
     }
 }
 
-/// `LocalDeviceProvider.update_status`: read the online document, replace
-/// `status` and `last_heartbeat`, then rewrite it with the online TTL. A
-/// missing document leaves Redis untouched and returns `false`.
+/// Refresh status only for the connection that owns the online document.
 pub async fn update_online_status(
     state: &AppState,
     user_id: i64,
     route_id: &str,
+    socket_id: &str,
     status: &str,
 ) -> bool {
-    let Some(redis) = state.redis.as_ref() else {
-        return false;
-    };
-    let Ok(Some(document)) =
-        crate::device_online_state::read_online_state_with(redis, user_id, route_id).await
-    else {
-        return false;
-    };
-    let Value::Object(mut data) = document else {
-        return false;
-    };
-    data.insert("status".into(), Value::String(status.into()));
-    data.insert("last_heartbeat".into(), Value::String(local_isoformat()));
-    set_online(state, user_id, route_id, &Value::Object(data)).await
+    crate::device_online_state::update_online_state(
+        state,
+        user_id,
+        route_id,
+        socket_id,
+        ONLINE_TTL_SECONDS,
+        |data| {
+            data.insert("status".into(), Value::String(status.into()));
+            data.insert("last_heartbeat".into(), Value::String(local_isoformat()));
+        },
+    )
+    .await
 }
 
 /// Reads the device online state (`cache_manager.get_or_raise`).
