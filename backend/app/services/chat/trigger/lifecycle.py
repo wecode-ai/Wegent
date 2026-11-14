@@ -609,7 +609,7 @@ async def persist_completed_result(
     error: Optional[str] = None,
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
-    expected_status: Optional[str] = None,
+    expected_status: str | tuple[str, ...] | None = None,
     expected_device: tuple[int, str] | None = None,
 ) -> bool:
     """Persist a terminal result and clean up streaming state.

@@ -611,6 +611,7 @@ async fn dispatch_device_turn(
     device_route: &str,
 ) -> Result<(), FastApiError> {
     set_subtask_executor(state, request, device_route).await?;
+    mark_subtask_running(state, request).await?;
     let Some(redis) = state.redis.as_ref() else {
         tracing::error!(task_id = request.task_id, "device dispatch has no Redis");
         return Err(FastApiError::internal());
@@ -667,6 +668,7 @@ async fn set_subtask_executor(
     request: &ExecutionRequest,
     runtime_device_id: &str,
 ) -> Result<(), FastApiError> {
+    let redis = state.redis.as_ref().ok_or_else(FastApiError::internal)?;
     let tables = state.task_store.table_templates();
     let mysql = state
         .mysql
@@ -678,16 +680,6 @@ async fn set_subtask_executor(
         "{} \n LIMIT 1",
         crate::task_store_statements::subtask_by_id_labeled_refresh_statement(tables.subtasks)
     );
-    let row: Option<brz_mysql::MysqlRow> = mysql
-        .fetch_optional(read, (request.subtask_id,))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, subtask_id = request.subtask_id, "executor subtask read failed");
-            FastApiError::internal()
-        })?;
-    if row.is_none() {
-        return Ok(());
-    }
     // `_set_subtask_executor`'s subtask session also loads the subtask's
     // contexts (`WHERE subtask_id IN (?) ORDER BY id ASC`) before the update.
     let contexts = format!(
@@ -696,22 +688,44 @@ async fn set_subtask_executor(
          ORDER BY subtask_contexts.id ASC",
         crate::task_store_listing::subtask_context_columns()
     );
-    let _rows: Vec<brz_mysql::MysqlRow> = mysql
-        .fetch_all(contexts, (request.subtask_id,))
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, subtask_id = request.subtask_id, "subtask contexts read failed");
-            FastApiError::internal()
-        })?;
     use brz_mysql::MysqlTransaction as _;
     let now = chrono::Local::now().naive_local();
     mysql
         .with_transaction(async |transaction| {
+            let registration = crate::device_records::lock_online_device_for_binding(
+                transaction,
+                redis,
+                request.user_id,
+                runtime_device_id,
+            )
+            .await?;
+            if !registration.is_some_and(|device| {
+                crate::device_identity::device_connection_route_id(&device) == runtime_device_id
+            }) {
+                return Ok(Err(FastApiError::detail(
+                    StatusCode::BAD_REQUEST,
+                    "Selected device is offline",
+                )));
+            }
+            // The turn has just been committed. Read it on the binding writer
+            // after taking the device owner lock that protects registration.
+            let row: Option<brz_mysql::MysqlRow> = transaction
+                .fetch_optional(read, (request.subtask_id,))
+                .await?;
+            if row.is_none() {
+                return Ok(Err(FastApiError::detail(
+                    StatusCode::NOT_FOUND,
+                    "Subtask not found",
+                )));
+            }
+            let _: Vec<brz_mysql::MysqlRow> = transaction
+                .fetch_all(contexts, (request.subtask_id,))
+                .await?;
             transaction
                 .execute(
                     format!(
                         "UPDATE {table} SET executor_namespace=?, executor_name=?, updated_at=? \
-                         WHERE {table}.id=?",
+                         WHERE {table}.id=? AND task_id=? AND status IN ('PENDING', 'RUNNING')",
                         table = tables.subtasks
                     ),
                     (
@@ -719,17 +733,17 @@ async fn set_subtask_executor(
                         format!("device-{runtime_device_id}"),
                         now,
                         request.subtask_id,
+                        request.task_id,
                     ),
                 )
                 .await?;
-            Ok(())
+            Ok(Ok(()))
         })
         .await
         .map_err(|error| {
             tracing::error!(%error, subtask_id = request.subtask_id, "executor update failed");
             FastApiError::internal()
-        })?;
-    Ok(())
+        })?
 }
 
 /// Submit the dispatch after the response stream subscribes to its callbacks.
@@ -935,7 +949,6 @@ pub(crate) async fn dispatch_chat_turn(
         return Ok(());
     }
     recover_before_dispatch(state, request, device_id).await?;
-    mark_subtask_running(state, request).await?;
     if target.mode == routing::CommunicationMode::Websocket {
         let Some(route) = resolved_device.as_deref() else {
             tracing::error!(task_id = request.task_id, "device dispatch has no route");
@@ -943,6 +956,7 @@ pub(crate) async fn dispatch_chat_turn(
         };
         return dispatch_device_turn(state, request, created_task, route).await;
     }
+    mark_subtask_running(state, request).await?;
     if target.mode == routing::CommunicationMode::Polling {
         return crate::background_jobs::video::create::dispatch(state, request)
             .await
