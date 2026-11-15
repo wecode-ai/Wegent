@@ -24,6 +24,6 @@ verify_cli() {
 
 verify_cli claude 2.1.310
 verify_cli kimi 0.35.0
-verify_cli opencode 1.18.16
+verify_cli opencode 1.19.5
 
 printf 'Local harness CLI versions verified\n'
