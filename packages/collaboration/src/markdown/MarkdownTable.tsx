@@ -5,7 +5,6 @@ import { Copy, CopyCheck, CircleAlert, Maximize2 } from "lucide-react";
 import { Button } from "./Button";
 import { Tooltip } from "../issue-detail/Tooltip";
 import { MarkdownTableDialog } from "./MarkdownTableDialog";
-import type { Element } from "hast";
 
 export function MarkdownTable({
   children,
@@ -13,7 +12,6 @@ export function MarkdownTable({
   sourceLineAnchors,
 }: {
   children?: ReactNode;
-  node?: Element;
   sourceLineAnchors?: boolean;
 } & ExtraProps) {
   const {

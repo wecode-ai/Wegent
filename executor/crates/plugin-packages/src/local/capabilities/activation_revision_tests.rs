@@ -984,3 +984,42 @@ mod membership_tests;
 
 #[path = "activation_revision_scope_tests.rs"]
 mod scope_tests;
+
+#[tokio::test]
+async fn local_reconciliation_digest_detects_damaged_published_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = store(temp.path());
+    let packages = python_packages(false);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store.clone(),
+        packages.clone(),
+        std::sync::Arc::new(crate::NoRunningSessions),
+    );
+    let payload = json!({"mode":"merge","scope":"plugins","plugin_sync":{"version":2,"generation":1,"complete":true},"plugins":[{"installed_plugin_id":8,"name":"demo","marketplace":"wegent","version":"1.0","enabled":true,"download_path":"/package","checksum":sha256_digest(&packages.package.plugin)}]});
+    handler.apply_sync(payload).await.unwrap();
+    let before = handler.local_plugin_digest().unwrap();
+    assert_eq!(handler.local_plugin_digest().unwrap(), before);
+    fs::write(codex_runtime(&store).join("payload.txt"), "damaged").unwrap();
+    assert_ne!(handler.local_plugin_digest().unwrap(), before);
+}
+
+#[test]
+fn local_reconciliation_revision_detects_manifest_only_writes_and_revoked_profiles() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = store(temp.path());
+    let handler = CapabilitySyncHandler::new(
+        "token",
+        store.clone(),
+        std::sync::Arc::new(crate::NoRunningSessions),
+    );
+    let digest = handler.local_plugin_digest().unwrap();
+    let revision = handler.local_plugin_revision().unwrap();
+    let mut manifest = store.manifest.load().unwrap();
+    manifest["revision"] = json!(manifest["revision"].as_i64().unwrap_or_default() + 1);
+    store.manifest.save(manifest).unwrap();
+    assert_eq!(handler.local_plugin_digest().unwrap(), digest);
+    assert_ne!(handler.local_plugin_revision().unwrap(), revision);
+    handler.invalidate_connection();
+    assert!(handler.local_plugin_revision().is_err());
+}

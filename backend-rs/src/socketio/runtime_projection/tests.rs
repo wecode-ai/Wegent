@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use brz_mysql::{FromMysqlRow, MysqlArgs, MysqlError, MysqlExecution};
 
 use super::*;
+use crate::loop_tasks::loop_repository::EXECUTION_COLUMNS;
 
 #[test]
 fn statements_bind_every_value_instead_of_inlining_literals() {
@@ -876,6 +877,26 @@ fn reconciled_message(metadata: Value) -> Message {
     let mut row = completed_message(metadata, "completed", "", "project-1", "issue-1");
     row.content = "Runtime reconciled".to_owned();
     row
+}
+
+#[test]
+fn streaming_chunks_preserve_execution_identity_without_a_prior_client_snapshot() {
+    let row = completed_message(
+        json!({"kind":"task_ai_response","execution_id":42,"runtime_turn_id":"reply-turn","run_status":"running","runtime_event_seq":9}),
+        "streaming",
+        "",
+        "project-1",
+        "issue-1",
+    );
+    let view = projected_delta_view(&row, "Live progress");
+    assert_eq!(view["content"], "Live progress");
+    assert_eq!(view["metadata"]["kind"], "task_ai_response");
+    assert_eq!(view["metadata"]["execution_id"], 42);
+    assert_eq!(view["metadata"]["runtime_turn_id"], "reply-turn");
+    assert_eq!(view["metadata"]["run_status"], "running");
+    assert_eq!(view["metadata"]["runtime_event_seq"], 9);
+    assert_eq!(view["metadata"]["contentMode"], "delta");
+    assert_eq!(projected_view(&row)["metadata"], row.metadata.0);
 }
 
 /// `reconciled_activity_for_runtime` returns the genuinely linked activity

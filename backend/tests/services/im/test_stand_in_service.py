@@ -151,6 +151,99 @@ async def test_concurrent_im_messages_get_separate_callback_destinations(setup):
     assert first != second
 
 
+async def test_failed_turn_only_deletes_its_own_callback(setup):
+    s = setup
+    await service.send_stand_in_message(s.db, s.user, s.session, s.context, s.port)
+    first = s.port._register_private_im_runtime_callback.await_args.kwargs[
+        "callback_key"
+    ]
+    s.port._private_im_runtime_client_user_message_id.return_value = (
+        "im:telegram:3:second"
+    )
+    s.rpc.side_effect = RuntimeRpcError("Device offline", code="device_offline")
+
+    assert (
+        await service.send_stand_in_message(s.db, s.user, s.session, s.context, s.port)
+        is False
+    )
+
+    failed = s.port._delete_private_im_runtime_callback.await_args.args[0]
+    assert failed != first
+    s.port._delete_private_im_runtime_callback.assert_awaited_once_with(failed)
+
+
+async def test_dingtalk_failure_cleans_only_failed_turn_with_real_handler(setup):
+    from app.services.channels.dingtalk.handler import DingTalkChannelHandler
+
+    s = setup
+    callback_service = SimpleNamespace(
+        delete_callback_info=AsyncMock(), _remove_emitter=AsyncMock()
+    )
+    port = DingTalkChannelHandler(channel_id=3)
+    port.get_callback_service = Mock(return_value=callback_service)
+    port._create_private_im_runtime_streaming_emitter = AsyncMock()
+    port._register_private_im_runtime_callback = AsyncMock()
+    port._emit_private_im_runtime_stream_error = AsyncMock()
+    s.rpc.side_effect = RuntimeRpcError("Device offline", code="device_offline")
+
+    assert (
+        await service.send_stand_in_message(s.db, s.user, s.session, s.context, port)
+        is False
+    )
+
+    callback_key = port._register_private_im_runtime_callback.await_args.kwargs[
+        "callback_key"
+    ]
+    callback_service.delete_callback_info.assert_awaited_once_with(callback_key)
+    callback_service._remove_emitter.assert_awaited_once_with(callback_key)
+    port._emit_private_im_runtime_stream_error.assert_awaited_once()
+
+
+async def test_telegram_failure_cleans_callback_with_real_handler(setup):
+    from app.services.channels.telegram.handler import TelegramChannelHandler
+
+    s = setup
+    callback_service = SimpleNamespace(
+        delete_callback_info=AsyncMock(), _remove_emitter=AsyncMock()
+    )
+    port = TelegramChannelHandler(channel_id=3)
+    port.get_callback_service = Mock(return_value=callback_service)
+    port._create_private_im_runtime_streaming_emitter = AsyncMock()
+    port._register_private_im_runtime_callback = AsyncMock()
+    port._emit_private_im_runtime_stream_error = AsyncMock()
+    s.rpc.side_effect = RuntimeRpcError("Device offline", code="device_offline")
+
+    assert (
+        await service.send_stand_in_message(s.db, s.user, s.session, s.context, port)
+        is False
+    )
+
+    callback_key = port._register_private_im_runtime_callback.await_args.kwargs[
+        "callback_key"
+    ]
+    callback_service.delete_callback_info.assert_awaited_once_with(callback_key)
+    callback_service._remove_emitter.assert_awaited_once_with(callback_key)
+    port._emit_private_im_runtime_stream_error.assert_awaited_once()
+
+
+async def test_card_error_failure_falls_back_to_text(setup):
+    s = setup
+    s.port._register_private_im_runtime_callback.side_effect = RuntimeError(
+        "callback persistence failed"
+    )
+    s.port._emit_private_im_runtime_stream_error.side_effect = RuntimeError(
+        "Redis unavailable"
+    )
+
+    assert (
+        await service.send_stand_in_message(s.db, s.user, s.session, s.context, s.port)
+        is False
+    )
+
+    assert "分身暂时无法接收消息" in s.port.send_text_reply.await_args.args[1]
+    s.rpc.assert_not_awaited()
+
+
 async def test_quoted_notification_is_context_without_changing_the_identity(setup):
     import json
 

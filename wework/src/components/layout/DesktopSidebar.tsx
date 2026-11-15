@@ -44,7 +44,7 @@ import type {
   PointerEventHandler,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { ActionMenu } from '@/components/common/ActionMenu'
+import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
 import { useMoveRuntimeTaskMenu } from './useMoveRuntimeTaskMenu'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
@@ -1233,6 +1233,14 @@ function getDeviceUnavailableActionTitle(
   )
 }
 
+function dshMenuItemIcon(name?: string): ActionMenuItem['icon'] {
+  if (!name) return undefined
+  const Icon = ({ className }: { className?: string }) => (
+    <DshIcon name={name} className={className} />
+  )
+  return Icon
+}
+
 function RuntimeTaskRow({
   workspace,
   devices,
@@ -1991,6 +1999,7 @@ function RuntimeTaskRow({
           moveTaskMenu,
           ...conversationMenuActions.map(action => ({
             label: action.title,
+            icon: dshMenuItemIcon(action.icon),
             testId: `runtime-local-task-menu-extension-${action.id}-${task.taskId}`,
             disabled: !workspace.available || !action.enabled,
             onSelect: async () => {

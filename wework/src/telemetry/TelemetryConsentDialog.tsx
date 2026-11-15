@@ -5,12 +5,10 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 
 interface TelemetryConsentDialogProps {
-  error: string | null
-  saving: boolean
   onChoose: (enabled: boolean) => void
 }
 
-export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryConsentDialogProps) {
+export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps) {
   const { t } = useTranslation('common')
   const acceptRef = useRef<HTMLButtonElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
@@ -64,16 +62,10 @@ export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryCon
           {t('workbench.telemetry_consent_privacy')}
         </p>
         <TelemetryCollectionNotice />
-        {error ? (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
             data-testid="telemetry-consent-decline"
-            disabled={saving}
             onClick={() => onChoose(false)}
             className="h-10 rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50"
           >
@@ -83,7 +75,6 @@ export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryCon
             type="button"
             ref={acceptRef}
             data-testid="telemetry-consent-accept"
-            disabled={saving}
             onClick={() => onChoose(true)}
             className="h-10 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
           >

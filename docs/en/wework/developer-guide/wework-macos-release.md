@@ -33,6 +33,22 @@ startup error path. The `startup-network-change` checkpoint interrupts one real
 script request through Chromium's protocol error API and verifies that the
 recovered workbench can continue opening a task.
 
+## macOS notarization
+
+The hook validates any existing stapled ticket first. Each archive is uploaded once;
+after receiving Apple's submission ID, `notarytool wait` observes that same job.
+A connection failure during observation must not upload the archive again. If a
+submission transport error contains an official submission URL or structured ID,
+observation continues with that ID. An unknown result without a valid ID remains
+a failure and is never interpreted as approval.
+
+Observations share the existing 30-minute wait budget and use only its remaining
+time after transport recovery. `WEWORK_NOTARY_UPLOAD_ATTEMPTS` continues to bound
+idempotent observation, staple and validate attempts (default 3, range 1–5), rather
+than repeated uploads. Only `Accepted` proceeds to stapling and final validation;
+rejection or budget exhaustion still fails the build. Logs record submission IDs,
+not authentication arguments.
+
 ## macOS app icons
 
 macOS bundles include both the existing `wework/resources/icons/icon.icns` and

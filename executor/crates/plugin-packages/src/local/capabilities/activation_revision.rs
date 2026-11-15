@@ -529,3 +529,26 @@ fn metadata(path: &Path) -> Result<Value, CapabilitySyncError> {
     }
     Ok(value)
 }
+
+/// A fresh content fingerprint for HTTP reconciliation, using the same runtime
+/// paths and file hashing as publication/reload verification.
+pub(super) fn local_plugin_digest(
+    store: &GlobalCapabilityStore,
+) -> Result<String, CapabilitySyncError> {
+    let manifest = store.manifest.load()?;
+    let mut paths = Paths::default();
+    for (key, entry) in object_map(manifest.get("plugins")).unwrap_or_default() {
+        if entry["managed"] == true {
+            paths.add_plugin(store, &PluginSyncSpec::from_manifest_entry(&key, &entry))?;
+        }
+    }
+    for marketplace in RECONCILABLE_PLUGIN_MARKETPLACES {
+        paths
+            .metadata
+            .extend(store.runtime_metadata_paths(marketplace));
+    }
+    let snapshot = Snapshot::capture(store, &paths, &mut FileDigests::default())?;
+    Ok(sha256_json_digest(
+        &json!({"plugins":snapshot.plugins,"metadata":snapshot.metadata}),
+    ))
+}

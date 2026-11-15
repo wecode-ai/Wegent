@@ -5,6 +5,12 @@ use serde_json::{Value, json};
 
 use crate::{http_compat::FastApiError, state::AppState};
 
+#[cfg(test)]
+#[path = "stand_in_issue_events_mention_tests.rs"]
+mod mention_tests;
+#[cfg(test)]
+pub(crate) use mention_tests::verify as verify_mentions;
+
 /// Commit a validated mention with its comment, after locking the owning Issue.
 /// The user and inbox locks match Python's Issue -> recipient -> inbox order.
 pub(crate) async fn enqueue_mention_on(
@@ -30,27 +36,20 @@ pub(crate) async fn enqueue_mention_on(
         .await?
         .ok_or(brz_mysql::MysqlError::RowNotFound)?;
     let inbox_id = format!("stand-in-inbox:{user}");
-    let sequence = match store::locked(tx, "stand_in_issue_inbox", &inbox_id).await? {
-        Some(inbox) => inbox.next_item_number,
-        None => {
-            store::insert(
-                tx,
-                "stand_in_issue_inbox",
-                json!({
-                    "id":inbox_id,"user_id":user,"next_item_number":1
-                }),
-            )
-            .await?;
-            1
-        }
-    };
-    if store::locked(tx, "stand_in_issue_event", &id)
+    // Insert before taking a current read to avoid locking an empty index gap
+    // shared by first-time recipients.
+    store::insert_once(
+        tx,
+        "stand_in_issue_inbox",
+        json!({"id":inbox_id,"user_id":user,"next_item_number":1}),
+    )
+    .await?;
+    let sequence = store::locked(tx, "stand_in_issue_inbox", &inbox_id)
         .await?
-        .is_some()
-    {
-        return Ok(());
-    }
-    store::insert(
+        .filter(|inbox| inbox.user_id == user)
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?
+        .next_item_number;
+    store::insert_once(
         tx,
         "stand_in_issue_event",
         json!({
@@ -58,6 +57,18 @@ pub(crate) async fn enqueue_mention_on(
         }),
     )
     .await?;
+    // The no-op upsert keeps the sequence of an existing event. Read the
+    // current row because MySQL can report a no-op update as an affected row.
+    let (event_sequence,): (i64,) = tx
+        .fetch_optional(
+            "SELECT CAST(sort_order AS SIGNED) FROM loop_items WHERE id=? AND parent_id=? AND resource_type='stand_in_issue_event' AND user_id=? FOR UPDATE",
+            (id.as_str(), inbox_id.as_str(), user),
+        )
+        .await?
+        .ok_or(brz_mysql::MysqlError::RowNotFound)?;
+    if event_sequence != sequence {
+        return Ok(());
+    }
     tx.execute(
         "UPDATE loop_items SET next_item_number=? WHERE id=? AND resource_type='stand_in_issue_inbox' AND user_id=?",
         (sequence + 1, inbox_id.as_str(), user),

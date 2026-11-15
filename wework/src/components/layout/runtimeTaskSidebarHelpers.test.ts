@@ -81,7 +81,7 @@ describe('runtimeTaskSidebarHelpers', () => {
         {
           taskId: 'ordinary-conversation',
           workspacePath: '/chats',
-          title: '我的分身',
+          title: '我的助理',
           runtime: 'codex',
         },
       ],

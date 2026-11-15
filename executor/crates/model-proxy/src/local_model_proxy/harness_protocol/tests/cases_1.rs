@@ -298,6 +298,60 @@ async fn chat_stream_adapter_emits_tool_use_messages_sse() {
     assert!(text.contains("event: message_stop"));
 }
 
+#[test]
+fn preserves_each_parallel_tool_completion_order() {
+    let ids = [
+        "call_00_wework_parallel",
+        "call_01_wework_parallel",
+        "call_02_wework_parallel",
+    ];
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let mut messages = vec![json!({"role":"user","content":"run parallel tools"})];
+        for id in ids {
+            messages.push(json!({"role":"assistant","content":[{
+                "type":"tool_use","id":id,"name":"Bash","input":{"command":"true"}
+            }]}));
+        }
+        for index in order {
+            messages.push(json!({"role":"user","content":[{
+                "type":"tool_result","tool_use_id":ids[index],"content":format!("done:{}", ids[index])
+            }]}));
+        }
+        let source =
+            serde_json::to_vec(&json!({"model":"claude-test","messages":messages})).unwrap();
+        let response: Value = serde_json::from_slice(
+            &adapt_messages_request(&source, "openai-responses", Some("gpt-test")).unwrap(),
+        )
+        .unwrap();
+        let outputs: Vec<_> = response["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .collect();
+        let actual: Vec<_> = outputs
+            .iter()
+            .map(|item| item["call_id"].as_str().unwrap())
+            .collect();
+        let expected = order.map(|index| ids[index]);
+        eprintln!("parallel tool completion raw={expected:?} forwarded={actual:?}");
+        assert_eq!(actual, expected);
+        for output in outputs {
+            assert_eq!(
+                output["output"],
+                format!("done:{}", output["call_id"].as_str().unwrap())
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn responses_stream_adapter_emits_messages_sse() {
     let source = stream::iter(vec![

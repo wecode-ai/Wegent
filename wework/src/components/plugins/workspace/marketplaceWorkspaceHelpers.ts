@@ -473,6 +473,19 @@ export function currentDeviceInstallation(
   plugin: InstalledPlugin,
   deviceId: string
 ): NonNullable<PluginMarketplaceItem['currentDeviceInstallation']> | null {
+  if (
+    plugin.status.localExecution?.state === 'installed' &&
+    plugin.status.localExecution.releaseId === (plugin.spec.releaseId ?? null)
+  ) {
+    return {
+      deviceId,
+      desiredReleaseId: plugin.spec.releaseId ?? 0,
+      actualReleaseId: plugin.spec.releaseId ?? null,
+      state: 'installed',
+      attemptCount: 0,
+      updatedAt: '',
+    }
+  }
   return plugin.status.devices?.find(device => device.deviceId === deviceId) ?? null
 }
 

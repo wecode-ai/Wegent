@@ -3,10 +3,8 @@ import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
-import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 import type { ExecutorClient } from '@/api/executorAccess'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import type {
   DeviceInfo,
   RuntimeSupervisorState,
@@ -548,11 +546,6 @@ export function useWorkbenchDataRefresh({
           type: 'runtime_work_load_failed',
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         })
-        if (preferCached && isElectronRuntime() && getDesktopWindowLabel() === 'main') {
-          void reportDesktopStartupFailure(result.reason, 'task_list_initialize').catch(error => {
-            console.error('[Wework] Failed to report task-list startup failure:', error)
-          })
-        }
         return
       }
       const runtimeWork = applyRuntimeTaskOverrides(result.value, true, supervisorRevision)

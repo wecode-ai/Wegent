@@ -147,6 +147,27 @@ export function interactionOriginalScheme(item: RuntimeInteraction): string {
     : weworkTaskScheme(item.task.address)
 }
 
+function scopedInteractionPayload(payload: RequestUserInputPayload, turnId?: string | null) {
+  return payload.interactionScope || !turnId || isAsyncRequestUserInputPayload(payload)
+    ? payload
+    : { ...payload, interactionScope: turnId }
+}
+
+/** Read only explicit settlement evidence; missing or partial history proves nothing. */
+export function settledRuntimeInteractionKeys(messages: WorkbenchMessage[]): Set<string> {
+  const keys = new Set<string>()
+  for (const message of resolveAsyncRequestUserInputAnswers(messages)) {
+    for (const block of message.blocks ?? []) {
+      if (!isRequestUserInputBlock(block) || !isSettledRequestUserInputBlock(block)) continue
+      const key = requestUserInputPayloadKey(
+        scopedInteractionPayload(block.renderPayload, message.turnId)
+      )
+      if (key) keys.add(key)
+    }
+  }
+  return keys
+}
+
 /** Read every history page: an async question may outlive several later turns. */
 export async function readRuntimeInteractions(
   task: RuntimeTaskReminderItem,
@@ -215,11 +236,7 @@ export async function readRuntimeInteractions(
   for (const message of messages) {
     for (const block of message.blocks ?? []) {
       if (!isRequestUserInputBlock(block)) continue
-      const original = block.renderPayload
-      const payload =
-        original.interactionScope || !message.turnId || isAsyncRequestUserInputPayload(original)
-          ? original
-          : { ...original, interactionScope: message.turnId }
+      const payload = scopedInteractionPayload(block.renderPayload, message.turnId)
       const answered = isSettledRequestUserInputBlock(block)
       if (!answered && !isPendingRequestUserInputBlock(block)) continue
       const key = requestUserInputPayloadKey(payload)

@@ -15,7 +15,7 @@ import {
   Rows3,
   WrapText,
 } from 'lucide-react'
-import { PatchDiff, Virtualizer } from '@pierre/diffs/react'
+import { Virtualizer } from '@pierre/diffs/react'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import type { CSSProperties, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -23,7 +23,6 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { useCodeTheme } from '@/features/appearance/useCodeTheme'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { GitPatchAction } from '@/api/environment'
 import { parseUnifiedDiff, type DiffFileSection } from './parseUnifiedDiff'
@@ -31,53 +30,17 @@ import { DiffCommentComposer, ReviewPatchActionButton } from './fileChangesRevie
 import {
   ensureTrailingNewline,
   fileNameFromPath,
-  getDiffSelection,
   getFirstChangedLine,
-  getHunkActionAnchor,
-  getHunkPatches,
-  getOpenSourceLine,
   getReviewActions,
   type DiffCommentSelection,
   type FileChangesReviewMode,
 } from './fileChangesReviewUtils'
+import { FileChangesPatchDiff } from './FileChangesPatchDiff'
 import { ReviewFileTree } from './FileChangesReviewTree'
 
 const COPY_FEEDBACK_DURATION_MS = 1500
 const REFRESH_FEEDBACK_DURATION_MS = 600
-const PIERRE_DIFF_CSS = `
-  :host {
-    --diffs-font-size: var(--text-code);
-    --diffs-line-height: var(--wework-review-code-line-height);
-    --diffs-light-bg: rgb(var(--color-bg-base));
-    --diffs-light: rgb(var(--color-text-primary));
-    --diffs-dark-bg: rgb(var(--color-bg-base));
-    --diffs-dark: rgb(var(--color-text-primary));
-    --diffs-fg-number-override: rgb(var(--color-text-muted));
-    --diffs-bg-context-override: rgb(var(--color-bg-base));
-    --diffs-bg-context-gutter-override: rgb(var(--color-bg-surface));
-    --diffs-bg-hover-override: rgb(var(--color-muted));
-    background: rgb(var(--color-bg-base)) !important;
-  }
-  :host, pre, code {
-    font-family: var(--font-code);
-    font-size: var(--text-code);
-    line-height: var(--diffs-line-height);
-  }
-  [data-diffs-file-header], [data-diffs-header] {
-    min-height: 36px;
-    border-bottom: 1px solid rgb(var(--color-border));
-    background: rgb(var(--color-bg-base));
-    font-family: var(--font-ui);
-    font-size: var(--text-sm);
-    font-weight: 500;
-  }
-  [data-diffs-line-addition], [data-diffs-line-added] {
-    background: rgb(var(--color-review-added, var(--color-diff-added)) / 0.12);
-  }
-  [data-diffs-line-deletion], [data-diffs-line-deleted] {
-    background: rgb(var(--color-review-removed, var(--color-diff-removed)) / 0.12);
-  }
-`
+
 interface FileChangesReviewPanelProps {
   loading: boolean
   diff: string
@@ -778,7 +741,6 @@ function FileDiffSection({
   onCommentSelectionChange: (selection: DiffCommentSelection | null) => void
   themeType: 'light' | 'dark'
 }) {
-  const codeTheme = useCodeTheme()
   const stats = useMemo(() => getDiffStats(section.lines), [section.lines])
   const patchChunks = useMemo(() => getPierrePatchChunks([section]), [section])
   const actionLabel = collapsed ? expandFileLabel : collapseFileLabel
@@ -850,93 +812,28 @@ function FileDiffSection({
           data-testid="file-changes-review-file-diff-body"
           data-theme={themeType}
         >
-          {patchChunks.map((patch, patchIndex) => {
-            const selectionKey = String(index) + ':' + patchIndex
-            const hunkActions = getHunkPatches(patch).flatMap((hunkPatch, hunkIndex) => {
-              const anchor = getHunkActionAnchor(hunkPatch)
-              return anchor
-                ? [
-                    {
-                      ...anchor,
-                      metadata: { patch: hunkPatch, key: selectionKey + ':' + hunkIndex },
-                    },
-                  ]
-                : []
-            })
-            return (
-              <PatchDiff<{ patch: string; key: string }>
-                key={selectionKey}
-                patch={patch}
-                lineAnnotations={fileActions.length > 0 ? hunkActions : []}
-                renderAnnotation={annotation => (
-                  <div className="relative h-0">
-                    <div
-                      data-testid="file-changes-review-hunk-actions"
-                      className="pointer-events-none absolute -top-8 right-0.5 z-20 flex items-center gap-1 rounded-full bg-surface/90 p-0.5 opacity-0 shadow-sm ring-1 ring-border/60 transition-opacity group-hover/file-diff:pointer-events-auto group-hover/file-diff:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
-                    >
-                      {fileActions.map(action => (
-                        <ReviewPatchActionButton
-                          key={action}
-                          action={action}
-                          scope="hunk"
-                          disabled={Boolean(pendingAction)}
-                          pending={
-                            pendingAction === 'hunk:' + annotation.metadata.key + ':' + action
-                          }
-                          onClick={() =>
-                            onApplyPatch(
-                              action,
-                              annotation.metadata.patch,
-                              'hunk:' + annotation.metadata.key + ':' + action
-                            )
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                selectedLines={
-                  commentSelection?.key === selectionKey ? commentSelection.range : null
-                }
-                options={{
-                  collapsed: hunksCollapsed,
-                  controlledSelection: true,
-                  diffStyle,
-                  disableFileHeader: true,
-                  enableLineSelection: canComment,
-                  lineHoverHighlight: 'both',
-                  onLineNumberClick: line => {
-                    const sourceLine = getOpenSourceLine(line)
-                    if (sourceLine !== null)
-                      onOpenSourceFile?.(section.path, sourceLine, sourceLine)
-                  },
-                  onLineSelectionEnd: range => {
-                    const selected = range ? getDiffSelection(patch, range) : null
-                    onCommentSelectionChange(
-                      range && selected
-                        ? { key: selectionKey, path: section.path, range, ...selected }
-                        : null
-                    )
-                  },
-                  overflow: wrapLines ? 'wrap' : 'scroll',
-                  stickyHeader: false,
-                  theme: codeTheme,
-                  themeType,
-                  tokenizeMaxLength: 250_000,
-                  tokenizeMaxLineLength: 2_000,
-                  unsafeCSS: PIERRE_DIFF_CSS,
-                }}
-                metrics={{
-                  diffHeaderHeight: 0,
-                  hunkLineCount: 120,
-                  lineHeight: codeLineHeight,
-                  paddingBottom: 0,
-                  paddingTop: 0,
-                  spacing: 0,
-                }}
-              />
-            )
-          })}
+          {patchChunks.map((patch, patchIndex) => (
+            <FileChangesPatchDiff
+              key={patchIndex}
+              patch={patch}
+              selectionKey={`${index}:${patchIndex}`}
+              path={section.path}
+              codeLineHeight={codeLineHeight}
+              wrapLines={wrapLines}
+              diffStyle={diffStyle}
+              hunksCollapsed={hunksCollapsed}
+              reviewMode={reviewMode}
+              pendingAction={pendingAction}
+              onApplyPatch={onApplyPatch}
+              onOpenSourceFile={onOpenSourceFile}
+              canComment={canComment}
+              selectedLines={
+                commentSelection?.key === `${index}:${patchIndex}` ? commentSelection.range : null
+              }
+              onCommentSelectionChange={onCommentSelectionChange}
+              themeType={themeType}
+            />
+          ))}
         </div>
       ) : null}
     </article>

@@ -467,6 +467,7 @@ async fn restore_active_activity(
         changed,
         detail: String::new(),
         messages,
+        settled_reply: None,
     }))
 }
 
@@ -875,6 +876,7 @@ async fn project_terminal(
         changed,
         detail: detail.to_owned(),
         messages,
+        settled_reply: None,
     })
 }
 

@@ -454,6 +454,13 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(completed.assignee_group_id).toBeNull()
       expect(completed.assignee_agent_id).toBe(collector.id)
 
+      // The status tool commits before the manager's final model response.
+      await expect
+        .poll(async () => (await getToolScenarioState(request, issueTitle)).nextStep, {
+          timeout: 60_000,
+          message: 'The final manager model step should finish before capturing its evidence',
+        })
+        .toBe(6)
       const managerBodies = await getScenarioModelBodies(request, issueTitle)
       const managerHeaders = await getScenarioRequestHeaders(request, issueTitle)
       const managerScenario = await getToolScenarioState(request, issueTitle)

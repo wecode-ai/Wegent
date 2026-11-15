@@ -268,6 +268,24 @@ stopped state. Native Goal continuations can outlive local request controls and 
 remain guidable through their native running turn. Waiting for the next turn
 is bounded and does not create another guidance state.
 
+Resume admission and shared-process protection use different busy conditions.
+`thread/resume` waits for local execution owners and native active turns, but an
+active Goal alone must not block admission: a Goal without a live turn may need
+the resume before it can continue. Active Goals still protect the shared process
+against background idle restarts and configuration mutations. Reloading MCP
+authority or runtime instructions during recovery still waits for the old
+subscription's `thread/closed`. Recovery preserves the original thread, Goal
+creation time and accumulated usage instead of clearing or recreating the Goal
+to unblock admission.
+
+Persist the native execution mode as `collaborationMode`. Conversation-control
+continuations also read the selected mode from `modelSelection.options`, so a
+legacy snapshot's `collaboration_model: single` cannot replace a selected default
+or plan mode. Both modes explicitly enable native V2 collaboration on resume,
+including threads previously persisted as disabled. Explicit single-agent
+executions still disable collaboration tools. Desktop requests no longer send
+the conflicting legacy single field alongside their native mode.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from

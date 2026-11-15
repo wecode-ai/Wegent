@@ -132,12 +132,18 @@ async def send_stand_in_message(
             if getattr(error, "code", None) == "attachment_failed"
             else f"分身暂时无法接收消息。{SETUP_GUIDANCE}"
         )
-        await port._emit_private_im_runtime_stream_error(
-            streaming_emitter=emitter,
-            task_id=callback_key,
-            message_context=context,
-            error=message,
-        )
+        try:
+            await port._emit_private_im_runtime_stream_error(
+                streaming_emitter=emitter,
+                task_id=callback_key,
+                message_context=context,
+                error=message,
+            )
+        except Exception:
+            logger.exception(
+                "IM stand-in card error delivery failed: user_id=%s", user.id
+            )
+            await port.send_text_reply(context, message)
         callback_service = port.get_callback_service()
         if callback_service:
             await callback_service._remove_emitter(callback_key)

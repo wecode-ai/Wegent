@@ -209,6 +209,12 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             payload
                 .get("modelOptions")
                 .or_else(|| payload.get("model_options"))
+                .or_else(|| {
+                    payload
+                        .get("modelSelection")
+                        .or_else(|| payload.get("model_selection"))
+                        .and_then(|selection| selection.get("options"))
+                })
                 .and_then(|options| {
                     options
                         .get("collaborationMode")
@@ -436,6 +442,25 @@ pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
                 id_field(address, "taskId").or_else(|| id_field(address, "task_id"))
             })
         })
+}
+
+pub(crate) fn replace_runtime_task_id(payload: &mut Value, task_id: &str) {
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    for key in ["taskId", "task_id"] {
+        if object.contains_key(key) {
+            object.insert(key.to_owned(), Value::String(task_id.to_owned()));
+        }
+    }
+    let Some(address) = object.get_mut("address").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for key in ["taskId", "task_id"] {
+        if address.contains_key(key) {
+            address.insert(key.to_owned(), Value::String(task_id.to_owned()));
+        }
+    }
 }
 
 pub(crate) fn workspace_path(payload: &Value) -> Option<String> {
@@ -1034,6 +1059,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn replaces_runtime_task_id_aliases_without_dropping_address_metadata() {
+        let mut payload = json!({
+            "task_id": "thread-1",
+            "address": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project"
+            }
+        });
+
+        replace_runtime_task_id(&mut payload, "local-1");
+
+        assert_eq!(payload["task_id"], "local-1");
+        assert_eq!(payload["address"]["taskId"], "local-1");
+        assert_eq!(payload["address"]["workspacePath"], "/tmp/project");
+    }
+
+    #[test]
     fn copies_cloud_project_id_from_runtime_payload() {
         let mut request = ExecutionRequest::default();
 
@@ -1119,6 +1161,19 @@ mod tests {
             request.extra.get("collaborationMode"),
             Some(&json!("single"))
         );
+    }
+
+    #[test]
+    fn explicit_backend_single_mode_precedes_saved_native_model_selection() {
+        let mut request = ExecutionRequest::default();
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "collaboration_model":"single",
+                "modelSelection":{"options":{"collaborationMode":"default"}}
+            }),
+        );
+        assert_eq!(request.extra["collaborationMode"], "single");
     }
 
     #[test]

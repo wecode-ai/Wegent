@@ -118,7 +118,7 @@ async fn authorized_credential_on<T: MysqlTransaction>(
     CredentialCipher::from_environment()?.decrypt(&spec["credential"], &context)
 }
 
-fn business_credential(spec: &Value, raw: String) -> Result<String, AuthFailure> {
+pub(super) fn business_credential(spec: &Value, raw: String) -> Result<String, AuthFailure> {
     if spec["credentialType"] != "oauth2" {
         return Ok(raw);
     }

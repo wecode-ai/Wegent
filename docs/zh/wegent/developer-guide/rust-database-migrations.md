@@ -17,6 +17,10 @@ Rust Backend 在启动后台消费者和 HTTP 服务前准备数据库，仅支�
 
 原始 Alembic 历史脚本及旧 Wiki SQL 集中保存在 `backend-rs/migrations/reference/`，用于 Python 独立运行和兼容性对照；Rust 不加载这些 Python 脚本。
 
+### 业务写入与生成列
+
+共享项目行写入器从 MySQL 表结构读取可写列，普通写入和幂等写入均排除 `GENERATION_EXPRESSION` 非空的生成列，让数据库计算其值。即使生成列允许 NULL，也不能显式写入 NULL，否则 MySQL 会返回 3105 错误，导致任务领取事务回滚。可空的 `public_id`、`project_key` 和 `storage_prefix` 仍保留 NULL，避免无标识记录之间发生唯一键冲突。此写入修复不修改数据库结构，不需要执行迁移。
+
 ## 开发命令
 
 从 `backend-rs` 目录运行，使用开发数据库配置文件：

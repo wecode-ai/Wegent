@@ -198,3 +198,11 @@ Once CPU profiling stops successfully, trace collection, parsing or report-write
 A successful explicit `detach` discards unfinished recording state for that target, allowing cancellation or recovery after an unexpected disconnect. Failed detaches retain state. The real Electron checkpoint also detaches during a recording, then starts another recording and generates its report.
 
 All desktop checkpoints use a `desktop-control` registry within their result directory for on-demand diagnosis of their isolated instance. Native macOS process snapshots read PID parent relationships first, then collect detailed metrics and command lines only for the Electron process tree, keeping unrelated process arguments out of the collection buffer.
+
+### Diff preview CPU and workbench memory regressions
+
+The diff preview uses Pierre virtualization. Keep line callbacks, render options, annotations and layout metrics stable; owner refreshes or replacement event handlers must not rebuild unchanged code DOM. Actual option, diff and annotation changes must still render. `FileChangesPatchDiff.test.tsx` checks node identity across repeated refreshes and cleanup on unmount with real Pierre instances.
+
+Define workbench memoized callbacks in independent Hook lexical scopes instead of the Provider's large render scope. Otherwise callbacks whose dependencies change at different rates can retain historical task, lifecycle and work-list snapshots through their shared closures. `workbenchCallbackLifetime.test.tsx` triggers real GC through Inspector, uses weak references to verify snapshot collection and guards against defining `useCallback` directly in the Provider again.
+
+Interpret CPU samples, HTML parsing duration and process memory separately. Heap object sizes do not equal Activity Monitor process memory; one heap snapshot establishes retaining paths, not a memory growth rate. Keep analysis files local and never commit user traces or heap snapshots.

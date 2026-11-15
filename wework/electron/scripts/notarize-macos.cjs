@@ -43,14 +43,11 @@ async function notarizeApp(appPath, environment = process.env) {
       () => run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', appPath, archivePath]),
       environment
     )
-    const result = await recordReleaseBuildStage(
+    await recordReleaseBuildStage(
       'notary-submit',
       () => submitArchive(archivePath, environment),
       environment
     )
-    if (result.status !== 'Accepted') {
-      throw new Error(`Apple notarization failed with status: ${result.status || 'unknown'}`)
-    }
     await recordReleaseBuildStage(
       'staple-ticket',
       () => runNotaryCommand(['stapler', 'staple', appPath], environment),
@@ -66,24 +63,83 @@ async function notarizeApp(appPath, environment = process.env) {
   }
 }
 
-async function submitArchive(archivePath, environment) {
+async function submitArchive(archivePath, environment, options = {}) {
+  const { execute = run, wait = delay } = options
   const args = [
     'notarytool',
     'submit',
     archivePath,
     ...authorizationArgs(environment),
     ...s3AccelerationArgs(environment.WEWORK_NOTARYTOOL_S3_ACCELERATION),
-    '--wait',
-    '--timeout',
-    '30m',
     '--output-format',
     'json',
   ]
-  return JSON.parse(await runNotaryCommand(args, environment))
+  let id
+  try {
+    id = submissionId(JSON.parse(await runNotaryCommand(args, environment, execute, wait)).id)
+    if (!id) throw new Error('Apple notarization returned no valid submission ID')
+  } catch (error) {
+    id = knownSubmissionId(error)
+    if (!id || !isTransientNotaryFailure(error)) throw error
+  }
+  console.info('Apple notarization submission:', id)
+  return waitForSubmission(id, environment, options)
+}
+
+function submissionId(value) {
+  return typeof value === 'string' && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(value)
+    ? value.toLowerCase()
+    : undefined
+}
+
+function knownSubmissionId(error) {
+  return (
+    submissionId(error?.notarySubmissionId) ||
+    submissionId(
+      String(error?.message || '').match(
+        /https:\/\/appstoreconnect\.apple\.com\/notary\/v2\/submissions\/([a-f\d-]{36})(?:\?|\b)/i
+      )?.[1]
+    )
+  )
+}
+
+async function waitForSubmission(
+  id,
+  environment,
+  { execute = run, wait = delay, now = Date.now } = {}
+) {
+  const deadline = now() + 30 * 60 * 1000
+  const exhausted = () => new Error(`Apple notarization observation budget exhausted: ${id}`)
+  const observe = (command, args) => {
+    const seconds = Math.floor((deadline - now()) / 1000)
+    if (seconds < 1) throw exhausted()
+    return execute(command, [...args, '--timeout', `${seconds}s`])
+  }
+  const pause = milliseconds => {
+    if (now() + milliseconds >= deadline) throw exhausted()
+    return wait(milliseconds)
+  }
+  const result = JSON.parse(
+    await runNotaryCommand(
+      ['notarytool', 'wait', id, ...authorizationArgs(environment), '--output-format', 'json'],
+      environment,
+      observe,
+      pause
+    )
+  )
+  if (result.status !== 'Accepted') {
+    throw Object.assign(
+      new Error(`Apple notarization failed with status: ${result.status || 'unknown'}`),
+      { notaryStatus: notaryStatus(result.status) }
+    )
+  }
+  return result
 }
 
 async function runNotaryCommand(args, environment, execute = run, wait = delay) {
-  const attempts = retryAttempts(environment.WEWORK_NOTARY_UPLOAD_ATTEMPTS)
+  const limit = retryAttempts(environment.WEWORK_NOTARY_UPLOAD_ATTEMPTS)
+  // A transport error can follow a successful upload; never create another job.
+  const attempts = args[0] === 'notarytool' && args[1] === 'submit' ? 1 : limit
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       return await execute('xcrun', args)
@@ -193,7 +249,9 @@ function run(command, args) {
           { exitCode: code, signal }
         )
         try {
-          error.notaryStatus = notaryStatus(JSON.parse(stdout).status)
+          const result = JSON.parse(stdout)
+          error.notaryStatus = notaryStatus(result.status)
+          error.notarySubmissionId = submissionId(result.id)
         } catch {
           // Non-JSON command output has no structured notarization status.
         }
@@ -224,3 +282,4 @@ module.exports.retryAttempts = retryAttempts
 module.exports.s3AccelerationArgs = s3AccelerationArgs
 module.exports.runNotaryCommand = runNotaryCommand
 module.exports.hasStapledTicket = hasStapledTicket
+module.exports.submitArchive = submitArchive

@@ -18,12 +18,14 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
 
 export function createDesktopScenario(options) {
   const existing = createOverloadRecovery(options)
+  const admission = createGoalAdmissionRecovery(options)
   let active = false
   let requests = 0
   let releaseRecovered
@@ -42,6 +44,7 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     async handleHttp(request, response, url) {
+      if (admission.active) return admission.handleHttp(request, response, url)
       if (!active) return existing.handleHttp(request, response, url)
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
@@ -199,6 +202,7 @@ export function createDesktopScenario(options) {
         if (address) await rpc('runtime.tasks.goal.clear', { address })
         active = false
       }
+      await admission.verify(control)
     },
     diagnostics() {
       return { ...existing.diagnostics(), goalRequests: requests, goalActive: active }

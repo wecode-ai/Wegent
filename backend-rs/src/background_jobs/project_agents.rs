@@ -68,6 +68,10 @@ pub(crate) async fn readiness(
     team: &resolution::KindRow,
     execution_user: i64,
 ) -> Result<()> {
+    let resolvers = state.entity_resolvers.for_execution();
+    let directory = state
+        .entity_resolvers
+        .execution_directory(state.erp.as_ref());
     let members = team.json.0["spec"]["members"]
         .as_array()
         .context("Team has no members")?;
@@ -77,8 +81,8 @@ pub(crate) async fn readiness(
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
+        erp: Some(directory),
+        resolvers: Some(&resolvers),
     };
     // `_validate_team_member` reads the Bot and its single Ghost reference
     // through `kindReader.get_by_name_and_namespace` (cached version/value
@@ -122,7 +126,7 @@ pub(crate) async fn readiness(
             })?;
         shell::resolve_shell(
             &state.mysql,
-            &state.entity_resolvers,
+            &resolvers,
             state.redis.as_ref(),
             team.user_id,
             spec["shellRef"]["name"].as_str().unwrap_or(""),
@@ -134,7 +138,7 @@ pub(crate) async fn readiness(
             let name = resolution::resolve_model_name(spec, false, None).unwrap_or_default();
             let model = resolution::resolve_model_for_bot(
                 &state.mysql,
-                &state.entity_resolvers,
+                &resolvers,
                 state.redis.as_ref(),
                 execution_user,
                 &name,
@@ -149,6 +153,10 @@ pub(crate) async fn readiness(
 }
 
 pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64) -> Result<Value> {
+    let resolvers = state.entity_resolvers.for_execution();
+    let directory = state
+        .entity_resolvers
+        .execution_directory(state.erp.as_ref());
     let mut config = config_metadata(&agent.metadata.0);
     let runtime = config["runtime"].as_str().unwrap_or("").to_owned();
     if !matches!(runtime.as_str(), "codex" | "claude_code" | "wegent") {
@@ -190,8 +198,8 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let cache = crate::task_skills::kinds::KindCacheStore {
         mysql: &state.mysql,
         redis: state.redis.as_ref(),
-        erp: Some(state.erp.as_ref()),
-        resolvers: Some(&state.entity_resolvers),
+        erp: Some(directory),
+        resolvers: Some(&resolvers),
     };
     if team.json.0["spec"]["collaborationModel"] != "solo" || members.len() != 1 {
         return Ok(config);
@@ -209,7 +217,7 @@ pub(crate) async fn compile(state: &AppState, agent: &Node, execution_user: i64)
     let spec = &bot.json.0["spec"];
     let shell = shell::resolve_shell(
         &state.mysql,
-        &state.entity_resolvers,
+        &resolvers,
         state.redis.as_ref(),
         team.user_id,
         spec["shellRef"]["name"].as_str().unwrap_or(""),

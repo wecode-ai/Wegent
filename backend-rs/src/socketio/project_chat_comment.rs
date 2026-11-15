@@ -335,7 +335,7 @@ pub(super) async fn settle_human_reply(
     mut issue: store::Node,
     request_id: &str,
     message_id: &str,
-) -> Result<(), MysqlError> {
+) -> Result<bool, MysqlError> {
     let Some(target) = issue.metadata.0["human_requests"]
         .as_array_mut()
         .and_then(|requests| {
@@ -347,7 +347,7 @@ pub(super) async fn settle_human_reply(
             request["status"] == "answering" && request["answer_message_id"] == message_id
         })
     else {
-        return Ok(());
+        return Ok(false);
     };
     let now = chrono::Utc::now().to_rfc3339();
     target
@@ -369,7 +369,7 @@ pub(super) async fn settle_human_reply(
     tx.execute("UPDATE wework_notifications SET is_read=true, read_status_changed_at=UTC_TIMESTAMP(6)
         WHERE user_id IN (?,?) AND is_read=false AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.humanRequestId'))=?",
         (recipient, responsible, request_id)).await?;
-    Ok(())
+    Ok(true)
 }
 
 fn claim_human_reply(

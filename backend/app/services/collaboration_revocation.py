@@ -17,6 +17,7 @@ from app.services.collaboration_permissions import (
     PermissionDecision,
     collaboration_permission_service,
 )
+from app.services.execution_permission_scope import execution_resource_scope
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ def _device_authorized(db: Session, execution: LoopItemExecution) -> bool:
 
 
 @trace_sync("collaboration.execution_permission", "backend.collaboration")
+@execution_resource_scope()
 def execution_permission(
     db: Session, execution: LoopItemExecution
 ) -> PermissionDecision:

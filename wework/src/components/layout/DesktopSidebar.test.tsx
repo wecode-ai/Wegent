@@ -2440,6 +2440,80 @@ describe('DesktopSidebar', () => {
     }
   })
 
+  test('renders the icon declared by a conversation menu extension', async () => {
+    const user = userEvent.setup()
+    window.__WEWORK_DSH_EXTENSIONS__ = {
+      getRevision: () => 0,
+      subscribe: () => () => {},
+      context: { matches: () => true },
+      commands: {
+        get: (id: string) =>
+          id === 'conversation-export.open'
+            ? {
+                id,
+                title: '导出会话',
+                icon: 'download',
+              }
+            : null,
+      },
+      menus: {
+        list: (location: string) =>
+          location === 'conversation.context'
+            ? [
+                {
+                  id: 'conversation-export.conversation.context',
+                  command: 'conversation-export.open',
+                  title: '导出会话',
+                  icon: 'download',
+                  enabled: true,
+                },
+              ]
+            : [],
+      },
+    } as unknown as NonNullable<Window['__WEWORK_DSH_EXTENSIONS__']>
+    onTestFinished(() => {
+      delete window.__WEWORK_DSH_EXTENSIONS__
+    })
+
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'codex-1',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Fix reconnect',
+                    runtime: 'codex',
+                    updatedAt: '2026-06-20T02:00:00Z',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await user.click(screen.getByTestId('runtime-local-task-menu-codex-1'))
+    const exportItem = screen.getByTestId(
+      'runtime-local-task-menu-extension-conversation-export.conversation.context-codex-1'
+    )
+    await waitFor(() => expect(exportItem.querySelector('svg.lucide-download')).toBeInTheDocument())
+  })
+
   test('preserves pending archive undo when a runtime task gains its thread id', async () => {
     const user = userEvent.setup()
     const onArchiveRuntimeTask = vi.fn().mockResolvedValue(undefined)

@@ -26,6 +26,10 @@ import {
   handleArchiveInteractionModel,
   verifyInteractionArchiving,
 } from '../modules/human-interaction-dismiss.mjs'
+import {
+  handleDismissAllModel,
+  verifyDismissAll,
+} from '../modules/human-interaction-dismiss-all.mjs'
 import { verifyPendingInteractionsTab } from '../modules/pending-interactions-tab.mjs'
 import { writeIssueInteractionIdentities } from '../modules/human-interaction-identity-diagnostics.mjs'
 import { verifyInteractionTime } from '../modules/human-interaction-time.mjs'
@@ -119,6 +123,7 @@ export function createDesktopScenario({
       response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
       if (handleArchivedTaskInteractionModel(body, response)) return true
       if (persistentNotice.handleModel(body, response)) return true
+      if (handleDismissAllModel(body, response)) return true
       if (handleArchiveInteractionModel(body, response)) return true
       if (JSON.stringify(body.input).includes(FOLLOWUP)) {
         response.end(
@@ -961,6 +966,7 @@ export function createDesktopScenario({
       } else await captureScreenshot(control, '09-original-task-resumes.png')
       if (checkpoint === 'human-interactions') {
         await verifyInteractionArchiving(control, modelResponseTimeoutMs, originalTaskId)
+        await verifyDismissAll(control, modelResponseTimeoutMs, originalTaskId)
         await control.command('click', `${page} [data-testid="interaction-open-original"]`)
         await persistentNotice.verify(control, modelResponseTimeoutMs)
         await verifyArchivedTaskInteractionCleanup(control, modelResponseTimeoutMs)

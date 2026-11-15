@@ -43,7 +43,7 @@ describe('stand-in message notification source', () => {
       workspace: { deviceId: 'device', available: true, workspacePath: '', tasks: [] },
       task: {
         taskId: address.taskId,
-        title: '我的分身',
+        title: '我的助理',
         runtime: 'codex',
         workspacePath: '',
         runtimeHandle: { origin: { type: 'stand_in_identity' } },
@@ -88,7 +88,7 @@ describe('stand-in message notification source', () => {
           workspace: { deviceId: 'device', available: true, workspacePath: '', tasks: [] },
           task: {
             taskId: address.taskId,
-            title: '我的分身',
+            title: '我的助理',
             runtime: 'codex',
             workspacePath: '',
             runtimeHandle: { origin: { type: 'stand_in_identity' } },

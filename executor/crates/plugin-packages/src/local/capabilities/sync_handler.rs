@@ -49,6 +49,23 @@ where
         }
     }
 
+    /// Fence publications from work owned by a disconnected account profile.
+    pub fn invalidate_connection(&self) {
+        self.plugin_sync_binding.invalidate();
+    }
+
+    pub fn local_plugin_digest(&self) -> Result<String, CapabilitySyncError> {
+        self.plugin_sync_binding.check()?;
+        activation_revision::local_plugin_digest(&self.store)
+    }
+
+    /// Fence scans against publication, including writes by another process.
+    pub fn local_plugin_revision(&self) -> Result<String, CapabilitySyncError> {
+        self.plugin_sync_binding.check()?;
+        let _publication = self.store.lock_shared_manifest()?;
+        Ok(sha256_json_digest(&self.store.manifest.load()?))
+    }
+
     pub fn auth_token(&self) -> &str {
         &self.auth_token
     }

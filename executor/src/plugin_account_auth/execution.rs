@@ -5,7 +5,6 @@ use super::{
     migration::interpreter_for, resolve_managed_package, AuthError, Credential, NativeAdapter,
     NativeAuthGateway, OAuthOperation, PreparedPackage,
 };
-use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use std::{
     future::Future,
@@ -23,7 +22,7 @@ pub struct ExecutionRequest {
     pub working_directory: Option<PathBuf>,
 }
 
-pub async fn execute<T: LocalBackendTransport>(
+pub async fn execute<T: super::PluginAuthTransport>(
     transport: T,
     executor_home: &Path,
     request: ExecutionRequest,
@@ -52,7 +51,7 @@ async fn after_runtime_preparation<T>(
         .map_err(|_| AuthError("plugin_auth_execution_timeout"))?
 }
 
-async fn execute_inner<T: LocalBackendTransport>(
+async fn execute_inner<T: super::PluginAuthTransport>(
     transport: T,
     executor_home: &Path,
     request: ExecutionRequest,
@@ -104,7 +103,7 @@ fn validate_request(request: &ExecutionRequest) -> Result<(), AuthError> {
     Ok(())
 }
 
-async fn execution_credential<T: LocalBackendTransport>(
+async fn execution_credential<T: super::PluginAuthTransport>(
     gateway: &NativeAuthGateway<T>,
     home: &Path,
     request: &ExecutionRequest,

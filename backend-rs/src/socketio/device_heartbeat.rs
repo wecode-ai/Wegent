@@ -92,9 +92,11 @@ impl HeartbeatPayload {
             Some(Value::Array(items)) => items
                 .iter()
                 .map(|item| {
-                    item.as_i64().ok_or_else(|| {
-                        "Invalid payload: running_task_ids must be integers".to_string()
-                    })
+                    item.as_i64()
+                        .or_else(|| item.as_str()?.trim().parse().ok())
+                        .ok_or_else(|| {
+                            "Invalid payload: running_task_ids must be integers".to_string()
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             Some(_) => return Err("Invalid payload: running_task_ids must be a list".to_string()),
@@ -528,6 +530,41 @@ fn slot_values(online: Option<&Value>) -> (i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heartbeat_accepts_integer_and_string_running_task_ids() {
+        let payload = HeartbeatPayload::parse(&json!({
+            "device_id": "d-1",
+            "running_task_ids": ["123456789012345", 123456789012346_i64]
+        }))
+        .unwrap();
+        assert_eq!(
+            payload.running_task_ids,
+            vec![123456789012345, 123456789012346]
+        );
+
+        let idle = HeartbeatPayload::parse(&json!({
+            "device_id": "d-1",
+            "running_task_ids": []
+        }))
+        .unwrap();
+        assert!(idle.running_task_ids.is_empty());
+    }
+
+    #[test]
+    fn heartbeat_rejects_invalid_and_out_of_range_running_task_ids() {
+        for invalid_id in [json!("not-a-task-id"), json!("9223372036854775808")] {
+            let error = HeartbeatPayload::parse(&json!({
+                "device_id": "d-1",
+                "running_task_ids": [invalid_id]
+            }))
+            .err();
+            assert_eq!(
+                error.as_deref(),
+                Some("Invalid payload: running_task_ids must be integers")
+            );
+        }
+    }
 
     #[test]
     fn heartbeat_payload_tracks_explicit_null_transfer_port() {

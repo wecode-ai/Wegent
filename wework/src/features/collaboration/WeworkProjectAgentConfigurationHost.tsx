@@ -4,6 +4,7 @@ import {
   runnerModelKey,
   runnerSupportsModel,
   type ProjectAgentConfigurationHost,
+  type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 
 import type { createAgentResourceApi } from '@/api/agentResources'
@@ -12,6 +13,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectChatAgentEditor } from '@/features/todo/ProjectChatAgentEditor'
 import { WeworkAgentPickerDialog } from './WeworkAgentPickerDialog'
 import { WeworkAgentResourceForm } from './WeworkAgentResourceForm'
+import { createProjectAgentEditorApi } from './projectAgentEditorApi'
 
 export const weworkProjectAgentConfigurationHost: ProjectAgentConfigurationHost = {
   renderDialog: props => <WeworkAgentPickerDialog {...props} />,
@@ -26,8 +28,23 @@ export function createWeworkProjectAgentConfigurationHost(
   localAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>,
   localModelApi?: WorkbenchServices['modelApi'],
   pluginApi?: WorkbenchServices['pluginApi'],
-  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>
+  deviceApi?: Pick<WorkbenchServices['deviceApi'], 'listDevices' | 'listSkills'>,
+  projectDefinition?: {
+    agents: SharedWorkspaceApi['agents']
+    modelApi: WorkbenchServices['modelApi']
+    name: string
+  }
 ): ProjectAgentConfigurationHost {
+  const editor =
+    projectDefinition && agentResourceApi
+      ? {
+          api: createProjectAgentEditorApi(projectDefinition.agents, agentResourceApi),
+          modelApi: projectDefinition.modelApi,
+          ownerLabel: projectDefinition.name,
+        }
+      : localAgentApi && localModelApi
+        ? { api: localAgentApi, modelApi: localModelApi, ownerLabel: undefined }
+        : undefined
   return {
     ...weworkProjectAgentConfigurationHost,
     ...(localAgentApi
@@ -188,14 +205,19 @@ export function createWeworkProjectAgentConfigurationHost(
               />
             )
           },
-          renderLocalAgentEditor({ projectId, resourceId, onClose, onSaved }) {
+        }
+      : {}),
+    ...(editor
+      ? {
+          renderProjectAgentEditor({ projectId, resourceId, onClose, onSaved }) {
             return (
               <ProjectChatAgentEditor
-                api={localAgentApi}
+                api={editor.api}
                 deviceApi={deviceApi}
                 editingAgentId={resourceId}
                 key={resourceId}
-                modelApi={localModelApi}
+                modelApi={editor.modelApi}
+                ownerLabel={editor.ownerLabel}
                 pluginApi={pluginApi}
                 projectId={projectId}
                 skillApi={agentResourceApi}

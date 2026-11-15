@@ -44,6 +44,7 @@ pub(crate) struct TerminalSession {
     user_id: i64,
     token_exp: Option<i64>,
     state: Mutex<TerminalState>,
+    attachment: tokio::sync::Mutex<()>,
 }
 
 /// The mutable half of one browser terminal connection.
@@ -62,6 +63,7 @@ impl TerminalSession {
             user_id: identity.user_id,
             token_exp: token.and_then(super::auth::token_expiry),
             state: Mutex::new(TerminalState::default()),
+            attachment: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -91,6 +93,7 @@ pub(crate) async fn attach(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
+    let _attachment = session.attachment.lock().await;
     if session.token_expired(chrono::Utc::now().timestamp()) {
         return Ok(Reply::payload(
             token_expired(state, runtime, socket_id).await,
@@ -150,6 +153,16 @@ pub(crate) async fn attach(
             json!({"error": "Terminal executor is offline"}),
         ));
     }
+    let Some(room) = runtime.emitters().bind_terminal_room(
+        socket_id,
+        &session_id,
+        previous_session_id.as_deref(),
+    ) else {
+        return Err(ClientError::new(
+            "SESSION_CLOSED",
+            "Terminal connection is closed",
+        ));
+    };
     let attach_payload = request.payload(&record.session_id, offered, socket_id);
     let attach_result = call_terminal_executor(
         state,
@@ -194,6 +207,7 @@ pub(crate) async fn attach(
         current.authorization = Some(record.clone());
     }
     tracing::info!(user_id, session_id, "terminal attached");
+    room.commit();
     Ok(Reply::payload(json!({
         "success": true,
         "protocol_version": selected,
@@ -201,8 +215,7 @@ pub(crate) async fn attach(
         "device_id": record.device_id,
         "project_id": record.project_id,
         "path": record.path,
-    }))
-    .join(format!("terminal:{session_id}")))
+    })))
 }
 
 /// `on_terminal_ack`.

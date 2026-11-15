@@ -9,6 +9,28 @@ use super::*;
 use crate::agents::codex::{spawn_codex_app_server, CodexLaunchConfig, CodexTurnProcess};
 use crate::agents::codex::{CodexAuthMode, EnvRestore};
 
+#[test]
+fn unknown_subscription_preference_preserves_credentials_and_refuses_access() {
+    let _lock = crate::test_env::lock();
+    let _preference = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("auth.json"), "synthetic-managed-account").unwrap();
+    fs::write(root.path().join(MANAGED_AUTH_MARKER), []).unwrap();
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "unavailable");
+    assert!(!codex_subscription_enabled());
+    assert!(sync_user_codex_auth(root.path(), false).is_err());
+    assert!(acquire_shared_auth(root.path(), Some(CodexAuthMode::WeworkRouter)).is_err());
+    assert!(acquire_shared_auth(root.path(), None).is_err());
+    assert_eq!(
+        fs::read_to_string(root.path().join("auth.json")).unwrap(),
+        "synthetic-managed-account"
+    );
+    assert!(root.path().join(MANAGED_AUTH_MARKER).is_file());
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "false");
+    sync_user_codex_auth(root.path(), false).unwrap();
+    assert!(!root.path().join("auth.json").exists());
+}
+
 #[tokio::test]
 #[cfg(unix)]
 #[allow(clippy::await_holding_lock)] // The fixture changes process-wide Home variables.

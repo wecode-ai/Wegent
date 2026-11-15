@@ -399,6 +399,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn read_codex_rate_limits(&self) -> Result<Value, AppIpcError> {
+        // Host tray polling can precede renderer configuration. It must not
+        // start cloud work in an environment that has not received its proxy.
+        if self.startup_recovery_deferred.load(Ordering::Acquire) {
+            return Err(AppIpcError::new(
+                "codex_runtime_not_ready",
+                "Codex runtime configuration is not ready for account usage",
+            ));
+        }
         self.codex_app_server
             .request("account/rateLimits/read", Value::Null)
             .await

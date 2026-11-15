@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import insert, select
@@ -12,6 +13,13 @@ from app.services.loop_item_executions.service import loop_item_execution_servic
 from app.services.project_chat.human_requests import settle_reply
 from tests.services.test_issue_human_requests import claim, handoff
 from tests.services.test_loop_item_executions import _make_bot, _make_execution
+
+
+@pytest.fixture(autouse=True)
+def isolated_notification_delivery(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.wework_notifications.deliver_notification", AsyncMock()
+    )
 
 
 def test_settlement_acknowledges_only_recipient_and_responsible_inboxes(

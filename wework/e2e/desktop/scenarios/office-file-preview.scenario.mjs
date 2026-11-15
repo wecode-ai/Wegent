@@ -88,9 +88,16 @@ async function verifyPresentation(control, captureScreenshot, timeoutMs) {
     'PageDown must scroll the presentation',
     timeoutMs
   )
+  // Windowed slides outside the preparation range deliberately unmount. Visit
+  // every page to verify its actual content instead of requiring all DOM at once.
+  for (let page = 1; page <= 8; page += 1) {
+    const slot = `.pptx-render-surface .flyfish-pptx-slide-slot[data-slide-number="${page}"]`
+    await control.command('scrollIntoViewAsUser', slot)
+    await control.command('waitFor', `${slot} .slide`, { text: `PPT PAGE ${page} OF 8` })
+  }
   await control.command('scrollToBottomAsUser', VIEWER)
   await control.command('waitFor', '.pptx-render-surface', { text: 'PPT PAGE 8 OF 8' })
-  assert.equal((await metrics(control, '.pptx-render-surface .slide')).length, 8)
+  assert.equal((await metrics(control, '.pptx-render-surface .flyfish-pptx-slide-slot')).length, 8)
   await assertLastContentVisible(control, VIEWER, '.pptx-render-surface .slide', timeoutMs)
   await captureScreenshot(control, 'office-preview-ppt-last-slide.png')
   await control.command('scrollFromBottomAsUser', VIEWER, { value: '100000' })

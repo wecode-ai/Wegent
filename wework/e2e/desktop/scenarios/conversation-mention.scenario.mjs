@@ -282,6 +282,20 @@ export function createDesktopScenario({
         completion = SOURCE_COMPLETION
       }
 
+      console.info(
+        '[conversation-mention-model-wire]',
+        JSON.stringify({
+          completion,
+          outputs: output.map(event => ({ type: event.item?.type, callId: event.item?.call_id })),
+          input: Array.isArray(body.input)
+            ? body.input.map(item => ({
+                type: item.type,
+                callId: item.call_id,
+                outputLength: typeof item.output === 'string' ? item.output.length : null,
+              }))
+            : [],
+        })
+      )
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
       response.end(
         sse([
@@ -487,6 +501,11 @@ export function createDesktopScenario({
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      for (const key of ['wework:debug-runtime-chat-stream', 'wework:debug-runtime']) {
+        await control.command('setLocalStorageItem', 'body', {
+          value: JSON.stringify({ key, value: '1' }),
+        })
+      }
       await sendPrompt(control, COMPOSER_SELECTOR, LARGE_SOURCE_PROMPT)
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LARGE_SOURCE_COMPLETION,

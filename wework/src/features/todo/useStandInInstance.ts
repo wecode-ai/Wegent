@@ -29,6 +29,7 @@ export function useStandInInstance(
   const [busy, setBusy] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const operation = useRef(false)
+  const cancelRead = useRef<(() => void) | null>(null)
   const pageActive = useRef(active)
   useLayoutEffect(() => {
     pageActive.current = active
@@ -44,6 +45,10 @@ export function useStandInInstance(
   useEffect(() => {
     if (!active || operation.current) return
     let current = true
+    const cancel = () => {
+      current = false
+    }
+    cancelRead.current = cancel
     void (async () => {
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
@@ -61,6 +66,8 @@ export function useStandInInstance(
         const profile = await api.personalGet(value.target.userId, value.target.deviceId)
         if (!current) return
         setStoppedProfile(profile)
+        setError(null)
+        return
       }
       if (value.status === 'unbound') {
         const initialize = async () => {
@@ -152,9 +159,7 @@ export function useStandInInstance(
     })().catch(cause => {
       if (current) setError({ cause, fallback: 'load_settings_failed' })
     })
-    return () => {
-      current = false
-    }
+    return cancel
   }, [
     api,
     services,
@@ -186,6 +191,7 @@ export function useStandInInstance(
   const stop = (version: number) =>
     run(async () => {
       if (!api || !binding?.target || !localDeviceId) return
+      cancelRead.current?.()
       const stopping = await api.binding(localDeviceId, 'beginStop', version)
       setBinding(stopping)
       const target = stopping.target!
@@ -201,6 +207,7 @@ export function useStandInInstance(
   const bind = (target: StandInBindingTarget) =>
     run(async () => {
       if (!api || !binding || !localDeviceId || binding.status !== 'stopped') return
+      cancelRead.current?.()
       const next = await api.binding(localDeviceId, 'bind', binding.version, target)
       try {
         await api.lifecycle(target.userId, target.deviceId, 'start')
@@ -212,6 +219,7 @@ export function useStandInInstance(
     run(async () => {
       if (!api || !binding?.target || binding.status !== 'stopped' || !localDeviceId)
         throw new StandInMigrationError('not_stopped')
+      cancelRead.current?.()
       const role = await migrateStandIn(api, {
         sourceUser: binding.target.userId,
         sourceDevice: binding.target.deviceId,

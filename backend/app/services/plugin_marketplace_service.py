@@ -473,8 +473,10 @@ class PluginMarketplaceService:
         user_id: int,
         plugin_id: int,
         release_id: int | None = None,
+        commit: bool = True,
     ) -> InstalledPlugin:
-        self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
+        if commit:
+            self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
         # Catalog repair may have committed its own transaction.
         acquire_plugin_write_lock(db, user_id)
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
@@ -509,7 +511,10 @@ class PluginMarketplaceService:
                 is_active=True,
             )
             db.add(installed)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
@@ -520,6 +525,7 @@ class PluginMarketplaceService:
         user_id: int,
         installed_id: int,
         release_id: int,
+        commit: bool = True,
     ) -> InstalledPlugin:
         acquire_plugin_write_lock(db, user_id)
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
@@ -535,7 +541,10 @@ class PluginMarketplaceService:
             installed, plugin=plugin, release=release
         )
         replace_installed_kind(db, installed, payload)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(installed)
         return self._kind_to_installed(installed)
 
@@ -559,10 +568,17 @@ class PluginMarketplaceService:
         return payload
 
     def release_package_for_install(
-        self, db: Session, *, user_id: int, installed_id: int
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        installed_id: int,
+        expected_release_id: int | None = None,
     ) -> tuple[bytes, str]:
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
         release_id = installed.json.get("spec", {}).get("releaseId")
+        if expected_release_id is not None and release_id != expected_release_id:
+            raise HTTPException(status_code=409, detail="RELEASE_CHANGED")
         if not isinstance(release_id, int):
             raise HTTPException(status_code=404, detail="Plugin release not found")
         release = db.get(PluginRelease, release_id)

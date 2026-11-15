@@ -324,6 +324,188 @@ async fn native_completion_wakes_a_resume_waiting_for_thread_admission() {
 }
 
 #[tokio::test]
+async fn an_active_goal_without_a_live_turn_does_not_block_resume_admission() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    client.ensure_started().await.unwrap();
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    hub.send(json!({"method":"thread/goal/updated","params":{
+        "threadId":"thread-1","turnId":null,"goal":{"status":"active"}
+    }}))
+    .await;
+    client
+        .state
+        .lock()
+        .await
+        .thread_context_configurations
+        .insert("thread-1".into(), Map::new());
+    assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1"}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    let admitted = timeout(
+        Duration::from_secs(1),
+        client.prepare_thread_admission(&plan, &request, &launch),
+    )
+    .await;
+    client.restart().await;
+    drop(
+        admitted
+            .expect("An active Goal must not wait for its own recovery to start")
+            .unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn goal_resume_waits_for_local_and_native_turns_but_not_continuation_eligibility() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    client.ensure_started().await.unwrap();
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1"}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for local_owner in [true, false] {
+        hub.send(json!({"method":"thread/goal/updated","params":{
+            "threadId":"thread-1","goal":{"status":"active"}
+        }}))
+        .await;
+        client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .insert("thread-1".into(), Map::new());
+        if local_owner {
+            client.mark_thread_active("thread-1").await;
+        } else {
+            hub.send(json!({"method":"turn/started","params":{
+                "threadId":"thread-1","turn":{"id":"live","status":"inProgress"}
+            }}))
+            .await;
+        }
+        let mut admission = Box::pin(client.prepare_thread_admission(&plan, &request, &launch));
+        assert!(futures_util::poll!(&mut admission).is_pending());
+        if local_owner {
+            client.finish_thread_activity("thread-1", true).await;
+        } else {
+            hub.send(json!({"method":"turn/completed","params":{
+                "threadId":"thread-1","turn":{"id":"live","status":"completed"}
+            }}))
+            .await;
+        }
+        let admitted = timeout(Duration::from_secs(1), admission).await;
+        if admitted.is_err() {
+            client.restart().await;
+        }
+        drop(
+            admitted
+                .expect("Goal eligibility cannot retain a completed turn's admission")
+                .unwrap(),
+        );
+        client.finish_thread_activity("thread-1", true).await;
+        assert_eq!(client.restart_if_idle().await, Err((1, 0)));
+    }
+    client.restart().await;
+}
+
+#[tokio::test]
+async fn active_goal_resume_still_waits_for_configuration_teardown() {
+    let fixture = Fixture::new();
+    let client = &fixture.client;
+    client.ensure_started().await.unwrap();
+    let hub = client
+        .state
+        .lock()
+        .await
+        .process
+        .as_ref()
+        .unwrap()
+        .notifications
+        .clone();
+    hub.send(json!({"method":"thread/goal/updated","params":{
+        "threadId":"thread-1","goal":{"status":"active"}
+    }}))
+    .await;
+    let original_pid = pid(client).await;
+    let plan = CodexThreadPlan {
+        start: CodexThreadStart::Request {
+            operation: "thread/resume",
+            params: json!({"threadId":"thread-1","config":{
+                "mcp_servers.test.http_headers.context":"new-authority"
+            }}),
+        },
+        resume_requested: true,
+        fork_requested: false,
+    };
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    let mut admission = Box::pin(client.prepare_thread_admission(&plan, &request, &launch));
+    assert!(futures_util::poll!(&mut admission).is_pending());
+    // The single native response reader processes unsubscribe before this read.
+    client
+        .request("thread/read", json!({"threadId":"thread-1"}))
+        .await
+        .unwrap();
+    assert!(
+        futures_util::poll!(&mut admission).is_pending(),
+        "Goal recovery must not overtake native MCP teardown"
+    );
+    hub.send(json!({"method":"thread/closed","params":{"threadId":"thread-1"}}))
+        .await;
+    let admitted = timeout(Duration::from_secs(1), admission).await;
+    if admitted.is_err() {
+        client.restart().await;
+    }
+    drop(
+        admitted
+            .expect("Native close must admit Goal recovery without clearing its metadata")
+            .unwrap(),
+    );
+    assert_eq!(pid(client).await, original_pid);
+    assert_eq!(
+        client
+            .request("thread/goal/get", json!({"threadId":"thread-1"}))
+            .await
+            .unwrap()["goal"]["status"],
+        "active"
+    );
+    client.finish_thread_activity("thread-1", false).await;
+    client.restart().await;
+}
+
+#[tokio::test]
 async fn reading_a_persisted_goal_does_not_block_its_recovery_admission() {
     let fixture = Fixture::new();
     let client = &fixture.client;

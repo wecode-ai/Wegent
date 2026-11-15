@@ -30,6 +30,7 @@ from app.services.channels.dingtalk.card_inbox import (
     CardActionInbox,
     CardActionRecord,
 )
+from app.services.channels.dingtalk.conversation import DingTalkConversationType
 from app.services.channels.dingtalk.message_logging import log_dingtalk_message
 from shared.telemetry.decorators import trace_async
 
@@ -60,13 +61,14 @@ def parse_follow_up(data: dict, binding: CardBinding) -> CardFollowUp:
     actor = data.get("userId")
     if not isinstance(actor, str) or not actor.strip() or data.get("userIdType") != 1:
         raise ValueError("卡片回调缺少有效的员工身份")
-    if address.get("conversationType") == "2":
+    if address.get("conversationType") == DingTalkConversationType.GROUP:
         if data.get("spaceType") != "im" or data.get("spaceId") != address.get(
             "conversationId"
         ):
             raise ValueError("请在原钉钉群内使用此任务卡片")
     if actor != address["senderStaffId"] and (
-        binding.runtime_task or address.get("conversationType") != "2"
+        binding.runtime_task
+        or address.get("conversationType") != DingTalkConversationType.GROUP
     ):
         raise ValueError("该卡片仅支持原提问者追问")
     if not binding.config.follow_up_enabled:

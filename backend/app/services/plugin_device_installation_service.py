@@ -47,6 +47,7 @@ class PluginDeviceInstallationService:
         installed_kind_id: int,
         desired_release_id: int,
         reset_failures: bool = False,
+        exclude_device_id: str | None = None,
     ) -> None:
         """Materialize devices after the authoritative install has committed."""
         # Device enumeration may await online-status providers. Keep it outside
@@ -55,6 +56,13 @@ class PluginDeviceInstallationService:
         device_ids = [
             device_id for device in devices if (device_id := self._device_id(device))
         ]
+        if exclude_device_id:
+            excluded = plugin_device_id(db, user_id, exclude_device_id)
+            device_ids = [
+                target
+                for target in device_ids
+                if plugin_device_id(db, user_id, target) != excluded
+            ]
         # Enumeration must not leave a request transaction open during the write.
         db.close()
         await run_plugin_operation(

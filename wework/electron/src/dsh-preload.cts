@@ -49,6 +49,11 @@ contextBridge.exposeInMainWorld('weworkElectronCloudCredentials', {
   clear: () => ipcRenderer.invoke('cloud-credentials:clear'),
 })
 
+contextBridge.exposeInMainWorld('weworkElectronPluginAuth', {
+  configure: (apiBaseUrl: string, accountToken: string) =>
+    ipcRenderer.invoke('plugin-auth:configure', apiBaseUrl, accountToken),
+})
+
 contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
   list: () => ipcRenderer.invoke('runtime:list-execution-environments'),
   ensurePython: () => ipcRenderer.invoke('runtime:ensure-python'),

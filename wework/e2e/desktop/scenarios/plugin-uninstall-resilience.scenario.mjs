@@ -11,6 +11,7 @@ import { verifyPluginLateResponseResilience } from '../modules/plugin-late-respo
 import { verifyPluginDetailResilience } from '../modules/plugin-detail-resilience.mjs'
 import { verifyPluginPartialInventoryResilience } from '../modules/plugin-partial-inventory-resilience.mjs'
 import { verifyPluginScopeBoundaries } from '../modules/plugin-scope-boundaries.mjs'
+import { verifyPluginLocalSync } from '../modules/plugin-local-sync.mjs'
 import { verifyPluginWriteCoordination } from '../modules/plugin-write-coordination.mjs'
 import { verifyPluginRegistrationCoordination } from '../modules/plugin-registration-coordination.mjs'
 import { verifyPluginSyncDisconnect } from '../modules/plugin-sync-disconnect.mjs'
@@ -530,6 +531,7 @@ export async function createDesktopScenario({
                 ['copied-source-reinstall', verifyPluginCopiedSourceReinstall],
                 ['write-coordination', verifyPluginWriteCoordination],
                 ['install-and-update', verifyPluginInstallUpdateResilience],
+                ['local-http-without-registration', verifyPluginLocalSync],
               ]),
           ],
           ['plugin-uninstall-unknown-result', unknownResult],

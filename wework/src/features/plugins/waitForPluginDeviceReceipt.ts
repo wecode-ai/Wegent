@@ -32,6 +32,11 @@ export class PluginInstallationSupersededError extends Error {
 }
 
 export function pluginDeviceReceiptPending(plugin: InstalledPlugin, deviceId: string): boolean {
+  if (
+    plugin.status.localExecution?.state === 'installed' &&
+    plugin.status.localExecution.releaseId === (plugin.spec.releaseId ?? null)
+  )
+    return false
   const receipt = plugin.status.devices?.find(item => item.deviceId === deviceId)
   if (receipt?.state === 'failed') return false
   if (receipt?.state !== 'installed') return true

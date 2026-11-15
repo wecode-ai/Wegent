@@ -18,18 +18,18 @@ export interface ProjectAgentConfigurationHost {
     location: "local" | "cloud",
     projectId?: string,
     environmentId?: string,
-    model?: import('../agent-form/runnerRouting').RunnerModelIdentity,
+    model?: import("../agent-form/runnerRouting").RunnerModelIdentity,
   ): Promise<import("../templates/types").TemplateAgentRouting>;
   listTemplateAgentModels?(
-    runtime: 'codex' | 'claude_code',
+    runtime: "codex" | "claude_code",
     projectId?: string,
   ): Promise<{
-    models: import('../agent-form/runnerRouting').RunnerModel[];
+    models: import("../agent-form/runnerRouting").RunnerModel[];
   }>;
   listTemplateCloudAgentModels?(
-    runtime: 'codex' | 'claude_code',
+    runtime: "codex" | "claude_code",
     projectId?: string,
-  ): Promise<import('../agent-form/runnerRouting').RunnerModel[]>;
+  ): Promise<import("../agent-form/runnerRouting").RunnerModel[]>;
   listTemplateAgentEnvironments?(
     projectId: string,
   ): Promise<import("../types").CollaborationExecutionEnvironment[]>;
@@ -77,7 +77,8 @@ export interface ProjectAgentConfigurationHost {
     onSaved(agent: { name: string; teamId: number }): Promise<void>;
     workspaceName: string;
   }): ReactNode;
-  renderLocalAgentEditor?(props: {
+  /** Edits a project-owned definition through its local or cloud storage API. */
+  renderProjectAgentEditor?(props: {
     projectId?: string;
     resourceId: string;
     onClose(): void;

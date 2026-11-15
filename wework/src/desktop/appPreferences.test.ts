@@ -27,6 +27,7 @@ const mergedDefaultPreferences = {
   contextCompactionThreshold: 75,
   experimentalFeaturesEnabled: false,
   localCodexSubscriptionEnabled: true,
+  telemetryConsentRevision: 0,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
   performanceRecordingEnabled: false,
@@ -101,6 +102,17 @@ const mergedDefaultPreferences = {
 }
 
 describe('appPreferences', () => {
+  test('carries the observed consent revision to the atomic host update', async () => {
+    invokeMock.mockResolvedValue({ ...mergedDefaultPreferences, telemetryConsentRevision: 8 })
+    const { updateAppPreferences } = await import('./appPreferences')
+    const patch = { telemetryConsentAsked: true, telemetryEnabled: true }
+    const preferences = await updateAppPreferences(patch, 7)
+    expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
+      patch,
+      expectedTelemetryConsentRevision: 7,
+    })
+    expect(preferences.telemetryConsentRevision).toBe(8)
+  })
   beforeEach(() => {
     vi.resetModules()
     invokeMock.mockReset()

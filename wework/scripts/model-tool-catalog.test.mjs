@@ -45,6 +45,27 @@ variants.push({
 const inputOf = event =>
   event.item.type === 'custom_tool_call' ? event.item.input : JSON.parse(event.item.arguments).input
 const finalCall = events => events.find(event => event.type === 'response.output_item.done')
+
+test.each(['function_call_output', 'custom_tool_call_output'])(
+  'reads the bound Issue success marker from %s without confusing another call',
+  type => {
+    const marker = 'REMOTE_AGENT_DISPATCH_BOARD_READ_OK'
+    const output = type === 'function_call_output' ? marker : [{ type: 'input_text', text: marker }]
+    expect(
+      toolOutputText(
+        {
+          input: [
+            { type, call_id: 'other-call', output: 'Bound Issue read failed' },
+            { type, call_id: 'bound-issue-read', output },
+          ],
+        },
+        'bound-issue-read'
+      )
+    ).toBe(marker)
+    expect(toolOutputText({ input: [] }, 'bound-issue-read')).toBeNull()
+  }
+)
+
 const metadata = {
   name: 'mcp__wework_space__get_current_context',
   description:

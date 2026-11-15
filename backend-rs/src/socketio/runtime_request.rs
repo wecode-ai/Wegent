@@ -34,8 +34,8 @@ use serde_json::{Map, Value, json};
 use super::mcp_app_ownership::{self, AppInstance, Ownership};
 use crate::device_commands::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_BYTES, MAX_COMMAND_TIMEOUT_SECONDS,
-    MAX_OUTPUT_BYTES, build_local_device_command_argv, python_str, python_truthy,
-    resolve_local_device_command,
+    MAX_OUTPUT_BYTES, add_executor_command_key, build_local_device_command_argv, python_str,
+    python_truthy, resolve_local_device_command,
 };
 use crate::http_compat::FastApiError;
 use crate::runtime_transcript_search::request::SearchRequest;
@@ -700,9 +700,13 @@ fn command_payload(
         "timeout_seconds": timeout_seconds,
         "max_output_bytes": max_output_bytes,
     });
-    if definition.native_git {
-        payload["command_key"] = json!(command_key);
-    }
+    add_executor_command_key(
+        payload
+            .as_object_mut()
+            .expect("command payload is an object"),
+        command_key,
+        definition.native_git,
+    );
     Ok(payload)
 }
 

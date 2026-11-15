@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebContents } from 'electron'
+import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { VerificationDevtools } from './verification-devtools.js'
 
@@ -189,6 +190,10 @@ export class WeworkDesktopControlBridge {
           error.code === 'python_runtime_login_required'
             ? error.code
             : 'python_runtime_download_unavailable'
+        console.warn('[python-runtime]', {
+          event: 'parent-python-downloads-failed',
+          reason: error instanceof PythonRuntimeDownloadTimeoutError ? error.code : code,
+        })
         writeResponse(response, 200, { ok: false, code, error: code })
       }
       return

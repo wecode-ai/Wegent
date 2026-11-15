@@ -853,6 +853,14 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/device_registration_mysql.py
 
+      - name: Verify plugin local-sync MySQL transactions and recovery
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          PLUGIN_LOCAL_SYNC_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/plugin_local_sync_mysql.py
+
       - name: Verify MySQL Runtime activity concurrency
         if: matrix.shardIndex == 1
         working-directory: ./backend
@@ -1231,6 +1239,8 @@ jobs:
             2>&1 | tee "$E2E_REPORT_DIR/e2e.log"
           uv run --no-sync python tests/e2e/team_detail_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/team-detail.log"
+          uv run --no-sync python tests/e2e/public_model_write_auth.py \
+            2>&1 | tee "$E2E_REPORT_DIR/public-model-auth.log"
 
       - name: Upload Python gateway API E2E reports
         if: always() && matrix.shardIndex == 1

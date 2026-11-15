@@ -57,6 +57,14 @@ test('offline refresh reports an error without requesting mutations', async () =
   expect(reconcilePluginRefresh).not.toHaveBeenCalled()
 })
 
+test('HTTP reconciliation runs without a cloud device identity', async () => {
+  const initial = { ...options(), request: 1, deviceId: '', localSync: true }
+  renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  await waitFor(() => expect(initial.onComplete).toHaveBeenCalledOnce())
+  expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+  expect(initial.onError).not.toHaveBeenCalled()
+})
+
 test('does not revive an old reconciliation after switching accounts and back', async () => {
   const initial = { ...options(), request: 1 }
   let finish!: () => void

@@ -130,6 +130,9 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'workspace-attachments') {
+    nextEnv.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS = '1'
+  }
   if (
     [
       'human-interactions',

@@ -183,7 +183,7 @@ fn activity_args(device_ids: &[String], task_id: &str, value: &str) -> Vec<State
 }
 
 /// `_runtime_turn_id` (`project_chat/service.py:1804`).
-fn runtime_turn_id(payload: &Value) -> Option<&str> {
+pub(super) fn runtime_turn_id(payload: &Value) -> Option<&str> {
     payload
         .get("subtaskId")
         .or_else(|| payload.get("subtask_id"))
@@ -202,7 +202,7 @@ pub(super) fn client_message_id(payload: &Value) -> Option<&str> {
 }
 
 /// Python `int(value)` for the metadata `execution_id`.
-fn coerce_execution_id(value: &Value) -> Option<i64> {
+pub(super) fn coerce_execution_id(value: &Value) -> Option<i64> {
     if value.is_boolean() {
         return None;
     }
@@ -269,7 +269,7 @@ pub(super) fn completion_identity_matches(
 }
 
 /// `completed_activity_for_turn` (`execution_snapshot.py:37`).
-async fn completed_activity_for_turn<T: MysqlTransaction>(
+pub(super) async fn completed_activity_for_turn<T: MysqlTransaction>(
     transaction: &mut T,
     device_ids: &[String],
     task_id: &str,

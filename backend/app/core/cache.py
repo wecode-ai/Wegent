@@ -328,6 +328,19 @@ class RedisCache:
             deleted = await client.delete(key)
         return deleted > 0
 
+    async def expire(self, key: str, expire: int) -> bool:
+        """Refresh the TTL of an existing key without rewriting its value."""
+        try:
+            return await self.expire_or_raise(key, expire)
+        except Exception as e:
+            logger.error("Error expiring cache key %s: %s", key, e)
+            return False
+
+    async def expire_or_raise(self, key: str, expire: int) -> bool:
+        """Refresh a key's TTL without hiding Redis failures."""
+        async with self._client_context() as client:
+            return bool(await client.expire(key, expire))
+
     async def pop(self, key: str) -> Optional[Any]:
         """Atomically return and delete one cache value."""
         try:

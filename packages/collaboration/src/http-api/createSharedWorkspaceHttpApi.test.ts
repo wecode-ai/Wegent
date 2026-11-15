@@ -31,6 +31,42 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("round-trips opaque MCP server names and options through project Agent editing", async () => {
+    const { transport, get, patch } = createTransport();
+    const mcpServers = {
+      Review_Server: {
+        command: "review",
+        env: { API_KEY_NAME: "fixture" },
+        customOption: true,
+      },
+    };
+    const stored = {
+      id: "agent",
+      name: "Agent",
+      version: 3,
+      mcp_servers: mcpServers,
+    };
+    get.mockResolvedValue([stored]);
+    patch.mockImplementation(async (_path, input) => ({ ...stored, ...input }));
+    const api = createSharedWorkspaceHttpApi(transport).agents;
+    const [agent] = await api.list("project");
+    expect(agent.mcpServers).toEqual(mcpServers);
+    const saved = await api.update("project", agent.id, {
+      version: agent.version,
+      name: "Renamed",
+      mcpServers: agent.mcpServers,
+    });
+    expect(patch).toHaveBeenCalledWith(
+      "/v1/cloud-projects/project/chat-agents/agent",
+      {
+        version: 3,
+        name: "Renamed",
+        mcp_servers: mcpServers,
+      },
+    );
+    expect(saved.mcpServers).toEqual(mcpServers);
+  });
+
   it.each(["renamed", null])(
     "serializes atomic tag change target %s without losing null",
     (target) => {

@@ -392,6 +392,66 @@ test('does not offer a stale rollback belonging to a different installed version
   expect(await service.previousRelease()).toBeNull()
 })
 
+test.each(['replaced', 'missing-components', 'activation', 'different-path'] as const)(
+  'reconciles a Windows installation before startup readiness: %s',
+  async mode => {
+    const { options, store, fetch } = await fixture()
+    const source = { ...(await store.active())!, id: 'installed-source' }
+    await store.save(source)
+    await atomicReleaseWrite(join(store.root, 'active'), source.id)
+    await atomicReleaseWrite(join(store.root, 'previousHealthy'), 'source')
+    const profile = currentCoreProfile(options.dataDirectory)
+    await mkdir(profile, { recursive: true })
+    await writeFile(join(profile, 'task.json'), '{"task":"keep"}')
+    if (mode === 'activation') {
+      const target = { ...source, id: 'installed-target' }
+      await store.save(target)
+      await store.activate(target, 'snapshot')
+    }
+    const before = await store.active()
+    const service = new AppUpdateService({
+      ...options,
+      currentVersion: '1.1.0',
+      executable:
+        mode === 'different-path' ? join(options.dataDirectory, 'other/host') : options.executable,
+    })
+    const components = { executor: join(options.dataDirectory, 'new/executor') } as ComponentPaths
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    try {
+      if (mode === 'missing-components') {
+        await expect(service.reconcileInstalledRelease(null)).rejects.toThrow(
+          'The running release component composition is unavailable'
+        )
+        expect(await store.active()).toEqual(before)
+      } else if (mode === 'replaced') {
+        const installed = await service.reconcileInstalledRelease(components)
+        expect(installed).toMatchObject({
+          version: '1.1.0',
+          executable: options.executable,
+          retainedRelease: source.id,
+          profileRoot: await realpath(profile),
+        })
+        expect(await store.active()).toEqual(installed)
+        expect(await readFile(join(store.root, 'bridge'), 'utf8')).toBe(options.executable)
+        expect(await service.previousRelease()).toBeNull()
+        expect(
+          JSON.parse(await readFile(join(store.slot(installed!.id), 'prepared.json'), 'utf8'))
+        ).toEqual({ components })
+        expect(await service.reconcileInstalledRelease(components)).toBeNull()
+        expect(await store.active()).toEqual(installed)
+      } else {
+        expect(await service.reconcileInstalledRelease(components)).toBeNull()
+        expect(await store.active()).toEqual(before)
+      }
+      expect(fetch).not.toHaveBeenCalled()
+      expect(await readFile(join(profile, 'task.json'), 'utf8')).toBe('{"task":"keep"}')
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+    }
+  }
+)
+
 test('waits for running component readiness before inspecting the profile or downloading', async () => {
   const { options, store, fetch } = await fixture()
   await rm(join(store.root, 'active'))

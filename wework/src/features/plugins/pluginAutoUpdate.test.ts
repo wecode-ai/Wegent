@@ -209,6 +209,22 @@ describe('runCurrentDevicePluginAutoUpdate', () => {
     clearPluginDeviceAutoSyncAttempts()
   })
 
+  test('HTTP updates do not require a device identity or the legacy local inventory', async () => {
+    const listLocalInstalledPlugins = vi.fn().mockRejectedValue(new Error('Inventory unavailable'))
+    const syncPlugin = vi.fn(async (_deviceId: string, id: number) => sync(true, id))
+    const result = await runCurrentDevicePluginAutoUpdate({
+      localSync: true,
+      listLocalInstalledPlugins,
+      listMarketplacePlugins: async () => ({ items: [] }),
+      updateBatch: async () => batch(1, 0),
+      syncPlugin,
+      syncDevice: vi.fn(),
+    })
+    expect(result).toMatchObject({ deviceId: '', updatedCount: 1, failedCount: 0 })
+    expect(syncPlugin).toHaveBeenCalledWith('', 1)
+    expect(listLocalInstalledPlugins).not.toHaveBeenCalled()
+  })
+
   test('skips cloud requests until the local executor reports a device id', async () => {
     const listMarketplacePlugins = vi.fn(async () => ({ items: [] }))
     const updateBatch = vi.fn(async () => batch(0, 0))

@@ -34,11 +34,7 @@ pub(super) async fn compile_request(
         );
     }
     let mut request = prepared.intent["runtime_request"].clone();
-    if group_dispatch
-        || !request
-            .as_object()
-            .is_some_and(|request| !request.is_empty())
-    {
+    if group_dispatch || request.as_object().is_none_or(|request| request.is_empty()) {
         let issue = store::get(&app.mysql, "task", &row.loop_item_id)
             .await?
             .context("Issue execution task is unavailable")?;

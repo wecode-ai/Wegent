@@ -43,6 +43,8 @@ cannot be enabled or disabled separately from the plugin management page.
 
 Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
 
+The workbench remains open when the settings file is damaged or unreadable, and the original file is preserved. This does not authorize importing or removing native Codex credentials or replacing the active shortcut with a default. Affected setting changes report a failure and can be retried after repairing the file.
+
 | Feature                                    | Steps and result                                                                                             | Conditions or limitations                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Mode                                       | Select Focus or Developer mode and confirm                                                                   | Restarts the managed plugin runtime; Focus mode hides Git entries                                               |
@@ -62,6 +64,10 @@ Open **bottom-left account menu → Settings → Personal → General**. The pag
 | Help improve Wework                        | Change the privacy preference and read the collection notice                                                 | Separate from explicitly exporting diagnostic logs                                                              |
 | Popout Window shortcut                     | Record a new key combination or clear the binding                                                            | Opens the Wework popout, not the message-send action                                                            |
 | System drag panel                          | Toggle in the popout group                                                                                   | Availability depends on device and system capabilities                                                          |
+
+Refusing data collection on first use or in privacy settings takes effect immediately. Enabling collection requires a successfully saved global preference, and a refusal saved by another window also applies. A failed save does not block the workbench; the next launch uses the saved preference or asks again. A later explicit choice takes precedence, so an older request completing late cannot re-enable collection after refusal.
+
+If saving the first choice fails, a notice at the top of the workbench offers **Retry** while the workbench remains usable. Retry reads the latest settings before saving again. After another window changes the preference, an opt-in based on an older revision is rejected. Refusing collection is allowed even from an older revision.
 
 Saving a UI preference, changing scheduler limits and replacing an executable have different activation rules. Follow restart prompts for Node.js and coding tools; saved preferences do not imply that existing processes have already changed.
 

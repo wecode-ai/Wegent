@@ -32,6 +32,9 @@ mod diagnostics;
 use diagnostics::measure_stage;
 
 #[cfg(test)]
+#[path = "worktrees/git_lifetime_tests.rs"]
+mod git_lifetime_tests;
+#[cfg(test)]
 mod persistence_tests;
 
 const STATE_VERSION: u64 = 5;
@@ -729,7 +732,7 @@ impl WorktreeManager {
             .lock()
             .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let key = normalized_path_key(path);
-        let mut record = {
+        let (mut record, known_roots) = {
             let _guard = self
                 .mutation_lock
                 .lock()
@@ -742,16 +745,35 @@ impl WorktreeManager {
                 .get(&key)
                 .cloned()
                 .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-            if path.exists() {
-                if preserve_snapshot {
-                    validate_record_worktree_identity(&record, path)?;
-                } else {
-                    validate_deletable_worktree_identity(&record, path)?;
-                }
-            }
-            record
+            (record, state.known_roots)
         };
-
+        let expected_path = if path.try_exists().map_err(|error| error.to_string())? {
+            Some(fs::canonicalize(path).map_err(|error| error.to_string())?)
+        } else {
+            None
+        };
+        // Wait without holding the registry lock, then validate the actual
+        // directory immediately before mutation under its lifetime lock.
+        let _directory = measure_stage(&record.worktree_id, "delete_directory_lock", || {
+            wegent_workspace::workspace_lifetime::remove_directory(path)
+        })?;
+        ensure_managed_path(path, &known_roots)?;
+        if path.try_exists().map_err(|error| error.to_string())? {
+            let actual_path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+            if expected_path
+                .as_ref()
+                .is_some_and(|expected| expected != &actual_path)
+            {
+                return Err(worktree_target_conflict(
+                    "Managed worktree path changed while waiting for deletion",
+                ));
+            }
+            if preserve_snapshot {
+                validate_record_worktree_identity(&record, path)?;
+            } else {
+                validate_deletable_worktree_identity(&record, path)?;
+            }
+        }
         operation(&mut record)?;
 
         record.state = if preserve_snapshot && record.snapshot_ref.is_some() {

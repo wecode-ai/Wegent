@@ -500,6 +500,37 @@ test('drops a real response after upstream completion', { timeout: 5000 }, async
   assert.equal(received.length, 1)
 })
 
+test('loses native acceptance headers only after the upstream write commits', async t => {
+  const { proxy, received } = await fixture(t, {
+    'X-Plugin-Delivery-Mode': 'local_pull_v1',
+    'X-Plugin-Operation-Id': 'original-operation',
+    'X-Plugin-Intent-Order': '7',
+  })
+  proxy.rule = () => 'drop-before-headers'
+  let headersObserved = false
+  await assert.rejects(
+    new Promise((resolve, reject) => {
+      const outgoing = request(
+        `${proxy.url}/api/plugins/installed/42`,
+        { method: 'PUT' },
+        response => {
+          headersObserved = true
+          response.resume()
+          resolve()
+        }
+      )
+      outgoing.once('error', reject)
+      outgoing.end('{}')
+    }),
+    /socket hang up/
+  )
+  assert.equal(headersObserved, false, 'Native must not observe the acceptance headers')
+  assert.deepEqual(received, [{ method: 'PUT', url: '/api/plugins/installed/42' }])
+  assert.equal(proxy.requests[0].status, 200)
+  assert.equal(proxy.requests[0].committedResponseDropped, true)
+  assert.notEqual(proxy.requests[0].responseCompleted, true)
+})
+
 test(
   'releases the first real response after a later response without changing either body',
   { timeout: 5000 },
@@ -970,3 +1001,41 @@ test(
     assert.ok(proxy.requests.every(entry => entry.fault === null && entry.delivered))
   }
 )
+
+for (const ack of [
+  { success: false, error: 'invalid payload' },
+  { error: 'Invalid payload: device_id must not be empty' },
+])
+  test(
+    'registration fault changes only the ID and observes the real upstream ACK ' +
+      JSON.stringify(ack),
+    async t => {
+      const { proxy } = await fixture(t)
+      const fault = proxy.rejectDeviceRegistration()
+      const frames = []
+      const output = { push: frame => frames.push(frame) }
+      const original = [
+        'device:register',
+        { device_id: 'normal-id', name: 'test', runtime_instance_id: 'keep-binding' },
+      ]
+      assert.equal(fault.rewrite(`42/local-executor,23${JSON.stringify(original)}`, output), true)
+      const frame = frames[0]
+      const wide = (frame[1] & 127) === 126
+      const offset = wide ? 4 : 2
+      const mask = frame.subarray(offset, offset + 4)
+      const payload = Buffer.from(frame.subarray(offset + 4))
+      for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4]
+      assert.equal(
+        payload.toString(),
+        `42/local-executor,23${JSON.stringify(['device:register', { ...original[1], device_id: '' }])}`
+      )
+      assert.equal(fault.submitted, 1)
+      assert.equal(fault.rejected, 0, 'Sending a fault is not evidence that Backend rejected it')
+      assert.equal(fault.rewrite('42/local-executor,24["plugin.auth.execute",{}]', output), false)
+      fault.observe('43/local-executor,99[{"error":"Invalid payload: unrelated request"}]')
+      assert.equal(fault.rejected, 0, 'Unrelated rejection is not registration evidence')
+      fault.observe(`43/local-executor,23${JSON.stringify([ack])}`)
+      assert.equal(fault.rejected, 1)
+      assert.ok(!JSON.stringify(fault).includes('keep-binding'))
+    }
+  )

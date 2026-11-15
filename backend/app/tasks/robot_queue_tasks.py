@@ -25,6 +25,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.services.device.runtime_route import runtime_device_route_id
 from app.services.device_service import device_service
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.cancellation import execution_cancellation_target
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.runtime_cancellation import emit_runtime_cancellations
@@ -104,6 +105,7 @@ def scan_robot_queue(self) -> dict:
             }
 
 
+@execution_resource_scope()
 def _queued_devices(db) -> list[tuple[int, str]]:
     loop_item_execution_service.prepare_queued_assignments(db)
     bound_rows = db.execute(
@@ -262,10 +264,19 @@ def _prepare_queue_targets() -> list[tuple[int, str]]:
 async def consume_queues_background() -> None:
     """Notify connected Executors; the notification never carries work."""
 
+    try:
+        devices = await run_in_threadpool(_prepare_queue_targets)
+        await notify_execution_targets(devices)
+    except Exception:
+        logger.exception("[RobotQueue] Work availability notification failed")
+
+
+@trace_async("robot_queue.notify_targets", tracer_name="backend")
+async def notify_execution_targets(devices: list[tuple[int, str]]) -> None:
+    """Signal already selected targets without reading or preparing the queue."""
     from app.core.socketio import get_sio
 
     try:
-        devices = await run_in_threadpool(_prepare_queue_targets)
         if devices:
             logger.info(
                 "[RobotQueue] Publishing work availability source=api targets=%s",
@@ -280,6 +291,39 @@ async def consume_queues_background() -> None:
             )
     except Exception:
         logger.exception("[RobotQueue] Work availability notification failed")
+
+
+def wake_executions(db: Session, executions: list[LoopItemExecution]) -> None:
+    """Wake only committed executions from this operation, without a queue scan."""
+    from app.core.async_utils import schedule_async_task
+    from app.services.runner_routing import execution_environment_ids
+
+    targets: set[tuple[int, str]] = set()
+    for execution in executions:
+        if execution.status != "queued" or execution.execution_environment not in {
+            "local",
+            "cloud",
+        }:
+            continue
+        if execution.execution_device_id:
+            targets.add(
+                (execution.executor_owner_user_id, execution.execution_device_id)
+            )
+            continue
+        device_ids = execution_environment_ids(
+            db, execution.cloud_project_id, execution.agent_id
+        )
+        for device in db.query(Kind).filter(
+            Kind.id.in_(device_ids),
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.is_active.is_(True),
+        ):
+            route_id = runtime_device_route_id(device)
+            if route_id:
+                targets.add((int(device.user_id), route_id))
+    if targets:
+        schedule_async_task(notify_execution_targets, sorted(targets))
 
 
 def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:

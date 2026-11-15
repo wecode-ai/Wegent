@@ -4,6 +4,8 @@ sidebar_position: 12
 
 # Personal stand-in and scenario roles
 
+In the Chinese interface, the **My stand-in** entry is labeled **我的助理**.
+
 ## Ongoing Issue collaboration
 
 Assigning an Issue or mentioning a member wakes their enabled, project-connected stand-ins that match its tags and allow automatic handling.
@@ -13,6 +15,8 @@ Reassignment, unassignment, deletion of the original mention or pausing automati
 Manually starting a stand-in does not require assigning the Issue to yourself and never changes its assignee. Automatic intake settings select new work without restricting explicit user actions. Current project and Issue access and execution permissions still apply.
 Acknowledgment and result appear as separate comments. You can keep writing and sending while subagents work; follow-up wakeups are handled in order.
 Reply directly to a stand-in comment without another mention to continue with that role. Private chats, reasoning and tool activity are not published.
+
+Stand-in replies on an Issue show the owning user followed by the role in parentheses, for example “Alex (Assistant)”, so participants can distinguish different users' stand-ins. A user ID appears while the member name is unavailable and updates to the name when member information loads.
 
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->

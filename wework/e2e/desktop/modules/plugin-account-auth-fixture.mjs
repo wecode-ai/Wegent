@@ -339,6 +339,18 @@ delegated = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", 
 raise SystemExit(delegated if delegated is not None else provider.execute(provider.export(), sys.argv[1:]))
 `
   )
+  await writeFile(
+    join(fixtureRoot, 'scripts/native-cli.py'),
+    `
+import os, sys
+from pathlib import Path
+from wegent_plugin_auth import delegate_cloud_command
+assert os.environ.get("WEGENT_PLUGIN_AUTH_MODE") == "local", "Expected a real local conversation"
+result = delegate_cloud_command(Path(__file__).resolve().parents[1], "mail", sys.argv[1:], account_id="alice@example.test")
+assert result is not None
+raise SystemExit(result)
+`
+  )
   await run(
     'uv',
     ['run', '--no-project', 'python', 'sdk/plugin-auth/tool.py', 'vendor', fixtureRoot],

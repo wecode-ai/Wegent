@@ -42,7 +42,7 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_default()
     }
 
-    pub(super) async fn creation_model_config(
+    pub(in super::super) async fn creation_model_config(
         &self,
         runtime: &str,
         selection: &Value,

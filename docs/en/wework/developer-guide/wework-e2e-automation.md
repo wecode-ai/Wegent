@@ -362,6 +362,12 @@ for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
 
 The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
+
+The Python descriptor's 200ms deadline covers HTTP headers and body. Credential resolution and the
+final persisted Backend identity check run outside that HTTP deadline, so queued storage reads do not
+become network timeouts. Backend identity and address expiry are checked before use. Parent logs record
+safe failure categories under `parent-python-downloads-failed`, including descriptor timeouts,
+without credentials or download addresses.
 Long history hydration polls use `performanceSnapshot` with `collectMemory: false`
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated

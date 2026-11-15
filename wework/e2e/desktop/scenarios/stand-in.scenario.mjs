@@ -681,7 +681,8 @@ export async function createDesktopScenario({
         )
       }
       // Create a personally owned stand-in through the project picker.
-      await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
+      // Reloaded sidebar badges precede the asynchronously restored project header.
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
       await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目协调' })

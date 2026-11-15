@@ -2,13 +2,14 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 import { promisify } from 'node:util'
 import { macosApplication, macosInstallationStage } from './macos-installation-paths.js'
 import { copyPhysicalRelease, removePhysicalRelease } from './physical-release-files.js'
 import {
   atomicReleaseWrite,
   optionalText,
+  sameReleasePath,
   type DesktopRelease,
   type ReleaseStore,
 } from './release-store.js'
@@ -318,12 +319,12 @@ export async function enterInstalledMacosRelease(
 ): Promise<void> {
   const installation = release.macosInstallation
   if (process.platform !== 'darwin' || !installation) return
-  if (resolve(process.execPath) === resolve(release.executable)) {
+  if (await sameReleasePath(process.execPath, release.executable)) {
     selectedResources = release.resources
     return
   }
   // Only the selected payload can perform this one-use handoff, before opening data.
-  if (resolve(process.execPath) !== resolve(installation.payloadExecutable))
+  if (!(await sameReleasePath(process.execPath, installation.payloadExecutable)))
     throw new Error('The macOS bootstrap is not the selected release payload')
   const launcher = join(resources, 'wework-launcher')
   // Re-execing Electron at the same PID leaves RunningBoard's cached PID version

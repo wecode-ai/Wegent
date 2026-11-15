@@ -448,6 +448,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "cloudProjectId"
                 | "cloud_project_id"
                 | "client_user_message_id"
+                | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
                 | "modelSelection"
@@ -493,6 +494,26 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
 #[cfg(test)]
 mod stand_in_request_snapshot_tests {
     use super::*;
+
+    #[test]
+    fn native_collaboration_mode_survives_saved_execution_round_trip() {
+        for mode in ["default", "plan", "single"] {
+            let mut request = ExecutionRequest::default();
+            request.extra.extend(json!({"collaborationMode":mode,"collaboration_model":"single"})
+                .as_object().unwrap().clone());
+            let mut handle = json!({});
+            store_runtime_execution_request(&mut handle, &request);
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("index.json");
+            RuntimeWorkStore::new(path.clone()).upsert_task(RuntimeTaskLink {
+                local_task_id: "native-mode".into(), runtime_handle: handle, ..Default::default()
+            });
+            let restored = RuntimeWorkStore::new(path).get_task_summary("native-mode").unwrap();
+            let request = runtime_event_request_from_link(&restored);
+            assert_eq!(request.extra["collaborationMode"], mode);
+            assert_eq!(request.extra["collaboration_model"], "single");
+        }
+    }
 
     #[test]
     fn stand_in_bindings_and_request_identity_survive_snapshots_without_one_time_permission() {

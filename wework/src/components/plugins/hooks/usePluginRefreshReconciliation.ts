@@ -16,6 +16,7 @@ export function usePluginRefreshReconciliation(options: {
   accountKey: string
   deviceId: string
   available: boolean
+  localSync?: boolean
   busy: boolean
   operations: Omit<ReconciliationOptions, 'isCurrent' | 'onProgress'>
   onComplete: () => void
@@ -54,7 +55,7 @@ export function usePluginRefreshReconciliation(options: {
     setStage('waiting')
     logPluginRefreshPhase('reconcile-request', { request: options.request, busy: options.busy })
     if (options.busy) return clearActive
-    if (!options.available || !options.deviceId) {
+    if (!options.available || (!options.localSync && !options.deviceId)) {
       handled.current = options.request
       options.onError(new Error('Current device is offline; plugin state was not changed'))
       clearActive()
@@ -75,7 +76,9 @@ export function usePluginRefreshReconciliation(options: {
       latest.current.request === request
     const start = () => {
       if (cancelled || !isCurrent()) return
-      const release = beginPluginDeviceSync(deviceId, 'reconcile')
+      const release = options.localSync
+        ? () => undefined
+        : beginPluginDeviceSync(deviceId, 'reconcile')
       if (!release) {
         if (!waiting) {
           waiting = true
@@ -123,7 +126,14 @@ export function usePluginRefreshReconciliation(options: {
       if (timer) clearTimeout(timer)
       if (!acquired) clearActive()
     }
-  }, [options.request, options.accountKey, options.deviceId, options.available, options.busy])
+  }, [
+    options.request,
+    options.accountKey,
+    options.deviceId,
+    options.available,
+    options.busy,
+    options.localSync,
+  ])
   return {
     active: Boolean(
       active && active.accountKey === options.accountKey && active.deviceId === options.deviceId

@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `get_model_config_for_bot`'s raising contract and its position relative to
-//! the Shell read.
+//! Execution request construction and lookup ordering.
 
 use super::super::resolution::flat_model_config_error;
+use super::{BuildExecutionRequestInput, KindRow, build_chat_execution_request};
+use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
+use brz_mysql::Json;
+use serde_json::{Value, json};
 
 #[test]
 fn a_bot_without_a_model_is_a_400_with_the_source_message() {
@@ -31,15 +34,184 @@ fn an_unresolved_model_is_a_400_with_the_source_message() {
     );
 }
 
+const ANALYSIS_SKILL: &str = "offline-analyzer";
+
+fn stored_kind(id: i64, owner: i64, kind: &str, name: &str, spec: Value) -> KindRow {
+    KindRow {
+        id,
+        user_id: owner,
+        kind: kind.into(),
+        name: name.into(),
+        namespace: "default".into(),
+        json: Json(json!({"spec": spec})),
+        is_active: 1,
+        created_at: None,
+        updated_at: None,
+    }
+}
+
+fn kind_result(kind: KindRow) -> (Row, Vec<Row>) {
+    let row = vec![
+        ("kinds_id", SqlValue::I64(kind.id)),
+        ("kinds_user_id", SqlValue::I64(kind.user_id)),
+        ("kinds_kind", SqlValue::Text(kind.kind)),
+        ("kinds_name", SqlValue::Text(kind.name)),
+        ("kinds_namespace", SqlValue::Text(kind.namespace)),
+        ("kinds_json", SqlValue::Text(kind.json.0.to_string())),
+        ("kinds_is_active", SqlValue::I8(1)),
+        ("kinds_created_at", SqlValue::DateTime),
+        ("kinds_updated_at", SqlValue::DateTime),
+    ];
+    (row.clone(), vec![row])
+}
+
+fn skill_fixture(sql: &str, automatic: bool, preload: bool) -> (Row, Vec<Row>) {
+    if sql.contains("'SkillBinding'") && automatic {
+        return kind_result(stored_kind(
+            10,
+            7,
+            "SkillBinding",
+            "automatic-analysis",
+            json!({
+                "targetType": "user",
+                "targetId": "user:7",
+                "skillRef": {"skillId": 11},
+                "forcePreload": preload,
+            }),
+        ));
+    }
+    if sql.contains("'Ghost'") || sql.contains("kinds.user_id = 0 AND kinds.kind = ?") {
+        return kind_result(stored_kind(
+            12,
+            0,
+            "Ghost",
+            "analysis-ghost",
+            if automatic {
+                json!({})
+            } else {
+                json!({
+                    "skills": [ANALYSIS_SKILL],
+                    "preload_skills": if preload { vec![ANALYSIS_SKILL] } else { vec![] },
+                    "skill_refs": {(ANALYSIS_SKILL): {"skill_id": 11, "is_public": true}},
+                })
+            },
+        ));
+    }
+    if sql.contains("'Skill'") && sql.contains("kinds.id = ?") {
+        return kind_result(stored_kind(
+            11,
+            0,
+            "Skill",
+            ANALYSIS_SKILL,
+            json!({"bindShells": ["ClaudeCode"]}),
+        ));
+    }
+    if sql.contains("'Model'") {
+        let (mut row, _) = kind_result(stored_kind(
+            13,
+            7,
+            "Model",
+            "test-model",
+            json!({"modelConfig": {"env": {"model": "openai", "model_id": "test"}}}),
+        ));
+        row.insert(0, ("anon_1_name", SqlValue::Text("test-model".into())));
+        return (row.clone(), vec![row]);
+    }
+    assert!(
+        sql.contains("'SkillBinding'")
+            || sql.contains("'Skill'")
+            || sql.contains("FROM `tasks`")
+            || sql.contains("FROM subtasks")
+            || sql.contains("FROM subtask_contexts"),
+        "unexpected query: {sql}"
+    );
+    (vec![("id", SqlValue::I64(0))], vec![])
+}
+
+#[tokio::test]
+async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
+    let team = stored_kind(1, 0, "Team", "analysis-agent", json!({}));
+    let bot = stored_kind(
+        2,
+        0,
+        "Bot",
+        "analysis-bot",
+        json!({
+            "ghostRef": {"name": "analysis-ghost", "namespace": "default"},
+            "modelRef": {"name": "test-model", "namespace": "default"},
+        }),
+    );
+    let input = BuildExecutionRequestInput {
+        user_id: 7,
+        user_name: "user",
+        user_git_info: &Value::Null,
+        user_preferences: None,
+        task_id: 3,
+        assistant_subtask_id: 5,
+        user_subtask_id: 4,
+        team: &team,
+        bot: &bot,
+        bot_role: "leader",
+        team_member_prompt: None,
+        bot_ids: &[2],
+        message: "Analyze the report",
+        reasoning: None,
+        enable_tools: false,
+        enable_web_search: false,
+        enable_deep_thinking: false,
+        task_json: &Value::Null,
+        request_id: "skill-test",
+        message_id: 2,
+        is_group_chat: false,
+        task_project_id: 0,
+        executor_name: "",
+        executor_namespace: "",
+        executor_deleted: false,
+        new_session: false,
+        knowledge_base_refs: &[],
+        knowledge_base_names: &[],
+        web_runtime_guidance: false,
+        subtask_bot_resolved: true,
+    };
+
+    for (automatic, preload) in [(false, true), (false, false), (true, true), (true, false)] {
+        let fixture =
+            MysqlRows::start_results(move |sql| skill_fixture(sql, automatic, preload)).await;
+        let state = crate::app_test_support::app(fixture.mysql.clone());
+        let request = build_chat_execution_request(&state, &input, &[], None, None)
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "automatic={automatic}, preload={preload}: {error:?}; queries: {:?}",
+                    fixture.queries()
+                )
+            });
+
+        assert_eq!(request.bot[0]["shell_type"], "Chat");
+        assert_eq!(request.bot[0]["skills"], json!([ANALYSIS_SKILL]));
+        assert_eq!(request.skill_names, vec![json!(ANALYSIS_SKILL)]);
+        assert_eq!(
+            request.skill_configs[0]["bindShells"],
+            json!(["ClaudeCode"])
+        );
+        let skill_ref = &request.skill_refs[ANALYSIS_SKILL];
+        assert_eq!(skill_ref["skill_id"], 11);
+        assert_eq!(skill_ref["bind_shells"], json!(["ClaudeCode"]));
+        assert_eq!(request.bot[0]["skill_refs"][ANALYSIS_SKILL], *skill_ref);
+        if preload {
+            assert_eq!(request.preload_skills, vec![json!(ANALYSIS_SKILL)]);
+            assert_eq!(request.preload_skill_refs[ANALYSIS_SKILL], *skill_ref);
+        } else {
+            assert!(request.preload_skills.is_empty());
+            assert!(request.preload_skill_refs.get(ANALYSIS_SKILL).is_none());
+        }
+    }
+}
+
 /// `_get_model_config` (`request_builder.py:318`), `_get_bot_skills` (`:393`)
 /// and only then `_build_bot_config` (`:415`), whose `_resolve_shell_info`
 /// (`:2219`) is the Shell read. Both flat-config failures return before the
-/// Shell call, so a failed flat config never issues a Shell query. The one
-/// earlier read is the Source's own cached `_resolve_shell_info` call in the
-/// automatic-binding filter (`:374-388`), which runs before `_get_bot_skills`
-/// only when a binding declares `bind_shells`; without one the lookup keeps
-/// its later position and the Shell's team-owner group block cannot precede
-/// the Ghost/Skill reads.
+/// Shell call, so a failed flat config never issues a Shell query.
 #[test]
 fn the_flat_model_config_precedes_the_shell_read() {
     let source = include_str!("request.rs");
@@ -52,19 +224,12 @@ fn the_flat_model_config_precedes_the_shell_read() {
     let skills = source
         .find("let mut skills = get_bot_skills(")
         .expect("skill resolution");
-    let early_shell = source
-        .find("let early_shell = if super::skills::binding_refs_restrict_shell(&binding_refs) {")
-        .expect("automatic-binding shell filter");
-    let lazy_shell = source
-        .find("None => resolve_shell_type(state, input).await?,")
-        .expect("lazy shell resolution");
+    let shell = source
+        .find("let (shell_type, base_image) = resolve_shell_type(state, input).await?;")
+        .expect("shell resolution");
     assert!(
-        no_model < unresolved && unresolved < early_shell && early_shell < skills,
-        "both flat-model-config failures must return before any Shell read"
-    );
-    assert!(
-        skills < lazy_shell,
-        "the lazy Shell read belongs to _build_bot_config after _get_bot_skills"
+        no_model < unresolved && unresolved < skills && skills < shell,
+        "both flat-model-config failures must return before Skill and Shell reads"
     );
 }
 

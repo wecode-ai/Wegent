@@ -10,6 +10,7 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/catalog/workbench-control.json" \
   "wework/e2e/desktop/scenarios/workbench-control.scenario.mjs" \
+  "wework/e2e/desktop/modules/workbench-control-collaboration.mjs" \
   "executor/src/runtime_work/reader.rs" \
   "executor/src/workbench_control/catalog.rs" \
   "executor/src/runtime_work/handler/control/execution.rs" \

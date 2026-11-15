@@ -27,6 +27,7 @@ use crate::{
 
 use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, SocketIoTransport};
 
+mod local_sync;
 mod plugin_route;
 
 #[derive(Clone)]
@@ -41,6 +42,8 @@ pub struct LocalBackendConnectionController {
     connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     connection_status: Arc<AtomicBool>,
     device_route_id: Arc<StdMutex<Option<String>>>,
+    local_sync_lock: Arc<Mutex<()>>,
+    plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext,
 }
 
 #[derive(Default)]
@@ -49,6 +52,9 @@ struct LocalBackendConnectionState {
     profile: Option<LocalBackendConnectionProfile>,
     transport: Option<SocketIoTransport>,
     task: Option<JoinHandle<()>>,
+    plugin_sync: Option<Arc<dyn super::capability::CapabilitySyncRpcHandler>>,
+    plugin_broker: Option<crate::plugin_account_auth::broker::RunningBroker>,
+    plugin_broker_owner: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,19 +64,20 @@ struct LocalBackendConnectionProfile {
 }
 
 impl LocalBackendConnectionController {
-    async fn auth_transport(&self) -> Result<SocketIoTransport, AppIpcError> {
-        if !self.connection_status.load(Ordering::Acquire) {
+    async fn auth_transport(
+        &self,
+    ) -> Result<crate::plugin_account_auth::local_http::LocalAuthContext, AppIpcError> {
+        use crate::plugin_account_auth::PluginAuthTransport;
+        if !self
+            .plugin_auth
+            .available(self.connection_status.load(Ordering::Acquire))
+        {
             return Err(AppIpcError::new(
                 "backend_connection_unavailable",
                 "Connect this device before using account authentication",
             ));
         }
-        self.state.lock().await.transport.clone().ok_or_else(|| {
-            AppIpcError::new(
-                "backend_connection_unavailable",
-                "Backend connection is unavailable",
-            )
-        })
+        Ok(self.plugin_auth.clone())
     }
 
     pub async fn start(config: DeviceConfig) -> Self {
@@ -120,9 +127,13 @@ impl LocalBackendConnectionController {
             runtime_work_handler,
             runtime_event_hub,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
+            plugin_auth: crate::plugin_account_auth::local_http::LocalAuthContext::new(Arc::clone(
+                &connection_snapshot,
+            )),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
             device_route_id,
+            local_sync_lock: Arc::new(Mutex::new(())),
         };
         controller.replace_connection(initial_profile, false).await;
         controller
@@ -145,6 +156,20 @@ impl LocalBackendConnectionController {
         if let Ok(mut snapshot) = self.connection_snapshot.lock() {
             *snapshot = profile.as_ref().map(|value| value.connection.clone());
         }
+        let owner = profile.as_ref().map(|p| {
+            format!(
+                "{}:{:?}",
+                crate::plugin_account_auth::local_http::account_scope(&p.connection),
+                plugin_auth_cloud_mode(&self.base_config, p)
+            )
+        });
+        if state.plugin_broker_owner != owner {
+            state.plugin_broker.take();
+            state.plugin_broker_owner = owner;
+        }
+        if profile.is_none() {
+            self.plugin_auth.clear();
+        }
         // Runtime credentials are consumed through the live connection snapshot;
         // rotating them must not disconnect the device's in-flight RPC route.
         if state
@@ -163,6 +188,10 @@ impl LocalBackendConnectionController {
             return true;
         }
 
+        if let Some(handler) = state.plugin_sync.take() {
+            handler.invalidate_connection();
+        }
+        self.plugin_auth.socket(None, false);
         if let Some(task) = state.task.take() {
             self.connection_status.store(false, Ordering::Release);
             // Stop the old route producer before clearing the shared slot.
@@ -203,7 +232,31 @@ impl LocalBackendConnectionController {
             }
             .with_connection_status(Arc::clone(&self.connection_status))
             .with_connection_snapshot(Arc::clone(&self.connection_snapshot));
-            let runner = runner.with_device_route_id_slot(Arc::clone(&self.device_route_id));
+            let handler = runner
+                .capability_sync_handler
+                .as_ref()
+                .expect("default capability handler")
+                .clone();
+            state.plugin_sync = Some(handler);
+            let runner = runner
+                .with_device_route_id_slot(Arc::clone(&self.device_route_id))
+                .with_external_plugin_auth_broker();
+            let cloud_plugin_auth = plugin_auth_cloud_mode(&self.base_config, profile);
+            self.plugin_auth
+                .socket(Some(transport.clone()), cloud_plugin_auth);
+            if state.plugin_broker.is_none() {
+                match crate::plugin_account_auth::broker::start(
+                    self.plugin_auth.clone(),
+                    crate::config::paths::executor_home(),
+                    self.connection_status.clone(),
+                    cloud_plugin_auth,
+                )
+                .await
+                {
+                    Ok(broker) => state.plugin_broker = Some(broker),
+                    Err(_) => write_executor_error_line("plugin auth broker unavailable"),
+                }
+            }
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {
@@ -252,6 +305,19 @@ impl LocalBackendConnectionController {
 }
 
 impl BackendConnectionHandler for LocalBackendConnectionController {
+    fn configure_plugin_auth<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move { self.plugin_auth.configure(params) })
+    }
+    fn plugin_local_sync<'a>(
+        &'a self,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(self.local_plugin_sync(params))
+    }
+
     fn plugin_device_route<'a>(
         &'a self,
         params: Value,
@@ -383,6 +449,16 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
     }
 }
 
+fn plugin_auth_cloud_mode(base: &DeviceConfig, profile: &LocalBackendConnectionProfile) -> bool {
+    matches!(
+        profile
+            .registration_device_type
+            .as_deref()
+            .unwrap_or(&base.device_type),
+        "cloud" | "remote"
+    )
+}
+
 fn device_config_for_profile(
     base_config: &DeviceConfig,
     profile: &LocalBackendConnectionProfile,
@@ -507,6 +583,38 @@ mod tests {
     use axum::{http::HeaderMap, routing::get, Json, Router};
     use serde_json::json;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn disconnect_invalidates_the_installer_held_by_in_flight_http_work() {
+        use super::super::CapabilitySyncRpcHandler;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        struct Installer(Arc<AtomicBool>);
+        impl CapabilitySyncRpcHandler for Installer {
+            fn invalidate_connection(&self) {
+                self.0.store(true, Ordering::Release);
+            }
+            fn handle_sync_capabilities<'a>(
+                &'a self,
+                _: serde_json::Value,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = serde_json::Value> + Send + 'a>>
+            {
+                Box::pin(async { json!({}) })
+            }
+        }
+        let controller = LocalBackendConnectionController::start(DeviceConfig::default()).await;
+        let profile = json!({"backend_url":"http://127.0.0.1:9", "auth_token":"test-token"});
+        controller.configure_backend(profile.clone()).await.unwrap();
+        let invalidated = Arc::new(AtomicBool::new(false));
+        controller.state.lock().await.plugin_sync = Some(Arc::new(Installer(invalidated.clone())));
+        controller.configure_backend(profile).await.unwrap();
+        assert!(!invalidated.load(Ordering::Acquire));
+        controller.configure_backend(json!({})).await.unwrap();
+        assert!(invalidated.load(Ordering::Acquire));
+        assert!(controller.state.lock().await.plugin_sync.is_none());
+    }
 
     #[tokio::test]
     async fn explicit_disconnect_is_distinct_from_a_fresh_executor_and_resets_on_connect() {
@@ -709,6 +817,23 @@ mod tests {
         assert_eq!(quota["data"]["remaining"], 845.21);
         assert_eq!(quota["quota_source"], "AIGC额度");
         server.abort();
+    }
+
+    #[test]
+    fn plugin_broker_inherits_the_configured_cloud_mode_without_an_ipc_override() {
+        let base = DeviceConfig {
+            device_type: "cloud".into(),
+            ..Default::default()
+        };
+        let mut profile = super::LocalBackendConnectionProfile {
+            connection: Default::default(),
+            registration_device_type: None,
+        };
+        assert!(super::plugin_auth_cloud_mode(&base, &profile));
+        profile.registration_device_type = Some("app".into());
+        assert!(!super::plugin_auth_cloud_mode(&base, &profile));
+        profile.registration_device_type = Some("remote".into());
+        assert!(super::plugin_auth_cloud_mode(&base, &profile));
     }
 
     #[test]

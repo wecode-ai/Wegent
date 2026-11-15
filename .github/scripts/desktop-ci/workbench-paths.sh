@@ -326,7 +326,11 @@ classify_workbench_path() {
       select_target "core:runtime-input-answer-persistence"
       return
       ;;
-    wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs)
+    wework/e2e/desktop/scenarios/runtime-input-answer-persistence.scenario.mjs | \
+      wework/e2e/desktop/scenarios/consecutive-questions.scenario.mjs | \
+      wework/e2e/desktop/modules/interaction-draft-windows.mjs | \
+      wework/e2e/desktop/modules/native-reply-recovery.mjs | \
+      wework/e2e/desktop/modules/pending-interactions-tab.mjs)
       select_target "core:runtime-input-answer-persistence"
       return
       ;;
@@ -426,6 +430,11 @@ classify_workbench_path() {
       wework/src/api/runtimeBackgroundTerminals.ts | \
       wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
       select_target "core:background-terminals"
+      return
+      ;;
+
+    wework/e2e/desktop/modules/harness-tool-result-order.*)
+      select_target "core:local-harness"
       return
       ;;
 

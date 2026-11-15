@@ -127,6 +127,7 @@ pub async fn forward(
     data: &Map<String, Value>,
 ) -> Result<Value, crate::BoxError> {
     let envelope = working_envelope(data, logical_device_id);
+    log_terminal_relay(&envelope, user_id, device_id, "received");
     if let Some(identity) = RuntimeIdentity::parse(&envelope)
         && let Some(projected) =
             runtime_projection::project(state, runtime, user_id, device_id, &identity).await?
@@ -174,7 +175,26 @@ pub async fn forward(
     publish_live(state, user_id, device_id, &envelope).await;
     forward_channel_event(state, logical_device_id, &envelope).await;
     notify_runtime_event(state, user_id, logical_device_id, &envelope).await;
+    log_terminal_relay(&envelope, user_id, device_id, "forwarded");
     Ok(accepted())
+}
+
+fn log_terminal_relay(envelope: &Value, user_id: i64, device_id: &str, phase: &str) {
+    let Some(event) = envelope["event"]
+        .as_str()
+        .filter(|event| TERMINAL_EVENT_TYPES.contains(event))
+    else {
+        return;
+    };
+    tracing::info!(
+        user_id,
+        device_id,
+        event,
+        phase,
+        task_id = envelope["payload"]["taskId"].as_str().unwrap_or_default(),
+        event_seq = envelope["payload"]["eventSeq"].as_u64(),
+        "runtime terminal relay"
+    );
 }
 
 /// `sio.emit(PROJECT_CHAT_* , message, room=project_chat_room(...))`.

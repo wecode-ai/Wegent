@@ -989,79 +989,6 @@ fn an_explicitly_empty_bind_shells_list_is_preserved_for_the_device_payload() {
     );
 }
 
-#[test]
-fn optional_skills_are_filtered_by_the_bot_shell() {
-    let mut skills = BotSkills {
-        skills: vec![json!({"name": "wegent-knowledge"}), json!({"name": "docx"})],
-        preload_skills: vec!["wegent-knowledge".to_string()],
-        ..BotSkills::default()
-    };
-    skills.skill_refs.insert(
-        "wegent-knowledge".to_string(),
-        json!({"skill_id": 1, "bind_shells": ["Chat", "ClaudeCode"]}),
-    );
-    skills.skill_refs.insert(
-        "docx".to_string(),
-        json!({"skill_id": 2, "bind_shells": ["ClaudeCode"]}),
-    );
-    let selected = select_runtime_skill_names(&skills, "Chat").expect("compatible preload");
-    assert_eq!(selected, vec!["wegent-knowledge".to_string()]);
-}
-
-#[test]
-fn a_required_skill_rejects_an_incompatible_shell() {
-    let mut skills = BotSkills {
-        skills: vec![json!({"name": "docx"})],
-        preload_skills: vec!["docx".to_string()],
-        ..BotSkills::default()
-    };
-    skills.skill_refs.insert(
-        "docx".to_string(),
-        json!({"skill_id": 2, "bind_shells": ["ClaudeCode"]}),
-    );
-    let error = select_runtime_skill_names(&skills, "Chat").expect_err("strict preload");
-    assert!(format!("{error:?}").contains("not compatible"));
-}
-
-/// `_filter_runtime_skills` prunes the reference map together with the
-/// selection: the runtime request advertises `skill_refs` verbatim, so a Skill
-/// dropped from `skills` must not survive there (nor in the derived
-/// `preload_skill_refs`).
-#[test]
-fn the_runtime_selection_prunes_the_reference_map_too() {
-    let mut skills = BotSkills {
-        skills: vec![json!({"name": "wegent-knowledge"}), json!({"name": "docx"})],
-        preload_skills: vec!["wegent-knowledge".to_string()],
-        user_selected_skills: vec!["wegent-knowledge".to_string(), "docx".to_string()],
-        ..BotSkills::default()
-    };
-    skills.skill_refs.insert(
-        "wegent-knowledge".to_string(),
-        json!({"skill_id": 1, "bind_shells": ["Chat", "ClaudeCode"]}),
-    );
-    skills.skill_refs.insert(
-        "docx".to_string(),
-        json!({"skill_id": 2, "bind_shells": ["ClaudeCode"]}),
-    );
-    let selected = select_runtime_skill_names(&skills, "Chat").expect("compatible preload");
-    retain_runtime_skills(&mut skills, &selected);
-    let names: Vec<Value> = skills
-        .skills
-        .iter()
-        .filter_map(|entry| entry.get("name").cloned())
-        .collect();
-    assert_eq!(names, vec![json!("wegent-knowledge")]);
-    let keys: Vec<String> = skills.skill_refs.keys().cloned().collect();
-    assert_eq!(keys, vec!["wegent-knowledge".to_string()]);
-    let preload = super::preload_skill_refs(&skills);
-    assert_eq!(
-        preload
-            .as_object()
-            .map(|refs| refs.keys().cloned().collect::<Vec<_>>()),
-        Some(vec!["wegent-knowledge".to_string()])
-    );
-}
-
 /// `skill_resolution.get_runtime_skill_shells` applies to `skill_configs`
 /// too: the built-in public `default` interactive-form Skill keeps its
 /// shipped Codex compatibility, so `bindShells` and the ref's `bind_shells`
@@ -1079,31 +1006,4 @@ fn the_interactive_skill_keeps_its_codex_binding_in_the_config() {
     );
     let data = build_skill_data(&row, Some("")).expect("skill data");
     assert_eq!(data["bindShells"], json!(["ClaudeCode", "Codex"]));
-}
-
-#[test]
-fn shell_restricted_bindings_filter_before_routing() {
-    let mut bindings = vec![
-        json!({"name": "web-tools", "skill_id": 1, "bind_shells": ["Chat"]}),
-        json!({"name": "notes", "skill_id": 2}),
-        json!({"name": "claude-only", "skill_id": 3, "bind_shells": ["ClaudeCode", "Codex"]}),
-    ];
-    assert!(binding_refs_restrict_shell(&bindings));
-
-    retain_shell_compatible_bindings(&mut bindings, "ClaudeCode");
-
-    assert_eq!(
-        bindings
-            .iter()
-            .filter_map(|reference| reference["name"].as_str())
-            .collect::<Vec<_>>(),
-        ["notes", "claude-only"]
-    );
-
-    let unrestricted = vec![json!({"name": "notes", "skill_id": 2})];
-    assert!(!binding_refs_restrict_shell(&unrestricted));
-    assert!(!binding_refs_restrict_shell(&[json!({
-        "name": "empty",
-        "bind_shells": [],
-    })]));
 }

@@ -386,12 +386,30 @@ export class AppUpdateService {
     }
   }
 
-  private async registerInstalledRelease(): Promise<void> {
+  async reconcileInstalledRelease(
+    components: ComponentPaths | null
+  ): Promise<DesktopRelease | null> {
+    if (!this.options.isPackaged || process.platform !== 'win32') return null
+    const store = this.options.store
+    const current = await store.active()
+    if (
+      !current?.id.startsWith('installed-') ||
+      current.version === this.options.currentVersion ||
+      resolve(current.executable) !== resolve(this.options.executable) ||
+      (await store.activation())
+    )
+      return null
+    await this.registerInstalledRelease(components)
+    return store.active()
+  }
+
+  private async registerInstalledRelease(runningComponents?: ComponentPaths | null): Promise<void> {
     const store = this.options.store
     const current = await store.active()
     const runningRelease = current?.version === this.options.currentVersion
     if (runningRelease && !current.id.startsWith('installed-')) return
-    const components = await this.options.runningComponents?.()
+    const components =
+      runningComponents === undefined ? await this.options.runningComponents?.() : runningComponents
     if (!components) throw new Error('The running release component composition is unavailable')
     const id = runningRelease
       ? current.id

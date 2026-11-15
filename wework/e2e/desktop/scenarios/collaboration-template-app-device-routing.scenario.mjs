@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { openDirectProjectCreation } from '../modules/workspace-flows.mjs'
+import { verifyProjectAgentEditing } from '../modules/project-agent-editing.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -193,6 +194,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'The APP device must be authorized on the created project'
       )
       await captureScreenshot(control, 'template-app-device-routing-created.png', CONTENT)
+      await verifyProjectAgentEditing(control, CONTENT, project, agents[0], request)
     },
   }
 }

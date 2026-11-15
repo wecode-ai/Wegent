@@ -4251,16 +4251,18 @@ async fn terminate_codex_app_server_child(child: &mut Child) {
 }
 
 fn signal_codex_app_server_child(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
-    }
-
     #[cfg(unix)]
     if let Some(process_group_id) = child.id() {
+        // Signal the group before reaping its leader. The app-server can
+        // exit on stdin EOF while its tool children are still running.
         unsafe {
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
             let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
         }
+        return;
+    }
+
+    if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }
 
@@ -4947,15 +4949,22 @@ fn codex_collaboration_config_overrides(request: &ExecutionRequest) -> Vec<Strin
             CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
         ];
     }
-    if request
-        .extra
-        .get("origin")
-        .and_then(|origin| origin.get("type"))
-        .and_then(Value::as_str)
-        == Some("stand_in_identity")
+    let explicit_native_mode =
+        matches!(codex_collaboration_mode(request), Some("default" | "plan"));
+    if explicit_native_mode
+        || request
+            .extra
+            .get("origin")
+            .and_then(|origin| origin.get("type"))
+            .and_then(Value::as_str)
+            == Some("stand_in_identity")
     {
-        // Stand-in chat needs the native mailbox wait that also wakes on user input.
-        return vec![CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned()];
+        // A resumed thread retains its agent family, including an earlier disabled state.
+        // Explicit native modes and stand-in chat require the V2 mailbox tools.
+        return vec![
+            "agents.enabled=true".to_owned(),
+            CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE.to_owned(),
+        ];
     }
     Vec::new()
 }

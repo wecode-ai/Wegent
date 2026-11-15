@@ -43,6 +43,32 @@ impl AuthFailure {
     }
 }
 
+/// Preserve Native authorization without granting or weakening Device access.
+pub(super) fn preserve_native_fields(previous: &Value, next: &mut Value) {
+    if let Some(observations) = previous.get("nativeAuthSources") {
+        next["nativeAuthSources"] = observations.clone();
+    }
+    if let Some(grants) = previous.get("localGrants") {
+        next["localGrants"] = if previous["authDefinition"] == next["authDefinition"] {
+            grants.clone()
+        } else {
+            json!({})
+        };
+    }
+}
+
+/// Keep revocation ownership before dropping access on either transport.
+pub(super) fn revoke_native_fields(spec: &mut Value) {
+    if let Some(grants) = spec.get("localGrants").cloned() {
+        if !grants.as_object().is_none_or(|g| g.is_empty())
+            && spec["oauthRevocation"].get("credential").is_some()
+        {
+            spec["oauthRevocation"]["localPrincipals"] = grants;
+        }
+        spec["localGrants"] = json!({});
+    }
+}
+
 /// `_coordinate_owner`'s owner read: `filter(User.id == user_id).first()`.
 const OWNER_QUERY: &str = "SELECT users.id AS users_id, users.is_active AS users_is_active \
      FROM users WHERE users.id = ? LIMIT 1";
@@ -339,6 +365,38 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn legacy_replacement_preserves_only_valid_native_authorization() {
+        let old = json!({"authDefinition":{"adapter":"auth.py"},"localGrants":{"key":true},"nativeAuthSources":{"key":{"digest":"observed"}}});
+        let mut next = json!({"authDefinition":old["authDefinition"]});
+        preserve_native_fields(&old, &mut next);
+        assert_eq!(next["localGrants"], old["localGrants"]);
+        assert_eq!(next["nativeAuthSources"], old["nativeAuthSources"]);
+        next["authDefinition"] = json!({"adapter":"changed.py"});
+        preserve_native_fields(&old, &mut next);
+        assert_eq!(next["localGrants"], json!({}));
+        let mut legacy = json!({"authDefinition":{}});
+        preserve_native_fields(&json!({"authDefinition":{}}), &mut legacy);
+        revoke_native_fields(&mut legacy);
+        assert_eq!(
+            legacy,
+            json!({"authDefinition":{}}),
+            "legacy-only records gain no new fields"
+        );
+    }
+
+    #[test]
+    fn legacy_logout_revokes_native_grants_and_preserves_revoke_ownership() {
+        let mut spec = json!({"localGrants":{"key":true},"deviceGrants":{"device":{}},"oauthRevocation":{"state":"pending","credential":{"version":1}}});
+        revoke_native_fields(&mut spec);
+        assert_eq!(spec["localGrants"], json!({}));
+        assert_eq!(
+            spec["oauthRevocation"]["localPrincipals"],
+            json!({"key":true})
+        );
+        assert_eq!(spec["deviceGrants"], json!({"device":{}}));
+    }
 
     #[test]
     fn source_identity_sorts_and_compacts_the_five_fields() {

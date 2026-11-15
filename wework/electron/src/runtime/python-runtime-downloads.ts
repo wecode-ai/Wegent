@@ -14,6 +14,13 @@ export class PythonRuntimeLoginRequiredError extends Error {
 
 export const PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS = 200
 
+export class PythonRuntimeDownloadTimeoutError extends Error {
+  readonly code = 'python_runtime_download_timeout'
+  constructor() {
+    super(`Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms`)
+  }
+}
+
 interface DownloadConfigOptions {
   connection: () => Promise<unknown>
   accessToken: (apiBaseUrl: string, connection: Record<string, unknown>) => Promise<string>
@@ -70,15 +77,12 @@ export function validatePythonRuntimeDownloads(
   return { uvUrl: data!.uvUrl!, pythonUrl: data!.pythonUrl! }
 }
 
-async function metadataRequest(
-  load: (signal: AbortSignal) => Promise<PythonRuntimeDownloads>
-): Promise<PythonRuntimeDownloads> {
+async function metadataRequest<Result>(
+  load: (signal: AbortSignal) => Promise<Result>
+): Promise<Result> {
   const controller = new AbortController()
   const deadline = performance.now() + PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS
-  const error = () =>
-    new Error(
-      `Python download configuration timed out after ${PYTHON_DOWNLOAD_CONFIG_TIMEOUT_MS}ms`
-    )
+  const error = () => new PythonRuntimeDownloadTimeoutError()
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
@@ -110,7 +114,7 @@ export async function fetchPythonRuntimeDownloads(
     throw new Error('Python download configuration: Backend changed during request')
   const platform = options.platform ?? process.platform
   const arch = options.arch ?? process.arch
-  return metadataRequest(async signal => {
+  const payload = await metadataRequest(async signal => {
     const response = await options.fetch(`${api}/wework/runtime-downloads`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -119,27 +123,24 @@ export async function fetchPythonRuntimeDownloads(
     })
     if (response.status === 401) throw new PythonRuntimeLoginRequiredError()
     if (!response.ok) throw new Error(`Python download configuration: HTTP ${response.status}`)
-    const payload = await response.json().catch(() => {
+    return response.json().catch(() => {
       throw new Error('Python download configuration: invalid response')
     })
-    if (payload?.uv?.version !== '0.9.5' || payload?.python?.version !== '3.12.12')
-      throw new Error('Python download configuration: invalid runtime version')
-    if (
-      payload.expiresAt != null &&
-      (!Number.isFinite(Date.parse(payload.expiresAt)) ||
-        Date.parse(payload.expiresAt) <= Date.now())
-    )
-      throw new Error('Python download configuration: expired download addresses')
-    const result = validatePythonRuntimeDownloads(
-      { uvUrl: payload?.uv?.url, pythonUrl: payload?.python?.url },
-      platform as NodeJS.Platform,
-      arch
-    )
-    if (apiUrl(await options.connection()) !== api)
-      throw new Error('Python download configuration: Backend changed during request')
-    signal.throwIfAborted()
-    return result
   })
+  if (payload?.uv?.version !== '0.9.5' || payload?.python?.version !== '3.12.12')
+    throw new Error('Python download configuration: invalid runtime version')
+  if (apiUrl(await options.connection()) !== api)
+    throw new Error('Python download configuration: Backend changed during request')
+  if (
+    payload.expiresAt != null &&
+    (!Number.isFinite(Date.parse(payload.expiresAt)) || Date.parse(payload.expiresAt) <= Date.now())
+  )
+    throw new Error('Python download configuration: expired download addresses')
+  return validatePythonRuntimeDownloads(
+    { uvUrl: payload?.uv?.url, pythonUrl: payload?.python?.url },
+    platform as NodeJS.Platform,
+    arch
+  )
 }
 
 /** Development windows obtain addresses through the parent, never its login credentials. */

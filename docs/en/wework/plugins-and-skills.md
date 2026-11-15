@@ -16,6 +16,12 @@ You can also ask “Where are proxy settings?”, “How do I open a terminal?�
 
 ## Use plugins
 
+### Local installation and synchronization to other devices
+
+On versions that support local execution, when the capability is enabled for your account, keep your account signed in, the network available and the local runtime running. You can install, remove, update and refresh/repair plugins even while this device is not connected to the cloud. Other cloud devices synchronize independently in the background; their offline state or sync failures do not delay local completion. Older versions retain their original connection requirements.
+
+An installed plugin can still require account authorization. Open its details and connect the required apps before using their protected capabilities. Refreshing does not authorize apps or switch accounts. After an interruption, reopen the plugin page and refresh to recover unfinished local work.
+
 <!-- ui-source: src/components/settings/PluginSettingsPage.tsx -->
 
 ### Individual plugin operations

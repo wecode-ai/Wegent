@@ -1146,3 +1146,12 @@ path = "/api/v1/wework-human-requests"
 [[routes]]
 methods = ["PUT"]
 path = "/api/im/private-sessions/:session_key/stand-in"
+
+# Account HTTP local plugin execution; independent of Device registration.
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/local-sync"
+
+[[routes]]
+methods = ["POST"]
+path = "/api/plugins/native-auth/exchange"

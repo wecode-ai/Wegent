@@ -1631,6 +1631,8 @@ export interface PluginMarketplaceInstallResponse {
 
 export interface PluginDeviceSyncResponse {
   reconciled?: boolean
+  /** Local HTTP execution changed the observed account snapshot. */
+  localChanged?: boolean
   deviceId: string
   pendingCount: number
   sync: DeviceCapabilitySyncResponse

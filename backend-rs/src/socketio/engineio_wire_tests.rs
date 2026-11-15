@@ -43,6 +43,85 @@ struct WireServer {
     handle: tokio::task::JoinHandle<()>,
 }
 
+async fn emit_terminal_sequence(
+    server: &WireServer,
+    session: &str,
+    sequence: i64,
+) -> (usize, usize) {
+    server
+        .emitters
+        .emit_room(
+            super::runtime::TERMINAL_NAMESPACE,
+            "terminal:output",
+            &format!("terminal:{session}"),
+            None,
+            &ArgsTuple(&[json!({"session_id":session,"sequence":sequence})]),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn terminal_replay_is_bound_before_ack_and_failed_attachment_restores_prior_room() {
+    let server = WireServer::start().await;
+    let client = PollClient::connect(&server.addr, super::runtime::TERMINAL_NAMESPACE, "{}")
+        .await
+        .expect("terminal browser");
+    let browser = Arc::new(client.into_poller());
+    let polling = tokio::spawn(Arc::clone(&browser).run());
+    let binding = server
+        .emitters
+        .bind_terminal_room(browser.socket_id(), "first", None)
+        .expect("live authorized browser");
+    // An executor may replay before its attach ACK: the first bytes cannot be lost.
+    for sequence in 1..=3 {
+        assert_eq!(
+            emit_terminal_sequence(&server, "first", sequence).await,
+            (1, 0)
+        );
+        let event = browser
+            .next_event((sequence - 1) as usize, WINDOW)
+            .await
+            .expect("pre-ACK replay reaches browser");
+        assert_eq!(event.args[0]["sequence"], sequence);
+    }
+    binding.commit();
+    // A rejected or cancelled switch leaves the current terminal available.
+    drop(
+        server
+            .emitters
+            .bind_terminal_room(browser.socket_id(), "rejected", Some("first")),
+    );
+    assert_eq!(emit_terminal_sequence(&server, "rejected", 1).await, (0, 0));
+    drop(
+        server
+            .emitters
+            .bind_terminal_room(browser.socket_id(), "first", Some("first")),
+    );
+    assert_eq!(emit_terminal_sequence(&server, "first", 4).await, (1, 0));
+    browser
+        .next_event(3, WINDOW)
+        .await
+        .expect("failed reattach preserves existing room");
+    server
+        .emitters
+        .bind_terminal_room(browser.socket_id(), "second", Some("first"))
+        .expect("switch room")
+        .commit();
+    assert_eq!(emit_terminal_sequence(&server, "first", 5).await, (0, 0));
+    assert_eq!(emit_terminal_sequence(&server, "second", 1).await, (1, 0));
+    let event = browser.next_event(4, WINDOW).await.expect("new room");
+    assert_eq!(event.args[0]["session_id"], "second");
+    assert!(
+        server
+            .emitters
+            .bind_terminal_room("invalid-socket", "first", None)
+            .is_none()
+    );
+    polling.abort();
+    let _ = server.stop.send(());
+    server.handle.await.expect("server stops");
+}
+
 impl WireServer {
     /// Build the local server with the four namespaces `SocketEmitters` needs.
     async fn start() -> Self {

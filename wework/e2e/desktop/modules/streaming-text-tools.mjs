@@ -304,6 +304,11 @@ export function createStreamingToolChecks({
   }
 
   const verifySubagentStreamingPanel = async control => {
+    // X11 shrinks display-sized normal frames by one pixel. Capture a maximized
+    // baseline so cleanup can restore an attainable native window state.
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1280, height: 720, maximized: true }),
+    })
     const previousSize = JSON.parse(
       await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1600, height: 900 }),
