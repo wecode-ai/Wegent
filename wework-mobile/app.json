@@ -26,7 +26,12 @@
       "predictiveBackGestureEnabled": true
     },
     "plugins": [
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
       "expo-web-browser",
       "expo-document-picker",
       [

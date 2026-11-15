@@ -6,7 +6,7 @@ sidebar_position: 100
 
 Last updated: November 15, 2026
 
-This notice covers WeWork Mobile, the Wegent mobile client. The app supports phone-local execution and optional connections to user-provided Wegent deployments. Execution tools and AI model inference can run in different locations.
+This notice covers WeWork Mobile, the Wegent mobile client published and maintained by the developer identified on its App Store page. The app supports phone-local execution and optional connections to user-provided Wegent deployments. Execution tools and AI model inference can run in different locations.
 
 ## Data on your device
 
@@ -38,12 +38,16 @@ Task transcripts and technical diagnostics may be kept on the device for convers
 
 ## Managing and deleting data
 
+Local projects, files and execution records remain until you delete the corresponding material or app container. Model providers and Wegent deployment operators set their own retention periods. This app does not promise a uniform retention period for those services.
+
 You can remove model settings, sign out of model accounts and explicitly delete unwanted working files and execution records in the local environment. Deleting a configuration or conversation does not necessarily delete independent project files, tool transcripts or server-side copies.
+
+You can stop sending tasks, remove model settings or sign out of model accounts at any time to stop subsequent task-data sharing with that provider; this does not automatically retract data already sent. Contact the address below to request access, correction or deletion of personal information received by the developer through feedback you submit. Contact the respective operator about data controlled by a model provider or Wegent deployment.
 
 iOS manages removal of the app container on uninstall. Secure storage or system backups may retain information separately. Sign out and remove unused model settings before uninstalling. Contact your model provider or Wegent deployment operator to request removal of their stored data.
 
 ## Contact and updates
 
-For privacy questions about this client, contact the existing beta feedback address: [yudexiaozhou@gmail.com](mailto:yudexiaozhou@gmail.com). Do not include passwords, API keys or other people's private information in feedback.
+For privacy questions about this client, contact the existing beta feedback address: yudexiaozhou@gmail.com. Do not include passwords, API keys or other people's private information in feedback.
 
 This notice will be updated as actual data handling changes, with the update date shown above.

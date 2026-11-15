@@ -3,6 +3,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsScreen, BackendLoginScreen, LocalExecutionScreen } from './SettingsScreen'
 import { PhoneModelEditorScreen } from './PhoneModelsScreen'
+import { PrivacyPolicyScreen } from './PrivacyPolicyScreen'
+import policies from '@/content/mobilePrivacyPolicy.json'
 import type { WegentAuthState } from '@/auth/useWegentAuth'
 import type { LocalRuntime } from '@/services/localRuntime'
 
@@ -108,6 +110,7 @@ describe('full-page local settings', () => {
       const onClose = vi.fn()
       const onModels = vi.fn()
       const onBackend = vi.fn()
+      const onPrivacy = vi.fn()
       await act(() => {
         renderer = create(
           <SettingsScreen
@@ -118,6 +121,7 @@ describe('full-page local settings', () => {
             onModels={onModels}
             onBackend={onBackend}
             onExecution={vi.fn()}
+            onPrivacy={onPrivacy}
           />
         )
       })
@@ -133,9 +137,41 @@ describe('full-page local settings', () => {
       expect(onModels).toHaveBeenCalledOnce()
       expect(onBackend).toHaveBeenCalledOnce()
       expect(onClose).toHaveBeenCalledOnce()
-      expect(privacy.open).toHaveBeenCalledOnce()
+      expect(onPrivacy).toHaveBeenCalledOnce()
+      expect(privacy.open).not.toHaveBeenCalled()
     }
   )
+  it.each(['zh', 'en'] as const)(
+    'reads the complete %s privacy policy offline with native scrolling',
+    async language => {
+      const onBack = vi.fn()
+      await act(() => {
+        renderer = create(<PrivacyPolicyScreen onBack={onBack} />)
+      })
+      await act(() => control(`privacy-language-${language}`).props.onPress())
+      const policy = policies[language]
+      const text = renderer.root.findAllByType('Text' as never)
+      for (const paragraph of [
+        ...policy.introduction,
+        ...policy.sections.flatMap(section => section.paragraphs),
+      ]) {
+        const node = text.find(value => value.props.children === paragraph)
+        expect(node?.props.selectable).toBe(true)
+      }
+      for (const heading of [policy.title, ...policy.sections.map(section => section.title)]) {
+        expect(text.find(value => value.props.children === heading)?.props.accessibilityRole).toBe(
+          'header'
+        )
+      }
+      expect(control('settings-page-scroll')).toBeDefined()
+      expect(privacy.open).not.toHaveBeenCalled()
+      await act(() => control('privacy-public-version').props.onPress())
+      expect(privacy.open).toHaveBeenCalledExactlyOnceWith(language)
+      await act(() => control('settings-back').props.onPress())
+      expect(onBack).toHaveBeenCalledOnce()
+    }
+  )
+
   it('closes optional Backend authorization by cancelling only that login', async () => {
     const session = auth()
     const onClose = vi.fn()
@@ -195,7 +231,12 @@ describe('full-page local settings', () => {
       const onBack = vi.fn()
       await act(() => {
         renderer = create(
-          <PhoneModelEditorScreen runtime={runtime} onBack={onBack} onChanged={vi.fn()} />
+          <PhoneModelEditorScreen
+            runtime={runtime}
+            onBack={onBack}
+            onChanged={vi.fn()}
+            onPrivacy={vi.fn()}
+          />
         )
       })
       expect(control('settings-form-scroll').type).toBe('KeyboardAwareScrollView')
@@ -217,10 +258,16 @@ describe('full-page local settings', () => {
   it('preserves the draft and stored models when sharing confirmation is cancelled', async () => {
     const runtime = { status, request: vi.fn().mockResolvedValue({}) } as unknown as LocalRuntime
     const onBack = vi.fn()
+    const onPrivacy = vi.fn()
     privacy.confirm.mockImplementationOnce(() => undefined)
     await act(() => {
       renderer = create(
-        <PhoneModelEditorScreen runtime={runtime} onBack={onBack} onChanged={vi.fn()} />
+        <PhoneModelEditorScreen
+          runtime={runtime}
+          onBack={onBack}
+          onChanged={vi.fn()}
+          onPrivacy={onPrivacy}
+        />
       )
     })
     await act(() => control('local-model-modelId').props.onChangeText('test-model'))
@@ -230,7 +277,7 @@ describe('full-page local settings', () => {
     expect(onBack).not.toHaveBeenCalled()
     expect(control('local-model-modelId').props.value).toBe('test-model')
     await act(() => control('local-model-privacy-read').props.onPress())
-    expect(privacy.open).toHaveBeenCalledOnce()
+    expect(onPrivacy).toHaveBeenCalledOnce()
     expect(stored.raw).toBeNull()
   })
 
@@ -246,7 +293,12 @@ describe('full-page local settings', () => {
     const onBack = vi.fn()
     await act(() => {
       renderer = create(
-        <PhoneModelEditorScreen runtime={runtime} onBack={onBack} onChanged={vi.fn()} />
+        <PhoneModelEditorScreen
+          runtime={runtime}
+          onBack={onBack}
+          onChanged={vi.fn()}
+          onPrivacy={vi.fn()}
+        />
       )
     })
     await act(() => control('local-model-modelId').props.onChangeText('test-model'))

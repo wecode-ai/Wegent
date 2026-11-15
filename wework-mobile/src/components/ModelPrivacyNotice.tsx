@@ -1,8 +1,14 @@
 import { StyleSheet, View } from 'react-native'
 import { Button, Text, useTheme } from 'react-native-paper'
-import { MODEL_DATA_SHARING_NOTICE, openPrivacyPolicy } from '@/services/privacyPolicy'
+import { MODEL_DATA_SHARING_NOTICE } from '@/services/privacyPolicy'
 
-export function ModelPrivacyNotice({ testID }: { testID: string }) {
+export function ModelPrivacyNotice({
+  testID,
+  onReadPolicy,
+}: {
+  testID: string
+  onReadPolicy: () => void
+}) {
   const theme = useTheme()
   return (
     <View testID={testID} style={styles.notice}>
@@ -11,7 +17,7 @@ export function ModelPrivacyNotice({ testID }: { testID: string }) {
       </Text>
       <Button
         testID={`${testID}-read`}
-        onPress={() => void openPrivacyPolicy()}
+        onPress={onReadPolicy}
         style={styles.link}
         contentStyle={styles.linkContent}
       >

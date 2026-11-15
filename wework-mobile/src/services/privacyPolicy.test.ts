@@ -34,6 +34,13 @@ describe('model sharing disclosure', () => {
     expect(ui.error).toHaveBeenCalledWith(cause, { title: '无法打开隐私政策' })
   })
 
+  it('opens the English public policy when that language is selected', async () => {
+    await openPrivacyPolicy('en')
+    expect(ui.open).toHaveBeenCalledWith(
+      'https://github.com/wecode-ai/Wegent/blob/main/docs/en/wework/mobile-privacy.md'
+    )
+  })
+
   it('defers model configuration or login until explicit native confirmation', async () => {
     const operation = vi.fn().mockResolvedValue(undefined)
     confirmModelDataSharing(operation)
