@@ -1481,6 +1481,13 @@ class RealCloudEnvironment {
       assert.equal(current.status, 'online')
     }
     await assertOriginalAppRegistration()
+    await stopProcessGroup(executor)
+    await waitForAliasStatus('offline', historical.runtime_instance_id)
+    await assertOriginalAppRegistration()
+    return historical
+  }
+
+  async waitForRunnerCatalog(deviceRecordId) {
     // Registration precedes model discovery; preserve a real catalog before disconnecting.
     await waitForBoardValue(
       async () => {
@@ -1491,17 +1498,13 @@ class RealCloudEnvironment {
             signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
           }
         )
-        const catalog = environments.find(device => device.id === String(historical.id))
+        const catalog = environments.find(device => device.id === String(deviceRecordId))
         return catalog?.models.some(model => model.runtime === 'codex' && model.is_default) === true
       },
       true,
-      `The historical device must publish its default Codex model before disconnecting; see ${logPath}`,
+      `Executor ${deviceRecordId} must publish its default Codex model before disconnecting`,
       WORKBENCH_READY_TIMEOUT_MS
     )
-    await stopProcessGroup(executor)
-    await waitForAliasStatus('offline', historical.runtime_instance_id)
-    await assertOriginalAppRegistration()
-    return historical
   }
 
   async seedCloudProtocolModels() {

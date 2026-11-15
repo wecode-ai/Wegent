@@ -11,7 +11,7 @@ const selector = id => `${CONTENT} [data-testid="${id}"]`
 export async function verifyProjectAgentRoutingRecovery(
   control,
   cloud,
-  historical,
+  targetDevice,
   environment,
   options
 ) {
@@ -49,7 +49,7 @@ export async function verifyProjectAgentRoutingRecovery(
   const executionPolicy = original.executionPolicy ?? original.execution_policy
   const modelPolicy = original.modelPolicy ?? original.model_policy
   const originalEnvironmentId = executionPolicy.environment_id
-  assert.notEqual(originalEnvironmentId, String(historical.id))
+  assert.notEqual(originalEnvironmentId, String(targetDevice.id))
   for (const automation of await request(`${base}/automations`)) {
     if (automation.enabled)
       await request(`${base}/automations/${automation.id}`, {
@@ -59,16 +59,16 @@ export async function verifyProjectAgentRoutingRecovery(
   }
   await request(`/api/v1/workspaces/${project.workspace_id}/execution-environments`, {
     method: 'POST',
-    body: { device_id: historical.id },
+    body: { device_id: targetDevice.id },
   })
   await request(`${base}/execution-environments`, {
     method: 'POST',
-    body: { device_id: historical.id },
+    body: { device_id: targetDevice.id },
   })
   const environments = await request(
     `/api/v1/resources/execution-environments?project_id=${project.id}`
   )
-  const target = environments.find(row => row.id === String(historical.id))
+  const target = environments.find(row => row.id === String(targetDevice.id))
   const targetModel = target?.models.find(row => row.runtime === 'codex' && row.is_default)
   assert.ok(targetModel, 'The target device must declare its actual default Codex model')
   const targetModelPolicy = {
@@ -124,7 +124,7 @@ export async function verifyProjectAgentRoutingRecovery(
     body: {
       name: '跨设备研发智能体',
       runtime: 'codex',
-      execution_policy: { mode: 'fixed', environment_id: String(historical.id) },
+      execution_policy: { mode: 'fixed', environment_id: String(targetDevice.id) },
       model_policy: targetModelPolicy,
       execution_mode: 'auto',
       system_prompt: 'Return the requested result without tools.',
@@ -191,7 +191,7 @@ export async function verifyProjectAgentRoutingRecovery(
   await confirmRecovery()
   await control.command('waitFor', alert, { text: group.name })
   const groupError = await control.command('getText', alert)
-  for (const text of [conflict.name, originalEnvironmentId, String(historical.id)])
+  for (const text of [conflict.name, originalEnvironmentId, String(targetDevice.id)])
     assert.ok(groupError.includes(text), `Group error must identify ${text}: ${groupError}`)
   await control.command('waitFor', selector('cloud-todo-state-assignee'), { text: agent.name })
   const deniedGroup = await request(`/api/v1/loop-items/${completed.id}`)
@@ -218,8 +218,8 @@ export async function verifyProjectAgentRoutingRecovery(
   )
   assert.equal(await boundEnvironment(completed.id), originalEnvironmentId)
   await environment.startGeneratedRemoteDevice({
-    deviceId: historical.device_id,
-    deviceName: historical.name,
+    deviceId: targetDevice.device_id,
+    deviceName: targetDevice.name,
     authToken: cloud.authToken,
   })
   await waitForBoardValue(
@@ -227,7 +227,7 @@ export async function verifyProjectAgentRoutingRecovery(
       reassigned = await request('/api/v1/loop-items/' + completed.id)
       return (
         reassigned.execution_state === 'succeeded' &&
-        (await boundEnvironment(completed.id)) === String(historical.id)
+        (await boundEnvironment(completed.id)) === String(targetDevice.id)
       )
     },
     true,
@@ -294,7 +294,7 @@ export async function verifyProjectAgentRoutingRecovery(
     method: 'DELETE',
   })
   await control.command('waitFor', selector('cloud-todo-state-assignee'), { text: agent.name })
-  assert.equal(await boundEnvironment(completed.id), String(historical.id))
+  assert.equal(await boundEnvironment(completed.id), String(targetDevice.id))
   await assign(conflict.id)
   await confirmRecovery()
   await waitForBoardValue(
