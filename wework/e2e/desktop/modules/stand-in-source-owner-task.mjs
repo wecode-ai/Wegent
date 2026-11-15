@@ -288,6 +288,12 @@ export function createSourceOwnerTaskStory(options) {
         const source = works.items.find(item => item.roleId === ROLE)
         assert.ok(source)
         assert.notEqual(source.taskId, state.child)
+        await storyUntil(
+          () => rpc('runtime.tasks.get', { taskId: source.taskId }),
+          value => value.task?.status === 'done',
+          options.modelResponseTimeoutMs,
+          'The source reply turn must complete before testing a different participant'
+        )
         state.thirdParty = true
         const settings = await rpc('runtime.stand_in.personal.get', { userId: 9001 })
         const role = settings.roles.find(item => item.id === ROLE)

@@ -224,7 +224,17 @@ impl RuntimeWorkRpcHandler {
         let mut request = link.runtime_handle["executionRequest"].clone();
         request["prompt"] = json!(message);
         // Source-driven orchestration never elevates an existing conversation.
-        request["standInDelegation"] = json!({"sourceTaskId":identity.task_id,"userId":identity.user,"askBeforeAct":link.runtime_handle["origin"]["askBeforeAct"] == true || link.runtime_handle["executionRequest"]["standInDelegation"]["askBeforeAct"] == true});
+        let mut delegation = if request["standInDelegation"]["sourceMessageId"].is_string() {
+            self.source_task_parent(&link)?;
+            request["standInDelegation"].clone()
+        } else {
+            json!({"sourceTaskId":identity.task_id,"userId":identity.user})
+        };
+        delegation["askBeforeAct"] = json!(
+            link.runtime_handle["origin"]["askBeforeAct"] == true
+                || request["standInDelegation"]["askBeforeAct"] == true
+        );
+        request["standInDelegation"] = delegation;
         use sha2::{Digest, Sha256};
         let command = format!("stand-in-task:{:x}", Sha256::digest(client.as_bytes()));
         Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await

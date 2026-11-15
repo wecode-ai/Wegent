@@ -166,6 +166,23 @@ mod tests {
                     .contains(args["messageId"].as_str().unwrap()));
                 child.runtime_handle["standInResultReceipt"] = delivery["commandId"].clone();
                 assert!(handler.stand_in_result_delivery(&child).is_none());
+                handler.store.update_task(id, |link| {
+                    link.thread_id = Some("worker-thread".into());
+                    link.status = "done".into();
+                });
+                handler.upsert_local_task(RuntimeTaskLink {
+                    local_task_id: "primary".into(), runtime: "codex".into(),
+                    runtime_handle: json!({"origin":{"type":"stand_in_identity","userId":7,"deviceId":"mac"},"executionRequest":{"user_id":7}}),
+                    ..Default::default()
+                });
+                let primary = StandInMcpIdentity { task_id:"primary".into(), role:None, work:None, ..identity.clone() };
+                let continued = handler.stand_in_task_operation(primary,"continue_task",json!({"taskId":id,"requestId":"followup","message":"Continue the same repair"})).await.unwrap();
+                assert_eq!(continued["accepted"],true);
+                let queue = handler.turn_scheduler.lock().unwrap();
+                let continued = queue.queued_turns.iter().find(|turn| turn.local_task_id == id).unwrap();
+                assert_eq!(continued.request.extra["standInDelegation"]["sourceTaskId"],identity.task_id);
+                assert_eq!(continued.request.extra["standInDelegation"]["sourceMessageId"],args["messageId"]);
+                drop(queue);
                 let mut invalid = args.clone();
                 invalid["readSources"] = json!([]);
                 assert!(handler
