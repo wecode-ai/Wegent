@@ -19,6 +19,7 @@ import {
   createDefaultLocalModelCatalogEntry,
   normalizeLocalModelCatalogEntry,
 } from '../../../wework/src/features/model-settings/localModelCatalog'
+import { localModelSupportsImageInput } from '../../../wework/src/features/model-settings/localModelProviders'
 import { SettingsAction, SettingsPage, settingsStyles } from './SettingsScreen'
 import {
   ProviderChoices,
@@ -134,6 +135,33 @@ export function PhoneModelEditorScreen({
       : {})
   const catalog = (value: Record<string, unknown>) =>
     patch({ catalog_entry: { ...entry, ...value } })
+  const visionChoices =
+    state.captured.current?.providers
+      .filter(provider => provider.enabled !== false)
+      .flatMap(provider =>
+        provider.models
+          .filter(
+            row =>
+              row.id !== model?.id &&
+              row.enabled !== false &&
+              localModelSupportsImageInput({
+                catalogEntry: row.catalog_entry,
+                providerProfileId: row.provider_profile_id,
+                modelId: row.model_id,
+                baseUrl: provider.base_url,
+                apiFormat: row.api_format ?? provider.api_format,
+              })
+          )
+          .map(row => ({ value: row.id, label: row.display_name || row.model_id }))
+      ) ?? []
+  if (
+    model?.vision_model_config_id &&
+    !visionChoices.some(choice => choice.value === model.vision_model_config_id)
+  )
+    visionChoices.push({
+      value: model.vision_model_config_id,
+      label: `当前配置：${model.vision_model_config_id}`,
+    })
   let endpoint = ''
   try {
     if (state.draft && model) endpoint = phoneModelRequestUrl(state.draft, model)
@@ -304,14 +332,7 @@ export function PhoneModelEditorScreen({
                 id="local-model-vision"
                 label="视觉辅助模型"
                 value={model.vision_model_config_id ?? ''}
-                choices={[
-                  { value: '', label: '关闭' },
-                  ...(state.captured.current?.providers.flatMap(provider =>
-                    provider.models
-                      .filter(row => row.id !== model.id && row.enabled !== false)
-                      .map(row => ({ value: row.id, label: row.display_name || row.model_id }))
-                  ) ?? []),
-                ]}
+                choices={[{ value: '', label: '关闭' }, ...visionChoices]}
                 onChange={value => patch({ vision_model_config_id: value || undefined })}
                 disabled={operation.busy}
               />

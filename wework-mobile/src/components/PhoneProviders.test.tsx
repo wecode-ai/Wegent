@@ -311,3 +311,53 @@ it.each(['openai-chat-completions', 'anthropic-messages'] as const)(
     })
   }
 )
+
+it('offers only enabled image-capable vision models, matching PC', async () => {
+  const saved = await seed()
+  const image = (id: string) => ({
+    id,
+    model_id: id,
+    catalog_entry: {
+      ...createDefaultLocalModelCatalogEntry({ id, displayName: id, toolProfile: 'function' }),
+      input_modalities: ['text', 'image'],
+    },
+  })
+  await phoneModelProviders.saveProvider(
+    {
+      ...saved.providers[0],
+      models: [
+        ...saved.providers[0].models,
+        image('vision'),
+        { id: 'text-only', model_id: 'text-only' },
+        { ...image('disabled-image'), enabled: false },
+      ],
+    },
+    saved.revision
+  )
+  await phoneModelProviders.saveProvider(
+    {
+      id: 'disabled-service',
+      name: 'Disabled',
+      base_url: 'https://example.test/v1',
+      api_format: 'openai-responses',
+      enabled: false,
+      models: [image('other-image')],
+    },
+    (await phoneModelProviders.providers()).revision
+  )
+  const props = callbacks()
+  await act(() => {
+    renderer = create(
+      <PhoneModelEditorScreen {...props} providerId="service" modelId="stable" runtime={null} />
+    )
+  })
+  await act(() => control('local-model-advanced').props.onPress())
+  expect(control('local-model-vision-vision')).toBeDefined()
+  for (const id of ['text-only', 'disabled-image', 'other-image', 'stable'])
+    expect(control(`local-model-vision-${id}`)).toBeUndefined()
+  await act(() => control('local-model-vision-vision').props.onPress())
+  await act(() => control('local-model-save').props.onPress())
+  expect(
+    (await phoneModelProviders.providers()).providers[0].models[0].vision_model_config_id
+  ).toBe('vision')
+})
