@@ -317,6 +317,7 @@ export interface WeworkAutomationBridge {
   isDesktop: () => boolean
   getRuntimeConfig: () => ReturnType<typeof getRuntimeConfig>
   getRoute: () => string
+  getControlDiagnostics: typeof getDesktopControlDiagnostics
   navigate: (path: string) => string
   waitForTestId: (testId: string, options?: { timeoutMs?: number }) => Promise<boolean>
   queryTestIds: (prefix?: string) => string[]
@@ -561,6 +562,7 @@ function createBridge(): WeworkAutomationBridge {
     isDesktop: isElectronRuntime,
     getRuntimeConfig,
     getRoute: () => stripAppBasePath(window.location.pathname),
+    getControlDiagnostics: getDesktopControlDiagnostics,
     navigate: path => {
       const appPath = normalizeAppPath(path)
       const nextPath = joinAppPath(getRuntimeConfig().appBasePath, appPath)

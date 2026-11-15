@@ -146,6 +146,10 @@ impl RuntimeWorkRpcHandler {
             return Err(denied());
         }
         let parent = origin["sourceTaskId"].as_str().ok_or_else(denied)?;
+        if delegation["sourceMessageId"].is_string() {
+            self.source_task_parent(&actor)?;
+            return Ok(Vec::new());
+        }
         let current = self.primary_read_sources(child.user, parent)?;
         let selected = selection(delegation.get("readSources"))?;
         selected

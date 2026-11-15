@@ -71,6 +71,7 @@ async fn process_fixture() -> (
     let pending = Arc::new(Mutex::new(HashMap::from([(
         999,
         PendingCodexResponse {
+            method: "test/pending".to_owned(),
             sender: release_tx,
             native_request: None,
         },

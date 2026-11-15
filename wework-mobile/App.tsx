@@ -26,11 +26,15 @@ import {
   PhoneModelEditorScreen,
   CodexAccountScreen,
 } from '@/components/PhoneModelsScreen'
+import { PhoneStandaloneModelEditorScreen } from '@/components/PhoneStandaloneModelEditorScreen'
+import { PhoneProviderScreen } from '@/components/PhoneProviderScreen'
+import { PhoneProviderEditorScreen } from '@/components/PhoneProviderEditorScreen'
 import { phoneLocalModels } from '@/services/phoneLocalModels'
 import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
 import { darkTheme, lightTheme } from '@/theme'
 import { conversationPinTarget } from '@/domain/conversationActions'
 import { NativeErrorAlert } from '@/components/errors/NativeErrorAlert'
+import { PrivacyPolicyScreen } from '@/components/PrivacyPolicyScreen'
 
 type RuntimeStackParamList = {
   conversationList: undefined
@@ -39,9 +43,13 @@ type RuntimeStackParamList = {
   settings: undefined
   localExecution: undefined
   localModels: undefined
-  modelEditor: { modelId?: string } | undefined
+  provider: { providerId: string }
+  providerEditor: { providerId?: string } | undefined
+  modelEditor: { providerId: string; modelId?: string }
+  standaloneModelEditor: { modelId?: string } | undefined
   codexAccount: undefined
   backendLogin: undefined
+  privacyPolicy: undefined
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
@@ -316,6 +324,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   onModels={() => navigation.navigate('localModels')}
                   onExecution={() => navigation.navigate('localExecution')}
                   onBackend={() => navigation.navigate('backendLogin')}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -325,19 +334,76 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   runtime={local.runtime}
                   status={local.status}
                   onBack={navigation.goBack}
-                  onAdd={() => navigation.navigate('modelEditor')}
-                  onEdit={id => navigation.navigate('modelEditor', { modelId: id })}
+                  onAdd={() => navigation.navigate('providerEditor')}
+                  onEdit={id => navigation.navigate('provider', { providerId: id })}
+                  onAddStandalone={() => navigation.navigate('standaloneModelEditor')}
+                  onEditStandalone={modelId =>
+                    navigation.navigate('standaloneModelEditor', { modelId })
+                  }
                   onAccount={() => navigation.navigate('codexAccount')}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="standaloneModelEditor">
+              {({ navigation, route }) => (
+                <PhoneStandaloneModelEditorScreen
+                  modelId={route.params?.modelId}
+                  runtime={local.runtime}
+                  onBack={navigation.goBack}
+                  onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="provider">
+              {({ navigation, route }) => (
+                <PhoneProviderScreen
+                  providerId={route.params.providerId}
+                  runtime={local.runtime}
+                  onBack={navigation.goBack}
+                  onChanged={refreshLocal}
+                  onEditConnection={() =>
+                    navigation.navigate('providerEditor', { providerId: route.params.providerId })
+                  }
+                  onAddModel={() =>
+                    navigation.navigate('modelEditor', { providerId: route.params.providerId })
+                  }
+                  onEditModel={modelId =>
+                    navigation.navigate('modelEditor', {
+                      providerId: route.params.providerId,
+                      modelId,
+                    })
+                  }
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="providerEditor">
+              {({ navigation, route }) => (
+                <PhoneProviderEditorScreen
+                  providerId={route.params?.providerId}
+                  runtime={local.runtime}
+                  onBack={navigation.goBack}
+                  onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                  onSaved={providerId =>
+                    route.params?.providerId
+                      ? navigation.goBack()
+                      : navigation.replace('provider', { providerId })
+                  }
                 />
               )}
             </RuntimeStack.Screen>
             <RuntimeStack.Screen name="modelEditor">
               {({ navigation, route }) => (
                 <PhoneModelEditorScreen
-                  modelId={route?.params?.modelId}
+                  providerId={route.params.providerId}
+                  modelId={route.params.modelId}
                   runtime={local.runtime}
                   onBack={navigation.goBack}
                   onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -350,6 +416,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   onRetry={local.retry}
                   onBack={navigation.goBack}
                   onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -370,6 +437,9 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
             </RuntimeStack.Screen>
             <RuntimeStack.Screen name="backendLogin">
               {({ navigation }) => <BackendLoginScreen auth={auth} onClose={navigation.goBack} />}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="privacyPolicy">
+              {({ navigation }) => <PrivacyPolicyScreen onBack={navigation.goBack} />}
             </RuntimeStack.Screen>
           </RuntimeStack.Navigator>
         </NavigationContainer>

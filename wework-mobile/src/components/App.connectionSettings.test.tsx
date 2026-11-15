@@ -62,6 +62,14 @@ vi.mock('@/components/PhoneModelsScreen', () => ({
   PhoneModelEditorScreen: 'PhoneModelEditorScreen',
   CodexAccountScreen: 'CodexAccountScreen',
 }))
+vi.mock('@/components/PhoneStandaloneModelEditorScreen', () => ({
+  PhoneStandaloneModelEditorScreen: 'PhoneStandaloneModelEditorScreen',
+}))
+vi.mock('@/components/PhoneProviderScreen', () => ({ PhoneProviderScreen: 'PhoneProviderScreen' }))
+vi.mock('@/components/PhoneProviderEditorScreen', () => ({
+  PhoneProviderEditorScreen: 'PhoneProviderEditorScreen',
+}))
+vi.mock('@/components/PrivacyPolicyScreen', () => ({ PrivacyPolicyScreen: 'PrivacyPolicyScreen' }))
 vi.mock('@/services/chatLayoutDiagnostics', () => ({ recordChatLayoutDiagnostic: vi.fn() }))
 vi.mock('@/theme', () => ({ lightTheme: {}, darkTheme: {} }))
 vi.mock('expo-status-bar', () => ({ StatusBar: 'StatusBar' }))
@@ -89,9 +97,14 @@ vi.mock('@react-navigation/native-stack', () => ({
     }) => {
       const routeKey = name === 'conversation' ? navigation.conversationRouteKey : name
       return children({
+        route: {
+          params:
+            name === 'provider' || name === 'modelEditor' ? { providerId: 'service' } : undefined,
+        },
         navigation: {
           goBack: navigation.goBack,
           navigate: navigation.navigate,
+          replace: navigation.navigate,
           isFocused: () => navigation.currentRouteKey === routeKey,
         },
       })
@@ -161,6 +174,32 @@ describe('local-first settings navigation', () => {
     expect(navigation.goBack).toHaveBeenCalledOnce()
   })
 
+  it('navigates between provider connections, model details and their editors', async () => {
+    const models = renderer.root.findByType('PhoneModelsScreen' as never)
+    await act(() => models.props.onAddStandalone())
+    expect(navigation.navigate).toHaveBeenLastCalledWith('standaloneModelEditor')
+    await act(() => models.props.onEditStandalone('old-model'))
+    expect(navigation.navigate).toHaveBeenLastCalledWith('standaloneModelEditor', {
+      modelId: 'old-model',
+    })
+    await act(() => models.props.onAdd())
+    expect(navigation.navigate).toHaveBeenLastCalledWith('providerEditor')
+    await act(() => models.props.onEdit('service'))
+    expect(navigation.navigate).toHaveBeenLastCalledWith('provider', { providerId: 'service' })
+    const provider = renderer.root.findByType('PhoneProviderScreen' as never)
+    await act(() => provider.props.onAddModel())
+    expect(navigation.navigate).toHaveBeenLastCalledWith('modelEditor', { providerId: 'service' })
+    await act(() => provider.props.onEditModel('model-a'))
+    expect(navigation.navigate).toHaveBeenLastCalledWith('modelEditor', {
+      providerId: 'service',
+      modelId: 'model-a',
+    })
+    await act(() => provider.props.onEditConnection())
+    expect(navigation.navigate).toHaveBeenLastCalledWith('providerEditor', {
+      providerId: 'service',
+    })
+  })
+
   it('keeps Backend login optional and hides filters when using only this phone', async () => {
     authState.current.config = null
     authState.current.user = null
@@ -178,6 +217,27 @@ describe('local-first settings navigation', () => {
     expect(
       renderer.root.findByType('ConversationListScreen' as never).props.showDeviceFilters
     ).toBe(true)
+  })
+
+  it('opens the bundled privacy page from settings and every model entry without Backend login', async () => {
+    authState.current.config = null
+    authState.current.user = null
+    await act(() => renderer.update(<App />))
+    for (const screen of [
+      'SettingsScreen',
+      'PhoneModelsScreen',
+      'PhoneModelEditorScreen',
+      'PhoneStandaloneModelEditorScreen',
+      'PhoneProviderScreen',
+      'PhoneProviderEditorScreen',
+      'CodexAccountScreen',
+    ]) {
+      await act(() => renderer.root.findByType(screen as never).props.onPrivacy())
+      expect(navigation.navigate).toHaveBeenLastCalledWith('privacyPolicy')
+    }
+    await act(() => renderer.root.findByType('PrivacyPolicyScreen' as never).props.onBack())
+    expect(navigation.goBack).toHaveBeenCalledOnce()
+    expect(logout).not.toHaveBeenCalled()
   })
 
   it('routes connection failures to the sidebar instead of the global alert on every screen', async () => {

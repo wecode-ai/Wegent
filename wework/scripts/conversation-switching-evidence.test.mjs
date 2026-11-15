@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
+import { startRendererCpuProfile } from '../e2e/desktop/modules/renderer-cpu-profile.mjs'
 import {
   createConversationSwitchingChecks,
   summarizeSwitchingTranscript,
@@ -24,6 +25,40 @@ beforeEach(() => {
   devtools.create.mockReset().mockResolvedValue(devtools.client)
   devtools.write.mockReset().mockResolvedValue(undefined)
 })
+
+test.each([false, true])(
+  'retains CPU evidence when control diagnostics are unavailable=%s',
+  async unavailable => {
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const trace = [{ phase: 'poll-headers-received' }]
+    devtools.client.mockImplementation(async input => {
+      if (input.action === 'targets') return [{ type: 'window', url: 'http://localhost/', id: 1 }]
+      if (input.method === 'Profiler.stop') return { profile: { nodes: [] } }
+      if (input.method === 'Runtime.evaluate') {
+        if (unavailable) throw new Error('Renderer unavailable')
+        return { result: { value: trace } }
+      }
+      return {}
+    })
+    const directory = join(tmpdir(), 'renderer-evidence')
+    const stop = await startRendererCpuProfile(directory, 'timeout.cpuprofile', 3000, {
+      captureControlDiagnostics: true,
+    })
+    await stop()
+    await stop()
+    expect(devtools.write).toHaveBeenCalledWith(
+      join(directory, 'timeout.cpuprofile'),
+      expect.objectContaining({ nodes: [] })
+    )
+    expect(devtools.write).toHaveBeenCalledTimes(unavailable ? 1 : 2)
+    if (!unavailable)
+      expect(devtools.write).toHaveBeenCalledWith(
+        join(directory, 'timeout.cpuprofile.transport.json'),
+        trace
+      )
+    expect(devtools.client).toHaveBeenLastCalledWith({ action: 'detach', target: 1 })
+  }
+)
 
 const privateText = 'private-model-or-owner-content'
 const transcript = {

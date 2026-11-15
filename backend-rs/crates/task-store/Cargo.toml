@@ -6,6 +6,9 @@ rust-version.workspace = true
 license = "Apache-2.0"
 description = "Task persistence, transactional lifecycle, and stable documents"
 
+[features]
+test-support = []
+
 [dependencies]
 wegent-backend-persistence = { path = "../persistence" }
 wegent-resource-store = { path = "../resource-store" }

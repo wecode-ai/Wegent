@@ -111,6 +111,7 @@ zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 wegent-identity = { path = "crates/identity", features = ["test-support"] }
+wegent-task-store = { path = "crates/task-store", features = ["test-support"] }
 wegent-backend-test-support = { path = "crates/test-support" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 

@@ -243,6 +243,7 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import styles from './DesktopWorkbenchMain.module.css'
 import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
 import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
@@ -1098,7 +1099,15 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   if (!isDesktop) return mainContent
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={cn(
+        'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+        props.presentation !== 'popout' && styles.frame,
+        background.imagePath && (background.inMain || background.inTopBar)
+          ? 'bg-transparent'
+          : 'bg-background'
+      )}
+    >
       {!splitMode && props.presentation !== 'popout' ? (
         <header
           id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
