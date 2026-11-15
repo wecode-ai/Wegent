@@ -42,7 +42,11 @@ import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import { createCloudModelCatalog } from './cloudModelCatalog'
-import { canonicalCloudTaskPort, registeredCloudDeviceId } from './canonicalCloudTaskPort'
+import {
+  canonicalCloudTaskPort,
+  registeredCloudDeviceId,
+  registeredCloudDeviceIdentity,
+} from './canonicalCloudTaskPort'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -1983,6 +1987,11 @@ export function createHybridWorkbenchServices(
         )
       },
       async deviceIdentity(deviceId) {
+        const registered = registeredCloudDeviceIdentity(
+          deviceId,
+          await resolveExecutorDevice(deviceId)
+        )
+        if (registered) return registered
         return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
       },
       async personalGet(userId, deviceId) {

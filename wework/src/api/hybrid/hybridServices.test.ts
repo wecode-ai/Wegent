@@ -565,8 +565,14 @@ describe('stand-in save routing', () => {
       const other = selected === local ? cloud : local
       const identity = { deviceId: 'desktop-alias', backendDeviceId: deviceId }
       selected.deviceIdentity.mockResolvedValue(identity)
-      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(identity)
-      expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      expect(await services.standInApi!.deviceIdentity(deviceId)).toEqual(
+        deviceId === 'local-device' ? identity : { deviceId, backendDeviceId: deviceId }
+      )
+      if (deviceId === 'local-device') {
+        expect(selected.deviceIdentity).toHaveBeenCalledExactlyOnceWith(deviceId)
+      } else {
+        expect(selected.deviceIdentity).not.toHaveBeenCalled()
+      }
       expect(other.deviceIdentity).not.toHaveBeenCalled()
       expect(selected.personalSave).toHaveBeenCalledExactlyOnceWith(7, settings, deviceId)
       expect(other.personalSave).not.toHaveBeenCalled()

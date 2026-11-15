@@ -115,7 +115,7 @@ it('uses the board availability and ownership checks before opening a bound task
     'existing'
   )
   expect(props.services.standInApi?.readTask).toHaveBeenCalledWith('device', 'existing')
-  expect(props.services.standInApi?.deviceIdentity).not.toHaveBeenCalled()
+  expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalledWith('device')
   expect(setLocation).not.toHaveBeenCalled()
 })
 
@@ -133,7 +133,7 @@ it('opens an explicitly created task in the new Issue using the existing availab
   const pane = await screen.findByTestId('shared-board-conversation')
   expect(pane).toHaveAttribute('data-task', 'existing')
   expect(props.services.standInApi?.readTask).toHaveBeenCalledWith('device', 'existing')
-  expect(props.services.standInApi?.deviceIdentity).not.toHaveBeenCalled()
+  expect(props.services.standInApi?.deviceIdentity).toHaveBeenCalledWith('device')
   expect(setLocation).not.toHaveBeenCalled()
 })
 
