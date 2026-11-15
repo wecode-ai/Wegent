@@ -279,6 +279,7 @@ def _resolve_routing(
     automatic: bool = False,
     agent_id: str | None = None,
     session_environment_id: str | None = None,
+    group_recovery: bool = False,
 ) -> ResolvedRouting:
     if not config.get("model_policy"):
         raise routing_error(
@@ -315,7 +316,7 @@ def _resolve_routing(
         from app.services.runner_recovery import lock_recovery_source
 
         if (
-            not bound_candidates
+            (not bound_candidates or group_recovery)
             and session_environment_id is None
             and selected.recovery_from_environment_id == bound_id
             and not automatic
@@ -812,10 +813,11 @@ def resolve_group_routing(
             for key, value in (selection or {}).items()
             if (
                 key == "recovery_from_environment_id"
-                or key == "execution_policy"
-                and config["execution_policy"]["mode"] == "user_select"
-                or key == "model"
-                and config["model_policy"]["mode"] == "user_select"
+                or (
+                    key == "execution_policy"
+                    and config["execution_policy"]["mode"] == "user_select"
+                )
+                or (key == "model" and config["model_policy"]["mode"] == "user_select")
             )
         }
         try:
@@ -829,6 +831,7 @@ def resolve_group_routing(
                 selection=choices,
                 automatic=automatic,
                 session_environment_id=session_environment_id,
+                group_recovery=True,
             )
         except HTTPException as error:
             if isinstance(error.detail, dict):
@@ -901,6 +904,17 @@ def resolve_group_routing(
             ],
         }
         raise error
+    recovery_from = next(
+        (
+            route["recovery_from_environment_id"]
+            for route in routes.values()
+            if route.get("recovery_from_environment_id")
+        ),
+        None,
+    )
+    if recovery_from and int(recovery_from) in (intersection or set()):
+        for route in routes.values():
+            route.pop("recovery_from_environment_id", None)
     return routes
 
 

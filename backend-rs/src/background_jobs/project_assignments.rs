@@ -143,6 +143,7 @@ pub(crate) async fn agent_admission(
             &context["runner_selection"],
             authority::truthy(&context["run_id"]),
             session_environment_id,
+            false,
         )
         .await?;
         configured_model = route["model"]["model_id"].as_str().unwrap_or("").into();

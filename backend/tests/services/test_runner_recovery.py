@@ -9,6 +9,7 @@ from sqlalchemy import update
 from app.models.delivery import LoopItem
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
+from app.schemas.runner_routing import ExecutionPolicy
 from app.services.runner_routing import claim_routing, resolve_routing
 from tests.services.test_runner_routing import routing_setup  # noqa: F401
 from tests.services.test_runner_routing import MODEL
@@ -34,6 +35,9 @@ def prepare(db, setup, selection=None, automatic=False):
 def run_for(db, setup, snapshot, **values):
     user, _, issue = setup
     selection = {"runner_routing": snapshot} if snapshot is not None else {}
+    requirements = values.pop("group_runner_requirements", None)
+    if requirements is not None:
+        selection["group_runner_requirements"] = requirements
     resolved = values.pop("resolved_environment_id", None)
     if resolved:
         selection["resolved_environment_id"] = resolved
@@ -312,7 +316,14 @@ def test_unavailable_implicit_binding_offers_an_authorized_alternative(
     ).candidates == [devices[1]]
 
 
-def test_recovery_choice_reaches_every_fixed_group_member(test_db, routing_setup):
+@pytest.mark.parametrize(
+    "leader_pool,member_pool",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+@pytest.mark.parametrize("blocked", [None, "active", "automatic", "stale"])
+def test_group_recovery_uses_the_common_policy_without_moving_compatible_work(
+    test_db, routing_setup, leader_pool, member_pool, blocked
+):
     from app.models.delivery import ProjectChatAgent
     from app.services.runner_routing import resolve_group_routing
     from tests.utils.collaboration import authorize_project_agent
@@ -320,7 +331,7 @@ def test_recovery_choice_reaches_every_fixed_group_member(test_db, routing_setup
     user, devices, issue = routing_setup
     issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
     agents = []
-    for name in ["leader", "member"]:
+    for name, pool in [("leader", leader_pool), ("member", member_pool)]:
         agent = ProjectChatAgent(
             id=f"recovery-{name}",
             cloud_project_id=issue.cloud_project_id,
@@ -329,10 +340,14 @@ def test_recovery_choice_reaches_every_fixed_group_member(test_db, routing_setup
             created_by_user_id=user.id,
             metadata_json={
                 "runtime": "codex",
-                "execution_policy": {
-                    "mode": "fixed",
-                    "environment_id": str(devices[1].id),
-                },
+                "execution_policy": (
+                    {"mode": "project_pool"}
+                    if pool
+                    else {
+                        "mode": "fixed",
+                        "environment_id": str(devices[1].id),
+                    }
+                ),
                 "model_policy": {"mode": "fixed", "model": MODEL},
             },
         )
@@ -343,17 +358,64 @@ def test_recovery_choice_reaches_every_fixed_group_member(test_db, routing_setup
         "leader": {"kind": "agent", "id": agents[0].id},
         "members": [{"kind": "agent", "id": agents[1].id}],
     }
-    routes = resolve_group_routing(
-        test_db,
-        group=group,
-        project_id=issue.cloud_project_id,
-        issue_id=issue.id,
-        user_id=user.id,
-        selection={"recovery_from_environment_id": str(devices[0].id)},
-    )
+    live = None
+    if blocked == "active":
+        live = LoopItemExecution(
+            loop_item_id=issue.id, status="running", execution_payload="{}"
+        )
+        test_db.add(live)
+        test_db.flush()
+
+    def resolve():
+        return resolve_group_routing(
+            test_db,
+            group=group,
+            project_id=issue.cloud_project_id,
+            issue_id=issue.id,
+            user_id=user.id,
+            selection={
+                "recovery_from_environment_id": (
+                    "999" if blocked == "stale" else str(devices[0].id)
+                )
+            },
+            automatic=blocked == "automatic",
+        )
+
+    needs_recovery = not (leader_pool and member_pool)
+    if needs_recovery and blocked:
+        with pytest.raises(HTTPException) as error:
+            resolve()
+        assert error.value.detail["error_code"] == "ISSUE_RUNNER_CONFLICT"
+        assert issue.metadata_json["runner_binding"]["environment_id"] == str(
+            devices[0].id
+        )
+        return
+    routes = resolve()
     assert set(routes) == {agent.id for agent in agents}
     assert all(
-        route["recovery_from_environment_id"] == str(devices[0].id)
-        and route["execution_policy"]["environment_id"] == str(devices[1].id)
+        route.get("recovery_from_environment_id")
+        == (str(devices[0].id) if needs_recovery else None)
         for route in routes.values()
     )
+    for agent in agents:
+        assert (
+            routes[agent.id]["execution_policy"]
+            == ExecutionPolicy.model_validate(
+                agent.metadata_json["execution_policy"]
+            ).model_dump()
+        )
+    if live is not None:
+        live.status = "completed"
+        test_db.flush()
+    row = run_for(
+        test_db,
+        routing_setup,
+        routes[agents[0].id],
+        agent_id=agents[0].id,
+        group_runner_requirements=routes,
+    )
+    if not needs_recovery:
+        assert not claim_routing(test_db, row, devices[1])
+    chosen = devices[1] if needs_recovery else devices[0]
+    assert claim_routing(test_db, row, chosen)
+    assert issue.metadata_json["runner_binding"]["environment_id"] == str(chosen.id)

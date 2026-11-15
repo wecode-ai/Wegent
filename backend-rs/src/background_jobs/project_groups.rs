@@ -241,6 +241,7 @@ pub(crate) async fn runner_requirements(
             &choices,
             automatic,
             session_environment_id,
+            true,
         )
         .await?;
         let candidates =
@@ -257,7 +258,26 @@ pub(crate) async fn runner_requirements(
             "ISSUE_RUNNER_CONFLICT: No authorized runner satisfies all group members' environment and model policies"
         )
     }
+    retain_compatible_binding(&mut requirements, intersection.as_ref());
     Ok(Value::Object(requirements))
+}
+
+fn retain_compatible_binding(
+    requirements: &mut serde_json::Map<String, Value>,
+    intersection: Option<&std::collections::BTreeSet<i64>>,
+) {
+    let recovery_from = requirements.values().find_map(|route| {
+        route["recovery_from_environment_id"]
+            .as_str()
+            .and_then(|id| id.parse::<i64>().ok())
+    });
+    if recovery_from.is_some_and(|bound| intersection.is_some_and(|ids| ids.contains(&bound))) {
+        for route in requirements.values_mut() {
+            if let Some(route) = route.as_object_mut() {
+                route.remove("recovery_from_environment_id");
+            }
+        }
+    }
 }
 
 pub(crate) struct GroupAssignment {
@@ -497,6 +517,34 @@ fn human_instructions(project: &Node, issue: &Node, group: &Value) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_recovery_moves_only_when_the_common_policy_excludes_the_bound_device() {
+        for (common, recovers) in [(vec![2, 3], false), (vec![3], true)] {
+            let mut requirements = json!({
+                "leader":{"execution_policy":{"mode":"project_pool"},"recovery_from_environment_id":"2"},
+                "member":{"execution_policy":if recovers {json!({"mode":"fixed","environment_id":"3"})} else {json!({"mode":"project_pool"})},"recovery_from_environment_id":"2"}
+            }).as_object().unwrap().clone();
+            let policies = requirements
+                .values()
+                .map(|route| route["execution_policy"].clone())
+                .collect::<Vec<_>>();
+            retain_compatible_binding(&mut requirements, Some(&common.into_iter().collect()));
+            for route in requirements.values() {
+                assert_eq!(
+                    route["recovery_from_environment_id"].as_str(),
+                    recovers.then_some("2")
+                );
+            }
+            assert_eq!(
+                requirements
+                    .values()
+                    .map(|route| route["execution_policy"].clone())
+                    .collect::<Vec<_>>(),
+                policies
+            );
+        }
+    }
 
     #[test]
     fn group_reply_requires_the_current_group_and_assignment() {

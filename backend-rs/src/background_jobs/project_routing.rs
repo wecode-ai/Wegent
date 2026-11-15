@@ -111,6 +111,7 @@ pub(crate) async fn resolve(
     selection: &Value,
     automatic: bool,
     session_environment_id: Option<&str>,
+    group_recovery: bool,
 ) -> Result<Value> {
     authority::require(state, project_id, user_id).await?;
     if !config["model_policy"].is_object() {
@@ -208,7 +209,7 @@ pub(crate) async fn resolve(
         let compatible = candidates
             .iter()
             .any(|device| device.id.to_string() == binding);
-        let recovery = !compatible
+        let recovery = (!compatible || group_recovery)
             && session_environment_id.is_none()
             && !automatic
             && selection["recovery_from_environment_id"] == binding

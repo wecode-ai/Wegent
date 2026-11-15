@@ -234,8 +234,12 @@ export async function verifyProjectAgentRoutingRecovery(
   const oldExecution = history.items.find(row => row.id === completed.execution_id)
   const movedExecution = history.items.find(row => row.id === reassigned.execution_id)
   assert.ok(oldExecution && movedExecution)
-  assert.notEqual(oldExecution.runtime_device_id, movedExecution.runtime_device_id)
-  assert.notEqual(oldExecution.runtime_task_id, movedExecution.runtime_task_id)
+  for (const execution of [oldExecution, movedExecution]) {
+    assert.ok(execution.runtimeDeviceId, 'Every completed run must retain its Runtime device')
+    assert.ok(execution.runtimeTaskId, 'Every completed run must retain its original session')
+  }
+  assert.notEqual(oldExecution.runtimeDeviceId, movedExecution.runtimeDeviceId)
+  assert.notEqual(oldExecution.runtimeTaskId, movedExecution.runtimeTaskId)
   assert.equal(oldExecution.status, 'completed')
   await options.captureScreenshot(control, 'project-agent-runner-reassigned.png', CONTENT)
   await control.command('click', selector('cloud-todo-detail-close'))
