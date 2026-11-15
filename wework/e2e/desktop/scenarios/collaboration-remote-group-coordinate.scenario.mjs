@@ -490,6 +490,7 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   verifyManagerPlanning,
+  verifyMemberActivity,
 }) {
   let active = false
   let backendUrl = ''
@@ -776,6 +777,15 @@ export async function createDesktopScenario({
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await waitForActivityText(control, FIRST_TASK, modelResponseTimeoutMs)
       await waitForActivityText(control, SECOND_TASK, modelResponseTimeoutMs)
+      await verifyMemberActivity?.(control, {
+        backendUrl,
+        authToken,
+        projectId: project.id,
+        issueId: rootIssue.id,
+        creationStartedAt,
+        phase: 'running',
+        timeoutMs: uiTimeoutMs,
+      })
       await waitForActivityText(
         control,
         `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
@@ -840,6 +850,15 @@ export async function createDesktopScenario({
       assert.equal(managerRuns, 2, '本轮 barrier 后应恰好启动一次新的负责人运行')
       assert.equal(childRequests, 2, '应仅启动最初派发的两个成员任务')
       assert.equal(childCompletions, 2, '两个成员任务都应完成')
+      await verifyMemberActivity?.(control, {
+        backendUrl,
+        authToken,
+        projectId: project.id,
+        issueId: rootIssue.id,
+        creationStartedAt,
+        phase: 'completed',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(
         control,
         'remote-group-coordinate-03-agent-owner-awaiting-review.png',

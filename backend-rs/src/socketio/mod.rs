@@ -37,6 +37,8 @@ pub mod device_pull_claim;
 mod device_pull_payload;
 pub mod device_reconcile;
 #[cfg(test)]
+pub(crate) mod issue_timestamp_tests;
+#[cfg(test)]
 pub(crate) use device_reconcile::verify_reconnect_projection;
 #[cfg(test)]
 pub(crate) use runtime_projection::verify_late_human_reply_projection;

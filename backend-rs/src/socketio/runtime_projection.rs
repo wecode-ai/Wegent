@@ -983,6 +983,8 @@ use execution_lookup::{
 };
 mod human_reply;
 #[cfg(test)]
+pub(super) use activity::verify_restored_activity_timestamp;
+#[cfg(test)]
 pub(crate) use human_reply::verify_late_human_reply_projection;
 pub(super) mod lifecycle;
 pub(super) use activity::{finish_runtime_activity, linked_activity, open_runtime_activity};
