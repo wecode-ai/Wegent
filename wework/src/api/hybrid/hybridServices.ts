@@ -819,6 +819,10 @@ export function createHybridWorkbenchServices(
   }
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
+  const resolveRegisteredCloudDevice = async (deviceId: string): Promise<DeviceInfo | null> =>
+    rememberedCloudDevices.find(device => device.device_id === deviceId) ??
+    (await listCloudDevices()).find(device => device.device_id === deviceId) ??
+    null
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
     const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
@@ -1706,7 +1710,7 @@ export function createHybridWorkbenchServices(
       ? canonicalCloudTaskPort(
           cloudServices.workspaceRuntimePort,
           async deviceId => (await standInApiForDevice(deviceId)).deviceIdentity(deviceId),
-          resolveExecutorDevice
+          resolveRegisteredCloudDevice
         )
       : undefined,
     localParticipationIdentity: localServices.localParticipationIdentity,
@@ -1989,7 +1993,7 @@ export function createHybridWorkbenchServices(
       async deviceIdentity(deviceId) {
         const registered = registeredCloudDeviceIdentity(
           deviceId,
-          await resolveExecutorDevice(deviceId)
+          await resolveRegisteredCloudDevice(deviceId)
         )
         if (registered) return registered
         return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
