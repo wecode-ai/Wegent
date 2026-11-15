@@ -51,7 +51,10 @@ export function usePluginRefreshReconciliation(options: {
   }, [])
   useEffect(() => {
     const options = latest.current
-    if (!options.request || handled.current === options.request) return
+    if (!options.request || handled.current === options.request) {
+      setActive(current => (current && current.epoch !== scopeEpoch.current ? null : current))
+      return
+    }
     const owner = {
       accountKey: options.accountKey,
       deviceId: options.deviceId,
@@ -159,10 +162,7 @@ export function usePluginRefreshReconciliation(options: {
   ])
   return {
     active: Boolean(
-      active &&
-      active.epoch === scopeEpoch.current &&
-      active.accountKey === options.accountKey &&
-      active.deviceId === options.deviceId
+      active && active.accountKey === options.accountKey && active.deviceId === options.deviceId
     ),
     stage,
     startedAt: active?.startedAt ?? null,
