@@ -138,7 +138,7 @@ export function createSourceOwnerTaskStory(options) {
         events = checked(
           body,
           'owner-worker-repair',
-          `node -e "const fs=require('node:fs');fs.writeFileSync('source-owner-repair.txt','fixed');if(fs.readFileSync('source-owner-repair.txt','utf8')!=='fixed')process.exit(1);console.log('${MARKER}_VERIFIED')"`,
+          `node -e "const fs=require('node:fs');const file='./source-owner-repair.cjs';if(require(file)(1)===2)throw Error('Expected the broken fixture');fs.writeFileSync(file,'module.exports=n=>n+1');delete require.cache[require.resolve(file)];if(require(file)(1)!==2)process.exit(1);console.log('${MARKER}_VERIFIED')"`,
           `${MARKER}_VERIFIED`
         )
         if (!events) {
@@ -204,6 +204,10 @@ export function createSourceOwnerTaskStory(options) {
     async verify(control, rpc) {
       let original
       try {
+        await writeFile(
+          join(options.workspacePath, 'source-owner-repair.cjs'),
+          'module.exports=n=>n-1'
+        )
         await writeFile(join(root, 'replies.txt'), '')
         await writeFile(
           join(root, 'native.json'),
@@ -287,8 +291,8 @@ export function createSourceOwnerTaskStory(options) {
         assert.equal(child.task.status, 'done')
         assert.ok(child.task.runtimeHandle.threadId)
         assert.equal(
-          await readFile(join(options.workspacePath, 'source-owner-repair.txt'), 'utf8'),
-          'fixed'
+          await readFile(join(options.workspacePath, 'source-owner-repair.cjs'), 'utf8'),
+          'module.exports=n=>n+1'
         )
         const works = await rpc('runtime.stand_in.work.list', { userId: 9001 })
         const source = works.items.find(item => item.roleId === ROLE)
