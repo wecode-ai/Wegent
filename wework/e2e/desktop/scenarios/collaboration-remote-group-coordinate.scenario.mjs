@@ -25,7 +25,9 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 import { isTranscriptReadAdmissionBusy } from '../modules/runtime-read-admission.mjs'
 import {
   answerResumedManagerFromIssue,
+  createCollaborationIssueReplies,
   managerResumeQuestion,
+  updateStatusArguments,
 } from '../modules/collaboration-manager-resume-input.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -51,53 +53,10 @@ const CALLS = {
   updateStatus: `${MARKER}-update-status`,
 }
 
-function updateStatusArguments() {
-  return {
-    status: 'in_review',
-    reason: '本轮两项成员任务均已完成，负责人已综合核验。',
-    comment: '负责人已核验本轮两项任务的执行证据，提交 Issue 待确认。',
-  }
-}
-
-function scoped(selector) {
-  return `${CONTENT} ${selector}`
-}
-
-async function replyToActivity(control, cardTestId, text) {
-  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
-  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
-  await control.command(
-    'click',
-    scoped(`[data-testid="cloud-task-activity-reply-toggle-${messageId}"]`)
-  )
-  const composer = scoped('[data-testid="issue-reply-composer"]')
-  await control.command('fill', `${composer} [data-testid="cloud-task-activity-composer"]`, {
-    value: text,
-  })
-  await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
-}
-
-async function replyToManagerConclusion(control, cardTestId, text, timeoutMs) {
-  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
-  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
-  await control.command(
-    'click',
-    scoped(`[data-testid="cloud-task-activity-open-task-${messageId}"]`)
-  )
-  const panel = scoped('[data-testid="work-item-task-chat-panel"]')
-  const composer = `${panel} [data-testid="chat-message-input"]`
-  await control.command('waitFor', composer, { timeoutMs })
-  await control.command('fill', composer, { value: text })
-  await control.command('clickWhenEnabled', `${panel} [data-testid="send-message-button"]`, {
-    timeoutMs,
-  })
-  await control.command('waitFor', `${panel} [data-testid="message-assistant"]`, {
-    text: MANAGER_REPLY_RESULT,
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-  await control.command('waitFor', panel, { visible: false, timeoutMs })
-}
+const { scoped, replyToActivity, replyToManagerConclusion } = createCollaborationIssueReplies(
+  CONTENT,
+  MANAGER_REPLY_RESULT
+)
 
 function writeEvents(response, responseId, events) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
