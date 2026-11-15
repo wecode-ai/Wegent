@@ -130,6 +130,8 @@ export class EmbeddedBrowserBridge {
     response: import('node:http').ServerResponse,
     token: string
   ): Promise<void> {
+    // A browser mutation cannot be replayed after an idle-socket close race.
+    response.setHeader('connection', 'close')
     response.setHeader('access-control-allow-origin', '*')
     response.setHeader('access-control-allow-headers', 'content-type, authorization')
     response.setHeader('content-type', 'application/json')

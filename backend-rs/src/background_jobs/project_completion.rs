@@ -11,6 +11,7 @@ use brz_redis::Redis;
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
+use crate::socketio::project_chat_messages::{database_timestamp, utc_isoformat};
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
 
 const TERMINAL: &[&str] = &["succeeded", "failed", "cancelled", "skipped"];
@@ -102,8 +103,8 @@ impl Message {
                 Value::Null
             } else { json!({"deviceId": self.runtime_device_id, "taskId": self.runtime_task_id}) },
             "status": self.status,
-            "createdAt": self.created_at.and_utc().to_rfc3339(),
-            "updatedAt": self.updated_at.and_utc().to_rfc3339(),
+            "createdAt": utc_isoformat(self.created_at),
+            "updatedAt": utc_isoformat(self.updated_at),
         })
     }
 }
@@ -311,13 +312,13 @@ pub(crate) async fn complete<M: Mysql, R: Redis>(
         let now = Utc::now().naive_utc();
         transaction.execute(
             "UPDATE project_chat_messages SET content=?, status=?, message_type='text', metadata=?, updated_at=? WHERE id=?",
-            (message.content.as_str(), message.status.as_str(), Json(message.metadata.0.clone()), now, message.id),
+            (message.content.as_str(), message.status.as_str(), Json(message.metadata.0.clone()), database_timestamp(now), message.id),
         ).await?;
         transaction.execute(
             "UPDATE loop_items SET status=?, backend_task_id=?, completed_at=?, description=CASE WHEN ?='failed' THEN ? ELSE description END, version=version+1, updated_at=? WHERE id=? AND resource_type='automation_run'",
             (run_status, task_id, now, run_status, message.content.as_str(), now, run.id.as_str()),
         ).await?;
-        message.updated_at = now;
+        message.updated_at = database_timestamp(now);
         Ok(Some(message))
     }).await?;
     if let Some(message) = message {
@@ -357,8 +358,8 @@ pub(crate) async fn started<M: Mysql, R: Redis>(
         if !labels.matches(&run,&message,task_id,owner_id) || run.status.as_deref().is_some_and(|status|TERMINAL.contains(&status)) || matches!(message.status.as_str(),"completed"|"failed"|"cancelled") {return Ok(None)}
         let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();
         metadata.insert("backend_task_id".into(),json!(task_id));metadata.insert("run_status".into(),json!("running"));
-        message.status="streaming".into();message.metadata=Json(Value::Object(metadata));message.updated_at=Utc::now().naive_utc();
-        tx.execute("UPDATE loop_items SET status='running',backend_task_id=?,version=version+1,updated_at=? WHERE id=?",(task_id,message.updated_at,run.id.as_str())).await?;
+        message.status="streaming".into();message.metadata=Json(Value::Object(metadata));message.updated_at=database_timestamp(Utc::now().naive_utc());
+        tx.execute("UPDATE loop_items SET status='running',backend_task_id=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=?",(task_id,run.id.as_str())).await?;
         tx.execute("UPDATE project_chat_messages SET status='streaming',metadata=?,updated_at=? WHERE id=?",(Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
         Ok(Some(message))
     }).await?;
@@ -385,7 +386,7 @@ pub(crate) async fn dispatch_failed<M: Mysql, R: Redis>(
         let message:Option<Message>=if message_id.is_empty(){None}else{tx.fetch_optional("SELECT * FROM project_chat_messages WHERE message_id=? FOR UPDATE",(message_id,)).await?};
         let mut message=message;
         if let Some(message)=message.as_mut(){
-            message.status="failed".into();message.message_type="text".into();message.content=if error.is_empty(){"AI 托管任务派发失败。".into()}else{error.into()};message.updated_at=Utc::now().naive_utc();
+            message.status="failed".into();message.message_type="text".into();message.content=if error.is_empty(){"AI 托管任务派发失败。".into()}else{error.into()};message.updated_at=database_timestamp(Utc::now().naive_utc());
             let mut metadata=message.metadata.0.as_object().cloned().unwrap_or_default();metadata.insert("run_status".into(),json!("failed"));metadata.insert("error".into(),json!(message.content));message.metadata=Json(Value::Object(metadata));
             tx.execute("UPDATE project_chat_messages SET status='failed',message_type='text',content=?,metadata=?,updated_at=? WHERE id=?",(message.content.as_str(),Json(message.metadata.0.clone()),message.updated_at,message.id)).await?;
         }
@@ -491,6 +492,28 @@ mod tests {
                 updated_at: now,
             },
         )
+    }
+
+    #[test]
+    fn live_activity_timestamps_match_database_reads_across_midnight() {
+        let (_, mut message) = activity();
+        message.created_at = chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+            .unwrap()
+            .and_hms_micro_opt(1, 2, 3, 123456)
+            .unwrap();
+        let updated_utc = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_micro_opt(17, 3, 4, 654321)
+            .unwrap();
+        message.updated_at = database_timestamp(updated_utc);
+
+        let view = message.view();
+        assert_eq!(view["createdAt"], "2026-01-01T17:02:03.123456+00:00");
+        assert_eq!(view["updatedAt"], "2026-01-01T17:03:04.654321+00:00");
+        assert_eq!(
+            crate::socketio::project_chat_messages::utc_timestamp(message.updated_at),
+            updated_utc
+        );
     }
 
     #[test]

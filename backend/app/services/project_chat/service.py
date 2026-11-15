@@ -2606,7 +2606,7 @@ class ProjectChatService:
         from app.services.collaboration_permissions import (
             collaboration_permission_service,
         )
-        from app.services.workspaces import workspace_service
+        from app.services.workspaces.service import workspace_service
 
         if share_with_workspace:
             workspace_service.ensure_accessible_agent_authorized(
