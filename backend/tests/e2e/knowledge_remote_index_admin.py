@@ -276,6 +276,7 @@ def _assert_admin_calls_fail(
     calls: list[tuple[str, AdminCall]],
     expected_status: int,
     context: str,
+    expected_detail: str | None = None,
 ) -> None:
     """Each admin entry must answer with the expected failure and a detail."""
 
@@ -287,6 +288,11 @@ def _assert_admin_calls_fail(
             f"{operation} must surface the {context}: "
             f"{response.status_code} {response.text}",
         )
+        if expected_detail is not None:
+            _check(
+                detail == expected_detail,
+                f"{operation} must preserve the safe external failure detail: {detail}",
+            )
         _log(f"{operation} surfaced the {context}: detail={detail}")
 
 
@@ -449,14 +455,14 @@ def _run_admin_failure_scenario(
             f"{knowledge_base_id} untouched"
         )
 
-        # A store that cannot be reached is a runtime failure the Backend cannot
-        # see: the retriever record is authorized, so the request reaches the
-        # runtime and its storage failure must surface for the mutating entries.
+        # An authorized retriever reaches the Runtime, which classifies the
+        # external SDK failure separately from internal Runtime failures.
         _point_retriever_at(client, token, resource_name, UNREACHABLE_QDRANT_URL)
         _assert_admin_calls_fail(
             _admin_calls(client, token, knowledge_base_id)[1:],
-            500,
-            "unreachable store",
+            502,
+            "unreachable external store",
+            expected_detail="External index cleanup could not be confirmed",
         )
 
         # Restoring the store lets the same operations succeed again.
