@@ -945,6 +945,7 @@ pub(in crate::socketio) async fn finish_runtime_activity(
         format!("SELECT {ACTIVITY_COLUMNS} FROM project_chat_messages WHERE project_id=? AND task_id=? AND trigger_message_id=? AND sender_type='agent' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.kind'))='task_ai_subagent' AND status IN ('pending','streaming') AND {UNSET_DELETED_AT} FOR UPDATE"),
         (parent.project_id.as_str(), parent.task_id.as_str(), parent.message_id.as_str()),
     ).await?;
+    let updated_at = parent.updated_at;
     let mut messages = vec![parent];
     for child in children {
         let mut child = child.into_message();
@@ -953,6 +954,7 @@ pub(in crate::socketio) async fn finish_runtime_activity(
         child.message_type = "text".into();
         child.metadata.0["subagent_status"] = json!(status);
         child.metadata.0["run_status"] = json!(status);
+        child.updated_at = updated_at;
         update_terminal_row(tx, &child).await?;
         messages.push(child);
     }
@@ -961,8 +963,8 @@ pub(in crate::socketio) async fn finish_runtime_activity(
 
 async fn update_terminal_row(tx: &mut impl MysqlTransaction, message: &Message) -> MysqlResult<()> {
     tx.execute(
-        "UPDATE project_chat_messages SET content=?, status=?, message_type=?, metadata=?, updated_at=UTC_TIMESTAMP(6) WHERE id=?",
-        (message.content.as_str(), message.status.as_str(), message.message_type.as_str(), brz_mysql::Json(message.metadata.0.clone()), message.id),
+        "UPDATE project_chat_messages SET content=?, status=?, message_type=?, metadata=?, updated_at=? WHERE id=?",
+        (message.content.as_str(), message.status.as_str(), message.message_type.as_str(), brz_mysql::Json(message.metadata.0.clone()), message.updated_at, message.id),
     ).await?;
     Ok(())
 }

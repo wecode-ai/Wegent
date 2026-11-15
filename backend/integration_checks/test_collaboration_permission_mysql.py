@@ -211,7 +211,7 @@ def test_manager_decision_completes_dispatch_after_concurrent_heartbeat(
             project = _make_project(db, owner)
             group, manager, _member = _collaboration_group(db, project, owner)
             monkeypatch.setattr(
-                "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+                "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
                 lambda *args, **kwargs: [group],
             )
             item = loop_item_service.create(

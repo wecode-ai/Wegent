@@ -234,7 +234,7 @@ def test_cp11_legacy_team_binding_preserves_authorization_and_explicit_revocatio
 
     from app.models.delivery import ProjectChatAgent
     from app.schemas.workspace import WorkspaceAgentCreate
-    from app.services.workspaces import workspace_service
+    from app.services.workspaces.service import workspace_service
     from tests.api.test_workspace_shared_agents import _native_team
 
     team = _native_team(test_db, test_user)

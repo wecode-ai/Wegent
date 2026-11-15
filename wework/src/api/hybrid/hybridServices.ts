@@ -42,7 +42,11 @@ import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import { createCloudModelCatalog } from './cloudModelCatalog'
-import { canonicalCloudTaskPort, registeredCloudDeviceId } from './canonicalCloudTaskPort'
+import {
+  canonicalCloudTaskPort,
+  registeredCloudDeviceId,
+  registeredCloudDeviceIdentity,
+} from './canonicalCloudTaskPort'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -815,6 +819,10 @@ export function createHybridWorkbenchServices(
   }
   const listKnownDevices = async (signal?: AbortSignal) =>
     mergeKnownDevices(await listLocalDevices(signal), rememberedCloudDevices)
+  const resolveRegisteredCloudDevice = async (deviceId: string): Promise<DeviceInfo | null> =>
+    rememberedCloudDevices.find(device => device.device_id === deviceId) ??
+    (await listCloudDevices()).find(device => device.device_id === deviceId) ??
+    null
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
     const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
@@ -1699,8 +1707,10 @@ export function createHybridWorkbenchServices(
   return {
     ...cloudServices,
     workspaceRuntimePort: cloudServices.workspaceRuntimePort
-      ? canonicalCloudTaskPort(cloudServices.workspaceRuntimePort, async deviceId =>
-          (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+      ? canonicalCloudTaskPort(
+          cloudServices.workspaceRuntimePort,
+          async deviceId => (await standInApiForDevice(deviceId)).deviceIdentity(deviceId),
+          resolveRegisteredCloudDevice
         )
       : undefined,
     localParticipationIdentity: localServices.localParticipationIdentity,
@@ -1981,7 +1991,14 @@ export function createHybridWorkbenchServices(
         )
       },
       async deviceIdentity(deviceId) {
-        return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+        const api = await standInApiForDevice(deviceId)
+        if (api === localServices.standInApi) return api.deviceIdentity(deviceId)
+        const registered = registeredCloudDeviceIdentity(
+          deviceId,
+          await resolveRegisteredCloudDevice(deviceId)
+        )
+        if (registered) return registered
+        return api.deviceIdentity(deviceId)
       },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)

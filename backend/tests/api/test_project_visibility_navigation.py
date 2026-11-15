@@ -15,9 +15,9 @@ from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.schemas.cloud_project import CloudProjectCreate
 from app.schemas.workspace import WorkspaceCreate
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.responses import list_project_responses
-from app.services.workspaces import workspace_service
+from app.services.cloud_projects.service import cloud_project_service
+from app.services.workspaces.service import workspace_service
 from app.services.workspaces.storage import CollaborationWorkspace
 
 

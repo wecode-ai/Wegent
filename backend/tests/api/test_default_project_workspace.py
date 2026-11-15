@@ -12,7 +12,7 @@ from app.core.security import create_access_token
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
 from app.models.user import User
-from app.services.cloud_projects import cloud_project_service
+from app.services.cloud_projects.service import cloud_project_service
 
 
 @pytest.mark.parametrize("default_source", ["legacy", "create", "update"])
