@@ -160,6 +160,7 @@ mod tests {
                 child.completed_at = Some(123);
                 let delivery = handler.stand_in_result_delivery(&child).unwrap();
                 assert_eq!(delivery["taskId"], identity.task_id);
+                assert_eq!(delivery["automaticStandIn"], true);
                 assert!(delivery["message"]
                     .as_str()
                     .unwrap()

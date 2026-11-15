@@ -276,6 +276,12 @@ export function createSourceOwnerTaskStory(options) {
         const replies = (await readFile(join(root, 'replies.txt'), 'utf8')).trim().split('\n')
         assert.equal(replies.length, 2, 'One startup and one completion reply; no duplicates')
         assert.ok(replies.every(line => line.includes(`${MARKER}-request`)))
+        for (const reply of replies) {
+          const args = reply.split('\t')
+          assert.equal(args[args.indexOf('--conversation-id') + 1], 'owner-self-chat')
+          assert.equal(args[args.indexOf('--ref-msg-id') + 1], `${MARKER}-request`)
+          assert.equal(args[args.indexOf('--ref-sender') + 1], 'fixture-user')
+        }
         assert.equal(state.workerRuns, 1, 'Duplicate creation must not start another worker')
         const child = await rpc('runtime.tasks.get', { taskId: state.child })
         assert.equal(child.task.status, 'done')
