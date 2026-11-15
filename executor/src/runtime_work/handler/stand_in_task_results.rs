@@ -242,7 +242,7 @@ impl RuntimeWorkRpcHandler {
             message
         };
         request["prompt"] = json!(message);
-        let manual = source_parent && request["standInManualConfirmation"] == true;
+        let manual = source_parent && request["origin"]["manual"] == true;
         Some(
             json!({"taskId":source,"userId":user,"message":message,"executionRequest":request,
             "commandId":command,"clientUserMessageId":command,"queueIfBusy":true,"automaticStandIn":source_parent,"manualStandInConfirmation":manual,

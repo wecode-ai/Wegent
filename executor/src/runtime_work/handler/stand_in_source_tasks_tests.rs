@@ -53,7 +53,8 @@ fn fixture(
         local_task_id: id.into(),
         runtime: "codex".into(),
         thread_id: Some("source-thread".into()),
-        runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":7,"origin":origin,"standInSourceBindings":bindings}}),
+        workspace_path: root.path().to_str().unwrap().into(),
+        runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":7,"origin":origin,"standInSourceBindings":bindings,"project_workspace_path":root.path().to_str().unwrap()}}),
         ..Default::default()
     });
     let identity = crate::task_runtime::mcp::stand_in_identity(
@@ -63,6 +64,42 @@ fn fixture(
     let message_id = store.stand_in_messages(7, id).unwrap()[0]["recordId"].clone();
     let args = json!({"messageId":message_id,"requestId":"fix-once","title":"Fix the defect","message":"Fix the defect and verify the result in this worker."});
     (root, handler, identity, args)
+}
+
+async fn admit_host_manual_source_grant(
+    handler: &RuntimeWorkRpcHandler,
+    identity: &StandInMcpIdentity,
+) {
+    let result = handler
+        .run_connection_stand_in_work(json!({
+            "userId":identity.user,"workId":identity.work,"confirmThisRun":true
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true);
+    let turn = {
+        let mut scheduler = handler.turn_scheduler.lock().unwrap();
+        let position = scheduler
+            .queued_turns
+            .iter()
+            .position(|turn| turn.local_task_id == identity.task_id)
+            .unwrap();
+        scheduler.queued_turns.remove(position).unwrap()
+    };
+    assert_eq!(turn.request.extra["standInManualConfirmation"], true);
+    // Use the production admission snapshot, including its transient-metadata filtering.
+    handler
+        .persist_turn_queue(VecDeque::new(), None, std::slice::from_ref(&turn))
+        .await
+        .unwrap();
+    let link = handler.local_task_link(&identity.task_id).unwrap();
+    let saved = &link.runtime_handle["executionRequest"];
+    assert!(saved.get("standInManualConfirmation").is_none());
+    assert_eq!(saved["origin"]["manual"], true);
+    assert_eq!(
+        saved["standInSourceBindings"],
+        turn.request.extra["standInSourceBindings"]
+    );
 }
 
 #[tokio::test]
@@ -228,9 +265,7 @@ async fn confirmation_required_source_task_obeys_live_policy_without_host_manual
         assert_eq!(handler.local_task_links(true).len(), 1);
 
         // Only the host's recorded manual start permits work with automation disabled.
-        handler.store.update_task(&identity.task_id, |link| {
-            link.runtime_handle["executionRequest"]["standInManualConfirmation"] = json!(true);
-        });
+        admit_host_manual_source_grant(&handler, &identity).await;
         let (config, _) = handler
             .source_task_context(&identity, args["messageId"].as_str().unwrap())
             .unwrap();
@@ -280,14 +315,12 @@ fn manually_authorized_source_task_and_result_pass_native_queue_admission_with_a
             settings["primary"]["connections"][0]["policy"]["automatic"] = json!(false);
         }
         store.save_personal_stand_in(7, "mac", settings).unwrap();
-        handler.store.update_task(&identity.task_id, |link| {
-            link.runtime_handle["executionRequest"]["standInManualConfirmation"] = json!(true);
-        });
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
+                admit_host_manual_source_grant(&handler, &identity).await;
                 let result = handler
                     .stand_in_task_operation(identity.clone(), "create_task", args)
                     .await

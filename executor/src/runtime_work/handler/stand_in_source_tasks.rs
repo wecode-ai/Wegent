@@ -40,7 +40,7 @@ impl RuntimeWorkRpcHandler {
             .find(|role| role["id"].as_str() == identity.role.as_deref())
             .ok_or_else(denied)?;
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
-        let manual = actor.runtime_handle["executionRequest"]["standInManualConfirmation"] == true;
+        let manual = actor.runtime_handle["executionRequest"]["origin"]["manual"] == true;
         if manual
             && !actor.runtime_handle["executionRequest"]["standInSourceBindings"]
                 .as_array()
@@ -77,13 +77,13 @@ impl RuntimeWorkRpcHandler {
         if saved["standInDelegation"]["sourceMessageId"].is_string() {
             let parent = self.source_task_parent(link)?;
             return Ok(self.local_task_link(&parent.task_id).is_some_and(|parent| {
-                parent.runtime_handle["executionRequest"]["standInManualConfirmation"] == true
+                parent.runtime_handle["executionRequest"]["origin"]["manual"] == true
             }));
         }
         if matches!(
             link.runtime_handle["origin"]["type"].as_str(),
             Some("connection_work" | "dingtalk_work")
-        ) && saved["standInManualConfirmation"] == true
+        ) && saved["origin"]["manual"] == true
             && request.extra.get("standInManualConfirmation") == Some(&json!(true))
         {
             if request.extra.get("standInSourceBindings") != saved.get("standInSourceBindings") {
