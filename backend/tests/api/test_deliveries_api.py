@@ -46,7 +46,7 @@ from app.services.delivery.storage import (
 from app.services.loop_items.service import loop_item_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
-from app.services.workspaces import workspace_service
+from app.services.workspaces.service import workspace_service
 from tests.service_results import service_result
 from tests.utils.collaboration import (
     authorize_project,

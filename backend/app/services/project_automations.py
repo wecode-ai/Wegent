@@ -1031,7 +1031,7 @@ class ProjectAutomationService:
     ) -> None:
         if target["kind"] == "collaboration_group":
             from app.services.runner_routing import resolve_group_routing
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -1112,7 +1112,7 @@ class ProjectAutomationService:
                 "name": str(agent.title or agent.name or "AI"),
             }
         if target_kind == "collaboration_group":
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
