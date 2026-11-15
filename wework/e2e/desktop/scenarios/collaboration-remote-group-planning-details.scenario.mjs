@@ -7,7 +7,7 @@ import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 export async function createDesktopScenario(options) {
   return createCoordinateScenario({
     ...options,
-    async verifyManagerPlanning(control, { groupRules, leader }) {
+    async verifyManagerPlanning(control, { groupRules, leader, creationStartedAt }) {
       const eventTestId = await waitForTestIdByText(
         control,
         'body',
@@ -18,6 +18,15 @@ export async function createDesktopScenario(options) {
       await control.command('waitFor', `[data-testid="${eventTestId}"]`, {
         text: '正在规划任务',
       })
+      const createdAt = Date.parse(
+        await control.command('getAttribute', `[data-testid="${eventTestId}"] time`, {
+          value: 'datetime',
+        })
+      )
+      assert.ok(
+        createdAt >= creationStartedAt - 1000 && createdAt <= Date.now(),
+        'A live activity timestamp must fall within Issue creation and receipt, allowing database second precision'
+      )
       const executionTestId = eventTestId.replace(
         'cloud-task-manager-event-',
         'cloud-task-manager-execution-'
