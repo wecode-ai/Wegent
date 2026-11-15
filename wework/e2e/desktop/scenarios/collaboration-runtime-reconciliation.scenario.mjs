@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
-import { createRequire, registerHooks } from 'node:module'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
 import { holdDatabaseLock } from '../modules/database-lock.mjs'
+import { registerTypeScriptSourceResolver } from '../modules/load-typescript-source.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { RuntimeEventProxy } from '../modules/runtime-event-proxy.mjs'
@@ -67,21 +68,10 @@ async function connectSocket(backendUrl, authToken, timeoutMs) {
 }
 
 async function loadSnapshotProjector() {
-  const source = new URL('../../../../packages/chat-core/src/', import.meta.url)
   // Node 24 strips TypeScript; only the package's extensionless imports need resolving.
-  const hook = registerHooks({
-    resolve(specifier, context, nextResolve) {
-      const packageImport = context.parentURL?.startsWith(source.href)
-      const relativeImport = specifier.startsWith('./') || specifier.startsWith('../')
-      return nextResolve(
-        packageImport && relativeImport && !specifier.endsWith('.ts')
-          ? `${specifier}.ts`
-          : specifier,
-        context
-      )
-    },
-  })
+  const hook = registerTypeScriptSourceResolver(['../../../../packages/chat-core/src/'])
   try {
+    const source = new URL('../../../../packages/chat-core/src/', import.meta.url)
     return (await import(new URL('runtime-execution-snapshot.ts', source))).runtimeExecutionSnapshot
   } finally {
     hook.deregister()
