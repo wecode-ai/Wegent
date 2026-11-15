@@ -205,13 +205,23 @@ def _retriever_payload(
     }
 
 
-def _point_retriever_at(client: httpx.Client, token: str, name: str, url: str) -> None:
+def _point_retriever_at(
+    client: httpx.Client,
+    token: str,
+    name: str,
+    url: str,
+    *,
+    index_strategy: dict[str, Any] | None = None,
+) -> None:
     """Repoint one retriever's storage, so the next runtime call fails there."""
 
+    payload = _retriever_payload(name, url)
+    if index_strategy is not None:
+        payload["spec"]["storageConfig"]["indexStrategy"] = index_strategy
     response = client.put(
         f"/api/retrievers/{name}",
         headers=_auth_headers(token),
-        json=_retriever_payload(name, url),
+        json=payload,
     )
     _check(
         response.status_code < 300,

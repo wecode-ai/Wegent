@@ -11,24 +11,13 @@ from pymilvus import MilvusClient
 from pymilvus.exceptions import DataNotMatchException, MilvusException
 
 from knowledge_engine.storage.errors import MilvusRowTooLargeError
+from knowledge_engine.storage.milvus_limits import (
+    DEFAULT_BATCH_HEADROOM_BYTES,
+    DEFAULT_MAX_BATCH_BYTES,
+    validate_batch_limits,
+)
 
-DEFAULT_MAX_BATCH_BYTES = 1024 * 1024
-DEFAULT_BATCH_HEADROOM_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
-
-
-def validate_batch_limits(max_bytes: int, headroom: int, max_rows: int) -> None:
-    for name, value, minimum in (
-        ("max_batch_bytes", max_bytes, 1),
-        ("batch_headroom_bytes", headroom, 0),
-        ("batch_size", max_rows, 1),
-    ):
-        if type(value) is not int or value < minimum:
-            raise ValueError(f"Milvus {name} must be an integer >= {minimum}")
-    if headroom >= max_bytes:
-        raise ValueError(
-            "Milvus batch_headroom_bytes must be less than max_batch_bytes"
-        )
 
 
 class MilvusWriteClient:

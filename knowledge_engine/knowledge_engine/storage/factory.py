@@ -17,6 +17,8 @@ from knowledge_engine.storage.capabilities import (
     get_supported_storage_types,
     normalize_storage_type,
 )
+from knowledge_engine.storage.index_strategy import validate_index_strategy
+from knowledge_engine.storage.milvus_limits import validate_milvus_write_config
 from shared.knowledge_contracts import RuntimeRetrieverConfig
 
 if TYPE_CHECKING:
@@ -58,12 +60,35 @@ def create_storage_backend_from_runtime_config(
     *,
     request_timeout: float | None = None,
 ) -> BaseStorageBackend:
+    storage_type, config = prepare_runtime_storage_config(
+        retriever_config, request_timeout=request_timeout
+    )
+    return _load_backend_class(storage_type)(config)
+
+
+def prepare_runtime_storage_config(
+    retriever_config: RuntimeRetrieverConfig,
+    *,
+    request_timeout: float | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Validate and prepare local configuration without constructing SDK clients."""
     storage_config = retriever_config.storage_config or {}
     storage_type = normalize_storage_type(storage_config.get("type") or "")
     if not storage_config.get("url"):
         raise ValueError(f"storage url must be provided for {storage_type} backend")
 
-    config = {
+    if not isinstance(storage_config["url"], str):
+        raise ValueError("Storage URL must be a string")
+    for field in ("ext", "indexStrategy"):
+        if storage_config.get(field) is not None and not isinstance(
+            storage_config[field], dict
+        ):
+            raise ValueError(f"Storage {field} must be an object")
+    _validate_runtime_storage_url(
+        storage_type, storage_config["url"], network_only=request_timeout is not None
+    )
+
+    config: dict[str, Any] = {
         "url": storage_config.get("url"),
         "username": storage_config.get("username"),
         "password": storage_config.get("password"),
@@ -72,27 +97,48 @@ def create_storage_backend_from_runtime_config(
         "ext": storage_config.get("ext") or {},
     }
     if request_timeout is not None:
-        url = storage_config["url"]
-        if not isinstance(url, str):
-            raise ValueError("Storage URL must be a string")
-        if storage_type == "qdrant" and "://" not in url:
-            url = f"http://{url}"
-        target = urlsplit(url)
+        config["request_timeout"] = request_timeout
+    validate_index_strategy(config["indexStrategy"])
+    if storage_type == "milvus":
+        validate_milvus_write_config(config["ext"])
+    return storage_type, config
+
+
+def _validate_runtime_storage_url(
+    storage_type: str, url: str, *, network_only: bool
+) -> None:
+    """Validate syntax without contacting the storage service."""
+    candidate = (
+        f"http://{url}" if storage_type == "qdrant" and "://" not in url else url
+    )
+    message = (
+        "External cleanup requires a valid network storage URL"
+        if network_only
+        else "Storage URL must identify a valid storage target"
+    )
+    try:
+        target = urlsplit(candidate)
+        if storage_type == "milvus" and not network_only:
+            if not target.scheme and url.endswith(".db"):
+                return
+            if target.scheme == "unix" and target.path:
+                return
         allowed_schemes = (
             {"http", "https", "tcp", "grpc"}
             if storage_type == "milvus"
             else {"http", "https"}
         )
         if target.scheme not in allowed_schemes or not target.hostname:
-            raise ValueError("External cleanup requires a valid network storage URL")
+            raise ValueError(message)
         target.port
-        config["request_timeout"] = request_timeout
-    return _load_backend_class(storage_type)(config)
+    except ValueError as error:
+        raise ValueError(message) from error
 
 
 __all__ = [
     "create_storage_backend_from_config",
     "create_storage_backend_from_runtime_config",
+    "prepare_runtime_storage_config",
     "get_all_storage_retrieval_methods",
     "get_supported_retrieval_methods",
     "get_supported_storage_types",

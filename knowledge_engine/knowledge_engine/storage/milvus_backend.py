@@ -49,6 +49,7 @@ from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.cleanup_timeout import CleanupTimeoutClient
+from knowledge_engine.storage.document_scope import document_ref_variants
 from knowledge_engine.storage.milvus_batching import (
     DEFAULT_BATCH_HEADROOM_BYTES,
     DEFAULT_MAX_BATCH_BYTES,
@@ -1390,6 +1391,7 @@ class MilvusBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = MAX_QUERY_LIMIT,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
@@ -1419,6 +1421,11 @@ class MilvusBackend(BaseStorageBackend):
             # Sanitize knowledge_id to prevent expression injection
             safe_knowledge_id = self._sanitize_filter_value(knowledge_id)
             filter_expr = f'knowledge_id == "{safe_knowledge_id}"'
+
+            if scope is not None and scope.document_ids is not None:
+                filter_expr += " and doc_ref in " + json.dumps(
+                    document_ref_variants(scope.document_ids)
+                )
 
             # Query all records with matching knowledge_id
             results = client.query(

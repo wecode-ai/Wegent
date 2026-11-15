@@ -87,3 +87,30 @@ def test_create_storage_backend_from_runtime_config_requires_url() -> None:
                 },
             )
         )
+
+
+@pytest.mark.parametrize(
+    "storage_type,url",
+    [
+        ("qdrant", "localhost:6333"),
+        ("elasticsearch", "https://localhost:9200/prefix"),
+        ("milvus", "grpc://localhost:19530/db"),
+        ("milvus", "unix:///tmp/milvus.sock"),
+        ("milvus", "local-fixture.db"),
+    ],
+)
+def test_preparing_runtime_config_keeps_existing_targets_without_loading_clients(
+    monkeypatch: pytest.MonkeyPatch, storage_type: str, url: str
+) -> None:
+    def forbidden_load(storage_type: str) -> None:
+        raise AssertionError("Preparing configuration must not load storage clients")
+
+    monkeypatch.setattr(factory, "_load_backend_class", forbidden_load)
+    actual_type, config = factory.prepare_runtime_storage_config(
+        RuntimeRetrieverConfig(
+            name="test", storage_config={"type": storage_type, "url": url}
+        )
+    )
+
+    assert actual_type == storage_type
+    assert config["url"] == url

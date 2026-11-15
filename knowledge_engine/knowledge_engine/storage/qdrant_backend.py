@@ -37,6 +37,7 @@ from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.capabilities import STORAGE_BACKEND_SPECS
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from knowledge_engine.storage.document_scope import document_ref_variants
 from knowledge_engine.storage.qdrant_vector_store import (
     ReadyQdrantVectorStore as QdrantVectorStore,
 )
@@ -677,6 +678,7 @@ class QdrantBackend(BaseStorageBackend):
         knowledge_id: str,
         max_chunks: int = 10000,
         metadata_condition: Optional[Dict[str, Any]] = None,
+        scope: Optional[RetrievalScope] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
@@ -695,14 +697,22 @@ class QdrantBackend(BaseStorageBackend):
         collection_name = self.get_index_name(knowledge_id, **kwargs)
 
         # Build filter for knowledge_id
-        scroll_filter = qdrant_models.Filter(
-            must=[
+        conditions = [
+            qdrant_models.FieldCondition(
+                key="knowledge_id",
+                match=qdrant_models.MatchValue(value=knowledge_id),
+            )
+        ]
+        if scope is not None and scope.document_ids is not None:
+            conditions.append(
                 qdrant_models.FieldCondition(
-                    key="knowledge_id",
-                    match=qdrant_models.MatchValue(value=knowledge_id),
+                    key="doc_ref",
+                    match=qdrant_models.MatchAny(
+                        any=document_ref_variants(scope.document_ids)
+                    ),
                 )
-            ]
-        )
+            )
+        scroll_filter = qdrant_models.Filter(must=conditions)
 
         try:
             # Check if collection exists
