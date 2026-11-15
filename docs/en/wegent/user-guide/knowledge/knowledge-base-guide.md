@@ -257,20 +257,20 @@ Knowledge bases support fine-grained access control through the Share Service ar
 
 ### Managing Members
 
-The library list's **Permission Details**, document management's **Permission Management**, and the **Library created** page share the same member management and add flow. On mobile, open permission details from the list's **More** menu.
+The library list's **Permission Details**, ordinary library details, CodeWiki document management, and the **Library created** entry use one permission dialog. Opening it preserves the document list and its position; closing it restores focus to the entry. On mobile, open permission details from the list's **More** menu.
 
-1. Search existing collaborators to see members and roles. Pending requests remain visible independently of the search.
+1. View authorization objects and their permissions. Managers can also view pending requests.
 2. Click **Add collaborator**, select people by username or email, or search for groups.
 3. Choose Maintainer, Developer, Reporter, or RestrictedAnalyst for each selected target. Owner cannot be assigned through this flow.
 4. Click **Authorize**. Partial success leaves only failed targets for retry; uncertain results are checked against existing grants first.
 
-The member list supports role changes, removal, and request review. View-only users see their effective permission and access sources.
+Users who can directly access the library can inspect their effective permission and sources, the creator, owning-space inheritance rules, and all approved authorization objects. Readers have no editing or removal controls and do not load approval requests. Managers can continue changing explicit grant roles, removing members, and reviewing requests in the same dialog. The creator is an identity and inherited rules are not editable or removable member records. Inherited rules do not expand every group member or imply that all members have the same role.
 
 After creation, **Finish / Configure later** keeps the library. A failed list refresh can be retried separately without creating the library again or repeating grants.
 
 ### Group Authorization
 
-Select a group and assign its role in **Add collaborator**. Group members inherit that access; existing group grants appear under the management view's **Group** tab.
+Select a group and assign its role in **Add collaborator**. Group members inherit that access; existing group grants appear alongside people in the authorization-object list.
 
 **Note:** Libraries received through group grants appear under **Shared with Me**, rather than the receiving group's native library list.
 

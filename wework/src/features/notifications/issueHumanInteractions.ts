@@ -34,7 +34,7 @@ export function issueQuestionHandoff(item: RuntimeInteraction): string | undefin
   return assignment?.at ?? 'initial'
 }
 
-/** Only server-validated resolved questions supersede a retained native snapshot. */
+/** Only server-validated handled questions supersede a retained native snapshot. */
 export function isResolvedIssueQuestion(
   native: RuntimeInteraction,
   validatedResolved: readonly RuntimeInteraction[]
@@ -59,6 +59,17 @@ export function matchesIssueResolution(
   return identity
     ? identity === resolution.questionIdentity
     : !native.project && native.id === resolution.nativeInteractionId
+}
+
+/** Durable settlement also supersedes stale caches and stale project-work snapshots. */
+export function hasRecordedIssueResolution(
+  item: RuntimeInteraction,
+  history: readonly { resolvedIssueQuestion?: ValidatedIssueResolution }[]
+): boolean {
+  return history.some(
+    entry =>
+      entry.resolvedIssueQuestion && matchesIssueResolution(item, entry.resolvedIssueQuestion)
+  )
 }
 
 /** Shared Issue questions never require access to another member's private runtime. */
