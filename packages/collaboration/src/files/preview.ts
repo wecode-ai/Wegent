@@ -1,5 +1,29 @@
 export type CollaborationFilePreviewKind = "text" | "binary" | "unknown";
 
+import { mimeTypeForFileName } from "@wegent/chat-core/workspace-file-types";
+
+export function normalizeAttachmentBlob(
+  blob: Blob,
+  filename: string,
+  contentType?: string | null,
+): Blob {
+  if (blob.type && blob.type !== "application/octet-stream") return blob;
+  const type =
+    contentType && contentType !== "application/octet-stream"
+      ? contentType
+      : mimeTypeForFileName(filename);
+  return type && type !== blob.type ? blob.slice(0, blob.size, type) : blob;
+}
+
+export function attachmentPreviewKind(filename: string, contentType: string) {
+  if (contentType.startsWith("image/")) return "image";
+  if (/\.(?:md|markdown)$/i.test(filename) || contentType === "text/markdown")
+    return "markdown";
+  if (contentType === "application/pdf" || /\.pdf$/i.test(filename))
+    return "pdf";
+  return collaborationFilePreviewKind(filename, contentType);
+}
+
 const TEXT_FILE_EXTENSIONS = new Set([
   "c",
   "cc",

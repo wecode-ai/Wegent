@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMarkdownServices } from './MarkdownServices'
 import {
   getAuthenticatedAttachmentId,
+  getMarkdownAttachmentId,
+  classifyMarkdownLink,
   isAuthenticatedAttachmentImageSrc,
   localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
@@ -15,27 +17,81 @@ export function AssistantMarkdownImage({
   alt?: string
   sourceLine?: number
 }) {
-  const { fetchAttachmentBlob, readLocalFile, resolveImageUrl } = useMarkdownServices()
+  const {
+    fetchAttachmentBlob,
+    readLocalFile,
+    readMarkdownImage,
+    openMarkdownImage,
+    resolveImageUrl,
+    translate,
+  } = useMarkdownServices()
   const rawSrc = typeof src === 'string' ? src.trim() : ''
-  const [loadedPreview, setLoadedPreview] = useState<{
-    rawSrc: string
-    url: string
-  } | null>(null)
-  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const isAuthenticatedSrc = rawSrc ? isAuthenticatedAttachmentImageSrc(rawSrc) : false
   const localPath = rawSrc ? localMarkdownImagePath(rawSrc) : null
+  const readOwnedImage =
+    readMarkdownImage &&
+    rawSrc &&
+    (getMarkdownAttachmentId(rawSrc) !== null || classifyMarkdownLink(rawSrc).kind === 'file')
+      ? readMarkdownImage
+      : undefined
   const requiresBlobPreview =
-    Boolean(resolveImageUrl) || isAuthenticatedSrc || Boolean(localPath && readLocalFile)
+    Boolean(readOwnedImage) ||
+    Boolean(resolveImageUrl) ||
+    getMarkdownAttachmentId(rawSrc) !== null ||
+    Boolean(localPath)
+  const request = useMemo(
+    () => ({
+      rawSrc,
+      alt,
+      readOwnedImage,
+      resolveImageUrl,
+      fetchAttachmentBlob,
+      readLocalFile,
+      isAuthenticatedSrc,
+      localPath,
+      requiresBlobPreview,
+      attempt,
+    }),
+    [
+      rawSrc,
+      alt,
+      readOwnedImage,
+      resolveImageUrl,
+      fetchAttachmentBlob,
+      readLocalFile,
+      isAuthenticatedSrc,
+      localPath,
+      requiresBlobPreview,
+      attempt,
+    ]
+  )
+  const [loadedPreview, setLoadedPreview] = useState<{
+    request: typeof request
+    url: string
+  } | null>(null)
+  const [failedRequest, setFailedRequest] = useState<typeof request | null>(null)
   const resolvedSrc = requiresBlobPreview
-    ? loadedPreview?.rawSrc === rawSrc
+    ? loadedPreview?.request === request
       ? loadedPreview.url
       : null
     : rawSrc
       ? resolveDirectMarkdownImageSrc(rawSrc)
       : null
-  const hasError = failedSrc === rawSrc
+  const hasError = !rawSrc || failedRequest === request
 
   useEffect(() => {
+    const {
+      rawSrc,
+      alt,
+      readOwnedImage,
+      resolveImageUrl,
+      fetchAttachmentBlob,
+      readLocalFile,
+      isAuthenticatedSrc,
+      localPath,
+      requiresBlobPreview,
+    } = request
     let objectUrl: string | null = null
     let isMounted = true
 
@@ -47,16 +103,17 @@ export function AssistantMarkdownImage({
 
     async function loadImage() {
       try {
-        if (resolveImageUrl) {
+        if (!readOwnedImage && resolveImageUrl) {
           const url = await resolveImageUrl(rawSrc)
           if (isMounted) {
-            setFailedSrc(null)
-            setLoadedPreview({ rawSrc, url })
+            setLoadedPreview({ request, url })
           }
           return
         }
         let blob: Blob
-        if (isAuthenticatedSrc) {
+        if (readOwnedImage) {
+          blob = await readOwnedImage(rawSrc, alt)
+        } else if (isAuthenticatedSrc) {
           const attachmentId = getAuthenticatedAttachmentId(rawSrc)
           if (attachmentId === null) {
             throw new Error('Failed to resolve markdown attachment')
@@ -74,14 +131,13 @@ export function AssistantMarkdownImage({
 
         objectUrl = URL.createObjectURL(blob)
         if (isMounted) {
-          setFailedSrc(null)
-          setLoadedPreview({ rawSrc, url: objectUrl })
+          setLoadedPreview({ request, url: objectUrl })
         } else {
           URL.revokeObjectURL(objectUrl)
         }
       } catch {
         if (isMounted) {
-          setFailedSrc(rawSrc)
+          setFailedRequest(request)
         }
       }
     }
@@ -94,23 +150,28 @@ export function AssistantMarkdownImage({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [
-    fetchAttachmentBlob,
-    readLocalFile,
-    resolveImageUrl,
-    isAuthenticatedSrc,
-    localPath,
-    rawSrc,
-    requiresBlobPreview,
-  ])
+  }, [request])
 
   if (hasError) {
     return (
       <span
+        role="alert"
         data-testid="assistant-markdown-image-error"
         className="my-2 inline-flex max-w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-text-muted"
       >
-        {alt || rawSrc}
+        {translate('image.failed')}: {alt || rawSrc}
+        {rawSrc ? (
+          <button
+            type="button"
+            data-testid="assistant-markdown-image-retry"
+            className="ml-2 underline"
+            onClick={() => {
+              setAttempt(value => value + 1)
+            }}
+          >
+            {translate('image.retry')}
+          </button>
+        ) : null}
       </span>
     )
   }
@@ -126,7 +187,7 @@ export function AssistantMarkdownImage({
     )
   }
 
-  return (
+  const image = (
     <img
       data-testid="assistant-markdown-image"
       data-scroll-anchor
@@ -135,6 +196,26 @@ export function AssistantMarkdownImage({
       alt={alt || ''}
       className="my-2 block max-h-[360px] max-w-full rounded-xl border border-border bg-base object-contain"
       loading="lazy"
+      onError={() => setFailedRequest(request)}
     />
+  )
+  return openMarkdownImage && readOwnedImage ? (
+    <button
+      type="button"
+      data-testid="assistant-markdown-image-open"
+      aria-label={translate('image.open')}
+      className="block max-w-full text-left"
+      onClick={async () => {
+        try {
+          await openMarkdownImage(rawSrc, alt)
+        } catch {
+          setFailedRequest(request)
+        }
+      }}
+    >
+      {image}
+    </button>
+  ) : (
+    image
   )
 }

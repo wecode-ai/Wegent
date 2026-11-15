@@ -146,7 +146,7 @@ export function IssueActivityPanel({
     [api.activity, assignments, comments, executions]
   )
   const content = (
-    <IssueMarkdownProvider attachments={api.attachments}>
+    <IssueMarkdownProvider attachments={api.attachments} issueId={issue.id} projectId={issue.cloud_project_id}>
       <IssueActivityFeed
         testId="collaboration-issue-activity"
         listTestId="collaboration-comments"

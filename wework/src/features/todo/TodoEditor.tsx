@@ -10,6 +10,8 @@ import {
   type CollaborationAssignment,
   createCollaborationTranslator,
   createSharedIssueDetailPort,
+  IssueMarkdownProvider,
+  type CollaborationAttachment,
   formatIssueAttachmentSize,
   type SharedEditorIssue,
   type SharedEditorProject,
@@ -185,6 +187,14 @@ export function TodoEditor(props: TodoEditorProps) {
   )
   const attachmentProjectId = props.project ? String(props.project.id) : undefined
   const attachmentIssueId = props.mode === 'edit' ? props.item.id : undefined
+  const openResourceAttachment = useCallback((attachment: CollaborationAttachment) => {
+    setPreviewAttachment({
+      id: attachment.id,
+      filename: attachment.display_name,
+      contentType: attachment.content_type,
+      sizeBytes: attachment.size_bytes,
+    })
+  }, [])
   const attachmentContext = useMemo(
     () =>
       attachmentProjectId && attachmentIssueId
@@ -429,7 +439,12 @@ export function TodoEditor(props: TodoEditorProps) {
     )
 
   return (
-    <>
+    <IssueMarkdownProvider
+      attachments={workspaceApi.attachments}
+      issueId={attachmentIssueId}
+      projectId={attachmentProjectId}
+      onOpenAttachment={openResourceAttachment}
+    >
       {editor}
       {previewAttachment ? (
         <CloudFilePreviewDialog
@@ -447,6 +462,6 @@ export function TodoEditor(props: TodoEditorProps) {
           onClose={() => setPreviewAttachment(null)}
         />
       ) : null}
-    </>
+    </IssueMarkdownProvider>
   )
 }

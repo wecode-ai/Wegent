@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Download, Loader2, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
-import { collaborationFilePreviewKind } from '../files/preview'
+import { useAttachmentPreview } from '../files/useAttachmentPreview'
+import { IssueActivityMarkdown } from '../issue-detail/IssueActivityMarkdown'
+import { useIssueResources } from '../issue-detail/issueResourcesContext'
 import { formatIssueAttachmentSize } from '../issue-detail/IssueDetailCore'
 import { Button } from '../markdown/Button'
 import { useEscapeKey } from '../markdown/useEscapeKey'
@@ -18,6 +20,7 @@ interface BrowserAttachmentPreviewProps {
   read(attachmentId: string): Promise<Blob>
   translate: CollaborationTranslate
   onClose(): void
+  onOpenAttachment?(id: string, filename: string): void
 }
 
 export function BrowserAttachmentPreview({
@@ -26,17 +29,22 @@ export function BrowserAttachmentPreview({
   read,
   translate,
   onClose,
+  onOpenAttachment,
 }: BrowserAttachmentPreviewProps) {
   const theme = useCollaborationPortalTheme()
+  const resources = useIssueResources()
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [preview, setPreview] = useState<{
-    url: string
-    size: number
-    kind: 'image' | 'text' | 'binary'
-    text?: string
-  } | null>(null)
-  const [loaded, setLoaded] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const load = useCallback(
+    async () =>
+      resources
+        ? (await resources.read(`wegent://attachments/${attachmentId}`)).blob
+        : read(attachmentId),
+    [resources, read, attachmentId]
+  )
+  const { preview, failed, loading, markLoaded, markFailed, retry } = useAttachmentPreview(
+    load,
+    filename
+  )
   useEscapeKey(onClose, true, dialogRef)
 
   useLayoutEffect(() => {
@@ -48,37 +56,6 @@ export function BrowserAttachmentPreview({
       if (trigger?.isConnected) trigger.focus()
     }
   }, [])
-
-  useEffect(() => {
-    let active = true
-    let objectUrl: string | null = null
-    setPreview(null)
-    setLoaded(false)
-    setFailed(false)
-    async function load() {
-      try {
-        const blob = await read(attachmentId)
-        if (!active) return
-        const kind = blob.type.startsWith('image/')
-          ? 'image'
-          : collaborationFilePreviewKind(filename, blob.type) === 'text'
-            ? 'text'
-            : 'binary'
-        const text = kind === 'text' ? await blob.text() : undefined
-        if (!active) return
-        objectUrl = URL.createObjectURL(blob)
-        setPreview({ url: objectUrl, size: blob.size, kind, text })
-        setLoaded(kind !== 'image')
-      } catch {
-        if (active) setFailed(true)
-      }
-    }
-    void load()
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [attachmentId, filename, read])
 
   return createPortal(
     <dialog
@@ -105,7 +82,9 @@ export function BrowserAttachmentPreview({
                 data-testid="browser-attachment-preview-download"
                 href={preview.url}
                 download={filename}
-                aria-label={translate('todo.download_name', undefined, { name: filename })}
+                aria-label={translate('todo.download_name', undefined, {
+                  name: filename,
+                })}
               >
                 <Download aria-hidden="true" />
               </a>
@@ -125,10 +104,20 @@ export function BrowserAttachmentPreview({
         </header>
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
           {failed ? (
-            <p role="alert">{translate('todo.file_preview_failed')}</p>
+            <div>
+              <p role="alert">{translate('todo.file_preview_failed')}</p>
+              <button
+                type="button"
+                data-testid="browser-attachment-preview-retry"
+                className="ml-2 underline"
+                onClick={retry}
+              >
+                {translate('attachment.retry')}
+              </button>
+            </div>
           ) : (
             <>
-              {!loaded ? (
+              {loading ? (
                 <Loader2
                   role="status"
                   aria-label={translate('todo.file_downloading')}
@@ -141,9 +130,21 @@ export function BrowserAttachmentPreview({
                   src={preview.url}
                   alt={filename}
                   className="max-h-full max-w-full object-contain"
-                  onLoad={() => setLoaded(true)}
-                  onError={() => setFailed(true)}
+                  onLoad={markLoaded}
+                  onError={markFailed}
                 />
+              ) : preview?.kind === 'markdown' ? (
+                <article
+                  data-testid="browser-attachment-preview-markdown"
+                  className="h-full w-full overflow-auto p-3"
+                >
+                  <IssueActivityMarkdown
+                    content={preview.text ?? ''}
+                    variant="document"
+                    translate={translate}
+                    onOpenAttachment={onOpenAttachment}
+                  />
+                </article>
               ) : preview?.kind === 'text' ? (
                 <pre
                   data-testid="browser-attachment-preview-text"

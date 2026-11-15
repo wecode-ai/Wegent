@@ -176,3 +176,5 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 启动时出现恢复中心或本机服务提示时，操作入口与限制见[启动故障与恢复](./getting-started.md#startup-recovery)。
 
 个人分组的 **… → 分组设置** 管理当前账户实际拥有的个人分组；项目标题及项目行右侧不再提供加号。见[项目入口](./projects.md#workspace-resource-controls)。
+
+Issue 动态中的图片、Markdown 和文件链接可打开附件预览，失败后可重试并下载原文件。见[附件与文档预览](./projects.md#issue-resource-preview)。

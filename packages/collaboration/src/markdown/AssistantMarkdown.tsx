@@ -91,7 +91,7 @@ export interface AssistantMarkdownProps {
   preserveLineBreaks?: boolean
   variant?: 'default' | 'document' | 'process' | 'user'
   sourceLineAnchors?: boolean
-  renderLink?: (href: string, text: string) => ReactNode
+  renderLink?: (href: string, text: string, children?: ReactNode) => ReactNode
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
 }
@@ -376,7 +376,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           )
         }
         const text = reactNodeToText(children)
-        const customLink = href ? renderLink?.(href, text) : undefined
+        const customLink = href ? renderLink?.(href, text, children) : undefined
         if (customLink !== undefined) return customLink
         const isComposerLink =
           href &&

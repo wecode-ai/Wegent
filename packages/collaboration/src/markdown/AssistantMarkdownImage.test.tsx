@@ -53,7 +53,7 @@ describe('platform Markdown image resolution', () => {
     })
     expect(
       container.querySelector('[data-testid="assistant-markdown-image-error"]')?.textContent
-    ).toBe('Resource')
+    ).toContain('Resource')
     expect(container.querySelector('img')).toBeNull()
   })
   it('does not replace a newer image with a late result from the old document', async () => {

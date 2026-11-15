@@ -2,7 +2,7 @@ import { useActivityExecutionDisplayStatus } from './useActivityExecutionStatus'
 import type { ComponentProps } from 'react'
 import { createCollaborationTranslator, IssueChatMessage } from '@wegent/collaboration'
 import { isPublicStandInMessage } from './issueActivityRole'
-import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { MarkdownServicesProvider, useMarkdownServices } from '@wegent/collaboration/markdown'
 import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
@@ -20,8 +20,12 @@ export function ChatMessage({
   executionTurnId?: string
 }) {
   const { status } = useActivityExecutionDisplayStatus(props.message, executionTurnId)
+  const inherited = useMarkdownServices()
+  const desktop = useDesktopMarkdownServices()
   return (
-    <MarkdownServicesProvider value={useDesktopMarkdownServices()}>
+    <MarkdownServicesProvider
+      value={{ ...desktop, readMarkdownImage: inherited.readMarkdownImage }}
+    >
       <IssueChatMessage
         {...props}
         showInlineExecutionStatus={
