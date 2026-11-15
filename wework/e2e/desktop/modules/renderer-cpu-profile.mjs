@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { createDevtoolsClient, writeDiagnosticFile } from '../../../scripts/ai-verify-devtools.mjs'
 
-export async function startRendererCpuProfile(directory, fileName, timeoutMs) {
+export async function startRendererCpuProfile(
+  directory,
+  fileName,
+  timeoutMs,
+  { captureControlDiagnostics = false } = {}
+) {
   let client
   let target
   try {
@@ -36,6 +41,26 @@ export async function startRendererCpuProfile(directory, fileName, timeoutMs) {
       } catch {
         console.info('[desktop-e2e-profile] CPU profile unavailable', { phase: 'stop' })
       } finally {
+        if (captureControlDiagnostics) {
+          try {
+            const snapshot = await client({
+              action: 'command',
+              target,
+              method: 'Runtime.evaluate',
+              params: {
+                expression: 'window.__WEWORK_E2E__?.getControlDiagnostics()',
+                returnByValue: true,
+              },
+            })
+            assert.ok(Array.isArray(snapshot.result?.value), 'Control diagnostics unavailable')
+            await writeDiagnosticFile(
+              join(directory, `${fileName}.transport.json`),
+              snapshot.result.value
+            )
+          } catch {
+            console.info('[desktop-e2e-profile] Renderer transport diagnostics unavailable')
+          }
+        }
         await client({ action: 'detach', target }).catch(() => {})
       }
     })())

@@ -4709,7 +4709,8 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       const stopProfile = await startRendererCpuProfile(
         resultDir,
         'command-delivery-timeout.cpuprofile',
-        3000
+        3000,
+        { captureControlDiagnostics: true }
       )
       try {
         await new Promise(resolve => setTimeout(resolve, 1000))
