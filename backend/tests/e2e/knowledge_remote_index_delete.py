@@ -239,16 +239,21 @@ def run_delete_failure_scenario(
         detail = (
             failed.json().get("detail")
             if "json" in failed.headers.get("content-type", "")
-            else ""
+            else None
         )
         _check(
-            failed.status_code >= 500,
+            failed.status_code == 502,
             "a remote removal failure must surface instead of a local success: "
             f"{failed.status_code} {failed.text}",
         )
         _check(
-            isinstance(detail, str) and detail,
-            f"the surfaced removal failure must carry a detail: {failed.text}",
+            isinstance(detail, dict)
+            and detail.get("code") == "external_engine_unavailable"
+            and detail.get("error_code") == "external_engine_unavailable"
+            and detail.get("content_deleted") is False
+            and detail.get("index_cleanup") == "unconfirmed"
+            and detail.get("can_continue") is True,
+            f"the surfaced removal failure must carry its outcome: {failed.text}",
         )
         _check(
             _document_row_exists(document_id),

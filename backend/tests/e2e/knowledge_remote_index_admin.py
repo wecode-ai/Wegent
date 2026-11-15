@@ -458,11 +458,19 @@ def _run_admin_failure_scenario(
         # An authorized retriever reaches the Runtime, which classifies the
         # external SDK failure separately from internal Runtime failures.
         _point_retriever_at(client, token, resource_name, UNREACHABLE_QDRANT_URL)
+        purge_call, drop_call = _admin_calls(client, token, knowledge_base_id)[1:]
         _assert_admin_calls_fail(
-            _admin_calls(client, token, knowledge_base_id)[1:],
+            [purge_call],
             502,
             "unreachable external store",
             expected_detail="External index cleanup could not be confirmed",
+        )
+        # Physical drop is outside the content-deletion cleanup boundary.
+        _assert_admin_calls_fail(
+            [drop_call],
+            500,
+            "unreachable store",
+            expected_detail="internal server error",
         )
 
         # Restoring the store lets the same operations succeed again.

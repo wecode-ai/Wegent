@@ -4,6 +4,8 @@
 
 """Only proven external SDK failures permit content-only deletion."""
 
+from unittest.mock import MagicMock, patch
+
 import grpc
 import httpx
 import pytest
@@ -11,8 +13,12 @@ from elastic_transport import ApiResponseMeta
 from elastic_transport import ConnectionError as ESConnectionError
 from elastic_transport import ConnectionTimeout, NodeConfig, TlsError
 from elasticsearch import AuthenticationException
+from pymilvus import connections
+from pymilvus.client.grpc_handler import GrpcHandler
+from pymilvus.client.types import Status
 from pymilvus.exceptions import (
     ConnectError,
+    ConnectionConfigException,
     MilvusException,
     MilvusUnavailableException,
 )
@@ -73,6 +79,16 @@ def test_explicit_sdk_failures_have_safe_cleanup_reasons(
         ("qdrant", UnexpectedResponse(429, "rate limit", b"", {})),
         ("elasticsearch", TlsError("invalid local certificate")),
         ("milvus", MilvusException(code=1, message="permission denied")),
+        (
+            "milvus",
+            MilvusException(
+                code=Status.CONNECT_FAILED, message="No channel configured"
+            ),
+        ),
+        (
+            "milvus",
+            ConnectionConfigException(code=Status.CONNECT_FAILED, message="bad config"),
+        ),
         ("milvus", RpcFailure(grpc.StatusCode.UNKNOWN)),
         ("elasticsearch", RuntimeError("connection failed")),
         ("qdrant", httpx.ConnectError("not emitted by the qdrant SDK wrapper")),
@@ -105,3 +121,42 @@ def test_milvus_preserves_the_sdk_rpc_cause_without_parsing_error_text() -> None
     result = classify_cleanup_error("milvus", wrapped)
     assert result is not None
     assert result.reason == "authentication_failed"
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_milvus_sdk_connection_timeout_survives_its_self_cause(
+    wrapped: bool,
+) -> None:
+    """Execute the installed SDK's connection path without opening a socket."""
+    handler = object.__new__(GrpcHandler)
+    handler._channel = object()
+    handler._user = ""
+    handler._address = "synthetic-milvus"
+    handler.close = MagicMock()
+    readiness = MagicMock()
+    readiness.result.side_effect = grpc.FutureTimeoutError()
+
+    with (
+        patch("pymilvus.orm.connections.GrpcHandler", return_value=handler),
+        patch("grpc.channel_ready_future", return_value=readiness),
+        pytest.raises(MilvusException) as caught,
+    ):
+        connections.connect(
+            alias="cleanup-timeout-unit-test",
+            uri="http://localhost:19530",
+            timeout=0.01,
+        )
+
+    error = caught.value
+    assert type(error) is MilvusException
+    assert error.code == Status.CONNECT_FAILED
+    assert error.__cause__ is error
+    assert isinstance(error.__context__, grpc.FutureTimeoutError)
+    if wrapped:
+        outer = MilvusException(code=1, message="opaque SDK wrapper")
+        outer.__cause__ = error
+        error = outer
+    result = classify_cleanup_error("milvus", error)
+
+    assert result is not None
+    assert result.reason == "timeout"

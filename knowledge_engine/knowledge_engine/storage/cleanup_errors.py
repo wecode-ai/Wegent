@@ -79,13 +79,29 @@ def _elasticsearch_reason(error: Exception) -> str | None:
 
 def _milvus_reason(error: Exception) -> str | None:
     import grpc
-    from pymilvus.exceptions import ConnectError, MilvusUnavailableException
+    from pymilvus.client.types import Status
+    from pymilvus.exceptions import (
+        ConnectError,
+        ConnectionConfigException,
+        MilvusException,
+        MilvusUnavailableException,
+    )
 
     reason = None
+    connection_failed = False
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        if isinstance(current, ConnectionConfigException):
+            return None
+        if (
+            isinstance(current, MilvusException)
+            and current.code == Status.CONNECT_FAILED
+        ):
+            connection_failed = True
+        if connection_failed and isinstance(current, grpc.FutureTimeoutError):
+            return "timeout"
         if isinstance(current, (ConnectError, MilvusUnavailableException)):
             reason = "connection_failed"
         if isinstance(current, grpc.RpcError):
@@ -95,5 +111,12 @@ def _milvus_reason(error: Exception) -> str | None:
                 grpc.StatusCode.UNAUTHENTICATED: "authentication_failed",
                 grpc.StatusCode.PERMISSION_DENIED: "authentication_failed",
             }.get(current.code())
-        current = current.__cause__
+        cause = current.__cause__
+        # PyMilvus re-raises connection failures from themselves. Their original
+        # gRPC timeout remains in __context__, not in the cyclic __cause__.
+        current = (
+            cause
+            if cause is not None and id(cause) not in seen
+            else current.__context__
+        )
     return reason

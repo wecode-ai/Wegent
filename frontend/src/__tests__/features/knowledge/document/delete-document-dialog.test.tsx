@@ -4,13 +4,44 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { ApiError } from '@/apis/client'
+import client, { ApiError } from '@/apis/client'
 import { DeleteDocumentDialog } from '@/features/knowledge/document/components/DeleteDocumentDialog'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 
 const document = { id: 11, name: 'document.txt' } as KnowledgeDocument
+
+afterEach(() => jest.restoreAllMocks())
+
+it.each([false, true])(
+  'does not dispatch deletion after the account changes before render (continuing=%s)',
+  async continuing => {
+    const cacheScope = jest.spyOn(client, 'getCacheScope').mockReturnValue('original-account')
+    const confirm = jest.fn().mockRejectedValue(
+      new ApiError('External failure', 502, 'external_engine_unavailable', {
+        code: 'external_engine_unavailable',
+        can_continue: true,
+      })
+    )
+    render(
+      <DeleteDocumentDialog open document={document} onOpenChange={jest.fn()} onConfirm={confirm} />
+    )
+    if (continuing) {
+      fireEvent.click(screen.getByTestId('confirm-delete-document'))
+      await screen.findByTestId('continue-delete-document')
+    }
+
+    cacheScope.mockReturnValue('different-account-or-backend')
+    fireEvent.click(
+      screen.getByTestId(continuing ? 'continue-delete-document' : 'confirm-delete-document')
+    )
+
+    expect(confirm).toHaveBeenCalledTimes(continuing ? 1 : 0)
+    expect(screen.queryByTestId('continue-delete-document')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  }
+)
 
 it('clears continuation eligibility if a retry encounters an internal error', async () => {
   const confirm = jest

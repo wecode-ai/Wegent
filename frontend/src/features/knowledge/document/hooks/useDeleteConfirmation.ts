@@ -35,6 +35,7 @@ export function useDeleteConfirmation(
   const confirm = async () => {
     const continuing = canContinue
     reset()
+    if (client.getCacheScope() !== scope) return
     const requestVersion = version.current
     try {
       await onConfirm(continuing)
