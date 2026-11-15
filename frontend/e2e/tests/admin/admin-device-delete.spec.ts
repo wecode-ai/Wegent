@@ -3,12 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from '@playwright/test'
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { resolve } from 'node:path'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import { startAdminDeviceFixture } from '../../utils/admin-device-fixture'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const ADMIN_DEVICES = '/api/admin/device-monitor/devices'
@@ -28,6 +27,7 @@ test('an admin can remove another user’s offline device registration', async (
   const suffix = randomUUID()
   const deviceId = `e2e-admin-delete-${suffix}`
   const name = `E2E admin deletion ${suffix}`
+  const fixtureProcess = startAdminDeviceFixture()
   const client = createAuthenticatedSocketClient({
     socketBaseUrl: () => API_URL,
     getToken: () => token,
@@ -72,12 +72,7 @@ test('an admin can remove another user’s offline device registration', async (
     expect((await admin.delete(deletionPath)).status).toBe(409)
 
     const fixture = (action: 'expire' | 'claim_execution' | 'clear_execution') => {
-      execFileSync('uv', ['run', '--no-sync', 'python', '-m', 'tests.e2e_admin_device_fixture'], {
-        cwd: resolve(process.cwd(), '../backend'),
-        env: { ...process.env, PYTHONPATH: '..:.' },
-        input: JSON.stringify({ action, record_id: device.id, suffix }),
-        timeout: 30_000,
-      })
+      return fixtureProcess.run({ action, record_id: device.id, suffix })
     }
     const heartbeat = () =>
       new Promise(resolve => {
@@ -90,23 +85,23 @@ test('an admin can remove another user’s offline device registration', async (
           )
       })
     await test.step('reject offline deletion while a project execution holds the device', async () => {
-      fixture('expire')
+      await fixture('expire')
       expect((await findDevice())?.status).toBe('offline')
-      fixture('claim_execution')
+      await fixture('claim_execution')
       try {
         expect((await admin.delete(deletionPath)).status).toBe(409)
       } finally {
-        fixture('clear_execution')
+        await fixture('clear_execution')
       }
       expect(await heartbeat()).toMatchObject({ success: true })
     })
 
     await test.step('serialize expired heartbeat recovery with removal', async () => {
-      fixture('expire')
+      await fixture('expire')
       const [removed, recovered] = await Promise.all([admin.delete(deletionPath), heartbeat()])
       if (removed.status === 409) {
         expect(recovered).toMatchObject({ success: true })
-        fixture('expire')
+        await fixture('expire')
         expect((await admin.delete(deletionPath)).status).toBe(200)
       } else {
         expect(removed.status).toBe(200)
@@ -147,9 +142,13 @@ test('an admin can remove another user’s offline device registration', async (
     recordId = undefined
   } finally {
     client.dispose()
-    if (recordId !== undefined) {
-      await expect.poll(async () => (await findDevice())?.status).not.toBe('online')
-      await owner.delete(`/api/devices/records/${recordId}`)
+    try {
+      if (recordId !== undefined) {
+        await expect.poll(async () => (await findDevice())?.status).not.toBe('online')
+        await owner.delete(`/api/devices/records/${recordId}`)
+      }
+    } finally {
+      await fixtureProcess.close()
     }
   }
 })
