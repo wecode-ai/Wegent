@@ -503,7 +503,8 @@ function writeResponsesToolCalls(
   request: ModelRequest | null,
   toolCalls: ToolCallRule[],
   model: string,
-  preamble?: PhaseChangingMessage
+  preamble?: PhaseChangingMessage,
+  doneGate?: MockResponseGate
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
@@ -542,7 +543,7 @@ function writeResponsesToolCalls(
     response: { id: responseId, object: 'response', status: 'in_progress', model, output: [] },
   })
   /** Finish tool output after the optional assistant item at output index zero. */
-  const finish = (message?: Record<string, unknown>) => {
+  const finish = async (message?: Record<string, unknown>) => {
     output.forEach((item, outputIndex) => {
       writeResponsesSseEvent(res, {
         type: 'response.output_item.done',
@@ -550,6 +551,8 @@ function writeResponsesToolCalls(
         item,
       })
     })
+    await doneGate?.wait(res)
+    if (res.destroyed) return
     writeResponsesSseEvent(res, {
       type: 'response.completed',
       response: {
@@ -569,8 +572,8 @@ function writeResponsesToolCalls(
     })
     res.end()
   }
-  if (preamble) writePhaseChangingMessage(res, preamble, finish)
-  else finish()
+  if (preamble) writePhaseChangingMessage(res, preamble, value => void finish(value))
+  else void finish()
 }
 
 /**
@@ -722,7 +725,8 @@ const server = http.createServer((req, res) => {
             parsedBody,
             resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls),
             parsedBody?.model || 'mock-codex',
-            scenarioStep.preamble
+            scenarioStep.preamble,
+            streamRule?.holdDone ? responseGate : undefined
           )
           return
         }
