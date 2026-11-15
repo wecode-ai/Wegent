@@ -549,11 +549,13 @@ classify_workbench_path() {
       select_target "core:codex-native-catalog"
       return
       ;;
-    wework/src/components/settings/ProviderSettingsSection* | \
+    wework/e2e/desktop/scenarios/model-settings.scenario.mjs | \
+      wework/src/components/settings/ProviderSettingsSection* | \
       wework/src/components/settings/ProviderEditor* | \
       wework/src/components/settings/ProviderModelFields* | \
       wework/src/components/settings/ModelSettingsPage* | \
       wework/src/features/model-settings/provider*)
+      select_target "core:model-settings"
       select_target "core:codex-account-login"
       select_target "core:model-routing"
       return

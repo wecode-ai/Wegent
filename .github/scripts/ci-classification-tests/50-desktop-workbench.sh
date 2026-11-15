@@ -283,7 +283,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "model settings changes select model management and account coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"codex-account-login"},{"id":"core-5","name":"Core / shard 5","segments":"model-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"codex-account-login"},{"id":"core-2","name":"Core / shard 2","segments":"model-settings"},{"id":"core-5","name":"Core / shard 5","segments":"model-routing"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/settings/ProviderEditor.tsx" \

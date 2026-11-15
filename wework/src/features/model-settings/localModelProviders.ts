@@ -5,10 +5,12 @@ import {
   DEEPSEEK_V4_PRO_MODEL_ID,
   KIMI_CODING_CONTEXT_WINDOW,
   KIMI_K3_CONTEXT_WINDOW,
-  type LocalModelApiFormat,
-  type LocalModelConfig,
-  type LocalModelToolProfile,
-  type LocalModelWebSearchMode,
+} from './localModelConstants'
+import type {
+  LocalModelApiFormat,
+  LocalModelConfig,
+  LocalModelToolProfile,
+  LocalModelWebSearchMode,
 } from './localModelSettings'
 
 export type LocalModelProviderProfileId =
@@ -247,7 +249,12 @@ export function findLocalModelProviderProfile(id?: string | null): LocalModelPro
   )
 }
 
-export function localModelSupportsImageInput(config: LocalModelConfig): boolean {
+export function localModelSupportsImageInput(
+  config: Pick<
+    LocalModelConfig,
+    'catalogEntry' | 'providerProfileId' | 'modelId' | 'baseUrl' | 'apiFormat'
+  >
+): boolean {
   const declaredModalities = config.catalogEntry?.input_modalities
   if (Array.isArray(declaredModalities) && declaredModalities.includes('image')) return true
 

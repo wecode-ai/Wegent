@@ -81,7 +81,7 @@ export class LocalRuntimeApi {
   async createConversation(data: RuntimeCreateRequest): Promise<RuntimeCreateResponse> {
     this.assertDevice(data.deviceId)
     const context = this.modelContext(data.modelType)
-    await this.models?.sync(this.runtime)
+    await this.models?.sync(this.runtime, data.modelId)
     this.assertModelContext(context)
     const source = data.execution?.workspace.source ?? 'local_path'
     const executionRequest = this.executionRequest(
@@ -119,7 +119,7 @@ export class LocalRuntimeApi {
   ): Promise<RuntimeSendResponse> {
     this.assertDevice(address.deviceId)
     const context = this.modelContext(selection.modelType)
-    await this.models?.sync(this.runtime)
+    await this.models?.sync(this.runtime, selection.modelName)
     this.assertModelContext(context)
     const executionRequest = this.executionRequest(
       {
