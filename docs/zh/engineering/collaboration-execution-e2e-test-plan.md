@@ -166,6 +166,20 @@ Issues:
 
 ## 完整场景矩阵
 
+### 成员交付后协调者接管与人工澄清
+
+用户故事：作为 Issue 发起方，我需要看到成员交付后的协调者接管，并能在原 Issue 打开其业务问题、回答后继续同一轮协调工作。
+
+复用 CI 的 `collaboration-remote-group-coordinate` checkpoint、隔离 Electron、真实后端、MySQL、Redis、远程 Executor 与原生 Codex，只替换模型服务，不新增完整环境或 CI 作业。
+
+1. 从 UI 创建小组与 Issue，协调者并发分派两项工作。仅一项完成时，Issue 保持进行中，不提前接管。
+2. 两项均交付后，断言负责人回到协调者，且新会话已绑定 Issue、具有独立动态；不能依赖协调者先分派下一轮或更新状态才出现入口。
+3. 新协调者调用同步 `request_user_input` 等待业务回答。从新动态打开会话，看到真实问题并选择答案；断言模型接收原调用对应的准确回答。
+4. 协调者沿原会话显式提交待确认；保留原有成员数量、单次调度信封、独立会话与后续回复断言。
+5. 单元/协议测试补充未完成轮次、伪造身份、手工绑定无共享权、重复上报不抢占下一轮负责人，以及进程恢复后的动态补报。
+
+清理复用该 checkpoint 的项目归档与隔离进程关闭。失败保留完整 runner 日志；截图与日志只作测试产物，不提交代码库。
+
 ### 远程协作组负责人规划详情
 
 `collaboration-remote-group-planning-details` checkpoint 使用隔离 Electron、真实后端、MySQL、Redis 和远程 Executor，仅替代模型上游。

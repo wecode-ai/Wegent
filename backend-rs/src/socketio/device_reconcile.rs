@@ -143,7 +143,8 @@ async fn reconcile_after_register(
             return;
         }
     };
-    if executions.is_empty() {
+    let execution_refs = reconcile_execution_refs(&executions);
+    if execution_refs.is_empty() {
         return;
     }
     let Some(socket_id) = online_socket_id(state, user_id, device_id).await else {
@@ -159,8 +160,7 @@ async fn reconcile_after_register(
     let Some(snapshots) = reported_snapshots(&response) else {
         return;
     };
-    for execution in &executions {
-        let runtime_task_id = execution.runtime_task_id.clone().unwrap_or_default();
+    for (execution_id, runtime_task_id) in execution_refs {
         let snapshot = snapshots.get(&runtime_task_id);
         let (runtime_status, running, turn_status) = match snapshot {
             Some(value) => (
@@ -173,7 +173,7 @@ async fn reconcile_after_register(
         if let Err(error) = reconcile_one(
             state,
             runtime,
-            execution.id,
+            execution_id,
             &runtime_status,
             running,
             turn_status.as_deref(),
@@ -186,12 +186,23 @@ async fn reconcile_after_register(
                 %error,
                 user_id,
                 device_id,
-                execution = execution.id,
+                execution = execution_id,
                 "device execution snapshot reconcile failed"
             );
             return;
         }
     }
+}
+
+/// Dispatch envelopes span multiple conversations; manager decisions own completion.
+fn reconcile_execution_refs(executions: &[ExecutionRow]) -> Vec<(i64, String)> {
+    executions
+        .iter()
+        .filter(|row| {
+            runtime_projection::execution_executor_type(row) != "collaboration_group_dispatch"
+        })
+        .map(|row| (row.id, row.runtime_task_id.clone().unwrap_or_default()))
+        .collect()
 }
 
 /// `active_for_device_reconciliation`'s statement. The heartbeat caller adds

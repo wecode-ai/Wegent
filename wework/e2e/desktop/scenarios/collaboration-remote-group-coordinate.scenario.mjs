@@ -23,6 +23,10 @@ import {
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { isTranscriptReadAdmissionBusy } from '../modules/runtime-read-admission.mjs'
+import {
+  answerResumedManagerFromIssue,
+  managerResumeQuestion,
+} from '../modules/collaboration-manager-resume-input.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -642,6 +646,11 @@ export async function createDesktopScenario({
         )
         assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
         assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
+        const question = managerResumeQuestion(body)
+        if (question) {
+          writeEvents(response, responseId, question)
+          return true
+        }
         const selection = managerToolEvents(
           body,
           'update_issue_status',
@@ -802,8 +811,24 @@ export async function createDesktopScenario({
         CONTENT
       )
 
+      const beforeManagerResume = JSON.parse(
+        await control.command('snapshot', scoped('[data-testid="cloud-task-activity-list"]'))
+      )
       releaseSecondChild()
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
+      await answerResumedManagerFromIssue({
+        control,
+        scope: CONTENT,
+        leader,
+        request,
+        issueId: rootIssue.id,
+        managerTaskId: `${runningDispatch.runtimeTaskId}-manager-initial-manager-after-${MARKER}-round-1`,
+        previousManagerEvents: beforeManagerResume.testIds.filter(id =>
+          id.startsWith('cloud-task-manager-event-')
+        ),
+        waitForValue,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
       await waitForCondition(

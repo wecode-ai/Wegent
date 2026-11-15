@@ -16,6 +16,8 @@ impl RuntimeWorkRpcHandler {
                 .local_task_link(&fresh_task_id)
                 .is_some_and(|link| fresh_cloud_manager_task_started(&link))
             {
+                self.publish_fresh_cloud_manager(command, &fresh_task_id)
+                    .await?;
                 self.clear_cloud_collaboration_round(&command.manager_runtime_task_id);
                 return Ok(());
             }
@@ -28,6 +30,10 @@ impl RuntimeWorkRpcHandler {
                 return Err("Collaboration manager Runtime task was not found".to_owned());
             };
             let payload = self.prepare_fresh_cloud_manager(&source_link, command, &outcomes)?;
+            // Publish ownership and transcript access before the new turn can
+            // ask a blocking question or submit its next round.
+            self.publish_fresh_cloud_manager(command, &fresh_task_id)
+                .await?;
 
             match self.create_task(payload).await {
                 Ok(value)
@@ -61,6 +67,42 @@ impl RuntimeWorkRpcHandler {
                             ("error", error.message),
                         ],
                     );
+                }
+            }
+            sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;
+        }
+    }
+
+    async fn publish_fresh_cloud_manager(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        task_id: &str,
+    ) -> Result<(), String> {
+        let payload = json!({
+            "role": "manager",
+            "loop_item_id": command.item_id,
+            "dispatch_id": command.dispatch_id,
+            "round_id": command.round_id,
+            "runtime_device_id": self.device_id,
+            "runtime_task_id": task_id,
+        });
+        loop {
+            match self
+                .report_cloud_collaboration_activity(command, &payload)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    log_executor_event(
+                        "cloud collaboration manager publication failed",
+                        &[
+                            ("manager_task_id", task_id.to_owned()),
+                            ("error", error.message.clone()),
+                        ],
+                    );
+                    if !error.retryable {
+                        return Err(error.message);
+                    }
                 }
             }
             sleep(CLOUD_COLLABORATION_LAUNCH_RETRY_INTERVAL).await;

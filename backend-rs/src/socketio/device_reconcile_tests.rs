@@ -55,6 +55,27 @@ fn row(status: &str, observed: &str, reason: Option<&str>) -> ExecutionRow {
 }
 
 #[test]
+fn reconciliation_excludes_dispatch_envelopes_but_keeps_real_conversations() {
+    let conversation = row("claimed", "accepted", None);
+    let mut executions = vec![conversation];
+    for payload in [
+        r#"{"runtime_selection":{"executor_kind":"collaboration_group_dispatch"}}"#,
+        r#"{"executor_kind":"collaboration_group_dispatch"}"#,
+    ] {
+        let mut dispatch = row("claimed", "accepted", None);
+        dispatch.id = 99;
+        dispatch.runtime_task_id = Some("codex-queue-99".into());
+        dispatch.execution_payload = Some(payload.into());
+        executions.push(dispatch);
+    }
+    assert!(reconcile_execution_refs(&executions[1..]).is_empty());
+    assert_eq!(
+        reconcile_execution_refs(&executions),
+        vec![(7, "codex-queue-7".into())]
+    );
+}
+
+#[test]
 fn capacity_statuses_match_the_source_set() {
     for status in ["running", "claimed", "cancel_requested"] {
         assert!(is_capacity_status(Some(status)), "{status}");
