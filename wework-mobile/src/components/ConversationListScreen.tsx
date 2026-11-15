@@ -35,6 +35,8 @@ import { WorkbenchSidebar } from './WorkbenchSidebar'
 
 interface ConversationListScreenProps {
   userLabel?: string
+  connectionError?: string | null
+  showDeviceFilters?: boolean
   conversations: ConversationItem[]
   devices: DeviceInfo[]
   workspaces: Array<{ projectName: string; workspace: RuntimeDeviceWorkspace }>
@@ -401,6 +403,9 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       </View>
 
       <WorkbenchSidebar
+        connectionError={props.connectionError ?? null}
+        reconnecting={props.refreshing}
+        onRetryConnection={props.onRefresh}
         onDismiss={() => setSidebarVisible(false)}
         onSettings={props.onSettings}
         userLabel={props.userLabel ?? ''}
@@ -452,15 +457,17 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                   }}
                   testID="drawer-settings"
                 />
-                <DrawerAction
-                  icon={showAllDevices ? 'eye-off-outline' : 'eye-outline'}
-                  label={showAllDevices ? '仅显示在线设备' : '显示全部设备'}
-                  onPress={() => {
-                    setActionsVisible(false)
-                    setShowAllDevices(current => !current)
-                  }}
-                  testID="drawer-toggle-offline-devices"
-                />
+                {props.showDeviceFilters !== false && (
+                  <DrawerAction
+                    icon={showAllDevices ? 'eye-off-outline' : 'eye-outline'}
+                    label={showAllDevices ? '仅显示在线设备' : '显示全部设备'}
+                    onPress={() => {
+                      setActionsVisible(false)
+                      setShowAllDevices(current => !current)
+                    }}
+                    testID="drawer-toggle-offline-devices"
+                  />
+                )}
               </LiquidGlassSurface>
             </Pressable>
           </Pressable>
@@ -470,10 +477,10 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       <FlatList
         contentContainerStyle={styles.list}
         data={props.loading ? [] : drawerItems}
-        ListHeaderComponent={deviceStrip}
+        ListHeaderComponent={props.showDeviceFilters === false ? null : deviceStrip}
         ListEmptyComponent={props.loading ? <ActivityIndicator style={styles.loader} /> : null}
         keyExtractor={item => item.key}
-        keyboardDismissMode="interactive"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl

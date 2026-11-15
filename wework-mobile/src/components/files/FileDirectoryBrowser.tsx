@@ -1,5 +1,6 @@
+import { showErrorAlert } from '@/services/errorAlerts'
 import { useEffect, useState } from 'react'
-import { Alert, FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native'
+import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
@@ -16,10 +17,10 @@ import {
   FileBrowserHeader,
   FileErrorState,
   FileSegments,
-  FileTextAction,
   type FileMenuAction,
 } from './FileBrowserChrome'
 import { FileChangesView } from './FileChangesView'
+import { ErrorNotice } from '../errors/ErrorNotice'
 import { useWorkspaceFileTree } from './useWorkspaceFileTree'
 
 export function FileDirectoryBrowser({
@@ -101,7 +102,7 @@ export function FileDirectoryBrowser({
       testID: 'files-copy-path',
       onPress: () => {
         void Clipboard.setStringAsync(target.path).catch(cause =>
-          Alert.alert('复制失败', String(cause))
+          showErrorAlert(cause, { title: '无法复制内容' })
         )
       },
     },
@@ -280,19 +281,13 @@ export function FileDirectoryBrowser({
                   ]}
                 />
                 {item.error ? (
-                  <View style={styles.childError}>
-                    <Text
-                      variant="bodySmall"
-                      style={[styles.grow, { color: theme.colors.onSurfaceVariant }]}
-                    >
-                      {item.error}
-                    </Text>
-                    <FileTextAction
-                      label="重试"
-                      testID={`files-retry-${item.path}`}
-                      onPress={() => tree.retryFolder(item.path)}
-                    />
-                  </View>
+                  <ErrorNotice
+                    error={item.error}
+                    title="无法读取文件夹"
+                    testID={`files-folder-error-${item.path}`}
+                    retryTestID={`files-retry-${item.path}`}
+                    onRetry={() => tree.retryFolder(item.path)}
+                  />
                 ) : null}
               </View>
             )}
@@ -390,13 +385,6 @@ const styles = StyleSheet.create({
   },
   chevron: { width: 16, alignItems: 'center' },
   rowDivider: { height: StyleSheet.hairlineWidth },
-  childError: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingLeft: 52,
-    paddingRight: 16,
-    gap: 8,
-  },
   listContent: { paddingBottom: 80 },
   emptyList: { flexGrow: 1 },
   emptyState: {

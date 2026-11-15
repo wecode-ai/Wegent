@@ -98,20 +98,6 @@ impl DeviceType {
     }
 }
 
-impl DeviceSpecInput {
-    /// `spec.deviceType` as persisted, before the `DeviceType` normalization
-    /// the identity helpers apply.
-    pub(crate) fn device_type_value(&self) -> Option<&str> {
-        self.device_type.as_deref()
-    }
-
-    /// `spec.runtimeInstanceId` as the raw JSON the identity checks compare
-    /// against the online-state document's `runtime_instance_id`.
-    pub(crate) fn runtime_instance_id_value(&self) -> Option<serde_json::Value> {
-        self.runtime_instance_id.as_ref().map(OpaqueJson::to_value)
-    }
-}
-
 /// The source `kinds` query for one provider's listing (`Kind` model filter).
 /// The projection mirrors the source SQLAlchemy labeled rendering
 /// (`kinds.<column> AS kinds_<column>`) so the prepared statement matches the

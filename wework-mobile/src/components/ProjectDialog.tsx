@@ -1,12 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { useEffect, useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native'
+import { Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { ActivityIndicator, Portal, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import type { DeviceInfo } from '@/types/runtime'
+import { ErrorNotice } from './errors/ErrorNotice'
 import {
   LiquidGlassButton,
   LiquidGlassSurface,
@@ -73,7 +74,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
         bounces={false}
         bottomOffset={24}
         contentContainerStyle={styles.scrollContent}
-        keyboardDismissMode="interactive"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         style={styles.keyboardLayer}
@@ -219,15 +220,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
                 </View>
 
                 {error ? (
-                  <View style={styles.errorRow}>
-                    <Ionicons color={theme.colors.error} name="alert-circle-outline" size={18} />
-                    <Text
-                      style={[styles.errorText, { color: theme.colors.error }]}
-                      variant="bodySmall"
-                    >
-                      {error}
-                    </Text>
-                  </View>
+                  <ErrorNotice error={error} title="无法创建项目" testID="project-create-error" />
                 ) : null}
 
                 <View style={styles.actions}>
@@ -321,8 +314,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   input: { flex: 1, minWidth: 0, minHeight: 54, fontSize: 17, paddingVertical: 0 },
-  errorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, paddingHorizontal: 4 },
-  errorText: { flex: 1 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 4 },
   actionGlass: { flex: 1, height: 46, borderRadius: 23 },
   actionContent: {

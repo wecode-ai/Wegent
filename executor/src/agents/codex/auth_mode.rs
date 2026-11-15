@@ -3,6 +3,32 @@
 
 use super::*;
 
+impl CodexAppServerClient {
+    /// Bind login completion to the process that accepted it, including a fast exit.
+    pub(crate) async fn start_account_login(
+        &self,
+        login_type: &str,
+    ) -> Result<(Value, u64), String> {
+        let method = "account/login/start";
+        let params = json!({"type":login_type});
+        let (request_id, handle, response_rx) = self
+            .prepare_request_with_process(true, None, method, &params)
+            .await?;
+        let generation = handle.notifications.process_generation;
+        // Login is a mutation; never replay it after an uncertain transport outcome.
+        let result = Self::send_request_and_wait(
+            method,
+            params,
+            codex_rpc_timeout_seconds(),
+            request_id,
+            handle,
+            response_rx,
+        )
+        .await?;
+        Ok((result, generation))
+    }
+}
+
 /// Rejects incompatible launches until the current process can change authentication safely.
 pub(super) async fn apply_auth_mode(
     state: &mut CodexAppServerSharedState,

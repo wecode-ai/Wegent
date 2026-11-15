@@ -1,6 +1,6 @@
+import { showErrorAlert, copyErrorDetails } from '@/services/errorAlerts'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { Alert } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as Sharing from 'expo-sharing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +16,10 @@ vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('../LiquidGlass', () => ({
   LiquidGlassButton: 'GlassButton',
   LiquidGlassSurface: 'GlassSurface',
+}))
+vi.mock('@/services/errorAlerts', () => ({
+  showErrorAlert: vi.fn(),
+  copyErrorDetails: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('react-native', () => ({
   Platform: { OS: 'ios' },
@@ -301,8 +305,8 @@ describe('FileBrowserModal', () => {
     expect(element('file-mode-preview')).toBeUndefined()
     expect(element('file-mode-source')).toBeUndefined()
     await act(() => element('file-preview-error-details-toggle').props.onPress())
-    expect(element('file-preview-error-details').props.children).toContain('HTTP 403')
-    expect(element('file-preview-error-details').props.style.color).toBe('#777')
+    expect(copyErrorDetails).toHaveBeenCalledWith(expect.stringContaining('HTTP 403'))
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('HTTP 403')
     await act(() => element('file-preview-retry').props.onPress())
     expect(preview().props.document).toEqual(document)
   })
@@ -414,7 +418,10 @@ describe('FileBrowserModal', () => {
     vi.mocked(Sharing.isAvailableAsync).mockResolvedValue(false)
     await render()
     await menuAction('file-preview-share')
-    expect(Alert.alert).toHaveBeenCalledWith('无法分享文件', '此设备暂不支持系统文件分享')
+    expect(showErrorAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ message: '此设备暂不支持系统文件分享' }),
+      { title: '无法分享文件' }
+    )
     expect(store.acquire).toHaveBeenCalledTimes(1)
     expect(preview().props.document).toEqual(document)
     await act(() => element('file-preview-more').props.onPress())

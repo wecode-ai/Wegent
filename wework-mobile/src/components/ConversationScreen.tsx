@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useKeyboardChatComposerInset } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
-import { useFocusEffect } from '@react-navigation/native'
+import { useFocusEffect, useIsFocused } from '@react-navigation/native'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   AccessibilityInfo,
@@ -68,6 +68,7 @@ export interface ConversationWorkspaceChoice {
 interface ConversationScreenProps {
   api: Pick<RuntimeApi, 'getSubagentTranscript'>
   composerFocusRequest?: number
+  onComposerFocusHandled: (request: number) => void
   currentAddress: RuntimeTaskAddress | null
   currentTitle: string
   devices: DeviceInfo[]
@@ -106,6 +107,7 @@ interface ConversationScreenProps {
 }
 
 export function ConversationScreen(props: ConversationScreenProps) {
+  const isFocused = useIsFocused()
   const theme = useTheme()
   const insets = useSafeAreaInsets()
   const listRef = useRef<LegendListRef>(null)
@@ -207,7 +209,11 @@ export function ConversationScreen(props: ConversationScreenProps) {
                   : []),
               ]
             : selector === 'permission'
-              ? permissionChoices(props.permissionMode, props.onSelectPermissionMode)
+              ? permissionChoices(
+                  props.permissionMode,
+                  props.onSelectPermissionMode,
+                  configurationDevice?.device_type === 'local'
+                )
               : [],
     [
       availableWorkspaces,
@@ -420,7 +426,9 @@ export function ConversationScreen(props: ConversationScreenProps) {
             </View>
           ) : null}
           <ChatComposer
+            active={isFocused && !quickModelVisible && selector === null}
             focusRequest={props.composerFocusRequest}
+            onFocusRequestHandled={props.onComposerFocusHandled}
             disabled={props.sending}
             emptyContextPlaceholder={props.isNew ? '向 Wework 提问' : '跟进'}
             modelLabel={selectedModelLabel}
@@ -556,6 +564,7 @@ interface Choice {
   icon?: keyof typeof Ionicons.glyphMap
   separatorAfter?: boolean
   selected: boolean
+  disabled?: boolean
   onPress: () => void
 }
 
@@ -680,12 +689,15 @@ function ChoiceSheet({
             {choices.map(choice => (
               <View key={choice.id}>
                 <Pressable
+                  disabled={choice.disabled}
+                  accessibilityState={{ disabled: choice.disabled, selected: choice.selected }}
                   onPress={() => {
                     choice.onPress()
                     dismiss()
                   }}
                   style={({ pressed }) => [
                     styles.choice,
+                    choice.disabled && { opacity: 0.45 },
                     choice.selected && { backgroundColor: theme.colors.surfaceVariant },
                     pressed && styles.pressed,
                   ]}
@@ -730,24 +742,30 @@ function ChoiceSheet({
 
 function permissionChoices(
   selected: RuntimePermissionMode,
-  onSelect: (value: RuntimePermissionMode) => void
+  onSelect: (value: RuntimePermissionMode) => void,
+  phoneLocal = false
 ): Choice[] {
   return [
     {
       id: 'read-only',
       label: '只读',
+      disabled: phoneLocal,
+      detail: phoneLocal ? '本机执行环境不支持' : undefined,
       selected: selected === 'read-only',
       onPress: () => onSelect('read-only'),
     },
     {
       id: 'workspace-write',
       label: '工作区',
+      disabled: phoneLocal,
+      detail: phoneLocal ? '本机执行环境不支持' : undefined,
       selected: selected === 'workspace-write',
       onPress: () => onSelect('workspace-write'),
     },
     {
       id: 'full-access',
       label: '完整访问',
+      detail: phoneLocal ? '限 App 沙盒内的文件和运行环境' : undefined,
       selected: selected === 'full-access',
       onPress: () => onSelect('full-access'),
     },

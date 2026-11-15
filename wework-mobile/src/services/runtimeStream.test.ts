@@ -8,6 +8,7 @@ import { RuntimeApi } from './runtimeApi'
 import { loadMobileWorkspaceChanges } from './mobileWorkspaceGit'
 import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 import type { DeviceInfo } from '@/types/runtime'
+import type { LocalRuntime } from './localRuntime'
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }))
 
@@ -99,6 +100,41 @@ describe('RuntimeStream', () => {
     expect(io).toHaveBeenCalledOnce()
   })
 
+  it('keeps phone RPC and events isolated from the remote socket', async () => {
+    const deviceId = 'mobile-local:phone:account'
+    let nativeEvent: (event: Record<string, unknown>) => void = () => {}
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const local = {
+      ownsDevice: (id: string) => id === deviceId,
+      request,
+      onEvent: (listener: typeof nativeEvent) => {
+        nativeEvent = listener
+        return vi.fn()
+      },
+      onRecovery: () => vi.fn(),
+    } as unknown as LocalRuntime
+    const stream = await createStream(config, () => [], local)
+    const listener = vi.fn()
+    await stream.subscribe({ deviceId, taskId: 'task' }, listener, vi.fn())
+    const event = { event: 'response.created', payload: { deviceId, taskId: 'task' } }
+    handlers.get('runtime:event')?.(event)
+    handlers.get('runtime:event')?.({ ...event, payload: { taskId: 'task' } })
+    expect(listener).not.toHaveBeenCalled()
+    nativeEvent(event)
+    expect(listener).toHaveBeenCalledOnce()
+    await stream.request('runtime.tasks.cancel', { taskId: 'task' }, deviceId)
+    expect(request).toHaveBeenCalledWith(
+      'runtime.tasks.cancel',
+      { deviceId, taskId: 'task' },
+      75_000
+    )
+    expect(emit).not.toHaveBeenCalled()
+    await expect(
+      stream.request('runtime.tasks.list', {}, 'mobile-local:another:account')
+    ).rejects.toThrow('尚未就绪')
+    expect(emit).not.toHaveBeenCalled()
+  })
+
   it('replaces a pending authentication with the refreshed credentials', async () => {
     connect.mockImplementation(() => undefined)
     const stream = await createStream(config)
@@ -112,6 +148,65 @@ describe('RuntimeStream', () => {
       'wss://stream.wegent.example/wework-runtime',
       expect.objectContaining({ auth: { token: 'fresh-token', client_origin: 'wework' } })
     )
+  })
+
+  it('recreates same-host sessions for another account and ignores late events from the old socket', async () => {
+    const stream = await createStream(config)
+    stream.updateBackend(config, 1)
+    await Promise.resolve()
+    const oldEvent = handlers.get('runtime:event')!
+    const listener = vi.fn()
+    stream.subscribeLifecycle(listener, vi.fn())
+    stream.updateBackend({ ...config, accessToken: 'account-b' }, 2)
+    await Promise.resolve()
+    const event = { event: 'response.created', payload: { deviceId: 'device', taskId: 'task' } }
+    oldEvent(event)
+    expect(listener).not.toHaveBeenCalled()
+    handlers.get('runtime:event')!(event)
+    expect(listener).toHaveBeenCalledOnce()
+    expect(io).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ auth: { token: 'account-b', client_origin: 'wework' } })
+    )
+  })
+
+  it('rejects pending remote RPC on logout and cannot accept a late acknowledgement', async () => {
+    const stream = await createStream(config)
+    const pending = stream.request('runtime.tasks.list', {}, 'remote')
+    const rejected = expect(pending).rejects.toThrow('账号已变化')
+    await Promise.resolve()
+    const ack = emit.mock.calls.at(-1)![2]
+    stream.updateBackend(null)
+    await rejected
+    ack({ ok: true, result: { private: 'account-a' } })
+    await expect(stream.request('runtime.tasks.list', {}, 'remote')).rejects.toThrow('请先登录')
+  })
+
+  it('preserves local event subscriptions and RPC through Backend logout', async () => {
+    const deviceId = 'mobile-local:phone:stable'
+    let event: (value: Record<string, unknown>) => void = () => {}
+    const nativeRequest = vi.fn().mockResolvedValue({ accepted: true })
+    const local = {
+      ownsDevice: (id: string) => id === deviceId,
+      request: nativeRequest,
+      onEvent: (listener: typeof event) => {
+        event = listener
+        return vi.fn()
+      },
+      onRecovery: () => vi.fn(),
+    } as unknown as LocalRuntime
+    const stream = await createStream(config, () => [], local)
+    const listener = vi.fn()
+    await stream.subscribe({ deviceId, taskId: 'task' }, listener, vi.fn())
+    stream.updateBackend(null)
+    event({
+      event: 'response.output_text.delta',
+      payload: { deviceId, taskId: 'task', delta: 'local' },
+    })
+    expect(listener).toHaveBeenCalledOnce()
+    await expect(
+      stream.request('runtime.tasks.cancel', { taskId: 'task' }, deviceId)
+    ).resolves.toEqual({ accepted: true })
   })
 
   it('recovers conversation and lifecycle state after refreshing credentials during an outage', async () => {

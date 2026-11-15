@@ -36,6 +36,7 @@ export interface WegentAuthState {
   error: string | null
   setBackendUrl: (value: string) => void
   login: () => Promise<void>
+  cancelLogin: () => void
   logout: () => Promise<void>
   refresh: () => Promise<boolean>
 }
@@ -54,6 +55,13 @@ export function useWegentAuth(): WegentAuthState {
   const [error, setError] = useState<string | null>(null)
   const loginPromise = useRef<Promise<void> | null>(null)
   const activeGeneration = useRef(0)
+  const cancelLogin = useCallback(() => {
+    if (!loginPromise.current) return
+    activeGeneration.current += 1
+    loginPromise.current = null
+    WebBrowser.dismissBrowser()
+    setStatus(current => (current === 'authenticated' ? current : 'unauthenticated'))
+  }, [])
 
   const applyToken = useCallback(
     async (
@@ -189,15 +197,19 @@ export function useWegentAuth(): WegentAuthState {
       if (activeGeneration.current !== generation) return
       const session = await createAuthorizationSession(config, publicKey)
       if (activeGeneration.current !== generation) return
+      let browserError: unknown
       void WebBrowser.openBrowserAsync(session.authorize_url, {
         presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
         controlsColor: '#181818',
-      }).catch(() => undefined)
+      }).catch(cause => {
+        browserError = cause
+      })
 
       const pollDelay = Math.max(500, session.poll_interval_seconds * 1000 || 2000)
       while (Date.now() < session.expires_at * 1000) {
         await delay(pollDelay)
         if (activeGeneration.current !== generation) return
+        if (browserError != null) throw browserError
         const result = await credentials.claimAuthorization(
           {
             apiBaseUrl: config.apiBaseUrl,
@@ -224,7 +236,7 @@ export function useWegentAuth(): WegentAuthState {
         throw cause
       })
       .finally(() => {
-        loginPromise.current = null
+        if (loginPromise.current === operation) loginPromise.current = null
       })
     loginPromise.current = operation
     return operation
@@ -286,6 +298,7 @@ export function useWegentAuth(): WegentAuthState {
     error,
     setBackendUrl,
     login,
+    cancelLogin,
     logout,
     refresh,
   }

@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { ActivityIndicator, Image, Pressable, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 
@@ -23,9 +23,11 @@ import type {
   ChatToolBlock,
 } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { ErrorNotice } from './errors/ErrorNotice'
 import { isRequestUserInputBlock, requestUserInputPayloadKey } from '@/domain/requestUserInput'
 import { RequestUserInputCard, type RequestUserInputHandlers } from './RequestUserInputCard'
 import { useMobileFilePreview } from './files/FilePreviewContext'
+import { useAutomaticCollapse } from './useConversationReading'
 
 interface UserInputPresentation extends RequestUserInputHandlers {
   pendingInputKeys?: ReadonlySet<string>
@@ -35,41 +37,64 @@ export function ProcessingTimeline({
   message,
   ...userInput
 }: { message: ChatMessage } & UserInputPresentation) {
-  const segments = buildMessageDisplaySegments(message.blocks, message.content)
-  const rows = segments.flatMap(segment => segment.rows)
-  const images = generatedImagesFromBlocks(message.blocks)
+  // Only an exact duplicate of the visible reply changes processing rows.
+  // Other reply deltas must not rebuild already completed tool/file groups.
+  const reply = message.content.trim()
+  const duplicateReply = message.blocks?.find(
+    block => block.type === 'text' && block.content.trim() === reply
+  )
+  const excludedReply = duplicateReply && 'content' in duplicateReply ? duplicateReply.content : ''
+  const segments = useMemo(
+    () => buildMessageDisplaySegments(message.blocks, excludedReply),
+    [message.blocks, excludedReply]
+  )
+  const rows = useMemo(() => segments.flatMap(segment => segment.rows), [segments])
+  const images = useMemo(() => generatedImagesFromBlocks(message.blocks), [message.blocks])
   const [expanded, setExpanded] = useState(false)
-  if (!rows.length && !images.length) return null
-
-  const collapsed =
+  const collapsed = useAutomaticCollapse(
     !rows.some(isRequestUserInputRow) &&
-    shouldCollapseCompletedProcessing(message.blocks, message.content, rows)
-  const timeline = !rows.length ? null : !collapsed ? (
-    <View style={styles.timeline} testID={`processing-timeline-${message.id}`}>
-      {segments.map(segment => (
-        <ProcessingSegment key={segment.id} segment={segment} {...userInput} />
-      ))}
-    </View>
-  ) : (
-    <View style={styles.completedTimeline} testID={`completed-processing-${message.id}`}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setExpanded(current => !current)}
-        style={styles.completedHeader}
-        testID={`completed-processing-toggle-${message.id}`}
-      >
-        <Text style={styles.completedLabel} variant="bodyMedium">
-          {processingDurationLabel(message.blocks, message.createdAt, message.completedAt)}
-        </Text>
-        <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} />
-      </Pressable>
-      {expanded ? (
-        <View style={styles.completedContent} testID={`completed-processing-content-${message.id}`}>
-          {segments.map(segment => (
-            <ProcessingSegment key={segment.id} segment={segment} {...userInput} />
-          ))}
-        </View>
+      shouldCollapseCompletedProcessing(message.blocks, message.content, rows, message.status)
+  )
+  if (!rows.length && !images.length) return null
+  const hidden = collapsed && !expanded
+  const timeline = !rows.length ? null : (
+    <View
+      style={collapsed ? styles.completedTimeline : styles.timeline}
+      testID={`${collapsed ? 'completed-processing' : 'processing-timeline'}-${message.id}`}
+    >
+      {collapsed ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded(current => !current)}
+          style={styles.completedHeader}
+          testID={`completed-processing-toggle-${message.id}`}
+        >
+          <Text style={styles.completedLabel} variant="bodyMedium">
+            {processingDurationLabel(message.blocks, message.createdAt, message.completedAt)}
+          </Text>
+          <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} />
+        </Pressable>
       ) : null}
+      <View
+        accessibilityElementsHidden={hidden}
+        importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+        style={[styles.segments, collapsed && styles.completedContent, hidden && styles.hidden]}
+        testID={collapsed ? `completed-processing-content-${message.id}` : undefined}
+      >
+        {segments.map((segment, index) => (
+          <ProcessingSegment
+            key={segment.id}
+            segment={segment}
+            live={
+              message.status === 'streaming' &&
+              !message.content.trim() &&
+              index === segments.length - 1
+            }
+            {...userInput}
+          />
+        ))}
+      </View>
     </View>
   )
 
@@ -81,56 +106,91 @@ export function ProcessingTimeline({
   )
 }
 
-function ProcessingSegment({
-  segment,
-  ...userInput
-}: { segment: MessageDisplaySegment } & UserInputPresentation) {
-  if (segment.kind === 'tool') {
-    const groups: MessageDisplayRow[][] = []
-    for (const row of segment.rows) {
-      if (
-        isRequestUserInputRow(row) ||
-        !groups.length ||
-        groups.at(-1)?.some(isRequestUserInputRow)
-      )
-        groups.push([row])
-      else groups.at(-1)!.push(row)
-    }
-    return (
-      <>
-        {groups.map((rows, index) => {
-          const first = rows[0]!
-          if (first.type === 'tool' && isRequestUserInputBlock(first.block)) {
-            const key = requestUserInputPayloadKey(first.block.renderPayload)
+const ProcessingSegment = memo(
+  function ProcessingSegment({
+    segment,
+    live,
+    ...userInput
+  }: { segment: MessageDisplaySegment; live: boolean } & UserInputPresentation) {
+    if (segment.kind === 'tool') {
+      const groups: MessageDisplayRow[][] = []
+      for (const row of segment.rows) {
+        if (
+          isRequestUserInputRow(row) ||
+          !groups.length ||
+          groups.at(-1)?.some(isRequestUserInputRow)
+        )
+          groups.push([row])
+        else groups.at(-1)!.push(row)
+      }
+      return (
+        <>
+          {groups.map((rows, index) => {
+            const first = rows[0]!
+            if (first.type === 'tool' && isRequestUserInputBlock(first.block)) {
+              const key = requestUserInputPayloadKey(first.block.renderPayload)
+              return (
+                <RequestUserInputCard
+                  key={key ?? first.id}
+                  block={first.block}
+                  active={Boolean(key && userInput.pendingInputKeys?.has(key))}
+                  onRequestUserInputSubmit={userInput.onRequestUserInputSubmit}
+                  onRequestUserInputSkip={userInput.onRequestUserInputSkip}
+                />
+              )
+            }
             return (
-              <RequestUserInputCard
-                key={key ?? first.id}
-                block={first.block}
-                active={Boolean(key && userInput.pendingInputKeys?.has(key))}
-                onRequestUserInputSubmit={userInput.onRequestUserInputSubmit}
-                onRequestUserInputSkip={userInput.onRequestUserInputSkip}
+              <ToolProcessingSegment
+                key={`${segment.id}:${index}`}
+                rows={rows}
+                live={live && index === groups.length - 1}
               />
             )
-          }
-          return <ToolProcessingSegment key={`${segment.id}:${index}`} rows={rows} />
-        })}
-      </>
+          })}
+        </>
+      )
+    }
+    return (
+      <View style={styles.narrativeSegment}>
+        {segment.rows.map(row => (
+          <ProcessingRow key={row.id} row={row} />
+        ))}
+      </View>
+    )
+  },
+  (previous, next) =>
+    previous.live === next.live &&
+    (previous.pendingInputKeys === next.pendingInputKeys ||
+      (previous.pendingInputKeys?.size === next.pendingInputKeys?.size &&
+        [...(previous.pendingInputKeys ?? [])].every(key => next.pendingInputKeys?.has(key)))) &&
+    previous.onRequestUserInputSubmit === next.onRequestUserInputSubmit &&
+    previous.onRequestUserInputSkip === next.onRequestUserInputSkip &&
+    previous.segment.id === next.segment.id &&
+    previous.segment.rows.length === next.segment.rows.length &&
+    previous.segment.rows.every((row, index) => sameDisplayRow(row, next.segment.rows[index]!))
+)
+
+function sameDisplayRow(previous: MessageDisplayRow, next: MessageDisplayRow): boolean {
+  if (previous === next) return true
+  if (previous.id !== next.id || previous.type !== next.type) return false
+  if (previous.type === 'tool-group' && next.type === 'tool-group') {
+    return (
+      previous.kind === next.kind &&
+      previous.label === next.label &&
+      previous.failed === next.failed &&
+      previous.blocks.length === next.blocks.length &&
+      previous.blocks.every((block, index) => block === next.blocks[index])
     )
   }
-  return (
-    <View style={styles.narrativeSegment}>
-      {segment.rows.map(row => (
-        <ProcessingRow key={row.id} row={row} />
-      ))}
-    </View>
-  )
+  return 'block' in previous && 'block' in next && previous.block === next.block
 }
 
-function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
+function ToolProcessingSegment({ rows, live }: { rows: MessageDisplayRow[]; live: boolean }) {
   const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
   const stats = processingActivityStats(rows)
   const running = rows.some(isProcessingRowRunning)
+  const hidePreview = useAutomaticCollapse(!running && !live)
   const contentExpanded = expanded
   const color = theme.colors.onSurfaceVariant
   const details = (
@@ -161,10 +221,8 @@ function ToolProcessingSegment({ rows }: { rows: MessageDisplayRow[] }) {
         <ProcessingStats color={color} stats={stats} />
         {running ? <ActivityIndicator size={14} /> : null}
       </Pressable>
-      {contentExpanded ? (
-        details
-      ) : running ? (
-        <View style={styles.livePreview}>{details}</View>
+      {contentExpanded || !hidePreview ? (
+        <View style={!contentExpanded && styles.livePreview}>{details}</View>
       ) : null}
     </View>
   )
@@ -273,7 +331,6 @@ function ProcessingRow({
   initialGroupExpanded?: boolean
   row: MessageDisplayRow
 }) {
-  const theme = useTheme()
   if (row.type === 'tool-group') {
     return <ToolActivityGroup initialExpanded={initialGroupExpanded} row={row} />
   }
@@ -283,13 +340,13 @@ function ProcessingRow({
   const { block } = row
   if (!block.content.trim()) return null
   if (block.type === 'error') {
-    return (
-      <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
-        {block.content}
-      </Text>
-    )
+    return <ErrorNotice error={block.content} testID={`processing-error-${block.id}`} />
   }
-  return <AssistantMarkdown muted={block.type === 'guidance'}>{block.content}</AssistantMarkdown>
+  return (
+    <AssistantMarkdown muted={block.type === 'guidance'} streaming={block.status === 'streaming'}>
+      {block.content}
+    </AssistantMarkdown>
+  )
 }
 
 function ToolActivityGroup({
@@ -584,7 +641,9 @@ function isContextCompactionName(name: string): boolean {
 }
 
 const styles = StyleSheet.create({
-  timeline: { marginBottom: 10, gap: 8 },
+  timeline: { marginBottom: 10 },
+  segments: { gap: 8 },
+  hidden: { display: 'none' },
   narrativeSegment: { gap: 8 },
   toolSegment: { marginBottom: 2 },
   segmentHeader: {
@@ -654,5 +713,4 @@ const styles = StyleSheet.create({
   contextCompaction: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 4 },
   contextDivider: { height: StyleSheet.hairlineWidth, flex: 1 },
   contextLabel: { flexShrink: 1, fontWeight: '600' },
-  error: { marginTop: 4 },
 })

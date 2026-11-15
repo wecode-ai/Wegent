@@ -796,3 +796,74 @@ async def test_fail_stalled_subtask_drops_event_when_status_changed():
         )
 
     assert failed is False
+
+
+@pytest.mark.asyncio
+async def test_stall_sweep_keeps_running_turn_when_parent_write_fails(test_db):
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
+
+    from app.stores.tasks import task_store
+
+    candidate = _candidate()
+    task = _task(candidate.task_id)
+    task.json = {
+        "metadata": {"name": task.name, "namespace": "default"},
+        "spec": {
+            "title": "Stalled turn",
+            "prompt": "Run task",
+            "teamRef": {"name": "test-team"},
+            "workspaceRef": {"name": "test-workspace"},
+        },
+        "status": {"status": "RUNNING"},
+    }
+    test_db.add(task)
+    test_db.add(_subtask(candidate.subtask_id, task.id, status=SubtaskStatus.RUNNING))
+    test_db.commit()
+    connection = test_db.get_bind()
+
+    def session():
+        return Session(bind=connection, join_transaction_mode="create_savepoint")
+
+    def reject_parent_write(db, **kwargs):
+        assert db.get(Subtask, candidate.subtask_id).status == SubtaskStatus.FAILED
+        raise OperationalError("UPDATE", {}, RuntimeError("connection reset"))
+
+    client = SimpleNamespace(run_sync=AsyncMock(return_value=[candidate]))
+    notifications = AsyncMock()
+    with (
+        patch("app.db.session.SessionLocal", side_effect=session),
+        patch.object(
+            task_store, "update_json", side_effect=reject_parent_write
+        ) as write,
+        patch(
+            "app.services.execution.stalled_tasks.WebSocketResultEmitter",
+            return_value=notifications,
+        ),
+        patch(
+            "app.services.execution.stalled_tasks.executor_pod_missing",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            AsyncMock(return_value={}),
+        ),
+    ):
+        failed = await sweep_stalled_subtasks(
+            client,
+            silent_timeout_seconds=900,
+            heartbeat_timeout_seconds=1800,
+            max_age_seconds=86400,
+            limit=10,
+            now=NOW,
+        )
+
+    assert failed == []
+    write.assert_called_once()
+    notifications.emit.assert_not_awaited()
+    test_db.expire_all()
+    assert test_db.get(Subtask, candidate.subtask_id).status == SubtaskStatus.RUNNING
+    assert (
+        test_db.get(TaskResource, candidate.task_id).json["status"]["status"]
+        == "RUNNING"
+    )

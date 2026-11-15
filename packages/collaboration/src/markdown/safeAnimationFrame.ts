@@ -2,7 +2,7 @@ const FALLBACK_FRAME_MS = 16;
 
 export interface SafeAnimationFrameHandle {
   animationFrameId: number;
-  fallbackTimerId: number | null;
+  fallbackTimerId: ReturnType<typeof setTimeout> | null;
 }
 
 export function requestSafeAnimationFrame(
@@ -24,10 +24,7 @@ export function requestSafeAnimationFrame(
     animationFrameId,
     fallbackTimerId:
       calledSynchronously && fallbackOnSynchronous
-        ? window.setTimeout(
-            () => callback(performance.now()),
-            FALLBACK_FRAME_MS,
-          )
+        ? setTimeout(() => callback(performance.now()), FALLBACK_FRAME_MS)
         : null,
   };
 }

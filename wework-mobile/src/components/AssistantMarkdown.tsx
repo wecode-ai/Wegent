@@ -1,16 +1,24 @@
-import { useMemo } from 'react'
+import { showErrorAlert } from '@/services/errorAlerts'
+import * as Clipboard from 'expo-clipboard'
+import { memo, useCallback, useMemo, useRef } from 'react'
 import {
   EnrichedMarkdownText,
   type AccessibilityLabels,
   type MarkdownStyle,
+  type TextSelectionMenuConfig,
 } from 'react-native-enriched-markdown'
-import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native'
+import { Linking, Pressable, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { useMobileFilePreview } from './files/FilePreviewContext'
 import {
   classifyMarkdownLink,
   extractMarkdownLinks,
 } from '../../../packages/collaboration/src/markdown/assistantMarkdownLinks'
+import {
+  hasMarkdownReferenceDefinitions,
+  splitStaticMarkdownChunks,
+} from '../../../packages/collaboration/src/markdown/assistantMarkdownWindowing'
+import { useBufferedStreamingText } from '../../../packages/collaboration/src/markdown/useBufferedStreamingText'
 
 interface AssistantMarkdownProps {
   children: string
@@ -32,17 +40,41 @@ const ACCESSIBILITY_LABELS: AccessibilityLabels = {
 
 const MARKDOWN_FLAGS = { latexMath: false } as const
 const STREAMING_CONFIG = { tableMode: 'progressive', codeBlockMode: 'progressive' } as const
+const SELECTION_MENU: TextSelectionMenuConfig = {
+  copy: { label: '复制' },
+  copyAsMarkdown: { enabled: true, label: '复制为 Markdown' },
+  copyImageUrl: {
+    label: '复制图片地址',
+    pluralLabels: { other: '复制 {count} 个图片地址' },
+  },
+}
 
-export function AssistantMarkdown({
+export const AssistantMarkdown = memo(function AssistantMarkdown({
   children,
   muted = false,
   streaming = false,
 }: AssistantMarkdownProps) {
   const theme = useTheme()
-  const filePreview = useMobileFilePreview()
+  const latestContent = useRef(children)
+  latestContent.current = children
+  const content = useBufferedStreamingText(
+    children,
+    streaming,
+    children.length < 4_000 ? 48 : children.length < 32_000 ? 96 : 160
+  )
+  const chunks = useMemo(
+    () =>
+      hasMarkdownReferenceDefinitions(content) ? [content] : splitStaticMarkdownChunks(content),
+    [content]
+  )
+  const copyMessage = useCallback(() => {
+    void Clipboard.setStringAsync(latestContent.current).catch(error =>
+      showErrorAlert(error, { title: '无法复制消息' })
+    )
+  }, [])
   const imageFileLinks = useMemo(() => {
     const images = new Map<string, { href: string; title: string }>()
-    for (const link of extractMarkdownLinks(children)) {
+    for (const link of extractMarkdownLinks(content)) {
       const target = classifyMarkdownLink(link.href)
       if (
         target.kind === 'file' &&
@@ -51,7 +83,7 @@ export function AssistantMarkdown({
         images.set(link.href, link)
     }
     return [...images.values()]
-  }, [children])
+  }, [content])
   const markdownStyle = useMemo<MarkdownStyle>(() => {
     const textColor = muted ? theme.colors.onSurfaceVariant : theme.colors.onBackground
     const subtleSurface = theme.colors.elevation.level2
@@ -203,50 +235,94 @@ export function AssistantMarkdown({
 
   return (
     <>
-      <EnrichedMarkdownText
-        accessibilityLabels={ACCESSIBILITY_LABELS}
-        containerStyle={styles.container}
-        enableTaskListItemToggle={false}
-        flavor="github"
-        lineBreakStrategyIOS="standard"
-        markdown={children}
-        markdownStyle={markdownStyle}
-        md4cFlags={MARKDOWN_FLAGS}
-        onLinkPress={({ url }) => {
-          if (filePreview) return filePreview.openLink(url)
-          if (!/^(https?:|mailto:|tel:)/i.test(url)) {
-            Alert.alert('无法打开文件', '当前页面没有可用的文件工作空间。')
-            return
-          }
-          void Linking.openURL(url).catch(error =>
-            Alert.alert('无法打开链接', error instanceof Error ? error.message : String(error))
-          )
-        }}
-        selectable={false}
-        streamingAnimation={streaming}
-        streamingConfig={STREAMING_CONFIG}
-        testID="assistant-markdown"
-        textBreakStrategy="highQuality"
-        writingDirection="first-strong"
-      />
-      {imageFileLinks.length ? (
-        <View style={styles.imageLinks}>
-          {imageFileLinks.map((link, index) => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`预览图片 ${link.title}`}
-              disabled={!filePreview?.target}
-              key={link.href}
-              onPress={() => filePreview?.openLink(link.href)}
-              style={[styles.imageLink, { backgroundColor: theme.colors.elevation.level1 }]}
-              testID={`markdown-image-preview-${index}`}
-            >
-              <Text numberOfLines={2}>预览图片 · {link.title}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+      {chunks.map((chunk, index) => (
+        <MarkdownChunk
+          key={index}
+          content={chunk}
+          markdownStyle={markdownStyle}
+          streaming={streaming && index === chunks.length - 1}
+          trailingMargin={index < chunks.length - 1}
+          onCopyMessage={copyMessage}
+        />
+      ))}
+      {imageFileLinks.length ? <ImageFileLinks links={imageFileLinks} /> : null}
     </>
+  )
+})
+
+const MarkdownChunk = memo(function MarkdownChunk({
+  content,
+  markdownStyle,
+  streaming,
+  trailingMargin,
+  onCopyMessage,
+}: {
+  content: string
+  markdownStyle: MarkdownStyle
+  streaming: boolean
+  trailingMargin: boolean
+  onCopyMessage: () => void
+}) {
+  const filePreview = useMobileFilePreview()
+  const menuItems = useMemo(
+    () => [{ text: '复制整条消息', onPress: onCopyMessage }],
+    [onCopyMessage]
+  )
+  const openLink = useCallback(
+    ({ url }: { url: string }) => {
+      if (filePreview) return filePreview.openLink(url)
+      if (!/^(https?:|mailto:|tel:)/i.test(url)) {
+        showErrorAlert('当前页面没有可用的文件工作空间。', { title: '无法打开文件' })
+        return
+      }
+      void Linking.openURL(url).catch(error => showErrorAlert(error, { title: '无法打开链接' }))
+    },
+    [filePreview]
+  )
+  return (
+    <EnrichedMarkdownText
+      accessibilityLabels={ACCESSIBILITY_LABELS}
+      allowFontScaling
+      allowTrailingMargin={trailingMargin}
+      containerStyle={styles.container}
+      contextMenuItems={menuItems}
+      enableTaskListItemToggle={false}
+      flavor="github"
+      lineBreakStrategyIOS="standard"
+      markdown={content}
+      markdownStyle={markdownStyle}
+      md4cFlags={MARKDOWN_FLAGS}
+      onLinkPress={openLink}
+      selectable
+      selectionMenuConfig={SELECTION_MENU}
+      streamingAnimation={streaming}
+      streamingConfig={STREAMING_CONFIG}
+      testID="assistant-markdown"
+      textBreakStrategy="highQuality"
+      writingDirection="first-strong"
+    />
+  )
+})
+
+function ImageFileLinks({ links }: { links: { href: string; title: string }[] }) {
+  const filePreview = useMobileFilePreview()
+  const theme = useTheme()
+  return (
+    <View style={styles.imageLinks}>
+      {links.map((link, index) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`预览图片 ${link.title}`}
+          disabled={!filePreview?.target}
+          key={link.href}
+          onPress={() => filePreview?.openLink(link.href)}
+          style={[styles.imageLink, { backgroundColor: theme.colors.elevation.level1 }]}
+          testID={`markdown-image-preview-${index}`}
+        >
+          <Text numberOfLines={2}>预览图片 · {link.title}</Text>
+        </Pressable>
+      ))}
+    </View>
   )
 }
 

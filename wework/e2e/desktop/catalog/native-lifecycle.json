@@ -1,7 +1,8 @@
 {
   "order": 174000,
-  "scenario": "./scenarios/native-guidance.scenario.mjs",
+  "scenario": "./scenarios/mobile-local-payload.scenario.mjs",
   "scenarioOnly": true,
+  "paths": ["wework-mobile/src/services/localRuntimeApi*"],
   "ci": {
     "core": {
       "order": 94000,

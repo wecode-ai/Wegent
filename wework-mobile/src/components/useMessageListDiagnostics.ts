@@ -24,27 +24,27 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
   const enabled = process.env.EXPO_PUBLIC_CHAT_LAYOUT_DIAGNOSTICS === '1'
   const latest = useRef(options)
   latest.current = options
-  const session = useRef({
+  const session = useRef<{ dataKey: string; epoch: number; lastScrollReportedAt?: number }>({
     dataKey: options.dataKey,
     epoch: 1,
-    lastReportedAt: new Map<DiagnosticEvent, number>(),
   })
 
   const report = useCallback(
-    (event: DiagnosticEvent, details?: NumericDetails, force = false) => {
+    (event: DiagnosticEvent, details?: NumericDetails) => {
       if (!enabled) return
       const current = latest.current
       if (session.current.dataKey !== current.dataKey) {
         session.current = {
           dataKey: current.dataKey,
           epoch: session.current.epoch + 1,
-          lastReportedAt: new Map(),
         }
       }
       const timestamp = Date.now()
-      const previous = session.current.lastReportedAt.get(event)
-      if (!force && previous !== undefined && timestamp - previous < 200) return
-      session.current.lastReportedAt.set(event, timestamp)
+      if (event === 'scroll') {
+        const previous = session.current.lastScrollReportedAt
+        if (previous !== undefined && timestamp - previous < 200) return
+        session.current.lastScrollReportedAt = timestamp
+      }
 
       const state = current.listRef.current?.getState()
       const tail = current.messages.at(-1)
@@ -57,6 +57,10 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
         tailRole: tail?.role ?? null,
         tailStatus: tail?.status ?? null,
         tailLength: tail?.content.length ?? 0,
+        tailBlockCount: tail?.blocks?.length ?? 0,
+        tailRunningBlockCount:
+          tail?.blocks?.filter(block => block.status !== 'done' && block.status !== 'error')
+            .length ?? 0,
         composerInset: current.contentInsetEndAdjustment.value,
         freeze: current.freeze?.value ?? null,
         legend: state
@@ -79,7 +83,7 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
   )
 
   useEffect(() => {
-    report('running', undefined, true)
+    report('running')
   }, [options.dataKey, options.running, report])
 
   return useMemo(() => {
@@ -95,7 +99,7 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
       }
     }
     return {
-      onReady: () => report('ready', undefined, true),
+      onReady: () => report('ready'),
       onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) =>
         report('scroll', () => ({
           nativeInsetBottom: event.nativeEvent.contentInset.bottom,
@@ -116,8 +120,8 @@ export function useMessageListDiagnostics(options: MessageListDiagnosticsOptions
         })),
       onContentSizeChange: (width: number, height: number) =>
         report('contentSize', () => ({ contentWidth: width, contentHeight: height })),
-      reportUserScroll: () => report('user', undefined, true),
-      reportSend: () => report('send', undefined, true),
+      reportUserScroll: () => report('user'),
+      reportSend: () => report('send'),
     }
   }, [enabled, report])
 }

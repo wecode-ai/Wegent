@@ -1458,9 +1458,13 @@ class LoopItemExecutionService:
         ):
             return None
 
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )
@@ -1574,9 +1578,13 @@ class LoopItemExecutionService:
         )
         if candidate is None:
             return None
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )

@@ -46,9 +46,11 @@ vi.mock('./ComposerContextMenu', () => ({ ComposerContextMenu: 'ComposerContextM
 describe('ChatComposer', () => {
   let renderer: ReactTestRenderer
   const focus = vi.fn()
+  const blur = vi.fn()
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     focus.mockClear()
+    blur.mockClear()
     vi.mocked(getDocumentAsync).mockReset()
     preview.current = null
   })
@@ -58,7 +60,9 @@ describe('ChatComposer', () => {
 
   async function render(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
     const props = {
+      active: true,
       disabled: false,
+      onFocusRequestHandled: vi.fn(),
       modelLabel: 'GPT-6 High',
       onLoadApps: vi.fn().mockResolvedValue([]),
       onClearPlanMode: vi.fn(),
@@ -74,7 +78,7 @@ describe('ChatComposer', () => {
     }
     await act(() => {
       renderer = create(<ChatComposer {...props} />, {
-        createNodeMock: element => (element.type === 'TextInput' ? { focus } : null),
+        createNodeMock: element => (element.type === 'TextInput' ? { focus, blur } : null),
       })
     })
     return props
@@ -253,21 +257,63 @@ describe('ChatComposer', () => {
     expect(focus).not.toHaveBeenCalled()
     await act(() => renderer.update(<ChatComposer {...props} focusRequest={1} />))
     expect(focus).toHaveBeenCalledOnce()
+    expect(props.onFocusRequestHandled).toHaveBeenCalledExactlyOnceWith(1)
     await act(() => element('chat-input').props.onChangeText('Keep this draft'))
     await act(() =>
       renderer.update(<ChatComposer {...props} focusRequest={1} modelLabel="Other" />)
     )
     expect(focus).toHaveBeenCalledOnce()
+    expect(props.onFocusRequestHandled).toHaveBeenCalledOnce()
     expect(element('chat-input').props.value).toBe('Keep this draft')
     await act(() => renderer.update(<ChatComposer {...props} focusRequest={2} />))
     expect(focus).toHaveBeenCalledTimes(2)
+    expect(props.onFocusRequestHandled).toHaveBeenLastCalledWith(2)
   })
 
-  it('defers requested focus until the input can become editable', async () => {
+  it('expires delivered focus requests when disabled instead of reopening the keyboard later', async () => {
     const props = await render({ disabled: true, focusRequest: 1 })
     expect(focus).not.toHaveBeenCalled()
+    expect(props.onFocusRequestHandled).toHaveBeenCalledExactlyOnceWith(1)
     await act(() => renderer.update(<ChatComposer {...props} disabled={false} />))
+    expect(focus).not.toHaveBeenCalled()
+    await act(() => renderer.update(<ChatComposer {...props} disabled={false} focusRequest={2} />))
     expect(focus).toHaveBeenCalledOnce()
+  })
+
+  it('expires requests on an inactive screen and releases only its own input', async () => {
+    const props = await render({ focusRequest: 1 })
+    await act(() => {
+      element('chat-input').props.onChangeText('Keep this draft')
+      element('chat-input').props.onFocus()
+    })
+    expect(blur).not.toHaveBeenCalled()
+    await act(() => renderer.update(<ChatComposer {...props} active={false} focusRequest={2} />))
+    expect(blur).toHaveBeenCalledOnce()
+    expect(props.onFocusRequestHandled).toHaveBeenLastCalledWith(2)
+    expect(focus).toHaveBeenCalledOnce()
+    expect(element('chat-input').props.value).toBe('Keep this draft')
+    await act(() => renderer.update(<ChatComposer {...props} focusRequest={2} />))
+    expect(focus).toHaveBeenCalledOnce()
+    expect(blur).toHaveBeenCalledOnce()
+    // Native blur can arrive after the outgoing screen has already detached.
+    expect(element('chat-input').props.scrollEnabled).toBe(false)
+    await act(() => element('chat-input').props.onFocus())
+    expect(element('chat-input').props.scrollEnabled).toBe(true)
+    await act(() => renderer.update(<ChatComposer {...props} focusRequest={3} />))
+    expect(focus).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    { active: true, disabled: false, focuses: true },
+    { active: false, disabled: false, focuses: false },
+    { active: true, disabled: true, focuses: false },
+  ])('focuses a goal selection synchronously only for an available composer (%j)', async state => {
+    const props = await render(state)
+    await act(() => renderer.root.findByType('ComposerContextMenu' as never).props.onSetGoal())
+    expect(focus).toHaveBeenCalledTimes(state.focuses ? 1 : 0)
+    expect(element('chat-input').props.placeholder).toBe('Wework 应该往哪个方向努力？')
+    await act(() => renderer.update(<ChatComposer {...props} active disabled={false} />))
+    expect(focus).toHaveBeenCalledTimes(state.focuses ? 1 : 0)
   })
 
   it('shows the speed shortcut only when the selected model supplies a real action', async () => {

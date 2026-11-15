@@ -4,8 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatProcessingBlock } from '@/types/runtime'
 import { ProcessingTimeline } from './ProcessingTimeline'
 import { FilePreviewContext, type MobileFilePreviewActions } from './files/FilePreviewContext'
+import { ConversationFollowingContext } from './useConversationReading'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const markdownRenders = vi.hoisted(() => vi.fn())
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
@@ -18,7 +20,12 @@ vi.mock('react-native-paper', () => ({
   Text: 'Text',
   useTheme: () => ({ colors: { onSurfaceVariant: '#888' } }),
 }))
-vi.mock('./AssistantMarkdown', () => ({ AssistantMarkdown: 'Markdown' }))
+vi.mock('./AssistantMarkdown', () => ({
+  AssistantMarkdown: (props: { children: string }) => {
+    markdownRenders(props.children)
+    return React.createElement('Markdown', props)
+  },
+}))
 vi.mock('./RequestUserInputCard', () => ({ RequestUserInputCard: 'Input' }))
 
 describe('ProcessingTimeline file preview entry points', () => {
@@ -205,5 +212,183 @@ describe('ProcessingTimeline file preview entry points', () => {
     )
     expect(button('generated-image-preview-read').props.disabled).toBe(true)
     expect(button('generated-image-preview-invalid')).toBeUndefined()
+  })
+})
+
+describe('ProcessingTimeline streaming ownership', () => {
+  let renderer: ReactTestRenderer | undefined
+  afterEach(async () => {
+    if (renderer) await act(() => renderer!.unmount())
+    renderer = undefined
+  })
+  const tool = (id: string, status: 'streaming' | 'done'): ChatProcessingBlock => ({
+    id,
+    type: 'tool',
+    subtaskId: 'turn',
+    toolName: 'exec_command',
+    toolInput: { cmd: 'pwd' },
+    status,
+    createdAt: 1,
+  })
+  const message = (blocks: ChatProcessingBlock[], content = ''): ChatMessage => ({
+    id: 'message',
+    role: 'assistant',
+    status: 'streaming',
+    content,
+    blocks,
+    createdAt: 1,
+  })
+  const nodes = (testID: string) => renderer!.root.findAllByProps({ testID })
+  const update = async (next: ChatMessage, following = true) => {
+    await act(() => {
+      const element = (
+        <ConversationFollowingContext.Provider value={following}>
+          <ProcessingTimeline message={next} />
+        </ConversationFollowingContext.Provider>
+      )
+      if (renderer) renderer.update(element)
+      else renderer = create(element)
+    })
+  }
+
+  it('does not mistake streaming commentary between tools for a completed turn', async () => {
+    const first = tool('first', 'done')
+    await update(message([first]))
+    const segment = nodes('processing-tool-segment')[0]
+
+    await update(message([first], '接下来检查目录。'))
+    expect(nodes('completed-processing-message')).toHaveLength(0)
+    expect(nodes('processing-tool-segment')[0] === segment).toBe(true)
+
+    await update(
+      message([
+        first,
+        {
+          id: 'commentary',
+          subtaskId: 'turn',
+          type: 'text',
+          content: '接下来检查目录。',
+          status: 'done',
+          createdAt: 2,
+        },
+        tool('next', 'streaming'),
+      ])
+    )
+    expect(nodes('processing-tool-segment')[0] === segment).toBe(true)
+    expect(nodes('processing-timeline-message')).toHaveLength(1)
+  })
+
+  it('keeps the active preview mounted between consecutive tool calls', async () => {
+    await update(message([tool('first', 'streaming')]))
+    const segment = nodes('processing-tool-segment')[0]
+    const details = nodes('processing-segment-details')[0]
+
+    await update(message([tool('first', 'done')]))
+    expect(nodes('processing-tool-segment')[0] === segment).toBe(true)
+    expect(nodes('processing-segment-details')[0] === details).toBe(true)
+
+    await update(message([tool('first', 'done'), tool('second', 'streaming')]))
+    expect(nodes('processing-tool-segment')[0] === segment).toBe(true)
+    expect(nodes('processing-segment-details')[0] === details).toBe(true)
+
+    await update(message([tool('first', 'done'), tool('second', 'done')]))
+    expect(nodes('processing-tool-segment')[0] === segment).toBe(true)
+    expect(nodes('processing-segment-details')[0] === details).toBe(true)
+  })
+
+  it('preserves explicit expansion through added tools and the completed turn summary', async () => {
+    const first = tool('first', 'done')
+    await update(message([first]))
+    await act(() => nodes('processing-segment-toggle')[0]!.props.onPress())
+    const details = nodes('processing-segment-details')[0]
+
+    await update(message([first, tool('second', 'done')]))
+    expect(nodes('processing-segment-details')[0] === details).toBe(true)
+
+    await update({ ...message([first, tool('second', 'done')], '完成。'), status: 'completed' })
+    expect(nodes('completed-processing-message')).toHaveLength(1)
+    expect(
+      nodes('completed-processing-content-message')[0]!.props.accessibilityElementsHidden
+    ).toBe(true)
+    await act(() => nodes('completed-processing-toggle-message')[0]!.props.onPress())
+    expect(
+      nodes('completed-processing-content-message')[0]!.props.accessibilityElementsHidden
+    ).toBe(false)
+    expect(nodes('processing-segment-details')[0] === details).toBe(true)
+  })
+
+  it('does not reopen a collapsed tool group when the next tool joins it', async () => {
+    const first = tool('first', 'done')
+    await update(message([first]))
+    const groupToggle = () =>
+      renderer!.root.findAll(
+        node =>
+          node.type === ('Pressable' as never) &&
+          node.props.testID?.startsWith('tool-group-toggle-')
+      )[0]!
+    const toggle = groupToggle()
+    await act(() => toggle.props.onPress())
+    const groupDetails = () =>
+      renderer!.root.findAll(node => node.props.testID?.startsWith('tool-group-details-'))
+    expect(groupDetails()).toHaveLength(0)
+
+    await update(message([first, tool('second', 'done')]))
+    expect(groupToggle() === toggle).toBe(true)
+    expect(groupDetails()).toHaveLength(0)
+  })
+
+  it('defers completion collapse while browsing and applies it on returning to the end', async () => {
+    await update(message([tool('first', 'streaming')]))
+    const completed = {
+      ...message([tool('first', 'done')], '完成。'),
+      status: 'completed' as const,
+    }
+    await update(completed, false)
+    expect(nodes('processing-timeline-message')).toHaveLength(1)
+    expect(nodes('processing-segment-details')).toHaveLength(1)
+
+    await update(completed, true)
+    expect(
+      nodes('completed-processing-content-message')[0]!.props.accessibilityElementsHidden
+    ).toBe(true)
+    await update(completed, false)
+    expect(
+      nodes('completed-processing-content-message')[0]!.props.accessibilityElementsHidden
+    ).toBe(true)
+
+    await act(() => nodes('completed-processing-toggle-message')[0]!.props.onPress())
+    expect(
+      nodes('completed-processing-content-message')[0]!.props.accessibilityElementsHidden
+    ).toBe(false)
+  })
+
+  it('holds the live tool preview while reading when commentary arrives', async () => {
+    await update(message([tool('first', 'streaming')]), false)
+    const commentary = message([tool('first', 'done')], '现在解释结果。')
+    await update(commentary, false)
+    expect(nodes('processing-segment-details')).toHaveLength(1)
+    await update(commentary, true)
+    expect(nodes('processing-segment-details')).toHaveLength(0)
+  })
+
+  it('does not rerender completed narrative blocks when only the reply tail changes', async () => {
+    const blocks: ChatProcessingBlock[] = [
+      {
+        id: 'intro',
+        type: 'text',
+        subtaskId: 'turn',
+        status: 'done',
+        createdAt: 1,
+        content: 'Stable introduction',
+      },
+      tool('first', 'done'),
+    ]
+    await update(message(blocks, 'Tail'))
+    markdownRenders.mockClear()
+    await update(message(blocks, 'Tail with additional text'))
+    expect(markdownRenders).not.toHaveBeenCalled()
+    const changed = [{ ...blocks[0]!, content: 'Corrected introduction' }, blocks[1]!]
+    await update(message(changed, 'Tail with additional text'))
+    expect(markdownRenders).toHaveBeenCalledWith('Corrected introduction')
   })
 })
