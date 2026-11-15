@@ -116,6 +116,9 @@ impl RuntimeWorkRpcHandler {
                 .read_stand_in_conversations(&identity, name, &args)
                 .await;
         }
+        if identity.work.is_some() && name == "create_task" {
+            return self.create_source_task(&identity, &args).await;
+        }
         if identity.device != self.device_id
             || identity.work.is_some()
             || !matches!(identity.role.as_deref(), None | Some("@primary"))
@@ -295,9 +298,21 @@ impl RuntimeWorkRpcHandler {
         config["userId"] = json!(identity.user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
         let sources = self.capture_delegated_read_sources(identity, args)?;
-        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":false});
-        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), &config).await?;
-        payload["executionRequest"]["standInDelegation"] = json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources});
+        self.start_delegated_task(identity, args, &id, &config, json!({"userId":identity.user,"sourceTaskId":identity.task_id,"askBeforeAct":false,"readSources":sources})).await
+    }
+
+    pub(super) async fn start_delegated_task(
+        &self,
+        identity: &StandInMcpIdentity,
+        args: &Value,
+        id: &str,
+        config: &Value,
+        delegation: Value,
+    ) -> Result<Value, AppIpcError> {
+        let ask = delegation["askBeforeAct"] == true;
+        let origin = json!({"type":"stand_in_task","initiatedBy":"stand_in","standInId":"@primary","userId":identity.user,"deviceId":self.device_id,"sourceTaskId":identity.task_id,"askBeforeAct":ask});
+        let mut payload = self.prepare_stand_in_execution(json!({"taskId":id,"title":required(args,"title")?,"message":required(args,"message")?,"origin":origin,"commandId":format!("{id}:create"),"automaticStandIn":true}), config).await?;
+        payload["executionRequest"]["standInDelegation"] = delegation;
         Box::pin(self.create_task(payload)).await
     }
 }
