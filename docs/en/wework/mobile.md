@@ -24,6 +24,12 @@ API Key (optional for unauthenticated services), and an optional display name. O
 is supported. **Test connection (测试连接)** sends a real tool-call probe; **Save model (保存模型)** makes
 the model selectable in chat. Keys remain in device secure storage.
 
+Saving a model or starting OpenAI login first asks for explicit task-data sharing confirmation.
+Only **Agree and continue (同意并继续)** starts the operation; cancellation preserves the input.
+Read the [privacy policy](./mobile-privacy.md) through the model-page link or **Settings → Privacy
+(隐私) → Privacy policy (隐私政策)**. Messages, attachments, required file contents and tool output
+may be sent to the selected model provider. Local tool execution does not mean local model inference.
+
 For Backend models and cloud devices, use **Settings → Sign in to Wegent (登录 Wegent)** to configure
 the Backend address and authorize. Device filters appear after login. Settings is a full-screen page
 with a top-right **×** close button; the existing new-chat layout remains unchanged.

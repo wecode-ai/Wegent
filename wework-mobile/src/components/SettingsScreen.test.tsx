@@ -9,6 +9,17 @@ import type { LocalRuntime } from '@/services/localRuntime'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const stored = vi.hoisted(() => ({ raw: null as string | null, id: 0 }))
 const environment = vi.hoisted(() => ({ platform: 'ios' }))
+const privacy = vi.hoisted(() => ({
+  open: vi.fn(async () => undefined),
+  confirm: vi.fn<(action: () => Promise<void>) => void>(action => {
+    void action()
+  }),
+}))
+vi.mock('@/services/privacyPolicy', () => ({
+  MODEL_DATA_SHARING_NOTICE: '消息、附件和任务文件会发送给所选模型服务。',
+  openPrivacyPolicy: privacy.open,
+  confirmModelDataSharing: privacy.confirm,
+}))
 vi.mock('expo-crypto', () => ({ randomUUID: () => `model-${++stored.id}` }))
 vi.mock('expo-secure-store', () => ({
   getItemAsync: async () => stored.raw,
@@ -31,7 +42,11 @@ vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
   StyleSheet: { create: (value: unknown) => value, hairlineWidth: 0.5 },
 }))
-vi.mock('react-native-paper', () => ({ Text: 'Text', useTheme: () => ({ colors: {} }) }))
+vi.mock('react-native-paper', () => ({
+  Button: 'Button',
+  Text: 'Text',
+  useTheme: () => ({ colors: {} }),
+}))
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 59, bottom: 34 }),
 }))
@@ -80,6 +95,8 @@ describe('full-page local settings', () => {
     stored.raw = null
     stored.id = 0
     environment.platform = 'ios'
+    privacy.open.mockClear()
+    privacy.confirm.mockClear()
   })
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
@@ -111,10 +128,12 @@ describe('full-page local settings', () => {
       expect(renderer.root.findAllByType('Dialog' as never)).toHaveLength(0)
       await act(() => control('settings-models').props.onPress())
       await act(() => control('settings-backend').props.onPress())
+      await act(() => control('settings-privacy-policy').props.onPress())
       await act(() => control('close-settings').props.onPress())
       expect(onModels).toHaveBeenCalledOnce()
       expect(onBackend).toHaveBeenCalledOnce()
       expect(onClose).toHaveBeenCalledOnce()
+      expect(privacy.open).toHaveBeenCalledOnce()
     }
   )
   it('closes optional Backend authorization by cancelling only that login', async () => {
@@ -194,6 +213,26 @@ describe('full-page local settings', () => {
       expect(onBack).toHaveBeenCalledOnce()
     }
   )
+
+  it('preserves the draft and stored models when sharing confirmation is cancelled', async () => {
+    const runtime = { status, request: vi.fn().mockResolvedValue({}) } as unknown as LocalRuntime
+    const onBack = vi.fn()
+    privacy.confirm.mockImplementationOnce(() => undefined)
+    await act(() => {
+      renderer = create(
+        <PhoneModelEditorScreen runtime={runtime} onBack={onBack} onChanged={vi.fn()} />
+      )
+    })
+    await act(() => control('local-model-modelId').props.onChangeText('test-model'))
+    await act(() => control('local-model-save').props.onPress())
+    expect(stored.raw).toBeNull()
+    expect(runtime.request).not.toHaveBeenCalled()
+    expect(onBack).not.toHaveBeenCalled()
+    expect(control('local-model-modelId').props.value).toBe('test-model')
+    await act(() => control('local-model-privacy-read').props.onPress())
+    expect(privacy.open).toHaveBeenCalledOnce()
+    expect(stored.raw).toBeNull()
+  })
 
   it('does not navigate again if the editor was closed while a save was synchronizing', async () => {
     let complete!: () => void

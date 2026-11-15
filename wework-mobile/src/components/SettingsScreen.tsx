@@ -8,6 +8,7 @@ import type { WegentAuthState } from '@/auth/useWegentAuth'
 import type { LocalRuntime, LocalRuntimeProfile, LocalRuntimeStatus } from '@/services/localRuntime'
 import { confirmNativeAction, showErrorAlert } from '@/services/errorAlerts'
 import { phoneLocalModels, type PhoneLocalModel } from '@/services/phoneLocalModels'
+import { openPrivacyPolicy } from '@/services/privacyPolicy'
 import { AuthorizationScreen } from './AuthorizationScreen'
 import { LocalRuntimeSettings } from './LocalRuntimeSettings'
 import { ErrorNotice } from './errors/ErrorNotice'
@@ -292,6 +293,14 @@ export function SettingsScreen({
           detail={auth.user?.user_name}
           onPress={onBackend}
           testID="settings-backend"
+        />
+      </SettingsGroup>
+      <SettingsGroup title="隐私">
+        <SettingsRow
+          icon="shield-checkmark-outline"
+          label="隐私政策"
+          onPress={() => void openPrivacyPolicy()}
+          testID="settings-privacy-policy"
         />
       </SettingsGroup>
       {(error != null || localError != null) && (

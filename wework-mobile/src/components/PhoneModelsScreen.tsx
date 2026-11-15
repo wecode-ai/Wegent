@@ -20,6 +20,8 @@ import {
 } from './SettingsScreen'
 import { LocalRuntimeSettings } from './LocalRuntimeSettings'
 import { ErrorNotice } from './errors/ErrorNotice'
+import { ModelPrivacyNotice } from './ModelPrivacyNotice'
+import { confirmModelDataSharing } from '@/services/privacyPolicy'
 
 export function PhoneModelsScreen({
   runtime,
@@ -39,6 +41,7 @@ export function PhoneModelsScreen({
   const { models, error } = usePhoneModels()
   return (
     <SettingsPage title="模型与账号" onBack={onBack}>
+      <ModelPrivacyNotice testID="models-privacy" />
       <SettingsGroup title="OpenAI 账号">
         <SettingsRow
           icon="sparkles-outline"
@@ -94,6 +97,7 @@ export function CodexAccountScreen({
 }) {
   return (
     <SettingsPage title="OpenAI 账号" onBack={onBack}>
+      <ModelPrivacyNotice testID="codex-account-privacy" />
       {runtime ? (
         <LocalRuntimeSettings
           runtime={runtime}
@@ -249,6 +253,7 @@ export function PhoneModelEditorScreen({
   )
   return (
     <SettingsPage title={modelId ? '编辑模型' : '添加模型'} onBack={onBack} keyboard>
+      <ModelPrivacyNotice testID="local-model-privacy" />
       {loading && <ActivityIndicator />}
       <View style={settingsStyles.form}>
         {field('displayName', '显示名称', '我的模型（可选）')}
@@ -278,7 +283,7 @@ export function PhoneModelEditorScreen({
         </SettingsAction>
         <SettingsAction
           testID="local-model-save"
-          onPress={() => void save()}
+          onPress={() => confirmModelDataSharing(save)}
           disabled={busy || loading}
         >
           保存模型
