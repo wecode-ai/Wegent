@@ -1991,12 +1991,14 @@ export function createHybridWorkbenchServices(
         )
       },
       async deviceIdentity(deviceId) {
+        const api = await standInApiForDevice(deviceId)
+        if (api === localServices.standInApi) return api.deviceIdentity(deviceId)
         const registered = registeredCloudDeviceIdentity(
           deviceId,
           await resolveRegisteredCloudDevice(deviceId)
         )
         if (registered) return registered
-        return (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+        return api.deviceIdentity(deviceId)
       },
       async personalGet(userId, deviceId) {
         return (await standInApiForDevice(deviceId)).personalGet(userId, deviceId)

@@ -520,6 +520,18 @@ function deferred<T>() {
 }
 
 describe('stand-in save routing', () => {
+  it('attests the local Runtime without requiring Backend device discovery', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      { id: 0, device_id: 'local-device', device_type: 'local', status: 'online' },
+    ])
+    mocks.cloudListDevices.mockRejectedValue(new Error('Backend unavailable'))
+    const identity = { deviceId: 'local-device', backendDeviceId: 'app-record-42' }
+    mocks.localServices.standInApi.deviceIdentity.mockResolvedValue(identity)
+
+    expect(await createServices().standInApi!.deviceIdentity('local-device')).toEqual(identity)
+    expect(mocks.cloudListDevices).not.toHaveBeenCalled()
+  })
+
   it('requires attestation when only the local catalog labels a device as cloud', async () => {
     mocks.localListDevices.mockResolvedValue([
       { id: 0, device_id: 'local-device', device_type: 'cloud', status: 'online' },
