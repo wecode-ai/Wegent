@@ -106,6 +106,18 @@ def test_replayed_resume_does_not_steal_ownership_from_the_next_batch(resumed_ma
     assert s.db.query(LoopItemTaskBinding).count() == 1
 
 
+def test_deleted_issue_cannot_resume_its_manager(resumed_manager):
+    s, values = resumed_manager
+    s.issue.deleted_at = datetime.now()
+    s.db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        report(s, values)
+
+    assert error.value.status_code == 404
+    assert s.db.query(LoopItemTaskBinding).count() == 0
+
+
 @pytest.mark.parametrize(
     "field,value,code",
     [

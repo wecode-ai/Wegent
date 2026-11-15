@@ -34,7 +34,12 @@ def project_collaboration_manager_activity(
     """Bind the exact next manager session and return ownership once per round."""
     item = (
         db.query(LoopItem)
-        .filter_by(id=values.loop_item_id, cloud_project_id=str(project_id))
+        .filter_by(
+            id=values.loop_item_id,
+            cloud_project_id=str(project_id),
+            resource_type="task",
+        )
+        .filter(loop_datetime_is_unset(LoopItem.deleted_at))
         .populate_existing()
         .with_for_update()
         .one_or_none()
