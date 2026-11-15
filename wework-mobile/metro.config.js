@@ -13,6 +13,19 @@ config.resolver.nodeModulesPaths = [
 ]
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // NodeNext imports name emitted JavaScript; Metro consumes the shared TypeScript source.
+  if (
+    moduleName === './model-configuration-contract.js' &&
+    context.originModulePath ===
+      path.join(repositoryRoot, 'wework/electron/src/host/model-configuration-validation.ts')
+  ) {
+    return context.resolveRequest(
+      context,
+      path.join(repositoryRoot, 'wework/electron/src/host/model-configuration-contract.ts'),
+      platform
+    )
+  }
+
   // Shared PC hooks must use the same React instance as the native renderer.
   if (moduleName === 'react' || moduleName.startsWith('react/')) {
     return context.resolveRequest(
