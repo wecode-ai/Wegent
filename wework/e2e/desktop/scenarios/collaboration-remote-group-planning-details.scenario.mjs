@@ -3,10 +3,25 @@ import assert from 'node:assert/strict'
 import { createDesktopScenario as createCoordinateScenario } from './collaboration-remote-group-coordinate.scenario.mjs'
 import { waitForTestIdByText } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { verifyIssueActivityTimestamps } from '../modules/issue-activity-timestamps.mjs'
+import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 
 export async function createDesktopScenario(options) {
-  return createCoordinateScenario({
+  const scenario = await createCoordinateScenario({
     ...options,
+    async verifyMemberActivity(control, context) {
+      await verifyIssueActivityTimestamps(control, context)
+      if (context.phase === 'completed') {
+        await reloadMainWindow(
+          control,
+          'The desktop did not reconnect for persisted activity timestamps'
+        )
+        await control.command('openWeworkScheme', 'body', {
+          value: `wework://boards/${context.projectId}/issues/${context.issueId}`,
+        })
+        await verifyIssueActivityTimestamps(control, { ...context, phase: 'reloaded' })
+      }
+    },
     async verifyManagerPlanning(control, { groupRules, leader, creationStartedAt }) {
       const eventTestId = await waitForTestIdByText(
         control,
@@ -77,4 +92,11 @@ export async function createDesktopScenario(options) {
       await control.command('waitFor', panel, { visible: false })
     },
   })
+  return {
+    ...scenario,
+    async prepareApp(context) {
+      await scenario.prepareApp?.(context)
+      context.appEnvironment.TZ = 'Asia/Shanghai'
+    },
+  }
 }
