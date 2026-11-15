@@ -7,6 +7,31 @@ import {
 } from "./preview";
 
 describe("collaboration file preview classification", () => {
+  it("normalizes response parameters and generic metadata without overriding an explicit media type", () => {
+    const image = normalizeAttachmentBlob(
+      new Blob(["png"], { type: "application/octet-stream; charset=binary" }),
+      "resource",
+      "IMAGE/PNG; charset=binary",
+    );
+    expect(image.type).toBe("image/png");
+    const html = normalizeAttachmentBlob(
+      new Blob(["html"], { type: "text/html; charset=utf-8" }),
+      "image.png",
+      "image/png",
+    );
+    expect(html.type).toBe("text/html");
+    expect(html.size).toBe(4);
+  });
+  it.each([
+    ["TEXT/MARKDOWN; charset=utf-8", "markdown"],
+    ["application/pdf; charset=binary", "pdf"],
+    [" Image/PNG ; charset=binary", "image"],
+  ])(
+    "classifies parameterized MIME %s without requiring a filename extension",
+    (type, kind) => {
+      expect(attachmentPreviewKind("resource", type)).toBe(kind);
+    },
+  );
   it.each([
     ["image.png", "image/png"],
     ["image.svg", "image/svg+xml"],

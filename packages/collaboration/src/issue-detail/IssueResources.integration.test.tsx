@@ -175,3 +175,37 @@ it('preserves linked images without nesting interactive controls', async () => {
   )
   expect(open).toHaveBeenCalledWith(expect.objectContaining({ id: 'image-uuid' }))
 })
+
+it('does not nest a retry button in a resource link when its image fails', async () => {
+  const { api, read, open } = fixture()
+  read.mockRejectedValue(new Error('offline'))
+  await render(
+    api,
+    '[![chart.png](wegent://attachments/image-uuid)](wegent://attachments/image-uuid)',
+    open
+  )
+  expect(container.querySelector('[data-testid="assistant-markdown-image-error"]')).not.toBeNull()
+  expect(container.querySelector('button button')).toBeNull()
+})
+
+it('keeps standalone image retry from activating an ancestor action', async () => {
+  const { api, list } = fixture()
+  list.mockResolvedValueOnce([])
+  const parent = vi.fn()
+  await act(async () =>
+    root.render(
+      <div onClick={parent}>
+        <IssueMarkdownProvider attachments={api} issueId="issue-6">
+          <IssueActivityMarkdown content="![chart.png](/remote/chart.png)" />
+        </IssueMarkdownProvider>
+      </div>
+    )
+  )
+  await act(async () =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="assistant-markdown-image-retry"]')!
+      .click()
+  )
+  expect(parent).not.toHaveBeenCalled()
+  expect(container.querySelector('img')).not.toBeNull()
+})

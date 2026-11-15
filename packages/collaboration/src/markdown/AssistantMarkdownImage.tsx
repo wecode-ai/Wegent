@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
+import { MarkdownLinkScope } from './markdownLinkScope'
 import { useMarkdownServices } from './MarkdownServices'
 import {
   getAuthenticatedAttachmentId,
@@ -26,6 +27,7 @@ export function AssistantMarkdownImage({
     translate,
   } = useMarkdownServices()
   const rawSrc = typeof src === 'string' ? src.trim() : ''
+  const insideLink = useContext(MarkdownLinkScope)
   const [attempt, setAttempt] = useState(0)
   const isAuthenticatedSrc = rawSrc ? isAuthenticatedAttachmentImageSrc(rawSrc) : false
   const localPath = rawSrc ? localMarkdownImagePath(rawSrc) : null
@@ -123,6 +125,8 @@ export function AssistantMarkdownImage({
           if (!blob.type.startsWith('image/')) {
             throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
           }
+        } else if (getMarkdownAttachmentId(rawSrc) !== null) {
+          throw new Error('An Issue image reader is required for this resource')
         } else if (localPath && readLocalFile) {
           blob = await readLocalFile(localPath)
         } else {
@@ -160,12 +164,14 @@ export function AssistantMarkdownImage({
         className="my-2 inline-flex max-w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-text-muted"
       >
         {translate('image.failed')}: {alt || rawSrc}
-        {rawSrc ? (
+        {rawSrc && !insideLink ? (
           <button
             type="button"
             data-testid="assistant-markdown-image-retry"
             className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
-            onClick={() => {
+            onClick={event => {
+              event.preventDefault()
+              event.stopPropagation()
               setAttempt(value => value + 1)
             }}
           >
@@ -199,7 +205,7 @@ export function AssistantMarkdownImage({
       onError={() => setFailedRequest(request)}
     />
   )
-  return openMarkdownImage && readOwnedImage ? (
+  return openMarkdownImage && readOwnedImage && !insideLink ? (
     <button
       type="button"
       data-testid="assistant-markdown-image-open"

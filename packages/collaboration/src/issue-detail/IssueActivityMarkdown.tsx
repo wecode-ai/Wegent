@@ -4,6 +4,7 @@ import {
   getMarkdownAttachmentId,
 } from "../markdown/assistantMarkdownLinks";
 import { useIssueResources } from "./issueResourcesContext";
+import { MarkdownLinkScope } from "../markdown/markdownLinkScope";
 import {
   AssistantMarkdown,
   MarkdownServicesProvider,
@@ -88,12 +89,7 @@ function IssueResourceLink({
   children?: ReactNode;
 }) {
   const resources = useIssueResources();
-  const services = useMarkdownServices();
-  const { translate } = services;
-  const contentServices = useMemo(
-    () => ({ ...services, openMarkdownImage: undefined }),
-    [services],
-  );
+  const { translate } = useMarkdownServices();
   const [opening, setOpening] = useState(false);
   const [failed, setFailed] = useState(false);
   return (
@@ -126,9 +122,9 @@ function IssueResourceLink({
           }
         }}
       >
-        <MarkdownServicesProvider value={contentServices}>
+        <MarkdownLinkScope.Provider value={true}>
           {children ?? label}
-        </MarkdownServicesProvider>
+        </MarkdownLinkScope.Provider>
       </button>
       {failed ? (
         <span role="alert">

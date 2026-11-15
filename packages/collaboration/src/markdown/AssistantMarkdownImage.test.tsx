@@ -33,6 +33,18 @@ async function render(src: string, services: Partial<MarkdownServices> = {}) {
 }
 
 describe('platform Markdown image resolution', () => {
+  it.each([
+    '/api/v1/loop-item-attachments/123/content',
+    '/api/v1/loop-item-attachments/image-uuid/content',
+    'wegent://attachments/123',
+  ])('never routes an Issue source %s to legacy attachments or viewer-local files', async src => {
+    const fetchAttachmentBlob = vi.fn().mockRejectedValue(new Error('wrong legacy route'))
+    const readLocalFile = vi.fn().mockRejectedValue(new Error('wrong device'))
+    await render(src, { fetchAttachmentBlob, readLocalFile })
+    expect(fetchAttachmentBlob).not.toHaveBeenCalled()
+    expect(readLocalFile).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="assistant-markdown-image-error"]')).not.toBeNull()
+  })
   it('lets the owner resolve relative images without fetching them from the browser origin', async () => {
     const resolveImageUrl = vi.fn().mockResolvedValue('http://127.0.0.1:5000/session/image.png')
     await render('../images/test.png', { resolveImageUrl })

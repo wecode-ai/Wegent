@@ -1,9 +1,9 @@
 import { useActivityExecutionDisplayStatus } from './useActivityExecutionStatus'
-import type { ComponentProps } from 'react'
+import { useMemo, type ComponentProps } from 'react'
 import { createCollaborationTranslator, IssueChatMessage } from '@wegent/collaboration'
 import { isPublicStandInMessage } from './issueActivityRole'
 import { MarkdownServicesProvider, useMarkdownServices } from '@wegent/collaboration/markdown'
-import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
+import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 export type { ExecutionTaskSummary } from '@wegent/collaboration'
@@ -21,11 +21,13 @@ export function ChatMessage({
 }) {
   const { status } = useActivityExecutionDisplayStatus(props.message, executionTurnId)
   const inherited = useMarkdownServices()
-  const desktop = useDesktopMarkdownServices()
+  const markdown = useCollaborationMarkdownServices()
+  const services = useMemo(
+    () => ({ ...markdown, readMarkdownImage: inherited.readMarkdownImage }),
+    [markdown, inherited.readMarkdownImage]
+  )
   return (
-    <MarkdownServicesProvider
-      value={{ ...desktop, readMarkdownImage: inherited.readMarkdownImage }}
-    >
+    <MarkdownServicesProvider value={services}>
       <IssueChatMessage
         {...props}
         showInlineExecutionStatus={

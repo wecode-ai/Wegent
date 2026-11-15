@@ -2,25 +2,36 @@ export type CollaborationFilePreviewKind = "text" | "binary" | "unknown";
 
 import { mimeTypeForFileName } from "@wegent/chat-core/workspace-file-types";
 
+function mediaType(value: string): string {
+  return value.split(";", 1)[0].trim().toLowerCase();
+}
+
 export function normalizeAttachmentBlob(
   blob: Blob,
   filename: string,
   contentType?: string | null,
 ): Blob {
-  if (blob.type && blob.type !== "application/octet-stream") return blob;
+  const responseType = mediaType(blob.type);
+  const declaredType = mediaType(contentType ?? "");
   const type =
-    contentType && contentType !== "application/octet-stream"
-      ? contentType
-      : mimeTypeForFileName(filename);
+    responseType && responseType !== "application/octet-stream"
+      ? responseType
+      : declaredType && declaredType !== "application/octet-stream"
+        ? declaredType
+        : mimeTypeForFileName(filename);
   return type && type !== blob.type ? blob.slice(0, blob.size, type) : blob;
 }
 
 export function attachmentPreviewKind(filename: string, contentType: string) {
-  if (contentType.startsWith("image/")) return "image";
-  if (/\.(?:md|markdown)$/i.test(filename) || contentType === "text/markdown")
+  const normalizedType = mediaType(contentType);
+  if (normalizedType.startsWith("image/")) return "image";
+  if (
+    /\.(?:md|markdown)$/i.test(filename) ||
+    normalizedType === "text/markdown"
+  )
     return "markdown";
-  if (contentType === "application/pdf") return "pdf";
-  return collaborationFilePreviewKind(filename, contentType);
+  if (normalizedType === "application/pdf") return "pdf";
+  return collaborationFilePreviewKind(filename, normalizedType);
 }
 
 const TEXT_FILE_EXTENSIONS = new Set([
