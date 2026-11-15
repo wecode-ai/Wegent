@@ -34,6 +34,7 @@ export async function withAdminDeviceState(
       },
     }
   )
+  const closed = new Promise<void>(accept => child.once('close', () => accept()))
   const reader = createInterface({ input: child.stdout })
   const lines = reader[Symbol.asyncIterator]()
   let failure: Error | undefined
@@ -64,6 +65,7 @@ export async function withAdminDeviceState(
   } finally {
     reader.close()
     await stopProcessGroup(child)
+    await closed
   }
 }
 
