@@ -119,8 +119,25 @@ jest.mock('@/features/knowledge/document/components/DocumentList', () => ({
   ),
 }))
 
-jest.mock('@/features/knowledge/permission/components/PermissionManagementTab', () => ({
-  PermissionManagementTab: () => <div data-testid="mock-classic-permissions" />,
+jest.mock('@/features/knowledge/document/components/KnowledgeAccessDialog', () => ({
+  KnowledgeAccessDialog: ({
+    canManage,
+    onChanged,
+    onClose,
+  }: {
+    canManage: boolean
+    onChanged: () => void
+    onClose: () => void
+  }) => (
+    <div role="dialog">
+      {canManage && (
+        <button data-testid="mock-classic-permissions" onClick={onChanged}>
+          Change permission
+        </button>
+      )}
+      <button onClick={onClose}>Close permission dialog</button>
+    </div>
+  ),
 }))
 
 jest.mock('@/apis/knowledge', () => ({
@@ -209,7 +226,7 @@ it('exits the classic permission view when the list confirms management downgrad
   )
   const trigger = screen.getByTestId('knowledge-detail-permissions-tab')
   expect(trigger).toHaveClass('min-h-11', 'min-w-11')
-  fireEvent.mouseDown(trigger, { button: 0 })
+  fireEvent.click(trigger)
   expect(screen.getByTestId('mock-classic-permissions')).toBeInTheDocument()
   const calls = mockFetchPermission.mock.calls.length
   rerender(
@@ -241,4 +258,15 @@ it('renders the current chat actions and clears them when switching libraries', 
   expect(screen.queryByRole('button', { name: 'Export current chat' })).not.toBeInTheDocument()
   act(() => oldChat.onShareButtonRender(<button>Obsolete export</button>))
   expect(screen.queryByText('Obsolete export')).not.toBeInTheDocument()
+})
+
+it('keeps the document list mounted while permissions are open', () => {
+  const classic = { ...knowledgeBase, kb_type: 'classic' as const }
+  render(
+    <KnowledgeDetailPanel selectedKb={classic} currentView="documents" verifiedRole="Maintainer" />
+  )
+  const list = screen.getByTestId('mock-classic-document-list')
+  fireEvent.mouseDown(screen.getByTestId('knowledge-detail-permissions-tab'), { button: 0 })
+  fireEvent.click(screen.getByTestId('knowledge-detail-permissions-tab'))
+  expect(screen.getByTestId('mock-classic-document-list')).toBe(list)
 })
