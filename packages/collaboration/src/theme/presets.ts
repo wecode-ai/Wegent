@@ -5,10 +5,10 @@ export const DEFAULT_ACCENT_COLOR = "#2563eb";
 
 export const lightPalette: ThemePalette = {
   bgBase: "255 255 255",
-  bgSurface: "247 247 248",
+  bgSurface: "244 244 244",
   bgMuted: "245 245 245",
   bgHover: "37 99 235 / 0.08",
-  sidebar: "246 246 246 / 0.88",
+  sidebar: "244 244 244 / 0.92",
   sidebarActive: "222 223 226",
   sidebarHover: "255 255 255 / 0.7",
   sidebarTextPrimary: "36 40 45",

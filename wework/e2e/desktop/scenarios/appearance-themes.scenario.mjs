@@ -148,12 +148,12 @@ export function createDesktopScenario({
             `${label} misses ANSI tokens`
           )
           if (id === 'wework') {
+            const chrome = mode === 'light' ? '244 244 244' : '33 33 33'
             assert.equal(background, mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 24)')
             assert.equal(await css(control, 'html', '--color-primary'), '37 99 235')
-            assert.equal(
-              await css(control, 'html', '--color-sidebar'),
-              mode === 'light' ? '246 246 246 / 0.88' : '33 33 33 / 0.92'
-            )
+            assert.equal(await css(control, 'html', '--color-bg-surface'), chrome)
+            assert.equal(await css(control, 'html', '--color-titlebar'), chrome)
+            assert.equal(await css(control, 'html', '--color-sidebar'), `${chrome} / 0.92`)
           }
           await captureScreenshot(control, `appearance-theme-${mode}-${id}.png`, 'body')
           evidence.variants.push({ mode, id, label, background, foreground })
