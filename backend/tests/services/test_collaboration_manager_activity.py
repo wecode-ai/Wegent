@@ -14,6 +14,7 @@ from app.services.collaboration_manager_activity import (
     project_collaboration_manager_activity,
 )
 from app.services.collaboration_round_assignment import assign_round_owner
+from app.services.project_chat.runtime_binding import resumed_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
 from tests.services.test_project_comment_execution import scenario  # noqa: F401
 from tests.services.test_project_group_comment_execution import (  # noqa: F401
@@ -49,6 +50,80 @@ def report(s, values):
     return project_collaboration_manager_activity(
         s.db, project_id=s.project.id, user_id=s.owner.id, values=values
     )
+
+
+@pytest.mark.parametrize(
+    "source,round_id,expected",
+    [
+        ("manager-task-1", "round-1", "manager-task-1-manager-after-round-1"),
+        ("m" * 239, "r", f"{'m' * 239}-manager-after-r"),
+        (
+            "m" * 255,
+            "r" * 128,
+            "collaboration-manager-b3b830da1c050c0d6d371db96a2b2820336ee1574eb99ebd3c9dc86413358186",
+        ),
+        (
+            "m" * 240,
+            "澄清" * 20,
+            "collaboration-manager-46bd8b428e70c1a5915f224e44ca0ea4cb3ec5ac484d1e3a9c6ed06caf07b0de",
+        ),
+        ("澄" * 200, "r", f"{'澄' * 200}-manager-after-r"),
+    ],
+)
+def test_manager_id_encoding_matches_the_executor(source, round_id, expected):
+    assert resumed_manager_task_id(source, round_id) == expected
+
+
+def test_long_rounds_keep_exact_manager_transcripts_readable(resumed_manager):
+    s, values = resumed_manager
+    plan = s.db.query(ProjectChatMessage).filter_by(message_id="member-plan").one()
+    template = dict(plan.metadata_json)
+    source = f"{s.execution.runtime_task_id}-manager-initial"
+    encoded = False
+    for index in range(6):
+        round_id = f"round-{index}-{'澄' * 120}"
+        if index:
+            plan = ProjectChatMessage(
+                message_id=f"long-plan-{index}",
+                project_id=str(s.project.id),
+                task_id=s.issue.id,
+                sender_type="agent",
+                sender_id=s.agent.id,
+                sender_name=s.agent.name,
+                agent_id=s.agent.id,
+                message_type="text",
+                content="",
+                status="completed",
+            )
+            s.db.add(plan)
+        plan.metadata_json = {
+            **template,
+            "coordination_round_id": round_id,
+            "manager_runtime_task_id": source,
+        }
+        s.db.commit()
+        source = resumed_manager_task_id(source, round_id)
+        values = LoopItemExecutionManagerStatus.model_validate(
+            {**values.model_dump(), "round_id": round_id, "runtime_task_id": source}
+        )
+        message, created = report(s, values)
+        assert created
+        assert message.runtime_task_id == source
+        owner, address = resolve_project_transcript(
+            s.db,
+            s.member.id,
+            RuntimeTranscriptRequest(
+                deviceId=values.runtime_device_id,
+                taskId=source,
+                projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+            ),
+        )
+        assert owner == s.owner.id
+        assert address.local_task_id == source
+        assert len(source) <= 255
+        encoded |= source.startswith("collaboration-manager-")
+    assert encoded
+    assert s.db.query(LoopItemTaskBinding).count() == 6
 
 
 def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(resumed_manager):

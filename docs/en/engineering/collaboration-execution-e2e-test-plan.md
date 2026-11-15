@@ -179,7 +179,9 @@ Reuse the CI-covered `collaboration-remote-group-coordinate` checkpoint, isolate
 2. After both deliver, assert manager ownership and an independent activity with the exact Issue session binding, before any new assignment or status decision.
 3. Have the resumed manager block in native `request_user_input`. Open its activity, see the real question and select an answer. Assert that the model receives the exact answer for its original call.
 4. Let that manager explicitly submit the Issue for confirmation. Retain the existing member-count, single-dispatch, independent-session and follow-up reply assertions.
-5. Focused protocol tests also cover unfinished rounds, forged identities, manual bindings without sharing authority, replay after the next assignment and publication recovery after restart.
+5. Focused protocol tests also cover unfinished rounds, forged identities, manual bindings without sharing authority, replay after the next assignment and publication recovery after restart. Additional cases cover the 255-character session limit across long rounds, cross-language Unicode identity encoding, and reconciliation of an ordinary execution after a full page of dispatch envelopes.
+
+The web Executor two-round scenario also requires final manager ownership. Its old collector-ownership assertions were changed only after complete CI logs and trace evidence confirmed both deliveries, both manager handoffs and the final review state. Concurrency, independent sessions, evidence synthesis and state assertions are retained.
 
 Reuse checkpoint project archival and isolated-process cleanup. Retain complete runner diagnostics for failures; screenshots and logs remain test artifacts and are not committed.
 

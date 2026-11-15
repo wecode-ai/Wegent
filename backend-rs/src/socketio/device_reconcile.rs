@@ -21,6 +21,7 @@
 //! Lifecycle effects are delivered after commit.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -129,21 +130,23 @@ async fn reconcile_after_register(
     device_id: &str,
     needs_confirmation_only: bool,
 ) {
-    let executions: Vec<ExecutionRow> = match state
-        .mysql
-        .fetch_all(
-            reconcile_statement(needs_confirmation_only),
-            (user_id, device_id),
-        )
-        .await
+    let execution_refs = match load_reconciliation_refs(|after_id| async move {
+        state
+            .mysql
+            .fetch_all(
+                reconcile_statement(needs_confirmation_only),
+                (user_id, device_id, after_id),
+            )
+            .await
+    })
+    .await
     {
-        Ok(rows) => rows,
+        Ok(references) => references,
         Err(error) => {
             tracing::error!(%error, user_id, device_id, "device execution reconcile read failed");
             return;
         }
     };
-    let execution_refs = reconcile_execution_refs(&executions);
     if execution_refs.is_empty() {
         return;
     }
@@ -205,6 +208,28 @@ fn reconcile_execution_refs(executions: &[ExecutionRow]) -> Vec<(i64, String)> {
         .collect()
 }
 
+/// Bound native reconciliation work without letting aggregate envelopes fill its page.
+async fn load_reconciliation_refs<F, P>(mut fetch_page: F) -> MysqlResult<Vec<(i64, String)>>
+where
+    F: FnMut(i64) -> P,
+    P: Future<Output = MysqlResult<Vec<ExecutionRow>>>,
+{
+    let mut references = Vec::new();
+    let mut after_id = 0;
+    loop {
+        let rows = fetch_page(after_id).await?;
+        let Some(last) = rows.last() else {
+            return Ok(references);
+        };
+        after_id = last.id;
+        let remaining = RECONCILE_LIMIT - references.len();
+        references.extend(reconcile_execution_refs(&rows).into_iter().take(remaining));
+        if references.len() == RECONCILE_LIMIT || rows.len() < RECONCILE_LIMIT {
+            return Ok(references);
+        }
+    }
+}
+
 /// `active_for_device_reconciliation`'s statement. The heartbeat caller adds
 /// the source's unconfirmed-attempt predicate; the registration caller does
 /// not.
@@ -220,6 +245,7 @@ fn reconcile_statement(needs_confirmation_only: bool) -> String {
         "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
          WHERE loop_item_executions.executor_owner_user_id = ? \
          AND loop_item_executions.runtime_device_id = ? \
+         AND loop_item_executions.id > ? \
          AND loop_item_executions.runtime_task_id != '' \
          AND loop_item_executions.status IN ({CAPACITY_STATUSES}){confirmation} \
          ORDER BY loop_item_executions.id ASC \n LIMIT {RECONCILE_LIMIT}"

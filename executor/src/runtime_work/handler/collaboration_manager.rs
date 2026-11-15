@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use sha2::{Digest, Sha256};
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn launch_fresh_cloud_manager(
@@ -140,9 +141,18 @@ impl RuntimeWorkRpcHandler {
 }
 
 pub(super) fn fresh_cloud_manager_task_id(command: &CloudCollaborationRoundCommand) -> String {
+    resumed_manager_task_id(&command.manager_runtime_task_id, &command.round_id)
+}
+
+fn resumed_manager_task_id(manager_task_id: &str, round_id: &str) -> String {
+    let candidate = format!("{manager_task_id}-manager-after-{round_id}");
+    if candidate.chars().count() <= 255 {
+        return candidate;
+    }
+    let identity = json!([manager_task_id, round_id]).to_string();
     format!(
-        "{}-manager-after-{}",
-        command.manager_runtime_task_id, command.round_id
+        "collaboration-manager-{:x}",
+        Sha256::digest(identity.as_bytes())
     )
 }
 
@@ -227,4 +237,39 @@ pub(super) fn fresh_cloud_manager_payload(
         payload["runtimeHandle"][identity_key] = identity.clone();
     }
     Ok((request, payload))
+}
+
+#[cfg(test)]
+mod task_id_tests {
+    use super::resumed_manager_task_id;
+
+    #[test]
+    fn manager_lineage_stays_within_the_persisted_id_limit() {
+        assert_eq!(
+            resumed_manager_task_id("manager-task-1", "round-1"),
+            "manager-task-1-manager-after-round-1"
+        );
+        assert_eq!(
+            resumed_manager_task_id(&"m".repeat(239), "r"),
+            format!("{}-manager-after-r", "m".repeat(239))
+        );
+        assert_eq!(
+            resumed_manager_task_id(&"m".repeat(255), &"r".repeat(128)),
+            "collaboration-manager-b3b830da1c050c0d6d371db96a2b2820336ee1574eb99ebd3c9dc86413358186"
+        );
+        assert_eq!(
+            resumed_manager_task_id(&"m".repeat(240), &"澄清".repeat(20)),
+            "collaboration-manager-46bd8b428e70c1a5915f224e44ca0ea4cb3ec5ac484d1e3a9c6ed06caf07b0de"
+        );
+        let unicode = "澄".repeat(200);
+        assert_eq!(
+            resumed_manager_task_id(&unicode, "r"),
+            format!("{unicode}-manager-after-r")
+        );
+        let mut current = "manager-task-1".to_owned();
+        for index in 0..100 {
+            current = resumed_manager_task_id(&current, &format!("{index}-{}", "r".repeat(120)));
+            assert!(current.chars().count() <= 255);
+        }
+    }
 }

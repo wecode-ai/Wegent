@@ -21,6 +21,7 @@ from app.services.loop_item_events import publish_loop_item_changed
 from app.services.project_chat.runtime_binding import (
     bind_collaboration_manager_activity,
     collaboration_manager_task_id,
+    resumed_manager_task_id,
 )
 
 
@@ -79,7 +80,7 @@ def project_collaboration_manager_activity(
     ):
         raise HTTPException(403, "Manager Runtime is not owned by the caller")
     previous_task = collaboration_manager_task_id(db, dispatch, previous)
-    expected_task = f"{previous_task}-manager-after-{values.round_id}"
+    expected_task = resumed_manager_task_id(previous_task, values.round_id)
     assignments = previous.metadata_json.get("dispatch_assignments") or []
     if values.runtime_task_id != expected_task or not _round_finished(
         db, project_id, item.id, assignments
