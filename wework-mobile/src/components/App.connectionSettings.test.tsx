@@ -62,6 +62,7 @@ vi.mock('@/components/PhoneModelsScreen', () => ({
   PhoneModelEditorScreen: 'PhoneModelEditorScreen',
   CodexAccountScreen: 'CodexAccountScreen',
 }))
+vi.mock('@/components/PrivacyPolicyScreen', () => ({ PrivacyPolicyScreen: 'PrivacyPolicyScreen' }))
 vi.mock('@/services/chatLayoutDiagnostics', () => ({ recordChatLayoutDiagnostic: vi.fn() }))
 vi.mock('@/theme', () => ({ lightTheme: {}, darkTheme: {} }))
 vi.mock('expo-status-bar', () => ({ StatusBar: 'StatusBar' }))
@@ -178,6 +179,24 @@ describe('local-first settings navigation', () => {
     expect(
       renderer.root.findByType('ConversationListScreen' as never).props.showDeviceFilters
     ).toBe(true)
+  })
+
+  it('opens the bundled privacy page from settings and every model entry without Backend login', async () => {
+    authState.current.config = null
+    authState.current.user = null
+    await act(() => renderer.update(<App />))
+    for (const screen of [
+      'SettingsScreen',
+      'PhoneModelsScreen',
+      'PhoneModelEditorScreen',
+      'CodexAccountScreen',
+    ]) {
+      await act(() => renderer.root.findByType(screen as never).props.onPrivacy())
+      expect(navigation.navigate).toHaveBeenLastCalledWith('privacyPolicy')
+    }
+    await act(() => renderer.root.findByType('PrivacyPolicyScreen' as never).props.onBack())
+    expect(navigation.goBack).toHaveBeenCalledOnce()
+    expect(logout).not.toHaveBeenCalled()
   })
 
   it('routes connection failures to the sidebar instead of the global alert on every screen', async () => {

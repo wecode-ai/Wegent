@@ -226,6 +226,7 @@ export function SettingsScreen({
   onModels,
   onExecution,
   onBackend,
+  onPrivacy,
 }: {
   auth: WegentAuthState
   status: LocalRuntimeStatus
@@ -234,6 +235,7 @@ export function SettingsScreen({
   onModels: () => void
   onExecution: () => void
   onBackend: () => void
+  onPrivacy: () => void
 }) {
   const theme = useTheme()
   const { models, error } = usePhoneModels()
@@ -292,6 +294,14 @@ export function SettingsScreen({
           detail={auth.user?.user_name}
           onPress={onBackend}
           testID="settings-backend"
+        />
+      </SettingsGroup>
+      <SettingsGroup title="隐私">
+        <SettingsRow
+          icon="shield-checkmark-outline"
+          label="隐私政策"
+          onPress={onPrivacy}
+          testID="settings-privacy-policy"
         />
       </SettingsGroup>
       {(error != null || localError != null) && (

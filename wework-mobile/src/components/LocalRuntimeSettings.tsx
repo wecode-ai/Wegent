@@ -6,6 +6,7 @@ import { Button, Text, useTheme } from 'react-native-paper'
 import type { LocalRuntime, LocalRuntimeStatus } from '@/services/localRuntime'
 import { localCodexLogin } from '@/services/localCodexLogin'
 import { ErrorNotice } from './errors/ErrorNotice'
+import { confirmModelDataSharing } from '@/services/privacyPolicy'
 
 interface CodexAccount {
   id: string
@@ -251,14 +252,16 @@ export function LocalRuntimeSettings({
                     testID="codex-account-login"
                     disabled={busy}
                     loading={busy}
-                    onPress={() => void act(() => startLogin('chatgpt'))}
+                    onPress={() => confirmModelDataSharing(() => act(() => startLogin('chatgpt')))}
                   >
                     {account ? '登录其他 OpenAI 账号' : '使用 OpenAI 账号登录'}
                   </Button>
                   <Button
                     testID="codex-device-login"
                     disabled={busy}
-                    onPress={() => void act(() => startLogin('chatgptDeviceCode'))}
+                    onPress={() =>
+                      confirmModelDataSharing(() => act(() => startLogin('chatgptDeviceCode')))
+                    }
                   >
                     使用设备码登录
                   </Button>

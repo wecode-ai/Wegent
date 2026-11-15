@@ -31,6 +31,7 @@ import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
 import { darkTheme, lightTheme } from '@/theme'
 import { conversationPinTarget } from '@/domain/conversationActions'
 import { NativeErrorAlert } from '@/components/errors/NativeErrorAlert'
+import { PrivacyPolicyScreen } from '@/components/PrivacyPolicyScreen'
 
 type RuntimeStackParamList = {
   conversationList: undefined
@@ -42,6 +43,7 @@ type RuntimeStackParamList = {
   modelEditor: { modelId?: string } | undefined
   codexAccount: undefined
   backendLogin: undefined
+  privacyPolicy: undefined
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
@@ -316,6 +318,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   onModels={() => navigation.navigate('localModels')}
                   onExecution={() => navigation.navigate('localExecution')}
                   onBackend={() => navigation.navigate('backendLogin')}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -328,6 +331,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   onAdd={() => navigation.navigate('modelEditor')}
                   onEdit={id => navigation.navigate('modelEditor', { modelId: id })}
                   onAccount={() => navigation.navigate('codexAccount')}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -338,6 +342,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   runtime={local.runtime}
                   onBack={navigation.goBack}
                   onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -350,6 +355,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   onRetry={local.retry}
                   onBack={navigation.goBack}
                   onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
                 />
               )}
             </RuntimeStack.Screen>
@@ -370,6 +376,9 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
             </RuntimeStack.Screen>
             <RuntimeStack.Screen name="backendLogin">
               {({ navigation }) => <BackendLoginScreen auth={auth} onClose={navigation.goBack} />}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="privacyPolicy">
+              {({ navigation }) => <PrivacyPolicyScreen onBack={navigation.goBack} />}
             </RuntimeStack.Screen>
           </RuntimeStack.Navigator>
         </NavigationContainer>
