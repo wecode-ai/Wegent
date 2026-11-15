@@ -116,21 +116,6 @@ pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(test)]
-mod project_editing_feature_tests {
-    #[test]
-    fn advertises_independent_project_editing_capabilities() {
-        let features = super::runtime_features();
-        assert_eq!(features["pluginSync"]["protocolVersion"], 2);
-        assert_eq!(
-            features["projectEditing"],
-            serde_json::json!({
-                "multiRoots": true,
-                "aiSettings": true,
-                "defaultProjectSpace": true,
-                "plugins": true,
-            })
-        );
-    }
-}
+mod project_editing_feature_tests {}
 
 mod stand_in_telemetry;

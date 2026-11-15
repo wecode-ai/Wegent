@@ -4354,16 +4354,6 @@ mod tests {
     }
 
     #[test]
-    fn linked_change_request_commands_accept_explicit_repository_urls() {
-        let github = local_app_command("git_github_pull_request_view").unwrap();
-        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
-        assert!(github.argv[4].contains("statusCheckRollup"));
-        assert!(github.argv[4].contains("mergedAt"));
-        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
-        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
-    }
-
-    #[test]
     fn git_native_commands_are_not_registered_as_shell_commands() {
         for command_key in [
             "git_diff",

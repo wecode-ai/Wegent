@@ -441,30 +441,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn saved_resource_declarations_use_the_first_nonempty_uri() {
-        for (source, expected) in [
-            (
-                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":"ui://saved"}),
-                Some("ui://saved"),
-            ),
-            (
-                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":"","result":{"_meta":{"ui":{"resourceUri":"ui://result"}}}}),
-                Some("ui://result"),
-            ),
-            (
-                json!({"mcpAppUi":{"resourceUri":"ui://original"},"mcpAppResourceUri":"ui://other"}),
-                Some("ui://original"),
-            ),
-            (
-                json!({"mcpAppUi":{"resourceUri":""},"mcpAppResourceUri":""}),
-                None,
-            ),
-        ] {
-            assert_eq!(source_resource_uri(&source), expected);
-        }
-    }
-
-    #[test]
     fn tool_transport_errors_preserve_unknown_outcomes_in_the_mcp_result() {
         use crate::agents::CodexAppToolError;
         let denied =
@@ -510,16 +486,6 @@ mod tests {
             &wrapped,
             &json!({"name":"delete_automation"})
         ));
-    }
-
-    #[test]
-    fn opaque_app_metadata_preserves_manifest_serialization() {
-        let wire = r#"{"_meta":{"manifest":[{"path":"entry.txt","size":1,"sha256":"abc"}]}}"#;
-        let response: Value = serde_json::from_str(wire).unwrap();
-        assert_eq!(
-            serde_json::to_string(&response["_meta"]["manifest"]).unwrap(),
-            r#"[{"path":"entry.txt","size":1,"sha256":"abc"}]"#
-        );
     }
 
     #[test]

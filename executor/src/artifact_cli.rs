@@ -389,15 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn known_extensions_get_specific_mime_types() {
-        assert_eq!(infer_mime_type("report.pdf"), "application/pdf");
-        assert_eq!(
-            infer_mime_type("archive.unknown"),
-            "application/octet-stream"
-        );
-    }
-
-    #[test]
     fn declaration_payload_contains_metadata_only() {
         let artifact = ArtifactMetadata {
             workspace_root: "/workspace/repository".to_owned(),

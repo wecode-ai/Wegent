@@ -6,7 +6,7 @@ import { createWorkbenchDeviceResolver } from '../../../packages/chat-core/src/r
 import type { MobileRuntimeState } from './useMobileRuntime'
 import { useMobileRuntime } from './useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
+import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => ({
@@ -189,6 +189,149 @@ describe('creating a conversation on the only computer', () => {
     expect(state.selectedModel?.name).toBe('public-model')
     await act(() => state.startNewConversation())
   }
+
+  it.each(['new', 'existing'] as const)(
+    'keeps complete %s message attachments through sending, confirmation and transcript reload',
+    async kind => {
+      const attachment: Attachment = {
+        id: 42,
+        filename: 'report.pdf',
+        file_size: 150,
+        mime_type: 'application/pdf',
+        status: 'ready',
+        file_extension: 'pdf',
+        created_at: '2026-11-14T10:00:00Z',
+        workspace_file: {
+          device_id: 'storage-device',
+          workspace_path: '/project',
+          path: 'report.pdf',
+        },
+        ui_group_id: 'files',
+        ui_group_role: 'primary',
+      }
+      mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+      await mount()
+      if (kind === 'existing') await act(() => state.openConversation(state.conversations[0]!))
+      const response = deferred<{ accepted: boolean; taskId: string; workspacePath: string }>()
+      const operation = kind === 'new' ? mocks.create : mocks.sendMessage
+      operation.mockReturnValue(response.promise)
+      let send!: Promise<boolean>
+      await act(() => {
+        send = state.send('Inspect', { attachmentIds: [42], attachments: [attachment] })
+      })
+      expect(state.messages[0]).toMatchObject({ attachments: [attachment], pendingDelivery: true })
+      const currentAddress = state.currentAddress!
+      await act(async () => {
+        response.resolve({ accepted: true, taskId: currentAddress.taskId, workspacePath: '/work' })
+        expect(await send).toBe(true)
+      })
+      expect(state.messages[0]).toMatchObject({ attachments: [attachment], pendingDelivery: false })
+      if (kind === 'new') {
+        expect(mocks.create.mock.calls[0]![0].attachmentIds).toEqual([42])
+        expect(mocks.create.mock.calls[0]![0]).not.toHaveProperty('attachments')
+      } else {
+        expect(mocks.sendMessage.mock.calls[0]).toHaveLength(5)
+        expect(mocks.sendMessage.mock.calls[0]![4]).toEqual([42])
+      }
+      mocks.transcript.mockResolvedValue({
+        taskId: currentAddress.taskId,
+        workspacePath: '/work',
+        runtime: 'codex',
+        messages: [
+          {
+            id: 'provider-user',
+            clientUserMessageId: 'user-message-id',
+            role: 'user',
+            content: 'Inspect',
+          },
+        ],
+      })
+      await act(() =>
+        state.openConversation({
+          address: currentAddress,
+          sourceWorkspacePath: '/work',
+          title: 'Inspect',
+          deviceName: 'Computer',
+          projectName: null,
+          updatedAt: 10,
+          running: false,
+        })
+      )
+      expect(state.messages).toHaveLength(1)
+      expect(state.messages[0].attachments).toEqual([attachment])
+    }
+  )
+
+  it('returns the same API instance and resolves the storage device and final worktree after work refresh', async () => {
+    const work = workFor('app-record-11')
+    const workspace = {
+      ...work.chats[0],
+      workspaceSource: 'remote',
+      remoteHostId: 'storage-device',
+      workspaceKind: 'worktree',
+      worktreeId: 'task',
+      workspacePath: '/worktree',
+      tasks: [{ ...work.chats[0].tasks[0], status: 'queued' }],
+    }
+    mocks.listWork.mockResolvedValue({ ...work, chats: [workspace] })
+    await mount()
+    const api = state.api
+    await act(() => state.openConversation(state.conversations[0]!))
+    expect(state.fileTarget).toBeNull()
+    mocks.listWork.mockResolvedValue({
+      ...work,
+      chats: [
+        {
+          ...workspace,
+          tasks: [{ ...workspace.tasks[0], status: 'running' }],
+        },
+      ],
+    })
+    await act(() => state.refresh())
+    expect(state.api).toBe(api)
+    expect(state.fileTarget).toEqual({
+      deviceId: 'storage-device',
+      path: '/worktree',
+      taskId: 'task',
+      workspaceSource: 'remote',
+    })
+  })
+
+  it('never exposes the project source while a newly requested worktree is provisional or queued', async () => {
+    const work = workFor('app-record-11')
+    mocks.listWork.mockResolvedValue(work)
+    await mount()
+    await act(() => state.startNewConversation(work.chats[0]))
+    expect(state.fileTarget?.path).toBe('/work')
+    const response = deferred<{
+      accepted: boolean
+      taskId: string
+      workspacePath: string
+      status: string
+    }>()
+    mocks.create.mockReturnValue(response.promise)
+    let send!: Promise<boolean>
+    await act(() => {
+      send = state.send('Inspect', { worktreeBranch: 'feature/preview' })
+    })
+    expect(state.fileTarget).toBeNull()
+    const taskId = state.currentAddress!.taskId
+    await act(async () => {
+      response.resolve({ accepted: true, taskId, workspacePath: '/work', status: 'queued' })
+      expect(await send).toBe(true)
+    })
+    expect(state.fileTarget).toBeNull()
+    const ready = {
+      ...work.chats[0],
+      workspaceKind: 'worktree',
+      worktreeId: taskId,
+      workspacePath: '/final-worktree',
+      tasks: [{ ...work.chats[0].tasks[0], taskId, status: 'running' }],
+    }
+    mocks.listWork.mockResolvedValue({ ...work, chats: [ready] })
+    await act(() => state.refresh())
+    expect(state.fileTarget).toEqual({ deviceId: 'app-record-11', path: '/final-worktree', taskId })
+  })
 
   it('starts model loading before the device request finishes', async () => {
     const devices = deferred<{ items: DeviceInfo[] }>()

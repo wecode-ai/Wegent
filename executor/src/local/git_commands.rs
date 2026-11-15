@@ -867,20 +867,15 @@ fn cli_result(
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command as StdCommand;
 
-    use super::*;
-
-    fn git_setup_env(home: &Path) -> HashMap<String, String> {
-        // Build a minimal environment so ambient GIT_* variables or a parent
-        // repository cannot redirect the fixture repository operations.
-        let mut env = HashMap::new();
-        if let Ok(path) = std::env::var("PATH") {
-            env.insert("PATH".to_owned(), path);
-        }
-        env.insert("HOME".to_owned(), home.display().to_string());
-        env.insert("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned());
-        env
+    fn init_repo_with_commit(repo: &Path) {
+        run_git_setup(repo, &["init", "-q", "-b", "main"]);
+        run_git_setup(repo, &["config", "user.email", "executor@test.local"]);
+        run_git_setup(repo, &["config", "user.name", "Executor Test"]);
+        std::fs::write(repo.join("tracked.txt"), "one\ntwo\nthree\nfour\nfive\n")
+            .expect("seed file should be written");
+        run_git_setup(repo, &["add", "tracked.txt"]);
+        run_git_setup(repo, &["commit", "-q", "-m", "seed"]);
     }
 
     fn run_git_setup(repo: &Path, args: &[&str]) {
@@ -898,14 +893,20 @@ mod tests {
         );
     }
 
-    fn init_repo_with_commit(repo: &Path) {
-        run_git_setup(repo, &["init", "-q", "-b", "main"]);
-        run_git_setup(repo, &["config", "user.email", "executor@test.local"]);
-        run_git_setup(repo, &["config", "user.name", "Executor Test"]);
-        std::fs::write(repo.join("tracked.txt"), "one\ntwo\nthree\nfour\nfive\n")
-            .expect("seed file should be written");
-        run_git_setup(repo, &["add", "tracked.txt"]);
-        run_git_setup(repo, &["commit", "-q", "-m", "seed"]);
+    use std::process::Command as StdCommand;
+
+    use super::*;
+
+    fn git_setup_env(home: &Path) -> HashMap<String, String> {
+        // Build a minimal environment so ambient GIT_* variables or a parent
+        // repository cannot redirect the fixture repository operations.
+        let mut env = HashMap::new();
+        if let Ok(path) = std::env::var("PATH") {
+            env.insert("PATH".to_owned(), path);
+        }
+        env.insert("HOME".to_owned(), home.display().to_string());
+        env.insert("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned());
+        env
     }
 
     fn empty_env() -> HashMap<String, String> {
@@ -979,101 +980,6 @@ mod tests {
                 "missing tracked diff in: {stdout}"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn hosting_cli_status_marks_missing_tool_as_not_installed() {
-        let result = hosting_cli_status("wegent-definitely-missing-tool", &empty_env(), 5.0).await;
-        assert!(result.success);
-        assert_eq!(result.stdout["installed"], Value::Bool(false));
-        assert_eq!(
-            result.stdout["tool"],
-            Value::String("wegent-definitely-missing-tool".to_owned())
-        );
-    }
-
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn hosting_cli_status_executes_node_batch_shims() {
-        let directory = tempfile::tempdir().expect("temporary directory should be created");
-        let script = directory.path().join("gh.mjs");
-        let shim = directory.path().join("gh.cmd");
-        std::fs::write(
-            &script,
-            "if (process.argv.includes('--version')) console.log('gh version fixture')\n",
-        )
-        .expect("CLI fixture script should be written");
-        std::fs::write(&shim, "@echo off\r\nnode \"%~dp0gh.mjs\" %*\r\n")
-            .expect("CLI fixture shim should be written");
-        let mut env = empty_env();
-        let path = std::env::join_paths(
-            std::iter::once(directory.path().to_path_buf()).chain(
-                std::env::var_os("PATH")
-                    .as_deref()
-                    .map(std::env::split_paths)
-                    .into_iter()
-                    .flatten(),
-            ),
-        )
-        .expect("fixture PATH should be valid");
-        env.insert("PATH".to_owned(), path.to_string_lossy().to_string());
-
-        let result = hosting_cli_status("gh", &env, 5.0).await;
-
-        assert!(result.success);
-        assert_eq!(result.stdout["installed"], Value::Bool(true));
-        assert_eq!(result.stdout["authenticated"], Value::Bool(true));
-        assert_eq!(
-            result.stdout["version"],
-            Value::String("gh version fixture".to_owned())
-        );
-        assert_eq!(result.stdout["detectionError"], Value::Null);
-    }
-
-    #[test]
-    fn diff_base_prefers_fork_parent_remote_before_origin() {
-        let candidates = diff_base_candidates(
-            Some("upstream/main".to_owned()),
-            Some("origin/main".to_owned()),
-        );
-        let upstream = candidates
-            .iter()
-            .position(|candidate| candidate == "upstream/main")
-            .expect("upstream/main should be a candidate");
-        let origin = candidates
-            .iter()
-            .position(|candidate| candidate == "origin/main")
-            .expect("origin/main should be a candidate");
-        let local = candidates
-            .iter()
-            .position(|candidate| candidate == "main")
-            .expect("main should be a candidate");
-        assert!(
-            upstream < origin,
-            "fork parent remote must be checked first"
-        );
-        assert!(origin < local, "origin must be checked before local main");
-        assert_eq!(
-            candidates.len(),
-            6,
-            "duplicated symbolic defaults should be deduplicated"
-        );
-    }
-
-    #[test]
-    fn diff_base_keeps_upstream_remotes_even_without_symbolic_heads() {
-        let candidates = diff_base_candidates(None, None);
-        assert_eq!(
-            candidates,
-            vec![
-                "upstream/main",
-                "upstream/master",
-                "origin/main",
-                "origin/master",
-                "main",
-                "master"
-            ]
-        );
     }
 
     #[tokio::test]

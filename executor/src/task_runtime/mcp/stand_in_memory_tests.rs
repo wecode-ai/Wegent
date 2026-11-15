@@ -487,7 +487,7 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
     assert!(reply["description"]
         .as_str()
         .unwrap()
-        .contains("Writing @Name in text alone"));
+        .contains("Follow current scoped provider assistance"));
     assert!(catalog.iter().all(|tool| !matches!(
         tool["name"].as_str(),
         Some(

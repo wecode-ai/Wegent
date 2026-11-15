@@ -10,6 +10,7 @@ const environment = vi.hoisted(() => ({
   focused: true,
   platform: 'android',
   backHandlers: new Set<() => boolean>(),
+  composerInset: { value: 0 },
 }))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
@@ -68,30 +69,49 @@ vi.mock('./ChatComposer', async () => {
   }
 })
 vi.mock('./ConversationEdgeMask', () => ({ ConversationEdgeMask: 'EdgeMask' }))
+vi.mock('./ConversationChangesPill', () => ({ ConversationChangesPill: 'ChangesPill' }))
+vi.mock('./ConversationAgentsPill', () => ({ ConversationAgentsPill: 'AgentsPill' }))
 vi.mock('./ConversationHeader', () => ({
   ConversationHeader: 'Header',
   CONVERSATION_HEADER_HEIGHT: 44,
 }))
-vi.mock('./KeyboardSafeInput', () => ({
-  KeyboardSafeView: 'KeyboardSafeView',
-  useKeyboardVisible: () => false,
+vi.mock('./ConversationMenu', () => ({ ConversationMenu: 'ConversationMenu' }))
+vi.mock('react-native-keyboard-controller', () => ({
+  KeyboardGestureArea: 'KeyboardGestureArea',
+  KeyboardStickyView: 'KeyboardStickyView',
 }))
-vi.mock('./MessageList', () => ({ MessageList: 'MessageList' }))
+vi.mock('@legendapp/list/keyboard', () => ({
+  useKeyboardChatComposerInset: () => ({
+    contentInsetEndAdjustment: environment.composerInset,
+    onComposerLayout: (event: { nativeEvent: { layout: { height: number } } }) => {
+      environment.composerInset.value = event.nativeEvent.layout.height
+    },
+  }),
+}))
+vi.mock('./MessageList', async () => {
+  const { createElement } = await import('react')
+  return {
+    MessageList: (props: { configuration?: React.ReactElement }) =>
+      createElement('MessageList', props, props.configuration),
+  }
+})
 vi.mock('./QuickModelSelector', () => ({
   QuickModelDismissLayer: 'QuickDismiss',
   QuickModelSelector: 'QuickSelector',
 }))
 
-describe('Android quick model back navigation', () => {
+describe('conversation keyboard layout and model navigation', () => {
   let renderer: ReactTestRenderer
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     environment.focused = true
     environment.platform = 'android'
     environment.backHandlers.clear()
+    environment.composerInset.value = 0
   })
 
   const props = (): React.ComponentProps<typeof ConversationScreen> => ({
+    api: { getSubagentTranscript: vi.fn() },
     currentAddress: null,
     currentTitle: '',
     devices: [],
@@ -115,7 +135,15 @@ describe('Android quick model back navigation', () => {
     onBack: vi.fn(),
     onLoadApps: vi.fn(),
     onLoadMoreMessagesBefore: vi.fn(),
-    onMore: vi.fn(),
+    conversationActions: {
+      threadId: null,
+      canPin: false,
+      pinned: false,
+      onPin: vi.fn(),
+      onRename: vi.fn(),
+      onArchive: vi.fn(),
+      onSettings: vi.fn(),
+    },
     onNewConversation: vi.fn(),
     onOpenAdvancedModel: vi.fn(),
     onSelectDevice: vi.fn(),
@@ -175,5 +203,149 @@ describe('Android quick model back navigation', () => {
     await act(() => composer().props.onSelectModel())
     expect(quick()).toHaveLength(1)
     expect(environment.backHandlers.size).toBe(0)
+  })
+
+  it.each(['ios', 'android'])('reserves the measured composer once on %s', async platform => {
+    environment.platform = platform
+    await act(() => {
+      renderer = create(<ConversationScreen {...props()} isNew={false} />)
+    })
+    const dock = renderer.root.findByProps({ testID: 'conversation-composer-dock' })
+    const list = renderer.root.findByType('MessageList' as never)
+    expect(list.props.keyboardOffset).toBe(16)
+    expect(dock.props.offset).toEqual({ opened: 16 })
+    expect(list.props.contentInsetEndAdjustment).toBe(environment.composerInset)
+    await act(() => dock.props.onLayout({ nativeEvent: { layout: { height: 124 } } }))
+    expect(list.props.contentInsetEndAdjustment.value).toBe(124)
+    await act(() => dock.props.onLayout({ nativeEvent: { layout: { height: 188 } } }))
+    expect(list.props.contentInsetEndAdjustment.value).toBe(188)
+    expect(list.props.bottomInset).toBeUndefined()
+  })
+
+  it('changes the list data key on re-entry without remounting the list or losing the draft', async () => {
+    const screenProps = { ...props(), isNew: false }
+    await act(() => {
+      renderer = create(<ConversationScreen {...screenProps} />)
+    })
+    const previousList = renderer.root.findByType('MessageList' as never)
+    const previousDataKey = previousList.props.dataKey
+    await act(() => composer().props.onChangeText('Keep this draft'))
+    await act(() => renderer.update(<ConversationScreen {...screenProps} entryRevision={1} />))
+    const currentList = renderer.root.findByType('MessageList' as never)
+    expect(currentList).toBe(previousList)
+    expect(currentList.props.dataKey).not.toBe(previousDataKey)
+    expect(composer().props.draft).toBe('Keep this draft')
+  })
+
+  it('keeps one list through creating a conversation and loading another conversation', async () => {
+    const screenProps = props()
+    await act(() => {
+      renderer = create(<ConversationScreen {...screenProps} />)
+    })
+    const list = renderer.root.findByType('MessageList' as never)
+    const newConversationDataKey = list.props.dataKey
+    expect(list.props.configuration.props.testID).toBe('new-chat-configuration')
+    await act(() => composer().props.onChangeText('Keep this draft'))
+
+    const existingProps = {
+      ...screenProps,
+      isNew: false,
+      currentAddress: { deviceId: 'remote-executor', taskId: 'created-task' },
+      messages: [
+        {
+          id: 'user-1',
+          role: 'user' as const,
+          content: 'Hello',
+          status: 'completed' as const,
+          createdAt: 1,
+        },
+      ],
+    }
+    await act(() => renderer.update(<ConversationScreen {...existingProps} />))
+    expect(renderer.root.findByType('MessageList' as never)).toBe(list)
+    expect(list.props.dataKey).not.toBe(newConversationDataKey)
+    expect(list.props.configuration).toBeUndefined()
+
+    await act(() =>
+      renderer.update(
+        <ConversationScreen
+          {...existingProps}
+          currentAddress={{ deviceId: 'remote-executor', taskId: 'other-task' }}
+          loading
+          messages={[]}
+        />
+      )
+    )
+    expect(renderer.root.findByType('MessageList' as never)).toBe(list)
+    expect(list.props.loading).toBe(true)
+    expect(list.props.messages).toEqual([])
+    expect(composer().props.draft).toBe('Keep this draft')
+  })
+
+  it('provides every new conversation configuration row as one measured list item', async () => {
+    const screenProps = props()
+    screenProps.devices = [
+      {
+        id: 1,
+        device_id: 'remote-executor',
+        name: 'Remote executor',
+        status: 'online',
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+      },
+    ]
+    screenProps.selectedDeviceId = 'remote-executor'
+    screenProps.selectedProjectName = 'Cloud project'
+    screenProps.selectedWorkspace = {
+      deviceId: 'remote-executor',
+      deviceName: 'Remote executor',
+      deviceStatus: 'online',
+      available: true,
+      workspacePath: '/workspace/project',
+      tasks: [],
+    }
+    screenProps.gitRef = 'refs/heads/main'
+    await act(() => {
+      renderer = create(<ConversationScreen {...screenProps} />)
+    })
+    const list = renderer.root.findByType('MessageList' as never)
+    const configuration = list.findByProps({ testID: 'new-chat-configuration' })
+    expect(configuration.props.style.position).toBeUndefined()
+    expect(configuration.findAllByType('ScrollView' as never)).toHaveLength(0)
+    expect(configuration.findAllByType('KeyboardStickyView' as never)).toHaveLength(0)
+    for (const testID of [
+      'new-chat-device',
+      'new-chat-project',
+      'new-chat-work-mode',
+      'new-chat-branch',
+    ]) {
+      expect(configuration.findByProps({ testID })).toBeDefined()
+    }
+    const dock = renderer.root.findByProps({ testID: 'conversation-composer-dock' })
+    await act(() => dock.props.onLayout({ nativeEvent: { layout: { height: 240 } } }))
+    expect(list.props.contentInsetEndAdjustment.value).toBe(240)
+    expect(list.findByProps({ testID: 'new-chat-configuration' })).toBe(configuration)
+  })
+  it('mounts the native menu in the header and scopes its dialogs to the current conversation', async () => {
+    const screenProps = props()
+    await act(() => {
+      renderer = create(<ConversationScreen {...screenProps} />)
+    })
+    const header = () => renderer.root.findByType('Header' as never)
+    const initialMenu = header().props.menu
+    expect(initialMenu.type).toBe('ConversationMenu')
+    expect(initialMenu.props.compact).toBe(true)
+    expect(initialMenu.props.onSettings).toBe(screenProps.conversationActions.onSettings)
+    expect(header().props.menuExpanded).toBeUndefined()
+    expect(header().props.onMore).toBeUndefined()
+    const address = { deviceId: 'device', taskId: 'task' }
+    await act(() =>
+      renderer.update(
+        <ConversationScreen {...screenProps} currentAddress={address} isNew={false} />
+      )
+    )
+    expect(header().props.menu.props.address).toBe(address)
+    expect(header().props.menu.props.compact).toBe(false)
+    expect(header().props.menu.key).not.toBe(initialMenu.key)
   })
 })

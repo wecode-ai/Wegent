@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
+import type { ReactElement } from 'react'
 import {
   Pressable,
   StyleSheet,
@@ -20,7 +21,7 @@ interface ConversationHeaderProps {
   onLayout?: (event: LayoutChangeEvent) => void
   onNewConversation: () => void
   canCreateConversation?: boolean
-  onMore: () => void
+  menu: ReactElement
   style?: StyleProp<ViewStyle>
 }
 
@@ -36,7 +37,7 @@ export function ConversationHeader({
   onLayout,
   onNewConversation,
   canCreateConversation = true,
-  onMore,
+  menu,
   style,
 }: ConversationHeaderProps) {
   const theme = useTheme()
@@ -54,6 +55,22 @@ export function ConversationHeader({
         onPress={onBack}
         testID="open-drawer"
       />
+      {minimal ? (
+        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          <View style={{ width: 44, height: 44 }} testID="conversation-menu-anchor">
+            <LiquidGlassSurface
+              colorScheme={theme.dark ? 'dark' : 'light'}
+              fallbackStyle={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.outlineVariant,
+              }}
+              style={styles.minimalCapsule}
+            >
+              {menu}
+            </LiquidGlassSurface>
+          </View>
+        </View>
+      ) : null}
 
       {minimal ? null : (
         <>
@@ -102,30 +119,27 @@ export function ConversationHeader({
             </View>
           </View>
 
-          <LiquidGlassSurface
-            colorScheme={theme.dark ? 'dark' : 'light'}
-            fallbackStyle={{
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.outlineVariant,
-            }}
-            style={styles.actionCapsule}
-          >
-            <View style={styles.actionRow}>
-              <HeaderAction
-                accessibilityLabel="新会话"
-                disabled={!canCreateConversation}
-                icon="create-outline"
-                onPress={onNewConversation}
-                testID="new-conversation"
-              />
-              <HeaderAction
-                accessibilityLabel="更多"
-                icon="ellipsis-horizontal"
-                onPress={onMore}
-                testID="more-actions"
-              />
-            </View>
-          </LiquidGlassSurface>
+          <View style={styles.actionCapsule} testID="conversation-menu-anchor">
+            <LiquidGlassSurface
+              colorScheme={theme.dark ? 'dark' : 'light'}
+              fallbackStyle={{
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.outlineVariant,
+              }}
+              style={styles.actionCapsule}
+            >
+              <View style={styles.actionRow}>
+                <HeaderAction
+                  accessibilityLabel="新会话"
+                  disabled={!canCreateConversation}
+                  icon="create-outline"
+                  onPress={onNewConversation}
+                  testID="new-conversation"
+                />
+                {menu}
+              </View>
+            </LiquidGlassSurface>
+          </View>
         </>
       )}
     </LiquidGlassGroup>
@@ -224,6 +238,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     overflow: 'hidden',
   },
+  minimalCapsule: { flex: 1, borderRadius: 22 },
   actionRow: {
     flex: 1,
     flexDirection: 'row',

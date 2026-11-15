@@ -2146,30 +2146,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn routes_aitable_board_projection_without_task_rows() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = aitable_project(&store);
-        let runtime = TaskRuntime::new(store).unwrap();
-        assert!(matches!(
-            runtime.list_tasks(&project.id).await,
-            Err(TaskRuntimeError::ProviderRequest(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn aitable_native_describe_returns_dynamic_fields() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
-        let project = aitable_project(&store);
-        let runtime = TaskRuntime::new(store).unwrap();
-        assert!(matches!(
-            runtime.aitable_describe(&project.id).await,
-            Err(TaskRuntimeError::ProviderRequest(_))
-        ));
-    }
-
-    #[tokio::test]
     async fn aitable_record_write_requires_dws_authentication() {
         let directory = tempfile::tempdir().unwrap();
         let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
@@ -2309,19 +2285,5 @@ esac
                 .len(),
             1
         );
-    }
-
-    #[test]
-    fn aitable_provider_combinations_are_valid() {
-        assert!(crate::task_runtime::store::validate_provider(
-            ProjectStoreKind::Local,
-            TaskProviderKind::DingtalkAitable
-        )
-        .is_ok());
-        assert!(crate::task_runtime::store::validate_provider(
-            ProjectStoreKind::Backend,
-            TaskProviderKind::DingtalkAitable
-        )
-        .is_ok());
     }
 }

@@ -2,12 +2,12 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useEffect, useState } from 'react'
-import { Image, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
-import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
+import { Image, Pressable, StyleSheet, View } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
+import { ActivityIndicator, Text, TextInput, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import type { AuthStatus } from '@/auth/useWegentAuth'
-import { KeyboardSafePaperTextInput, KeyboardSafeView } from './KeyboardSafeInput'
 import { LiquidGlassButton, LiquidGlassSurface } from './LiquidGlass'
 
 interface AuthorizationScreenProps {
@@ -27,7 +27,6 @@ const capabilityItems = [
 export function AuthorizationScreen(props: AuthorizationScreenProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
-  const { height } = useWindowDimensions()
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const working = props.status === 'initializing' || props.status === 'authorizing'
   const authorizing = props.status === 'authorizing'
@@ -60,7 +59,7 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
   }
 
   return (
-    <KeyboardSafeView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <LinearGradient
         colors={
           theme.dark
@@ -88,18 +87,20 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
         ]}
       />
 
-      <ScrollView
+      <KeyboardAwareScrollView
         bounces={false}
+        bottomOffset={24}
         contentContainerStyle={[
           styles.content,
           {
-            minHeight: height,
             paddingTop: insets.top + 56,
             paddingBottom: insets.bottom + 24,
           },
         ]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         showsVerticalScrollIndicator={false}
+        testID="authorization-form-scroll"
       >
         <View style={styles.hero}>
           <Image
@@ -190,7 +191,7 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
               </Pressable>
             ) : (
               <View style={styles.configuration}>
-                <KeyboardSafePaperTextInput
+                <TextInput
                   autoCapitalize="none"
                   autoCorrect={false}
                   disabled={working}
@@ -268,8 +269,8 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
             </View>
           </View>
         </LiquidGlassSurface>
-      </ScrollView>
-    </KeyboardSafeView>
+      </KeyboardAwareScrollView>
+    </View>
   )
 }
 

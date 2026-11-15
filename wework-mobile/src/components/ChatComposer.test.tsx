@@ -1,13 +1,17 @@
+import { getDocumentAsync } from 'expo-document-picker'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatComposer } from './ChatComposer'
+import type { MobileFilePreviewActions } from './files/FilePreviewContext'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+const preview = vi.hoisted(() => ({ current: null as MobileFilePreviewActions | null }))
+vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => preview.current }))
 
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
-vi.mock('expo-document-picker', () => ({}))
+vi.mock('expo-document-picker', () => ({ getDocumentAsync: vi.fn() }))
 vi.mock('expo-image-picker', () => ({}))
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
@@ -16,6 +20,7 @@ vi.mock('react-native', () => ({
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
+  TextInput: 'TextInput',
   View: 'View',
 }))
 vi.mock('react-native-paper', () => ({
@@ -32,7 +37,6 @@ vi.mock('react-native-paper', () => ({
     },
   }),
 }))
-vi.mock('./KeyboardSafeInput', () => ({ KeyboardSafeTextInput: 'TextInput' }))
 vi.mock('./LiquidGlass', () => ({
   LiquidGlassGroup: 'LiquidGlassGroup',
   LiquidGlassSurface: 'LiquidGlassSurface',
@@ -45,6 +49,8 @@ describe('ChatComposer', () => {
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
     focus.mockClear()
+    vi.mocked(getDocumentAsync).mockReset()
+    preview.current = null
   })
 
   const element = (testID: string) =>
@@ -99,6 +105,48 @@ describe('ChatComposer', () => {
     expect(props.onSelectModel).toHaveBeenCalledOnce()
   })
 
+  it('allows attachment removal through its horizontal scroller while editing the draft', async () => {
+    vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        {
+          name: 'notes.txt',
+          uri: 'file:///notes.txt',
+          mimeType: 'text/plain',
+          size: 12,
+          lastModified: 1,
+        },
+      ],
+    })
+    const props = await render({
+      onUploadAttachment: vi.fn().mockResolvedValue({
+        id: 7,
+        filename: 'notes.txt',
+        fileSize: 12,
+        mimeType: 'text/plain',
+      }),
+    })
+    await act(async () => {
+      renderer.root.findByType('ComposerContextMenu' as never).props.onPickDocument()
+    })
+    await act(() => {
+      element('chat-input').props.onFocus()
+      element('chat-input').props.onChangeText('Keep this draft')
+    })
+    const strip = renderer.root.findByType('ScrollView' as never)
+    expect(strip.props.horizontal).toBe(true)
+    expect(strip.props.keyboardShouldPersistTaps).toBe('handled')
+    await act(() => strip.findByProps({ testID: 'composer-attachment-remove-7' }).props.onPress())
+    expect(renderer.root.findAllByProps({ testID: 'composer-attachment-remove-7' })).toHaveLength(0)
+    expect(element('chat-input').props.value).toBe('Keep this draft')
+    await act(() => element('chat-send').props.onPress())
+    expect(props.onSend).toHaveBeenCalledWith('Keep this draft', {
+      attachmentIds: [],
+      attachments: [],
+      pursueGoal: false,
+    })
+  })
+
   it.each([true, false])('clears the draft only after an accepted send (%s)', async accepted => {
     const onSend = vi.fn().mockResolvedValue(accepted)
     await render({ onSend })
@@ -106,10 +154,89 @@ describe('ChatComposer', () => {
     await act(() => element('chat-send').props.onPress())
     expect(onSend).toHaveBeenCalledWith('Review this project', {
       attachmentIds: [],
+      attachments: [],
       pursueGoal: false,
     })
     expect(element('chat-input').props.value).toBe(accepted ? '' : 'Review this project')
   })
+
+  it.each([true, false])(
+    'previews every uploaded attachment and preserves it after rejected sends (context=%s)',
+    async enabled => {
+      const openAttachment = vi.fn()
+      if (enabled)
+        preview.current = { target: null, openAttachment } as unknown as MobileFilePreviewActions
+      vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+        canceled: false,
+        assets: [
+          {
+            name: 'notes.txt',
+            uri: 'file:///notes.txt',
+            mimeType: 'text/plain',
+            size: 12,
+            lastModified: 1,
+          },
+          {
+            name: 'image.png',
+            uri: 'file:///image.png',
+            mimeType: 'image/png',
+            size: 30,
+            lastModified: 1,
+          },
+        ],
+      })
+      const props = await render({
+        onSend: vi.fn().mockResolvedValue(false),
+        onUploadAttachment: vi.fn().mockImplementation(async asset => ({
+          id: asset.name === 'notes.txt' ? 7 : 8,
+          filename: asset.name,
+          fileSize: asset.size,
+          mimeType: asset.mimeType,
+        })),
+      })
+      await act(() =>
+        renderer.root.findByType('ComposerContextMenu' as never).props.onPickDocument()
+      )
+      for (const id of [7, 8]) {
+        expect(element(`composer-attachment-preview-${id}`).props.disabled).toBe(!enabled)
+        if (enabled) await act(() => element(`composer-attachment-preview-${id}`).props.onPress())
+      }
+      if (enabled)
+        expect(openAttachment.mock.calls.map(([attachment]) => attachment.filename)).toEqual([
+          'notes.txt',
+          'image.png',
+        ])
+      await act(() => element('chat-input').props.onChangeText('Review both'))
+      await act(() => element('chat-send').props.onPress())
+      expect(props.onSend).toHaveBeenCalledWith(
+        'Review both',
+        expect.objectContaining({
+          attachmentIds: [7, 8],
+          attachments: [
+            expect.objectContaining({
+              id: 7,
+              filename: 'notes.txt',
+              file_size: 12,
+              mime_type: 'text/plain',
+              status: 'ready',
+            }),
+            expect.objectContaining({
+              id: 8,
+              filename: 'image.png',
+              file_size: 30,
+              mime_type: 'image/png',
+              local_preview_url: 'file:///image.png',
+            }),
+          ],
+        })
+      )
+      expect(element('composer-attachment-preview-7')).toBeDefined()
+      expect(element('composer-attachment-preview-8')).toBeDefined()
+      expect(vi.mocked(props.onSend).mock.calls[0]?.[1].attachments[0]).not.toHaveProperty(
+        'local_path'
+      )
+    }
+  )
 
   it('keeps stopping in the existing action slot and disables repeated cancellation', async () => {
     const props = await render({ running: true })

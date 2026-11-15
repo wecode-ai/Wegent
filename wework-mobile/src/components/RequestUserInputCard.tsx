@@ -3,15 +3,16 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   AccessibilityInfo,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
+  TextInput,
   View,
   findNodeHandle,
-  useWindowDimensions,
 } from 'react-native'
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -27,7 +28,6 @@ import type {
   RequestUserInputPayload,
   RequestUserInputResponse,
 } from '@/types/runtime'
-import { KeyboardSafeTextInput, KeyboardSafeView, useKeyboardVisible } from './KeyboardSafeInput'
 import { ModelControlSurface } from './ModelControlSurface'
 
 export interface RequestUserInputHandlers {
@@ -48,10 +48,6 @@ export function RequestUserInputCard({
 }: Props) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
-  const { height } = useWindowDimensions()
-  const keyboardVisible = useKeyboardVisible()
-  const [availableHeight, setAvailableHeight] = useState(height)
-  const bottomGap = keyboardVisible ? 8 : Math.max(insets.bottom, 12)
   const payload = block.renderPayload
   const questions = userInputQuestions(payload)
   const implementation = implementationPlanQuestion(questions)
@@ -198,7 +194,10 @@ export function RequestUserInputCard({
           <Pressable
             ref={answerButtonRef}
             accessibilityRole="button"
-            onPress={() => setOpen(true)}
+            onPress={() => {
+              Keyboard.dismiss()
+              setOpen(true)
+            }}
             style={[styles.answerButton, { backgroundColor: theme.colors.surface }]}
             testID="request-user-input-open"
           >
@@ -219,9 +218,18 @@ export function RequestUserInputCard({
         onDismiss={restoreFocus}
         onRequestClose={() => setOpen(false)}
       >
-        <KeyboardSafeView
+        <KeyboardAwareScrollView
+          bounces={false}
+          bottomOffset={24}
+          contentContainerStyle={[
+            styles.modalContent,
+            { paddingTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) },
+          ]}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
           style={styles.modal}
-          onLayout={event => setAvailableHeight(event.nativeEvent.layout.height)}
+          testID="request-user-input-form-scroll"
         >
           <Pressable
             accessible={false}
@@ -231,19 +239,7 @@ export function RequestUserInputCard({
             style={styles.backdrop}
             testID="request-user-input-backdrop"
           />
-          <ModelControlSurface
-            style={[
-              styles.sheet,
-              {
-                maxHeight: Math.max(
-                  0,
-                  Math.min(height, availableHeight) - insets.top - bottomGap - 16
-                ),
-                marginBottom: bottomGap,
-              },
-            ]}
-            testID="request-user-input-sheet"
-          >
+          <ModelControlSurface style={styles.sheet} testID="request-user-input-sheet">
             <View
               accessibilityViewIsModal
               onAccessibilityEscape={() => setOpen(false)}
@@ -277,12 +273,7 @@ export function RequestUserInputCard({
                   <Ionicons color={theme.colors.onSurfaceVariant} name="close" size={23} />
                 </Pressable>
               </View>
-              <ScrollView
-                style={styles.questionScroller}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.questions}
-              >
+              <View style={styles.questions}>
                 {questions.map(question => (
                   <View key={question.id} style={styles.questionGroup}>
                     {questions.length > 1 && question.header ? (
@@ -360,7 +351,7 @@ export function RequestUserInputCard({
                       })}
                     </View>
                     {question.allowCustom ? (
-                      <KeyboardSafeTextInput
+                      <TextInput
                         accessibilityLabel={`${question.question}，自定义回答`}
                         editable={!busy}
                         multiline
@@ -388,7 +379,7 @@ export function RequestUserInputCard({
                     ) : null}
                   </View>
                 ))}
-              </ScrollView>
+              </View>
               {error ? (
                 <Text
                   accessibilityRole="alert"
@@ -438,7 +429,7 @@ export function RequestUserInputCard({
               </View>
             </View>
           </ModelControlSurface>
-        </KeyboardSafeView>
+        </KeyboardAwareScrollView>
       </Modal>
     </>
   )
@@ -464,10 +455,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonLabel: { fontSize: 16, fontWeight: '600' },
-  modal: { flex: 1, justifyContent: 'flex-end' },
+  modal: { flex: 1 },
+  modalContent: { flexGrow: 1, justifyContent: 'flex-end' },
   backdrop: { position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.14)' },
   sheet: { marginHorizontal: 16, borderRadius: 28, overflow: 'hidden' },
-  sheetContent: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16, flexShrink: 1 },
+  sheetContent: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 },
   closeButton: {
     width: 44,
     height: 44,
@@ -476,7 +468,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   questions: { gap: 24, paddingTop: 12, paddingBottom: 8 },
-  questionScroller: { flexShrink: 1 },
   questionGroup: { gap: 16 },
   option: {
     minHeight: 52,
