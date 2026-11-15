@@ -811,3 +811,51 @@ async def test_heartbeat_reconciliation_queries_only_unconfirmed_executions(
         needs_confirmation_only=True,
     )
     get_sio.assert_not_called()
+
+
+@pytest.mark.parametrize("needs_confirmation_only", [False, True])
+async def test_device_inventory_does_not_reconcile_group_dispatch_aggregates(
+    test_db: Session, test_user: User, needs_confirmation_only: bool
+) -> None:
+    execution = _make_execution(test_db, test_user)
+    execution.status = "claimed"
+    execution.observed_state = "accepted"
+    execution.runtime_device_id = "cloud-device"
+    execution.runtime_task_id = f"codex-queue-{execution.id}"
+    test_db.commit()
+    options = {
+        "owner_user_id": test_user.id,
+        "runtime_device_id": "cloud-device",
+        "needs_confirmation_only": needs_confirmation_only,
+    }
+    assert loop_item_execution_service.active_for_device_reconciliation(
+        test_db, **options
+    ) == [execution]
+
+    payload = execution.execution_intent
+    payload["runtime_selection"]["executor_kind"] = "collaboration_group_dispatch"
+    execution.execution_payload = json.dumps(payload)
+    test_db.commit()
+
+    @contextmanager
+    def _test_session():
+        yield test_db
+
+    from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+    with (
+        patch("app.db.session.get_db_session", _test_session),
+        patch("app.core.socketio.get_sio") as get_sio,
+    ):
+        assert (
+            await reconcile_device_executions(
+                user_id=test_user.id,
+                device_id="cloud-device",
+                needs_confirmation_only=needs_confirmation_only,
+            )
+            == 0
+        )
+    get_sio.assert_not_called()
+    test_db.refresh(execution)
+    assert execution.status == "claimed"
+    assert execution.observed_state == "accepted"

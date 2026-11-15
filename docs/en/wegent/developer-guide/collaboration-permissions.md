@@ -340,6 +340,16 @@ conversation identity. `test_stand_in_issue_replies.py` and Executor
 CI's stand-in Issue-conversation scenario covers real execution with duplicate
 desktop aliases.
 
+Cloud hosts and remote devices confirmed by the Backend device catalog use their
+exact registered identity for task metadata without a desktop-alias identity RPC.
+This path requires an exact match between the requested ID and catalog record;
+local devices, desktop devices and unknown or mismatched aliases still attest
+their registration through the owning Runtime. Backend checks continue to enforce
+device ownership, project, Issue and private-conversation access for every read
+and binding. CP01–CP20 remain unchanged. `canonicalCloudTaskPort.test.ts` covers
+registered devices, an unavailable identity RPC and ambiguous-alias rejection;
+the remote group planning-details E2E covers the real conversation entry.
+
 A role's execution device selects where new work is received; it grants no resource
 authority. A device change stages a paused role on the target, redirects source
 intake, and then activates the target. The target retains identity, resource and

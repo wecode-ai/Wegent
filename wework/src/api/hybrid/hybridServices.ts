@@ -1699,8 +1699,10 @@ export function createHybridWorkbenchServices(
   return {
     ...cloudServices,
     workspaceRuntimePort: cloudServices.workspaceRuntimePort
-      ? canonicalCloudTaskPort(cloudServices.workspaceRuntimePort, async deviceId =>
-          (await standInApiForDevice(deviceId)).deviceIdentity(deviceId)
+      ? canonicalCloudTaskPort(
+          cloudServices.workspaceRuntimePort,
+          async deviceId => (await standInApiForDevice(deviceId)).deviceIdentity(deviceId),
+          resolveExecutorDevice
         )
       : undefined,
     localParticipationIdentity: localServices.localParticipationIdentity,

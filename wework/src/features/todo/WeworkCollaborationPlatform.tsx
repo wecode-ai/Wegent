@@ -987,11 +987,13 @@ export function WeworkSharedProject({
             String(binding.taskUserId) === String(taskOwnerUserId)
         )
         if (!owned.length) throw new Error(t('todo.linked_task_unavailable'))
+        const exactBinding = owned.find(binding => binding.deviceId === address.deviceId)
         const backendDeviceId =
-          project.project_store === 'backend'
+          !exactBinding && project.project_store === 'backend'
             ? (await services.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId
             : address.deviceId
-        const latestBinding = owned.find(binding => binding.deviceId === backendDeviceId)
+        const latestBinding =
+          exactBinding ?? owned.find(binding => binding.deviceId === backendDeviceId)
         const availableBinding = await requireIssueTaskAvailable(
           latestBinding,
           taskOwnerUserId,

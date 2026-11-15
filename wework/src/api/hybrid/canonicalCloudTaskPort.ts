@@ -1,4 +1,5 @@
 import type { WeworkWorkspaceRuntimePort, WorkspaceRuntimeTaskAddress } from '@wegent/collaboration'
+import type { DeviceInfo } from '@/types/devices'
 
 export async function registeredCloudDeviceId(
   deviceId: string,
@@ -12,9 +13,17 @@ export async function registeredCloudDeviceId(
 /** Persist the Runtime's registered identity instead of a reusable desktop alias. */
 export function canonicalCloudTaskPort(
   port: WeworkWorkspaceRuntimePort,
-  identity: (deviceId: string) => Promise<{ backendDeviceId: string }>
+  identity: (deviceId: string) => Promise<{ backendDeviceId: string }>,
+  resolveDevice: (deviceId: string) => Promise<Pick<DeviceInfo, 'device_id' | 'device_type'> | null>
 ): WeworkWorkspaceRuntimePort {
   const address = async (task: WorkspaceRuntimeTaskAddress) => {
+    const device = await resolveDevice(task.deviceId)
+    if (
+      device?.device_id === task.deviceId &&
+      (device.device_type === 'cloud' || device.device_type === 'remote')
+    ) {
+      return task
+    }
     return { ...task, deviceId: await registeredCloudDeviceId(task.deviceId, identity) }
   }
   // Existing backend record routes identify persisted metadata even while offline.
