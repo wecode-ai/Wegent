@@ -25,12 +25,15 @@ export function CloudFilePreviewDialog({
 }) {
   const { t, i18n } = useTranslation('common')
   const translate = createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
-  const [downloading, setDownloading] = useState(false)
-  const { preview, failed, loading, markLoaded, markFailed, retry } = useAttachmentPreview(
-    loadFile,
-    filename,
-    contentType
-  )
+  const [downloadState, setDownloadState] = useState<{
+    source: typeof loadFile
+    pending: boolean
+    error?: string
+  } | null>(null)
+  const downloading = downloadState?.source === loadFile && downloadState.pending
+  const downloadError = downloadState?.source === loadFile ? downloadState.error : undefined
+  const { preview, failed, errorMessage, loading, markLoaded, markFailed, retry } =
+    useAttachmentPreview(loadFile, filename, contentType)
   const kind = preview?.kind
   const text = preview?.text ?? ''
   const objectUrl = preview?.url
@@ -43,14 +46,17 @@ export function CloudFilePreviewDialog({
   }, [onClose])
 
   async function download() {
-    setDownloading(true)
-    setError(null)
+    const source = loadFile
+    setDownloadState({ source, pending: true })
+    const finish = (error?: string) =>
+      setDownloadState(current =>
+        current?.source === source ? { source, pending: false, error } : current
+      )
     try {
       await onDownload()
-    } catch {
-      markFailed()
-    } finally {
-      setDownloading(false)
+      finish()
+    } catch (cause) {
+      finish(cause instanceof Error ? cause.message : t('todo.file_preview_failed', '预览失败'))
     }
   }
 
@@ -94,6 +100,15 @@ export function CloudFilePreviewDialog({
             <X className="h-4 w-4" />
           </button>
         </header>
+        {downloadError ? (
+          <p
+            role="alert"
+            data-testid="cloud-file-preview-download-error"
+            className="px-4 py-2 text-sm text-destructive"
+          >
+            {downloadError}
+          </p>
+        ) : null}
         <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
           {loading && !preview && !failed ? (
             <div className="flex h-full items-center justify-center text-sm text-text-muted">
@@ -101,11 +116,11 @@ export function CloudFilePreviewDialog({
             </div>
           ) : failed ? (
             <div className="flex h-full items-center justify-center px-6 text-sm text-destructive">
-              {t('todo.file_preview_failed', '预览失败')}
+              {errorMessage ?? t('todo.file_preview_failed', '预览失败')}
               <button
                 type="button"
                 data-testid="cloud-file-preview-retry"
-                className="ml-2 underline"
+                className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
                 onClick={retry}
               >
                 {translate('attachment.retry')}
@@ -141,7 +156,10 @@ export function CloudFilePreviewDialog({
               className="h-full w-full border-0"
             />
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-muted">
+            <div
+              data-testid="cloud-file-preview-unsupported"
+              className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-muted"
+            >
               <span>{t('todo.file_preview_unsupported', '此文件格式暂不支持预览')}</span>
               <button
                 type="button"

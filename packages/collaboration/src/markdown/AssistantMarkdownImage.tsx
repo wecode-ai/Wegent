@@ -164,7 +164,7 @@ export function AssistantMarkdownImage({
           <button
             type="button"
             data-testid="assistant-markdown-image-retry"
-            className="ml-2 underline"
+            className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
             onClick={() => {
               setAttempt(value => value + 1)
             }}
@@ -204,7 +204,7 @@ export function AssistantMarkdownImage({
       type="button"
       data-testid="assistant-markdown-image-open"
       aria-label={translate('image.open')}
-      className="block max-w-full text-left"
+      className="block min-h-11 min-w-11 max-w-full text-left md:min-h-0 md:min-w-0"
       onClick={async () => {
         try {
           await openMarkdownImage(rawSrc, alt)

@@ -100,7 +100,7 @@ function IssueResourceLink({
     <span>
       <button
         type="button"
-        className="task-detail-ai-run-open-task"
+        className="task-detail-ai-run-open-task min-h-11 md:min-h-0"
         data-resource-name={label}
         data-testid={
           attachmentId

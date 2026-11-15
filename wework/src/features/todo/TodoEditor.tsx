@@ -224,6 +224,12 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript, attachmentContext])
+  const loadPreviewAttachment = useCallback(() => {
+    if (!previewAttachment) throw new Error('No Issue attachment is selected')
+    return attachmentContext
+      ? workspaceApi.attachments.read(previewAttachment.id, attachmentContext)
+      : workspaceApi.attachments.read(previewAttachment.id)
+  }, [workspaceApi.attachments, attachmentContext, previewAttachment])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -455,7 +461,7 @@ export function TodoEditor(props: TodoEditorProps) {
               ? formatIssueAttachmentSize(previewAttachment.sizeBytes)
               : null
           }
-          loadFile={() => port.attachments.read(previewAttachment.id)}
+          loadFile={loadPreviewAttachment}
           onDownload={() =>
             port.attachments.download(previewAttachment.id, previewAttachment.filename)
           }

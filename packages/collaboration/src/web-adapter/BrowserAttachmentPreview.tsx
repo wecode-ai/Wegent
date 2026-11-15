@@ -109,7 +109,7 @@ export function BrowserAttachmentPreview({
               <button
                 type="button"
                 data-testid="browser-attachment-preview-retry"
-                className="ml-2 underline"
+                className="ml-2 min-h-11 min-w-11 underline md:min-h-0 md:min-w-0"
                 onClick={retry}
               >
                 {translate('attachment.retry')}

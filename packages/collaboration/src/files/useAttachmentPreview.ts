@@ -20,7 +20,10 @@ export function useAttachmentPreview(
     text?: string
   }
   const [result, setResult] = useState<Preview | null>(null)
-  const [failure, setFailure] = useState<typeof request | null>(null)
+  const [failure, setFailure] = useState<{
+    request: typeof request
+    message?: string
+  } | null>(null)
   const [decoded, setDecoded] = useState<typeof request | null>(null)
   useEffect(() => {
     let active = true
@@ -37,8 +40,12 @@ export function useAttachmentPreview(
         if (!active) return
         url = URL.createObjectURL(blob)
         setResult({ request, url, size: blob.size, kind, text })
-      } catch {
-        if (active) setFailure(request)
+      } catch (cause) {
+        if (active)
+          setFailure({
+            request,
+            message: cause instanceof Error ? cause.message : undefined,
+          })
       }
     })()
     return () => {
@@ -49,10 +56,15 @@ export function useAttachmentPreview(
   const preview = result?.request === request ? result : null
   return {
     preview,
-    failed: failure === request,
+    failed: failure?.request === request,
+    errorMessage: failure?.request === request ? failure.message : undefined,
     loading: !preview || (preview.kind === 'image' && decoded !== request),
     markLoaded: () => setDecoded(request),
-    markFailed: () => setFailure(request),
+    markFailed: (cause?: unknown) =>
+      setFailure({
+        request,
+        message: cause instanceof Error ? cause.message : undefined,
+      }),
     retry: () => setRevision(value => value + 1),
   }
 }
