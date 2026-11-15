@@ -34,10 +34,20 @@ def permits_runner_recovery(db: Session, execution: Any, bound_id: str | None) -
     from app.services.runner_routing import automatic_execution
 
     snapshot = execution.runtime_selection.get("runner_routing") or {}
+    context = execution.runtime_origin_context or {}
+    key = context.get("assignment_key")
+    # Manual group dispatches also have internal run IDs.
+    manual_group = (
+        context.get("dispatch_kind") == "collaboration_group"
+        and bool(key)
+        and getattr(execution, "automation_run_id", None)
+        == f"collaboration-group:{key}"
+        and context.get("run_id") == f"collaboration-group:{key}"
+    )
     return bool(
         bound_id
         and snapshot.get("recovery_from_environment_id") == bound_id
-        and not automatic_execution(execution)
+        and (not automatic_execution(execution) or manual_group)
         and runner_recovery_available(
             db,
             execution.loop_item_id,

@@ -24,10 +24,10 @@ pub(crate) mod profile;
 pub(crate) mod queue;
 #[path = "project_routing.rs"]
 pub(crate) mod routing;
-#[path = "project_runner_recovery.rs"]
-pub(crate) mod runner_recovery;
 #[path = "project_routing_diagnostics.rs"]
 mod routing_diagnostics;
+#[path = "project_runner_recovery.rs"]
+pub(crate) mod runner_recovery;
 #[path = "project_runtime_rpc.rs"]
 pub(crate) mod runtime_rpc;
 

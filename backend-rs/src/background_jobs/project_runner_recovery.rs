@@ -43,7 +43,15 @@ pub(crate) async fn permits_on(
     execution: &Execution,
     bound: &str,
 ) -> Result<bool> {
-    if execution.automatic()
+    let context = execution.context();
+    // Manual group dispatches also have internal run IDs.
+    let manual_group = context["dispatch_kind"] == "collaboration_group"
+        && context["assignment_key"].as_str().is_some_and(|key| {
+            !key.is_empty()
+                && execution.automation_run_id == format!("collaboration-group:{key}")
+                && context["run_id"] == format!("collaboration-group:{key}")
+        });
+    if execution.automatic() && !manual_group
         || execution.selection()["runner_routing"]["recovery_from_environment_id"] != bound
     {
         return Ok(false);

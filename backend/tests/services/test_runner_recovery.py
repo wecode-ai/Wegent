@@ -185,3 +185,31 @@ def test_old_session_reply_does_not_restore_the_old_issue_binding(
     execution.runtime_selection["resolved_environment_id"] = str(devices[0].id)
     assert claim_routing(test_db, execution, devices[0])
     assert issue.metadata_json["runner_binding"]["environment_id"] == str(devices[1].id)
+
+
+@pytest.mark.parametrize(
+    "run_id,allowed",
+    [("collaboration-group:assignment", True), ("scheduled-run", False)],
+)
+def test_manual_group_dispatch_identity_is_not_an_automation(
+    test_db, routing_setup, run_id, allowed
+):
+    from app.services.runner_recovery import permits_runner_recovery
+
+    _, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
+    test_db.flush()
+    result = prepare(
+        test_db, routing_setup, {"recovery_from_environment_id": str(devices[0].id)}
+    )
+    execution = run_for(
+        routing_setup,
+        result.snapshot(),
+        automation_run_id=run_id,
+        runtime_origin_context={
+            "dispatch_kind": "collaboration_group",
+            "assignment_key": "assignment",
+            "run_id": run_id,
+        },
+    )
+    assert permits_runner_recovery(test_db, execution, str(devices[0].id)) is allowed
