@@ -9,9 +9,9 @@ use brz_redis::{Redis, RedisSubscription};
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use wegent_backend_rs::{
-    Application, Gateway, HybridConfig, OriginService, RouteTable, auth::AppAuthenticator, bind,
-    build_app_state, config::AuthConfig, serve, task_store::TaskStore,
-    user_reader::PublicUserReader,
+    AppState, Application, Gateway, HybridConfig, OriginService, RouteTable,
+    auth::AppAuthenticator, bind, build_app_state, config::AuthConfig, serve,
+    task_store::TaskStore, user_reader::PublicUserReader,
 };
 
 use super::fixture::{LARGE_RESULT_BYTES, LONG_CONVERSATION_ROWS};
@@ -215,28 +215,7 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
         mysql.clone(),
     ));
     let redis = state.redis.clone().expect("real Redis is required for E2E");
-    let state = Arc::new(state);
-    let application = Application::build(Arc::clone(&state)).await.unwrap();
-    let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
-        "127.0.0.1:0".parse().unwrap(),
-        application.routes,
-        AppAuthenticator::new(state.authentication_services()),
-    )
-    .await
-    .unwrap();
-    let url = format!(
-        "http://{}/api/internal/callback",
-        server.local_addr().unwrap()
-    );
-    let (stop, stopped) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(async move {
-        server
-            .serve_until(async {
-                let _ = stopped.await;
-            })
-            .await
-            .unwrap();
-    });
+    let (url, stop, server) = start_callback_server(state).await;
     let client = brz_http::Client::builder()
         .timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(15))
@@ -393,7 +372,39 @@ pub async fn assert_terminal_callback_atomic(mysql: &MysqlService, task_id: i64,
     server.await.unwrap();
 }
 
-async fn next_callback(subscription: &mut RedisSubscription) -> Value {
+pub(super) async fn start_callback_server(
+    state: AppState,
+) -> (
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let state = Arc::new(state);
+    let application = Application::build(Arc::clone(&state)).await.unwrap();
+    let server = wegent_backend_rs::http_server::Server::bind_with_authenticator(
+        "127.0.0.1:0".parse().unwrap(),
+        application.routes,
+        AppAuthenticator::new(state.authentication_services()),
+    )
+    .await
+    .unwrap();
+    let url = format!(
+        "http://{}/api/internal/callback",
+        server.local_addr().unwrap()
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        server
+            .serve_until(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+    });
+    (url, stop, server)
+}
+
+pub(super) async fn next_callback(subscription: &mut RedisSubscription) -> Value {
     let message = tokio::time::timeout(Duration::from_secs(5), subscription.next_message())
         .await
         .expect("callback publication")
@@ -402,7 +413,7 @@ async fn next_callback(subscription: &mut RedisSubscription) -> Value {
     serde_json::from_slice(&message.payload).unwrap()
 }
 
-fn require_loopback_services() {
+pub(super) fn require_loopback_services() {
     // Require explicitly configured disposable services, never local dotenv defaults.
     for name in ["DATABASE_URL", "REDIS_URL"] {
         let url = url::Url::parse(&std::env::var(name).expect("explicit E2E service URL")).unwrap();
