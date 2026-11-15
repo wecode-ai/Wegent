@@ -85,10 +85,10 @@ export function createIssueResourceCoverage({ requestJson, assertImageDecoded })
       )
       await upload('missing-resource.png', imageBytes, 'image/png')
       await control.command('click', `${missing} [data-testid="assistant-markdown-image-retry"]`)
-      await assertImageDecoded(
-        control,
-        `${activity} [data-testid="assistant-markdown-image"][alt="missing-resource.png"]`
-      )
+      const recoveredImage = `${activity} [data-testid="assistant-markdown-image"][alt="missing-resource.png"]`
+      await control.command('waitFor', recoveredImage)
+      await control.command('scrollIntoView', recoveredImage)
+      await assertImageDecoded(control, recoveredImage)
       const reportLink = `${activity} [data-testid="issue-comment-file-attachment"][data-resource-name="resource-report.md"]`
       await control.command('scrollIntoView', reportLink)
       await control.command('click', reportLink)
