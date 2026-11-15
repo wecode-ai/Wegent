@@ -19,8 +19,7 @@ export function attachmentPreviewKind(filename: string, contentType: string) {
   if (contentType.startsWith("image/")) return "image";
   if (/\.(?:md|markdown)$/i.test(filename) || contentType === "text/markdown")
     return "markdown";
-  if (contentType === "application/pdf" || /\.pdf$/i.test(filename))
-    return "pdf";
+  if (contentType === "application/pdf") return "pdf";
   return collaborationFilePreviewKind(filename, contentType);
 }
 

@@ -32,6 +32,7 @@ describe("collaboration file preview classification", () => {
       "markdown",
     );
     expect(attachmentPreviewKind("report", "text/markdown")).toBe("markdown");
+    expect(attachmentPreviewKind("report.pdf", "text/html")).toBe("binary");
   });
   it("preserves text and binary extension handling", () => {
     expect(
