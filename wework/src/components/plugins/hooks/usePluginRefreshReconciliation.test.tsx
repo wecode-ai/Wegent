@@ -65,6 +65,31 @@ test('HTTP reconciliation runs without a cloud device identity', async () => {
   expect(initial.onError).not.toHaveBeenCalled()
 })
 
+test.each(['available', 'busy', 'localSync'] as const)(
+  'keeps the result of an acquired reconciliation when %s changes in the same scope',
+  async field => {
+    const initial = { ...options(), request: 1, localSync: true }
+    let reject!: (error: Error) => void
+    vi.mocked(reconcilePluginRefresh).mockImplementation(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    const { rerender, result } = renderHook(usePluginRefreshReconciliation, {
+      initialProps: initial,
+    })
+    await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
+    rerender({ ...initial, [field]: !initial[field] })
+    const error = new Error('Plugin reconciliation failed: PLUGIN_RUNTIME_METADATA_FAILED')
+    await act(async () => reject(error))
+    expect(initial.onError).toHaveBeenCalledExactlyOnceWith(error)
+    expect(initial.onComplete).not.toHaveBeenCalled()
+    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+    expect(result.current.active).toBe(false)
+  }
+)
+
 test('does not revive an old reconciliation after switching accounts and back', async () => {
   const initial = { ...options(), request: 1 }
   let finish!: () => void
@@ -87,6 +112,29 @@ test('does not revive an old reconciliation after switching accounts and back', 
   expect(initial.onComplete).not.toHaveBeenCalled()
   expect(initial.onError).not.toHaveBeenCalled()
   expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+})
+
+test('scope cancellation survives an earlier admission-gate change', async () => {
+  const initial = { ...options(), request: 1 }
+  let finish!: () => void
+  let captured!: Parameters<typeof reconcilePluginRefresh>[0]
+  vi.mocked(reconcilePluginRefresh).mockImplementation(
+    options =>
+      new Promise(resolve => {
+        captured = options
+        finish = resolve
+      })
+  )
+  const { rerender, result } = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
+  await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
+  rerender({ ...initial, busy: true })
+  rerender({ ...initial, accountKey: 'other-account', request: 0 })
+  rerender(initial)
+  expect(captured.isCurrent()).toBe(false)
+  expect(result.current.active).toBe(false)
+  await act(async () => finish())
+  expect(initial.onComplete).not.toHaveBeenCalled()
+  expect(initial.onError).not.toHaveBeenCalled()
 })
 
 test('clears queued refresh activity when the shared device lease times out', async () => {

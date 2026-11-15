@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
-import { test } from '../../fixtures/admin-device-state'
+import { startAdminDeviceFixture } from '../../utils/admin-device-fixture'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const ADMIN_DEVICES = '/api/admin/device-monitor/devices'
@@ -15,7 +15,6 @@ const ADMIN_DEVICES = '/api/admin/device-monitor/devices'
 test('an admin can remove another user’s offline device registration', async ({
   page,
   request,
-  deviceState,
 }) => {
   const admin = createApiClient(request, API_URL)
   const owner = createApiClient(request, API_URL)
@@ -28,6 +27,7 @@ test('an admin can remove another user’s offline device registration', async (
   const suffix = randomUUID()
   const deviceId = `e2e-admin-delete-${suffix}`
   const name = `E2E admin deletion ${suffix}`
+  const fixtureProcess = startAdminDeviceFixture()
   const client = createAuthenticatedSocketClient({
     socketBaseUrl: () => API_URL,
     getToken: () => token,
@@ -71,8 +71,9 @@ test('an admin can remove another user’s offline device registration', async (
     expect((await owner.delete(deletionPath)).status).toBe(403)
     expect((await admin.delete(deletionPath)).status).toBe(409)
 
-    const fixture = (action: 'expire' | 'claim_execution' | 'clear_execution') =>
-      deviceState({ action, record_id: device.id, suffix })
+    const fixture = (action: 'expire' | 'claim_execution' | 'clear_execution') => {
+      return fixtureProcess.run({ action, record_id: device.id, suffix })
+    }
     const heartbeat = () =>
       new Promise(resolve => {
         socket
@@ -141,9 +142,13 @@ test('an admin can remove another user’s offline device registration', async (
     recordId = undefined
   } finally {
     client.dispose()
-    if (recordId !== undefined) {
-      await expect.poll(async () => (await findDevice())?.status).not.toBe('online')
-      await owner.delete(`/api/devices/records/${recordId}`)
+    try {
+      if (recordId !== undefined) {
+        await expect.poll(async () => (await findDevice())?.status).not.toBe('online')
+        await owner.delete(`/api/devices/records/${recordId}`)
+      }
+    } finally {
+      await fixtureProcess.close()
     }
   }
 })

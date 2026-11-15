@@ -92,7 +92,7 @@ def clear_execution(db: Session, owner_id: int, task_id: str, route: str) -> Non
         db.delete(workspace)
 
 
-def apply_state(data: dict[str, Any]) -> None:
+def run_action(data: dict[str, Any]) -> None:
     url = make_url(os.environ["DATABASE_URL"])
     if (
         url.host not in {"localhost", "127.0.0.1", "mysql"}
@@ -133,9 +133,12 @@ def apply_state(data: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    for line in sys.stdin:
-        apply_state(json.loads(line))
-        print("ADMIN_DEVICE_STATE " + json.dumps({"success": True}), flush=True)
+    if sys.argv[1:] == ["--serve"]:
+        for line in sys.stdin:
+            run_action(json.loads(line))
+            print('admin-device-fixture:{"ok":true}', flush=True)
+    else:
+        run_action(json.load(sys.stdin))
 
 
 if __name__ == "__main__":
