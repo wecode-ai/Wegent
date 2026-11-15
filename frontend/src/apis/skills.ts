@@ -16,6 +16,7 @@ export async function fetchSkillsList(params?: {
   skip?: number
   limit?: number
   namespace?: string
+  binding?: SkillBindingTarget
 }): Promise<Skill[]> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
@@ -24,6 +25,13 @@ export async function fetchSkillsList(params?: {
   if (params?.skip !== undefined) queryParams.append('skip', params.skip.toString())
   if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString())
   if (params?.namespace) queryParams.append('namespace', params.namespace)
+  if (params?.binding) {
+    queryParams.set('binding_namespace', params.binding.namespace)
+    if (params.binding.botId) queryParams.set('binding_bot_id', String(params.binding.botId))
+    for (const group of params.binding.targetGroupNames || []) {
+      queryParams.append('target_group_names', group)
+    }
+  }
 
   const url = `${getApiUrl()}/v1/kinds/skills?${queryParams.toString()}`
   const response = await fetch(url, {
@@ -374,12 +382,36 @@ function normalizeSkillAvailability(skill: ApiUnifiedSkill): UnifiedSkill {
 /**
  * Fetch unified skills list (user's + public)
  */
+export interface SkillBindingTarget {
+  botId?: number
+  namespace: string
+  targetGroupNames?: string[]
+}
+
 export async function fetchUnifiedSkillsList(params?: {
   skip?: number
   limit?: number
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  binding?: SkillBindingTarget
 }): Promise<UnifiedSkill[]> {
+  if (params?.binding) {
+    const skills: Skill[] = []
+    let page: Skill[]
+    do {
+      page = await fetchSkillsList({ skip: skills.length, limit: 100, binding: params.binding })
+      skills.push(...page)
+    } while (page.length === 100)
+    return skills.map(skill => ({
+      ...skill.spec,
+      id: Number(skill.metadata.labels?.id),
+      user_id: Number(skill.metadata.labels?.user_id),
+      name: skill.metadata.name,
+      namespace: skill.metadata.namespace,
+      is_active: true,
+      is_public: skill.metadata.labels?.user_id === '0',
+    }))
+  }
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 

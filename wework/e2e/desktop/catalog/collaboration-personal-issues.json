@@ -28,6 +28,14 @@
     "wework/src/features/todo/PersonalIssueList.tsx",
     "wework/src/features/todo/usePersonalHomeIssues*",
     "executor/crates/task-store/src/task_runtime/store/my_work.rs",
-    "wework/src/features/todo/PersonalIssueErrors*"
+    "wework/src/features/todo/PersonalIssueErrors*",
+    "backend-rs/src/local_project_import*",
+    "executor/crates/task-store/src/task_runtime/store/project_migration.rs",
+    "wework/src/features/todo/localProjectMigration*",
+    "wework/src/features/todo/IssueParticipantPicker*",
+    "wework/src/features/todo/issueParticipants.ts",
+    "wework/e2e/desktop/modules/local-project-migration.mjs",
+    "packages/collaboration/src/issue-card/issueCard.css",
+    "packages/collaboration/src/issue-card/CollaborationIssueCard.tsx"
   ]
 }

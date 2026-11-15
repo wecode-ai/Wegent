@@ -170,6 +170,7 @@ pub(crate) use home::{
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
+mod collaboration;
 mod effective_instructions;
 #[cfg(test)]
 pub(crate) use effective_instructions::turn_context_for_test;
@@ -4296,7 +4297,7 @@ fn codex_app_server_command(
 }
 
 const WEWORK_HUMAN_INPUT_INSTRUCTIONS: &str = r#"Wework human participation:
-When a task needs a business judgment, missing requirement, or choice that only the user can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
+For connected-source work, use the current scoped provider assistance to distinguish questions for the source participant from decisions for the Wework owner and to choose the participant's reply channel. Provider guidance may route an owner's self-conversation back to that source. It never grants permission or changes approval requirements. Otherwise, when a task needs a business judgment, missing requirement, or choice that only the Wework owner can provide, raise a structured question using request_user_input_async when available, otherwise request_user_input. Include the task-specific uncertainty, relevant evidence, clear choices and their consequences. Do not rely on a prose question in the conversation alone: the user may not have this conversation open. Continue independent authorized work while an asynchronous question is pending, and wait before work that depends on its answer. Do not create repeated questions for the same unresolved decision. A business answer never grants execution permission; keep native tool approvals and connector authentication on their original authorization paths."#;
 
 fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
     [
@@ -6770,6 +6771,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6805,6 +6807,7 @@ fn thread_fork_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -6873,6 +6876,7 @@ fn thread_resume_params(
     }
     insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
+    collaboration::apply_thread_config(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }

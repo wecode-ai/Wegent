@@ -13,6 +13,7 @@ mod fixture;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use brz_mysql::MysqlService;
 use brz_redis::{Redis, RedisService, cmd};
 use engineio_poll_client::PollClient;
 use serde_json::{Value, json};
@@ -46,16 +47,34 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         )
         .await
         .unwrap();
-    let state = build_app_state_with_clients(fixture.mysql.clone(), Some(redis.clone()))
+    let mut state = build_app_state_with_clients(fixture.mysql.clone(), Some(redis.clone()))
         .await
         .unwrap();
+    state.background_jobs = wegent_backend_rs::background_jobs::BackgroundJobsClient::new(
+        wegent_backend_rs::background_jobs::config::BackgroundJobsConfig {
+            scheduler_enabled: false,
+            worker_enabled: true,
+            job_allowlist: ["device_heartbeat_monitor".to_owned()].into(),
+            shutdown_grace: Duration::from_secs(3),
+        },
+    );
+    let state = Arc::new(state);
+    let jobs = wegent_backend_rs::Application::build(Arc::clone(&state))
+        .await
+        .unwrap();
+    let background = wegent_job_runtime::BackgroundJobsRuntime::start(
+        jobs.background_jobs,
+        &state.background_jobs,
+    )
+    .await
+    .unwrap();
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         &json!({"sub": "heartbeat-e2e", "exp": chrono::Utc::now().timestamp() + 60}),
         &jsonwebtoken::EncodingKey::from_secret(state.auth.jwt_key.as_bytes()),
     )
     .unwrap();
-    let server = socketio::handlers::build(Arc::new(state)).await.unwrap();
+    let server = socketio::handlers::build(Arc::clone(&state)).await.unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();
     let (stop, stopped) = oneshot::channel();
@@ -69,14 +88,17 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         chrono::Utc::now().timestamp_micros()
     );
     let key = format!("device:online:{USER_ID}:{device_id}");
+    let mysql = fixture.mysql.clone();
     let outcome = tokio::spawn({
+        let state = Arc::clone(&state);
         let redis = redis.clone();
         let key = key.clone();
         async move {
-            timeout(
-                Duration::from_secs(20),
-                assert_heartbeats(&address, &token, &redis, &device_id, &key),
-            )
+            timeout(Duration::from_secs(20), async {
+                let client = assert_heartbeats(&address, &token, &redis, &device_id, &key).await;
+                assert_terminal_delivery(&client, &redis, &mysql, &device_id).await;
+                assert_offline_timeout(&state, &redis, &mysql).await;
+            })
             .await
             .expect("device heartbeat scenario timed out");
         }
@@ -84,6 +106,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
     .await;
     let _ = stop.send(());
     let stopped = server.await;
+    background.shutdown(Duration::from_secs(3)).await.unwrap();
     redis.del(key).await.unwrap();
     fixture.close().await;
     stopped.unwrap().unwrap();
@@ -96,7 +119,7 @@ async fn assert_heartbeats(
     redis: &RedisService,
     device_id: &str,
     key: &str,
-) {
+) -> PollClient {
     let client = PollClient::connect(address, NAMESPACE, &json!({"token": token}).to_string())
         .await
         .unwrap();
@@ -149,6 +172,148 @@ async fn assert_heartbeats(
         assert_eq!(online(redis, key).await, refreshed);
         assert!((1..=30_000).contains(&pttl(redis, key).await));
     }
+    client
+}
+
+async fn assert_terminal_delivery(
+    client: &PollClient,
+    redis: &RedisService,
+    mysql: &MysqlService,
+    device_id: &str,
+) {
+    let (task_id, subtask_id) = (810_i64, 811_i64);
+    mysql.execute(
+        "INSERT INTO tasks (id,user_id,kind,name,namespace,json,is_active,created_at,updated_at,project_id,is_group_chat)
+         VALUES (?,?,'Task','heartbeat-terminal','default',JSON_OBJECT('status',JSON_OBJECT('status','RUNNING')),1,NOW(),NOW(),0,false)",
+        (task_id, USER_ID),
+    ).await.unwrap();
+    mysql.execute(
+        "INSERT INTO subtasks (id,task_id,user_id,team_id,title,bot_ids,role,executor_name,executor_namespace,message_id,status,progress,executor_deleted_at,completed_at,sender_type,sender_user_id,reply_to_subtask_id)
+         VALUES (?,?,?,0,'Device terminal',JSON_ARRAY(),'ASSISTANT',?,?,1,'RUNNING',0,false,'1970-01-01 00:00:00','',0,0)",
+        (subtask_id, task_id, USER_ID, format!("device-{device_id}"), format!("user-{USER_ID}")),
+    ).await.unwrap();
+    let channel = format!("callback:channel:{subtask_id}");
+    let mut subscription = redis.subscribe(channel.as_str()).await.unwrap();
+    // Fail the runtime projection after the terminal rows commit, before
+    // any terminal frame is published.
+    mysql
+        .execute(
+            "RENAME TABLE loop_item_executions TO loop_item_executions_unavailable",
+            (),
+        )
+        .await
+        .unwrap();
+    let mut raw_events = redis.subscribe("socketio").await.unwrap();
+    let completed = json!({
+        "task_id":task_id, "subtask_id":subtask_id, "message_id":1,
+        "data":{"response":{"output":[{"type":"message","content":[{"type":"output_text","text":"device result"}]}]}}
+    });
+    let failed = event_ack(client, 2, "response.completed", completed.clone()).await;
+    assert!(failed["error"].is_string(), "{failed}");
+    let status: String = mysql
+        .fetch_one("SELECT status FROM subtasks WHERE id = ?", (subtask_id,))
+        .await
+        .unwrap();
+    assert_eq!(status, "COMPLETED");
+    let barrier = json!({"type":"fixture-barrier"});
+    redis
+        .publish(channel.as_str(), barrier.to_string())
+        .await
+        .unwrap();
+    assert_eq!(next_callback(&mut subscription).await, barrier);
+
+    mysql
+        .execute(
+            "RENAME TABLE loop_item_executions_unavailable TO loop_item_executions",
+            (),
+        )
+        .await
+        .unwrap();
+    let mut replay = completed.clone();
+    replay["data"]["response"]["output"][0]["content"][0]["text"] = json!("different retry result");
+    assert_eq!(
+        event_ack(client, 3, "response.completed", replay).await,
+        json!({"success":true})
+    );
+    assert_eq!(
+        next_callback(&mut subscription).await["result"]["value"],
+        "device result"
+    );
+    loop {
+        let frame = next_callback(&mut raw_events).await;
+        if frame["event"] == "response.completed" && frame["data"][0]["subtask_id"] == subtask_id {
+            let data = &frame["data"][0]["data"];
+            assert_eq!(
+                data["response"]["output"][0]["content"][0]["text"],
+                "device result"
+            );
+            assert_eq!(data["result"]["value"], "device result");
+            break;
+        }
+    }
+    raw_events.close().await.unwrap();
+
+    assert_eq!(
+        event_ack(client, 4, "error", completed).await,
+        json!({"success":true})
+    );
+    redis
+        .publish(channel.as_str(), barrier.to_string())
+        .await
+        .unwrap();
+    assert_eq!(next_callback(&mut subscription).await, barrier);
+    subscription.close().await.unwrap();
+}
+
+async fn assert_offline_timeout(
+    state: &wegent_backend_rs::AppState,
+    redis: &RedisService,
+    mysql: &MysqlService,
+) {
+    let (task_id, subtask_id) = (820_i64, 821_i64);
+    mysql.execute(
+        "INSERT INTO tasks (id,user_id,kind,name,namespace,json,is_active,created_at,updated_at,project_id,is_group_chat)
+         VALUES (?,?,'Task','heartbeat-timeout','default',JSON_OBJECT('status',JSON_OBJECT('status','RUNNING')),1,NOW(),NOW(),0,false)",
+        (task_id, USER_ID),
+    ).await.unwrap();
+    mysql.execute(
+        "INSERT INTO subtasks (id,task_id,user_id,team_id,title,bot_ids,role,executor_name,executor_namespace,message_id,status,progress,executor_deleted_at,completed_at,sender_type,sender_user_id,reply_to_subtask_id)
+         VALUES (?,?,?,0,'Heartbeat timeout',JSON_ARRAY(),'ASSISTANT','device-offline-fixture',?,1,'RUNNING',0,false,'1970-01-01 00:00:00','',0,0)",
+        (subtask_id, task_id, USER_ID, format!("user-{USER_ID}")),
+    ).await.unwrap();
+    let mut events = redis.subscribe("socketio").await.unwrap();
+    state
+        .background_jobs
+        .submit("device_heartbeat_monitor", Value::Null, None, None)
+        .await
+        .unwrap();
+
+    loop {
+        let event = next_callback(&mut events).await;
+        if event["event"] == "chat:error" && event["data"][0]["subtask_id"] == subtask_id {
+            break;
+        }
+    }
+    let (subtask_status, task): (String, brz_mysql::Json<Value>) = mysql
+        .fetch_one(
+            "SELECT subtasks.status, tasks.json
+             FROM subtasks JOIN tasks ON subtasks.task_id = tasks.id WHERE subtasks.id = ?",
+            (subtask_id,),
+        )
+        .await
+        .unwrap();
+    assert_eq!(subtask_status, "FAILED");
+    assert_eq!(task.0["status"]["status"], "FAILED");
+    events.close().await.unwrap();
+}
+
+async fn next_callback(subscription: &mut brz_redis::RedisSubscription) -> Value {
+    let message = timeout(Duration::from_secs(5), subscription.next_message())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    serde_json::from_slice(&message.payload).unwrap()
 }
 
 async fn event_ack(client: &PollClient, id: u8, event: &str, payload: Value) -> Value {

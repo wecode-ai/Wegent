@@ -36,7 +36,9 @@
           "cameraPermission": "允许 WeWork 拍摄照片并作为会话附件发送。",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-sharing",
+      "expo-asset"
     ]
   }
 }

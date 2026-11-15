@@ -1,3 +1,4 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -100,6 +101,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
   }
 
   async function expectOrder(control, lane, ids) {
+    await showAllCollaborationIssues(control, CONTENT)
     await control.command('waitFor', laneSelector(lane), { timeoutMs: uiTimeoutMs })
     await waitForValue(
       async () =>
@@ -143,6 +145,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
   async function openBoard(control) {
     await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
     await selectBoard(control, workbenchReadyTimeoutMs)
+    await showAllCollaborationIssues(control, CONTENT)
     await control.command('waitFor', scoped('[data-testid="board-view-picker"]'), {
       timeoutMs: uiTimeoutMs,
     })
@@ -292,6 +295,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
     await createLocalCollaborationProject(control, CONTENT, name)
     await configureFirstProjectExecutionEnvironment(control, CONTENT, uiTimeoutMs)
     await selectBoard(control, uiTimeoutMs)
+    await showAllCollaborationIssues(control, CONTENT)
     const first = await createCollaborationBoardIssue(
       control,
       'Older local card',
@@ -322,6 +326,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       )
       await control.command('click', '[data-e2e-anchor-id="local-sorting-project"]')
       await selectBoard(control, uiTimeoutMs)
+      await showAllCollaborationIssues(control, CONTENT)
     }
     await expectRules(control, 'pending', 'priority-desc')
     await editRules(control, 'pending', ['manual'])

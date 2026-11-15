@@ -138,18 +138,18 @@ export function AnchorPopover({
       aria-label={title}
       inert={suspended}
       aria-hidden={suspended || undefined}
-      className={`electron-titlebar-interactive-region fixed ${suspended ? 'z-modal' : 'z-system-popover'} border border-border/70 bg-popover text-text-primary shadow-lg ${profile ? 'flex flex-col overflow-hidden rounded-2xl' : `rounded-xl ${header ? '' : 'p-1'}`}`}
+      className={`electron-titlebar-interactive-region fixed flex flex-col overflow-hidden ${suspended ? 'z-modal' : 'z-system-popover'} border border-border/70 bg-popover text-text-primary shadow-lg ${profile ? 'rounded-2xl' : `rounded-xl ${header ? '' : 'p-1'}`}`}
       style={{
         left: position.left,
         width: position.width,
         bottom: position.bottom,
         top: position.top,
-        maxHeight: profile ? position.maxHeight : undefined,
+        maxHeight: position.maxHeight,
       }}
     >
       {header ??
         (!profile && (
-          <p className="px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>
+          <p className="shrink-0 px-2 pb-1.5 pt-2 text-xs font-medium text-text-primary">{title}</p>
         ))}
       <div
         ref={bodyRef}
@@ -158,8 +158,8 @@ export function AnchorPopover({
           profile
             ? 'min-h-0 overflow-y-auto overscroll-contain'
             : wide
-              ? `overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
-              : `max-h-[264px] overflow-y-auto ${header ? '' : 'px-1 pb-1'}`
+              ? `min-h-0 overflow-y-auto overscroll-contain ${header ? '' : 'px-1 pb-1'}`
+              : `min-h-0 max-h-[264px] overflow-y-auto overscroll-contain ${header ? '' : 'px-1 pb-1'}`
         }
         style={wide ? { maxHeight: 'min(400px, calc(100vh - 112px))' } : undefined}
       >

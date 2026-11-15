@@ -53,30 +53,44 @@ export function useIssueHumanInteractions(
                 item.sharedRequest &&
                 !ids.has(item.sharedRequest.id)
             )
-            setItems(current => [
-              ...current.filter(item => item.project?.store !== store),
-              ...response.items.map(request => issueHumanInteraction(request, store)),
-            ])
-            setErrors(current => {
-              const next = { ...current }
-              delete next[`issue:${store}`]
-              return next
-            })
+            const unverified: RuntimeInteraction[] = []
+            const failures: string[] = []
+            const incoming = response.items.map(request => issueHumanInteraction(request, store))
+            const replace = (retained: RuntimeInteraction[]) =>
+              setItems(current => [
+                ...current.filter(item => item.project?.store !== store),
+                ...incoming,
+                ...retained,
+              ])
+            replace(removed.map(item => ({ ...item, cached: true })))
             for (const previous of removed) {
               const project = previous.project!
-              // A transfer or revocation is not a resolved answer.
+              // Only an authoritative terminal question settles a native snapshot.
               const current = await api!
                 .list(project.projectId, project.issueId)
                 .then(result => result.items.find(item => item.id === previous.sharedRequest!.id))
-                .catch(() => undefined)
+                .catch(cause => {
+                  // Preserve discovery evidence without retaining reply authority.
+                  unverified.push({ ...previous, cached: true })
+                  failures.push(cause instanceof Error ? cause.message : String(cause))
+                  return undefined
+                })
               if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
-              if (current?.status === 'resolved')
+              if (current && ['resolved', 'cancelled'].includes(current.status))
                 setResolved(items =>
                   items.some(item => item.id === previous.id)
                     ? items
                     : [...items, previous].slice(-100)
                 )
             }
+            if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
+            if (removed.length) replace(unverified)
+            setErrors(current => {
+              const next = { ...current }
+              if (failures.length) next[`issue:${store}`] = failures.join('\n')
+              else delete next[`issue:${store}`]
+              return next
+            })
           } catch (cause) {
             if (generation.current !== epoch || sequences.current.get(store) !== sequence) return
             setItems(current =>

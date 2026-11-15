@@ -124,6 +124,11 @@ export type BackendCollaborationProject = CollaborationProject & {
 };
 
 export interface CollaborationIssue {
+  resource_participants?: Array<{
+    kind: "agent" | "group";
+    id: number;
+    name: string;
+  }>;
   human_requests?: import("./issueParticipation").IssueHumanRequest[];
   milestone_id?: string | null;
   id: string;

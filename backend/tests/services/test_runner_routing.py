@@ -657,6 +657,7 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
     )
     agent.metadata_json = {
         **agent.metadata_json,
+        "system_prompt": "Configured template coordinator instructions.",
         "execution_policy": {"mode": "project_pool"},
         "model_policy": {"mode": "fixed", "model": MODEL},
     }
@@ -704,6 +705,14 @@ def test_group_automation_keeps_run_identity_and_assignment_snapshot(
         group=group,
         automatic=True,
         automation_context={"run_id": "automation-run"},
+    )
+    assert (
+        "Configured template coordinator instructions."
+        in execution.runtime_origin_context["system_prompt"]
+    )
+    assert (
+        "Do not execute member work"
+        in execution.runtime_origin_context["system_prompt"]
     )
     assert execution.automation_run_id == "automation-run"
     assert (

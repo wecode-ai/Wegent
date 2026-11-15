@@ -99,13 +99,15 @@ impl GlobalCapabilityStore {
         let Some(runtime) = normalized_legacy_tree(runtime, spec)? else {
             return Ok(false);
         };
-        if let Some(package) = spec
-            .checksum
-            .as_deref()
-            .and_then(|hash| self.verified_plugin_package(hash).ok())
-        {
-            return Ok(normalized_legacy_tree(&package.path, spec)?
-                .is_some_and(|package| same_fingerprints(runtime, &package)));
+        if let Some(hash) = spec.checksum.as_deref() {
+            match self.verified_plugin_package(hash) {
+                Ok(package) => {
+                    return Ok(normalized_legacy_tree(&package.path, spec)?
+                        .is_some_and(|package| same_fingerprints(runtime, &package)));
+                }
+                Err(error @ CapabilitySyncError::PluginPackageBusy(_)) => return Err(error),
+                Err(_) => {}
+            }
         }
         let moved = self
             .manifest
@@ -174,9 +176,13 @@ impl GlobalCapabilityStore {
             return Ok(false);
         };
         if let Some(hash) = historical.checksum.as_deref() {
-            if let Ok(package) = self.verified_plugin_package(hash) {
-                return Ok(normalized_legacy_tree(&package.path, &historical)?
-                    .is_some_and(|package| same_fingerprints(source, &package)));
+            match self.verified_plugin_package(hash) {
+                Ok(package) => {
+                    return Ok(normalized_legacy_tree(&package.path, &historical)?
+                        .is_some_and(|package| same_fingerprints(source, &package)));
+                }
+                Err(error @ CapabilitySyncError::PluginPackageBusy(_)) => return Err(error),
+                Err(_) => {}
             }
         }
         // Old private installations have no archive receipt. Their independently

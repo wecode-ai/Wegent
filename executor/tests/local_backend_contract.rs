@@ -244,12 +244,13 @@ async fn local_backend_event_sink_emits_responses_api_event_names() {
 
     sink.send(event).await.unwrap();
 
-    let emits = transport.emits();
-    assert_eq!(emits.len(), 1);
-    assert_eq!(emits[0].event, "response.completed");
-    assert_eq!(emits[0].payload["task_id"], 1);
-    assert_eq!(emits[0].payload["subtask_id"], 2);
-    assert_eq!(emits[0].payload["data"]["response"]["id"], "resp-test");
+    assert!(transport.emits().is_empty());
+    let calls = transport.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].event, "response.completed");
+    assert_eq!(calls[0].payload["task_id"], 1);
+    assert_eq!(calls[0].payload["subtask_id"], 2);
+    assert_eq!(calls[0].payload["data"]["response"]["id"], "resp-test");
 }
 
 #[tokio::test]
@@ -996,6 +997,7 @@ struct RecordedCall {
 #[derive(Clone, Default)]
 struct RecordingTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
+    event_deliveries: Arc<Mutex<Vec<RecordedCall>>>,
     emits: Arc<Mutex<Vec<RecordedCall>>>,
     emit_failure_event: Arc<Mutex<Option<String>>>,
     connection_failed: Arc<Mutex<bool>>,
@@ -1059,7 +1061,7 @@ impl RecordingTransport {
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
         timeout(Duration::from_secs(10), async {
             loop {
-                let emits = self.emits();
+                let emits = self.event_deliveries.lock().unwrap().clone();
                 if emits.len() >= count {
                     return emits;
                 }
@@ -1076,7 +1078,7 @@ impl RecordingTransport {
                 let notified = self.notify.notified();
                 tokio::pin!(notified);
                 notified.as_mut().enable();
-                let emits = self.emits();
+                let emits = self.event_deliveries.lock().unwrap().clone();
                 if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
@@ -1086,9 +1088,11 @@ impl RecordingTransport {
         .await
         .unwrap_or_else(|error| {
             let observed = self
-                .emits()
-                .into_iter()
-                .map(|emit| emit.event)
+                .event_deliveries
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|emit| emit.event.clone())
                 .collect::<Vec<_>>();
             panic!("Timed out waiting for {event}: {error:?}; observed events: {observed:?}")
         })
@@ -1112,9 +1116,12 @@ impl RecordingTransport {
     }
 
     fn emits_for_event(&self, event: &str) -> Vec<RecordedCall> {
-        self.emits()
-            .into_iter()
+        self.event_deliveries
+            .lock()
+            .unwrap()
+            .iter()
             .filter(|emit| emit.event == event)
+            .cloned()
             .collect()
     }
 }
@@ -1144,10 +1151,18 @@ impl LocalBackendTransport for RecordingTransport {
         _timeout: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'a>> {
         Box::pin(async move {
-            self.calls.lock().unwrap().push(RecordedCall {
+            let call = RecordedCall {
                 event: event.to_owned(),
                 payload,
-            });
+            };
+            if matches!(
+                event,
+                "response.completed" | "response.incomplete" | "error"
+            ) {
+                self.event_deliveries.lock().unwrap().push(call.clone());
+                self.notify.notify_waiters();
+            }
+            self.calls.lock().unwrap().push(call);
             Ok(self
                 .responses
                 .lock()
@@ -1163,10 +1178,12 @@ impl LocalBackendTransport for RecordingTransport {
         payload: Value,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
-            self.emits.lock().unwrap().push(RecordedCall {
+            let call = RecordedCall {
                 event: event.to_owned(),
                 payload,
-            });
+            };
+            self.event_deliveries.lock().unwrap().push(call.clone());
+            self.emits.lock().unwrap().push(call);
             self.notify.notify_waiters();
             let mut failure_event = self.emit_failure_event.lock().unwrap();
             if failure_event.as_deref() == Some(event) {

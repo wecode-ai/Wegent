@@ -413,18 +413,20 @@ function reloadMainWindowLocalStorageInput(
 
 async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string>(
+  return evalEmbeddedBrowserWhenReady<string>(
+    command,
+    input.label,
     `(localStorage.setItem(${JSON.stringify(input.key)}, ${JSON.stringify(input.value)}), ` +
-      `localStorage.getItem(${JSON.stringify(input.key)}))`,
-    input.label
+      `localStorage.getItem(${JSON.stringify(input.key)}))`
   )
 }
 
 async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
-  return evalEmbeddedBrowserJson<string | null>(
-    `localStorage.getItem(${JSON.stringify(input.key)})`,
-    input.label
+  return evalEmbeddedBrowserWhenReady<string | null>(
+    command,
+    input.label,
+    `localStorage.getItem(${JSON.stringify(input.key)})`
   )
 }
 
@@ -2258,7 +2260,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const property = command.value?.trim()
       if (!property) throw new Error('getComputedStyleValue requires a CSS property')
-      return getComputedStyle(element).getPropertyValue(property).trim()
+      const pseudo = command.target
+      if (pseudo !== undefined && pseudo !== '::before' && pseudo !== '::after')
+        throw new Error('getComputedStyleValue target must be ::before or ::after')
+      return getComputedStyle(element, pseudo).getPropertyValue(property).trim()
     }
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)

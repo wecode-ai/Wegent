@@ -68,40 +68,44 @@ fn sanitize_result_for_storage(result: &Value) -> Value {
     Value::Object(copy)
 }
 
+pub(super) async fn lock_subtask<T: MysqlTransaction>(
+    mysql: &mut T,
+    tables: sql::Tables,
+    subtask_id: i64,
+) -> MysqlResult<Option<MysqlRow>> {
+    let sql = format!("{} FOR UPDATE", sql::subtask_by_id(tables));
+    mysql.fetch_optional(sql, (subtask_id,)).await
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
     tables: sql::Tables,
     mysql: &mut T,
-    task_id: i64,
+    row: MysqlRow,
     subtask_id: i64,
     status: &str,
     result: Option<&Value>,
     error: Option<&str>,
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
+    device_attempt: Option<&super::DeviceAttempt<'_>>,
 ) -> MysqlResult<Option<(MysqlRow, Option<String>)>> {
-    let row: Option<MysqlRow> = mysql
-        .fetch_optional(
-            format!("{} FOR UPDATE", sql::subtask_by_id(tables)),
-            (subtask_id,),
-        )
-        .await?;
-    let Some(row) = row else { return Ok(None) };
-    if subtask_column::<i64>(&row, "task_id") != Some(task_id)
-        || !matches!(
-            subtask_column::<String>(&row, "status").as_deref(),
-            Some("PENDING" | "RUNNING")
-        )
+    let current_status = subtask_column::<String>(&row, "status");
+    if matches!(
+        current_status.as_deref(),
+        Some("COMPLETED" | "FAILED" | "CANCELLED" | "DELETE")
+    ) {
+        return Ok(None);
+    }
+    if let Some(attempt) = device_attempt
+        && (current_status.as_deref() != Some("RUNNING")
+            || subtask_column::<i64>(&row, "user_id") != Some(attempt.owner_id)
+            || subtask_column::<String>(&row, "executor_name").as_deref() != Some(attempt.name)
+            || subtask_column::<String>(&row, "executor_namespace").as_deref()
+                != Some(attempt.namespace))
     {
         return Ok(None);
     }
-    // `SubtaskStore.get_by_id` (`sqlalchemy_subtask_store.py:321-330`)
-    // eager-loads `Subtask.contexts` with `subqueryload`, so the source issues
-    // this read even though the update never consumes it.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
-        .await
-        .unwrap_or_default();
     let existing_executor_name = subtask_column::<String>(&row, "executor_name");
     // The ORM projection labels every column `{table}_{column}`, so the stored
     // result is read by its position in that projection.
@@ -233,7 +237,9 @@ pub(super) async fn update_subtask_status_on<T: MysqlTransaction>(
                 .await
         }
     };
-    outcome?;
+    if outcome?.rows_affected == 0 {
+        return Ok(None);
+    }
     Ok(Some((row, metrics_message)))
 }
 

@@ -29,7 +29,7 @@ import { createAgentResourceName } from '@wegent/collaboration'
 
 import { botApis } from '@/apis/bots'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
-import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
+import { useBotSkillOptions } from '@/hooks/useBotSkillOptions'
 import {
   Bot,
   Team,
@@ -434,9 +434,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     initializeNewDraft,
     normalizeExecutor,
   } = useSimpleTeamDraft()
-  const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
-  const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
-  const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -525,7 +522,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return shellSupportsPreloadSkills(selectedSimpleShell)
   }, [selectedSimpleShell])
 
-  const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
   const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
   const handleModelLoadError = useCallback(() => {
@@ -777,58 +773,25 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     useSimpleEditor,
   ])
 
-  const reloadSimpleSkills = useCallback(async () => {
-    if (!useSimpleEditor) return
-
-    setSimpleLoadingSkills(true)
-    try {
-      const personalSkills = await fetchUnifiedSkillsList({ scope: 'personal' })
-      let skills = personalSkills
-
-      if (publishTarget === 'team' && publishGroupNames.length > 0) {
-        const groupSkillLists = await Promise.all(
-          publishGroupNames.map(targetGroupName =>
-            fetchUnifiedSkillsList({
-              scope: 'group',
-              groupName: targetGroupName,
-            })
-          )
-        )
-        const commonGroupSkillIds = new Set(groupSkillLists[0].map(skill => skill.id))
-        for (const groupSkills of groupSkillLists.slice(1)) {
-          const groupSkillIds = new Set(groupSkills.map(skill => skill.id))
-          for (const skillId of commonGroupSkillIds) {
-            if (!groupSkillIds.has(skillId)) {
-              commonGroupSkillIds.delete(skillId)
-            }
-          }
-        }
-
-        const mergedSkills = new Map(personalSkills.map(skill => [skill.id, skill]))
-        for (const skill of groupSkillLists[0]) {
-          if (commonGroupSkillIds.has(skill.id)) {
-            mergedSkills.set(skill.id, skill)
-          }
-        }
-        skills = Array.from(mergedSkills.values())
-      }
-
-      setSimpleAllSkills(skills)
-      setSimpleAvailableSkills(filterVisibleSkills(skills))
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: skillLoadingFailedTitle,
-      })
-    } finally {
-      setSimpleLoadingSkills(false)
-    }
-  }, [publishGroupNames, publishTarget, skillLoadingFailedTitle, toast, useSimpleEditor])
-
-  useEffect(() => {
-    if (!open || !useSimpleEditor) return
-    reloadSimpleSkills()
-  }, [open, reloadSimpleSkills, useSimpleEditor])
+  const {
+    skills: simpleAllSkills,
+    loading: simpleLoadingSkills,
+    error: simpleSkillsError,
+    reload: reloadSimpleSkills,
+  } = useBotSkillOptions(
+    {
+      botId: isEditing
+        ? (formTeam?.bots.find(bot => bot.role === 'leader')?.bot_id ?? formTeam?.bots[0]?.bot_id)
+        : undefined,
+      namespace: (scope === 'group' ? groupName : undefined) || 'default',
+      targetGroupNames: publishTarget === 'team' ? publishGroupNames : [],
+    },
+    open && useSimpleEditor
+  )
+  const simpleAvailableSkills = useMemo(
+    () => filterVisibleSkills(simpleAllSkills),
+    [simpleAllSkills]
+  )
 
   // Check if mode change needs confirmation
   const needsModeChangeConfirmation = useCallback(() => {
@@ -1506,6 +1469,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   availableSkills={simpleAvailableSkills}
                   allSkills={simpleAllSkills}
                   loadingSkills={simpleLoadingSkills}
+                  skillsError={simpleSkillsError}
                   onSkillsChange={(skills, refs) => {
                     setSimpleField('simpleSelectedSkills', skills)
                     setSimpleField('simpleSelectedSkillRefs', refs)

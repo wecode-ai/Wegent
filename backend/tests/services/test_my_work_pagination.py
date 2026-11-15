@@ -213,6 +213,243 @@ def test_api_rejects_invalid_cursor(test_client, test_token):
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize("order", ["recent", "attention"])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        ("assignee_name", "created_by_user_name"),
+        ("created_at", "updated_at"),
+        ("permissions", "can_edit", "can_view_detail", "security_level"),
+        ("human_requests",),
+    ],
+    ids=["names", "utc", "permissions", "human-requests"],
+)
+def test_my_work_api_matches_canonical_issue_projection(
+    test_client, test_db, test_user, test_token, order, fields
+):
+    project = _make_project(test_db, test_user)
+    item = add_items(test_db, project, test_user.id, 1, prefix="PROJECTION")[0]
+    item.assignee_user_id = test_user.id
+    item.created_at = datetime(2026, 1, 2, 3, 4, 5)
+    item.updated_at = datetime(2026, 1, 3, 4, 5, 6)
+    item.metadata_json = {
+        "security_level": "related",
+        "human_requests": [{"id": "question", "status": "pending"}],
+    }
+    test_db.commit()
+    headers = {"Authorization": f"Bearer {test_token}"}
+
+    detail = test_client.get(f"/api/v1/loop-items/{item.id}", headers=headers)
+    listing = test_client.get(
+        f"/api/v1/cloud-projects/{project.id}/loop-items", headers=headers
+    )
+    page = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=headers, params={"order": order}
+    )
+
+    assert detail.status_code == listing.status_code == page.status_code == 200
+    canonical = detail.json()
+    listed = listing.json()["items"][0]
+    actual = page.json()["items"][0]
+    for field in fields:
+        assert listed[field] == canonical[field], field
+        assert actual[field] == canonical[field], field
+
+
+def test_my_work_preserves_each_projects_effective_permissions(test_db, test_user):
+    owner = User(user_name="projection-owner", password_hash="unused", is_active=True)
+    test_db.add(owner)
+    test_db.commit()
+    expected = {}
+    for role in ("Viewer", "Developer", "Maintainer"):
+        project = _make_project(test_db, owner)
+        test_db.add(
+            ResourceMember.create(
+                resource_type="CloudProject",
+                resource_id=int(project.id),
+                entity_type="user",
+                entity_id=str(test_user.id),
+                role=role,
+                status="approved",
+            )
+        )
+        item = add_items(test_db, project, owner.id, 1, prefix=role)[0]
+        item.assignee_user_id = test_user.id
+        item.metadata_json = {"security_level": "related"}
+        expected[item.id] = role != "Viewer"
+    test_db.commit()
+
+    rows, _ = loop_item_service.list_my_work_page(test_db, test_user.id)
+
+    assert {row["id"] for row in rows} == set(expected)
+    for row in rows:
+        assert row["can_view_detail"] is True
+        assert row["can_edit"] is expected[row["id"]]
+        assert row["permissions"] == {
+            action: expected[row["id"]]
+            for action in ("edit_content", "comment", "assign", "execute")
+        }
+
+
+def test_my_work_uses_canonical_execution_and_approval_projection(test_db, test_user):
+    from app.models.delivery import ProjectChatAgent
+    from app.models.kind import Kind
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.schemas.delivery import LoopItemResponse, MyWorkItemResponse
+
+    project = _make_project(test_db, test_user)
+    items = add_items(test_db, project, test_user.id, 2, prefix="EXECUTION")
+    agent = ProjectChatAgent(
+        id="projection-agent",
+        cloud_project_id=project.id,
+        name="Review Bot",
+        created_by_user_id=test_user.id,
+    )
+    team = Kind(
+        kind="Team",
+        namespace="default",
+        name="Projection Team",
+        user_id=test_user.id,
+        json={},
+    )
+    test_db.add_all([agent, team])
+    test_db.flush()
+    items[0].assignee_agent_id = agent.id
+    items[1].assignee_team_id = team.id
+    for index, item in enumerate(items):
+        test_db.add(
+            LoopItemExecution(
+                loop_item_id=item.id,
+                cloud_project_id=project.id,
+                agent_id=agent.id if index == 0 else None,
+                team_id=team.id if index == 1 else None,
+                status="pending_approval" if index == 0 else "failed",
+                attempt_no=2,
+                last_event_seq=4,
+                runtime_device_id="projection-device",
+                runtime_task_id=f"projection-runtime-{index}",
+                error_message="Execution failure" if index == 1 else "",
+            )
+        )
+    test_db.commit()
+    canonical = {
+        item.id: LoopItemResponse.model_validate(
+            loop_item_service.response_values(test_db, item, test_user.id)
+        ).model_dump(mode="json")
+        for item in items
+    }
+
+    rows, _ = loop_item_service.list_my_work_page(test_db, test_user.id)
+
+    assert {row["id"] for row in rows} == {item.id for item in items}
+    fields = (
+        "assignee_agent_name",
+        "assignee_team_name",
+        "execution_id",
+        "execution_state",
+        "execution_control_state",
+        "execution_observed_state",
+        "execution_sync_state",
+        "execution_attempt_no",
+        "execution_last_event_seq",
+        "execution_error",
+        "can_approve",
+        "approval",
+        "ai_state",
+        "processing_actor",
+        "human_waiting_since",
+    )
+    for row in rows:
+        actual = MyWorkItemResponse.model_validate(row).model_dump(mode="json")
+        assert {field: actual[field] for field in fields} == {
+            field: canonical[row["id"]][field] for field in fields
+        }
+
+
+def test_my_work_query_count_does_not_grow_with_projects(test_db, test_user):
+    from sqlalchemy import event
+
+    from app.models.loop_item_execution import LoopItemExecution
+    from app.services.issue_assignments import issue_assignment_service
+
+    user_id = test_user.id
+    owner = User(user_name="query-owner", password_hash="unused", is_active=True)
+    test_db.add(owner)
+    test_db.commit()
+    owner_id = owner.id
+    counts = []
+    previous = []
+    for project_count in (1, 6):
+        for item_id in previous:
+            test_db.get(LoopItem, item_id).deleted_at = datetime(2026, 3, 1)
+        test_db.commit()
+        previous = []
+        for project_index in range(project_count):
+            project = _make_project(test_db, test_db.get(User, owner_id))
+            project.metadata_json = {"default_issue_security": "related"}
+            test_db.add(
+                ResourceMember.create(
+                    resource_type="CloudProject",
+                    resource_id=int(project.id),
+                    entity_type="user",
+                    entity_id=str(user_id),
+                    role="Developer",
+                    status="approved",
+                )
+            )
+            items = add_items(
+                test_db,
+                project,
+                owner_id,
+                6 // project_count,
+                prefix=f"PROJECTS-{project_count}-{project_index}",
+            )
+            for item in items:
+                item.assignee_user_id = user_id
+                issue_assignment_service.record(
+                    test_db,
+                    project_id=project.id,
+                    issue_id=item.id,
+                    member_type="human",
+                    member_id=str(user_id),
+                    assigned_by_user_id=user_id,
+                    workflow_step=None,
+                    notify=False,
+                    trigger="manual",
+                    comment_body="Personal assignment",
+                )
+                test_db.add(
+                    LoopItemExecution(
+                        loop_item_id=item.id,
+                        cloud_project_id=project.id,
+                        status="failed",
+                    )
+                )
+                previous.append(item.id)
+        test_db.commit()
+        test_db.expunge_all()
+        statements = []
+
+        def record_query(_conn, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(test_db.bind, "before_cursor_execute", record_query)
+        try:
+            rows, _ = loop_item_service.list_my_work_page(test_db, user_id)
+        finally:
+            event.remove(test_db.bind, "before_cursor_execute", record_query)
+        assert len(rows) == 6
+        assert all(row["execution_state"] == "failed" for row in rows)
+        assert all(row["can_view_detail"] is True for row in rows)
+        assert all(row["human_task_binding"] is not None for row in rows)
+        assert all(
+            row["assignment_context"]["body"] == "Personal assignment" for row in rows
+        )
+        counts.append(len(statements))
+    assert counts[0] == counts[1], counts
+
+
 @pytest.mark.parametrize("attention", [False, True])
 def test_my_work_batches_personal_bindings_and_assignment_comments(
     test_db, test_user, attention

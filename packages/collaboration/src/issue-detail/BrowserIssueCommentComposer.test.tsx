@@ -4,7 +4,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
-import type { SharedWorkspaceApi, SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
+import type {
+  SharedWorkspaceApi,
+  SharedWorkspaceRuntimeApi,
+} from '../ports/SharedWorkspaceApi'
 import type { CollaborationIssue, CollaborationProject } from '../types'
 import { createCollaborationTranslator } from '../i18n'
 import { BrowserTaskDrafts } from './BrowserTaskDrafts'
@@ -85,7 +88,7 @@ describe('browser main comment with the PC execution pipeline', () => {
       class {
         observe() {}
         disconnect() {}
-      }
+      },
     )
     vi.stubGlobal('matchMedia', () => ({
       matches: false,
@@ -97,7 +100,7 @@ describe('browser main comment with the PC execution pipeline', () => {
       class {
         observe() {}
         disconnect() {}
-      }
+      },
     )
     container = document.createElement('div')
     document.body.append(container)
@@ -122,7 +125,11 @@ describe('browser main comment with the PC execution pipeline', () => {
         listRuntimeWork: vi.fn().mockResolvedValue({
           projects: [
             {
-              project: { key: 'repo', name: 'Repository', stateDeviceId: 'device-1' },
+              project: {
+                key: 'repo',
+                name: 'Repository',
+                stateDeviceId: 'device-1',
+              },
               deviceWorkspaces: [
                 {
                   deviceId: 'device-1',
@@ -139,13 +146,15 @@ describe('browser main comment with the PC execution pipeline', () => {
         }),
         createRuntimeTask: vi
           .fn()
-          .mockImplementation(async input => ({ accepted: true, ...input })),
+          .mockImplementation(async (input) => ({ accepted: true, ...input })),
         sendRuntimeMessage: vi.fn(),
         guideRuntimeTask: vi.fn(),
         interruptAndSendRuntimeMessage: vi.fn(),
         cancelRuntimeTask: vi.fn(),
         revertRuntimeFileChanges: vi.fn(),
-        getRuntimeGoal: vi.fn().mockResolvedValue({ accepted: true, taskId: 'task-1', goal: null }),
+        getRuntimeGoal: vi
+          .fn()
+          .mockResolvedValue({ accepted: true, taskId: 'task-1', goal: null }),
       },
       uploadAttachment: vi.fn().mockResolvedValue(attachment),
       deleteAttachment: vi.fn(),
@@ -158,7 +167,9 @@ describe('browser main comment with the PC execution pipeline', () => {
       dispose: vi.fn(),
     }
     api = {
-      issues: { get: vi.fn().mockResolvedValue(issue) } as unknown as SharedWorkspaceApi['issues'],
+      issues: {
+        get: vi.fn().mockResolvedValue(issue),
+      } as unknown as SharedWorkspaceApi['issues'],
       taskBindings: {
         list: vi.fn(),
         bindTask: vi.fn().mockResolvedValue(undefined),
@@ -176,12 +187,16 @@ describe('browser main comment with the PC execution pipeline', () => {
     }
     client = {
       send: vi.fn().mockResolvedValue(message),
-      startAgentResponse: vi
-        .fn()
-        .mockResolvedValue({ ...message, messageId: 'response', status: 'streaming' }),
-      failAgentResponse: vi
-        .fn()
-        .mockResolvedValue({ ...message, messageId: 'response', status: 'failed' }),
+      startAgentResponse: vi.fn().mockResolvedValue({
+        ...message,
+        messageId: 'response',
+        status: 'streaming',
+      }),
+      failAgentResponse: vi.fn().mockResolvedValue({
+        ...message,
+        messageId: 'response',
+        status: 'failed',
+      }),
     } as unknown as ProjectChatClient
     onMessages.mockClear()
     onTaskUpdated.mockClear()
@@ -191,8 +206,10 @@ describe('browser main comment with the PC execution pipeline', () => {
     container.remove()
     vi.unstubAllGlobals()
   })
-  const element = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
-  const input = () => element('collaboration-issue-comment') as HTMLElement & { value: string }
+  const element = (id: string) =>
+    document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
+  const input = () =>
+    element('collaboration-issue-comment') as HTMLElement & { value: string }
   async function mount(
     members: {
       id: number
@@ -201,7 +218,8 @@ describe('browser main comment with the PC execution pipeline', () => {
       email: null
       role: 'Developer'
     }[] = [],
-    agents = [agent]
+    agents = [agent],
+    assignment?: import('./useCommentAssignment').CommentAssignment,
   ) {
     await act(async () =>
       root.render(
@@ -209,6 +227,7 @@ describe('browser main comment with the PC execution pipeline', () => {
           <BrowserIssueExecution runtime={runtime}>
             <BrowserIssueCommentComposer
               api={api}
+              assignment={assignment}
               runtime={runtime}
               client={client}
               project={project}
@@ -224,19 +243,40 @@ describe('browser main comment with the PC execution pipeline', () => {
               onTaskUpdated={onTaskUpdated}
             />
           </BrowserIssueExecution>
-        </BrowserTaskDrafts>
-      )
+        </BrowserTaskDrafts>,
+      ),
     )
   }
   async function type(text: string) {
     await act(async () => {
       input().value = text
-      input().dispatchEvent(new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }))
+      input().dispatchEvent(
+        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }),
+      )
     })
   }
   async function click(id: string) {
     await act(async () => element(id).click())
   }
+  it('creates a comment child while the model catalog is still loading without executing the parent', async () => {
+    vi.mocked(runtime.listModels).mockReturnValue(new Promise(() => {}))
+    const createChild = vi.fn().mockResolvedValue({ id: 'child' })
+    await mount([], [agent], { options: [], assign: vi.fn(), createChild })
+    await act(async () => {
+      const mode = element(
+        'collaboration-issue-comment-form-assignment-mode',
+      ) as HTMLSelectElement
+      mode.value = 'child'
+      mode.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await type('Review independently')
+    await click('collaboration-issue-comment-submit')
+    expect(client.send).toHaveBeenCalledOnce()
+    expect(createChild).toHaveBeenCalledOnce()
+    expect(runtime.work.createRuntimeTask).not.toHaveBeenCalled()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+  })
+
   it('refreshes persisted Issue badges after a plain comment without an assigned agent', async () => {
     const updated = {
       ...issue,
@@ -244,7 +284,9 @@ describe('browser main comment with the PC execution pipeline', () => {
     }
     vi.mocked(api.issues.get).mockResolvedValue(updated)
     await mount([], [])
-    await type('Also review https://gitlab.example.test/group/app/-/merge_requests/7')
+    await type(
+      'Also review https://gitlab.example.test/group/app/-/merge_requests/7',
+    )
     await click('collaboration-issue-comment-submit')
     expect(client.send).toHaveBeenCalledOnce()
     expect(api.issues.get).toHaveBeenCalledExactlyOnceWith(issue.id)
@@ -293,14 +335,16 @@ describe('browser main comment with the PC execution pipeline', () => {
     await click('collaboration-comment-settings-toggle')
     expect(element('permission-mode-menu-button')).not.toBeNull()
     await click('project-work-button')
-    const option = document.querySelector<HTMLElement>('[data-testid^="project-option-"]')!
+    const option = document.querySelector<HTMLElement>(
+      '[data-testid^="project-option-"]',
+    )!
     await act(async () => option.click())
     await click('collaboration-issue-comment-submit')
     expect(client.send).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'Run pwd',
         mentions: [{ type: 'agent', id: agent.id, label: agent.name }],
-      })
+      }),
     )
     expect(runtime.work.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -314,13 +358,15 @@ describe('browser main comment with the PC execution pipeline', () => {
             weworkCloudModelResourceUserId: '7',
           }),
         }),
-      })
+      }),
     )
     expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
     expect(input().value).toBe('')
   })
   it('sends the structured target for a project member mention', async () => {
-    await mount([{ id: 3, user_id: 8, user_name: 'bob', email: null, role: 'Developer' }])
+    await mount([
+      { id: 3, user_id: 8, user_name: 'bob', email: null, role: 'Developer' },
+    ])
     await type('@')
     const option = element('collaboration-issue-mention-member-8')
     expect(option).not.toBeNull()
@@ -335,28 +381,36 @@ describe('browser main comment with the PC execution pipeline', () => {
           { type: 'agent', id: agent.id, label: agent.name },
           { type: 'user', id: '8', label: 'bob' },
         ],
-      })
+      }),
     )
   })
   it('uses actual uploaded runtime IDs and imports them for durable Issue links', async () => {
     await mount()
     await type('Read notes')
-    const fileInput = element('collaboration-comment-attach-input') as HTMLInputElement
-    Object.defineProperty(fileInput, 'files', { value: [new File(['data'], 'notes.txt')] })
-    await act(async () => fileInput.dispatchEvent(new Event('change', { bubbles: true })))
+    const fileInput = element(
+      'collaboration-comment-attach-input',
+    ) as HTMLInputElement
+    Object.defineProperty(fileInput, 'files', {
+      value: [new File(['data'], 'notes.txt')],
+    })
+    await act(async () =>
+      fileInput.dispatchEvent(new Event('change', { bubbles: true })),
+    )
     await click('collaboration-issue-comment-submit')
     expect(api.attachments.importContexts).toHaveBeenCalledWith(issue.id, [14])
     expect(client.send).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'Read notes\n\n[notes.txt](wegent://attachments/issue-file-14)',
-      })
+      }),
     )
     expect(runtime.work.createRuntimeTask).toHaveBeenCalledWith(
-      expect.objectContaining({ attachmentIds: [14], attachments: [] })
+      expect.objectContaining({ attachmentIds: [14], attachments: [] }),
     )
   })
   it('retains the draft if comment persistence fails and never dispatches execution', async () => {
-    vi.mocked(client.send).mockRejectedValueOnce(new Error('Comment save failed'))
+    vi.mocked(client.send).mockRejectedValueOnce(
+      new Error('Comment save failed'),
+    )
     await mount()
     await type('Keep my draft')
     await click('collaboration-issue-comment-submit')
@@ -366,7 +420,7 @@ describe('browser main comment with the PC execution pipeline', () => {
   })
   it.each([false, true])(
     'closes a rejected execution without duplicating the persisted comment (refresh fails=%s)',
-    async refreshFails => {
+    async (refreshFails) => {
       if (refreshFails)
         vi.mocked(api.issues.get)
           .mockResolvedValueOnce(issue)
@@ -383,10 +437,10 @@ describe('browser main comment with the PC execution pipeline', () => {
       expect(container.textContent).toContain('Device went offline')
       expect(client.send).toHaveBeenCalledOnce()
       expect(client.failAgentResponse).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'Device went offline' })
+        expect.objectContaining({ error: 'Device went offline' }),
       )
       expect(api.taskBindings.unbindTask).toHaveBeenCalledOnce()
-    }
+    },
   )
   it('keeps a saved comment successful when its metadata refresh fails', async () => {
     const failure = new Error('Refresh failed')
@@ -401,15 +455,22 @@ describe('browser main comment with the PC execution pipeline', () => {
     expect(input().value).toBe('')
     expect(warn).toHaveBeenCalledWith(
       '[collaboration] Failed to refresh Issue after saving comment',
-      expect.objectContaining({ projectId: project.id, issueId: issue.id, error: failure })
+      expect.objectContaining({
+        projectId: project.id,
+        issueId: issue.id,
+        error: failure,
+      }),
     )
     warn.mockRestore()
   })
   it.each([false, true])(
     'refreshes a saved comment after server execution rejects (refresh fails=%s)',
-    async refreshFails => {
-      client.executeTaskComment = vi.fn().mockRejectedValue(new Error('Execution failed'))
-      if (refreshFails) vi.mocked(api.issues.get).mockRejectedValue(new Error('Refresh failed'))
+    async (refreshFails) => {
+      client.executeTaskComment = vi
+        .fn()
+        .mockRejectedValue(new Error('Execution failed'))
+      if (refreshFails)
+        vi.mocked(api.issues.get).mockRejectedValue(new Error('Refresh failed'))
       await mount([], [])
       await type('Saved review link')
       await click('collaboration-issue-comment-submit')
@@ -418,7 +479,8 @@ describe('browser main comment with the PC execution pipeline', () => {
       expect(container.textContent).toContain('Execution failed')
       expect(container.textContent).not.toContain('Refresh failed')
       expect(input().value).toBe('')
-      if (!refreshFails) expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(issue)
-    }
+      if (!refreshFails)
+        expect(onTaskUpdated).toHaveBeenCalledExactlyOnceWith(issue)
+    },
   )
 })

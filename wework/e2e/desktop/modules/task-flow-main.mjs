@@ -1254,8 +1254,8 @@ async function main() {
     desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
       checkpoint: SELECTED_DESKTOP_SEGMENT,
-      captureScreenshot: (control, name, selector) =>
-        captureVerificationScreenshot(control, name, selector),
+      captureScreenshot: (control, name, selector, options) =>
+        captureVerificationScreenshot(control, name, selector, options),
       codexSqliteHome,
       codexHome,
       executorHome,

@@ -1458,9 +1458,13 @@ class LoopItemExecutionService:
         ):
             return None
 
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )
@@ -1574,9 +1578,13 @@ class LoopItemExecutionService:
         )
         if candidate is None:
             return None
-        from app.services.device.identity import resolve_owned_device_alias
+        from app.services.device.identity import (
+            lock_device_owner,
+            resolve_owned_device_alias,
+        )
         from app.services.runner_routing import claim_routing
 
+        lock_device_owner(db, owner_user_id)
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=execution_device_id
         )
@@ -3278,6 +3286,13 @@ class LoopItemExecutionService:
         allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
+
+        from app.services.runtime_event_context import (
+            runtime_event_is_private_discussion,
+        )
+
+        if runtime_event_is_private_discussion(payload):
+            return None
 
         # Thread metadata, Goal and lifecycle notifications can retain the
         # previous request's turn identity while a continuation starts. Per-turn

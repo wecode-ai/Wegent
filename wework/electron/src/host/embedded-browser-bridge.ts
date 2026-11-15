@@ -466,7 +466,15 @@ export class EmbeddedBrowserBridge {
       // This script returns synchronously. A Promise callback can be destroyed by
       // the navigation that the action itself dispatched.
       { awaitPromise: false }
-    )
+    ).catch(error => {
+      console.warn('[embedded-browser-action]', {
+        label,
+        action: request.action,
+        previewOnly,
+        error: errorMessage(error),
+      })
+      throw error
+    })
   }
 
   private async waitForCondition(label: string, request: BrowserBridgeRequest): Promise<unknown> {

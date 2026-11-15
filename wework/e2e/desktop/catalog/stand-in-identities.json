@@ -1,8 +1,10 @@
 {
   "order": 42000,
-  "scenario": "./scenarios/stand-in-identities.scenario.mjs",
+  "scenario": "./scenarios/stand-in-context.scenario.mjs",
   "scenarioOnly": true,
   "paths": [
+    "wework/e2e/desktop/scenarios/stand-in-identities.scenario.mjs",
+    "executor/src/runtime_work/handler/stand_in_context.rs",
     "wework/e2e/desktop/modules/stand-in-proposal-regression.mjs",
     "wework/e2e/desktop/modules/stand-in-local-device-recovery.mjs"
   ],

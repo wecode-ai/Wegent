@@ -108,7 +108,7 @@ pub(crate) async fn handle(
 
     // The Source writes the execution event back before the local-task branch.
     if let Some(task_id) = task_id.filter(|task_id| *task_id != 0) {
-        write_back(
+        let _ = write_back(
             state, runtime, user_id, &device_id, task_id, event_name, &object,
         )
         .await;
@@ -179,41 +179,163 @@ async fn process_remote_event(
     data: &Map<String, Value>,
     event_data: &Value,
 ) -> Result<(), String> {
-    write_back(
-        state, runtime, user_id, device_id, task_id, event_name, data,
-    )
-    .await;
-
-    let payload = response_api_payload(data, device_id);
-    emit_response_api_event(
-        state,
+    let room = format!("{WEWORK_TASK_ROOM_PREFIX}{task_id}");
+    let raw_terminal = matches!(
         event_name,
-        payload,
-        &format!("{WEWORK_TASK_ROOM_PREFIX}{task_id}"),
-    )
-    .await?;
+        "response.completed" | "response.incomplete" | "error"
+    );
+    if !raw_terminal {
+        let _ = write_back(
+            state, runtime, user_id, device_id, task_id, event_name, data,
+        )
+        .await;
+        emit_response_api_event(
+            state,
+            event_name,
+            response_api_payload(data, device_id),
+            &room,
+        )
+        .await?;
+    }
 
     let parsed = parser::shared().parse(task_id, subtask_id, message_id, event_name, event_data);
     let Some(mut event) = parsed.map_err(|error| error.0)? else {
         return Ok(());
     };
-    emit_event_chain(state, user_id, &mut event).await?;
-
+    let status = completion::terminal_status(&event.event_type);
     let Some(redis) = state.redis.as_ref() else {
-        return Ok(());
+        return if status.is_some() {
+            Err("Device terminal delivery requires Redis".into())
+        } else {
+            Ok(())
+        };
     };
+    if let Some(status) = status {
+        return completion::with_delivery_lock(
+            redis,
+            subtask_id,
+            completion::Delivery::Device,
+            || "Device terminal delivery lock unavailable".to_owned(),
+            deliver_remote_terminal(
+                state, runtime, user_id, device_id, event_name, data, &room, &mut event, status,
+            ),
+        )
+        .await;
+    }
+
+    let mut emitter = StatusUpdatingEmitter::new(redis.clone(), task_id, subtask_id);
+    let result = emitter.emit(&mut event).await;
+    emitter.close().await;
+    result.map_err(|error| error.to_string())?;
     if let Err(error) = publish_callback_event(redis, subtask_id, &event).await {
         tracing::warn!(%error, subtask_id, "Responses callback event publish failed");
     }
     channel::forward_event_to_channel_callbacks(redis, task_id, &event).await;
-
-    if is_terminal(&event.event_type) {
-        publish_task_completed(
-            state, runtime, user_id, device_id, task_id, subtask_id, &event,
-        )
-        .await;
-    }
     Ok(())
+}
+
+/// Replay delivery of a committed terminal event until its effects succeed.
+#[allow(clippy::too_many_arguments)]
+async fn deliver_remote_terminal(
+    state: &AppState,
+    runtime: &SocketRuntime,
+    user_id: i64,
+    device_id: &str,
+    event_name: &str,
+    data: &Map<String, Value>,
+    room: &str,
+    event: &mut crate::internal_callback::event::ExecutionEvent,
+    status: &str,
+) -> Result<(), String> {
+    let redis = state.redis.as_ref().ok_or("Device Redis unavailable")?;
+    let task_id = event.task_id;
+    let subtask_id = event.subtask_id;
+    let delivery = completion::Delivery::Device;
+    let ctx = completion::Completion {
+        app: Some(state),
+        mysql: &state.mysql,
+        redis,
+        tables: crate::internal_callback::tables(state),
+        executor_manager: &state.executor_manager,
+    };
+    let source = Value::Object(data.clone());
+    let Some(committed) = completion::complete_with_delivery(
+        &ctx,
+        event,
+        status,
+        None,
+        None,
+        delivery,
+        Some(&source),
+    )
+    .await
+    .map_err(|error| error.to_string())?
+    else {
+        return Ok(());
+    };
+    if let Some(error) = committed.replay_error {
+        event.error = error;
+    }
+    event.result = committed.result;
+    let result = event.result.clone().unwrap_or_else(|| json!({}));
+    let mut canonical = committed.replay_source.unwrap_or(source);
+    let raw = canonical.as_object_mut().expect("device event payload");
+    if let Some(body) = raw.get_mut("data").and_then(Value::as_object_mut) {
+        if status == "COMPLETED" {
+            body.insert("result".into(), result.clone());
+            if let Some(text) = result.get("value").and_then(Value::as_str) {
+                body.insert("value".into(), json!(text));
+            }
+        } else if status == "FAILED" {
+            body.insert("message".into(), json!(event.error));
+            event.error_code = result
+                .get("error_type")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+    }
+    let data = raw;
+    let contexts = if status == "COMPLETED" {
+        Some(
+            crate::responses::create::contexts::context_briefs(&state.mysql, subtask_id)
+                .await
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    write_back(
+        state, runtime, user_id, device_id, task_id, event_name, data,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    emitter::emit_terminal_frames_once(
+        redis,
+        event,
+        Some(user_id),
+        &result,
+        &committed.task,
+        contexts.as_ref(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let raw_key = completion::notification_key(task_id, subtask_id, "device-response");
+    crate::internal_callback::publish_terminal_emit(
+        redis,
+        &raw_key,
+        event_name,
+        room,
+        response_api_payload(data, device_id),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await?;
+    crate::internal_callback::publish_terminal_callback(redis, event)
+        .await
+        .map_err(|error| error.to_string())?;
+    completion::acknowledge_delivery(&ctx, task_id, subtask_id, delivery)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// `_execution_runtime_event_sync` through the shared projection.
@@ -225,7 +347,7 @@ async fn write_back(
     task_id: i64,
     event_name: &str,
     data: &Map<String, Value>,
-) {
+) -> brz_mysql::MysqlResult<()> {
     let payload = Value::Object(data.clone());
     let identity = RuntimeIdentity {
         event_name,
@@ -233,105 +355,7 @@ async fn write_back(
         payload: &payload,
     };
     runtime_projection::write_back_execution_event(state, runtime, user_id, device_id, &identity)
-        .await;
-}
-
-/// `StatusUpdatingEmitter` wrapping `WebSocketResultEmitter`, including the
-/// terminal collection/persistence/`TaskCompletedEvent` step.
-async fn emit_event_chain(
-    state: &AppState,
-    user_id: i64,
-    event: &mut crate::internal_callback::event::ExecutionEvent,
-) -> Result<(), String> {
-    let Some(redis) = state.redis.as_ref() else {
-        return Ok(());
-    };
-    let status = completion::terminal_status(&event.event_type);
-    let mut emitter = StatusUpdatingEmitter::new(redis.to_owned(), event.task_id, event.subtask_id);
-    if status.is_none() {
-        emitter
-            .emit(event)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    emitter.close().await;
-    let Some(status) = status else {
-        return Ok(());
-    };
-
-    let ctx = completion::Completion {
-        app: Some(state),
-        mysql: &state.mysql,
-        redis,
-        tables: crate::internal_callback::tables(state),
-        executor_manager: &state.executor_manager,
-    };
-    let final_result = completion::complete_terminal_event(
-        &ctx,
-        event.task_id,
-        event.subtask_id,
-        status,
-        event.result.as_ref(),
-        event.error.as_deref(),
-        event.error_code.as_deref(),
-        None,
-        None,
-    )
-    .await;
-    if let Some(result) = final_result {
-        event.result = Some(result);
-    }
-    let result = event
-        .result
-        .clone()
-        .unwrap_or_else(|| Value::Object(Map::new()));
-    let contexts = if status == "COMPLETED" {
-        Some(
-            crate::responses::create::contexts::context_briefs(&state.mysql, event.subtask_id)
-                .await
-                .map_err(|error| error.to_string())?,
-        )
-    } else {
-        None
-    };
-    emitter::emit_terminal_frames(redis, event, Some(user_id), &result, contexts.as_ref())
         .await
-        .map_err(|error| error.to_string())
-}
-
-/// `DeviceNamespace._publish_task_completed_event` plus the slot broadcast.
-async fn publish_task_completed(
-    state: &AppState,
-    runtime: &SocketRuntime,
-    user_id: i64,
-    device_id: &str,
-    task_id: i64,
-    subtask_id: i64,
-    event: &crate::internal_callback::event::ExecutionEvent,
-) {
-    let (status, result, error) = match event.event_type.as_str() {
-        "done" => ("COMPLETED", event.result.as_ref(), None),
-        "error" => (
-            "FAILED",
-            None,
-            Some(event.error.as_deref().unwrap_or("Unknown error")),
-        ),
-        _ => ("CANCELLED", None, None),
-    };
-    if let Some(redis) = state.redis.as_ref() {
-        let ctx = completion::Completion {
-            app: Some(state),
-            mysql: &state.mysql,
-            redis,
-            tables: crate::internal_callback::tables(state),
-            executor_manager: &state.executor_manager,
-        };
-        completion::publish_task_completed_for_owner(
-            &ctx, task_id, subtask_id, user_id, status, result, error,
-        )
-        .await;
-    }
-    device_heartbeat::broadcast_slot_update(state, runtime, user_id, device_id).await;
 }
 
 /// `emit_response_api_event`: the raw Responses event on the `/chat` namespace.

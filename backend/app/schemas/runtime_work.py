@@ -636,6 +636,9 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     queue_if_busy: bool = Field(default=False, alias="queueIfBusy")
+    conversation_context: Optional[Literal["private_discussion"]] = Field(
+        default=None, alias="conversationContext"
+    )
     client_user_message_id: Optional[str] = Field(
         default=None,
         alias="clientUserMessageId",
@@ -676,6 +679,9 @@ class RuntimeGuidanceRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = ""
+    conversation_context: Optional[Literal["private_discussion"]] = Field(
+        default=None, alias="conversationContext"
+    )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     client_guidance_id: Optional[str] = Field(
         default=None,

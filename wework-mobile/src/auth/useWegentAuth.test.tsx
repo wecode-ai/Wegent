@@ -242,6 +242,16 @@ afterEach(async () => {
 })
 
 describe('authentication generation', () => {
+  it('keeps the runtime config stable across unrelated auth renders', async () => {
+    seedCredential()
+    await renderHook()
+    await waitForStatus('authenticated')
+    const config = latest?.config
+    await act(() => {
+      root?.update(<Harness />)
+    })
+    expect(latest?.config).toBe(config)
+  })
   it('stale refresh continuation cannot restore auth after logout', async () => {
     seedCredential()
     await renderHook()

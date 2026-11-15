@@ -21,11 +21,6 @@ pub(crate) fn text_result_with_options(
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
 }
 
-#[cfg(test)]
-pub(crate) fn combined_text_result(data: &Value) -> Option<String> {
-    combined_text_result_with_options(data, false)
-}
-
 fn combined_text_result_with_options(data: &Value, include_json: bool) -> Option<String> {
     if data.get("kind").and_then(Value::as_str) != Some("browser.combined") {
         return None;
@@ -104,11 +99,6 @@ fn combined_text_result_with_options(data: &Value, include_json: bool) -> Option
         ));
     }
     Some(sections.join("\n\n"))
-}
-
-#[cfg(test)]
-pub(crate) fn inspect_text_result(data: &Value) -> Option<String> {
-    inspect_text_result_with_options(data, false)
 }
 
 pub(crate) fn inspect_text_result_with_options(data: &Value, include_json: bool) -> Option<String> {

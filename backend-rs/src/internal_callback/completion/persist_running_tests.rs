@@ -336,8 +336,8 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
     writer
         .execute("DROP TRIGGER reject_running_transition", ())
         .await?;
-    verify_obsolete_dispatches(writer, tables).await?;
-    verify_terminal_callbacks(writer).await?;
+    Box::pin(verify_obsolete_dispatches(writer, tables)).await?;
+    Box::pin(verify_terminal_callbacks(writer)).await?;
     mysql.close().await;
     Ok(())
 }

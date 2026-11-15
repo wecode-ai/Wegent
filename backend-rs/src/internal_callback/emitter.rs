@@ -535,11 +535,64 @@ pub(crate) async fn emit_terminal_frames<R: Redis>(
     result: &Value,
     contexts: Option<&Value>,
 ) -> RedisResult<()> {
-    match event.event_type.as_str() {
-        "error" => emit_error_frames(redis, event, user_id).await,
-        "cancelled" => emit_cancelled_frames(redis, event, user_id).await,
-        _ => emit_done_frames(redis, event, user_id, result, None, contexts).await,
+    let (name, status, payload) = match event.event_type.as_str() {
+        "error" => ("chat:error", "FAILED", error_payload(event)),
+        "cancelled" => ("chat:cancelled", "CANCELLED", cancelled_payload(event)),
+        _ => return emit_done_frames(redis, event, user_id, result, None, contexts).await,
+    };
+    publish_emit(redis, name, event.task_id, payload).await?;
+    emit_task_status_frame(redis, event, user_id, status).await
+}
+
+pub(crate) async fn emit_terminal_frames_once<R: Redis>(
+    redis: &R,
+    event: &ExecutionEvent,
+    user_id: Option<i64>,
+    result: &Value,
+    task: &super::completion::CollaborationStatus,
+    contexts: Option<&Value>,
+) -> RedisResult<()> {
+    let room = format!("task:{}", event.task_id);
+    let publish = async |name: &str, room: &str, step: &str, payload: Value| {
+        let key = super::completion::notification_key(event.task_id, event.subtask_id, step);
+        super::socketio::publish_terminal_emit(redis, &key, name, room, payload).await
+    };
+    let (name, payload) = match event.event_type.as_str() {
+        "error" => ("chat:error", error_payload(event)),
+        "cancelled" => ("chat:cancelled", cancelled_payload(event)),
+        _ => {
+            for (index, payload) in
+                block_frames::guidance_created_payloads(event.task_id, event.subtask_id, result)
+                    .into_iter()
+                    .enumerate()
+            {
+                publish(
+                    "chat:block_created",
+                    &room,
+                    &format!("guidance:{index}"),
+                    payload,
+                )
+                .await?;
+            }
+            ("chat:done", done_payload(event, result, contexts))
+        }
+    };
+    publish(name, &room, "result", payload).await?;
+    if let Some(user_id) = user_id {
+        let mut payload = task_status_payload(event, &task.status);
+        if matches!(
+            task.status.as_str(),
+            "PENDING" | "RUNNING" | "PENDING_CONFIRMATION"
+        ) {
+            payload["progress"] = json!(task.progress);
+            payload
+                .as_object_mut()
+                .expect("task status payload")
+                .shift_remove("completed_at");
+        }
+        publish("task:status", &format!("user:{user_id}"), "status", payload).await?;
     }
+    Ok(())
 }
 
 /// `WebSocketResultEmitter.emit`'s DONE branch: the `chat:done` result frame
@@ -559,6 +612,23 @@ pub(crate) async fn emit_done_frames<R: Redis>(
 ) -> RedisResult<()> {
     // `_emit_result_guidance_blocks` runs before `emit_chat_done`.
     block_frames::publish_guidance_blocks(redis, event, result).await?;
+    publish_emit(
+        redis,
+        "chat:done",
+        event.task_id,
+        done_payload(event, result, contexts),
+    )
+    .await?;
+
+    let status = task_status.unwrap_or(match event.event_type.as_str() {
+        "error" => "FAILED",
+        "cancelled" => "CANCELLED",
+        _ => "COMPLETED",
+    });
+    emit_task_status_frame(redis, event, user_id, status).await
+}
+
+fn done_payload(event: &ExecutionEvent, result: &Value, contexts: Option<&Value>) -> Value {
     let sanitized = match sanitize_client_payload(result) {
         Value::Object(object) if object.is_empty() => Value::Object(object),
         other => other,
@@ -574,42 +644,7 @@ pub(crate) async fn emit_done_frames<R: Redis>(
     );
     // `emit_chat_done` always includes the `contexts` key for DONE frames.
     payload.insert("contexts".into(), contexts.cloned().unwrap_or(Value::Null));
-    publish_emit(redis, "chat:done", event.task_id, Value::Object(payload)).await?;
-
-    let status = task_status.unwrap_or(match event.event_type.as_str() {
-        "error" => "FAILED",
-        "cancelled" => "CANCELLED",
-        _ => "COMPLETED",
-    });
-    emit_task_status_frame(redis, event, user_id, status).await
-}
-
-/// `emit_chat_error` (`webpage_websocket_chat_emitter.py:189-225`): the
-/// `chat:error` frame for `task:{task_id}`, then `task:status FAILED`.
-async fn emit_error_frames<R: Redis>(
-    redis: &R,
-    event: &ExecutionEvent,
-    user_id: Option<i64>,
-) -> RedisResult<()> {
-    publish_emit(redis, "chat:error", event.task_id, error_payload(event)).await?;
-    emit_task_status_frame(redis, event, user_id, "FAILED").await
-}
-
-/// `emit_chat_cancelled` (`webpage_websocket_chat_emitter.py:227-248`): the
-/// `chat:cancelled` frame for `task:{task_id}`, then `task:status CANCELLED`.
-async fn emit_cancelled_frames<R: Redis>(
-    redis: &R,
-    event: &ExecutionEvent,
-    user_id: Option<i64>,
-) -> RedisResult<()> {
-    publish_emit(
-        redis,
-        "chat:cancelled",
-        event.task_id,
-        cancelled_payload(event),
-    )
-    .await?;
-    emit_task_status_frame(redis, event, user_id, "CANCELLED").await
+    Value::Object(payload)
 }
 
 /// `_emit_task_status`'s `task:status` frame; it returns early without a task

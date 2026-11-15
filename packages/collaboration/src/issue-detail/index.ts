@@ -10,6 +10,7 @@ export * from "./IssueDetailControls";
 export * from "./IssueDetailDraft";
 export * from "./IssueHistoryLists";
 export * from "./attachmentMarkdown";
+export { useIssueProjectChat } from "./useIssueProjectChat";
 export * from "./createSharedIssueDetailPort";
 export { persistIssueDetailFields } from "./persistIssueDetailFields";
 export * from "./dateTime";
@@ -55,3 +56,9 @@ export * from "./IssueTaskConversationPanel";
 export { issueTaskSummaryForMessage } from "./issueTaskSummary";
 
 export { issueCommentBody } from "./useIssueCommentAttachments";
+
+export { IssueCommentChildAction } from "./IssueCommentChildAction";
+export type {
+  CommentChildInput,
+  CommentSubmissionOptions,
+} from "./useCommentAssignment";

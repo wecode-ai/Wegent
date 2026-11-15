@@ -41,6 +41,28 @@ describe('primary stand-in conversation visibility', () => {
     ).toBe(true)
   })
 
+  test('keeps the homepage context out of ordinary task navigation without hiding unrelated work', () => {
+    const home = {
+      taskId: 'stand-in-chat-7-primary-collaboration',
+      runtimeHandle: {
+        origin: { type: 'stand_in_identity', userId: 7, conversationScope: 'collaboration' },
+      },
+    }
+    expect(isPrimaryStandInConversation(home)).toBe(true)
+    expect(isPrimaryStandInConversation({ ...home, runtimeHandle: primary.runtimeHandle })).toBe(
+      false
+    )
+    expect(isPrimaryStandInConversation({ ...primary, runtimeHandle: home.runtimeHandle })).toBe(
+      false
+    )
+    expect(
+      isPrimaryStandInConversation({
+        ...home,
+        runtimeHandle: { origin: { ...home.runtimeHandle.origin, userId: 8 } },
+      })
+    ).toBe(false)
+  })
+
   test.each([
     { taskId: 'stand-in-chat-7-primary' },
     { ...primary, taskId: 'different-conversation' },

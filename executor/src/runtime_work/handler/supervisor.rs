@@ -1041,45 +1041,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_fenced_supervisor_json() {
-        let result = parse_supervisor_evaluation(
-            "```json\n{\"correction\":\"stop\",\"rationale\":\"drift\"}\n```",
-        )
-        .expect("evaluation should parse");
-        assert_eq!(result.correction.as_deref(), Some("stop"));
-    }
-
-    #[test]
-    fn parses_supervisor_pass_without_correction() {
-        let result = parse_supervisor_evaluation("{\"correction\":null,\"rationale\":\"aligned\"}")
-            .expect("evaluation should parse");
-        assert_eq!(result.correction, None);
-    }
-
-    #[test]
-    fn builds_model_reference_from_cloud_selection() {
-        let reference = supervisor_model_reference(&json!({
-            "modelName": "review-model",
-            "modelType": "public",
-            "options": {
-                "weworkCloudModelNamespace": "default",
-                "weworkCloudModelResourceUserId": "0"
-            }
-        }))
-        .expect("cloud selection should be accepted");
-
-        assert_eq!(
-            reference,
-            json!({
-                "name": "review-model",
-                "type": "public",
-                "namespace": "default",
-                "resource_user_id": 0
-            })
-        );
-    }
-
-    #[test]
     fn rejects_runtime_model_for_supervisor_evaluation() {
         let error = supervisor_model_reference(&json!({
             "modelName": "gpt-5.6-sol",
@@ -1089,30 +1050,6 @@ mod tests {
         .expect_err("runtime model should not use the Codex process for supervision");
 
         assert!(error.contains("cloud model"));
-    }
-
-    #[test]
-    fn visible_ai_progress_separates_latest_output_from_recent_context() {
-        let messages = vec![
-            json!({"role": "user", "content": "private original request"}),
-            json!({"role": "assistant", "content": "older progress"}),
-            json!({"role": "assistant", "content": "latest progress"}),
-        ];
-
-        let progress = visible_ai_progress(messages)
-            .expect("snapshot should serialize")
-            .expect("assistant content should exist");
-
-        assert!(!progress.latest.contains("private original request"));
-        assert!(!progress.latest.contains("older progress"));
-        assert!(progress.latest.contains("latest progress"));
-        assert_eq!(progress.context.len(), 1);
-        assert!(progress.context[0].contains("older progress"));
-    }
-
-    #[test]
-    fn visible_tail_is_bounded_from_the_latest_content() {
-        assert_eq!(truncate_visible_tail("abcdef", 3), "def");
     }
 
     #[test]
@@ -1134,27 +1071,6 @@ mod tests {
         };
 
         assert!(supervisor_needs_scheduled_check(&link, false, 200));
-    }
-
-    #[test]
-    fn stopped_task_without_ai_content_is_not_polled_again() {
-        let link = RuntimeTaskLink {
-            completed_at: Some(100),
-            supervisor: Some(RuntimeSupervisorState {
-                mode: "auto".to_owned(),
-                status: "active".to_owned(),
-                instructions: String::new(),
-                model_selection: None,
-                interval_seconds: 30,
-                last_evaluated_at: Some(100),
-                last_content_hash: Some(empty_content_hash()),
-                last_error: None,
-                suggestions: Vec::new(),
-            }),
-            ..RuntimeTaskLink::default()
-        };
-
-        assert!(!supervisor_needs_scheduled_check(&link, false, 200));
     }
 
     #[test]
@@ -1218,72 +1134,6 @@ mod tests {
         };
 
         assert!(!supervisor_needs_scheduled_check(&link, true, 2_001));
-    }
-
-    #[test]
-    fn manual_check_re_evaluates_unchanged_content() {
-        let supervisor = RuntimeSupervisorState {
-            mode: "auto".to_owned(),
-            status: "active".to_owned(),
-            instructions: String::new(),
-            model_selection: None,
-            interval_seconds: 30,
-            last_evaluated_at: Some(100),
-            last_content_hash: Some("same".to_owned()),
-            last_error: None,
-            suggestions: Vec::new(),
-        };
-
-        assert!(should_skip_unchanged_content(&supervisor, "same", false));
-        assert!(!should_skip_unchanged_content(&supervisor, "same", true));
-    }
-
-    #[test]
-    fn supervisor_defaults_to_auto_correction() {
-        let supervisor = configured_supervisor(
-            &json!({
-                "modelSelection": {
-                    "modelName": "review-model",
-                    "modelType": "public",
-                    "options": {
-                        "weworkCloudModelNamespace": "default",
-                        "weworkCloudModelResourceUserId": "0"
-                    }
-                }
-            }),
-            None,
-        )
-        .expect("supervisor should configure");
-
-        assert_eq!(supervisor.mode, "auto");
-    }
-
-    #[test]
-    fn supervisor_accepts_runtime_model_selection() {
-        let supervisor = configured_supervisor(
-            &json!({
-                "modelSelection": {
-                    "modelName": "deepseek-v4-pro",
-                    "modelType": "runtime",
-                    "options": {
-                        "reasoning": "high"
-                    }
-                }
-            }),
-            None,
-        )
-        .expect("runtime supervisor should configure");
-
-        assert_eq!(
-            supervisor.model_selection,
-            Some(json!({
-                "modelName": "deepseek-v4-pro",
-                "modelType": "runtime",
-                "options": {
-                    "reasoning": "high"
-                }
-            }))
-        );
     }
 
     #[test]

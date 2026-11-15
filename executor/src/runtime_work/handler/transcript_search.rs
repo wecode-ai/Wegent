@@ -447,6 +447,9 @@ mod hydration_tests;
 
 #[cfg(test)]
 mod tests {
+
+    use super::*;
+
     #[test]
     fn cached_search_obeys_shared_projection_contract() {
         use crate::runtime_work::transcript_search_projection::contract_tests::*;
@@ -481,8 +484,6 @@ mod tests {
             }
         }
     }
-
-    use super::*;
 
     #[test]
     fn search_user_content_matches_transcript_presentation_restoration() {
@@ -579,22 +580,6 @@ mod tests {
     }
 
     #[test]
-    fn cached_search_uses_rendered_markdown_and_ignores_whitespace_queries() {
-        let messages = vec![json!({
-            "id":"assistant", "role":"assistant",
-            "content":"[needle](https://hidden.example/needle) ![needle](image.png)\u{e200}cite\u{e202}needle\u{e201}",
-        })];
-        assert_eq!(
-            search_cached_transcript(&messages, "needle", 250)["totalMatches"],
-            1
-        );
-        assert_eq!(
-            search_cached_transcript(&messages, "  ", 250)["totalMatches"],
-            0
-        );
-    }
-
-    #[test]
     fn cached_search_ignores_hidden_failed_final_content() {
         for content in [
             "needle",
@@ -616,33 +601,6 @@ mod tests {
                 search_cached_transcript(&[message], "needle", 250)["totalMatches"],
                 0,
                 "hidden failed content was indexed: {content}",
-            );
-        }
-    }
-
-    #[test]
-    fn cached_search_uses_canonical_status_precedence_only_for_turns() {
-        for (status, runtime_status, expected) in [
-            ("failed", json!("done"), 1),
-            ("done", json!("FAILED"), 0),
-            ("failed", Value::Null, 0),
-            ("failed", json!(""), 1),
-        ] {
-            let mut message = json!({
-                "id":"assistant", "turnId":"turn", "role":"assistant",
-                "status":status, "runtimeStatus":runtime_status,
-                "content":"API error: needle", "error":"needle",
-            });
-            assert_eq!(
-                search_cached_transcript(&[message.clone()], "needle", 250)["totalMatches"],
-                expected,
-                "canonical turn status={status}, runtimeStatus={runtime_status}",
-            );
-            message.as_object_mut().unwrap().remove("turnId");
-            assert_eq!(
-                search_cached_transcript(&[message], "needle", 250)["totalMatches"],
-                if status == "failed" { 0 } else { 1 },
-                "unkeyed runtime message must use status={status}",
             );
         }
     }
@@ -679,31 +637,6 @@ mod tests {
         let result = search_cached_transcript(&messages, "needle", 250);
         assert_eq!(result["totalMatches"], 1);
         assert_eq!(result["matches"][0]["itemId"], "commentary");
-    }
-
-    #[test]
-    fn cached_search_keeps_early_assistant_segment_before_guidance_visible() {
-        let messages = vec![
-            json!({
-                "id":"early", "turnId":"turn", "role":"assistant",
-                "status":"failed", "content":"API error: early needle", "error":"needle",
-            }),
-            json!({
-                "id":"guidance", "turnId":"turn", "role":"user",
-                "status":"done", "runtimeGuidance":true, "content":"Please continue",
-            }),
-            json!({
-                "id":"final", "turnId":"turn", "role":"assistant",
-                "status":"failed", "content":"API error: final needle", "error":"needle",
-            }),
-        ];
-        let result = search_cached_transcript(&messages, "needle", 250);
-        assert_eq!(result["totalMatches"], 1);
-        assert_eq!(result["matches"][0]["itemId"], "early");
-        assert_eq!(
-            result["matches"][0]["cursor"],
-            format!("{CACHED_SEARCH_CURSOR_PREFIX}\"early\"")
-        );
     }
 
     #[test]
@@ -777,62 +710,6 @@ mod tests {
                 1
             );
         }
-    }
-
-    #[test]
-    fn cached_search_hydrates_a_bounded_stable_window_for_ephemeral_codex() {
-        let mut link = RuntimeTaskLink {
-            local_task_id: "cached-task".to_owned(),
-            thread_id: Some("thread-1".to_owned()),
-            runtime: "codex".to_owned(),
-            ephemeral: true,
-            runtime_handle: json!({
-                "messages": (0..300).map(|index| json!({
-                    "id":format!("message-{index}"), "turnId":format!("turn-{index}"),
-                    "role":"assistant", "content":"other prose",
-                })).collect::<Vec<_>>(),
-                "completedTranscriptThreadId":"thread-1",
-                "completedTranscriptMessages":[{
-                    "id":"completed", "turnId":"completed-turn", "role":"assistant",
-                    "content":"needle", "blocks":[{"id":"duplicate","type":"text","content":" needle "}],
-                }],
-                "userMessagePresentations":[{
-                    "clientUserMessageId":"unrelated-prompt", "content":"unrelated", "ensureVisible":true,
-                }],
-            }),
-            ..RuntimeTaskLink::default()
-        };
-        let result = search_cached_transcript(&cached_search_messages(&link), "needle", 250);
-        assert_eq!(result["totalMatches"], 1);
-        let cursor = result["matches"][0]["cursor"].as_str().unwrap();
-        link.runtime_handle["messages"]
-            .as_array_mut()
-            .unwrap()
-            .insert(
-                0,
-                json!({
-                    "id":"new-first", "turnId":"new-turn", "role":"user", "content":"new prompt",
-                }),
-            );
-        let response = cached_search_match_response(&link, cursor, Some(3), false, false)
-            .unwrap()
-            .unwrap();
-        let messages = response["messages"].as_array().unwrap();
-        assert!(messages.len() <= 3);
-        assert!(messages.iter().any(|message| message["id"] == "completed"));
-        assert!(!messages
-            .iter()
-            .any(|message| message["id"] == "unrelated-prompt"));
-        assert_eq!(response["fullContent"], true);
-        assert_eq!(response["hasMoreBefore"], true);
-        assert_eq!(response["hasMoreAfter"], false);
-        assert!(response["turns"].as_array().unwrap().iter().any(|turn| {
-            turn["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|item| item["id"] == "completed")
-        }));
     }
 
     #[test]

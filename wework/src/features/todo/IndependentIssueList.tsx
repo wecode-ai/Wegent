@@ -1,14 +1,26 @@
+import {
+  CollaborationIssueCard,
+  createCollaborationTranslator,
+  createIssueBoardCardLabels,
+} from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { useIndependentIssuePage } from './useIndependentIssuePage'
 
 export function IndependentIssueList({
   state,
   hideWhenEmpty = false,
+  onOpenIssue,
+  selectedId,
 }: {
   state: ReturnType<typeof useIndependentIssuePage>
   hideWhenEmpty?: boolean
+  onOpenIssue?(id: string): void
+  selectedId?: string
 }) {
-  const { t } = useTranslation('common')
+  const { t, i18n } = useTranslation('common')
+  const labels = createIssueBoardCardLabels(
+    createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en')
+  )
   if (
     !state.context?.api ||
     (hideWhenEmpty && !state.loading && !state.error && !state.items.length)
@@ -32,30 +44,66 @@ export function IndependentIssueList({
         <p className="py-3 text-sm text-text-secondary">{t('independentIssues.empty')}</p>
       ) : null}
       {state.items.map(issue => (
-        <button
-          type="button"
+        <CollaborationIssueCard
           key={issue.id}
-          data-testid={`independent-issue-${issue.id}`}
-          onClick={() => state.context?.open(issue.id)}
-          className="flex min-h-11 w-full flex-wrap items-center justify-between gap-3 border-b border-border py-4 text-left hover:bg-muted md:min-h-8"
-        >
-          <span className="min-w-0 flex-1">
-            <span className="block break-words text-base">{issue.title}</span>
-            <span className="mt-1 block line-clamp-2 text-sm text-text-secondary">
-              {issue.description}
-            </span>
-            <span className="mt-2 block text-xs text-text-secondary">
-              {issue.assignee_id == null
-                ? t('independentIssues.unassigned')
+          variant="list"
+          item={{
+            ...issue,
+            assignee_user_id: issue.assignee_id,
+            assignee_agent_id:
+              issue.metadata.assignee_resource?.kind === 'agent'
+                ? String(issue.metadata.assignee_resource.id)
+                : null,
+            assignee_agent_name: issue.metadata.resource_participants?.find(
+              resource =>
+                resource.kind === 'agent' && resource.id === issue.metadata.assignee_resource?.id
+            )?.name,
+            assignee_group_id:
+              issue.metadata.assignee_resource?.kind === 'group'
+                ? String(issue.metadata.assignee_resource.id)
+                : null,
+            assignee_group_name: issue.metadata.resource_participants?.find(
+              resource =>
+                resource.kind === 'group' && resource.id === issue.metadata.assignee_resource?.id
+            )?.name,
+            assignee_name:
+              issue.assignee_id == null
+                ? null
                 : issue.assignee_id === state.context?.userId
                   ? t('personalHome.me')
-                  : (issue.people[issue.assignee_id] ?? `#${issue.assignee_id}`)}
-            </span>
-          </span>
-          <span className="rounded-md bg-muted px-2 py-1 text-xs text-text-secondary">
-            {t(`independentIssues.${issue.status}`)}
-          </span>
-        </button>
+                  : (issue.people[issue.assignee_id] ?? '#' + issue.assignee_id),
+          }}
+          reference=""
+          labels={{
+            ...labels,
+            statuses: {
+              pending: t('independentIssues.pending'),
+              in_progress: t('independentIssues.in_progress'),
+              completed: t('independentIssues.completed'),
+            },
+          }}
+          display={{
+            showAssignee: true,
+            showPriority: true,
+            showTags: false,
+            showDate: true,
+            showReference: false,
+          }}
+          detailButtonTestId={`independent-issue-${issue.id}`}
+          articleProps={{
+            'aria-current':
+              (selectedId ?? state.context?.selectedId) === issue.id ? 'true' : undefined,
+          }}
+          cardClassName="cursor-pointer aria-[current=true]:bg-muted"
+          onOpen={() => (onOpenIssue ?? state.context?.open)?.(issue.id)}
+          summary={
+            issue.description ? (
+              <p className="mt-1 line-clamp-1 text-sm leading-5 text-text-secondary">
+                {issue.description}
+              </p>
+            ) : undefined
+          }
+        />
       ))}
       {state.hasMore ? (
         <button

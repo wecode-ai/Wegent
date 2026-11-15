@@ -1,38 +1,42 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
+import { KeyboardAwareLegendList, useKeyboardScrollToEnd } from '@legendapp/list/keyboard'
+import type { LegendListRef } from '@legendapp/list/react-native'
 import * as Clipboard from 'expo-clipboard'
-import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  FlatList,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native'
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefObject,
+} from 'react'
+import { type GestureResponderEvent, Pressable, StyleSheet, View } from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
+import type { SharedValue } from 'react-native-reanimated'
 
-import {
-  isNearMessageListBottom,
-  messageListBottomOffset,
-  reduceMessageListFollow,
-  shouldLoadEarlierMessages,
-} from '@/domain/messageListScroll'
+import { hasAppendedUserMessage } from '@/domain/messageListScroll'
 import { buildThinkingPreview } from '@/domain/messagePresentation'
-import type { ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
+import { pendingMobileUserInput } from '@/domain/requestUserInput'
+import type { Attachment, ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { MessageContextMenu, type MessageMenuAnchor } from './MessageContextMenu'
 import { ProcessingTimeline } from './ProcessingTimeline'
+import type { RequestUserInputHandlers } from './RequestUserInputCard'
+import { useMessageListDiagnostics } from './useMessageListDiagnostics'
+import { useMobileFilePreview } from './files/FilePreviewContext'
 
-interface MessageListProps {
-  bottomInset: number
-  conversationId: string
-  entryRevision: number
+interface MessageListProps extends RequestUserInputHandlers {
+  dataKey: string
+  configuration?: ReactElement
+  contentInsetEndAdjustment: SharedValue<number>
+  keyboardOffset: number
+  listRef: RefObject<LegendListRef | null>
   hasMoreBefore: boolean
   messages: ChatMessage[]
   loading: boolean
   loadingMoreBefore: boolean
+  running: boolean
   onLoadMoreBefore: () => Promise<void>
   topInset: number
 }
@@ -42,111 +46,90 @@ interface MessageMenuSelection {
   content: string
 }
 
+interface ConfigurationListItem {
+  kind: 'configuration'
+  id: string
+}
+
+const configurationItems: ConfigurationListItem[] = [
+  { kind: 'configuration', id: 'new-conversation-configuration' },
+]
+
 export function MessageList({
-  bottomInset,
-  conversationId,
-  entryRevision,
+  dataKey,
+  configuration,
+  contentInsetEndAdjustment,
+  keyboardOffset,
+  listRef,
   hasMoreBefore,
   messages,
   loading,
   loadingMoreBefore,
+  running,
   onLoadMoreBefore,
+  onRequestUserInputSubmit,
+  onRequestUserInputSkip,
   topInset,
 }: MessageListProps) {
-  const listRef = useRef<FlatList<ChatMessage>>(null)
-  const followsLatestRef = useRef(true)
-  const userDraggingRef = useRef(false)
-  const contentHeightRef = useRef(0)
-  const viewportHeightRef = useRef(0)
-  const scrollFrameRef = useRef<number | null>(null)
+  const pendingInputKeys = new Set(pendingMobileUserInput(messages).keys())
+  const previousRef = useRef({ dataKey, messages, loading })
+  const paginationRef = useRef({ dataKey, loading: false, userScrolled: false })
+  if (paginationRef.current.dataKey !== dataKey) {
+    paginationRef.current = { dataKey, loading: false, userScrolled: false }
+  }
+  const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef })
+  const diagnostics = useMessageListDiagnostics({
+    listRef,
+    contentInsetEndAdjustment,
+    dataKey,
+    messages,
+    running,
+    freeze,
+  })
   const [menuSelection, setMenuSelection] = useState<MessageMenuSelection | null>(null)
-  const scrollToLatest = useCallback(() => {
-    if (!followsLatestRef.current || userDraggingRef.current) return
-    if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current)
-    scrollFrameRef.current = requestAnimationFrame(() => {
-      scrollFrameRef.current = null
-      if (!followsLatestRef.current || userDraggingRef.current || viewportHeightRef.current <= 0) {
-        return
-      }
-      listRef.current?.scrollToOffset({
-        animated: false,
-        offset: messageListBottomOffset(contentHeightRef.current, viewportHeightRef.current),
-      })
-    })
-  }, [])
+
+  useEffect(() => setMenuSelection(null), [dataKey])
 
   useEffect(() => {
-    followsLatestRef.current = reduceMessageListFollow(followsLatestRef.current, {
-      type: 'conversation-entered',
-    })
-    userDraggingRef.current = false
-    setMenuSelection(null)
-    scrollToLatest()
-  }, [conversationId, entryRevision, scrollToLatest])
+    const previous = previousRef.current
+    previousRef.current = { dataKey, messages, loading }
+    if (
+      previous.dataKey !== dataKey ||
+      loading ||
+      previous.loading ||
+      !hasAppendedUserMessage(previous.messages, messages)
+    )
+      return
+    // The list owns measurement, animation and gesture interruption. Only a new
+    // user turn overrides reading history; streamed deltas use built-in following.
+    diagnostics.reportSend()
+    void scrollMessageToEnd({ animated: true, closeKeyboard: false })
+  }, [dataKey, diagnostics.reportSend, loading, messages, scrollMessageToEnd])
 
-  useEffect(() => {
-    if (!messages.length || !followsLatestRef.current) return
-    scrollToLatest()
-  }, [messages, scrollToLatest])
+  const loadEarlier = useCallback(async () => {
+    const pagination = paginationRef.current
+    if (
+      pagination.dataKey !== dataKey ||
+      !pagination.userScrolled ||
+      loading ||
+      !hasMoreBefore ||
+      loadingMoreBefore ||
+      pagination.loading
+    )
+      return
+    pagination.loading = true
+    try {
+      await onLoadMoreBefore()
+    } finally {
+      pagination.loading = false
+    }
+  }, [dataKey, loading, hasMoreBefore, loadingMoreBefore, onLoadMoreBefore])
 
-  useEffect(
-    () => () => {
-      if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current)
-    },
-    []
-  )
-
-  const handleContentSizeChange = useCallback(
-    (_width: number, height: number) => {
-      contentHeightRef.current = height
-      scrollToLatest()
-    },
-    [scrollToLatest]
-  )
-
-  const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      viewportHeightRef.current = event.nativeEvent.layout.height
-      scrollToLatest()
-    },
-    [scrollToLatest]
-  )
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (!userDraggingRef.current) return
-      followsLatestRef.current = reduceMessageListFollow(followsLatestRef.current, {
-        type: 'scroll-position-changed',
-        metrics: event.nativeEvent,
-        userInitiated: true,
-      })
-      if (
-        shouldLoadEarlierMessages(
-          event.nativeEvent,
-          hasMoreBefore,
-          loadingMoreBefore,
-          userDraggingRef.current
-        )
-      ) {
-        void onLoadMoreBefore()
-      }
-    },
-    [hasMoreBefore, loadingMoreBefore, onLoadMoreBefore]
-  )
-
-  const handleScrollBeginDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    userDraggingRef.current = true
-    followsLatestRef.current = isNearMessageListBottom(event.nativeEvent)
-  }, [])
-
-  const handleScrollEndDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    followsLatestRef.current = isNearMessageListBottom(event.nativeEvent)
-    userDraggingRef.current = false
-  }, [])
-
-  const handleMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    followsLatestRef.current = isNearMessageListBottom(event.nativeEvent)
-  }, [])
+  const handleUserScroll = useCallback(() => {
+    diagnostics.reportUserScroll()
+    paginationRef.current.userScrolled = true
+    if (listRef.current?.getState().isAtStart) void loadEarlier()
+  }, [diagnostics.reportUserScroll, listRef, loadEarlier])
 
   const openMessageMenu = useCallback((message: ChatMessage, event: GestureResponderEvent) => {
     if (!message.content.trim()) return
@@ -163,19 +146,35 @@ export function MessageList({
     void Clipboard.setStringAsync(content)
   }, [menuSelection])
 
-  if (loading && messages.length === 0) return <ActivityIndicator style={styles.center} />
-
   return (
     <>
-      <FlatList
+      <KeyboardAwareLegendList<ChatMessage | ConfigurationListItem>
+        alignItemsAtEnd={Boolean(configuration)}
+        contentInsetEndAdjustment={contentInsetEndAdjustment}
         contentContainerStyle={[
-          messages.length ? styles.content : styles.emptyContent,
+          configuration
+            ? styles.configurationContent
+            : messages.length
+              ? styles.content
+              : styles.emptyContent,
           { paddingTop: topInset },
         ]}
-        data={messages}
+        data={configuration ? configurationItems : messages}
+        dataKey={dataKey}
+        extraData={{
+          configuration,
+          loading,
+          pendingInputKeys,
+          onRequestUserInputSubmit,
+          onRequestUserInputSkip,
+        }}
+        freeze={freeze}
+        initialScrollAtEnd
         ItemSeparatorComponent={MessageSeparator}
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
+        keyboardLiftBehavior="whenAtEnd"
+        keyboardOffset={keyboardOffset}
         keyExtractor={message => message.id}
         ListHeaderComponent={
           loadingMoreBefore ? (
@@ -184,26 +183,56 @@ export function MessageList({
             </View>
           ) : null
         }
-        ListFooterComponent={messages.length > 0 ? <View style={{ height: bottomInset }} /> : null}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text variant="headlineSmall">从这里开始</Text>
-            <Text style={styles.muted} variant="bodyLarge">
-              选择云端项目，或直接向在线 executor 发起会话。
-            </Text>
+        ListFooterComponent={
+          <View>
+            {running && messages.at(-1)?.role !== 'assistant' ? (
+              <ThinkingIndicator preview="" />
+            ) : null}
           </View>
         }
-        onContentSizeChange={handleContentSizeChange}
-        onLayout={handleLayout}
-        onMomentumScrollEnd={handleMomentumScrollEnd}
-        onScroll={handleScroll}
-        onScrollBeginDrag={handleScrollBeginDrag}
-        onScrollEndDrag={handleScrollEndDrag}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={styles.center} />
+          ) : (
+            <View style={styles.empty}>
+              <Text variant="headlineSmall">从这里开始</Text>
+              <Text style={styles.muted} variant="bodyLarge">
+                选择云端项目，或直接向在线 executor 发起会话。
+              </Text>
+            </View>
+          )
+        }
+        onStartReached={loadEarlier}
+        onReady={diagnostics.onReady}
+        onScroll={diagnostics.onScroll}
+        onItemSizeChanged={diagnostics.onItemSizeChanged}
+        onLayout={diagnostics.onLayout}
+        onContentSizeChange={diagnostics.onContentSizeChange}
+        onStartReachedThreshold={0.1}
+        onUserScroll={handleUserScroll}
+        maintainScrollAtEnd={{ animated: false }}
+        maintainVisibleContentPosition
         ref={listRef}
-        renderItem={({ item }) => <Message message={item} onLongPress={openMessageMenu} />}
+        renderItem={({ item }) =>
+          'kind' in item ? (
+            loading ? (
+              <ActivityIndicator style={styles.center} />
+            ) : (
+              configuration
+            )
+          ) : (
+            <Message
+              message={item}
+              onLongPress={openMessageMenu}
+              pendingInputKeys={pendingInputKeys}
+              onRequestUserInputSubmit={onRequestUserInputSubmit}
+              onRequestUserInputSkip={onRequestUserInputSkip}
+            />
+          )
+        }
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
+        style={styles.list}
         testID="message-list"
       />
       <MessageContextMenu
@@ -219,70 +248,127 @@ function MessageSeparator() {
   return <View style={styles.messageSeparator} />
 }
 
-function Message({
-  message,
-  onLongPress,
-}: {
-  message: ChatMessage
-  onLongPress: (message: ChatMessage, event: GestureResponderEvent) => void
-}) {
-  const theme = useTheme()
+const Message = memo(
+  function Message({
+    message,
+    onLongPress,
+    pendingInputKeys,
+    onRequestUserInputSubmit,
+    onRequestUserInputSkip,
+  }: {
+    message: ChatMessage
+    onLongPress: (message: ChatMessage, event: GestureResponderEvent) => void
+    pendingInputKeys: ReadonlySet<string>
+  } & RequestUserInputHandlers) {
+    const theme = useTheme()
 
-  if (message.role === 'user') {
+    if (message.role === 'user') {
+      return (
+        <View style={styles.userRow}>
+          <Pressable
+            accessibilityHint="长按可复制消息"
+            delayLongPress={350}
+            onLongPress={event => onLongPress(message, event)}
+            style={({ pressed }) => [
+              styles.userBubble,
+              { backgroundColor: theme.colors.surfaceVariant },
+              pressed && styles.messagePressed,
+            ]}
+            testID={`message-${message.id}`}
+          >
+            <Text variant="bodyLarge">{message.content}</Text>
+          </Pressable>
+          <MessageAttachments messageId={message.id} attachments={message.attachments} />
+        </View>
+      )
+    }
+
+    const thinkingPreview =
+      message.status === 'streaming'
+        ? buildThinkingPreview(message.streamingThinkingContent ?? '')
+        : ''
+
     return (
-      <View style={styles.userRow}>
-        <Pressable
-          accessibilityHint="长按可复制消息"
-          delayLongPress={350}
-          onLongPress={event => onLongPress(message, event)}
-          style={({ pressed }) => [
-            styles.userBubble,
-            { backgroundColor: theme.colors.surfaceVariant },
-            pressed && styles.messagePressed,
-          ]}
-          testID={`message-${message.id}`}
-        >
-          <Text variant="bodyLarge">{message.content}</Text>
-        </Pressable>
-      </View>
+      <Pressable
+        accessible={false}
+        accessibilityHint={message.content.trim() ? '长按可复制消息' : undefined}
+        delayLongPress={350}
+        onLongPress={message.content.trim() ? event => onLongPress(message, event) : undefined}
+        style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
+        testID={`message-${message.id}`}
+      >
+        <ProcessingTimeline
+          message={message}
+          pendingInputKeys={pendingInputKeys}
+          onRequestUserInputSubmit={onRequestUserInputSubmit}
+          onRequestUserInputSkip={onRequestUserInputSkip}
+        />
+        {message.content ? (
+          <AssistantMarkdown streaming={message.status === 'streaming'}>
+            {message.content}
+          </AssistantMarkdown>
+        ) : null}
+        <MessageAttachments messageId={message.id} attachments={message.attachments} />
+        {message.status === 'completed' && message.fileChanges ? (
+          <FileChangesSummary summary={message.fileChanges} />
+        ) : null}
+        {thinkingPreview ? <ThinkingIndicator preview={thinkingPreview} /> : null}
+        {(message.status === 'pending' || message.status === 'streaming') &&
+        !message.content &&
+        !thinkingPreview &&
+        !message.blocks?.length ? (
+          <ThinkingIndicator preview="" />
+        ) : null}
+        {message.error ? (
+          <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
+            {message.error}
+          </Text>
+        ) : null}
+      </Pressable>
     )
-  }
+  },
+  (previous, next) =>
+    previous.message === next.message &&
+    previous.onLongPress === next.onLongPress &&
+    previous.onRequestUserInputSubmit === next.onRequestUserInputSubmit &&
+    previous.onRequestUserInputSkip === next.onRequestUserInputSkip &&
+    previous.pendingInputKeys.size === next.pendingInputKeys.size &&
+    [...previous.pendingInputKeys].every(key => next.pendingInputKeys.has(key))
+)
 
-  const thinkingPreview =
-    message.status === 'streaming'
-      ? buildThinkingPreview(message.streamingThinkingContent ?? '')
-      : ''
-
+function MessageAttachments({
+  messageId,
+  attachments,
+}: {
+  messageId: string
+  attachments?: Attachment[]
+}) {
+  const preview = useMobileFilePreview()
+  const theme = useTheme()
+  if (!attachments?.length) return null
   return (
-    <Pressable
-      accessibilityHint={message.content.trim() ? '长按可复制消息' : undefined}
-      delayLongPress={350}
-      onLongPress={message.content.trim() ? event => onLongPress(message, event) : undefined}
-      style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
-      testID={`message-${message.id}`}
-    >
-      <ProcessingTimeline message={message} />
-      {message.content ? (
-        <AssistantMarkdown streaming={message.status === 'streaming'}>
-          {message.content}
-        </AssistantMarkdown>
-      ) : null}
-      {message.status === 'completed' && message.fileChanges ? (
-        <FileChangesSummary summary={message.fileChanges} />
-      ) : null}
-      {thinkingPreview ? <ThinkingIndicator preview={thinkingPreview} /> : null}
-      {(message.status === 'pending' || message.status === 'streaming') &&
-      !message.content &&
-      !thinkingPreview &&
-      !message.blocks?.length ? (
-        <ActivityIndicator size={16} style={styles.streaming} />
-      ) : null}
-      {message.error ? (
-        <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
-          {message.error}
-        </Text>
-      ) : null}
-    </Pressable>
+    <View style={{ gap: 8, paddingTop: 8 }}>
+      {attachments.map(attachment => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`预览 ${attachment.filename}`}
+          disabled={!preview}
+          key={`${attachment.id}:${attachment.filename}`}
+          onPress={() => preview?.openAttachment(attachment)}
+          style={[styles.fileChangesPill, { backgroundColor: theme.colors.surfaceVariant }]}
+          testID={`message-attachment-${messageId}-${attachment.id}`}
+        >
+          <Ionicons
+            color={theme.colors.onSurfaceVariant}
+            name={attachment.mime_type.startsWith('image/') ? 'image-outline' : 'document-outline'}
+            size={20}
+          />
+          <Text numberOfLines={2} style={{ flexShrink: 1 }}>
+            {attachment.filename}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
   )
 }
 
@@ -295,13 +381,14 @@ function ThinkingIndicator({ preview }: { preview: string }) {
       testID="thinking-indicator"
       variant="bodyMedium"
     >
-      思考中 · {preview}
+      {preview ? `思考中 · ${preview}` : '思考中'}
     </Text>
   )
 }
 
 function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
   const theme = useTheme()
+  const preview = useMobileFilePreview()
   const [expanded, setExpanded] = useState(false)
   return (
     <View style={styles.fileChangesContainer}>
@@ -334,7 +421,19 @@ function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
           testID="file-changes-list"
         >
           {summary.files.map(file => (
-            <View style={styles.fileChangeRow} key={`${file.oldPath ?? ''}:${file.path}`}>
+            <Pressable
+              style={styles.fileChangeRow}
+              key={`${file.oldPath ?? ''}:${file.path}`}
+              accessibilityRole="button"
+              accessibilityLabel={`查看 ${file.path}`}
+              disabled={!preview || (!summary.source && !preview.target)}
+              onPress={() =>
+                summary.source
+                  ? preview?.openChanges(summary.source, file.path)
+                  : preview?.openWorkspaceFile(file.path)
+              }
+              testID={`message-file-preview-${file.path}`}
+            >
               <Text
                 numberOfLines={1}
                 style={[styles.filePath, { color: theme.colors.onSurface }]}
@@ -354,7 +453,7 @@ function FileChangesSummary({ summary }: { summary: ChatFileChangesSummary }) {
                   </Text>
                 </View>
               ) : null}
-            </View>
+            </Pressable>
           ))}
         </View>
       ) : null}
@@ -369,9 +468,12 @@ function compactCount(value: number): string {
 
 const styles = StyleSheet.create({
   center: { flex: 1 },
+  list: { flex: 1 },
   content: {
     paddingHorizontal: 18,
+    paddingBottom: 20,
   },
+  configurationContent: { paddingBottom: 20 },
   messageSeparator: { height: 22 },
   olderMessagesLoader: { minHeight: 36, alignItems: 'center', justifyContent: 'center' },
   emptyContent: { flexGrow: 1 },
@@ -414,6 +516,5 @@ const styles = StyleSheet.create({
   fileStats: { flexDirection: 'row', gap: 8 },
   additions: { color: '#34a853' },
   deletions: { color: '#ea4335' },
-  streaming: { alignSelf: 'flex-start', marginTop: 8 },
   error: { marginTop: 8 },
 })

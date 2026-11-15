@@ -27,6 +27,7 @@ impl Application {
         };
         let mut background_jobs = crate::background_jobs::BackgroundJobRegistry::default();
         crate::background_jobs::register_public_jobs(&mut background_jobs, state.clone())?;
+        crate::internal_callback::recovery::start(&state);
         Ok(Self {
             state,
             routes,

@@ -149,7 +149,7 @@ export function createDesktopScenario({
           where: [
             { path: 'params.limit', equals: 20 },
             { path: 'params.includeFullContent', equals: true },
-            { path: 'params.projectSession.issueId', equals: issue.id },
+            { path: 'params.taskId', equals: address.taskId },
           ],
         })
         await control.command('fill', `${CONTENT} [data-testid="cloud-board-search"]`, {

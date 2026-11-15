@@ -65,6 +65,7 @@ pub mod runtime_features;
 pub mod runtime_projection;
 pub mod runtime_request;
 pub mod runtime_rpc;
+mod runtime_rpc_policy;
 pub mod session;
 pub mod skill_registry;
 pub mod terminal_attach;

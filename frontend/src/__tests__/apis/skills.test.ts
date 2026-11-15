@@ -10,7 +10,44 @@ jest.mock('@/lib/runtime-config', () => ({
   getApiBaseUrl: jest.fn(() => 'http://localhost:8000/api'),
 }))
 
-import { fetchSkillReferences, updateMyDefaultSkillBindingExceptions } from '@/apis/skills'
+import {
+  fetchSkillReferences,
+  fetchUnifiedSkillsList,
+  updateMyDefaultSkillBindingExceptions,
+} from '@/apis/skills'
+
+it('loads binding options through the shared backend policy and preserves same-name identities', async () => {
+  const originalFetch = global.fetch
+  const fetchMock = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      items: [7, 8].map(id => ({
+        metadata: {
+          name: 'same-name',
+          namespace: 'default',
+          labels: { id: String(id), user_id: '2' },
+        },
+        spec: { description: 'Option metadata' },
+      })),
+    }),
+  })
+  global.fetch = fetchMock
+  try {
+    const skills = await fetchUnifiedSkillsList({
+      binding: {
+        namespace: 'dev',
+        botId: 10,
+        targetGroupNames: ['dev', 'research'],
+      },
+    })
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://localhost:8000/api/v1/kinds/skills?skip=0&limit=100&binding_namespace=dev&binding_bot_id=10&target_group_names=dev&target_group_names=research'
+    )
+    expect(skills.map(skill => skill.id)).toEqual([7, 8])
+  } finally {
+    global.fetch = originalFetch
+  }
+})
 
 describe('fetchSkillReferences', () => {
   const originalFetch = global.fetch

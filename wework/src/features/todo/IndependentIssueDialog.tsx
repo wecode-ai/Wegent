@@ -1,9 +1,11 @@
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { ApiError } from '@/api/http'
 import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
 import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { X, Maximize2, Minimize2 } from 'lucide-react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -12,28 +14,35 @@ import {
   independentIssueInput,
   type IndependentIssue,
   type IndependentIssueComment,
-  type IndependentIssueInput,
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
-import { IndependentIssueEditor } from './IndependentIssueEditor'
+import { IndependentIssueEditor, type IssueCreationInput } from './IndependentIssueEditor'
 
 const action =
   'min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8'
 
 export function IndependentIssueDialog({
   api,
+  collaborationApi,
   userId,
   issueId,
   onClose,
   onSaved,
   onOpenProjectIssue,
+  presentation = 'dialog',
+  expanded = false,
+  onExpandedChange,
 }: {
+  collaborationApi?: SharedWorkspaceApi
   api: PersonalIssuesApi
   userId: number
   issueId: string | null
   onClose(): void
   onSaved(issue: IndependentIssue | null): void
   onOpenProjectIssue?(projectId: string, issueId: string): void
+  presentation?: 'dialog' | 'drawer'
+  expanded?: boolean
+  onExpandedChange?(expanded: boolean): void
 }) {
   const { t } = useTranslation('common')
   const [issue, setIssue] = useState<IndependentIssue | null>(null)
@@ -51,8 +60,15 @@ export function IndependentIssueDialog({
     () => {
       if (!busy) onClose()
     },
-    !deleting,
+    presentation === 'dialog' && !deleting,
     'input, button'
+  )
+  useEscapeKey(
+    () => {
+      if (!busy) onClose()
+    },
+    presentation === 'drawer' && !deleting,
+    ref
   )
   useEffect(() => {
     if (!issueId) return
@@ -107,10 +123,17 @@ export function IndependentIssueDialog({
       setBusy(false)
     }
   }
-  const save = (input: IndependentIssueInput) =>
+  const save = ({ project_id, project_status, ...input }: IssueCreationInput) =>
     run(async () => {
       const row = issue ? await api.update(issue.id, input) : await api.create(input)
       setIssue(row)
+      if (project_id) {
+        const target = await api.associate(row.id, project_id, row.version, project_status ?? '')
+        onSaved(null)
+        onOpenProjectIssue?.(target.project_id, target.issue_id)
+        onClose()
+        return
+      }
       setEditing(false)
       onSaved(row)
     })
@@ -135,35 +158,61 @@ export function IndependentIssueDialog({
       : id === userId
         ? t('personalHome.me')
         : (issue?.people[id] ?? `#${id}`)
-  return createPortal(
+  const content = (
     <>
-      <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
+      <div
+        className={
+          presentation === 'drawer'
+            ? `relative flex h-full min-h-0 min-w-0 shrink-0 border-l border-border ${expanded ? 'w-[min(75%,72rem)]' : 'w-[min(44%,32rem)]'}`
+            : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
+        }
+      >
         <div
           ref={ref}
-          role="dialog"
-          aria-modal="true"
+          role={presentation === 'drawer' ? 'region' : 'dialog'}
+          aria-modal={presentation === 'dialog' ? true : undefined}
           aria-labelledby="independent-issue-dialog-title"
           inert={deleting}
           data-testid="independent-issue-dialog"
-          className="flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col rounded-xl border border-border bg-popover text-text-primary shadow-lg"
+          className={`flex w-full max-w-3xl flex-col border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-xl'}`}
         >
           <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-5">
             <div>
               <h2 id="independent-issue-dialog-title" className="text-heading-sm font-medium">
                 {issue?.title ?? t('independentIssues.create')}
               </h2>
-              <p className="mt-1 text-sm text-text-secondary">{t('independentIssues.noProject')}</p>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t(!issueId ? 'issue_creation.generic_scope_hint' : 'independentIssues.noProject')}
+              </p>
             </div>
-            <button
-              type="button"
-              disabled={busy}
-              data-testid="independent-issue-close"
-              aria-label={t('independentIssues.close')}
-              onClick={onClose}
-              className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex shrink-0 gap-1">
+              {presentation === 'drawer' && onExpandedChange && (
+                <button
+                  type="button"
+                  data-testid="independent-issue-expand"
+                  aria-pressed={expanded}
+                  aria-label={t(
+                    expanded
+                      ? 'workbench.restore_right_workspace_panel'
+                      : 'workbench.expand_right_workspace_panel'
+                  )}
+                  onClick={() => onExpandedChange(!expanded)}
+                  className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+                >
+                  {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                data-testid="independent-issue-close"
+                aria-label={t('independentIssues.close')}
+                onClick={onClose}
+                className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </header>
           <div className="min-h-0 overflow-auto p-5">
             {error ? (
@@ -189,6 +238,8 @@ export function IndependentIssueDialog({
             ) : editing ? (
               <IndependentIssueEditor
                 api={api}
+                collaborationApi={collaborationApi}
+                allowProjectSelection={!issueId}
                 issue={issue}
                 userId={userId}
                 busy={busy}
@@ -283,7 +334,13 @@ export function IndependentIssueDialog({
                   </div>
                   <div>
                     <dt className="text-text-secondary">{t('independentIssues.assignee')}</dt>
-                    <dd>{name(issue.assignee_id)}</dd>
+                    <dd>
+                      {issue.metadata.resource_participants?.find(
+                        resource =>
+                          resource.kind === issue.metadata.assignee_resource?.kind &&
+                          resource.id === issue.metadata.assignee_resource?.id
+                      )?.name ?? name(issue.assignee_id)}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-text-secondary">{t('independentIssues.priority')}</dt>
@@ -300,8 +357,12 @@ export function IndependentIssueDialog({
                   <div>
                     <dt className="text-text-secondary">{t('independentIssues.participants')}</dt>
                     <dd>
-                      {issue.metadata.participants.map(name).join('、') ||
-                        t('independentIssues.creatorOnly')}
+                      {[
+                        ...issue.metadata.participants.map(name),
+                        ...(issue.metadata.resource_participants ?? []).map(
+                          resource => resource.name
+                        ),
+                      ].join('、') || t('independentIssues.creatorOnly')}
                     </dd>
                   </div>
                 </dl>
@@ -386,7 +447,7 @@ export function IndependentIssueDialog({
           })
         }
       />
-    </>,
-    document.body
+    </>
   )
+  return presentation === 'drawer' ? content : createPortal(content, document.body)
 }

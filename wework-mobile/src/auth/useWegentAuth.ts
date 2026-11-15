@@ -1,6 +1,6 @@
 import * as WebBrowser from 'expo-web-browser'
 import { AppState } from 'react-native'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   createAuthorizationSession,
@@ -265,11 +265,23 @@ export function useWegentAuth(): WegentAuthState {
     return () => subscription.remove()
   }, [accessTokenExpiresAt, refresh, status])
 
+  const config = useMemo(
+    () => (backend && accessToken ? { ...backend, accessToken } : null),
+    [
+      backend?.backendUrl,
+      backend?.apiBaseUrl,
+      backend?.socketBaseUrl,
+      backend?.socketPath,
+      backend?.webUrl,
+      accessToken,
+    ]
+  )
+
   return {
     status,
     backend,
     backendUrl: backendInput,
-    config: backend && accessToken ? { ...backend, accessToken } : null,
+    config,
     user,
     error,
     setBackendUrl,

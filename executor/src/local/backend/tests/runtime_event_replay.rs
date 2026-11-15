@@ -9,11 +9,16 @@ use tokio::sync::mpsc;
 async fn receive_through(
     receiver: &mut mpsc::UnboundedReceiver<Value>,
     marker: &str,
+    is_app: bool,
 ) -> Vec<String> {
     tokio::time::timeout(Duration::from_secs(10), async {
         let mut turns = Vec::new();
         loop {
             let event = receiver.recv().await.expect("the backend must stay open");
+            assert_eq!(
+                event.get("appRemoteTaskAccessEnabled"),
+                is_app.then_some(&Value::Bool(false))
+            );
             let turn = if event["event"] == "executor.event_lagged" {
                 "history-gap"
             } else {
@@ -40,7 +45,10 @@ fn connection_replacement_preserves_runtime_event_delivery_progress() {
             .enable_all()
             .build()
             .unwrap()
-            .block_on(verify_connection_replacement())
+            .block_on(async {
+                verify_connection_replacement("local").await;
+                verify_connection_replacement("app").await;
+            })
     });
     restore_env("WEGENT_EXECUTOR_HOME", previous_home);
     if let Err(error) = result {
@@ -48,7 +56,8 @@ fn connection_replacement_preserves_runtime_event_delivery_progress() {
     }
 }
 
-async fn verify_connection_replacement() {
+async fn verify_connection_replacement(device_type: &str) {
+    let is_app = device_type == "app";
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let registered = Arc::new(Notify::new());
@@ -74,6 +83,7 @@ async fn verify_connection_replacement() {
         axum::serve(listener, router).await.unwrap();
     });
     let config = DeviceConfig {
+        device_type: device_type.to_owned(),
         device_id: "local-device".to_owned(),
         runtime_instance_id: "runtime-1".to_owned(),
         ..DeviceConfig::default()
@@ -99,7 +109,7 @@ async fn verify_connection_replacement() {
     publish(&events, "response.completed", "already-delivered");
     publish(&events, "runtime.turn.updated", "first-barrier");
     assert_eq!(
-        receive_through(&mut receiver, "first-barrier").await,
+        receive_through(&mut receiver, "first-barrier", is_app).await,
         ["already-delivered", "first-barrier"]
     );
 
@@ -112,7 +122,7 @@ async fn verify_connection_replacement() {
     publish(&events, "response.completed", "new-turn");
     publish(&events, "runtime.turn.updated", "second-barrier");
     assert_eq!(
-        receive_through(&mut receiver, "second-barrier").await,
+        receive_through(&mut receiver, "second-barrier", is_app).await,
         ["new-turn", "second-barrier"]
     );
 
@@ -124,7 +134,7 @@ async fn verify_connection_replacement() {
         .unwrap();
     publish(&events, "runtime.turn.updated", "third-barrier");
     assert_eq!(
-        receive_through(&mut receiver, "third-barrier").await,
+        receive_through(&mut receiver, "third-barrier", is_app).await,
         ["completed-offline", "third-barrier"]
     );
 
@@ -151,12 +161,12 @@ async fn verify_connection_replacement() {
         .collect::<Vec<_>>();
     expected.extend(["retained-after-gap", "history-gap"].map(str::to_owned));
     assert_eq!(
-        receive_through(&mut receiver, "history-gap").await,
+        receive_through(&mut receiver, "history-gap", is_app).await,
         expected
     );
     publish(&events, "runtime.turn.updated", "fourth-barrier");
     assert_eq!(
-        receive_through(&mut receiver, "fourth-barrier").await,
+        receive_through(&mut receiver, "fourth-barrier", is_app).await,
         ["fourth-barrier"]
     );
 
