@@ -41,15 +41,59 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(denied)?;
         let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let manual = actor.runtime_handle["executionRequest"]["standInManualConfirmation"] == true;
+        if manual
+            && !actor.runtime_handle["executionRequest"]["standInSourceBindings"]
+                .as_array()
+                .is_some_and(|bindings| {
+                    bindings.iter().any(|binding| {
+                        binding["recordId"] == message
+                            && super::stand_in_read_sources::same_source(
+                                &binding["source"],
+                                &source,
+                            )
+                    })
+                })
+        {
+            return Err(denied());
+        }
         if !manual && (config["enabled"] != true || source["policy"]["automatic"] != true) {
             return Err(denied());
         }
-        let ask = identity.ask_before_act
+        let ask = manual
+            || identity.ask_before_act
             || source["policy"]["askBeforeAct"] == true
             || actor.runtime_handle["origin"]["askBeforeAct"] == true;
         config["userId"] = json!(identity.user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":ask});
         Ok((config, record.clone()))
+    }
+
+    pub(super) fn authorized_manual_source_turn(
+        &self,
+        link: &RuntimeTaskLink,
+        request: &ExecutionRequest,
+    ) -> Result<bool, AppIpcError> {
+        let saved = &link.runtime_handle["executionRequest"];
+        if saved["standInDelegation"]["sourceMessageId"].is_string() {
+            let parent = self.source_task_parent(link)?;
+            return Ok(self.local_task_link(&parent.task_id).is_some_and(|parent| {
+                parent.runtime_handle["executionRequest"]["standInManualConfirmation"] == true
+            }));
+        }
+        if matches!(
+            link.runtime_handle["origin"]["type"].as_str(),
+            Some("connection_work" | "dingtalk_work")
+        ) && saved["standInManualConfirmation"] == true
+            && request.extra.get("standInManualConfirmation") == Some(&json!(true))
+        {
+            if request.extra.get("standInSourceBindings") != saved.get("standInSourceBindings") {
+                return Err(denied());
+            }
+            let mut request = request.clone();
+            self.refresh_stand_in_confirmation(&link.local_task_id, &mut request)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     pub(super) async fn create_source_task(

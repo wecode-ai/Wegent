@@ -42,12 +42,18 @@ fn fixture(
         .ingest_stand_in_message(7, "@primary", &source, &message, None)
         .unwrap();
     let id = work["id"].as_str().unwrap();
+    let bindings: Vec<_> = store
+        .stand_in_messages(7, id)
+        .unwrap()
+        .iter()
+        .map(|message| json!({"recordId":message["recordId"],"source":message["source"]}))
+        .collect();
     let origin = json!({"type":"connection_work","initiatedBy":"stand_in","userId":7,"deviceId":"mac","standInId":"@primary","workId":id,"askBeforeAct":true});
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: id.into(),
         runtime: "codex".into(),
         thread_id: Some("source-thread".into()),
-        runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":7,"origin":origin}}),
+        runtime_handle: json!({"origin":origin,"executionRequest":{"user_id":7,"origin":origin,"standInSourceBindings":bindings}}),
         ..Default::default()
     });
     let identity = crate::task_runtime::mcp::stand_in_identity(
@@ -229,5 +235,109 @@ async fn confirmation_required_source_task_obeys_live_policy_without_host_manual
             .source_task_context(&identity, args["messageId"].as_str().unwrap())
             .unwrap();
         assert_eq!(config["handlingPolicy"]["askBeforeAct"], true);
+
+        let source = store
+            .stand_in_messages(7, identity.work.as_deref().unwrap())
+            .unwrap()[0]["source"]
+            .clone();
+        store.ingest_stand_in_message(7, "@primary", &source,
+            &json!({"id":"later-request","text":"Start another task","isOwn":true,"isSelfConversation":true}), identity.work.as_deref()).unwrap();
+        let later = store
+            .stand_in_messages(7, identity.work.as_deref().unwrap())
+            .unwrap()
+            .into_iter()
+            .find(|record| record["recordId"] != args["messageId"])
+            .unwrap();
+        let mut unbound = args.clone();
+        unbound["messageId"] = later["recordId"].clone();
+        assert_eq!(
+            handler
+                .stand_in_task_operation(identity, "create_task", unbound)
+                .await
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        assert_eq!(handler.local_task_links(true).len(), 1);
+    }
+}
+
+#[test]
+fn manually_authorized_source_task_and_result_pass_native_queue_admission_with_automation_disabled()
+{
+    let _lock = crate::test_env::lock();
+    for disable_role in [false, true] {
+        let (root, handler, identity, args) = fixture(Some(true), Some(true));
+        let _workspace = super::super::tests::ScalarEnv::set(
+            "WEGENT_STANDALONE_WORKSPACE_ROOT",
+            root.path().to_str().unwrap(),
+        );
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        if disable_role {
+            settings["primary"]["enabled"] = json!(false);
+        } else {
+            settings["primary"]["connections"][0]["policy"]["automatic"] = json!(false);
+        }
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        handler.store.update_task(&identity.task_id, |link| {
+            link.runtime_handle["executionRequest"]["standInManualConfirmation"] = json!(true);
+        });
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let result = handler
+                    .stand_in_task_operation(identity.clone(), "create_task", args)
+                    .await
+                    .unwrap();
+                assert_eq!(result["accepted"], true);
+                let id = result["taskId"].as_str().unwrap();
+                let mut turn = {
+                    let scheduler = handler.turn_scheduler.lock().unwrap();
+                    scheduler
+                        .queued_turns
+                        .iter()
+                        .find(|turn| turn.local_task_id == id)
+                        .unwrap()
+                        .clone()
+                };
+                handler.validate_automatic_turn(&turn).await.unwrap();
+                handler
+                    .refresh_stand_in_confirmation(id, &mut turn.request)
+                    .unwrap();
+                assert!(crate::runtime_work::stand_in_requires_confirmation(
+                    &turn.request
+                ));
+                handler.turn_scheduler.lock().unwrap().queued_turns.clear();
+                let mut child = handler.local_task_link(id).unwrap();
+                child.status = "done".into();
+                child.completed_at = Some(123);
+                let delivery = handler.stand_in_result_delivery(&child).unwrap();
+                assert_eq!(delivery["manualStandInConfirmation"], true);
+                let mut request: ExecutionRequest =
+                    serde_json::from_value(delivery["executionRequest"].clone()).unwrap();
+                apply_runtime_payload_metadata(&mut request, &delivery);
+                request.extra.insert(
+                    "standInAutomaticVersion".into(),
+                    turn.request.extra["standInAutomaticVersion"].clone(),
+                );
+                turn.local_task_id = identity.task_id.clone();
+                turn.request = request;
+                handler.validate_automatic_turn(&turn).await.unwrap();
+                handler
+                    .refresh_stand_in_confirmation(&identity.task_id, &mut turn.request)
+                    .unwrap();
+                assert!(crate::runtime_work::stand_in_requires_confirmation(
+                    &turn.request
+                ));
+                // Revoking the host's exact message grant also revokes queued workers and results.
+                handler.store.update_task(&identity.task_id, |link| {
+                    link.runtime_handle["executionRequest"]["standInSourceBindings"] = json!([]);
+                });
+                assert!(handler.source_task_parent(&child).is_err());
+                assert!(handler.validate_automatic_turn(&turn).await.is_err());
+            });
     }
 }
