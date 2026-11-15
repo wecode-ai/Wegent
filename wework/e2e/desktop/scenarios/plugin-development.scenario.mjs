@@ -344,11 +344,20 @@ export async function createDesktopScenario({
           demanded: false,
         }
       )
-      const focusSnapshot = JSON.parse(await mainControl.command('getWindowFocusSnapshot', 'body'))
+      // Foreground activation trails window readiness on slower platforms;
+      // wait for the product to focus the isolated instance rather than
+      // reading the focus state at an arbitrary instant.
+      const focusStartedAt = Date.now()
+      let focusSnapshot = null
+      while (Date.now() - focusStartedAt < uiTimeoutMs) {
+        focusSnapshot = JSON.parse(await mainControl.command('getWindowFocusSnapshot', 'body'))
+        if (focusSnapshot.mainFocused === false) break
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
       assert.equal(
-        focusSnapshot.mainFocused,
+        focusSnapshot?.mainFocused,
         false,
-        'Starting plugin debugging did not focus the isolated Wework instance'
+        `Starting plugin debugging did not focus the isolated Wework instance: ${JSON.stringify(focusSnapshot)}`
       )
 
       const installedPythonPlugin = await requestExecutor(
