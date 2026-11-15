@@ -7,6 +7,8 @@ import type { RuntimeTaskAddress } from '@/types/runtime'
 import { ConversationMenuNative } from './ConversationMenuNative'
 import type { ConversationMenuAction } from './ConversationMenuNative.types'
 import { useMobileFilePreview } from './files/FilePreviewContext'
+import { ErrorNotice } from './errors/ErrorNotice'
+import { NativeErrorAlert } from './errors/NativeErrorAlert'
 
 export interface ConversationMenuActions {
   threadId: string | null
@@ -186,9 +188,11 @@ export function ConversationMenu(props: Props) {
                 testID="conversation-rename-input"
               />
               {error ? (
-                <Text accessibilityRole="alert" style={{ color: theme.colors.error }}>
-                  {error}
-                </Text>
+                <ErrorNotice
+                  error={error}
+                  title="未能重命名会话"
+                  testID="conversation-rename-error"
+                />
               ) : null}
             </Dialog.Content>
             <Dialog.Actions>
@@ -212,17 +216,7 @@ export function ConversationMenu(props: Props) {
             </Dialog.Actions>
           </Dialog>
         ) : error ? (
-          <Dialog visible onDismiss={dismiss} testID="conversation-menu-error-dialog">
-            <Dialog.Title>操作失败</Dialog.Title>
-            <Dialog.Content>
-              <Text accessibilityRole="alert">{error}</Text>
-            </Dialog.Content>
-            <Dialog.Actions>
-              <Button onPress={dismiss} testID="conversation-menu-error-dismiss">
-                确定
-              </Button>
-            </Dialog.Actions>
-          </Dialog>
+          <NativeErrorAlert error={error} onDismiss={dismiss} />
         ) : null}
       </Portal>
     </>

@@ -1,0 +1,1669 @@
+diff --git a/asbestos/guest-arm64/gadgets-aarch64/memory.S b/asbestos/guest-arm64/gadgets-aarch64/memory.S
+index 03e28d19b43585be4b9b8c4f838bfef47fb76c0b..364f1fed53d42d5a46a1c21ea4a5bc63f8968a1b 100644
+--- a/asbestos/guest-arm64/gadgets-aarch64/memory.S
++++ b/asbestos/guest-arm64/gadgets-aarch64/memory.S
+@@ -1531,26 +1531,33 @@ atomic_cas_segfault:
+     gret
+     read_bullshit 128, ldp64_1
+ 
+-// LDP Wn, Wm, [addr] - 32-bit load pair (inline TLB)
+-.gadget ldp32
++// LDP Wn, Wm and LDPSW Xn, Xm both read two 4-byte words.
++.irp pair, ldp32, ldpsw
++.gadget \pair
+     ldr x22, [_pc]
+     add _pc, _pc, #8
+     mov x24, _addr
+-    read_prep 64, ldp32_1       // 8 bytes total (2x4): cross-page if offset > 0xff8
+-    ldr w23, [_addr]            // val1 (32-bit, zero-extended to x23)
+-    ldr w25, [_addr, #4]        // val2 (32-bit, zero-extended to x25)
++    read_prep 64, \pair\()_1       // 8 bytes total (2x4): cross-page if offset > 0xff8
++    .ifc \pair,ldpsw
++        ldrsw x23, [_addr]
++        ldrsw x25, [_addr, #4]
++    .else
++        ldr w23, [_addr]
++        ldr w25, [_addr, #4]
++    .endif
+     and x8, x22, #0x1f          // rt
+     ubfx x9, x22, #8, #5        // rt2
+     add x10, _cpu, #CPU_x0
+     cmp x8, #31
+     b.eq 1f
+-    str x23, [x10, x8, lsl #3]  // store zero-extended 64-bit
++    str x23, [x10, x8, lsl #3]  // store the extended 64-bit value
+ 1:  cmp x9, #31
+     b.eq 2f
+     str x25, [x10, x9, lsl #3]
+ 2:  mov _addr, x24
+     gret
+-    read_bullshit 64, ldp32_1
++    read_bullshit 64, \pair\()_1
++.endr
+ 
+ // STP Xn, Xm, [addr] - 64-bit store pair (inline TLB)
+ .gadget stp64
+diff --git a/asbestos/guest-arm64/gen.c b/asbestos/guest-arm64/gen.c
+index fa1bd9b5a26b778883933a282a356dc386ea8a5a..f84f74a6c809b5d1db7c9f4496b7b7f60c42ab29 100644
+--- a/asbestos/guest-arm64/gen.c
++++ b/asbestos/guest-arm64/gen.c
+@@ -831,6 +831,7 @@ extern void gadget_ic_ivau(void);          // IC IVAU: invalidate translated cod
+ // Load/store pair gadgets
+ extern void gadget_ldp64(void);
+ extern void gadget_ldp32(void);
++extern void gadget_ldpsw(void);
+ extern void gadget_ldxp_c(void);
+ extern void gadget_stp64(void);
+ extern void gadget_stp32(void);
+@@ -2729,10 +2730,10 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+         return 1;
+     }
+ 
+-    // Load/store pair (LDP/STP)
++    // Load/store pair (LDP/STP/LDPSW)
+     // Encoding: xx101xxx_xxxxxxxx_xxxxxxxx_xxxxxxxx
+     if ((insn & 0x3a000000) == 0x28000000) {
+-        uint32_t opc = (insn >> 30) & 0x3;  // size: 00=32-bit, 10=64-bit
++        uint32_t opc = (insn >> 30) & 0x3;  // GPR: 00=32-bit, 01=LDPSW, 10=64-bit
+         uint32_t V = (insn >> 26) & 1;
+         uint32_t mode = (insn >> 23) & 0x7;  // 001=post, 010=signed offset, 011=pre
+         uint32_t L = (insn >> 22) & 1;       // 0=store, 1=load
+@@ -2806,6 +2807,14 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+             return 1;
+         }
+ 
++        // LDPSW reads two signed words into 64-bit registers. It has no store
++        // or non-temporal form; other opc values are unsupported or reserved.
++        bool signed_pair = opc == 1;
++        if (opc == 3 || (signed_pair && (!L || mode == 0))) {
++            gen_interrupt(state, INT_UNDEFINED);
++            return 0;
++        }
++
+         // For signed offset mode (010), just calculate address
+         // For post-indexed (001), use base first, then update
+         // For pre-indexed (011), calculate address first, then use and update
+@@ -2823,7 +2832,7 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+         }
+ 
+         // Fused path for signed-offset mode (most common LDP/STP encoding)
+-        if (is_offset) {
++        if (is_offset && !signed_pair) {
+             int16_t off16 = (int16_t)offset;
+             uint64_t param = (uint64_t)(rt & 0x1f)
+                            | ((uint64_t)(rt2 & 0x1f) << 8)
+@@ -2881,7 +2890,8 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+             return 1;
+         }
+ 
+-        // Pre/post-indexed: use separate calc_addr + ldp/stp + writeback
++        // Generic pair access also handles every LDPSW addressing mode, using
++        // 4-byte elements and sign extension before optional base writeback.
+ 
+         // Step 1: Calculate address
+         if (is_post) {
+@@ -2889,14 +2899,15 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+             gen(state, (unsigned long) gadget_calc_addr_base);
+             gen(state, rn);
+         } else {
+-            // Pre-indexed: add offset to base
++            // Signed offset or pre-indexed: add offset to base
+             gen(state, (unsigned long) gadget_calc_addr_imm);
+             gen(state, rn | ((uint64_t)offset << 8));
+         }
+ 
+         // Step 2: Perform the load/store pair
+         if (L) {
+-            gen(state, (unsigned long) (is64 ? gadget_ldp64 : gadget_ldp32));
++            gen(state, (unsigned long) (signed_pair ? gadget_ldpsw :
++                    is64 ? gadget_ldp64 : gadget_ldp32));
+         } else {
+             gen(state, (unsigned long) (is64 ? gadget_stp64 : gadget_stp32));
+         }
+@@ -2906,7 +2917,7 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+         if (is_post) {
+             gen(state, (unsigned long) gadget_update_base);
+             gen(state, rn | ((uint64_t)offset << 8));
+-        } else {
++        } else if (is_pre) {
+             // Pre-indexed: writeback calculated address
+             gen(state, (unsigned long) gadget_writeback_addr);
+             gen(state, rn);
+@@ -3457,9 +3468,9 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+         if (base_opcode == 0) {
+             elem_size = 1;
+             lane = (Q << 3) | (S << 2) | size;
+-        } else if (base_opcode == 2) {
++        } else if (base_opcode == 2 && (size & 1) == 0) {
+             elem_size = 2;
+-            lane = (Q << 2) | (S << 1) | (size & 1);
++            lane = (Q << 2) | (S << 1) | (size >> 1);
+         } else if (base_opcode == 4 && size == 0) {
+             elem_size = 4;
+             lane = (Q << 1) | S;
+@@ -3564,9 +3575,9 @@ static int gen_ldst(struct gen_state *state, uint32_t insn) {
+         if (base_opcode == 0) {
+             elem_size = 1;
+             lane = (Q << 3) | (S << 2) | size;
+-        } else if (base_opcode == 2) {
++        } else if (base_opcode == 2 && (size & 1) == 0) {
+             elem_size = 2;
+-            lane = (Q << 2) | (S << 1) | (size & 1);
++            lane = (Q << 2) | (S << 1) | (size >> 1);
+         } else if (base_opcode == 4 && size == 0) {
+             elem_size = 4;
+             lane = (Q << 1) | S;
+diff --git a/fs/mount.c b/fs/mount.c
+index 2e4b751501baf79c3105bc27a1b456ac2ee8c67f..89663a4494caa7cc9623e1cfcf8f473aad974fda 100644
+--- a/fs/mount.c
++++ b/fs/mount.c
+@@ -177,72 +177,16 @@ bool mount_param_flag(const char *info, const char *flag) {
+ #define MS_SUPPORTED (MS_READONLY_|MS_NOSUID_|MS_NODEV_|MS_NOEXEC_|MS_SILENT_)
+ #define MS_FLAGS (MS_READONLY_|MS_NOSUID_|MS_NODEV_|MS_NOEXEC_)
+ 
+-dword_t sys_mount(addr_t source_addr, addr_t point_addr, addr_t type_addr, dword_t flags, addr_t data_addr) {
+-    char source[MAX_PATH];
+-    if (user_read_string(source_addr, source, sizeof(source)))
+-        return _EFAULT;
+-    char point_raw[MAX_PATH];
+-    if (user_read_string(point_addr, point_raw, sizeof(point_raw)))
+-        return _EFAULT;
+-    char data[MAX_PATH];
+-    if (data_addr != 0) {
+-        if (user_read_string(data_addr, data, sizeof(data)))
+-            return _EFAULT;
+-    }
+-    char type[100];
+-    if (user_read_string(type_addr, type, sizeof(type)))
+-        return _EFAULT;
+-    STRACE("mount(\"%s\", \"%s\", \"%s\", %#x, \"%s\")", source, point_raw, type, flags, data_addr != 0 ? data : NULL);
+-
+-    if (flags & ~MS_SUPPORTED) {
+-        FIXME("missing mount flags %#x", flags & ~MS_SUPPORTED);
+-        return _EINVAL;
+-    }
+-
+-    const struct fs_ops *fs = NULL;
+-    for (size_t i = 0; i < sizeof(filesystems)/sizeof(filesystems[0]); i++) {
+-        if (filesystems[i] && (strcmp(filesystems[i]->name, type) == 0)) {
+-            fs = filesystems[i];
+-            break;
+-        }
+-    }
+-    if (fs == NULL)
+-        return _EINVAL;
+-
+-    struct statbuf stat;
+-    int err = generic_statat(AT_PWD, point_raw, &stat, true);
+-    if (err < 0)
+-        return err;
+-    if (!S_ISDIR(stat.mode))
+-        return _ENOTDIR;
+-
+-    char point[MAX_PATH];
+-    err = path_normalize(AT_PWD, point_raw, point, N_SYMLINK_FOLLOW);
+-    if (err < 0)
+-        return err;
+-
+-    lock(&mounts_lock);
+-    err = do_mount(fs, source, point, data, flags & MS_FLAGS);
+-    unlock(&mounts_lock);
+-    return err;
++// Mounts are owned by the embedding host and shared across guest environments.
++// Guest requests must not expose host paths or alter another environment's mounts.
++// The host still uses do_mount/do_umount to construct and drain each environment.
++dword_t sys_mount(addr_t UNUSED(source_addr), addr_t UNUSED(point_addr),
++        addr_t UNUSED(type_addr), dword_t UNUSED(flags), addr_t UNUSED(data_addr)) {
++    return _EPERM;
+ }
+ 
+-#define UMOUNT_NOFOLLOW_ 8
+-
+-dword_t sys_umount2(addr_t target_addr, dword_t flags) {
+-    char target_raw[MAX_PATH];
+-    if (user_read_string(target_addr, target_raw, sizeof(target_raw)))
+-        return _EFAULT;
+-    char target[MAX_PATH];
+-    int err = path_normalize(AT_PWD, target_raw, target,
+-            flags & UMOUNT_NOFOLLOW_ ? N_SYMLINK_NOFOLLOW : N_SYMLINK_FOLLOW);
+-    if (err < 0)
+-        return err;
+-
+-    lock(&mounts_lock);
+-    err = do_umount(target);
+-    unlock(&mounts_lock);
+-    return err;
++dword_t sys_umount2(addr_t UNUSED(target_addr), dword_t UNUSED(flags)) {
++    return _EPERM;
+ }
+ 
+ struct list mounts = {&mounts, &mounts};
+diff --git a/fs/proc/pid.c b/fs/proc/pid.c
+index 2920f5254ff969fed6ef7c34d7046ab2189448d5..f7e8c2d1c478f48dbfa8695c8c87fa93c8489450 100644
+--- a/fs/proc/pid.c
++++ b/fs/proc/pid.c
+@@ -28,17 +28,24 @@ static void proc_put_task(struct task *UNUSED(task)) {
+ }
+ 
+ static int proc_pid_stat_show(struct proc_entry *entry, struct proc_data *buf) {
+-    struct task *task = proc_get_task(entry);
+-    if (task == NULL)
++    // A retained zombie leader remains observable until wait reaps it. Its
++    // remaining threads may still own native descriptors and must stay visible.
++    lock(&pids_lock);
++    struct task *task = pid_get_task_zombie(entry->pid);
++    if (task == NULL || task->group == NULL) {
++        unlock(&pids_lock);
+         return _ESRCH;
++    }
+     lock(&task->general_lock);
+     lock(&task->group->lock);
+-    lock(&task->sighand->lock);
++    struct sighand *sighand = task->sighand;
++    if (sighand != NULL)
++        lock(&sighand->lock);
+ 
+     proc_printf(buf, "%d ", task->pid);
+     proc_printf(buf, "(%.16s) ", task->comm);
+     proc_printf(buf, "%c ",
+-            task->zombie ? 'Z' :
++            task->zombie || task->exiting ? 'Z' :
+             task->group->stopped ? 'T' :
+             'R'); // I have no visibility into sleep state at the moment
+     proc_printf(buf, "%d ", task->parent ? task->parent->pid : 0);
+@@ -64,7 +71,11 @@ static int proc_pid_stat_show(struct proc_entry *entry, struct proc_data *buf) {
+ 
+     proc_printf(buf, "%ld ", 20l); // priority (not adjustable)
+     proc_printf(buf, "%ld ", 0l); // nice (also not adjustable)
+-    proc_printf(buf, "%ld ", list_size(&task->group->threads));
++    // exit_tgroup removes an exited leader before its parent reaps it.
++    long threads = list_size(&task->group->threads);
++    if (task->group->leader->exiting)
++        threads++;
++    proc_printf(buf, "%ld ", threads);
+     proc_printf(buf, "%ld ", 0l); // itimer value (deprecated, always 0)
+     proc_printf(buf, "%lld ", 0ll); // jiffies on process start
+ 
+@@ -83,10 +94,10 @@ static int proc_pid_stat_show(struct proc_entry *entry, struct proc_data *buf) {
+     proc_printf(buf, "%lu ", (unsigned long) task->blocked & 0xffffffff);
+     uint32_t ignored = 0;
+     uint32_t caught = 0;
+-    for (int i = 0; i < 32; i++) {
+-        if (task->sighand->action[i].handler == SIG_IGN_)
++    for (int i = 0; sighand != NULL && i < 32; i++) {
++        if (sighand->action[i].handler == SIG_IGN_)
+             ignored |= 1l << i;
+-        else if (task->sighand->action[i].handler != SIG_DFL_)
++        else if (sighand->action[i].handler != SIG_DFL_)
+             caught |= 1l << i;
+     }
+     proc_printf(buf, "%lu ", (unsigned long) ignored);
+@@ -100,7 +111,8 @@ static int proc_pid_stat_show(struct proc_entry *entry, struct proc_data *buf) {
+     // that's enough for now
+     proc_printf(buf, "\n");
+ 
+-    unlock(&task->sighand->lock);
++    if (sighand != NULL)
++        unlock(&sighand->lock);
+     unlock(&task->group->lock);
+     unlock(&task->general_lock);
+     proc_put_task(task);
+diff --git a/fs/proc/root.c b/fs/proc/root.c
+index 27dc77d65b5cfd48440b9e85c8efa18c89034a2b..22944ae5ba6fe596aafed3d2c8c510489650c66b 100644
+--- a/fs/proc/root.c
++++ b/fs/proc/root.c
+@@ -166,7 +166,7 @@ static bool proc_root_readdir(struct proc_entry *UNUSED(entry), unsigned long *i
+         lock(&pids_lock);
+         do {
+             pid++;
+-        } while (pid <= MAX_PID && pid_get_task(pid) == NULL);
++        } while (pid <= MAX_PID && pid_get_task_zombie(pid) == NULL);
+         unlock(&pids_lock);
+         if (pid > MAX_PID)
+             return false;
+diff --git a/fs/real.c b/fs/real.c
+index d5af5b03325f93bb070ac080afedf62734a3cf53..9db9d1208d4de51607e1363eddaffb98a9d0f0f0 100644
+--- a/fs/real.c
++++ b/fs/real.c
+@@ -177,24 +177,37 @@ int realfs_fstat(struct fd *fd, struct statbuf *fake_stat) {
+     return 0;
+ }
+ 
++static bool realfs_guest_signal_pending(void) {
++    if (current == NULL || current->sighand == NULL)
++        return false;
++    lock(&current->sighand->lock);
++    bool pending = !!(current->pending & ~current->blocked);
++    unlock(&current->sighand->lock);
++    return pending;
++}
++
+ ssize_t realfs_read(struct fd *fd, void *buf, size_t bufsize) {
+-    ssize_t res;
+-    do {
+-        res = read(fd->real_fd, buf, bufsize);
+-    } while (res < 0 && errno == EINTR);
+-    if (res < 0)
+-        return errno_map();
+-    return res;
++    for (;;) {
++        if (realfs_guest_signal_pending())
++            return _EINTR;
++        ssize_t res = read(fd->real_fd, buf, bufsize);
++        if (res >= 0)
++            return res;
++        if (errno != EINTR)
++            return errno_map();
++    }
+ }
+ 
+ ssize_t realfs_write(struct fd *fd, const void *buf, size_t bufsize) {
+-    ssize_t res;
+-    do {
+-        res = write(fd->real_fd, buf, bufsize);
+-    } while (res < 0 && errno == EINTR);
+-    if (res < 0)
+-        return errno_map();
+-    return res;
++    for (;;) {
++        if (realfs_guest_signal_pending())
++            return _EINTR;
++        ssize_t res = write(fd->real_fd, buf, bufsize);
++        if (res >= 0)
++            return res;
++        if (errno != EINTR)
++            return errno_map();
++    }
+ }
+ 
+ ssize_t realfs_pread(struct fd *fd, void *buf, size_t bufsize, off_t off) {
+diff --git a/fs/sock.c b/fs/sock.c
+index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e268fe649b8 100644
+--- a/fs/sock.c
++++ b/fs/sock.c
+@@ -882,19 +882,34 @@ error:
+     return err;
+ }
+ 
+-// Read a socket timeout option as milliseconds. Returns 0 if unset or error.
+-static long sock_get_timeout_ms(int real_fd, int optname) {
+-    struct timeval tv = {0, 0};
++// Keep milliseconds representable without overflowing conversion or elapsed arithmetic.
++#define SOCK_TIMEOUT_MAX_SEC (INT64_MAX / 1000 - 1)
++
++static int sock_get_timeout_ms(int real_fd, int optname, int64_t *timeout_ms) {
++    struct timeval tv = {0};
+     socklen_t len = sizeof(tv);
+     if (getsockopt(real_fd, SOL_SOCKET, optname, &tv, &len) < 0)
+-        return 0;
+-    return (long)tv.tv_sec * 1000L + (long)tv.tv_usec / 1000L;
++        return errno_map();
++    if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000)
++        return _EDOM;
++    if (tv.tv_sec > SOCK_TIMEOUT_MAX_SEC)
++        return _EOVERFLOW;
++    // poll() has millisecond resolution; a positive sub-ms timeout must not
++    // become zero, which means an unlimited wait.
++    *timeout_ms = (int64_t) tv.tv_sec * 1000 + (tv.tv_usec + 999) / 1000;
++    return 0;
+ }
+ 
+-static long monotonic_ms(void) {
++struct sock_wait_state {
++    bool initialized;
++    int64_t timeout_ms;
++    int64_t start_ms;
++};
++
++static int64_t monotonic_ms(void) {
+     struct timespec ts;
+     clock_gettime(CLOCK_MONOTONIC, &ts);
+-    return (long)ts.tv_sec * 1000L + (long)ts.tv_nsec / 1000000L;
++    return (int64_t) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+ }
+ 
+ // Wait for a socket fd to become ready (readable or writable), with a
+@@ -904,10 +919,14 @@ static long monotonic_ms(void) {
+ //
+ // Returns 0 when ready, _EINTR on guest signal, _EAGAIN on timeout expiry,
+ // or a negative errno on poll() error.
+-static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+-    long timeout_ms = sock_get_timeout_ms(real_fd, timeout_opt);
+-    long start_ms = monotonic_ms();
+-    long deadline_ms = (timeout_ms > 0) ? (start_ms + timeout_ms) : 0;
++static int sock_wait_for(int real_fd, short events, int timeout_opt, struct sock_wait_state *wait) {
++    if (!wait->initialized) {
++        int err = sock_get_timeout_ms(real_fd, timeout_opt, &wait->timeout_ms);
++        if (err < 0)
++            return err;
++        wait->start_ms = monotonic_ms();
++        wait->initialized = true;
++    }
+     bool slow_logged = false;
+     for (;;) {
+         if (current->sighand != NULL) {
+@@ -919,11 +938,11 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+         }
+ 
+         int poll_ms = 1000;
+-        if (deadline_ms > 0) {
+-            long remaining = deadline_ms - monotonic_ms();
++        if (wait->timeout_ms > 0) {
++            int64_t remaining = wait->timeout_ms - (monotonic_ms() - wait->start_ms);
+             if (remaining <= 0) {
+-                printk("NETDIAG sock_wait(pid=%d comm=%s fd=%d ev=%#x) deadline-expired after %ldms\n",
+-                       current->pid, current->comm, real_fd, events, timeout_ms);
++                printk("NETDIAG sock_wait(pid=%d comm=%s fd=%d ev=%#x) deadline-expired after %lldms\n",
++                       current->pid, current->comm, real_fd, events, (long long) wait->timeout_ms);
+                 return _EAGAIN;
+             }
+             if (remaining < poll_ms)
+@@ -940,9 +959,9 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+             return 0;
+         if (pr == 0) {
+             // Log once if we're stuck > 3 seconds without any ready event
+-            if (!slow_logged && (monotonic_ms() - start_ms) >= 3000) {
+-                printk("NETDIAG sock_wait(pid=%d comm=%s fd=%d ev=%#x) no-event for 3s (timeout_opt_ms=%ld)\n",
+-                       current->pid, current->comm, real_fd, events, timeout_ms);
++            if (!slow_logged && (monotonic_ms() - wait->start_ms) >= 3000) {
++                printk("NETDIAG sock_wait(pid=%d comm=%s fd=%d ev=%#x) no-event for 3s (timeout_opt_ms=%lld)\n",
++                       current->pid, current->comm, real_fd, events, (long long) wait->timeout_ms);
+                 slow_logged = true;
+             }
+             continue;
+@@ -956,8 +975,8 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+     }
+ }
+ 
+-static int sock_wait_readable(int real_fd) {
+-    return sock_wait_for(real_fd, POLLIN, SO_RCVTIMEO);
++static int sock_wait_readable(int real_fd, struct sock_wait_state *wait) {
++    return sock_wait_for(real_fd, POLLIN, SO_RCVTIMEO, wait);
+ }
+ 
+ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags, addr_t sockaddr_addr, addr_t sockaddr_len_addr) {
+@@ -997,6 +1016,7 @@ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
+     // should wait do we fall back to the bounded-poll wait.
+     ssize_t res;
+     if (should_wait) {
++        struct sock_wait_state wait = {0};
+         // Diagnostic: a blocking recv is exceptional for most network
+         // programs (Node, Go, Python asyncio all use nonblock). Log it so
+         // we can see the guest/host fd state in user-shared logs.
+@@ -1018,7 +1038,7 @@ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
+             }
+             // EAGAIN: no data yet. Wait (bounded) for readability or a
+             // guest signal, then retry.
+-            int wr = sock_wait_readable(sock->real_fd);
++            int wr = sock_wait_readable(sock->real_fd, &wait);
+             if (wr < 0) {
+                 free(buffer);
+                 return wr;
+@@ -1071,11 +1091,102 @@ int_t sys_shutdown(fd_t sock_fd, dword_t how) {
+ 
+ #define DEFAULT_TCP_CONGESTION "cubic"
+ 
++// Linux OLD uses native guest longs; NEW always uses signed 64-bit fields.
++// Darwin has a 32-bit tv_usec plus padding even on ARM64, so copying either
++// guest structure directly to the host leaks padding and misreads usec.
++struct sock_timeval64_ { int64_t sec, usec; };
++struct sock_timeval32_ { int32_t sec, usec; };
++
++static bool sock_timeout_old32(dword_t option) {
++#ifdef GUEST_ARM64
++    return false;
++#else
++    return option == SO_RCVTIMEO_OLD_ || option == SO_SNDTIMEO_OLD_;
++#endif
++}
++
++static int sock_timeout_option(dword_t level, dword_t option) {
++    if (level != SOL_SOCKET_)
++        return 0;
++    switch (option) {
++        case SO_RCVTIMEO_OLD_:
++        case SO_RCVTIMEO_NEW_: return SO_RCVTIMEO;
++        case SO_SNDTIMEO_OLD_:
++        case SO_SNDTIMEO_NEW_: return SO_SNDTIMEO;
++        default: return 0;
++    }
++}
++
++static int sock_set_timeout(struct fd *sock, dword_t option, int real_opt,
++                            addr_t value_addr, dword_t value_len) {
++    struct sock_timeval64_ guest;
++    if (sock_timeout_old32(option)) {
++        struct sock_timeval32_ old;
++        if ((int32_t) value_len < (int) sizeof(old))
++            return _EINVAL;
++        if (user_get(value_addr, old))
++            return _EFAULT;
++        guest = (struct sock_timeval64_) {old.sec, old.usec};
++    } else {
++        if ((int32_t) value_len < (int) sizeof(guest))
++            return _EINVAL;
++        if (user_get(value_addr, guest))
++            return _EFAULT;
++    }
++    if (guest.usec < 0 || guest.usec >= 1000000)
++        return _EDOM;
++    // Negative seconds mean immediate timeout on Linux, distinct from {0,0}.
++    // Darwin cannot represent that state; retain the existing explicit failure.
++    if (guest.sec < 0)
++        return _EDOM;
++    if (guest.sec > SOCK_TIMEOUT_MAX_SEC)
++        return _EOVERFLOW;
++    struct timeval host = {.tv_sec = guest.sec, .tv_usec = guest.usec};
++    if ((int64_t) host.tv_sec != guest.sec)
++        return _EOVERFLOW;
++    if (setsockopt(sock->real_fd, SOL_SOCKET, real_opt, &host, sizeof(host)) < 0)
++        return errno_map();
++    return 0;
++}
++
++static int sock_get_timeout(struct fd *sock, dword_t option, int real_opt,
++                            addr_t value_addr, addr_t len_addr, dword_t value_len) {
++    if ((int32_t) value_len < 0)
++        return _EINVAL;
++    struct timeval host = {0};
++    socklen_t host_len = sizeof(host);
++    if (getsockopt(sock->real_fd, SOL_SOCKET, real_opt, &host, &host_len) < 0)
++        return errno_map();
++    struct sock_timeval64_ guest = {host.tv_sec, host.tv_usec};
++    struct sock_timeval32_ old = {0};
++    const void *value = &guest;
++    size_t size = sizeof(guest);
++    if (sock_timeout_old32(option)) {
++        if (host.tv_sec > INT32_MAX || host.tv_sec < INT32_MIN)
++            return _EOVERFLOW;
++        old = (struct sock_timeval32_) {host.tv_sec, host.tv_usec};
++        value = &old;
++        size = sizeof(old);
++    }
++    if (value_len > size)
++        value_len = size;
++    // Linux writes the value first, then optlen. A failed value write must
++    // leave optlen untouched; zero-length output accepts a null value pointer.
++    if (value_len && user_write(value_addr, value, value_len))
++        return _EFAULT;
++    if (user_put(len_addr, value_len))
++        return _EFAULT;
++    return 0;
++}
++
+ int_t sys_setsockopt(fd_t sock_fd, dword_t level, dword_t option, addr_t value_addr, dword_t value_len) {
+     STRACE("setsockopt(%d, %d, %d, 0x%x, %d)", sock_fd, level, option, value_addr, value_len);
+     struct fd *sock = sock_getfd(sock_fd);
+     if (sock == NULL)
+         return _EBADF;
++    int timeout_opt = sock_timeout_option(level, option);
++    if (timeout_opt)
++        return sock_set_timeout(sock, option, timeout_opt, value_addr, value_len);
+     char value[value_len];
+     if (user_read(value_addr, value, value_len))
+         return _EFAULT;
+@@ -1137,6 +1248,9 @@ int_t sys_getsockopt(fd_t sock_fd, dword_t level, dword_t option, addr_t value_a
+     dword_t value_len;
+     if (user_get(len_addr, value_len))
+         return _EFAULT;
++    int timeout_opt = sock_timeout_option(level, option);
++    if (timeout_opt)
++        return sock_get_timeout(sock, option, timeout_opt, value_addr, len_addr, value_len);
+     char value[value_len];
+     if (user_read(value_addr, value, value_len))
+         return _EFAULT;
+@@ -1526,6 +1640,7 @@ int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags) {
+     ssize_t res = -1;
+     int err = 0;
+     if (should_wait_rm) {
++        struct sock_wait_state wait = {0};
+         printk("NETDIAG recvmsg-block(pid=%d comm=%s fd=%d real=%d gflags=%#x hflags=%#x sflags=%#x)\n",
+                current->pid, current->comm, sock_fd, sock->real_fd,
+                (unsigned)flags, host_flags_rm, sock->flags);
+@@ -1539,7 +1654,7 @@ int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags) {
+                 err = errno_map();
+                 break;
+             }
+-            int wr = sock_wait_readable(sock->real_fd);
++            int wr = sock_wait_readable(sock->real_fd, &wait);
+             if (wr < 0) {
+                 err = wr;
+                 break;
+diff --git a/fs/sock.h b/fs/sock.h
+index ed34b5176e1638fd0c5172f5e7a7e0a9e4dea886..ab0c363ff97696aae4d3868f4696f22ad4d1ed3c 100644
+--- a/fs/sock.h
++++ b/fs/sock.h
+@@ -210,8 +210,10 @@ static inline int sock_flags_from_real(int real) {
+ #define SO_TIMESTAMP_ 29
+ #define SO_PROTOCOL_ 38
+ #define SO_DOMAIN_ 39
+-#define SO_RCVTIMEO_ 66
+-#define SO_SNDTIMEO_ 67
++#define SO_RCVTIMEO_OLD_ 20
++#define SO_SNDTIMEO_OLD_ 21
++#define SO_RCVTIMEO_NEW_ 66
++#define SO_SNDTIMEO_NEW_ 67
+ #define IP_TOS_ 1
+ #define IP_TTL_ 2
+ #define IP_HDRINCL_ 3
+@@ -243,8 +245,10 @@ static inline int sock_opt_to_real(int fake, int level) {
+             case SO_SNDBUF_: return SO_SNDBUF;
+             case SO_RCVBUF_: return SO_RCVBUF;
+             case SO_TIMESTAMP_: return SO_TIMESTAMP;
+-            case SO_RCVTIMEO_: return SO_RCVTIMEO;
+-            case SO_SNDTIMEO_: return SO_SNDTIMEO;
++            case SO_RCVTIMEO_OLD_:
++            case SO_RCVTIMEO_NEW_: return SO_RCVTIMEO;
++            case SO_SNDTIMEO_OLD_:
++            case SO_SNDTIMEO_NEW_: return SO_SNDTIMEO;
+             case SO_REUSEPORT_: return SO_REUSEPORT;
+         } break;
+         case IPPROTO_TCP: switch (fake) {
+diff --git a/kernel/calls.c b/kernel/calls.c
+index 6295ad70db7e15c7d6a217718dc1767962ada49d..0eabaceedaf02db474aab897f058012a4f33426c 100644
+--- a/kernel/calls.c
++++ b/kernel/calls.c
+@@ -166,29 +166,6 @@ void handle_interrupt(int interrupt) {
+                             (unsigned long long)_a0,(unsigned long long)_a1,(unsigned long long)_a2,
+                             (unsigned long long)_a3,(unsigned long long)_a4,(unsigned long long)_a5,
+                             (unsigned long long)result);
+-                // SA_RESTART: mark this syscall restartable if it was
+-                // interrupted (EINTR). receive_signals will rewind PC if the
+-                // delivered signal's handler has SA_RESTART. Restricted to
+-                // syscalls that re-execute correctly by simply re-running with
+-                // the same args (futex, poll/epoll, read/write, recv/send,
+-                // accept, connect, wait). Timer syscalls (nanosleep,
+-                // clock_nanosleep, ppoll/pselect with timeout) must NOT use
+-                // naive PC-rewind restart: it would restart the FULL duration
+-                // rather than the remaining time, so a `timeout N` wrapper's
+-                // sleep would never end. Those keep returning EINTR (userspace
+-                // handles their own restart with an adjusted timeout).
+-                if ((int32_t)(uint32_t)result == -EINTR) {
+-                    switch (syscall_num) {
+-                        case 98:  // futex
+-                        case 22:  // epoll_pwait
+-                        case 63:  // read
+-                        case 64:  // write
+-                            current->syscall_restartable = true;
+-                            break;
+-                        default:
+-                            current->syscall_restartable = false;
+-                    }
+-                }
+                 // sigreturn/rt_sigreturn restore the full CPU state from the
+                 // signal frame. Do NOT touch regs[0] — it was already restored
+                 // by restore_sigcontext. Any post-processing could corrupt the
+@@ -215,36 +192,28 @@ void handle_interrupt(int interrupt) {
+                 }
+             }
+         }
+-        // [T-ish-group-null-post-syscall-crash] The syscall we just ran may have
+-        // left this thread orphaned: a blocking syscall (futex/poll/wait) can
+-        // return right as another thread's do_exit_group() safety valve
+-        // force-releases us — it sets our `exiting` flag — and, once the group
+-        // leader is reaped, task_destroy() does memset(task, 0, ...) which
+-        // zeroes our (thread-local) `current` struct, so both `current->group`
+-        // and `current->exiting` read back as 0/NULL. The post-syscall
+-        // bookkeeping below dereferences current->group unconditionally; with a
+-        // zeroed group that computes &((tgroup*)0)->syscall_count == 0x4fc and
+-        // the atomic_fetch_add faults (the reported EXC_BAD_ACCESS at 0x4fc on a
+-        // backgrounded guest thread). task_run_current()'s top-of-loop guard
+-        // already handles this, but only on the NEXT iteration — we must not
+-        // touch group before we get back there.
+-        //
+-        // Bail the SAME way task_run_current() does for a destroyed/leaked task:
+-        // pthread_exit() straight out, letting task_run_current()'s
+-        // pthread_cleanup handler (task_run_tlb_cleanup) run — it honors
+-        // mm_release_deferred and frees the tlb. Do NOT call do_exit() here:
+-        //   * for the zeroed-struct case (group==NULL, exiting==0) do_exit()
+-        //     would fall through its `if (current->exiting)` fast-path and then
+-        //     dereference current->group->doing_group_exit — the same NULL crash
+-        //     one line over;
+-        //   * for the force-released case (exiting==1) do_exit() sets
+-        //     current=NULL before pthread_exit(), which makes task_run_tlb_cleanup
+-        //     skip the deferred mm_release and leak the guest address space.
+-        // Reading group_exit_code for a status is pointless anyway — do_exit()
+-        // ignores its argument once `exiting` is set — and unsafe, since the
+-        // group may already be freed.
+-        if (current->exiting || current->group == NULL) {
+-            pthread_exit(NULL);
++        // SA_RESTART: mark this syscall restartable if it was
++        // interrupted (EINTR). receive_signals will rewind PC if the
++        // delivered signal's handler has SA_RESTART. Restricted to
++        // syscalls that re-execute correctly by simply re-running with
++        // the same args (futex, poll/epoll, read/write, recv/send,
++        // accept, connect, wait). Timer syscalls (nanosleep,
++        // clock_nanosleep, ppoll/pselect with timeout) must NOT use
++        // naive PC-rewind restart: it would restart the FULL duration
++        // rather than the remaining time, so a `timeout N` wrapper's
++        // sleep would never end. Those keep returning EINTR (userspace
++        // handles their own restart with an adjusted timeout).
++        if ((int32_t)(uint32_t)cpu->regs[0] == -EINTR) {
++            switch (syscall_num) {
++                case 98:  // futex
++                case 22:  // epoll_pwait
++                case 63:  // read
++                case 64:  // write
++                    current->syscall_restartable = true;
++                    break;
++                default:
++                    current->syscall_restartable = false;
++            }
+         }
+         // Update deadlock detection state.
+         atomic_fetch_add(&current->group->syscall_count, 1);
+@@ -1384,15 +1353,11 @@ static inline int fast_read(struct cpu_state *cpu) {
+     if (fd == NULL || fd->ops != &realfs_fdops)
+         return -1;
+ 
+-    // Direct host read (with EINTR retry)
++    // Reuse realfs interruption semantics; fast paths must not swallow signals.
+     char buf[4096];
+-    ssize_t res;
+-    do {
+-        res = read(fd->real_fd, buf, size);
+-    } while (res < 0 && errno == EINTR);
+-
++    ssize_t res = realfs_read(fd, buf, size);
+     if (res < 0)
+-        return errno_map();
++        return res;
+ 
+     // Copy to guest memory
+     if (res > 0 && user_write(buf_addr, buf, res))
+@@ -1420,16 +1385,7 @@ static inline int fast_write(struct cpu_state *cpu) {
+     if (user_read(buf_addr, buf, size))
+         return _EFAULT;
+ 
+-    // Direct host write (with EINTR retry)
+-    ssize_t res;
+-    do {
+-        res = write(fd->real_fd, buf, size);
+-    } while (res < 0 && errno == EINTR);
+-
+-    if (res < 0)
+-        return errno_map();
+-
+-    return res;
++    return realfs_write(fd, buf, size);
+ }
+ 
+ #endif // GUEST_ARM64
+diff --git a/kernel/exec.c b/kernel/exec.c
+index 26fd31733e2d8f552a053156ca38b7caf70df6d3..3b5b1001b40f0f68d4665b290c5f7e53c42320e1 100644
+--- a/kernel/exec.c
++++ b/kernel/exec.c
+@@ -697,6 +697,11 @@ int __do_execve(const char *file, struct exec_args argv, struct exec_args envp)
+         return err;
+ 
+     // setuid/setgid
++    if (stat.mode & (S_ISUID | S_ISGID)) {
++        lock(&pids_lock);
++        current->parent_death_signal = 0;
++        unlock(&pids_lock);
++    }
+     if (stat.mode & S_ISUID) {
+         current->suid = current->euid;
+         current->euid = stat.uid;
+diff --git a/kernel/exit.c b/kernel/exit.c
+index fa51fc2f4c7d610fc7671cd0401bf2aa2f4167da..3b73ab321e79458af278b34079c0c73452505dc5 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -4,9 +4,6 @@
+ #include <string.h>
+ #include <time.h>
+ #include <unistd.h>
+-#if __APPLE__
+-#include <malloc/malloc.h>
+-#endif
+ #include "kernel/calls.h"
+ #include "kernel/mm.h"
+ #include "kernel/futex.h"
+@@ -68,14 +65,6 @@ noreturn void do_exit(int status) {
+     { extern void dump_wx_stats(void);
+       static int wx_dumped = 0;
+       if (!wx_dumped && current && current->pid == 1) { wx_dumped = 1; dump_wx_stats(); } }
+-    // If this thread was already marked as leaked by the safety valve,
+-    // the group leader has finished exiting and the group struct may be
+-    // freed. Don't touch any shared state — just kill the host thread.
+-    if (current->exiting) {
+-        current = NULL;
+-        pthread_exit(NULL);
+-    }
+-
+     // Block SIGSEGV during exit to prevent cosmetic crashes from host
+     // pthread stack unwinding (especially with many threads exiting at once).
+     if (current->group->doing_group_exit) {
+@@ -94,7 +83,7 @@ noreturn void do_exit(int status) {
+             futex_wake(clear_tid, 1);
+     }
+ 
+-    // release all our resources (may already be NULL if force-released by do_exit_group)
++    // Release resources only from the thread that owns them.
+     //
+     // [T-ish-exit-mm-general-lock] general_lock protects task->mm/task->mem
+     // against procfs: /proc/<pid>/{cmdline,environ,stat,statm,maps,mem} take
+@@ -122,9 +111,7 @@ noreturn void do_exit(int status) {
+         current->mem = NULL;
+         unlock(&current->general_lock);
+         mm_release_from(mm, "do_exit");
+-        // [T-ish-mm-leak-refcount-handoff] We just released it, so the pthread
+-        // cleanup handler must NOT release again.
+-        current->mm_release_deferred = false;
++
+     }
+     if (current->files != NULL) {
+         fdtable_release(current->files);
+@@ -158,8 +145,7 @@ noreturn void do_exit(int status) {
+     // the actual freeing needs pids_lock
+     lock(&pids_lock);
+     current->exiting = true;
+-    // release the sighand (may already be NULL if another thread in the group
+-    // exited concurrently and released it, e.g. after safety-valve SIGUSR1)
++    // Release this thread's sighand reference while pids_lock excludes readers.
+     if (current->sighand != NULL) {
+         sighand_release(current->sighand);
+         current->sighand = NULL;
+@@ -175,16 +161,22 @@ noreturn void do_exit(int status) {
+     struct task *new_parent = find_new_parent(current);
+     struct task *child, *tmp;
+     list_for_each_entry_safe(&current->children, child, tmp, siblings) {
++        // Linux delivers this when the creating thread exits, even if other
++        // threads in its process remain alive. Keep delivery and reparenting
++        // atomic with PR_SET_PDEATHSIG under pids_lock.
++        if (child->parent_death_signal != 0) {
++            send_signal(child, child->parent_death_signal, (struct siginfo_) {
++                .code = SI_USER_,
++                .kill.pid = current->tgid,
++                .kill.uid = current->uid,
++            });
++        }
+         child->parent = new_parent;
+         list_remove(&child->siblings);
+         list_add(&new_parent->children, &child->siblings);
+     }
+ 
+     if (exit_tgroup(current)) {
+-        // If already marked zombie by do_exit_group force path, skip
+-        if (leader->zombie)
+-            goto skip_zombie_notify;
+-
+         // notify parent that we died
+         struct task *parent = leader->parent;
+         if (parent == NULL && current->pid != 1) {
+@@ -217,15 +209,15 @@ noreturn void do_exit(int status) {
+ 
+         if (exit_hook != NULL)
+             exit_hook(current, status);
+-    skip_zombie_notify: ;
+     }
+ 
+     vfork_notify(current);
+-    if (current != leader) {
+-        struct task *self = current;
+-        current = NULL;  // Clear before destroy to prevent dangling access
++    struct task *self = current;
++    // The parent may reap the leader as soon as pids_lock is released. No
++    // pthread cleanup may retain a task pointer after this ownership boundary.
++    current = NULL;
++    if (self != leader)
+         task_destroy(self);
+-    }
+     unlock(&pids_lock);
+ 
+     pthread_exit(NULL);
+@@ -255,182 +247,27 @@ noreturn void do_exit_group(int status) {
+     { static int jit_reported = 0;
+       if (!jit_reported && current && current->pid == 1) { jit_reported = 1; jit_report(); } }
+ #endif
+-    // Leaked thread woke up after group already exited — bail silently.
+-    if (current->exiting) {
+-        current = NULL;
+-        pthread_exit(NULL);
+-    }
+     struct tgroup *group = current->group;
+     lock(&pids_lock);
+     lock(&group->lock);
+-    bool is_group_leader = false;
+     if (!group->doing_group_exit) {
+         group->doing_group_exit = true;
+         group->group_exit_code = status;
+-        is_group_leader = true;  // First thread to call exit_group
+     } else {
+         status = group->group_exit_code;
+     }
+ 
+-    // kill everyone else in the group
+-    int thread_count = 0;
++    // Each thread releases its own resources through do_exit. Never remove a
++    // live native thread from the group to simulate a completed process exit.
++    // exit_tgroup makes the retained leader waitable only after the last thread
++    // has finished, just as exit_group does on Linux.
+     struct task *task;
+     list_for_each_entry(&group->threads, task, group_links) {
+-        thread_count++;
+-        deliver_signal(task, SIGKILL_, SIGINFO_NIL);
+-        task->group->stopped = false;
+-        notify(&task->group->stopped_cond);
+-    }
+-    (void)is_group_leader;
+-
+-    // Only the first thread (group leader) waits for others to exit
+-    // Other threads exit immediately to avoid deadlock
+-    if (is_group_leader && thread_count > 1) {
+-        unlock(&group->lock);
+-        unlock(&pids_lock);
+-
+-        // Wait for threads to exit (they're DETACHED so we can't join)
+-        // Poll the thread count until only current thread remains
+-        int max_wait_ms = 500 + thread_count * 10;  // Scale with thread count
+-        if (max_wait_ms > 5000) max_wait_ms = 5000;  // Cap at 5s
+-        int wait_interval_ms = 10;  // Check every 10ms
+-        int waited_ms = 0;
+-        int last_remaining = -1;
+-
+-        while (waited_ms < max_wait_ms) {
+-            lock(&pids_lock);
+-            lock(&group->lock);
+-
+-            // Count threads still in the group (excluding current)
+-            int remaining = 0;
+-            list_for_each_entry(&group->threads, task, group_links) {
+-                if (task != current) {
+-                    remaining++;
+-                }
+-            }
+-
+-            unlock(&group->lock);
+-            unlock(&pids_lock);
+-
+-            last_remaining = remaining;
+-
+-            if (remaining == 0) {
+-                break;
+-            }
+-
+-            // Sleep a bit to let threads exit
+-            struct timespec ts = {0, wait_interval_ms * 1000000L};
+-            nanosleep(&ts, NULL);
+-            waited_ms += wait_interval_ms;
+-        }
+-
+-        if (waited_ms >= max_wait_ms) {
+-            // Threads are stuck in blocking syscalls and won't exit.
+-            if (ish_exec_trace())
+-                printk("SAFETY-VALVE[exit]: pid=%d do_exit_group waited %dms, %d threads still stuck → force kill\n",
+-                       current->pid, waited_ms, last_remaining);
+-
+-            // Signal stuck threads with SIGUSR1 repeatedly.
+-            // Don't use pthread_cancel — it can corrupt malloc state if the
+-            // thread is cancelled inside malloc/free.
+-            for (int attempt = 0; attempt < 3; attempt++) {
+-                lock(&pids_lock);
+-                lock(&group->lock);
+-                int still_alive = 0;
+-                list_for_each_entry(&group->threads, task, group_links) {
+-                    if (task != current && !task->exiting) {
+-                        still_alive++;
+-                        cpu_poke(&task->cpu);
+-                        if (task->thread)
+-                            pthread_kill(task->thread, SIGUSR1);
+-                    }
+-                }
+-                unlock(&group->lock);
+-                unlock(&pids_lock);
+-                if (still_alive == 0) break;
+-                struct timespec ts2 = {0, 50 * 1000000L};  // 50ms
+-                nanosleep(&ts2, NULL);
+-            }
+-
+-            // If threads are truly stuck in uninterruptible host syscalls,
+-            // we accept the leak rather than risking heap corruption.
+-            // Mark them as exiting and remove from the thread group list so
+-            // that exit_tgroup() sees the group as dead and notifies the parent.
+-            lock(&pids_lock);
+-            lock(&group->lock);
+-            int leaked = 0;
+-            struct task *task_tmp;
+-            list_for_each_entry_safe(&group->threads, task, task_tmp, group_links) {
+-                if (task != current && !task->exiting) {
+-                    task->exiting = true;
+-                    list_remove(&task->group_links);
+-                    // Release resources so pipes get EOF and memory is freed.
+-                    if (task->sighand != NULL) {
+-                        sighand_release(task->sighand);
+-                        task->sighand = NULL;
+-                    }
+-                    // [T-ish-mem-uaf-user-write / T-ish-mm-leak-refcount-handoff]
+-                    // DO NOT mm_release() a stuck thread's mm HERE. This thread
+-                    // is, by definition, still running inside an uninterruptible
+-                    // host syscall (e.g. sys_read → user_write blocked on a
+-                    // pipe) and may still hold mem->lock and be about to
+-                    // dereference task->mem. Freeing the mm now is a
+-                    // use-after-free (EXC_BAD_ACCESS at 0x38 = offsetof(struct
+-                    // mem, lock)). So keep task->mm/task->mem intact for now, but
+-                    // DEFER the release to this thread's own pthread cleanup
+-                    // handler (task_run_current), which runs only after the
+-                    // thread has left the read_wrlock critical section — so it
+-                    // both avoids the UAF and, unlike the old "accept the leak"
+-                    // path, actually reclaims the whole guest address space once
+-                    // the host pthread finally terminates. If the thread instead
+-                    // unblocks and re-enters do_exit(), that mm_release()s and
+-                    // clears the flag, so cleanup won't double-free.
+-                    task->mm_release_deferred = true;
+-                    // [T-ish-mm-diag] Unconditional (not exec-trace gated): one
+-                    // line per leaked thread, once — the flag above is set once.
+-                    printk("[iSH][SAFETY-VALVE] tid=%d (group pid=%d) marked mm_release_deferred, mm=%p refcount=%u\n",
+-                           task->pid, current->pid, (void *) task->mm,
+-                           task->mm ? (unsigned) task->mm->refcount : 0u);
+-                    if (task->files != NULL) {
+-                        fdtable_release(task->files);
+-                        task->files = NULL;
+-                    }
+-                    if (task->fs != NULL) {
+-                        fs_info_release(task->fs);
+-                        task->fs = NULL;
+-                    }
+-                    leaked++;
+-                }
+-            }
+-            unlock(&group->lock);
+-            unlock(&pids_lock);
+-            // [T-ish-mm-diag] Unconditional: do_exit_group runs once per
+-            // process, so this is at most one line per exiting process.
+-            if (leaked > 0)
+-                printk("[iSH][SAFETY-VALVE] pid=%d leaked %d stuck threads, mm_release deferred\n",
+-                       current->pid, leaked);
+-        } else {
+-
+-            // Give extra time for pthread cleanup on host system
+-            // This ensures:
+-            // 1. pthread_exit() completes for all threads
+-            // 2. TLS destructors run
+-            // 3. Host malloc/arena cleanup happens
+-            // 4. Stack unwinding completes (glibc on ARM64)
+-            struct timespec extra_delay = {0, 50 * 1000000L};  // 50ms for pthread cleanup
+-            nanosleep(&extra_delay, NULL);
+-
+-#if __APPLE__
+-            // Force malloc zone cleanup to release thread-specific caches
+-            // This helps prevent pollution between guest processes
+-            malloc_zone_pressure_relief(NULL, 0);
+-#endif
+-        }
+-
+-        lock(&pids_lock);
+-        lock(&group->lock);
++        if (task != current)
++            deliver_signal(task, SIGKILL_, SIGINFO_NIL);
+     }
+-
++    group->stopped = false;
++    notify(&group->stopped_cond);
+     unlock(&group->lock);
+     unlock(&pids_lock);
+ 
+diff --git a/kernel/getset.c b/kernel/getset.c
+index 8edf84fd9ee21c8f09a2af0546f73a58ecc063fb..bbad1c818f81625eb11cca5ea0014c5c600582a7 100644
+--- a/kernel/getset.c
++++ b/kernel/getset.c
+@@ -48,7 +48,11 @@ int_t sys_setuid(uid_t_ uid) {
+         if (uid != current->uid && uid != current->suid)
+             return _EPERM;
+     }
++    lock(&pids_lock);
++    if (current->euid != uid)
++        current->parent_death_signal = 0;
+     current->euid = uid;
++    unlock(&pids_lock);
+     return 0;
+ }
+ 
+@@ -65,8 +69,12 @@ dword_t sys_setresuid(uid_t_ ruid, uid_t_ euid, uid_t_ suid) {
+ 
+     if (ruid != (uid_t) -1)
+         current->uid = ruid;
++    lock(&pids_lock);
++    if (euid != (uid_t) -1 && euid != current->euid)
++        current->parent_death_signal = 0;
+     if (euid != (uid_t) -1)
+         current->euid = euid;
++    unlock(&pids_lock);
+     if (suid != (uid_t) -1)
+         current->suid = suid;
+     return 0;
+@@ -113,7 +121,11 @@ int_t sys_setgid(uid_t_ gid) {
+         if (gid != current->gid && gid != current->sgid)
+             return _EPERM;
+     }
++    lock(&pids_lock);
++    if (current->egid != gid)
++        current->parent_death_signal = 0;
+     current->egid = gid;
++    unlock(&pids_lock);
+     return 0;
+ }
+ 
+@@ -130,8 +142,12 @@ dword_t sys_setresgid(uid_t_ rgid, uid_t_ egid, uid_t_ sgid) {
+ 
+     if (rgid != (uid_t) -1)
+         current->gid = rgid;
++    lock(&pids_lock);
++    if (egid != (uid_t) -1 && egid != current->egid)
++        current->parent_death_signal = 0;
+     if (egid != (uid_t) -1)
+         current->egid = egid;
++    unlock(&pids_lock);
+     if (sgid != (uid_t) -1)
+         current->sgid = sgid;
+     return 0;
+diff --git a/kernel/init.c b/kernel/init.c
+index 5fb8db9d7fd7c8774503f538878eb8a5bc43447b..1bc63cfbed81f34bda94eaff15d219aef9f15cb2 100644
+--- a/kernel/init.c
++++ b/kernel/init.c
+@@ -52,12 +52,23 @@ static struct rlimit_ init_rlimits[16] = {
+     [RLIMIT_RTTIME_]     = {RLIM_INFINITY_, RLIM_INFINITY_},
+ };
+ 
+-// TODO error propagation
+ static struct task *construct_task(struct task *parent) {
++    struct task *old_current = current;
+     struct task *task = task_create_(parent);
++    if (task == NULL)
++        return ERR_PTR(_ENOMEM);
++    // task_create_ copies the parent. Construction owns only fresh resources.
++    task->group = NULL;
++    task->mm = NULL;
++    task->mem = NULL;
++    task->sighand = NULL;
++    task->files = NULL;
++    task->fs = NULL;
++    int err = _ENOMEM;
+ 
+-    struct tgroup *group = malloc(sizeof(struct tgroup));
+-    *group = (struct tgroup) {};
++    struct tgroup *group = calloc(1, sizeof(struct tgroup));
++    if (group == NULL)
++        goto fail;
+     list_init(&group->threads);
+     lock_init(&group->lock);
+     cond_init(&group->child_exit);
+@@ -65,34 +76,79 @@ static struct task *construct_task(struct task *parent) {
+     memcpy(group->limits, init_rlimits, sizeof(init_rlimits));
+     group->leader = task;
+     group->personality = ADDR_NO_RANDOMIZE_;
+-    {
+-        struct timespec _ts;
+-        clock_gettime(CLOCK_MONOTONIC, &_ts);
+-        atomic_store_explicit(&group->last_progress_ns,
+-            (uint64_t)_ts.tv_sec * 1000000000ULL + _ts.tv_nsec,
+-            memory_order_relaxed);
+-    }
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    atomic_store_explicit(&group->last_progress_ns,
++        (uint64_t) ts.tv_sec * 1000000000ULL + ts.tv_nsec, memory_order_relaxed);
+     list_add(&group->threads, &task->group_links);
+     task->group = group;
+     task->tgid = task->pid;
+     task_setsid(task);
+ 
+-    task_set_mm(task, mm_new());
++    struct mm *mm = mm_new();
++    if (mm == NULL)
++        goto fail;
++    task_set_mm(task, mm);
+     task->sighand = sighand_new();
+-    task->files = fdtable_new(3); // why is there a 3 here
+-
++    if (task->sighand == NULL)
++        goto fail;
++    task->files = fdtable_new(3);
++    if (IS_ERR(task->files)) {
++        err = PTR_ERR(task->files);
++        task->files = NULL;
++        goto fail;
++    }
+     task->fs = fs_info_new();
++    if (task->fs == NULL)
++        goto fail;
+     task->fs->umask = 0022;
+-    // we'll need to have current set to do the open call
+-    struct task *old_current = current;
+     current = task;
+-    task->fs->root = generic_open("/", O_RDONLY_, 0);
+-    if (IS_ERR(task->fs->root))
+-        return ERR_PTR(task->fs->root);
+-    task->fs->pwd = fd_retain(task->fs->root);
++    struct fd *root = generic_open("/", O_RDONLY_, 0);
++    if (IS_ERR(root)) {
++        err = PTR_ERR(root);
++        goto fail;
++    }
++    task->fs->root = root;
++    task->fs->pwd = fd_retain(root);
+     current = old_current;
+-
+     return task;
++
++fail:
++    current = old_current;
++    task_discard_unstarted(task);
++    return ERR_PTR(err);
++}
++
++void task_discard_unstarted(struct task *task) {
++    struct task *saved_current = current;
++    // fdtable_release consults current. Keep the failed task as TLS until its
++    // resources are closed, then restore the caller before removing its PID.
++    current = task;
++    if (task->files != NULL)
++        fdtable_release(task->files);
++    if (task->fs != NULL) {
++        if (task->fs->pwd != NULL) fd_close(task->fs->pwd);
++        if (task->fs->root != NULL) fd_close(task->fs->root);
++        pthread_mutex_destroy(&task->fs->lock.m);
++        free(task->fs);
++    }
++    if (task->sighand != NULL)
++        sighand_release(task->sighand);
++    if (task->mm != NULL)
++        mm_release(task->mm);
++    current = saved_current == task ? NULL : saved_current;
++    lock(&pids_lock);
++    if (task->group != NULL) {
++        task_leave_session(task);
++        list_remove(&task->group->pgroup);
++        list_remove(&task->group_links);
++        cond_destroy(&task->group->child_exit);
++        cond_destroy(&task->group->stopped_cond);
++        pthread_mutex_destroy(&task->group->lock.m);
++        free(task->group);
++    }
++    task_destroy(task);
++    unlock(&pids_lock);
+ }
+ 
+ int become_first_process() {
+diff --git a/kernel/init.h b/kernel/init.h
+index b52bc6cc68af5ba0a33d5d1aef9b04f3763399d1..3f01698f422b74b6d4373199dc7f508e25670a4d 100644
+--- a/kernel/init.h
++++ b/kernel/init.h
+@@ -8,6 +8,9 @@ int mount_root(const struct fs_ops *fs, const char *source);
+ void set_console_device(int major, int minor);
+ int become_first_process(void);
+ int become_new_init_child(void);
++// Discard a privately owned task before any native thread has run it.
++// Never call for a running task or one visible to guest fork/wait callers.
++void task_discard_unstarted(struct task *task);
+ int create_stdio(const char *file, int major, int minor);
+ int create_piped_stdio(void);
+ 
+diff --git a/kernel/misc.c b/kernel/misc.c
+index b717275d5a462b9e4e72b009c4da628742bb4711..27b1afbf5a06a2578047a2af9354a7bc747b2276 100644
+--- a/kernel/misc.c
++++ b/kernel/misc.c
+@@ -1,6 +1,8 @@
+ #include <string.h>
+ #include "kernel/calls.h"
+ 
++#define PRCTL_SET_PDEATHSIG_ 1
++#define PRCTL_GET_PDEATHSIG_ 2
+ #define PRCTL_GET_DUMPABLE_ 3
+ #define PRCTL_SET_DUMPABLE_ 4
+ #define PRCTL_SET_KEEPCAPS_ 8
+@@ -8,6 +10,23 @@
+ 
+ int_t sys_prctl(dword_t option, addr_t arg2, addr_t UNUSED(arg3), addr_t UNUSED(arg4), addr_t UNUSED(arg5)) {
+     switch (option) {
++        case PRCTL_SET_PDEATHSIG_:
++            STRACE("prctl(PR_SET_PDEATHSIG, %d)", arg2);
++            if (arg2 >= NUM_SIGS)
++                return _EINVAL;
++            lock(&pids_lock);
++            current->parent_death_signal = arg2;
++            unlock(&pids_lock);
++            return 0;
++        case PRCTL_GET_PDEATHSIG_: {
++            STRACE("prctl(PR_GET_PDEATHSIG, %#x)", arg2);
++            if (arg2 > (addr_t) -1 - sizeof(int_t))
++                return _EFAULT;
++            lock(&pids_lock);
++            int_t sig = current->parent_death_signal;
++            unlock(&pids_lock);
++            return user_put(arg2, sig) ? _EFAULT : 0;
++        }
+         // Nothing dumps core here, but sftp-server, sshd and other hardened
+         // programs set this at startup and exit when it fails.
+         case PRCTL_GET_DUMPABLE_:
+diff --git a/kernel/signal.c b/kernel/signal.c
+index f54619254360be3ffe7df30a4e8a13f58f20e75a..2ac312601d9fcaf216f164ef5362115e23f50126 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -155,6 +155,25 @@ bool try_self_signal(int sig) {
+     return can_send;
+ }
+ 
++// Process-directed signals must still reach a live thread after the leader
++// exits. The caller holds pids_lock, which protects the thread list and sighand.
++static struct task *process_signal_target(struct task *leader, int sig) {
++    struct task *fallback = NULL;
++    struct task *thread;
++    list_for_each_entry(&leader->group->threads, thread, group_links) {
++        if (thread->exiting || thread->zombie || thread->sighand == NULL)
++            continue;
++        if (fallback == NULL)
++            fallback = thread;
++        lock(&thread->sighand->lock);
++        bool blocked = sig != 0 && sigset_has(thread->blocked, sig);
++        unlock(&thread->sighand->lock);
++        if (!blocked)
++            return thread;
++    }
++    return fallback;
++}
++
+ int send_group_signal(dword_t pgid, int sig, struct siginfo_ info) {
+     lock(&pids_lock);
+     struct pid *pid = pid_get(pgid);
+@@ -164,7 +183,9 @@ int send_group_signal(dword_t pgid, int sig, struct siginfo_ info) {
+     }
+     struct tgroup *tgroup;
+     list_for_each_entry(&pid->pgroup, tgroup, pgroup) {
+-        send_signal(tgroup->leader, sig, info);
++        struct task *target = process_signal_target(tgroup->leader, sig);
++        if (target != NULL)
++            send_signal(target, sig, info);
+     }
+     unlock(&pids_lock);
+     return 0;
+@@ -1092,7 +1113,7 @@ int_t sys_rt_sigtimedwait(addr_t set_addr, addr_t info_addr, addr_t timeout_addr
+     return info.sig;
+ }
+ 
+-static int kill_task(struct task *task, dword_t sig) {
++static int kill_task(struct task *task, dword_t sig, bool process_directed) {
+     if (!superuser() &&
+             current->uid != task->uid &&
+             current->uid != task->suid &&
+@@ -1104,20 +1125,20 @@ static int kill_task(struct task *task, dword_t sig) {
+         .kill.pid = current->pid,
+         .kill.uid = current->uid,
+     };
+-    send_signal(task, sig, info);
++    struct task *target = process_directed ? process_signal_target(task, sig) : task;
++    if (target != NULL)
++        send_signal(target, sig, info);
+     return 0;
+ }
+ 
+ static int kill_group(pid_t_ pgid, dword_t sig) {
+     struct pid *pid = pid_get(pgid);
+-    if (pid == NULL) {
+-        unlock(&pids_lock);
++    if (pid == NULL)
+         return _ESRCH;
+-    }
+     struct tgroup *tgroup;
+     int err = _EPERM;
+     list_for_each_entry(&pid->pgroup, tgroup, pgroup) {
+-        int kill_err = kill_task(tgroup->leader, sig);
++        int kill_err = kill_task(tgroup->leader, sig, true);
+         // killing a group should return an error only if no process can be signaled
+         if (err == _EPERM)
+             err = kill_err;
+@@ -1131,14 +1152,14 @@ static int kill_everything(dword_t sig) {
+         struct task *task = pid_get_task(i);
+         if (task == NULL || task == current || !task_is_leader(task))
+             continue;
+-        int kill_err = kill_task(task, sig);
++        int kill_err = kill_task(task, sig, true);
+         if (err == _EPERM)
+             err = kill_err;
+     }
+     return err;
+ }
+ 
+-static int do_kill(pid_t_ pid, dword_t sig, pid_t_ tgid) {
++static int do_kill(pid_t_ pid, dword_t sig, pid_t_ tgid, bool process_directed) {
+     STRACE("kill(%d, %d)", pid, sig);
+     if (sig >= NUM_SIGS)
+         return _EINVAL;
+@@ -1153,7 +1174,7 @@ static int do_kill(pid_t_ pid, dword_t sig, pid_t_ tgid) {
+     } else if (pid < 0) {
+         err = kill_group(-pid, sig);
+     } else {
+-        struct task *task = pid_get_task(pid);
++        struct task *task = process_directed ? pid_get_task_zombie(pid) : pid_get_task(pid);
+         if (task == NULL) {
+             unlock(&pids_lock);
+             return _ESRCH;
+@@ -1165,7 +1186,7 @@ static int do_kill(pid_t_ pid, dword_t sig, pid_t_ tgid) {
+             return _ESRCH;
+         }
+ 
+-        err = kill_task(task, sig);
++        err = kill_task(task, sig, process_directed);
+     }
+ 
+     unlock(&pids_lock);
+@@ -1173,15 +1194,15 @@ static int do_kill(pid_t_ pid, dword_t sig, pid_t_ tgid) {
+ }
+ 
+ dword_t sys_kill(pid_t_ pid, dword_t sig) {
+-    return do_kill(pid, sig, 0);
++    return do_kill(pid, sig, 0, true);
+ }
+ dword_t sys_tgkill(pid_t_ tgid, pid_t_ tid, dword_t sig) {
+     if (tid <= 0 || tgid <= 0)
+         return _EINVAL;
+-    return do_kill(tid, sig, tgid);
++    return do_kill(tid, sig, tgid, false);
+ }
+ dword_t sys_tkill(pid_t_ tid, dword_t sig) {
+     if (tid <= 0)
+         return _EINVAL;
+-    return do_kill(tid, sig, 0);
++    return do_kill(tid, sig, 0, false);
+ }
+diff --git a/kernel/task.c b/kernel/task.c
+index b0a096d2c812e2949f9bc1fecf7808b7ae5a245d..25de6442a23db173bbccdf624d6749a522f4f2ca 100644
+--- a/kernel/task.c
++++ b/kernel/task.c
+@@ -11,6 +11,26 @@
+ 
+ __thread struct task *current;
+ 
++static _Atomic unsigned host_task_count;
++
++void ish_host_task_enter(void) {
++    atomic_fetch_add_explicit(&host_task_count, 1, memory_order_acq_rel);
++}
++
++void ish_host_task_leave(void) {
++    unsigned previous = atomic_fetch_sub_explicit(&host_task_count, 1, memory_order_acq_rel);
++    assert(previous > 0);
++}
++
++unsigned ish_host_task_count(void) {
++    return atomic_load_explicit(&host_task_count, memory_order_acquire);
++}
++
++static void host_task_cleanup(void *unused) {
++    (void) unused;
++    ish_host_task_leave();
++}
++
+ static struct pid pids[MAX_PID + 1] = {};
+ lock_t pids_lock = LOCK_INITIALIZER;
+ 
+@@ -71,6 +91,8 @@ struct task *task_create_(struct task *parent) {
+     if (parent != NULL)
+         *task = *parent;
+     task->pid = pid->id;
++    // Linux clears PR_SET_PDEATHSIG in every newly cloned task.
++    task->parent_death_signal = 0;
+     pid->task = task;
+ 
+ #ifdef GUEST_ARM64
+@@ -123,72 +145,14 @@ struct task *task_create_(struct task *parent) {
+     return task;
+ }
+ 
+-// Deferred-free list for task structs.
+-// When a task is destroyed, its struct is not immediately freed — instead it's
+-// placed on this list. The NEXT call to task_destroy will free previously
+-// deferred structs. This gives leaked/exiting pthreads time to finish accessing
+-// `current` before the memory is recycled by malloc, preventing use-after-free
+-// heap corruption.
+-#define DEFERRED_FREE_MAX 64
+-static struct task *deferred_free_list[DEFERRED_FREE_MAX];
+-static int deferred_free_count = 0;
+-// Must be called with pids_lock held (task_destroy already requires this).
+-static void flush_deferred_frees(void) {
+-    for (int i = 0; i < deferred_free_count; i++) {
+-        free(deferred_free_list[i]);
+-        deferred_free_list[i] = NULL;
+-    }
+-    deferred_free_count = 0;
+-}
+-
+ void task_destroy(struct task *task) {
+     list_remove(&task->siblings);
+     pid_get(task->pid)->task = NULL;
+-
+-    // Flush old deferred frees first — they've had time to quiesce.
+-    flush_deferred_frees();
+-
+-    // Zero the struct to poison stale `current` references, then defer the
+-    // actual free. This way if a leaked pthread is still running, it will
+-    // hit zeroed fields (NULL group, NULL mem) and crash cleanly rather than
+-    // silently corrupting a newly-allocated task at the same address.
+-    memset(task, 0, sizeof(struct task));
+-
+-    if (deferred_free_count < DEFERRED_FREE_MAX) {
+-        deferred_free_list[deferred_free_count++] = task;
+-    } else {
+-        // Overflow — free immediately (rare, only with 64+ concurrent exits)
+-        free(task);
+-    }
++    free(task);
+ }
+ 
+ static void task_run_tlb_cleanup(void *arg) {
+     tlb_free((struct tlb *)arg);
+-    // [T-ish-mm-leak-refcount-handoff] If the do_exit_group safety valve
+-    // orphaned this thread (stuck in an uninterruptible host syscall) it
+-    // deferred the mm_release to here — this runs only when the host pthread
+-    // actually terminates, i.e. AFTER the thread has left the read_wrlock
+-    // critical section, so releasing now can't UAF the mem lock. This reclaims
+-    // the whole guest address space instead of leaking it forever. `current`
+-    // is a __thread TLS pointer, still valid inside pthread cleanup.
+-    struct task *self = current;
+-    if (self != NULL && self->mm_release_deferred && self->mm != NULL) {
+-        self->mm_release_deferred = false;
+-        // [T-ish-exit-mm-general-lock] Same handoff as do_exit: unpublish the
+-        // mm under general_lock so a procfs reader cannot lock it after we
+-        // destroy it, then release outside the lock.
+-        lock(&self->general_lock);
+-        struct mm *mm = self->mm;
+-        self->mm = NULL;
+-        self->mem = NULL;
+-        unlock(&self->general_lock);
+-        // [T-ish-mm-diag] The other half of the SAFETY-VALVE line: when the
+-        // leaked thread finally unwinds and releases, and what refcount it
+-        // finds — a value other than 1 here means a second holder.
+-        printk("[iSH][DEFERRED-RELEASE] pid=%d mm_release from cleanup handler, mm=%p refcount_before=%u\n",
+-               self->pid, (void *) mm, (unsigned) mm->refcount);
+-        mm_release_from(mm, "cleanup_handler");
+-    }
+ }
+ 
+ void task_run_current() {
+@@ -207,19 +171,10 @@ void task_run_current() {
+         // Check for group exit before entering JIT — this catches threads
+         // returning from blocking host syscalls (futex, nanosleep, etc.)
+         // that were interrupted by SIGUSR1 from do_exit_group.
+-        // Also bail if our task struct was destroyed (current zeroed or NULLed).
+         struct task *self = current;
+-        if (self == NULL || self->group == NULL) {
+-            // Task struct was destroyed under us (leaked thread).
+-            // Exit the host thread silently; cleanup handler frees tlb.
+-            pthread_exit(NULL);
+-        }
+         if (self->group->doing_group_exit) {
+             do_exit(self->group->group_exit_code);
+         }
+-        if (self->mem == NULL) {
+-            pthread_exit(NULL);
+-        }
+         read_wrlock(&self->mem->lock);
+         tlb_refresh(tlb, &self->mem->mmu);
+         int interrupt = cpu_run_to_interrupt(cpu, tlb);
+@@ -235,7 +190,9 @@ void task_run_current() {
+ static void *task_thread(void *vtask) {
+     current = vtask;
+     update_thread_name();
++    pthread_cleanup_push(host_task_cleanup, NULL);
+     task_run_current();
++    pthread_cleanup_pop(1);
+     die("task_thread returned"); // above function call should never return
+ }
+ 
+@@ -251,9 +208,13 @@ int task_start(struct task *task) {
+     // thread was never started. Under thread-stack exhaustion (EAGAIN) that
+     // has to become a guest-visible clone() failure, not a dead task or a
+     // die(). [T-ish-jit-oom-abort]
++    // Count before scheduling so shutdown cannot miss a not-yet-started thread.
++    ish_host_task_enter();
+     int err = pthread_create(&task->thread, &task_thread_attr, task_thread, task);
+-    if (err != 0)
++    if (err != 0) {
++        ish_host_task_leave();
+         return err == EAGAIN ? _EAGAIN : _ENOMEM;
++    }
+     return 0;
+ }
+ 
+diff --git a/kernel/task.h b/kernel/task.h
+index a6ecca2ddf7589dbb9e3200eb80d1a26766b0ea2..38f5eb19e398bddcad496946bfcfea0b91e84426 100644
+--- a/kernel/task.h
++++ b/kernel/task.h
+@@ -72,6 +72,7 @@ struct task {
+ 
+     // locked by pids_lock
+     struct task *parent;
++    int parent_death_signal;
+     struct list children;
+     struct list siblings;
+ 
+@@ -97,15 +98,6 @@ struct task {
+     dword_t exit_code;
+     bool zombie;
+     bool exiting;
+-    // [T-ish-mm-leak-refcount-handoff] Set by the do_exit_group safety valve
+-    // when it orphans a thread stuck in an uninterruptible host syscall: the
+-    // valve can't mm_release() now (the thread may still hold mem->lock inside
+-    // user_write → UAF, see T-ish-mem-uaf-user-write), so it hands the release
+-    // off to this thread's own pthread cleanup handler, which runs only after
+-    // the thread has left the read_wrlock critical section. Prevents the mm
+-    // (whole guest address space) from leaking forever when the thread never
+-    // re-enters do_exit(). Cleared once released so it never double-frees.
+-    bool mm_release_deferred;
+ 
+     // this structure is allocated on the stack of the parent's clone() call
+     struct vfork_info {
+@@ -280,6 +272,13 @@ __attribute__((warn_unused_result))
+ int task_start(struct task *task);
+ void task_run_current(void);
+ 
++// Embedders that supply the host thread must enter before pthread_create and
++// leave from the outermost pthread cleanup handler. Kernel task_start accounts
++// for its own threads. A zero count means no guest can access mounted storage.
++void ish_host_task_enter(void);
++void ish_host_task_leave(void);
++unsigned ish_host_task_count(void);
++
+ extern void (*exit_hook)(struct task *task, int code);
+ 
+ typedef int (*ish_timer_tick_hook_t)(void);

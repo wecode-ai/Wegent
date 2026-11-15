@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -283,17 +284,13 @@ function SubagentConversation({
       )}
       {history.loading ? <ActivityIndicator testID="subagent-history-loading" /> : null}
       {history.error ? (
-        <View style={styles.group}>
-          <Text testID="subagent-history-error">{history.error}</Text>
-          <Pressable
-            testID="subagent-history-retry"
-            accessibilityRole="button"
-            style={styles.action}
-            onPress={() => setRevision(value => value + 1)}
-          >
-            <Text>重试</Text>
-          </Pressable>
-        </View>
+        <ErrorNotice
+          error={history.error}
+          title="无法加载子智能体记录"
+          testID="subagent-history-error"
+          retryTestID="subagent-history-retry"
+          onRetry={() => setRevision(value => value + 1)}
+        />
       ) : null}
     </ScrollView>
   )

@@ -13,6 +13,15 @@ config.resolver.nodeModulesPaths = [
 ]
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Shared PC hooks must use the same React instance as the native renderer.
+  if (moduleName === 'react' || moduleName.startsWith('react/')) {
+    return context.resolveRequest(
+      context,
+      require.resolve(moduleName, { paths: [__dirname] }),
+      platform
+    )
+  }
+
   if (/(^|\/)MaterialCommunityIcons(?:\.js)?$/.test(moduleName)) {
     return context.resolveRequest(context, paperIconModule, platform)
   }

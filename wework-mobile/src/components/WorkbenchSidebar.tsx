@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { Image, Modal, Pressable, StyleSheet, View } from 'react-native'
+import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -10,6 +10,9 @@ interface WorkbenchSidebarProps {
   userLabel: string
   onDismiss: () => void
   onSettings: () => void
+  connectionError: string | null
+  reconnecting: boolean
+  onRetryConnection: () => Promise<void>
 }
 
 export function WorkbenchSidebar({
@@ -17,6 +20,9 @@ export function WorkbenchSidebar({
   userLabel,
   onDismiss,
   onSettings,
+  connectionError,
+  reconnecting,
+  onRetryConnection,
 }: WorkbenchSidebarProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
@@ -82,26 +88,60 @@ export function WorkbenchSidebar({
             </Text>
           </Pressable>
           <View style={styles.spacer} />
-          <Pressable
-            accessibilityLabel="设置"
-            accessibilityRole="button"
-            onPress={() => {
-              onDismiss()
-              onSettings()
-            }}
-            style={styles.account}
-            testID="workbench-sidebar-settings"
-          >
-            <View style={[styles.avatar, { backgroundColor: theme.colors.surfaceVariant }]}>
-              <Text style={styles.initial}>
-                {userLabel.trim().slice(0, 1).toLocaleUpperCase() || 'W'}
+          <View style={styles.account}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={connectionError ? '连接未完成，轻点重试' : '账户设置'}
+              accessibilityState={{ disabled: reconnecting, busy: reconnecting }}
+              disabled={reconnecting}
+              onPress={() => {
+                if (connectionError) void onRetryConnection()
+                else {
+                  onDismiss()
+                  onSettings()
+                }
+              }}
+              style={styles.avatarTouchArea}
+              testID="workbench-sidebar-avatar"
+            >
+              <View style={[styles.avatar, { backgroundColor: theme.colors.surfaceVariant }]}>
+                <Text style={styles.initial}>
+                  {userLabel.trim().slice(0, 1).toLocaleUpperCase() || 'W'}
+                </Text>
+              </View>
+              {connectionError ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.connectionBadge,
+                    { backgroundColor: theme.colors.error, borderColor: theme.colors.background },
+                  ]}
+                  testID="workbench-sidebar-connection-badge"
+                >
+                  {reconnecting ? (
+                    <ActivityIndicator size={12} color={theme.colors.onError} />
+                  ) : (
+                    <Ionicons name="alert" size={12} color={theme.colors.onError} />
+                  )}
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable
+              accessibilityLabel="设置"
+              accessibilityRole="button"
+              onPress={() => {
+                onDismiss()
+                onSettings()
+              }}
+              style={styles.accountSettings}
+              testID="workbench-sidebar-settings"
+            >
+              <Text numberOfLines={1} style={styles.accountName} variant="bodyLarge">
+                {userLabel || 'Wework'}
               </Text>
-            </View>
-            <Text numberOfLines={1} style={styles.accountName} variant="bodyLarge">
-              {userLabel || 'Wework'}
-            </Text>
-            <Ionicons color={theme.colors.onSurfaceVariant} name="settings-outline" size={22} />
-          </Pressable>
+              <Ionicons color={theme.colors.onSurfaceVariant} name="settings-outline" size={22} />
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -155,6 +195,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarTouchArea: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  connectionBadge: {
+    position: 'absolute',
+    right: 3,
+    bottom: 3,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountSettings: { flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 12 },
   initial: { fontSize: 16, fontWeight: '500' },
   accountName: { flex: 1 },
 })

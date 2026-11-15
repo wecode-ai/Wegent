@@ -22,6 +22,27 @@ function functionProbeResponse(argumentsValue: unknown, streamed: boolean): Resp
   })
 }
 
+describe('Responses terminal failures', () => {
+  test.each(['response.failed', 'response.incomplete', 'error'])(
+    'rejects an explicit %s after a valid streamed tool call',
+    async type => {
+      const response = functionProbeResponse('{"input":"PING"}', true)
+      const body = await response.text()
+      const fetcher = vi.fn().mockResolvedValue(
+        new Response(`${body}\ndata: ${JSON.stringify({ type })}\n\n`, {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      )
+      await expect(
+        testLocalModelConnection(
+          { baseUrl: 'https://models.local/v1', modelId: 'probe' },
+          { fetcher }
+        )
+      ).rejects.toThrow('did not complete')
+    }
+  )
+})
+
 describe.each([false, true])('Responses function probe streamed=%s', streamed => {
   test.each([
     undefined,

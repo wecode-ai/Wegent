@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useEffect, useState } from 'react'
 import {
@@ -173,7 +174,7 @@ export function ComposerContextMenu({
                   <Text style={{ color: theme.colors.onSurfaceVariant }}>正在加载插件</Text>
                 </View>
               ) : error ? (
-                <Text style={[styles.statusText, { color: theme.colors.error }]}>{error}</Text>
+                <ErrorNotice error={error} title="无法加载插件" testID="composer-plugins-error" />
               ) : apps.length ? (
                 apps.map(app => (
                   <PluginAction

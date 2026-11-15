@@ -367,6 +367,18 @@
     "./workspace-git": {
       "types": "./src/workspace-git.ts",
       "import": "./src/workspace-git.ts"
+    },
+    "./local-runtime-execution": {
+      "types": "./src/local-runtime-execution.ts",
+      "import": "./src/local-runtime-execution.ts"
+    },
+    "./local-runtime-model": {
+      "types": "./src/local-runtime-model.ts",
+      "import": "./src/local-runtime-model.ts"
+    },
+    "./runtime-composer-references": {
+      "types": "./src/runtime-composer-references.ts",
+      "import": "./src/runtime-composer-references.ts"
     }
   },
   "scripts": {
