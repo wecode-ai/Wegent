@@ -116,6 +116,25 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         };
         if origin["type"] == "stand_in_task" {
+            if request
+                .extra
+                .get("standInDelegation")
+                .is_some_and(|context| context["sourceMessageId"].is_string())
+            {
+                let child = self.local_task_link(local_task_id).ok_or_else(|| {
+                    AppIpcError::new("permission_denied", "Source worker is unavailable")
+                })?;
+                let parent = self.source_task_parent(&child)?;
+                let message = request.extra["standInDelegation"]["sourceMessageId"]
+                    .as_str()
+                    .unwrap();
+                let (config, _) = self.source_task_context(&parent, message)?;
+                if config["handlingPolicy"]["askBeforeAct"] == true {
+                    request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(true);
+                    request.extra.get_mut("standInDelegation").unwrap()["askBeforeAct"] =
+                        json!(true);
+                }
+            }
             // Personal delegated work has no project connection policy. Native
             // review follows its recorded task/delegation authorization instead.
             if request.extra.get("standInManualConfirmation") == Some(&json!(true)) {

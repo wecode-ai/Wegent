@@ -4,6 +4,10 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Manual source starts use the host snapshot's existing `origin.manual` and exact `standInSourceBindings`. Transient confirmation flags confer no durable authorization, and later arrivals cannot reuse the grant. Disabling automation does not block authorized manual workers or their completion reports. Queue admission revalidates the original message grant, source, identity and configuration version while retaining native confirmation. Automatic workers still require enabled role and source policies; revoking the binding blocks both workers and reports. Native manual-start, snapshot and source-task admission regressions protect these boundaries. CP01–CP20 remain unchanged.
+
+Personal task creation from a connected source requires a connector-verified owner self-conversation record; `isOwn` alone is insufficient. Third-party messages, own messages to others/groups and unknown identity are rejected. The scoped `create_task` revalidates the current owner, device, role, work and exact source, then creates a task using the immutable message record and a stable request ID. Workers inherit role configuration and the stricter confirmation policy; callers cannot supply an owner, permissions, workspace overrides or source-read grants. Workers can read only their own conversation. The durable result outbox returns to the original source work, revalidating source authority before native replies; revocation, identity mismatch, uncertain sends and duplicate execution confer no authority. `stand_in_source_tasks`, source-tool catalog contracts and CI's `stand-in-cli` user story cover these transactions. CP01–CP20 remain unchanged.
+
 My Work reuses the Issue list/detail response projector, loading names, executions, human task bindings and visibility once for the whole page. Each Issue uses only its own project's current effective role and security policy; another project's access cannot grant authority. Responses normalize timestamps to UTC while retaining raw database pagination cursors and external-provider boundaries. API field parity, mixed-project permissions and constant cross-project query-count regressions protect this read path. CP01–CP20 remain unchanged.
 
 Child creation from comments rechecks current parent-Issue access and retains the stricter of parent visibility and the project default. Guessing a hidden parent identifier cannot create a child, and copying a comment cannot expose related-only content to the project. CP13 and CP14 remain unchanged. Permission contracts cover both parent and default visibility levels; the existing comment-assignment desktop checkpoint covers a restricted parent.
@@ -339,6 +343,16 @@ conversation identity. `test_stand_in_issue_replies.py` and Executor
 `runtime_owner_tests` cover ambiguity denial, exact routes and receipt identity;
 CI's stand-in Issue-conversation scenario covers real execution with duplicate
 desktop aliases.
+
+Cloud hosts and remote devices confirmed by the Backend device catalog use their
+exact registered identity for task metadata without a desktop-alias identity RPC.
+This path requires an exact match between the requested ID and catalog record;
+local devices, desktop devices and unknown or mismatched aliases still attest
+their registration through the owning Runtime. Backend checks continue to enforce
+device ownership, project, Issue and private-conversation access for every read
+and binding. CP01–CP20 remain unchanged. `canonicalCloudTaskPort.test.ts` covers
+registered devices, an unavailable identity RPC and ambiguous-alias rejection;
+the remote group planning-details E2E covers the real conversation entry.
 
 A role's execution device selects where new work is received; it grants no resource
 authority. A device change stages a paused role on the target, redirects source

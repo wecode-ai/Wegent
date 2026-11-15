@@ -20,6 +20,8 @@ import {
 } from './SettingsScreen'
 import { LocalRuntimeSettings } from './LocalRuntimeSettings'
 import { ErrorNotice } from './errors/ErrorNotice'
+import { ModelPrivacyNotice } from './ModelPrivacyNotice'
+import { confirmModelDataSharing } from '@/services/privacyPolicy'
 
 export function PhoneModelsScreen({
   runtime,
@@ -28,6 +30,7 @@ export function PhoneModelsScreen({
   onAdd,
   onEdit,
   onAccount,
+  onPrivacy,
 }: {
   runtime: LocalRuntime | null
   status: LocalRuntimeStatus
@@ -35,10 +38,12 @@ export function PhoneModelsScreen({
   onAdd: () => void
   onEdit: (id: string) => void
   onAccount: () => void
+  onPrivacy: () => void
 }) {
   const { models, error } = usePhoneModels()
   return (
     <SettingsPage title="模型与账号" onBack={onBack}>
+      <ModelPrivacyNotice testID="models-privacy" onReadPolicy={onPrivacy} />
       <SettingsGroup title="OpenAI 账号">
         <SettingsRow
           icon="sparkles-outline"
@@ -84,6 +89,7 @@ export function CodexAccountScreen({
   onRetry,
   onBack,
   onChanged,
+  onPrivacy,
 }: {
   runtime: LocalRuntime | null
   status: LocalRuntimeStatus
@@ -91,9 +97,11 @@ export function CodexAccountScreen({
   onRetry: () => Promise<void>
   onBack: () => void
   onChanged: () => Promise<void>
+  onPrivacy: () => void
 }) {
   return (
     <SettingsPage title="OpenAI 账号" onBack={onBack}>
+      <ModelPrivacyNotice testID="codex-account-privacy" onReadPolicy={onPrivacy} />
       {runtime ? (
         <LocalRuntimeSettings
           runtime={runtime}
@@ -123,11 +131,13 @@ export function PhoneModelEditorScreen({
   runtime,
   onBack,
   onChanged,
+  onPrivacy,
 }: {
   modelId?: string
   runtime: LocalRuntime | null
   onBack: () => void
   onChanged: () => Promise<void>
+  onPrivacy: () => void
 }) {
   const theme = useTheme()
   const [draft, setDraft] = useState<PhoneLocalModelInput>(emptyModel)
@@ -249,6 +259,7 @@ export function PhoneModelEditorScreen({
   )
   return (
     <SettingsPage title={modelId ? '编辑模型' : '添加模型'} onBack={onBack} keyboard>
+      <ModelPrivacyNotice testID="local-model-privacy" onReadPolicy={onPrivacy} />
       {loading && <ActivityIndicator />}
       <View style={settingsStyles.form}>
         {field('displayName', '显示名称', '我的模型（可选）')}
@@ -278,7 +289,7 @@ export function PhoneModelEditorScreen({
         </SettingsAction>
         <SettingsAction
           testID="local-model-save"
-          onPress={() => void save()}
+          onPress={() => confirmModelDataSharing(save)}
           disabled={busy || loading}
         >
           保存模型

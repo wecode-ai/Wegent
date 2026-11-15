@@ -42,10 +42,10 @@ from app.services.execution_environment_initialization import (
 )
 from app.services.loop_item_status_history import write_status_change
 from app.services.project_automation_domain import ACTIVE_RUN_STATUSES
-from app.services.workspaces import workspace_service
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
+from app.services.workspaces.service import workspace_service
 from app.services.workspaces.storage import (
     WORKSPACE_ENTITY_TYPE,
     resource_grant,
