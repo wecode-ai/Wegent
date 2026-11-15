@@ -110,6 +110,7 @@ pub(crate) async fn resolve(
     user_id: i64,
     selection: &Value,
     automatic: bool,
+    session_environment_id: Option<&str>,
 ) -> Result<Value> {
     authority::require(state, project_id, user_id).await?;
     if !config["model_policy"].is_object() {
@@ -119,7 +120,10 @@ pub(crate) async fn resolve(
     }
     let mut policy = config["execution_policy"].clone();
     let mut source = policy["mode"].as_str().unwrap_or("").to_owned();
-    let binding = issue_binding(state, issue).await?;
+    let binding = match session_environment_id {
+        Some(environment) => Some(environment.to_owned()),
+        None => issue_binding(state, issue).await?,
+    };
     if source == "user_select" {
         if selection["execution_policy"].is_object()
             && selection["execution_policy"]["mode"] != "user_select"
@@ -190,6 +194,11 @@ pub(crate) async fn resolve(
         }
         .record(&mut &state.mysql)
         .await;
+        if source == "issue_binding" {
+            bail!(
+                "ISSUE_RUNNER_CONFLICT: The bound environment is no longer available or authorized"
+            )
+        }
         bail!(
             "RUNNER_ENVIRONMENT_UNAVAILABLE: No execution environment is authorized for this selection"
         )
@@ -200,6 +209,7 @@ pub(crate) async fn resolve(
             .iter()
             .any(|device| device.id.to_string() == binding);
         let recovery = !compatible
+            && session_environment_id.is_none()
             && !automatic
             && selection["recovery_from_environment_id"] == binding
             && super::runner_recovery::available_on(&mut &state.mysql, &issue.id, 0).await?;

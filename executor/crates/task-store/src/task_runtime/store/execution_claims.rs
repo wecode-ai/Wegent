@@ -113,9 +113,9 @@ impl LocalTaskStore {
         let recovery = conflict
             && previous.is_some()
             && recovery_from == previous
-            && payload["automation_run_id"]
+            && !payload["automation_run_id"]
                 .as_str()
-                .is_none_or(str::is_empty)
+                .is_some_and(|id| !id.is_empty())
             && super::runner_recovery::available_on(&connection, &issue.id, candidate_id)?;
         let project = get_item_from(&connection, &pending.cloud_project_id, "project")?;
         if project.is_none() {

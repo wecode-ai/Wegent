@@ -1,5 +1,7 @@
 """Only explicit recovery of a failed assignment can replace a runner binding."""
 
+import json
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import update
@@ -9,7 +11,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import ResourceMember
 from app.services.runner_routing import claim_routing, resolve_routing
 from tests.services.test_runner_routing import routing_setup  # noqa: F401
-from tests.services.test_runner_routing import MODEL, _execution_stub
+from tests.services.test_runner_routing import MODEL
 
 
 def prepare(db, setup, selection=None, automatic=False):
@@ -29,15 +31,30 @@ def prepare(db, setup, selection=None, automatic=False):
     )
 
 
-def run_for(setup, snapshot, **values):
+def run_for(db, setup, snapshot, **values):
     user, _, issue = setup
-    return _execution_stub(
+    selection = {"runner_routing": snapshot} if snapshot is not None else {}
+    resolved = values.pop("resolved_environment_id", None)
+    if resolved:
+        selection["resolved_environment_id"] = resolved
+    payload = {
+        "runtime_selection": selection,
+        "origin_context": values.pop("runtime_origin_context", {}),
+        "runtime_request": values.pop("runtime_request", {}),
+    }
+    row = LoopItemExecution(
         loop_item_id=issue.id,
         cloud_project_id=issue.cloud_project_id,
         assigner_user_id=user.id,
-        runtime_selection={"runner_routing": snapshot},
+        executor_owner_user_id=user.id,
+        execution_environment="local",
+        status="queued",
+        execution_payload=json.dumps(payload),
         **values,
     )
+    db.add(row)
+    db.flush()
+    return row
 
 
 @pytest.mark.parametrize("previous_status", ["completed", "failed"])
@@ -71,7 +88,9 @@ def test_conflict_requires_explicit_recovery_and_preserves_history(
         {"recovery_from_environment_id": request["recovery_from_environment_id"]},
     )
     assert result.candidates == [devices[1]]
-    assert claim_routing(test_db, run_for(routing_setup, result.snapshot()), devices[1])
+    assert claim_routing(
+        test_db, run_for(test_db, routing_setup, result.snapshot()), devices[1]
+    )
     assert issue.metadata_json == {
         "runner_binding": {"environment_id": str(devices[1].id)},
         "tags": ["keep"],
@@ -122,7 +141,7 @@ def test_claim_rechecks_occupancy_and_expected_binding(test_db, routing_setup, s
         )
     test_db.flush()
     assert not claim_routing(
-        test_db, run_for(routing_setup, result.snapshot()), devices[1]
+        test_db, run_for(test_db, routing_setup, result.snapshot()), devices[1]
     )
     assert issue.metadata_json["runner_binding"]["environment_id"] == (
         "999" if stale else original
@@ -177,12 +196,13 @@ def test_old_session_reply_does_not_restore_the_old_issue_binding(
         "model": MODEL,
     }
     execution = run_for(
+        test_db,
         routing_setup,
         snapshot,
         runtime_device_id=devices[0].name,
         runtime_request={"newSession": False},
+        resolved_environment_id=str(devices[0].id),
     )
-    execution.runtime_selection["resolved_environment_id"] = str(devices[0].id)
     assert claim_routing(test_db, execution, devices[0])
     assert issue.metadata_json["runner_binding"]["environment_id"] == str(devices[1].id)
 
@@ -203,6 +223,7 @@ def test_manual_group_dispatch_identity_is_not_an_automation(
         test_db, routing_setup, {"recovery_from_environment_id": str(devices[0].id)}
     )
     execution = run_for(
+        test_db,
         routing_setup,
         result.snapshot(),
         automation_run_id=run_id,
@@ -213,3 +234,126 @@ def test_manual_group_dispatch_identity_is_not_an_automation(
         },
     )
     assert permits_runner_recovery(test_db, execution, str(devices[0].id)) is allowed
+
+
+@pytest.mark.parametrize(
+    "snapshot", [None, {"execution_policy": {"mode": "project_pool"}, "model": MODEL}]
+)
+def test_legacy_and_routed_replies_reject_the_wrong_device(
+    test_db, routing_setup, snapshot
+):
+    _, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding": {"environment_id": str(devices[1].id)}}
+    test_db.flush()
+    row = run_for(
+        test_db,
+        routing_setup,
+        snapshot,
+        runtime_device_id=devices[0].name,
+        runtime_request={"newSession": False},
+    )
+    assert not claim_routing(test_db, row, devices[1])
+    assert claim_routing(test_db, row, devices[0])
+    assert issue.metadata_json["runner_binding"]["environment_id"] == str(devices[1].id)
+
+
+def test_second_recovery_cannot_enqueue_behind_another_prepared_recovery(
+    test_db, routing_setup
+):
+    _, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
+    test_db.flush()
+    choice = {"recovery_from_environment_id": str(devices[0].id)}
+    first = prepare(test_db, routing_setup, choice)
+    row = run_for(test_db, routing_setup, first.snapshot())
+    with pytest.raises(HTTPException) as error:
+        prepare(test_db, routing_setup, choice)
+    assert error.value.detail["error_code"] == "ISSUE_RUNNER_CONFLICT"
+    assert (
+        test_db.query(LoopItemExecution).filter_by(loop_item_id=issue.id).count() == 1
+    )
+    assert claim_routing(test_db, row, devices[1])
+
+
+def test_unavailable_implicit_binding_offers_an_authorized_alternative(
+    test_db, routing_setup
+):
+    user, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
+    devices[0].is_active = False
+    test_db.flush()
+    config = {
+        "runtime": "codex",
+        "execution_policy": {"mode": "user_select"},
+        "model_policy": {"mode": "fixed", "model": MODEL},
+    }
+    with pytest.raises(HTTPException) as error:
+        resolve_routing(
+            test_db,
+            config=config,
+            project_id=issue.cloud_project_id,
+            issue_id=issue.id,
+            user_id=user.id,
+            selection=None,
+        )
+    request = error.value.detail["runner_selection_request"]
+    assert request["execution_policy"] == {"mode": "user_select"}
+    choice = {
+        "execution_policy": {"mode": "fixed", "environment_id": str(devices[1].id)},
+        "recovery_from_environment_id": request["recovery_from_environment_id"],
+    }
+    assert resolve_routing(
+        test_db,
+        config=config,
+        project_id=issue.cloud_project_id,
+        issue_id=issue.id,
+        user_id=user.id,
+        selection=choice,
+    ).candidates == [devices[1]]
+
+
+def test_recovery_choice_reaches_every_fixed_group_member(test_db, routing_setup):
+    from app.models.delivery import ProjectChatAgent
+    from app.services.runner_routing import resolve_group_routing
+    from tests.utils.collaboration import authorize_project_agent
+
+    user, devices, issue = routing_setup
+    issue.metadata_json = {"runner_binding": {"environment_id": str(devices[0].id)}}
+    agents = []
+    for name in ["leader", "member"]:
+        agent = ProjectChatAgent(
+            id=f"recovery-{name}",
+            cloud_project_id=issue.cloud_project_id,
+            name=name,
+            status="active",
+            created_by_user_id=user.id,
+            metadata_json={
+                "runtime": "codex",
+                "execution_policy": {
+                    "mode": "fixed",
+                    "environment_id": str(devices[1].id),
+                },
+                "model_policy": {"mode": "fixed", "model": MODEL},
+            },
+        )
+        authorize_project_agent(test_db, agent)
+        agents.append(agent)
+    test_db.flush()
+    group = {
+        "leader": {"kind": "agent", "id": agents[0].id},
+        "members": [{"kind": "agent", "id": agents[1].id}],
+    }
+    routes = resolve_group_routing(
+        test_db,
+        group=group,
+        project_id=issue.cloud_project_id,
+        issue_id=issue.id,
+        user_id=user.id,
+        selection={"recovery_from_environment_id": str(devices[0].id)},
+    )
+    assert set(routes) == {agent.id for agent in agents}
+    assert all(
+        route["recovery_from_environment_id"] == str(devices[0].id)
+        and route["execution_policy"]["environment_id"] == str(devices[1].id)
+        for route in routes.values()
+    )

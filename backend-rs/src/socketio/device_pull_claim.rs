@@ -645,6 +645,14 @@ async fn matches_issue_device_affinity(
     execution_target_id: &str,
     execution: &model::Execution,
 ) -> anyhow::Result<bool> {
+    if runner_recovery::original_session(execution) {
+        let runner =
+            resolve_owned_device_alias(&app.mysql, owner_user_id, execution_target_id).await?;
+        let Some(runner) = runner else {
+            return Ok(false);
+        };
+        return runner_recovery::session_matches_on(&mut &app.mysql, execution, runner.id).await;
+    }
     let bound = match load_issue_binding(app, &execution.loop_item_id).await {
         Ok(bound) => bound,
         Err(error) if robot_authority::infrastructure(&error) => return Err(error),

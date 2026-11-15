@@ -1,6 +1,10 @@
 //! Explicit recovery of rejected assignments, without moving live work.
 
 use super::super::robot::model::{COLUMNS, Execution};
+use super::{
+    routing,
+    store::{self, Node},
+};
 use crate::plugins_marketplace::query::PluginQuery;
 use anyhow::Result;
 
@@ -32,10 +36,41 @@ pub(crate) async fn available_on(
     exclude: i64,
 ) -> Result<bool> {
     let rows: Vec<Execution> = query.fetch_all(
-        format!("SELECT {COLUMNS} FROM loop_item_executions WHERE loop_item_id=? AND id<>? AND status IN ('queued','pending_approval','claimed','running','cancel_requested')"),
+        format!("SELECT {COLUMNS} FROM loop_item_executions WHERE loop_item_id=? AND id<>? AND status IN ('queued','pending_approval','claimed','running','cancel_requested') FOR UPDATE"),
         (issue, exclude),
     ).await?;
     Ok(rows.iter().all(Execution::assignment_pending))
+}
+
+pub(crate) async fn revalidate_on(
+    query: &mut impl PluginQuery,
+    issue: &Node,
+    selection: &serde_json::Value,
+    exclude: i64,
+) -> Result<bool> {
+    let route = &selection["runner_routing"];
+    let Some(expected) = route["recovery_from_environment_id"].as_str() else {
+        return Ok(true);
+    };
+    let locked: Option<Node> = query.fetch_optional(
+        format!("SELECT {} FROM loop_items WHERE id=? AND cloud_project_id=? AND resource_type='task' AND {} FOR UPDATE", store::COLUMNS, store::LIVE),
+        (issue.id.as_str(), issue.cloud_project_id.as_str()),
+    ).await?;
+    let Some(locked) = locked else {
+        return Ok(false);
+    };
+    let binding = routing::issue_binding_on(query, &locked).await?;
+    if route["execution_policy"]["mode"] == "fixed"
+        && binding
+            .as_deref()
+            .is_some_and(|bound| route["execution_policy"]["environment_id"] == bound)
+    {
+        return Ok(true);
+    }
+    if binding.as_deref() != Some(expected) {
+        return Ok(false);
+    }
+    available_on(query, &issue.id, exclude).await
 }
 
 pub(crate) async fn permits_on(

@@ -51,6 +51,21 @@ export async function verifyProjectAgentRoutingRecovery(
     method: 'POST',
     body: { device_id: historical.id },
   })
+  const environments = await request(
+    `/api/v1/resources/execution-environments?project_id=${project.id}`
+  )
+  const target = environments.find(row => row.id === String(historical.id))
+  const targetModel = target?.models.find(row => row.runtime === 'codex' && row.is_default)
+  assert.ok(targetModel, 'The target device must declare its actual default Codex model')
+  const targetModelPolicy = {
+    mode: 'fixed',
+    model: {
+      runtime: targetModel.runtime,
+      provider: targetModel.provider,
+      model_id: targetModel.model_id,
+      source: targetModel.source,
+    },
+  }
   const password = `project-agent-peer-${process.pid}`
   const peer = await request('/api/admin/users', {
     method: 'POST',
@@ -96,7 +111,7 @@ export async function verifyProjectAgentRoutingRecovery(
       name: '跨设备研发智能体',
       runtime: 'codex',
       execution_policy: { mode: 'fixed', environment_id: String(historical.id) },
-      model_policy: modelPolicy,
+      model_policy: targetModelPolicy,
       execution_mode: 'auto',
       system_prompt: 'Return the requested result without tools.',
     },

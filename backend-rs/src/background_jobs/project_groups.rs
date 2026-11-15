@@ -197,6 +197,8 @@ async fn resolve_agent_on(
     query.fetch_optional(format!("SELECT {COLUMNS} FROM loop_items WHERE resource_type='chat_agent' AND cloud_project_id=? AND status='active' AND {LIVE} AND (id=? OR CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.wegent_team_id')) AS CHAR)=?) ORDER BY (id=?) DESC LIMIT 1"),(project_id,id,id,id)).await?.context("Collaboration group member Agent is unavailable")
 }
 
+// Keep the same independent routing inputs for every group member.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn runner_requirements(
     state: &AppState,
     project_id: &str,
@@ -205,6 +207,7 @@ pub(crate) async fn runner_requirements(
     user: i64,
     selection: &Value,
     automatic: bool,
+    session_environment_id: Option<&str>,
 ) -> Result<Value> {
     let mut requirements = serde_json::Map::new();
     let mut intersection: Option<std::collections::BTreeSet<i64>> = None;
@@ -220,15 +223,24 @@ pub(crate) async fn runner_requirements(
             continue;
         }
         let mut choices = json!({});
-        for key in ["execution_policy", "model"] {
+        for key in ["execution_policy", "model", "recovery_from_environment_id"] {
             if (key == "execution_policy" && config["execution_policy"]["mode"] == "user_select")
                 || (key == "model" && config["model_policy"]["mode"] == "user_select")
+                || key == "recovery_from_environment_id"
             {
                 choices[key] = selection[key].clone();
             }
         }
         let route = routing::resolve(
-            state, &config, &agent.id, project_id, issue, user, &choices, automatic,
+            state,
+            &config,
+            &agent.id,
+            project_id,
+            issue,
+            user,
+            &choices,
+            automatic,
+            session_environment_id,
         )
         .await?;
         let candidates =
@@ -311,6 +323,7 @@ pub(crate) async fn prepare_assignment(
             actor,
             &context["runner_selection"],
             true,
+            None,
         )
         .await?;
         context["dispatch_kind"] = json!("collaboration_group");

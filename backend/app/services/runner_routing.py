@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -278,6 +278,7 @@ def _resolve_routing(
     selection: dict | None,
     automatic: bool = False,
     agent_id: str | None = None,
+    session_environment_id: str | None = None,
 ) -> ResolvedRouting:
     if not config.get("model_policy"):
         raise routing_error(
@@ -287,25 +288,38 @@ def _resolve_routing(
     policy = ExecutionPolicy.model_validate(config["execution_policy"])
     model_policy = ModelPolicy.model_validate(config["model_policy"])
     selected = RunnerSelection.model_validate(selection or {})
-    bound_id = issue_binding(db, issue_id)
+    bound_id = session_environment_id or issue_binding(db, issue_id)
     source = policy.mode
     if policy.mode == "user_select":
         policy, source = _user_policy(db, user_id, selected, bound_id, automatic)
     elif selected.execution_policy and selected.execution_policy != policy:
         raise routing_error("RUNNER_POLICY_FIXED", "The agent's runner policy is fixed")
-    candidates = _candidates(
-        db, policy, project_id, user_id, agent_id, automatic=automatic
-    )
+    try:
+        candidates = _candidates(
+            db, policy, project_id, user_id, agent_id, automatic=automatic
+        )
+    except HTTPException as error:
+        if (
+            source == "issue_binding"
+            and isinstance(error.detail, dict)
+            and error.detail.get("error_code") == "RUNNER_ENVIRONMENT_UNAVAILABLE"
+        ):
+            raise routing_error(
+                "ISSUE_RUNNER_CONFLICT",
+                "The bound execution environment is no longer available or authorized",
+            ) from error
+        raise
     recovery_from = None
     if bound_id:
         bound_candidates = [item for item in candidates if str(item.id) == bound_id]
-        from app.services.runner_recovery import runner_recovery_available
+        from app.services.runner_recovery import lock_recovery_source
 
         if (
             not bound_candidates
+            and session_environment_id is None
             and selected.recovery_from_environment_id == bound_id
             and not automatic
-            and runner_recovery_available(db, issue_id)
+            and lock_recovery_source(db, issue_id, bound_id)
         ):
             recovery_from = bound_id
         else:
@@ -539,18 +553,16 @@ def _resolve_model(
 
 def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
     from app.services.collaboration_revocation import execution_authorized
-    from app.services.runner_recovery import original_session, permits_runner_recovery
+    from app.services.runner_recovery import (
+        original_session,
+        permits_runner_recovery,
+        session_matches,
+    )
 
     if not execution_authorized(db, execution):
         return False
-    if original_session(execution):
-        original = resolve_owned_device_alias(
-            db,
-            user_id=execution.executor_owner_user_id,
-            device_id=execution.runtime_device_id,
-        )
-        if original is None or original.id != device.id:
-            return False
+    if not session_matches(db, execution, device.id):
+        return False
     snapshot = execution.runtime_selection["runner_routing"]
     try:
         bound_id = issue_binding(db, execution.loop_item_id)
@@ -604,6 +616,10 @@ def claim_routing(db: Session, execution: Any, device: Kind) -> bool:
     )
     if issue is None:
         return False
+    from app.services.runner_recovery import session_matches
+
+    if not session_matches(db, execution, device.id):
+        return False
     try:
         bound = issue_binding(db, issue.id)
     except HTTPException:
@@ -615,83 +631,14 @@ def claim_routing(db: Session, execution: Any, device: Kind) -> bool:
         )
 
         if not original_session(execution) and not permits_runner_recovery(
-            db, execution, bound
+            db, execution, bound, locking=True
         ):
             return False
     if snapshot is not None and not eligible_runner(db, execution, device):
         return False
-    return _bind_issue_in_claim(db, issue, execution, device)
+    from app.services.runner_claim import bind_issue_in_claim
 
-
-def _bind_issue_in_claim(
-    db: Session, issue: LoopItem, execution: Any, device: Kind
-) -> bool:
-    """Both historical and routed claims share one durable affinity lock."""
-    from app.models.loop_item_execution import LoopItemExecution
-
-    scope = getattr(execution, "execution_scope", "")
-    if (
-        scope
-        and db.query(LoopItemExecution.id)
-        .filter(
-            LoopItemExecution.execution_scope == scope,
-            LoopItemExecution.status.in_(["claimed", "running", "cancel_requested"]),
-        )
-        .with_for_update()
-        .first()
-    ):
-        return False
-    from app.services.runner_recovery import original_session
-
-    if original_session(execution):
-        return True
-    if not (issue.metadata_json or {}).get("runner_binding") or issue_binding(
-        db, issue.id
-    ) != str(device.id):
-        metadata = case(
-            (
-                func.lower(func.json_type(LoopItem.metadata_json)) == "object",
-                LoopItem.metadata_json,
-            ),
-            else_=func.json_object(),
-        )
-        saved = (issue.metadata_json or {}).get("runner_binding")
-        # Retain the JSON CAS even on stores that do not implement row locks.
-        expected_binding = (
-            LoopItem.metadata_json["runner_binding"]["environment_id"].as_string()
-            == saved["environment_id"]
-            if saved
-            else or_(
-                func.json_extract(metadata, "$.runner_binding").is_(None),
-                func.lower(
-                    func.json_type(func.json_extract(metadata, "$.runner_binding"))
-                )
-                == "null",
-            )
-        )
-        changed = (
-            db.query(LoopItem)
-            .filter(
-                LoopItem.id == issue.id,
-                LoopItem.version == issue.version,
-                expected_binding,
-            )
-            .update(
-                {
-                    LoopItem.metadata_json: func.json_set(
-                        metadata,
-                        "$.runner_binding",
-                        func.json_object("environment_id", str(device.id)),
-                    ),
-                },
-                synchronize_session=False,
-            )
-        )
-        if changed != 1:
-            db.refresh(issue, with_for_update=True)
-            return issue_binding(db, issue.id) == str(device.id)
-        db.refresh(issue, with_for_update=True)
-    return True
+    return bind_issue_in_claim(db, issue, execution, device)
 
 
 def bind_claimed_runner(db: Session, execution: Any, device: Kind) -> None:
@@ -826,6 +773,7 @@ def resolve_group_routing(
     user_id: int,
     selection: dict | None,
     automatic: bool = False,
+    session_environment_id: str | None = None,
 ) -> dict:
     """A collaboration group shares one Issue runner but keeps member models."""
     from app.models.delivery import ProjectChatAgent
@@ -863,7 +811,8 @@ def resolve_group_routing(
             key: value
             for key, value in (selection or {}).items()
             if (
-                key == "execution_policy"
+                key == "recovery_from_environment_id"
+                or key == "execution_policy"
                 and config["execution_policy"]["mode"] == "user_select"
                 or key == "model"
                 and config["model_policy"]["mode"] == "user_select"
@@ -879,6 +828,7 @@ def resolve_group_routing(
                 user_id=user_id,
                 selection=choices,
                 automatic=automatic,
+                session_environment_id=session_environment_id,
             )
         except HTTPException as error:
             if isinstance(error.detail, dict):

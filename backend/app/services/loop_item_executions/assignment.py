@@ -26,6 +26,7 @@ def prepare_assignment(
     priority: Optional[str],
     automation_context: dict[str, Any] | None = None,
     instruction: str | None = None,
+    session_environment_id: str | None = None,
 ) -> dict[str, Any]:
     """Resolve current execution requirements; callers own admission and persistence."""
 
@@ -171,6 +172,7 @@ def prepare_assignment(
             user_id=assigner_user_id,
             selection=effective_context.get("runner_selection"),
             automatic=bool(effective_context.get("run_id")),
+            session_environment_id=session_environment_id,
         )
         runtime_selection["runner_routing"] = routing.snapshot()
         # Native selectors and the actual owner are materialized at claim time.

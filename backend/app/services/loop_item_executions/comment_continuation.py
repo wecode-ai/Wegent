@@ -116,6 +116,7 @@ def apply_continuation(
             issue_id=row.loop_item_id,
             user_id=row.assigner_user_id,
             selection=context.get("runner_selection"),
+            session_environment_id=source["environment_id"],
         )
     intent = RuntimeTaskMaterializeRequest.model_validate(
         source["runtime_request"]

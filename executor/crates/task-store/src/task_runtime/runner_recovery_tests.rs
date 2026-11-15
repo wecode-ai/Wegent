@@ -190,3 +190,35 @@ fn live_execution_rejects_recovery_before_admission() {
         "runner-a"
     );
 }
+
+#[test]
+fn recovered_group_profiles_can_continue_on_the_current_runner() {
+    let (_directory, store, project, agent, issue, catalog) = setup();
+    store
+        .enqueue_execution(&project.id, &issue.id, &agent.id, json!({}), None)
+        .unwrap();
+    let original = store
+        .claim_next_execution_with_catalog(Some("runner-a"), "first", 300, Some(&catalog))
+        .unwrap()
+        .unwrap();
+    store.complete_execution(original.id, Some("Done")).unwrap();
+    for message in ["Recover", "Next group round"] {
+        let mut payload = selection("runner-a");
+        payload["runtimePayload"] = Value::Null;
+        payload["message"] = json!(message);
+        store
+            .enqueue_execution(&project.id, &issue.id, &agent.id, payload, None)
+            .unwrap();
+        let current = store
+            .claim_next_execution_with_catalog(Some("runner-b"), "second", 300, Some(&catalog))
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.runtime_device_id.as_deref(), Some("runner-b"));
+        store.complete_execution(current.id, Some("Done")).unwrap();
+        assert_eq!(
+            store.get_task(&project.id, &issue.id).unwrap().metadata["runner_binding"]
+                ["environment_id"],
+            "runner-b"
+        );
+    }
+}

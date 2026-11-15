@@ -34,6 +34,7 @@ pub(crate) async fn agent_admission(
     assigner: i64,
     mut context: Value,
     instruction: &str,
+    session_environment_id: Option<&str>,
 ) -> Result<Admission> {
     authority::require(state, &issue.cloud_project_id, assigner).await?;
     let source = context["runtime_source"]
@@ -141,6 +142,7 @@ pub(crate) async fn agent_admission(
             assigner,
             &context["runner_selection"],
             authority::truthy(&context["run_id"]),
+            session_environment_id,
         )
         .await?;
         configured_model = route["model"]["model_id"].as_str().unwrap_or("").into();
@@ -234,7 +236,7 @@ pub(super) async fn assign(
                 });
             }
             let admission =
-                agent_admission(state, &issue, &agent, owner, context, instruction).await?;
+                agent_admission(state, &issue, &agent, owner, context, instruction, None).await?;
             let name = if agent.title.is_empty() {
                 agent.name.clone()
             } else {

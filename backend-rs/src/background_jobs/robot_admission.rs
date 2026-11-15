@@ -46,6 +46,12 @@ pub(super) async fn prepare(app: &AppState) -> Result<usize> {
                     if !authorized {
                         return Ok(projection::Effects::default());
                     }
+                    let valid = super::super::project::runner_recovery::revalidate_on(
+                        &mut &mut *tx, &issue, &plan.payload["runtime_selection"], current.id,
+                    ).await.map_err(|error| brz_mysql::MysqlError::InvalidQuery { reason: error.to_string() })?;
+                    if !valid {
+                        return Ok(projection::Effects::default());
+                    }
                     let mut update=current;
                     if let Some(runtime)=plan.runtime_device.as_ref(){update.runtime_device_id=runtime.clone();}
                     let message=state::prepared_on(tx,app,&update,&plan.status,&plan.payload,plan.owner,plan.team,&plan.environment,&plan.device).await?;
@@ -128,9 +134,13 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
         row.assigner_user_id,
         context,
         &instruction,
+        continuation
+            .as_ref()
+            .map(|source| source.environment_id.as_str()),
     )
     .await?;
     if let Some(source) = &continuation {
+        plan.runtime_selection["resolved_environment_id"] = json!(source.environment_id);
         plan.owner = source.owner;
         plan.device_id.clone_from(&source.device);
         plan.environment = profile::environment(app, source.owner, &source.device).await?;
@@ -169,6 +179,9 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
                 row.assigner_user_id,
                 &plan.context["runner_selection"],
                 false,
+                continuation
+                    .as_ref()
+                    .map(|source| source.environment_id.as_str()),
             )
             .await?;
     }
@@ -208,6 +221,7 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
 struct Continuation {
     owner: i64,
     device: String,
+    environment_id: String,
     task: String,
     request: Value,
     compile_member_profile: bool,
@@ -306,6 +320,7 @@ async fn continuation(
     Ok(Some(Continuation {
         owner,
         device: device.to_owned(),
+        environment_id: binding,
         task: source["runtime_task_id"]
             .as_str()
             .context("Original session identity unavailable")?
@@ -346,6 +361,7 @@ mod tests {
     fn reply_reuses_the_original_session_and_configuration_with_fresh_comment_input() {
         let source = Continuation {
             owner: 7,
+            environment_id: "17".into(),
             device: "original-device".into(),
             task: "original-task".into(),
             compile_member_profile: false,

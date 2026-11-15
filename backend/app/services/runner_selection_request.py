@@ -22,6 +22,7 @@ def attach_runner_selection(db: Session, error: HTTPException, **kwargs: Any) ->
         isinstance(error.detail, dict)
         and error.detail.get("error_code") == "ISSUE_RUNNER_CONFLICT"
         and not kwargs.get("automatic")
+        and not kwargs.get("session_environment_id")
         and runner_recovery_available(db, kwargs["issue_id"])
     )
     if (
