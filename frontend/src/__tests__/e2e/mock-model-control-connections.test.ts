@@ -154,6 +154,15 @@ describe('mock model controls', () => {
     return rules.find(rule => rule.matchText === matchText)?.pendingResponses
   }
 
+  async function waitForGate(matchText: string) {
+    const deadline = Date.now() + 1000
+    while (Date.now() < deadline) {
+      if ((await pendingResponses(matchText)) === 1) return
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    throw new Error(`Model response did not reach its completion gate: ${matchText}`)
+  }
+
   function modelRequest(matchText: string, path = '/v1/messages') {
     // The server's end handler enters the gate before this observer runs.
     const received = new Promise<ServerResponse>(resolve => {
@@ -182,13 +191,13 @@ describe('mock model controls', () => {
     return { received, result, controller, finished: () => finished }
   }
 
-  function streamText(matchText: string, path: string) {
+  function streamText(matchText: string, path: string, ready?: RegExp) {
     const received = new Promise<ServerResponse>(resolve => {
       server.once('request', (request, response) => {
         request.once('end', () => resolve(response))
       })
     })
-    const result = fetch(`${url}${path}`, {
+    const responsePromise = fetch(`${url}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -197,16 +206,59 @@ describe('mock model controls', () => {
         messages: [{ role: 'user', content: matchText }],
         input: matchText,
       }),
-    }).then(async response => {
-      await received
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('model response stream is unavailable')
-      const first = await reader.read()
-      if (first.done) throw new Error('model response stream closed before the first event')
-      const text = new TextDecoder().decode(first.value, { stream: true })
-      return { text, completed: false }
     })
-    return { received, result }
+    const held = responsePromise.then(async response => {
+      await received
+      const stream = createHeldModelStream(
+        response,
+        ready ??
+          (path.includes('/responses')
+            ? /response\.output_item\.done/
+            : new RegExp(`DONE_${matchText}[\\s\\S]*\\n`)),
+        path.includes('/responses') ? /response\.completed/ : /\[DONE\]/
+      )
+      return { stream, snapshot: await stream.initial }
+    })
+    return { received, held }
+  }
+
+  function createHeldModelStream(response: Response, ready: RegExp, terminal: RegExp) {
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('model response stream is unavailable')
+    const read = () => reader.read()
+    const decoder = new TextDecoder()
+    let text = ''
+    async function readUntil(stop: () => boolean) {
+      while (!stop()) {
+        const chunk = await read()
+        if (chunk.done) return false
+        text += decoder.decode(chunk.value, { stream: true })
+      }
+      return true
+    }
+
+    let continueAfterRelease: (() => Promise<void>) | undefined
+    const initial = (async () => {
+      await readUntil(() => ready.test(text))
+      return { text, completed: false }
+    })()
+    const result = initial.then(async () => {
+      await new Promise<void>(resolve => {
+        continueAfterRelease = async () => resolve()
+      })
+      while (true) {
+        const chunk = await read()
+        if (chunk.done) break
+        text += decoder.decode(chunk.value, { stream: true })
+      }
+      return { text, completed: terminal.test(text) }
+    })
+
+    return {
+      initial,
+      result,
+      continueAfterRelease: () => continueAfterRelease?.() ?? Promise.resolve(),
+    }
   }
 
   it.each(['/v1/messages', '/v1/responses', '/v1/chat/completions'])(
@@ -239,19 +291,59 @@ describe('mock model controls', () => {
       })
       const pending = streamText(matchText, path)
       await pending.received
-      const settled = await pending.result
-      expect(settled.completed).toBe(false)
-      expect(settled.text.length).toBeGreaterThan(0)
+      const heldStream = await pending.held
+      const held = await heldStream.snapshot
+      await waitForGate(matchText)
+      expect(held.text).toContain(`DONE_${matchText}`)
+      expect(held.completed).toBe(false)
+      expect(held.text).not.toContain('response.completed')
+      expect(held.text).not.toContain('[DONE]')
 
-      await new Promise(resolve => setTimeout(resolve, 10))
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 1 })
       expect(await pendingResponses(matchText)).toBe(0)
-      expect(settled.text).toContain(`DONE_${matchText}`)
-      expect(settled.text).not.toContain('[DONE]')
-      expect(await modelRequest(matchText, path).result).toContain(`DONE_${matchText}`)
+      await heldStream.stream.continueAfterRelease()
+      const completed = await heldStream.stream.result
+      expect(completed.text).toContain(`DONE_${matchText}`)
+      expect(completed.completed).toBe(true)
+      expect(path === '/v1/responses' || completed.text.includes('[DONE]')).toBe(true)
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
     }
   )
+
+  it('holds /v1/responses tool-call completion until explicit release', async () => {
+    const matchText = 'held-tool-done'
+    await post('/tool-scenarios', {
+      matchText,
+      steps: [
+        {
+          toolCalls: [
+            {
+              toolName: 'search_deferred_tools',
+              arguments: { query: 'inspect', limit: 1 },
+            },
+          ],
+        },
+      ],
+    })
+    await post('/stream-rules', {
+      matchText,
+      responseContent: `DONE_${matchText}`,
+      holdDone: true,
+    })
+    const pending = streamText(matchText, '/v1/responses', /response\.output_item\.done/)
+    await pending.received
+    const heldStream = await pending.held
+    const held = await heldStream.snapshot
+    expect(held.text).toContain('response.output_item.done')
+    await waitForGate(matchText)
+
+    expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 1 })
+    expect(await pendingResponses(matchText)).toBe(0)
+    await heldStream.stream.continueAfterRelease()
+    const completed = await heldStream.stream.result
+    expect(completed.text).toContain('response.completed')
+    expect(completed.completed).toBe(true)
+  })
 
   it('remembers release before a model request arrives', async () => {
     const matchText = 'release-before-request'
