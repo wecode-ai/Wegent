@@ -231,7 +231,7 @@ fn execution_runtime_selection(row: &ExecutionRow) -> Value {
 }
 
 /// `LoopItemExecution.executor_type`.
-fn execution_executor_type(row: &ExecutionRow) -> &'static str {
+pub(super) fn execution_executor_type(row: &ExecutionRow) -> &'static str {
     let selection = execution_runtime_selection(row);
     if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
         && matches!(configured, "generic_robot" | "collaboration_group_dispatch")

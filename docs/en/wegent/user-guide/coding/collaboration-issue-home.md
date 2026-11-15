@@ -54,7 +54,7 @@ For AI assistance, use **New task** in Issue details to create a linked task. Th
 
 A collaboration-group assignment changes the Issue owner to the member taking the work. For an assignment to you, select **Let AI help me → Create task**, or choose **Reply and create a new task** under your assignment activity. The reply is saved as a comment before a new personal task panel opens. Its instructions contain the Issue reference and assignment, without acknowledgement replies such as “Received.” Sending after selecting the device, model, and workspace starts execution. The task retains its assignment binding so Delivery reports back to the round coordinator.
 
-An AI-only handoff retains the worker as owner and does not start a coordinator summary.
+When every member in a round has delivered, ownership returns to the group's coordinator, who checks the results and assigns the next round or submits the Issue for confirmation. Local and cloud projects use the same handoff. The coordinator's new run appears in Issue activity. If it needs business information, open that activity's conversation and answer the question to continue the same coordinator run.
 
 ## Archive Issues
 

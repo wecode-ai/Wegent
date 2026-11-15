@@ -806,12 +806,28 @@ fn group_automation_prompt_survives_manager_resume_after_a_member_round() {
         .unwrap();
     let member_execution = claim_prompt_execution(&store, &catalog);
     assert_eq!(member_execution.agent_id, member.id);
+    assert_eq!(
+        store
+            .get_task(&project.id, &issue.id)
+            .unwrap()
+            .assignee_agent_id
+            .as_deref(),
+        Some(member.id.as_str())
+    );
     store
         .complete_execution(member_execution.id, Some("Evidence checked"))
         .unwrap()
         .unwrap();
     let resumed = claim_prompt_execution(&store, &catalog);
     assert_eq!(resumed.agent_id, agent.id);
+    assert_eq!(
+        store
+            .get_task(&project.id, &issue.id)
+            .unwrap()
+            .assignee_agent_id
+            .as_deref(),
+        Some(agent.id.as_str())
+    );
     let payload = resumed.execution_payload.unwrap();
     let message = payload["message"].as_str().unwrap();
     assert!(message.starts_with(&format!("{context}\n\n<collaboration_round_results>")));
