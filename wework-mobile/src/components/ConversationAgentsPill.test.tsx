@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -147,7 +148,7 @@ describe('conversation subagent entry and isolated child view', () => {
     await render()
     await press('conversation-agents')
     await press('subagent-open-child')
-    expect(find('subagent-history-error').props.children).toBe('Permission denied')
+    expect(renderer.root.findByType(ErrorNotice).props.error).toBe('Permission denied')
     await press('subagent-history-retry')
     expect(api.getSubagentTranscript).toHaveBeenCalledTimes(2)
     expect(renderer.root.findByType('Timeline' as never).props.message.content).toBe(

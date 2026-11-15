@@ -424,7 +424,7 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
     item = _make_item(db, project, test_user)
     group, _leader, _member = _collaboration_group(db, project, test_user)
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         updated = loop_item_service.update(
@@ -450,7 +450,7 @@ def test_collaboration_group_owner_is_project_scoped_and_persisted(
     values = loop_item_service.response_values(db, assigned, test_user.id)
     assert values["assignee_group_name"] == "Delivery team"
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[],
     ):
         with pytest.raises(HTTPException) as error:
@@ -480,7 +480,7 @@ def test_create_with_collaboration_group_preserves_group_as_owner(
     group, _leader, _member = _collaboration_group(test_db, project, test_user)
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         item = loop_item_service.create(
@@ -514,7 +514,7 @@ def test_create_with_human_led_group_notifies_leader_without_executor_dispatch(
 
     with (
         patch(
-            "app.services.workspaces.workspace_service."
+            "app.services.workspaces.service.workspace_service."
             "list_project_collaboration_groups",
             return_value=[group],
         ),
@@ -583,7 +583,7 @@ def test_collaboration_group_assignment_hands_one_dispatch_to_executor(
     test_db.commit()
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         assigned = loop_item_service.assign(
@@ -714,7 +714,7 @@ def test_collaboration_group_execution_terminal_does_not_change_issue_status(
     group, _leader, _member = _collaboration_group(test_db, project, test_user)
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         assigned = loop_item_service.assign(
@@ -783,7 +783,7 @@ def test_unbound_collaboration_dispatch_uses_claiming_executor_device(
     test_db.commit()
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         loop_item_service.assign(
@@ -852,7 +852,7 @@ def test_collaboration_group_rejects_non_executor_runtime(
     test_db.commit()
 
     with patch(
-        "app.services.workspaces.workspace_service.list_project_collaboration_groups",
+        "app.services.workspaces.service.workspace_service.list_project_collaboration_groups",
         return_value=[group],
     ):
         with pytest.raises(

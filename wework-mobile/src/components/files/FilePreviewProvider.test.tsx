@@ -1,6 +1,7 @@
+import { showErrorAlert } from '@/services/errorAlerts'
 import React, { useEffect } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { Alert, Linking } from 'react-native'
+import { Linking } from 'react-native'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import type { LoadedMobileFile, MobileFileRequest } from '@/types/files'
@@ -8,14 +9,19 @@ import { FilePreviewProvider } from './FilePreviewProvider'
 import { useMobileFilePreview, type MobileFilePreviewActions } from './FilePreviewContext'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-const store = vi.hoisted(() => ({ dispose: vi.fn(), invalidate: vi.fn() }))
+const store = vi.hoisted(() => ({ dispose: vi.fn(), invalidate: vi.fn(), retain: vi.fn() }))
 vi.mock('@/services/mobileFileStore', () => ({
   MobileFileStore: class {
     dispose = store.dispose
     invalidate = store.invalidate
+    retain = store.retain
   },
 }))
 vi.mock('./FileBrowserModal', () => ({ FileBrowserModal: 'FileBrowserModal' }))
+vi.mock('@/services/errorAlerts', () => ({
+  showErrorAlert: vi.fn(),
+  copyErrorDetails: vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('react-native', () => ({
   Alert: { alert: vi.fn() },
   Keyboard: { dismiss: vi.fn() },
@@ -50,12 +56,13 @@ describe('FilePreviewProvider', () => {
     }, [])
     return <>{'Chat remains mounted'}</>
   }
-  function tree(owner: typeof target | null = target) {
+  function tree(owner: typeof target | null = target, backendSession = 'account-a') {
     return (
       <FilePreviewProvider
         api={api as unknown as RuntimeApi}
         apiBaseUrl="https://api.example.com/api"
         target={owner}
+        backendSession={backendSession}
       >
         <Chat />
       </FilePreviewProvider>
@@ -71,6 +78,15 @@ describe('FilePreviewProvider', () => {
   })
   afterEach(async () => {
     await act(() => renderer.unmount())
+  })
+
+  it('keeps workspace actions stable across equivalent work-list snapshots', async () => {
+    const initial = actions
+    await act(() => renderer.update(tree({ ...target })))
+    expect(actions).toBe(initial)
+    await act(() => renderer.update(tree({ ...target, taskId: 'another-task' })))
+    expect(actions).not.toBe(initial)
+    expect(actions.target?.taskId).toBe('another-task')
   })
 
   it('opens files over the mounted chat, supports stack back/close, and retains recent read position', async () => {
@@ -89,6 +105,40 @@ describe('FilePreviewProvider', () => {
     expect(store.dispose).not.toHaveBeenCalled()
     await act(() => actions.openFile(request))
     expect(modal().props.recent[0]).toMatchObject({ request, position: 124 })
+  })
+
+  it('removes the old Backend preview and history on same-host account changes while preserving phone files', async () => {
+    const phoneRequest: MobileFileRequest = {
+      ...request,
+      target: { ...target, deviceId: 'mobile-local:phone:stable' },
+    }
+    await act(() => actions.openFile(phoneRequest))
+    await act(() => modal().props.onLoaded(phoneRequest, document))
+    await act(() => modal().props.onPositionChange(phoneRequest, 90))
+    await act(() => actions.openFile(request))
+    await act(() => modal().props.onLoaded(request, document))
+    const oldLoaded = modal().props.onLoaded
+    await act(() => renderer.update(tree(target, 'account-b')))
+    expect(renderer.root.findAllByType('FileBrowserModal' as never)).toHaveLength(0)
+    expect(store.retain).toHaveBeenCalledOnce()
+    const retained = store.retain.mock.calls[0][0]
+    expect(retained(phoneRequest)).toBe(true)
+    expect(retained(request)).toBe(false)
+    await act(() => oldLoaded(request, document))
+    await act(() => actions.openFile(phoneRequest))
+    expect(modal().props.recent).toHaveLength(1)
+    expect(modal().props.recent[0]).toMatchObject({ request: phoneRequest, position: 90 })
+    expect(mounted).toHaveBeenCalledOnce()
+    expect(unmounted).not.toHaveBeenCalled()
+  })
+
+  it('keeps a phone preview mounted when Backend disconnects', async () => {
+    const phoneTarget = { ...target, deviceId: 'mobile-local:phone:stable' }
+    const phoneRequest: MobileFileRequest = { ...request, target: phoneTarget }
+    await act(() => actions.openFile(phoneRequest))
+    await act(() => renderer.update(tree(phoneTarget, 'offline')))
+    expect(modal().props.location).toEqual({ kind: 'file', request: phoneRequest })
+    expect(store.dispose).not.toHaveBeenCalled()
   })
 
   it('does not let an old link resolution replace a newer explicitly opened file', async () => {
@@ -200,14 +250,20 @@ describe('FilePreviewProvider', () => {
   it('reports directory lookup failures explicitly and never inserts a speculative file location', async () => {
     api.listWorkspaceDirectory.mockRejectedValueOnce(new Error('Device unavailable'))
     await act(() => actions.openLink('readme.md'))
-    expect(Alert.alert).toHaveBeenCalledWith('无法打开文件', 'Device unavailable')
+    expect(showErrorAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Device unavailable' }),
+      { title: '无法打开文件' }
+    )
     expect(renderer.root.findAllByType('FileBrowserModal' as never)).toHaveLength(0)
   })
 
   it('reports missing workspace context and disposes session files when the provider unmounts', async () => {
     await act(() => renderer.update(tree(null)))
     await act(() => actions.openBrowser())
-    expect(Alert.alert).toHaveBeenCalledWith('无法打开文件', '当前会话尚无可访问的文件目录')
+    expect(showErrorAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ message: '当前会话尚无可访问的文件目录' }),
+      { title: '无法打开文件' }
+    )
     await act(() => renderer.unmount())
     expect(store.dispose).toHaveBeenCalledTimes(1)
   })

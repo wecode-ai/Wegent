@@ -1,5 +1,6 @@
 //! Project-chat terminal state preserves newer runs and existing Issue content.
 
+use crate::socketio::project_chat_messages::{database_timestamp, utc_timestamp};
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlTransaction};
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
@@ -36,7 +37,7 @@ pub(crate) async fn finish(
     }
     message.metadata.0["run_status"] = json!(status);
     message.metadata.0["activity_at"] = json!(now.and_utc().to_rfc3339());
-    message.updated_at = now;
+    message.updated_at = database_timestamp(now);
     if message.task_id.is_empty() {
         return Ok(());
     }
@@ -91,7 +92,7 @@ pub(crate) async fn project_runtime_completion(
             &message.content,
         );
         let review = allow_review && !superseded && can_review(&task, &metadata, message)
-            && append_review_history(tx, &task, &mut metadata, message.updated_at).await?;
+            && append_review_history(tx, &task, &mut metadata, utc_timestamp(message.updated_at)).await?;
         if !review {
             if metadata == task.metadata.0 {
                 return Ok(false);

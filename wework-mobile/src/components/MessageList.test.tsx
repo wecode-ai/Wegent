@@ -1,7 +1,7 @@
 import { KeyboardAwareLegendList } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
 import React, { type ComponentProps, type ReactNode, type RefObject } from 'react'
-import { StyleSheet, View } from 'react-native'
+import { Keyboard, Platform, StyleSheet, View } from 'react-native'
 import type { SharedValue } from 'react-native-reanimated'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,6 +34,8 @@ interface ListBoundaryProps {
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }))
 vi.mock('react-native', () => ({
+  Keyboard: { dismiss: vi.fn() },
+  Platform: { OS: 'ios' },
   StyleSheet: {
     create: (styles: unknown) => styles,
     flatten: (style: unknown) =>
@@ -98,6 +100,7 @@ describe('conversation waiting, streaming and native list integration (PC contra
 
   beforeEach(() => {
     vi.clearAllMocks()
+    Platform.OS = 'ios'
     listRef = { current: null }
     contentInsetEndAdjustment = { value: 80 } as SharedValue<number>
   })
@@ -137,6 +140,26 @@ describe('conversation waiting, streaming and native list integration (PC contra
     )[0]!
   const list = () => boundary.list.mock.lastCall![0]
   const listInstance = () => renderer!.root.findByType(KeyboardAwareLegendList)
+
+  it.each(['ios', 'android'] as const)(
+    'dismisses on body taps and platform scroll gestures on %s',
+    async platform => {
+      Platform.OS = platform
+      await render([user, { ...assistant, content: 'Reply' }])
+      expect(list().keyboardDismissMode).toBe(platform === 'ios' ? 'interactive' : 'on-drag')
+      expect(list().keyboardShouldPersistTaps).toBe('handled')
+      await act(() => button('message-user').props.onPress())
+      await act(() => button('message-assistant').props.onPress())
+      expect(Keyboard.dismiss).toHaveBeenCalledTimes(2)
+      await act(() =>
+        button('message-user').props.onLongPress({ nativeEvent: { pageX: 20, pageY: 40 } })
+      )
+      expect(renderer!.root.findByType('MessageContextMenu' as never).props.anchor).toEqual({
+        x: 20,
+        y: 40,
+      })
+    }
+  )
   const indicators = () =>
     renderer!.root.findAll(
       node =>
@@ -530,9 +553,19 @@ describe('conversation waiting, streaming and native list integration (PC contra
     ])
   })
 
+  it('leaves assistant long presses to native selection while retaining tap dismissal', async () => {
+    await render([{ ...assistant, content: 'Select part of this response' }])
+    const body = button('message-assistant')
+    expect(body.props.onLongPress).toBeUndefined()
+    await act(() => body.props.onPress())
+    expect(Keyboard.dismiss).toHaveBeenCalledOnce()
+  })
+
   it('does not load history from initial layout before a real user scroll', async () => {
     const onLoadMoreBefore = vi.fn(async () => {})
-    listRef.current = { getState: () => ({ isAtStart: true }) } as unknown as LegendListRef
+    listRef.current = {
+      getState: () => ({ isAtStart: true, listen: () => () => {} }),
+    } as unknown as LegendListRef
     await render([user, assistant], { hasMoreBefore: true, onLoadMoreBefore })
     await act(() => list().onStartReached())
     expect(onLoadMoreBefore).not.toHaveBeenCalled()
@@ -551,7 +584,9 @@ describe('conversation waiting, streaming and native list integration (PC contra
 
   it('waits until the user reaches the start before loading previous pages', async () => {
     const onLoadMoreBefore = vi.fn(async () => {})
-    listRef.current = { getState: () => ({ isAtStart: false }) } as unknown as LegendListRef
+    listRef.current = {
+      getState: () => ({ isAtStart: false, listen: () => () => {} }),
+    } as unknown as LegendListRef
     await render([user, assistant], { hasMoreBefore: true, onLoadMoreBefore })
     await act(() => list().onUserScroll())
     expect(onLoadMoreBefore).not.toHaveBeenCalled()

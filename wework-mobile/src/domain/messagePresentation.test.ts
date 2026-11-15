@@ -142,7 +142,15 @@ describe('messagePresentation', () => {
     ]
     const rows = buildMessageDisplayRows(blocks, '已经完成。')
 
-    expect(shouldCollapseCompletedProcessing(blocks, '已经完成。', rows)).toBe(true)
+    expect(shouldCollapseCompletedProcessing(blocks, '已经完成。', rows, 'completed')).toBe(true)
+    expect(shouldCollapseCompletedProcessing(blocks, '仍在回复。', rows, 'streaming')).toBe(false)
+    expect(shouldCollapseCompletedProcessing(blocks, '尚未开始。', rows, 'pending')).toBe(false)
+    expect(shouldCollapseCompletedProcessing(blocks, '执行失败。', rows, 'failed')).toBe(true)
+    expect(shouldCollapseCompletedProcessing(blocks, '', rows, 'completed')).toBe(false)
+    const active = [tool('running', 'exec_command', 'streaming')]
+    expect(shouldCollapseCompletedProcessing(active, '还有工具执行中。', rows, 'completed')).toBe(
+      false
+    )
     expect(processingDurationLabel(blocks, 1_000, 12_000)).toBe('已处理 11 秒')
   })
 

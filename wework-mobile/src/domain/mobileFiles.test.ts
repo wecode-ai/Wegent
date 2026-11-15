@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest'
 import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
 import type { MobileFileRequest } from '@/types/files'
 import { mobileFileKey, mobileFileName, resolveMobileFileLink } from './mobileFiles'
+import { mobileAttachmentRequest } from './mobileFiles'
+
+it('allows local file-link resolution without requiring a Backend URL', () => {
+  expect(mobileAttachmentRequest('/root/project/file.md', '')).toBeNull()
+  expect(
+    resolveMobileFileLink('/root/project/file.md', {
+      deviceId: 'mobile-local:phone:stable',
+      path: '/root/project',
+    }).kind
+  ).toBe('file')
+})
 
 const target = {
   deviceId: 'device-a',

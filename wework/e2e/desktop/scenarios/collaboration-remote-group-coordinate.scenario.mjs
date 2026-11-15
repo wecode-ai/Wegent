@@ -716,6 +716,7 @@ export async function createDesktopScenario({
       assert.equal(String(group.reviewerId), String(collaborationGroupAgentId(reviewer)))
       collectorAgentId = group.collectorId
       reviewerAgentId = group.reviewerId
+      const creationStartedAt = Date.now()
       rootIssue = await createIssue(control, request, project.id, uiTimeoutMs)
       await assignGroup(control, group.id, uiTimeoutMs)
 
@@ -725,7 +726,11 @@ export async function createDesktopScenario({
           modelResponseTimeoutMs,
           '远程负责人没有开始规划任务'
         )
-        await verifyManagerPlanning(control, { groupRules: GROUP_RULES, leader: LEADER })
+        await verifyManagerPlanning(control, {
+          groupRules: GROUP_RULES,
+          leader: LEADER,
+          creationStartedAt,
+        })
         releaseManagerPlanning()
       }
 

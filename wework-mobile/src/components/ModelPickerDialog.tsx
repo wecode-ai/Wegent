@@ -1,3 +1,4 @@
+import { ErrorNotice } from './errors/ErrorNotice'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -163,9 +164,12 @@ export function ModelPickerScreen(props: ModelPickerScreenProps) {
             />
           ) : null}
           {props.error ? (
-            <Text style={styles.error} testID="device-models-error">
-              {props.error}
-            </Text>
+            <ErrorNotice
+              error={props.error}
+              title="无法加载模型"
+              testID="device-models-error"
+              onRetry={() => props.onLoadModels(true)}
+            />
           ) : null}
           <ScrollView showsVerticalScrollIndicator={false} style={styles.sheetContent}>
             <View style={styles.group}>

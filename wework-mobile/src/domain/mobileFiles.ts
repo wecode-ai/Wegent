@@ -6,11 +6,28 @@ import {
 import { resolveWorkspaceFilePath } from '../../../packages/chat-core/src/workspace-file-paths'
 import type { MobileWorkspaceFileTarget } from './mobileFileTarget'
 import type { MobileFileRequest } from '@/types/files'
+import { isPhoneLocalDeviceId } from '@/services/localRuntime'
+
+export function isPhoneLocalFile(request: MobileFileRequest): boolean {
+  switch (request.kind) {
+    case 'local':
+    case 'image':
+      return true
+    case 'workspace':
+    case 'git-diff':
+      return isPhoneLocalDeviceId(request.target.deviceId)
+    case 'diff':
+      return isPhoneLocalDeviceId(request.summary.device_id)
+    case 'attachment':
+      return isPhoneLocalDeviceId(request.attachment.workspace_file?.device_id)
+  }
+}
 
 export function mobileAttachmentRequest(
   href: string,
   apiBaseUrl: string
 ): MobileFileRequest | null {
+  if (!apiBaseUrl) return null
   const url = new URL(href, apiBaseUrl)
   const id =
     url.origin === new URL(apiBaseUrl).origin ? getAuthenticatedAttachmentId(url.href) : null

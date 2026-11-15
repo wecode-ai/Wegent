@@ -70,7 +70,8 @@ class PreviewBoundary extends Component<{ children: ReactNode }, { error: string
     reportError(error)
   }
   render() {
-    return this.state.error ? <p role="alert">{this.state.error}</p> : this.props.children
+    // The native preview owner receives reportError and presents ErrorNotice.
+    return this.state.error ? null : this.props.children
   }
 }
 
