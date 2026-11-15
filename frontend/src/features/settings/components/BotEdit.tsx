@@ -128,10 +128,51 @@ interface BotEditProps {
   groupName?: string
   /** Team groups that authorize shared Skills when saving a member Bot */
   targetGroupNames?: string[]
+  /** Whether the owning Team's target groups are still being resolved */
+  targetGroupsLoading?: boolean
+  /** Whether the owning Team's target groups failed to load */
+  targetGroupsError?: boolean
+  /** Retry loading the owning Team's target groups */
+  onRetryTargetGroups?: () => void
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
   /** Allow a Chat Bot to bind a generation model as its primary model */
   allowGenerationPrimaryModel?: boolean
+}
+
+const EMPTY_TARGET_GROUP_NAMES: string[] = []
+
+function mergeSkillsAvailableToAllGroups(groupSkillLists: UnifiedSkill[][]): UnifiedSkill[] {
+  const commonGroupSkillIds = new Set(groupSkillLists[0].map(skill => skill.id))
+  for (const groupSkills of groupSkillLists.slice(1)) {
+    const groupSkillIds = new Set(groupSkills.map(skill => skill.id))
+    for (const skillId of commonGroupSkillIds) {
+      if (!groupSkillIds.has(skillId)) {
+        commonGroupSkillIds.delete(skillId)
+      }
+    }
+  }
+
+  const mergedSkills = new Map<number, UnifiedSkill>()
+  for (const skill of groupSkillLists[0]) {
+    if (commonGroupSkillIds.has(skill.id)) {
+      mergedSkills.set(skill.id, skill)
+    }
+  }
+  return Array.from(mergedSkills.values())
+}
+
+function mergeSkillsByGroupPresence(baseSkills: UnifiedSkill[], groupSkills: UnifiedSkill[]) {
+  const skillsById = new Map(baseSkills.map(skill => [skill.id, skill]))
+  for (const skill of groupSkills) {
+    const existing = skillsById.get(skill.id)
+    // Keep the group-scoped copy so a same-id public/private duplicate is
+    // still rendered as available through the owning Team.
+    if (!existing || (existing.is_public && !skill.is_public)) {
+      skillsById.set(skill.id, skill)
+    }
+  }
+  return Array.from(skillsById.values())
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -149,7 +190,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
-    targetGroupNames = [],
+    targetGroupNames = EMPTY_TARGET_GROUP_NAMES,
+    targetGroupsLoading = false,
+    targetGroupsError = false,
+    onRetryTargetGroups,
     modelCategoryType = 'llm',
     allowGenerationPrimaryModel = false,
   },
@@ -439,6 +483,54 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     [scope]
   )
 
+  const loadSkills = useCallback(async () => {
+    setLoadingSkills(true)
+    try {
+      // For public scope, use fetchPublicSkillsList; otherwise combine the
+      // current scope with Skills shared with every selected Team group.
+      const skillsData =
+        scope === 'public'
+          ? await fetchPublicSkillsList()
+          : await fetchUnifiedSkillsList({
+              scope: scope,
+              groupName: groupName,
+            })
+      const groupSkillLists =
+        scope === 'public' || targetGroupNames.length === 0
+          ? []
+          : await Promise.all(
+              targetGroupNames.map(targetGroupName =>
+                fetchUnifiedSkillsList({
+                  scope: 'group',
+                  groupName: targetGroupName,
+                })
+              )
+            )
+      const mergedSkills =
+        groupSkillLists.length === 0
+          ? skillsData
+          : mergeSkillsByGroupPresence(skillsData, mergeSkillsAvailableToAllGroups(groupSkillLists))
+      setAllSkills(mergedSkills)
+      // Filter skills based on current shell type
+      setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(mergedSkills)))
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('common:skills.loading_failed'),
+      })
+    } finally {
+      setLoadingSkills(false)
+    }
+  }, [
+    filterSelectableSkills,
+    filterSkillsByShellType,
+    groupName,
+    scope,
+    t,
+    targetGroupNames,
+    toast,
+  ])
+
   useEffect(() => {
     // Only fetch skills when the selected runtime can deploy them.
     if (!supportsSkills) {
@@ -447,32 +539,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       setLoadingSkills(false)
       return
     }
-
-    const fetchSkills = async () => {
-      setLoadingSkills(true)
-      try {
-        // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-        const skillsData =
-          scope === 'public'
-            ? await fetchPublicSkillsList()
-            : await fetchUnifiedSkillsList({
-                scope: scope,
-                groupName: groupName,
-              })
-        setAllSkills(skillsData)
-        // Filter skills based on current shell type
-        setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: t('common:skills.loading_failed'),
-        })
-      } finally {
-        setLoadingSkills(false)
-      }
-    }
-    fetchSkills()
-  }, [supportsSkills, toast, t, filterSkillsByShellType, filterSelectableSkills, scope, groupName])
+    void loadSkills()
+  }, [loadSkills, supportsSkills])
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -1211,13 +1279,22 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
               <Button
                 onClick={handleSave}
-                disabled={botSaving}
+                disabled={botSaving || targetGroupsLoading || targetGroupsError}
                 variant="primary"
                 data-testid="save-button"
               >
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {botSaving ? t('common:actions.saving') : t('common:actions.save')}
               </Button>
+              {targetGroupsError && onRetryTargetGroups && (
+                <Button
+                  onClick={onRetryTargetGroups}
+                  variant="outline"
+                  data-testid="retry-target-groups-button"
+                >
+                  {t('common:actions.retry')}
+                </Button>
+              )}
             </div>
           ))}
       </div>
@@ -1798,27 +1875,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         groupName={groupName}
         onSkillsChange={() => {
           // Reload skills list when skills are changed
-          const fetchSkills = async () => {
-            try {
-              // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
-              const skillsData =
-                scope === 'public'
-                  ? await fetchPublicSkillsList()
-                  : await fetchUnifiedSkillsList({
-                      scope: scope,
-                      groupName: groupName,
-                    })
-              setAllSkills(skillsData)
-              // Filter skills based on current shell type
-              setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(skillsData)))
-            } catch {
-              toast({
-                variant: 'destructive',
-                title: t('common:skills.loading_failed'),
-              })
-            }
-          }
-          fetchSkills()
+          void loadSkills()
         }}
       />
 

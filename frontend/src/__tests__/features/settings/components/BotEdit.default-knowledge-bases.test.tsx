@@ -213,6 +213,9 @@ async function renderBotEdit(
     scope?: 'personal' | 'group' | 'all' | 'public'
     groupName?: string
     targetGroupNames?: string[]
+    targetGroupsLoading?: boolean
+    targetGroupsError?: boolean
+    onRetryTargetGroups?: () => void
     modelCategoryType?: 'llm' | 'image' | 'video'
     allowGenerationPrimaryModel?: boolean
   } = {}
@@ -253,6 +256,9 @@ async function renderBotEdit(
         scope={props.scope || 'personal'}
         groupName={props.groupName}
         targetGroupNames={props.targetGroupNames}
+        targetGroupsLoading={props.targetGroupsLoading}
+        targetGroupsError={props.targetGroupsError}
+        onRetryTargetGroups={props.onRetryTargetGroups}
         modelCategoryType={props.modelCategoryType}
         allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
       />
@@ -841,6 +847,62 @@ describe('BotEdit default knowledge bases', () => {
         })
       )
     })
+  })
+
+  test('includes skills shared with every selected team group', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { scope?: string }) =>
+      params?.scope === 'group'
+        ? params.groupName === 'engineering'
+          ? [
+              { id: 31, name: 'shared-skill', namespace: 'default', is_public: false },
+              { id: 32, name: 'missing-skill', namespace: 'default', is_public: false },
+            ]
+          : [{ id: 31, name: 'shared-skill', namespace: 'default', is_public: false }]
+        : [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
+    )
+
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering', 'research'],
+      }
+    )
+
+    expect(await screen.findByText('shared-skill')).toBeInTheDocument()
+    expect(screen.getByText('personal-skill')).toBeInTheDocument()
+    expect(screen.queryByText('missing-skill')).not.toBeInTheDocument()
+  })
+
+  test('blocks member bot saving while team groups are loading', async () => {
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering'],
+        targetGroupsLoading: true,
+      }
+    )
+
+    expect(await screen.findByTestId('save-button')).toBeDisabled()
+  })
+
+  test('offers retry and blocks saving when team groups fail to load', async () => {
+    const onRetryTargetGroups = jest.fn()
+
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering'],
+        targetGroupsError: true,
+        onRetryTargetGroups,
+      }
+    )
+
+    expect(await screen.findByTestId('save-button')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('retry-target-groups-button'))
+    expect(onRetryTargetGroups).toHaveBeenCalledTimes(1)
   })
 
   test('preserves an existing model binding when the model is hidden from selection', async () => {

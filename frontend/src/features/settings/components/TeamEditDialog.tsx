@@ -236,10 +236,41 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [marketplaceExampleConversations, setMarketplaceExampleConversations] = useState<
     MarketplaceExampleConversation[]
   >([])
+  const [agentBindingsLoading, setAgentBindingsLoading] = useState(false)
+  const [agentBindingsError, setAgentBindingsError] = useState(false)
 
   const publishTarget: CapabilityPublishTarget = isEditing
     ? editingPublishTarget
     : creatingPublishTarget
+  const retryAgentBindings = useCallback(async () => {
+    if (!open || !isEditing || !formTeam?.id) return
+
+    setAgentBindingsLoading(true)
+    setAgentBindingsError(false)
+    try {
+      const bindings = await resourceLibraryApi.getAgentBindings(formTeam.id)
+      setEditingGroupNames(bindings.group_names)
+      setInitialEditingGroupNames(bindings.group_names)
+      if (formTeam.publication_status !== 'published') {
+        setEditingPublishTarget(bindings.group_names.length > 0 ? 'team' : 'personal')
+      }
+    } catch {
+      setAgentBindingsError(true)
+      toast({
+        variant: 'destructive',
+        title: agentBindingsFetchFailedTitle,
+      })
+    } finally {
+      setAgentBindingsLoading(false)
+    }
+  }, [
+    agentBindingsFetchFailedTitle,
+    formTeam?.id,
+    formTeam?.publication_status,
+    isEditing,
+    open,
+    toast,
+  ])
   const publishGroupNames = useMemo(
     () =>
       isEditing
@@ -709,6 +740,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     }
 
     let active = true
+    setAgentBindingsLoading(true)
+    setAgentBindingsError(false)
     resourceLibraryApi
       .getAgentBindings(formTeam.id)
       .then(bindings => {
@@ -722,10 +755,16 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
       .catch(() => {
         if (active) {
+          setAgentBindingsError(true)
           toast({
             variant: 'destructive',
             title: agentBindingsFetchFailedTitle,
           })
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAgentBindingsLoading(false)
         }
       })
 
@@ -1754,6 +1793,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         scope={scope}
         groupName={groupName}
         targetGroupNames={publishTarget === 'team' ? publishGroupNames : []}
+        targetGroupsLoading={agentBindingsLoading}
+        targetGroupsError={agentBindingsError}
+        onRetryTargetGroups={() => void retryAgentBindings()}
       />
 
       {/* Mode change confirmation dialog */}
