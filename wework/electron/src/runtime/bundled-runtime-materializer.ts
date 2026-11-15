@@ -269,8 +269,6 @@ async function extractArchive(archive: string, destination: string): Promise<voi
   try {
     await extractPhysicalRelease(archive, destination)
   } catch (error) {
-    // Preserve the extractor failure before publication cleanup can fail independently.
-    console.error('[runtime-materialization] Archive extraction failed', error)
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Bundled DSH runtime extraction failed: ${detail}`, { cause: error })
   }
