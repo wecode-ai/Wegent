@@ -1,6 +1,7 @@
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
+import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 import { randomBytes } from 'node:crypto'
 import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
@@ -1480,6 +1481,23 @@ class RealCloudEnvironment {
       assert.equal(current.status, 'online')
     }
     await assertOriginalAppRegistration()
+    // Registration precedes model discovery; preserve a real catalog before disconnecting.
+    await waitForBoardValue(
+      async () => {
+        const environments = await fetchJson(
+          `${this.backendUrl}/api/v1/resources/execution-environments`,
+          {
+            headers: { Authorization: `Bearer ${this.authToken}` },
+            signal: AbortSignal.timeout(DEFAULT_STEP_TIMEOUT_MS),
+          }
+        )
+        const catalog = environments.find(device => device.id === String(historical.id))
+        return catalog?.models.some(model => model.runtime === 'codex' && model.is_default) === true
+      },
+      true,
+      `The historical device must publish its default Codex model before disconnecting; see ${logPath}`,
+      WORKBENCH_READY_TIMEOUT_MS
+    )
     await stopProcessGroup(executor)
     await waitForAliasStatus('offline', historical.runtime_instance_id)
     await assertOriginalAppRegistration()
