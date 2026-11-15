@@ -1730,6 +1730,24 @@ class RealCloudEnvironment {
     )
   }
 
+  async resumeRemoteDockerExecutor() {
+    assert.equal(this.remoteDockerExecutor, null, 'The remote executor must be offline')
+    const previous = await this.device(REMOTE_DOCKER_DEVICE_ID)
+    assert.ok(previous?.runtime_instance_id, 'The remote executor must retain its installation')
+    this.remoteDockerExecutor = await this.spawnExecutor(
+      this.remoteDockerExecutorEnv,
+      this.remoteDockerExecutorLogPath
+    )
+    const current = await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'online',
+      this.remoteDockerExecutorLogPath
+    )
+    assert.equal(current.runtime_instance_id, previous.runtime_instance_id)
+    assert.equal(current.id, previous.id)
+    return current
+  }
+
   async waitForWorkspaceRemoved(workspacePath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {

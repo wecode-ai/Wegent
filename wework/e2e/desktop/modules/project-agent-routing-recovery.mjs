@@ -217,11 +217,7 @@ export async function verifyProjectAgentRoutingRecovery(
     options.uiTimeoutMs
   )
   assert.equal(await boundEnvironment(completed.id), originalEnvironmentId)
-  await environment.startGeneratedRemoteDevice({
-    deviceId: targetDevice.device_id,
-    deviceName: targetDevice.name,
-    authToken: cloud.authToken,
-  })
+  await environment.resumeRemoteDockerExecutor()
   await waitForBoardValue(
     async () => {
       reassigned = await request('/api/v1/loop-items/' + completed.id)
