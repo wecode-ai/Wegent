@@ -766,6 +766,14 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     }
 
     async fn message_edit_tables(&self, _task_id: i64) -> MysqlResult<MessageEditTables> {
+        #[cfg(feature = "test-support")]
+        if let Some(tables) = self.migrated_tables {
+            return Ok(MessageEditTables {
+                tasks: tables.tasks.to_owned(),
+                subtasks: tables.subtasks.to_owned(),
+                ownership: MessageEditOwnership::StatementFilter,
+            });
+        }
         // The single-table store has no model selection to run: every id reads
         // the base tables, and `_filter_owner_user_id` is part of each
         // statement.
