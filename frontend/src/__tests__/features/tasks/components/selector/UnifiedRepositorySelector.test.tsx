@@ -106,3 +106,39 @@ it('opens on user request and clears the repository and branch through the exist
   expect(onRepoChange).toHaveBeenCalledWith(null)
   expect(onBranchChange).toHaveBeenCalledWith(null)
 })
+
+it.each(['{Enter}', ' '])('opens repository selection with the keyboard using %s', async key => {
+  const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+  render(<Selectors requiresWorkspace />)
+
+  await user.tab()
+  await user.tab()
+  expect(screen.getByTestId('repository-selector-trigger')).toHaveFocus()
+  await user.keyboard(key)
+
+  expect(screen.getByTestId('repository-list')).toBeVisible()
+})
+
+it('keeps a disabled repository selector out of keyboard navigation and closed', async () => {
+  const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+  render(
+    <UnifiedRepositorySelector
+      selectedRepo={null}
+      selectedBranch={null}
+      onRepoChange={onRepoChange}
+      onBranchChange={onBranchChange}
+      requiresWorkspace
+      disabled
+    />
+  )
+  const trigger = screen.getByTestId('repository-selector-trigger')
+
+  expect(trigger).toHaveAttribute('aria-disabled', 'true')
+  await user.tab()
+  expect(trigger).not.toHaveFocus()
+  await user.click(trigger)
+  trigger.focus()
+  await user.keyboard('{Enter} ')
+
+  expect(screen.queryByTestId('repository-list')).not.toBeInTheDocument()
+})

@@ -392,6 +392,17 @@ export default function UnifiedRepositorySelector({
               <PopoverTrigger asChild>
                 <div
                   data-testid="repository-selector-trigger"
+                  role="button"
+                  tabIndex={disabled ? -1 : 0}
+                  aria-label={tooltipContent}
+                  aria-disabled={disabled}
+                  onKeyDown={event => {
+                    if (disabled || event.target !== event.currentTarget) return
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      event.currentTarget.click()
+                    }
+                  }}
                   className={cn(
                     'group flex items-center gap-1 min-w-0 rounded-full pl-2 pr-2 py-2 h-9',
                     'transition-all duration-200 cursor-pointer',
@@ -400,7 +411,7 @@ export default function UnifiedRepositorySelector({
                       ? 'text-error bg-error/5 hover:bg-error/10'
                       : 'bg-transparent text-text-primary hover:bg-hover',
                     isLoading ? 'animate-pulse' : '',
-                    'focus:outline-none focus:ring-0',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                     (disabled || isLoading) && 'cursor-not-allowed opacity-50'
                   )}
                 >
