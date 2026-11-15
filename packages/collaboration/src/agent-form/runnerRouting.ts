@@ -189,6 +189,7 @@ export function policyModels(
 export interface RunnerSelection {
   execution_policy?: AgentExecutionPolicy
   model?: RunnerModelIdentity
+  recovery_from_environment_id?: string
 }
 
 /** Resolve a local execution using the same rules as the server queue. */
@@ -231,7 +232,12 @@ export function resolveRunnerSelection(input: {
     throw new Error('RUNNER_POLICY_FIXED: this agent has a fixed environment rule')
   }
   let candidates = policyEnvironments(input.environments, policy, true)
-  if (input.boundEnvironmentId)
+  const recovery =
+    !!input.boundEnvironmentId &&
+    !input.automatic &&
+    selection.recovery_from_environment_id === input.boundEnvironmentId &&
+    !candidates.some(item => item.id === input.boundEnvironmentId)
+  if (input.boundEnvironmentId && !recovery)
     candidates = candidates.filter(item => item.id === input.boundEnvironmentId)
   if (!candidates.length)
     throw new Error(
@@ -281,5 +287,6 @@ export function resolveRunnerSelection(input: {
         : selection.model
           ? 'execution_selection'
           : 'environment_default',
+    ...(recovery ? { recovery_from_environment_id: input.boundEnvironmentId } : {}),
   }
 }

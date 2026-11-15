@@ -4356,6 +4356,7 @@
     "runner_registration_hint": "在已有服务器上运行 Executor，设置 WEGENT_BACKEND_URL，以及以下设备 ID 和独立凭证。凭证只在本次显示，请保存到服务器的环境配置中。模型账号在该环境中配置。",
     "runner_registration_revoke": "从分组移除此公共环境会撤销凭证，后续执行将停止领取。",
     "runner_selection_title": "选择本次执行环境和模型",
+    "runner_selection_recovery": "分配失败后，可确认新的执行环境。仅在没有运行中任务时切换，历史会话和文件保留在原设备。",
     "runner_selection_confirm": "确认执行配置",
     "runner_selection_cancelled": "已取消执行配置选择",
     "runner_status_unknown": "状态待确认",

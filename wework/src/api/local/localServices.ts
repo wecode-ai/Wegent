@@ -3798,18 +3798,27 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         if (
           runnerSelection ||
           !(error instanceof Error) ||
-          !/^(RUNNER_SELECTION_REQUIRED|RUNNER_MODEL_REQUIRED):/.test(error.message)
+          !/^(RUNNER_SELECTION_REQUIRED|RUNNER_MODEL_REQUIRED|ISSUE_RUNNER_CONFLICT):/.test(
+            error.message
+          )
         )
           throw error
+        const recovery = error.message.startsWith('ISSUE_RUNNER_CONFLICT:')
         const selection = await requestRunnerSelection({
           environments,
           cloud_models: cloudModels,
           cloud_only: agent.executionPolicy.mode !== 'fixed',
           runtime: agent.runtime,
-          execution_policy: task.runner_binding
-            ? { mode: 'fixed', environment_id: task.runner_binding.environment_id }
-            : agent.executionPolicy,
+          execution_policy:
+            task.runner_binding && !recovery
+              ? { mode: 'fixed', environment_id: task.runner_binding.environment_id }
+              : agent.executionPolicy,
           model_policy: agent.modelPolicy,
+          ...(recovery
+            ? { recovery_from_environment_id: task.runner_binding?.environment_id }
+            : {}),
+        }).catch(cause => {
+          throw recovery ? error : cause
         })
         routing = resolveRunnerSelection({ ...input, selection })
       }

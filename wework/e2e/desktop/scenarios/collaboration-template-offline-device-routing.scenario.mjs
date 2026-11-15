@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 
 import { createDesktopScenario as createAppDeviceRoutingScenario } from './collaboration-template-app-device-routing.scenario.mjs'
 import { verifyProjectAgentRoutingRecovery } from '../modules/project-agent-routing-recovery.mjs'
+import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -43,7 +44,13 @@ export function createDesktopScenario(options) {
       assert.equal(historical.device_id, current.app_device_id)
       assert.notEqual(historical.id, current.id)
       await scenario.verify(control)
-      await verifyProjectAgentRoutingRecovery(control, cloud, historical, options)
+      const targetDevice = await environment.device(REMOTE_DOCKER_DEVICE_ID)
+      assert.ok(targetDevice, 'Recovery must use the independent real remote executor')
+      assert.notEqual(targetDevice.id, current.id)
+      assert.notEqual(targetDevice.device_id, current.app_device_id)
+      await environment.waitForRunnerCatalog(targetDevice.id)
+      await environment.stopRemoteDockerExecutorAndWaitOffline()
+      await verifyProjectAgentRoutingRecovery(control, cloud, targetDevice, environment, options)
     },
   }
 }
