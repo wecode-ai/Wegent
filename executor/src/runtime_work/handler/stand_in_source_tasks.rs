@@ -39,12 +39,11 @@ impl RuntimeWorkRpcHandler {
             .into_iter()
             .find(|role| role["id"].as_str() == identity.role.as_deref())
             .ok_or_else(denied)?;
-        if !identity.ask_before_act
-            && (config["enabled"] != true || source["policy"]["automatic"] != true)
-        {
+        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
+        let manual = actor.runtime_handle["executionRequest"]["standInManualConfirmation"] == true;
+        if !manual && (config["enabled"] != true || source["policy"]["automatic"] != true) {
             return Err(denied());
         }
-        let actor = self.local_task_link(&identity.task_id).ok_or_else(denied)?;
         let ask = identity.ask_before_act
             || source["policy"]["askBeforeAct"] == true
             || actor.runtime_handle["origin"]["askBeforeAct"] == true;

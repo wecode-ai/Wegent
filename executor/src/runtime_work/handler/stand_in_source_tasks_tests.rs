@@ -197,3 +197,37 @@ fn source_task_starts_once_retains_review_and_delivers_to_its_source_without_per
                 .is_err());
         });
 }
+
+#[tokio::test]
+async fn confirmation_required_source_task_obeys_live_policy_without_host_manual_authorization() {
+    for disable_role in [false, true] {
+        let (_root, handler, identity, args) = fixture(Some(true), Some(true));
+        assert!(identity.ask_before_act);
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        if disable_role {
+            settings["primary"]["enabled"] = json!(false);
+        } else {
+            settings["primary"]["connections"][0]["policy"]["automatic"] = json!(false);
+        }
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        assert_eq!(
+            handler
+                .stand_in_task_operation(identity.clone(), "create_task", args.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "permission_denied"
+        );
+        assert_eq!(handler.local_task_links(true).len(), 1);
+
+        // Only the host's recorded manual start permits work with automation disabled.
+        handler.store.update_task(&identity.task_id, |link| {
+            link.runtime_handle["executionRequest"]["standInManualConfirmation"] = json!(true);
+        });
+        let (config, _) = handler
+            .source_task_context(&identity, args["messageId"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(config["handlingPolicy"]["askBeforeAct"], true);
+    }
+}
