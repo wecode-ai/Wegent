@@ -182,6 +182,33 @@ describe('mock model controls', () => {
     return { received, result, controller, finished: () => finished }
   }
 
+  function streamText(matchText: string, path: string) {
+    const received = new Promise<ServerResponse>(resolve => {
+      server.once('request', (request, response) => {
+        request.once('end', () => resolve(response))
+      })
+    })
+    const result = fetch(`${url}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'mock-model',
+        stream: true,
+        messages: [{ role: 'user', content: matchText }],
+        input: matchText,
+      }),
+    }).then(async response => {
+      await received
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('model response stream is unavailable')
+      const first = await reader.read()
+      if (first.done) throw new Error('model response stream closed before the first event')
+      const text = new TextDecoder().decode(first.value, { stream: true })
+      return { text, completed: false }
+    })
+    return { received, result }
+  }
+
   it.each(['/v1/messages', '/v1/responses', '/v1/chat/completions'])(
     'holds %s until explicit release and lets later pipeline stages finish',
     async path => {
@@ -196,6 +223,32 @@ describe('mock model controls', () => {
       expect(await pendingResponses(matchText)).toBe(0)
       expect(await pending.result).toContain(`ANSWER_${matchText}`)
       expect(await modelRequest(matchText, path).result).toContain(`ANSWER_${matchText}`)
+      expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
+    }
+  )
+
+  it.each(['/v1/responses', '/v1/chat/completions'])(
+    'holds %s completion until explicit release',
+    async path => {
+      const matchText = `held-done-${path}`
+      await post('/stream-rules', {
+        matchText,
+        responseContent: `DONE_${matchText}`,
+        chunkDelayMs: 0,
+        holdDone: true,
+      })
+      const pending = streamText(matchText, path)
+      await pending.received
+      const settled = await pending.result
+      expect(settled.completed).toBe(false)
+      expect(settled.text.length).toBeGreaterThan(0)
+
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 1 })
+      expect(await pendingResponses(matchText)).toBe(0)
+      expect(settled.text).toContain(`DONE_${matchText}`)
+      expect(settled.text).not.toContain('[DONE]')
+      expect(await modelRequest(matchText, path).result).toContain(`DONE_${matchText}`)
       expect(await post('/stream-rules/release', { matchText })).toEqual({ released: 0 })
     }
   )
