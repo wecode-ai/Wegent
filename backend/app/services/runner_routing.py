@@ -238,6 +238,7 @@ class ResolvedRouting:
     candidates: list[Kind]
     source: str
     model_source: str = "agent_fixed"
+    recovery_from_environment_id: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -246,6 +247,11 @@ class ResolvedRouting:
             "model": self.model.model_dump(exclude_none=True),
             "source": self.source,
             "model_source": self.model_source,
+            **(
+                {"recovery_from_environment_id": self.recovery_from_environment_id}
+                if self.recovery_from_environment_id
+                else {}
+            ),
         }
 
 
@@ -256,64 +262,9 @@ def resolve_routing(db: Session, **kwargs) -> ResolvedRouting:
         from app.services.runner_routing_errors import attach_routing_context
 
         attach_routing_context(db, error, **kwargs)
-        if isinstance(error.detail, dict) and error.detail.get("error_code") in {
-            "RUNNER_SELECTION_REQUIRED",
-            "RUNNER_MODEL_REQUIRED",
-            "AUTOMATION_RUNNER_REQUIRED",
-        }:
-            config = kwargs["config"]
-            ids = visible_environment_ids(db, kwargs["user_id"], kwargs["project_id"])
-            allowed = execution_environment_ids(
-                db, kwargs["project_id"], kwargs.get("agent_id")
-            )
-            devices = (
-                db.query(Kind)
-                .filter(
-                    Kind.id.in_(ids),
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.is_active.is_(True),
-                )
-                .all()
-            )
-            policy = config["execution_policy"]
-            bound = issue_binding(db, kwargs["issue_id"])
-            if (
-                bound
-                and policy["mode"] == "user_select"
-                and not kwargs.get("automatic")
-            ):
-                policy = {"mode": "fixed", "environment_id": bound}
-            environments = []
-            from app.services.runner_cloud_models import cloud_model_catalog
+        from app.services.runner_selection_request import attach_runner_selection
 
-            for device in devices:
-                spec = (device.json or {}).get("spec") or {}
-                workspace = spec.get("workspaceOwnerId")
-                environments.append(
-                    {
-                        "id": str(device.id),
-                        "device_key": runtime_device_route_id(device),
-                        "name": spec.get("displayName") or device.name,
-                        "owner_type": "workspace" if workspace else "user",
-                        "owner_id": str(workspace or device.user_id),
-                        "status": "unknown",
-                        "project_authorized": device.id in allowed,
-                        "models": [
-                            model.model_dump() for model in catalog(device).models
-                        ],
-                        "runtimes": catalog(device).runtimes,
-                    }
-                )
-            error.detail["runner_selection_request"] = {
-                "runtime": config["runtime"],
-                "execution_policy": policy,
-                "model_policy": config["model_policy"],
-                "environments": environments,
-                "cloud_models": cloud_model_catalog(db, kwargs["user_id"]),
-                "cloud_only": config["execution_policy"]["mode"] != "fixed",
-                "automatic": bool(kwargs.get("automatic")),
-            }
+        attach_runner_selection(db, error, **kwargs)
         raise
 
 
@@ -345,8 +296,20 @@ def _resolve_routing(
     candidates = _candidates(
         db, policy, project_id, user_id, agent_id, automatic=automatic
     )
+    recovery_from = None
     if bound_id:
-        candidates = [item for item in candidates if str(item.id) == bound_id]
+        bound_candidates = [item for item in candidates if str(item.id) == bound_id]
+        from app.services.runner_recovery import runner_recovery_available
+
+        if (
+            not bound_candidates
+            and selected.recovery_from_environment_id == bound_id
+            and not automatic
+            and runner_recovery_available(db, issue_id)
+        ):
+            recovery_from = bound_id
+        else:
+            candidates = bound_candidates
         if not candidates:
             raise routing_error(
                 "ISSUE_RUNNER_CONFLICT",
@@ -387,6 +350,7 @@ def _resolve_routing(
             if model_policy.mode == "fixed"
             else "execution_selection" if selected.model else "environment_default"
         ),
+        recovery_from,
     )
 
 
@@ -575,15 +539,30 @@ def _resolve_model(
 
 def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
     from app.services.collaboration_revocation import execution_authorized
+    from app.services.runner_recovery import original_session, permits_runner_recovery
 
     if not execution_authorized(db, execution):
         return False
+    if original_session(execution):
+        original = resolve_owned_device_alias(
+            db,
+            user_id=execution.executor_owner_user_id,
+            device_id=execution.runtime_device_id,
+        )
+        if original is None or original.id != device.id:
+            return False
     snapshot = execution.runtime_selection["runner_routing"]
     try:
         bound_id = issue_binding(db, execution.loop_item_id)
     except HTTPException:
         return False
     if bound_id and bound_id != str(device.id):
+        if not original_session(execution) and not permits_runner_recovery(
+            db, execution, bound_id
+        ):
+            return False
+    resolved = execution.runtime_selection.get("resolved_environment_id")
+    if resolved and resolved != str(device.id):
         return False
     routes = [
         (execution.agent_id, snapshot),
@@ -630,7 +609,15 @@ def claim_routing(db: Session, execution: Any, device: Kind) -> bool:
     except HTTPException:
         return False
     if bound and bound != str(device.id):
-        return False
+        from app.services.runner_recovery import (
+            original_session,
+            permits_runner_recovery,
+        )
+
+        if not original_session(execution) and not permits_runner_recovery(
+            db, execution, bound
+        ):
+            return False
     if snapshot is not None and not eligible_runner(db, execution, device):
         return False
     return _bind_issue_in_claim(db, issue, execution, device)
@@ -654,7 +641,13 @@ def _bind_issue_in_claim(
         .first()
     ):
         return False
-    if not (issue.metadata_json or {}).get("runner_binding"):
+    from app.services.runner_recovery import original_session
+
+    if original_session(execution):
+        return True
+    if not (issue.metadata_json or {}).get("runner_binding") or issue_binding(
+        db, issue.id
+    ) != str(device.id):
         metadata = case(
             (
                 func.lower(func.json_type(LoopItem.metadata_json)) == "object",
@@ -662,18 +655,26 @@ def _bind_issue_in_claim(
             ),
             else_=func.json_object(),
         )
+        saved = (issue.metadata_json or {}).get("runner_binding")
+        # Retain the JSON CAS even on stores that do not implement row locks.
+        expected_binding = (
+            LoopItem.metadata_json["runner_binding"]["environment_id"].as_string()
+            == saved["environment_id"]
+            if saved
+            else or_(
+                func.json_extract(metadata, "$.runner_binding").is_(None),
+                func.lower(
+                    func.json_type(func.json_extract(metadata, "$.runner_binding"))
+                )
+                == "null",
+            )
+        )
         changed = (
             db.query(LoopItem)
             .filter(
                 LoopItem.id == issue.id,
                 LoopItem.version == issue.version,
-                or_(
-                    func.json_extract(metadata, "$.runner_binding").is_(None),
-                    func.lower(
-                        func.json_type(func.json_extract(metadata, "$.runner_binding"))
-                    )
-                    == "null",
-                ),
+                expected_binding,
             )
             .update(
                 {
@@ -698,7 +699,11 @@ def bind_claimed_runner(db: Session, execution: Any, device: Kind) -> None:
     if snapshot is None:
         return
     issue = db.get(LoopItem, execution.loop_item_id)
-    if issue_binding(db, issue.id) != str(device.id):
+    from app.services.runner_recovery import original_session
+
+    if not original_session(execution) and issue_binding(db, issue.id) != str(
+        device.id
+    ):
         raise routing_error(
             "ISSUE_RUNNER_CONFLICT", "Issue affinity changed before the claim completed"
         )

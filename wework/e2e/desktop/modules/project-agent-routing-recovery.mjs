@@ -7,8 +7,14 @@ import { reloadMainWindow } from './workspace-flows.mjs'
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = id => `${CONTENT} [data-testid="${id}"]`
 
-/** A different Maintainer repairs a policy conflict without moving Issue history. */
-export async function verifyProjectAgentRoutingRecovery(control, cloud, historical, options) {
+/** Failed assignments require explicit recovery; successful and live work keep their binding. */
+export async function verifyProjectAgentRoutingRecovery(
+  control,
+  cloud,
+  historical,
+  environment,
+  options
+) {
   const request = async (path, { method = 'GET', body, token = cloud.authToken } = {}) => {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -87,10 +93,10 @@ export async function verifyProjectAgentRoutingRecovery(control, cloud, historic
     method: 'POST',
     token: login.access_token,
     body: {
-      name: '设备策略冲突智能体',
+      name: '跨设备研发智能体',
       runtime: 'codex',
       execution_policy: { mode: 'fixed', environment_id: String(historical.id) },
-      model_policy: { mode: 'user_select' },
+      model_policy: modelPolicy,
       execution_mode: 'auto',
       system_prompt: 'Return the requested result without tools.',
     },
@@ -133,24 +139,26 @@ export async function verifyProjectAgentRoutingRecovery(control, cloud, historic
       return completed?.execution_state
     },
     'succeeded',
-    'The first real execution must establish Issue affinity',
+    'The first real execution must record its device',
     options.modelResponseTimeoutMs
   )
+  const confirmRecovery = async () => {
+    await control.command('waitFor', '[data-testid="runner-selection-recovery"]')
+    await control.command('clickWhenEnabled', '[data-testid="runner-selection-confirm"]')
+    await control.command('waitFor', '[data-testid="runner-selection-dialog"]', { visible: false })
+  }
   await assign(conflict.id)
-  const alert = selector('cloud-todo-save-error')
-  await control.command('waitFor', alert, { text: 'ISSUE_RUNNER_CONFLICT' })
-  const errorText = await control.command('getText', alert)
-  for (const text of [conflict.name, originalEnvironmentId, String(historical.id), '运行设置'])
-    assert.ok(errorText.includes(text), `Routing error must identify ${text}: ${errorText}`)
+  await control.command('waitFor', '[data-testid="runner-selection-recovery"]')
+  const beforeRecovery = await request('/api/v1/loop-items/' + completed.id)
+  assert.equal(beforeRecovery.execution_id, completed.execution_id)
+  assert.equal(beforeRecovery.assignee_agent_id, agent.id)
+  assert.equal(beforeRecovery.runner_binding.environment_id, originalEnvironmentId)
+  await control.command('click', '[data-testid="runner-selection-cancel"]')
+  await control.command('waitFor', '[data-testid="runner-selection-dialog"]', { visible: false })
   await control.command('waitFor', selector('cloud-todo-state-assignee'), { text: agent.name })
-  const unchanged = await request(`/api/v1/loop-items/${completed.id}`)
-  assert.equal(
-    unchanged.execution_id,
-    completed.execution_id,
-    'A denied assignment must not create work'
-  )
-  assert.equal(unchanged.assignee_agent_id, agent.id)
+  const alert = selector('cloud-todo-save-error')
   await assign(group.id, 'group')
+  await confirmRecovery()
   await control.command('waitFor', alert, { text: group.name })
   const groupError = await control.command('getText', alert)
   for (const text of [conflict.name, originalEnvironmentId, String(historical.id)])
@@ -161,6 +169,48 @@ export async function verifyProjectAgentRoutingRecovery(control, cloud, historic
   assert.equal(deniedGroup.assignee_agent_id, agent.id)
   assert.equal(deniedGroup.assignee_group_id, null)
   await options.captureScreenshot(control, 'project-agent-runner-conflict.png', CONTENT)
+  await assign(conflict.id)
+  await confirmRecovery()
+  let reassigned
+  await waitForBoardValue(
+    async () => {
+      reassigned = await request('/api/v1/loop-items/' + completed.id)
+      return (
+        reassigned.assignee_agent_id === conflict.id &&
+        reassigned.execution_id !== completed.execution_id &&
+        reassigned.execution_state === 'queued'
+      )
+    },
+    true,
+    'Reassignment to an authorized offline device must queue successfully',
+    options.uiTimeoutMs
+  )
+  assert.equal(reassigned.runner_binding.environment_id, originalEnvironmentId)
+  await environment.startGeneratedRemoteDevice({
+    deviceId: historical.device_id,
+    deviceName: historical.name,
+    authToken: cloud.authToken,
+  })
+  await waitForBoardValue(
+    async () => {
+      reassigned = await request('/api/v1/loop-items/' + completed.id)
+      return (
+        reassigned.execution_state === 'succeeded' &&
+        reassigned.runner_binding?.environment_id === String(historical.id)
+      )
+    },
+    true,
+    'The new device must claim and complete the reassigned Issue',
+    options.modelResponseTimeoutMs
+  )
+  const history = await request(base + '/executions?include_terminal=true')
+  const oldExecution = history.items.find(row => row.id === completed.execution_id)
+  const movedExecution = history.items.find(row => row.id === reassigned.execution_id)
+  assert.ok(oldExecution && movedExecution)
+  assert.notEqual(oldExecution.runtime_device_id, movedExecution.runtime_device_id)
+  assert.notEqual(oldExecution.runtime_task_id, movedExecution.runtime_task_id)
+  assert.equal(oldExecution.status, 'completed')
+  await options.captureScreenshot(control, 'project-agent-runner-reassigned.png', CONTENT)
   await control.command('click', selector('cloud-todo-detail-close'))
   await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command('click', selector('collaboration-project-settings-agents'))
@@ -204,17 +254,18 @@ export async function verifyProjectAgentRoutingRecovery(control, cloud, historic
   await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', selector(`cloud-todo-card-${completed.id}`))
   await assign(conflict.id)
+  await confirmRecovery()
   await waitForBoardValue(
     async () => {
       const current = await request(`/api/v1/loop-items/${completed.id}`)
       return (
         current.assignee_agent_id === conflict.id &&
-        current.execution_id !== completed.execution_id &&
+        current.execution_id !== reassigned.execution_id &&
         current.execution_state === 'succeeded'
       )
     },
     true,
-    'Repairing the member policy must allow the same Issue to execute again',
+    'Changing the Agent policy must allow reassignment back to the first device',
     options.modelResponseTimeoutMs
   )
   await options.captureScreenshot(control, 'project-agent-runner-recovered.png', CONTENT)

@@ -10,7 +10,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
 from app.services.device.identity import resolve_owned_device_alias
 from app.services.project_chat.service import bot_config
-from app.services.runner_routing import active_device, issue_binding, routing_error
+from app.services.runner_routing import routing_error
 
 if TYPE_CHECKING:
     from app.services.loop_item_executions.service import LoopItemExecutionService
@@ -46,24 +46,19 @@ def prepare_continuation(
             "runtime_request": original.runtime_request,
             "runtime_selection": original.runtime_selection,
         }
-    bound_id = issue_binding(db, row.loop_item_id)
-    bound = active_device(db, bound_id) if bound_id else None
-    if bound is None:
+    device = resolve_owned_device_alias(
+        db, user_id=source["owner_user_id"], device_id=source["runtime_device_id"]
+    )
+    if device is None:
         raise routing_error(
             "ISSUE_RUNNER_CONFIGURATION_REQUIRED",
             "The original session's environment must be restored before replying",
         )
-    device = resolve_owned_device_alias(
-        db, user_id=source["owner_user_id"], device_id=source["runtime_device_id"]
-    )
-    if device is None or device.id != bound.id:
-        raise routing_error(
-            "ISSUE_RUNNER_CONFLICT",
-            "The comment session belongs to a different environment than this Issue",
-        )
+    bound_id = str(device.id)
+    source = {**source, "environment_id": bound_id}
     if not source["runtime_request"]:
         raise HTTPException(409, "The original execution configuration is unavailable")
-    context["runtime_subject_user_id"] = bound.user_id
+    context["runtime_subject_user_id"] = device.user_id
     config = bot_config(db.get(ProjectChatAgent, row.agent_id))
     selection = dict(context.get("runner_selection") or {})
     if (config.get("execution_policy") or {}).get("mode") == "user_select":
@@ -110,6 +105,7 @@ def apply_continuation(
 ) -> None:
     context = row.runtime_origin_context
     selection = row.runtime_selection
+    selection["resolved_environment_id"] = source["environment_id"]
     if context.get("dispatch_role") == "manager":
         from app.services.runner_routing import resolve_group_routing
 

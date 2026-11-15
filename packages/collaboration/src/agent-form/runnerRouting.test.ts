@@ -42,6 +42,29 @@ const environment = (id: string, provider = 'openai'): RunnerEnvironment => ({
 const environments = [environment('a'), environment('b', 'other')]
 
 describe('runner routing', () => {
+  it('requires an explicit recovery choice after a bound-runner conflict', () => {
+    const input = {
+      environments: [environment('a'), environment('b')],
+      runtime: 'codex' as const,
+      executionPolicy: { mode: 'fixed', environment_id: 'b' } as const,
+      modelPolicy: { mode: 'fixed', model } as const,
+      boundEnvironmentId: 'a',
+    }
+    expect(() => resolveRunnerSelection(input)).toThrow('ISSUE_RUNNER_CONFLICT')
+    const selection = { recovery_from_environment_id: 'a' }
+    const recovered = resolveRunnerSelection({ ...input, selection })
+    expect(recovered.candidates.map(item => item.id)).toEqual(['b'])
+    expect(recovered.recovery_from_environment_id).toBe('a')
+    expect(() => resolveRunnerSelection({ ...input, selection, automatic: true })).toThrow(
+      'ISSUE_RUNNER_CONFLICT'
+    )
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        selection: { recovery_from_environment_id: 'stale' },
+      })
+    ).toThrow('ISSUE_RUNNER_CONFLICT')
+  })
   it('offers cloud models to both native runtimes through the executor protocol bridge', () => {
     expect(cloudModels.map(model => model.runtime)).toEqual(['codex', 'claude_code'])
     expect(JSON.stringify(cloudModels)).not.toContain('must-not-be-copied')

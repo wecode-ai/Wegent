@@ -4361,6 +4361,7 @@
     "runner_registration_hint": "Run Executor on your existing server with WEGENT_BACKEND_URL and the device ID and credential below. This credential is shown only once. Store it in the server environment configuration. Configure model accounts on that environment.",
     "runner_registration_revoke": "Removing this public environment from the group revokes its credential and prevents further claims.",
     "runner_selection_title": "Choose environment and model",
+    "runner_selection_recovery": "After the assignment fails, confirm a new environment. Switching requires no active execution. Historical sessions and files stay on their original device.",
     "runner_selection_confirm": "Confirm execution settings",
     "runner_selection_cancelled": "Execution configuration cancelled",
     "runner_status_unknown": "Status unknown",

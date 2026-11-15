@@ -1,7 +1,7 @@
 use super::*;
 use tempfile::TempDir;
 
-fn setup() -> (
+pub(super) fn setup() -> (
     TempDir,
     LocalTaskStore,
     LoopItem,

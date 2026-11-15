@@ -110,15 +110,8 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
     let continuation = if request["continuation"].is_null() {
         None
     } else {
-        let Some(source) = continuation(
-            app,
-            row,
-            &issue,
-            &agent,
-            &request["continuation"],
-            &mut context,
-        )
-        .await?
+        let Some(source) =
+            continuation(app, row, &agent, &request["continuation"], &mut context).await?
         else {
             return Ok(None);
         };
@@ -223,7 +216,6 @@ struct Continuation {
 async fn continuation(
     app: &AppState,
     row: &Execution,
-    issue: &Node,
     agent: &Node,
     source: &Value,
     context: &mut Value,
@@ -256,7 +248,6 @@ async fn continuation(
         source["runtime_request"] = original.intent()["runtime_request"].clone();
         source["runtime_selection"] = original.selection();
     }
-    let binding=super::super::project::routing::issue_binding(app,issue).await?.context("ISSUE_RUNNER_CONFIGURATION_REQUIRED: The original session's environment must be restored before replying")?;
     let owner = grants::integer(&source["owner_user_id"]).context("Original owner unavailable")?;
     let device = source["runtime_device_id"]
         .as_str()
@@ -265,11 +256,7 @@ async fn continuation(
     let active = crate::device_identity::resolve_owned_device_alias(&app.mysql, owner, device)
         .await?
         .context("Original environment unavailable")?;
-    if active.id.to_string() != binding {
-        bail!(
-            "ISSUE_RUNNER_CONFLICT: The comment session belongs to a different environment than this Issue"
-        )
-    }
+    let binding = active.id.to_string();
     let request = &source["runtime_request"];
     let compile_member_profile = source["compile_member_profile"] == true
         && context["dispatch_kind"] == "collaboration_group"

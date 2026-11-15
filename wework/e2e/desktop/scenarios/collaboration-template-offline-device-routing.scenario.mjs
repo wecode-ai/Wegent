@@ -43,7 +43,7 @@ export function createDesktopScenario(options) {
       assert.equal(historical.device_id, current.app_device_id)
       assert.notEqual(historical.id, current.id)
       await scenario.verify(control)
-      await verifyProjectAgentRoutingRecovery(control, cloud, historical, options)
+      await verifyProjectAgentRoutingRecovery(control, cloud, historical, environment, options)
     },
   }
 }
