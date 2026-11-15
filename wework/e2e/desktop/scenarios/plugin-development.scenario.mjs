@@ -344,19 +344,21 @@ export async function createDesktopScenario({
           demanded: false,
         }
       )
-      // Foreground activation trails window readiness on slower platforms;
-      // wait for the product to focus the isolated instance rather than
-      // reading the focus state at an arbitrary instant.
+      // Assert on the isolated instance's own focus state rather than the
+      // parent's blur: on some Windows sessions the parent window's focus
+      // tracker never records the loss even though the child is foreground.
+      // Foreground activation also trails window readiness on slower
+      // platforms, so poll within the step budget.
       const focusStartedAt = Date.now()
       let focusSnapshot = null
       while (Date.now() - focusStartedAt < uiTimeoutMs) {
-        focusSnapshot = JSON.parse(await mainControl.command('getWindowFocusSnapshot', 'body'))
-        if (focusSnapshot.mainFocused === false) break
+        focusSnapshot = JSON.parse(await childControl.command('getWindowFocusSnapshot', 'body'))
+        if (focusSnapshot.mainFocused === true) break
         await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       }
       assert.equal(
         focusSnapshot?.mainFocused,
-        false,
+        true,
         `Starting plugin debugging did not focus the isolated Wework instance: ${JSON.stringify(focusSnapshot)}`
       )
 
