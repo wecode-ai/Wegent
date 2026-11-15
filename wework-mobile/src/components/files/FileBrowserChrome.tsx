@@ -1,8 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'
 import { Menu, Text, useTheme } from 'react-native-paper'
 import { LiquidGlassButton, LiquidGlassSurface } from '../LiquidGlass'
+import { ErrorNotice } from '../errors/ErrorNotice'
 
 export interface FileMenuAction {
   label: string
@@ -281,8 +282,6 @@ export function FileErrorState({
   compact?: boolean
 }) {
   const theme = useTheme()
-  const [details, setDetails] = useState(false)
-  useEffect(() => setDetails(false), [message])
   return (
     <View style={[styles.error, compact && styles.compactError]} testID={testID}>
       {!compact ? (
@@ -290,35 +289,14 @@ export function FileErrorState({
           <Ionicons name="document-outline" size={24} color={theme.colors.onSurfaceVariant} />
         </View>
       ) : null}
-      <Text variant="titleMedium" style={styles.centerText}>
-        {title}
-      </Text>
-      <Text
-        variant="bodySmall"
-        style={[styles.centerText, { color: theme.colors.onSurfaceVariant }]}
-      >
-        请重试，或稍后重新打开。
-      </Text>
-      <View style={styles.errorActions}>
-        <FileTextAction label="重试" testID={retryTestID} onPress={onRetry} primary />
-        <FileTextAction
-          label={details ? '收起详情' : '查看错误详情'}
-          testID={`${testID}-details-toggle`}
-          onPress={() => setDetails(value => !value)}
-        />
-      </View>
-      {details ? (
-        <ScrollView style={styles.errorDetails}>
-          <Text
-            selectable
-            variant="bodySmall"
-            style={{ color: theme.colors.onSurfaceVariant }}
-            testID={`${testID}-details`}
-          >
-            {message}
-          </Text>
-        </ScrollView>
-      ) : null}
+      <ErrorNotice
+        error={message}
+        title={title}
+        testID={`${testID}-notice`}
+        retryTestID={retryTestID}
+        detailsTestID={`${testID}-details-toggle`}
+        onRetry={onRetry}
+      />
     </View>
   )
 }
@@ -413,9 +391,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 4,
   },
-  centerText: { textAlign: 'center' },
-  errorActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
-  errorDetails: { maxHeight: 160, alignSelf: 'stretch', marginTop: 4 },
   textAction: {
     minWidth: 44,
     minHeight: 44,

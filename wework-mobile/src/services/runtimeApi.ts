@@ -13,6 +13,13 @@ import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
 import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
 import { mobileAbortError, throwIfAborted } from './mobileAbort'
 import type { RuntimeStream } from './runtimeStream'
+import type { LocalRuntimeApi } from './localRuntimeApi'
+import { isPhoneLocalDeviceId } from './localRuntime'
+import { withPhoneLocalDevice } from '@/domain/withPhoneLocalDevice'
+import { loadLocalComposerApps } from './localComposerCatalog'
+import type { RuntimeComposerCatalogTarget } from '../../../packages/chat-core/src/runtime-composer-snapshot'
+import type { RuntimeComposerApp } from '@/types/runtime'
+import { base64 } from '@scure/base'
 import type { RuntimeDeviceCommandResponse } from '@/types/runtimeCommand'
 import {
   normalizeAbsoluteWorkspacePath,
@@ -85,6 +92,10 @@ type RuntimeFileUploader = (input: {
 }) => Promise<RuntimeFileUploadResult>
 
 export class RuntimeApi {
+  private readonly getAccessToken: () => string
+  private backendGeneration = 0
+  private backendIdentity: string | null = null
+  private readonly requests = new Set<AbortController>()
   private readonly pluginCatalogs = new Map<
     string,
     {
@@ -94,30 +105,75 @@ export class RuntimeApi {
     }
   >()
   constructor(
-    private readonly config: RuntimeSessionConfig,
+    private config: RuntimeSessionConfig | null,
     private readonly uploadFile: RuntimeFileUploader = uploadRuntimeFile,
-    private readonly getAccessToken: () => string = () => config.accessToken,
-    private readonly runtime?: Pick<RuntimeStream, 'executeCommand' | 'request'>
-  ) {}
+    getAccessToken: (() => string) | undefined = undefined,
+    private readonly runtime?: Pick<RuntimeStream, 'executeCommand' | 'request'>,
+    private readonly local?: LocalRuntimeApi
+  ) {
+    this.getAccessToken = getAccessToken ?? (() => this.config?.accessToken ?? '')
+  }
+
+  updateBackend(config: RuntimeSessionConfig | null, userId = 0): void {
+    const identity = config ? `${config.apiBaseUrl}\0${userId}` : null
+    if (identity !== this.backendIdentity) {
+      this.backendGeneration += 1
+      this.backendIdentity = identity
+      for (const controller of this.requests) controller.abort()
+      this.requests.clear()
+      this.clearPluginCatalogs()
+    }
+    this.config = config
+  }
+
+  private assertBackendGeneration(generation: number): void {
+    if (generation !== this.backendGeneration) throw new Error('Wegent 账号已变化，请重新操作')
+  }
+
+  private requireBackend(): RuntimeSessionConfig {
+    if (!this.config) throw new Error('请先登录 Wegent 以使用云端功能')
+    return this.config
+  }
 
   async testConnection(): Promise<void> {
     await this.request<DeviceListResponse>('/devices')
   }
 
-  listDevices(): Promise<DeviceListResponse> {
-    return this.request('/devices')
+  async listDevices(): Promise<DeviceListResponse> {
+    if (!this.config) return { items: withPhoneLocalDevice([], this.local?.runtime.device()) }
+    const generation = this.backendGeneration
+    try {
+      const response = await this.request<DeviceListResponse>('/devices')
+      return {
+        ...response,
+        items: withPhoneLocalDevice(response.items, this.local?.runtime.device()),
+      }
+    } catch (error) {
+      this.assertBackendGeneration(generation)
+      const localDevice = this.local?.runtime.device()
+      if (!localDevice) throw error
+      return {
+        items: [localDevice],
+        error: `远程设备不可用：${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
   }
 
   listModels(): Promise<UnifiedModelListResponse> {
+    if (!this.config) return Promise.resolve({ data: [] })
     return this.request(
       '/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework'
     )
   }
 
-  async listNativeModels(deviceRecordId: number): Promise<{
+  async listNativeModels(
+    deviceRecordId: number,
+    deviceId?: string
+  ): Promise<{
     models: RunnerModel[]
     catalog_error?: string | null
   }> {
+    if (this.local?.runtime.ownsDevice(deviceId)) return this.local.listModels()
     // APP catalogs use the same server-authorized read as PC Wework.
     const rows = await this.request<
       { id: string; models: RunnerModel[]; catalog_error?: string | null }[]
@@ -132,6 +188,8 @@ export class RuntimeApi {
     deviceId: string
     sourcePath: string
   }): Promise<RuntimeWorktreePreflightResponse> {
+    if (this.local?.runtime.ownsDevice(input.deviceId))
+      return this.local.runtime.request('runtime.worktrees.preflight', input)
     return this.request('/runtime-work/worktrees/preflight', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -139,6 +197,9 @@ export class RuntimeApi {
   }
 
   createConversation(data: RuntimeCreateRequest): Promise<RuntimeCreateResponse> {
+    if (this.local?.runtime.ownsDevice(data.deviceId)) return this.local.createConversation(data)
+    if (data.attachmentIds?.some(id => id <= 0))
+      throw new Error('本机附件不能发送到其他设备，请重新添加附件')
     return this.request('/runtime-work/create', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -300,13 +361,15 @@ export class RuntimeApi {
     query: string,
     cancellationToken?: string
   ): Promise<RuntimeWorkspaceSearchResponse> {
-    const response = await this.request<RuntimeWorkspaceSearchResponse>(
-      '/runtime-work/workspace/search',
-      {
-        method: 'POST',
-        body: JSON.stringify({ deviceId, root, query, cancellationToken }),
-      }
-    )
+    const response = this.local?.runtime.ownsDevice(deviceId)
+      ? await this.local.runtime.request<RuntimeWorkspaceSearchResponse>(
+          'runtime.workspace.search',
+          { deviceId, root, query, cancellationToken }
+        )
+      : await this.request<RuntimeWorkspaceSearchResponse>('/runtime-work/workspace/search', {
+          method: 'POST',
+          body: JSON.stringify({ deviceId, root, query, cancellationToken }),
+        })
     if (!isWorkspaceSearchResponse(response)) throw new Error('设备返回了无效的文件搜索结果')
     return response
   }
@@ -333,12 +396,15 @@ export class RuntimeApi {
     options: { signal?: AbortSignal } = {}
   ): Promise<RuntimeAttachmentDownload> {
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('附件标识无效')
-    return downloadRuntimeAttachment(
-      `${this.config.apiBaseUrl}/attachments/${id}/download`,
+    const generation = this.backendGeneration
+    const result = await downloadRuntimeAttachment(
+      `${this.requireBackend().apiBaseUrl}/attachments/${id}/download`,
       destinationUri,
       this.getAccessToken(),
       options.signal
     )
+    this.assertBackendGeneration(generation)
+    return result
   }
 
   sendMessage(
@@ -348,6 +414,16 @@ export class RuntimeApi {
     modelSelection: ModelSelectionConfig,
     attachmentIds: number[] = []
   ): Promise<RuntimeSendResponse> {
+    if (this.local?.runtime.ownsDevice(address.deviceId))
+      return this.local.sendMessage(
+        address,
+        message,
+        clientUserMessageId,
+        modelSelection,
+        attachmentIds
+      )
+    if (attachmentIds.some(id => id <= 0))
+      throw new Error('本机附件不能发送到其他设备，请重新添加附件')
     return this.request('/runtime-work/send', {
       method: 'POST',
       body: JSON.stringify({
@@ -361,6 +437,8 @@ export class RuntimeApi {
   }
 
   cancelTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+    if (this.local?.runtime.ownsDevice(address.deviceId))
+      return this.local.runtime.request('runtime.tasks.cancel', { ...address })
     return this.request('/runtime-work/cancel', {
       method: 'POST',
       body: JSON.stringify(address),
@@ -371,6 +449,8 @@ export class RuntimeApi {
     address: RuntimeTaskAddress,
     response: RequestUserInputResponse
   ): Promise<RuntimeSendResponse> {
+    if (this.local?.runtime.ownsDevice(address.deviceId))
+      return this.local.respondToUserInput(address, response)
     return this.request('/runtime-work/send', {
       method: 'POST',
       body: JSON.stringify({
@@ -386,18 +466,28 @@ export class RuntimeApi {
     message: string,
     clientGuidanceId: string
   ): Promise<RuntimeGuidanceResponse> {
+    if (this.local?.runtime.ownsDevice(address.deviceId))
+      return this.local.runtime.request('runtime.tasks.guidance', {
+        address,
+        message,
+        clientGuidanceId,
+      })
     return this.request('/runtime-work/guidance', {
       method: 'POST',
       body: JSON.stringify({ address, message, clientGuidanceId }),
     })
   }
 
-  async uploadAttachment(asset: RuntimeUploadAsset): Promise<RuntimeAttachment> {
+  async uploadAttachment(asset: RuntimeUploadAsset, deviceId?: string): Promise<RuntimeAttachment> {
+    if (isPhoneLocalDeviceId(deviceId) && !this.local?.runtime.ownsDevice(deviceId))
+      throw new Error('本机执行环境尚未就绪，请恢复或重新选择设备后添加附件')
+    if (this.local?.runtime.ownsDevice(deviceId)) return this.local.uploadAttachment(asset)
     if (asset.size && asset.size > 100 * 1024 * 1024) {
       throw new Error('附件不能超过 100 MB')
     }
+    const generation = this.backendGeneration
     const response = await this.uploadFile({
-      url: `${this.config.apiBaseUrl}/attachments/upload`,
+      url: `${this.requireBackend().apiBaseUrl}/attachments/upload`,
       uri: asset.uri,
       name: asset.name,
       mimeType: asset.mimeType,
@@ -406,6 +496,7 @@ export class RuntimeApi {
         Authorization: `Bearer ${this.getAccessToken()}`,
       },
     })
+    this.assertBackendGeneration(generation)
     const body = parseTextBody(response.body)
     if (response.status < 200 || response.status >= 300) {
       throw new RuntimeApiError(
@@ -429,6 +520,7 @@ export class RuntimeApi {
   }
 
   listInstalledPlugins(deviceId?: string): Promise<RuntimeInstalledPlugin[]> {
+    if (isPhoneLocalDeviceId(deviceId)) throw new Error('本机插件目录必须从手机执行环境读取')
     const key = deviceId ?? ''
     const cached = this.pluginCatalogs.get(key)
     if (cached?.value && cached.expiresAt > Date.now()) return Promise.resolve(cached.value)
@@ -453,7 +545,64 @@ export class RuntimeApi {
     this.pluginCatalogs.clear()
   }
 
+  async listLocalComposerApps(target: RuntimeComposerCatalogTarget): Promise<RuntimeComposerApp[]> {
+    if (!this.local?.runtime.ownsDevice(target.deviceId)) throw new Error('本机执行环境尚未就绪')
+    const labels: Record<string, string> = {
+      'workbench.plugins_source_personal_share': '个人分享',
+      'workbench.plugins_source_wegent_official': 'Wegent 官方',
+      'workbench.plugins_source_openai_official': 'OpenAI 官方',
+    }
+    return loadLocalComposerApps({
+      runtime: this.local.runtime,
+      target,
+      translate: key => labels[key] ?? key,
+      resolveAsset: path => this.localPluginAsset(target.deviceId, path),
+    })
+  }
+
+  private async localPluginAsset(deviceId: string, path: string): Promise<string> {
+    if (/^(https?:|data:)/i.test(path)) return path
+    const chunks: Uint8Array[] = []
+    let offset = 0
+    for (;;) {
+      const chunk = await this.readWorkspaceFileChunk(deviceId, path, offset)
+      const bytes = base64.decode(chunk.contentBase64)
+      chunks.push(bytes)
+      offset += bytes.length
+      if (chunk.eof) break
+      if (!bytes.length) throw new Error('插件图标读取未取得进展')
+    }
+    const content = new Uint8Array(offset)
+    offset = 0
+    for (const bytes of chunks) {
+      content.set(bytes, offset)
+      offset += bytes.length
+    }
+    const types: Record<string, string> = {
+      svg: 'image/svg+xml',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      gif: 'image/gif',
+    }
+    const mime = types[path.split('.').at(-1)?.toLowerCase() ?? '']
+    if (!mime) throw new Error('插件图标格式不受支持')
+    return `data:${mime};base64,${base64.encode(content)}`
+  }
+
   setGoal(address: RuntimeTaskAddress, objective: string): Promise<{ accepted: boolean }> {
+    if (this.local?.runtime.ownsDevice(address.deviceId))
+      return this.local.runtime.requestUserWork(
+        address.taskId,
+        objective,
+        'runtime.tasks.goal.set',
+        {
+          address,
+          objective,
+          status: 'active',
+        }
+      )
     return this.request('/runtime-work/goal/set', {
       method: 'POST',
       body: JSON.stringify({ address, objective, status: 'active' }),
@@ -464,6 +613,12 @@ export class RuntimeApi {
     deviceId: string
     workspacePath: string
   }): Promise<RuntimeWorkspaceOpenResponse> {
+    if (this.local?.runtime.ownsDevice(input.deviceId))
+      return this.local.runtime.request('runtime.workspaces.open', {
+        ...input,
+        runtime: 'codex',
+        action: 'create',
+      })
     return this.request('/runtime-work/workspaces/open', {
       method: 'POST',
       body: JSON.stringify({ ...input, runtime: 'codex', action: 'create' }),
@@ -475,6 +630,8 @@ export class RuntimeApi {
     workspacePath: string
     name: string
   }): Promise<RuntimeWorkspaceOpenResponse> {
+    if (this.local?.runtime.ownsDevice(input.deviceId))
+      return this.local.runtime.request('runtime.workspaces.rename', { ...input, runtime: 'codex' })
     return this.request('/runtime-work/workspaces/rename', {
       method: 'POST',
       body: JSON.stringify({ ...input, runtime: 'codex' }),
@@ -514,11 +671,18 @@ export class RuntimeApi {
     const response = await readRuntimeTranscript<CoreTranscript & { taskId: string }>(
       { ...address, threadId, includeFullContent: true },
       query =>
-        this.request('/runtime-work/transcript', {
-          method: 'POST',
-          body: JSON.stringify(query),
-          signal,
-        }),
+        this.local?.runtime.ownsDevice(address.deviceId)
+          ? this.local.runtime.request<CoreTranscript & { taskId: string }>(
+              'runtime.tasks.transcript',
+              {
+                ...query,
+              }
+            )
+          : this.request('/runtime-work/transcript', {
+              method: 'POST',
+              body: JSON.stringify(query),
+              signal,
+            }),
       decodeMobileTranscriptGzip
     )
     throwIfAborted(signal)
@@ -528,6 +692,8 @@ export class RuntimeApi {
   }
 
   deleteWorktree(input: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+    if (this.local?.runtime.ownsDevice(input.deviceId))
+      return this.local.runtime.request('runtime.worktrees.delete', { ...input })
     return this.request('/runtime-work/worktrees/delete', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -540,30 +706,51 @@ export class RuntimeApi {
     token = this.getAccessToken(),
     useUpdatedToken = true
   ): Promise<T> {
-    const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
-      ...init,
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...init.headers,
-      },
-    })
-
-    const body = await parseBody(response)
-    const nextToken = this.getAccessToken()
+    const payload = typeof init.body === 'string' ? JSON.parse(init.body) : null
     if (
-      response.status === 401 &&
-      useUpdatedToken &&
-      token !== nextToken &&
-      (!init.method || init.method === 'GET')
+      isPhoneLocalDeviceId(payload?.deviceId) ||
+      isPhoneLocalDeviceId(payload?.address?.deviceId) ||
+      path.startsWith('/devices/mobile-local')
     )
-      return this.request<T>(path, init, nextToken, false)
-    if (!response.ok) {
-      const message = errorMessage(body) ?? `请求失败 (${response.status})`
-      throw new RuntimeApiError(message, response.status, body)
+      throw new Error('当前账号的本机执行环境尚未就绪')
+    const generation = this.backendGeneration
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    init.signal?.addEventListener('abort', abort, { once: true })
+    if (init.signal?.aborted) controller.abort()
+    this.requests.add(controller)
+    try {
+      const response = await fetch(`${this.requireBackend().apiBaseUrl}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          ...init.headers,
+        },
+      })
+
+      this.assertBackendGeneration(generation)
+      const body = await parseBody(response)
+      this.assertBackendGeneration(generation)
+      const nextToken = this.getAccessToken()
+      if (
+        response.status === 401 &&
+        useUpdatedToken &&
+        token !== nextToken &&
+        (!init.method || init.method === 'GET')
+      )
+        return this.request<T>(path, init, nextToken, false)
+      if (!response.ok) {
+        const message = errorMessage(body) ?? `请求失败 (${response.status})`
+        throw new RuntimeApiError(message, response.status, body)
+      }
+      return body as T
+    } finally {
+      this.requests.delete(controller)
+      init.signal?.removeEventListener('abort', abort)
     }
-    return body as T
   }
 
   private async executeDeviceCommand(
@@ -577,20 +764,33 @@ export class RuntimeApi {
       signal?: AbortSignal
     }
   ): Promise<RuntimeDeviceCommandResponse> {
-    const response = await this.request<RuntimeDeviceCommandResponse>(
-      `/devices/${encodeURIComponent(deviceId)}/commands`,
-      {
-        method: 'POST',
-        signal: input.signal,
-        body: JSON.stringify({
-          command_key: input.commandKey,
-          ...(input.path !== undefined ? { path: input.path } : {}),
-          ...(input.args ? { args: input.args } : {}),
-          timeout_seconds: input.timeoutSeconds,
-          max_output_bytes: input.maxOutputBytes ?? 4096,
-        }),
-      }
-    )
+    const response = this.local?.runtime.ownsDevice(deviceId)
+      ? await this.local.runtime.request<RuntimeDeviceCommandResponse>(
+          'device.execute_command',
+          {
+            deviceId,
+            command_key: input.commandKey,
+            path: input.path,
+            args: input.args,
+            timeout_seconds: input.timeoutSeconds,
+            max_output_bytes: input.maxOutputBytes ?? 4096,
+          },
+          input.timeoutSeconds * 1000 + 10_000
+        )
+      : await this.request<RuntimeDeviceCommandResponse>(
+          `/devices/${encodeURIComponent(deviceId)}/commands`,
+          {
+            method: 'POST',
+            signal: input.signal,
+            body: JSON.stringify({
+              command_key: input.commandKey,
+              ...(input.path !== undefined ? { path: input.path } : {}),
+              ...(input.args ? { args: input.args } : {}),
+              timeout_seconds: input.timeoutSeconds,
+              max_output_bytes: input.maxOutputBytes ?? 4096,
+            }),
+          }
+        )
     if (!response || typeof response.success !== 'boolean') {
       throw new Error('设备返回了无效的命令响应')
     }

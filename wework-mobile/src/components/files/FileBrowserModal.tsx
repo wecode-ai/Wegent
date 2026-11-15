@@ -1,6 +1,7 @@
+import { showErrorAlert } from '@/services/errorAlerts'
 import * as Clipboard from 'expo-clipboard'
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Modal, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native'
+import { Modal, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native'
 import { ActivityIndicator, Portal, Text, useTheme } from 'react-native-paper'
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
@@ -196,8 +197,7 @@ function FilePreviewContent({
           dialogTitle: complete.name,
         })
     } catch (cause) {
-      if (!controller.signal.aborted)
-        Alert.alert('无法分享文件', cause instanceof Error ? cause.message : String(cause))
+      if (!controller.signal.aborted) showErrorAlert(cause, { title: '无法分享文件' })
     } finally {
       lease?.release()
       if (!controller.signal.aborted) setSharing(false)
@@ -232,7 +232,7 @@ function FilePreviewContent({
     const target = workspaceTarget
     const path = resolveWorkspaceFilePath(target, request.path)
     if (!path) {
-      Alert.alert('无法打开文件', '文件路径无效')
+      showErrorAlert('文件路径无效', { title: '无法打开文件' })
       return
     }
     onNavigate({ kind: 'file', request: { kind: 'workspace', target, path } })
@@ -265,7 +265,7 @@ function FilePreviewContent({
       testID: 'file-preview-copy-path',
       onPress: () => {
         void Clipboard.setStringAsync(displayPath).catch(cause =>
-          Alert.alert('复制失败', String(cause))
+          showErrorAlert(cause, { title: '无法复制内容' })
         )
       },
     },
@@ -310,7 +310,7 @@ function FilePreviewContent({
   const goToLine = () => {
     const lineStart = Number(lineDraft)
     if (!Number.isSafeInteger(lineStart) || lineStart <= 0) {
-      Alert.alert('请输入有效行号')
+      showErrorAlert('请输入文件中存在的行号。', { title: '无法跳转到此行' })
       return
     }
     changeMode('source')

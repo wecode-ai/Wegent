@@ -27,17 +27,39 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("codex_auth_read_failed", error))
     }
 
-    pub(super) async fn start_codex_login(&self) -> Result<Value, AppIpcError> {
+    pub(super) async fn start_codex_login(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let login_type = match payload.get("type") {
+            None => "chatgpt",
+            Some(Value::String(value))
+                if matches!(value.as_str(), "chatgpt" | "chatgptDeviceCode") =>
+            {
+                value.as_str()
+            }
+            Some(_) => {
+                return Err(AppIpcError::new(
+                    "invalid_request",
+                    "type must be chatgpt or chatgptDeviceCode",
+                ))
+            }
+        };
         self.preserve_current_codex_account().await?;
-        self.codex_app_server
-            .request(
-                "account/login/start",
-                json!({
-                    "type": "chatgpt",
-                }),
-            )
+        // Native completion can arrive before the login/start response.
+        self.try_ensure_notification_router()
             .await
-            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))
+            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))?;
+        let (mut response, generation) = self
+            .codex_app_server
+            .start_account_login(login_type)
+            .await
+            .map_err(|error| AppIpcError::new("codex_login_start_failed", error))?;
+        let response_fields = response.as_object_mut().ok_or_else(|| {
+            AppIpcError::new(
+                "codex_login_start_failed",
+                "Codex returned an invalid login response",
+            )
+        })?;
+        response_fields.insert("processGeneration".into(), json!(generation));
+        Ok(response)
     }
 
     pub(super) async fn cancel_codex_login(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -623,6 +645,9 @@ pub(super) fn optional_proxy_url(payload: &Value) -> Result<Option<String>, AppI
     }
     Ok(Some(proxy_url.to_owned()))
 }
+
+#[cfg(test)]
+mod login_tests;
 
 #[cfg(test)]
 mod configured_default_tests {

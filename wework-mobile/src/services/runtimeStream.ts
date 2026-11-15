@@ -1,4 +1,3 @@
-import { base64 } from '@scure/base'
 import {
   createSocketClient,
   type AuthenticatedSocketClient,
@@ -19,8 +18,9 @@ import type {
   DeviceInfo,
 } from '@/types/runtime'
 import type { RuntimeSessionConfig } from './backendConfig'
-import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
+import { decodeRuntimeResult } from './runtimeRpcResult'
 import { mobileAbortError, throwIfAborted } from './mobileAbort'
+import { isPhoneLocalDeviceId, type LocalRuntime } from './localRuntime'
 import type {
   RuntimeDeviceCommandRequest,
   RuntimeDeviceCommandResponse,
@@ -33,7 +33,6 @@ const TRANSCRIPT_TIMEOUT_MS = 15_000
 const REQUEST_TIMEOUT_MS = 75_000
 export const TRANSCRIPT_PAGE_SIZE = 5
 const TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE = 1
-const COMPRESSED_ENCODING = 'gzip+base64+json'
 
 type Listener = (event: RuntimeStreamEvent) => void
 type LifecycleListener = (address: RuntimeTaskAddress, event: RuntimeStreamEvent) => void
@@ -50,7 +49,10 @@ interface RuntimeRequestAck<T> {
 let nextRequestId = 1
 
 export class RuntimeStream {
-  private readonly client: AuthenticatedSocketClient
+  private client: AuthenticatedSocketClient | null = null
+  private backendIdentity: string | null = null
+  private backendRevision = 0
+  private readonly pendingRemote = new Set<(cause: Error) => void>()
   private scope: RuntimeTaskAddress | null = null
   private listener: Listener | null = null
   private reconnectListener: (() => void) | null = null
@@ -59,12 +61,47 @@ export class RuntimeStream {
   private accessToken: string
   private hasConnected = false
   private scopedEventCount = 0
+  private readonly localSubscriptions: (() => void)[] = []
 
   constructor(
-    config: RuntimeSessionConfig,
-    private readonly getDevices: () => DeviceInfo[] = () => []
+    config: RuntimeSessionConfig | null,
+    private readonly getDevices: () => DeviceInfo[] = () => [],
+    private readonly local?: LocalRuntime
   ) {
-    this.accessToken = config.accessToken
+    this.accessToken = config?.accessToken ?? ''
+    this.updateBackend(config)
+    if (local)
+      this.localSubscriptions.push(
+        local.onEvent(event => this.onEvent(event, 'local')),
+        local.onRecovery(() => {
+          if (local.ownsDevice(this.scope?.deviceId)) this.reconnectListener?.()
+          this.lifecycleReconnectListener?.()
+        })
+      )
+  }
+
+  updateBackend(config: RuntimeSessionConfig | null, userId = 0): void {
+    const identity = config
+      ? `${config.apiBaseUrl}\0${config.socketBaseUrl}\0${config.socketPath}\0${userId}`
+      : null
+    if (identity === this.backendIdentity) {
+      this.updateAccessToken(config?.accessToken ?? '')
+      return
+    }
+    this.backendRevision += 1
+    for (const fail of this.pendingRemote) fail(new Error('Wegent 账号已变化，请重新操作'))
+    if (this.scope && !this.local?.ownsDevice(this.scope.deviceId)) {
+      this.scope = null
+      this.listener = null
+      this.reconnectListener = null
+    }
+    this.client?.dispose()
+    this.client = null
+    this.backendIdentity = identity
+    this.hasConnected = false
+    this.accessToken = config?.accessToken ?? ''
+    if (!config) return
+    const revision = this.backendRevision
     this.client = createSocketClient({
       socketBaseUrl: () => config.socketBaseUrl,
       namespace: RUNTIME_NAMESPACE,
@@ -73,23 +110,29 @@ export class RuntimeStream {
       auth: { client_origin: 'wework' },
       logger: console,
     })
-    this.client.socket.on(RUNTIME_EVENT, envelope => this.onEvent(envelope))
+    this.client.socket.on(RUNTIME_EVENT, envelope => {
+      if (revision === this.backendRevision) this.onEvent(envelope)
+    })
     this.client.subscribe(state => {
-      if (state.isConnected) this.hasConnected = true
+      if (revision === this.backendRevision && state.isConnected) this.hasConnected = true
     })
     this.client.onReconnect(() => {
+      if (revision !== this.backendRevision) return
       this.reconnectListener?.()
       this.lifecycleReconnectListener?.()
     })
-    // Wework connects its runtime listener before task creation so the first
-    // response event cannot race the subscription.
     void this.client.connect()
+  }
+
+  private requireBackend(): AuthenticatedSocketClient {
+    if (!this.client) throw new Error('请先登录 Wegent 以使用云设备')
+    return this.client
   }
 
   updateAccessToken(token: string): void {
     if (this.accessToken === token) return
     this.accessToken = token
-    if (!this.client.socket.connected) {
+    if (this.client && !this.client.socket.connected) {
       this.client.disconnect()
       void this.client.connect(undefined, this.hasConnected)
     }
@@ -114,7 +157,7 @@ export class RuntimeStream {
       }
     }
     try {
-      await this.client.ensureConnected()
+      if (!this.local?.ownsDevice(scope.deviceId)) await this.requireBackend().ensureConnected()
       return unsubscribe
     } catch (error) {
       unsubscribe()
@@ -146,13 +189,26 @@ export class RuntimeStream {
   }
 
   async listWork(deviceId: string, deviceName?: string): Promise<RuntimeWorkListResponse> {
-    const response = await this.request<unknown>(
-      'runtime.tasks.list',
-      {},
-      deviceId,
-      REQUEST_TIMEOUT_MS
-    )
-    return adaptRuntimeWorkListResponse(response, deviceId, deviceName)
+    const startedAt = Date.now()
+    const local = this.local?.ownsDevice(deviceId) ?? false
+    try {
+      const response = await this.request<unknown>(
+        'runtime.tasks.list',
+        {},
+        deviceId,
+        REQUEST_TIMEOUT_MS
+      )
+      const work = adaptRuntimeWorkListResponse(response, deviceId, deviceName)
+      console.info('[MobileRuntime] Work list finished', {
+        local,
+        elapsedMs: Date.now() - startedAt,
+        totalTasks: work.totalTasks,
+      })
+      return work
+    } catch (cause) {
+      console.info('[MobileRuntime] Work list failed', { local, elapsedMs: Date.now() - startedAt })
+      throw cause
+    }
   }
 
   async executeCommand(
@@ -198,15 +254,18 @@ export class RuntimeStream {
   }
 
   dispose(): void {
+    this.backendRevision += 1
+    for (const fail of this.pendingRemote) fail(new Error('运行时连接已关闭'))
     this.scope = null
     this.listener = null
     this.lifecycleListener = null
     this.reconnectListener = null
     this.lifecycleReconnectListener = null
-    this.client.dispose()
+    this.client?.dispose()
+    this.localSubscriptions.forEach(unsubscribe => unsubscribe())
   }
 
-  private onEvent(envelope: unknown): void {
+  private onEvent(envelope: unknown, source: 'remote' | 'local' = 'remote'): void {
     if (!isRecord(envelope)) return
     const name = idValue(envelope.event)
     const payload = envelope.payload
@@ -221,6 +280,12 @@ export class RuntimeStream {
       idValue(address.device_id) ??
       idValue(data.deviceId) ??
       idValue(data.device_id)
+    if (
+      source === 'remote' &&
+      (isPhoneLocalDeviceId(rawDeviceId) ||
+        (!rawDeviceId && this.local?.ownsDevice(this.scope?.deviceId)))
+    )
+      return
     let deviceId = rawDeviceId
     const devices = this.getDevices()
     // Backend execution targets are routing addresses, not preferred aliases
@@ -279,15 +344,28 @@ export class RuntimeStream {
   ): Promise<T> {
     const { signal } = options
     throwIfAborted(signal)
-    await this.client.ensureConnected()
+    if (this.local?.ownsDevice(deviceId)) {
+      const result = await this.local.request<T>(method, { ...params, deviceId }, timeoutMs)
+      throwIfAborted(signal)
+      return result
+    }
+    if (isPhoneLocalDeviceId(deviceId)) throw new Error('当前账号的本机执行环境尚未就绪')
+    const client = this.requireBackend()
+    const revision = this.backendRevision
+    const assertCurrent = () => {
+      if (revision !== this.backendRevision) throw new Error('Wegent 账号已变化，请重新操作')
+    }
+    await client.ensureConnected()
+    assertCurrent()
     throwIfAborted(signal)
     const requestId = `mobile-runtime-${nextRequestId++}`
     return new Promise<T>((resolve, reject) => {
       let settled = false
       const cleanup = () => {
+        this.pendingRemote.delete(fail)
         clearTimeout(timeout)
         signal?.removeEventListener('abort', onAbort)
-        this.client.socket.off('disconnect', onDisconnect)
+        client.socket.off('disconnect', onDisconnect)
       }
       const fail = (error: unknown) => {
         if (settled) return
@@ -300,14 +378,15 @@ export class RuntimeStream {
       const timeout = setTimeout(() => {
         fail(new Error(`${method} 请求超时`))
       }, timeoutMs)
+      this.pendingRemote.add(fail)
       signal?.addEventListener('abort', onAbort, { once: true })
-      this.client.socket.on('disconnect', onDisconnect)
-      if (!this.client.socket.connected) {
+      client.socket.on('disconnect', onDisconnect)
+      if (!client.socket.connected) {
         onDisconnect()
         return
       }
 
-      this.client.socket.emit(
+      client.socket.emit(
         REQUEST_EVENT,
         {
           type: 'request',
@@ -329,6 +408,12 @@ export class RuntimeStream {
           }
           void decodeRuntimeResult(ack.result).then(result => {
             if (settled) return
+            try {
+              assertCurrent()
+            } catch (cause) {
+              fail(cause)
+              return
+            }
             settled = true
             cleanup()
             resolve(result)
@@ -355,22 +440,6 @@ export class RuntimeStream {
     )
     return projectMobileRuntimeTranscript(response)
   }
-}
-
-async function decodeRuntimeResult<T>(result: T | undefined): Promise<T> {
-  if (!isCompressedResult(result)) return result as T
-  const json = await decodeMobileTranscriptGzip([base64.decode(result.payload)])
-  return JSON.parse(json) as T
-}
-
-function isCompressedResult(
-  result: unknown
-): result is { __runtimeRpcEncoding: string; payload: string } {
-  return (
-    isRecord(result) &&
-    result.__runtimeRpcEncoding === COMPRESSED_ENCODING &&
-    typeof result.payload === 'string'
-  )
 }
 
 function runtimeRequestError(ack: RuntimeRequestAck<unknown>): string {

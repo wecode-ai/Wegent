@@ -15,6 +15,7 @@ import {
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller'
 import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { ErrorNotice } from './errors/ErrorNotice'
 
 import {
   implementationPlanQuestion,
@@ -225,7 +226,7 @@ export function RequestUserInputCard({
             styles.modalContent,
             { paddingTop: insets.top + 16, paddingBottom: Math.max(insets.bottom, 12) },
           ]}
-          keyboardDismissMode="interactive"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           style={styles.modal}
@@ -381,13 +382,7 @@ export function RequestUserInputCard({
                 ))}
               </View>
               {error ? (
-                <Text
-                  accessibilityRole="alert"
-                  style={[styles.error, { color: theme.colors.error }]}
-                  testID="request-user-input-error"
-                >
-                  {error}
-                </Text>
+                <ErrorNotice error={error} title="未能提交回答" testID="request-user-input-error" />
               ) : null}
               <View style={styles.actions}>
                 {busy ? (
@@ -513,5 +508,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   disabled: { opacity: 0.5 },
-  error: { paddingTop: 12 },
 })

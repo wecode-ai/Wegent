@@ -12,83 +12,37 @@ import {
   normalizeModelOptionAliases,
   resolveCodexCatalogModelId,
 } from "./model-ui";
-import type {
-  ModelOptions,
-  ModelType,
-  UnifiedModel,
-} from "@wegent/chat-core/models";
+import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 
-export const CLOUD_MODEL_NAMESPACE_OPTION = "weworkCloudModelNamespace";
-export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION =
-  "weworkCloudModelResourceUserId";
-export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION =
-  "weworkCloudModelContextWindow";
-export const CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION =
-  "weworkCloudModelMaxOutputTokens";
-export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION =
-  "weworkCloudModelUpstreamApiFormat";
-export const CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION =
-  "weworkCloudModelCodexCatalogModelId";
-export const CLOUD_MODEL_VISION_SIDECAR_OPTION = "weworkCloudVisionSidecar";
-export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION =
-  "weworkCloudModelNativeToolSearch";
-export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION =
-  "weworkCloudModelNativeNamespaceTools";
-export const CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION =
-  "weworkCloudModelCodexRequestMode";
+import {
+  CLOUD_MODEL_NAMESPACE_OPTION,
+  CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
+  CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+  CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
+  CLOUD_MODEL_VISION_SIDECAR_OPTION,
+  CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
+  CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+  CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION,
+  parseCloudVisionSidecarReference,
+} from "@wegent/chat-core/local-runtime-model";
+export {
+  CLOUD_MODEL_NAMESPACE_OPTION,
+  CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
+  CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+  CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
+  CLOUD_MODEL_VISION_SIDECAR_OPTION,
+  CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION,
+  CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION,
+  CLOUD_MODEL_CODEX_REQUEST_MODE_OPTION,
+  type CloudVisionSidecarReference,
+  parseCloudVisionSidecarReference,
+} from "@wegent/chat-core/local-runtime-model";
 
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = "visionSidecarModel";
-
-export interface CloudVisionSidecarReference {
-  modelName: string;
-  modelType: ModelType;
-  namespace: string;
-  resourceUserId: number;
-  apiFormat:
-    | "openai-responses"
-    | "openai-chat-completions"
-    | "anthropic-messages";
-}
-
-/**
- * Validate the shape of a cloud vision sidecar reference stored on a Model CRD.
- *
- * The reference is authoritative: the backend LLM gateway resolves it against the
- * `kinds` table and enforces access with the same identity headers, so there is no
- * client-side catalog lookup here. A reference that points at a missing or
- * non-visual model fails per image inside the executor's vision sidecar with an
- * inline diagnostic, instead of leaking the image to a text-only primary model.
- */
-export function parseCloudVisionSidecarReference(
-  value: unknown,
-): CloudVisionSidecarReference | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.modelName !== "string" ||
-    !record.modelName.trim() ||
-    !["public", "user", "group"].includes(String(record.modelType)) ||
-    typeof record.namespace !== "string" ||
-    !record.namespace.trim() ||
-    typeof record.resourceUserId !== "number" ||
-    !Number.isInteger(record.resourceUserId) ||
-    record.resourceUserId < 0 ||
-    ![
-      "openai-responses",
-      "openai-chat-completions",
-      "anthropic-messages",
-    ].includes(String(record.apiFormat))
-  ) {
-    return null;
-  }
-  return {
-    modelName: record.modelName.trim(),
-    modelType: record.modelType as ModelType,
-    namespace: record.namespace.trim(),
-    resourceUserId: record.resourceUserId,
-    apiFormat: record.apiFormat as CloudVisionSidecarReference["apiFormat"],
-  };
-}
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,

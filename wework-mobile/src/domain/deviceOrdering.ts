@@ -16,6 +16,7 @@ export function mobileOperableDevices(devices: readonly DeviceInfo[]): DeviceInf
       device =>
         (device.device_type === 'cloud' ||
           device.device_type === 'remote' ||
+          (device.device_type === 'local' && device.runtime_features?.embeddedRuntime != null) ||
           (device.device_type === 'app' &&
             Boolean(device.execution_target_id) &&
             device.runtime_features?.remoteTaskAccess?.version === 1 &&

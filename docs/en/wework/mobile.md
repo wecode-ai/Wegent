@@ -4,18 +4,49 @@ sidebar_position: 11
 
 # Wework Mobile
 
-Use Wework Mobile on iPhone or Android to view and control projects and conversations on connected devices. Tasks run on the selected device; the phone does not run an executor. To access a computer's tasks, enable remote access as described in [Devices and cloud work](./devices.md) and keep that computer online.
+Use Wework Mobile on iPhone or Android to view and control projects and conversations on the selected device. iPhone builds containing the local runtime can also run the Executor and official Codex directly on the phone. To access a computer's tasks, enable remote access as described in [Devices and cloud work](./devices.md) and keep that computer online.
+
+## Run on this phone
+
+The app opens directly into the task list without Backend login. Builds with the runtime prepare
+local execution automatically; view status or retry in **Settings → Local execution (本机执行)**.
+Before login, **All / This phone** filters are hidden and new conversations use the phone by default.
+Projects, Git, conversations, attachments and processes belong to a persistent phone environment.
+Wegent login, logout and account changes preserve local work and its filesystem.
+
+Open **Settings → Models and accounts (模型与账号) → OpenAI account (OpenAI 账号)** and tap
+**Sign in with OpenAI (使用 OpenAI 账号登录)** for official browser authorization. The explicit
+**Use device code (使用设备码登录)** option is also available; some accounts must enable it in ChatGPT
+settings. The account and model catalog refresh only after Codex confirms success.
+
+Use **Settings → Models and accounts → Add model (添加模型)** to configure API Base URL, model ID,
+API Key (optional for unauthenticated services), and an optional display name. Only **Responses API**
+is supported. **Test connection (测试连接)** sends a real tool-call probe; **Save model (保存模型)** makes
+the model selectable in chat. Keys remain in device secure storage.
+
+For Backend models and cloud devices, use **Settings → Sign in to Wegent (登录 Wegent)** to configure
+the Backend address and authorize. Device filters appear after login. Settings is a full-screen page
+with a top-right **×** close button; the existing new-chat layout remains unchanged.
+
+Upgrades adopt existing local data. If multiple legacy environments exist, select one in
+**Settings → Local execution**. An explicit switch stops current execution first, without merging or
+deleting either environment's files or conversations.
+
+Local execution currently requires an iPhone device build with the runtime resources. Android continues to support remote devices. The embedded Linux environment does not implement read-only or workspace sandboxes. Select **Full access (完整访问)** explicitly; access remains inside the iOS app sandbox. An existing restricted permission selection is never silently elevated.
+
+iOS uses the system's limited background execution allowance to let foreground-started tasks continue briefly after backgrounding. The system determines the allowance; long Codex tasks are not guaranteed to finish in the background or while locked. Keep the app in the foreground for long tasks. Exhausting the allowance interrupts background work with a visible indication, but does not cancel a task that is still running in the foreground. Force-quitting stops execution. Returning to the foreground restores conversations from the executor's persisted transcript. Old approval requests must not be treated as live after process termination.
 
 ## Home screen
 
-The app opens directly to Wework's devices, projects, and conversations. The current mobile interface uses the Chinese labels shown below.
+The app opens directly to **Pinned / Projects / Tasks**, with **Ask Wework** at the bottom.
+The current mobile interface uses the Chinese labels shown below.
 
 | Entry                                    | Action                                                                                                                                                      |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Top-left menu                            | Open the sidebar; tap its single **Wework** entry to return home, or the account row at the bottom to open connection settings                              |
+| Top-left menu                            | Open the sidebar; tap **Wework** to return home, settings beside the account to configure connections, or the avatar failure badge to retry                 |
 | **Wework ▾** at the top                  | Open **New project (新建项目)**, **Settings (设置)**, or **Show all devices (显示全部设备)**; project creation depends on the current device's capabilities |
 | Top-right search icon                    | Filter conversations in the current scope by conversation title, project name, or device name; the close button exits search and clears the query           |
-| Device strip                             | Tap **All (全部)** for online devices' conversations, or a device name to narrow the scope; swipe horizontally to see more devices                          |
+| Device strip                             | Appears after Wegent login; tap **All (全部)** for online devices' conversations, or a device name to narrow the scope                                      |
 | **Pinned (置顶)**                        | Expand or collapse pinned conversations, using the pinned state and order saved on desktop                                                                  |
 | **Projects (项目)** and **Tasks (任务)** | Expand or collapse a section; tap a conversation title to open it, or pull down to refresh the list                                                         |
 
@@ -53,6 +84,8 @@ or expanded changed files for a read-only preview with search, navigation, and s
 **Recent (最近)** keeps files and reading positions only for the current authenticated app session.
 Closing a preview preserves the chat draft. See [Mobile file previews](./mobile-file-preview.md)
 for entry points, truncated text, and format limitations.
+Backend account changes clear remote preview caches and recent entries while preserving phone
+previews and reading positions.
 
 ## iOS and Android
 

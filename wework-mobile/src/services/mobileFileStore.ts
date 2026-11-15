@@ -101,6 +101,7 @@ export class MobileFileStore {
   private readonly cache = new Map<string, CachedMobileFile>()
   private readonly files = new Set<NativeFileRead>()
   private readonly pending = new Map<string, Set<AbortController>>()
+  private readonly requests = new Map<string, MobileFileRequest>()
   private directory: import('expo-file-system').Directory | null = null
   private disposed = false
 
@@ -131,6 +132,7 @@ export class MobileFileStore {
   ): Promise<NativeFileRead> {
     this.assertActive(options.signal)
     const key = mobileFileKey(request)
+    this.requests.set(key, request)
     const entry = this.cache.get(key)
     const cached = options.complete ? entry?.complete : entry?.preview
     if (cached) {
@@ -150,7 +152,10 @@ export class MobileFileStore {
     } finally {
       options.signal.removeEventListener('abort', cancel)
       pending.delete(controller)
-      if (pending.size === 0) this.pending.delete(key)
+      if (pending.size === 0) {
+        this.pending.delete(key)
+        if (!this.cache.has(key)) this.requests.delete(key)
+      }
     }
   }
 
@@ -204,8 +209,17 @@ export class MobileFileStore {
     this.removeCached(key)
   }
 
+  retain(predicate: (request: MobileFileRequest) => boolean): void {
+    for (const [key, request] of this.requests) {
+      if (predicate(request)) continue
+      this.invalidate(request)
+      this.requests.delete(key)
+    }
+  }
+
   dispose() {
     this.disposed = true
+    this.requests.clear()
     for (const pending of this.pending.values())
       for (const controller of pending) controller.abort()
     this.cache.clear()
@@ -261,6 +275,7 @@ export class MobileFileStore {
   private removeCached(key: string) {
     const entry = this.cache.get(key)
     this.cache.delete(key)
+    if (!this.pending.get(key)?.size) this.requests.delete(key)
     for (const file of new Set([entry?.preview, entry?.complete])) {
       if (!file) continue
       file.cached = false
