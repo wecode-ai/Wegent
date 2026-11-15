@@ -14,7 +14,7 @@ export function registerTypeScriptSourceResolver(sourceDirectories) {
         const packageImport = context.parentURL?.startsWith(source.href)
         const relativeImport = specifier.startsWith('./') || specifier.startsWith('../')
         if (packageImport && relativeImport && !specifier.endsWith('.ts')) {
-          return nextResolve(new URL(`${specifier}.ts`, source).href, context)
+          return nextResolve(new URL(`${specifier}.ts`, context.parentURL).href)
         }
       }
       return nextResolve(specifier, context)
