@@ -9,6 +9,8 @@ export function createIssueResourceCoverage({ requestJson, assertImageDecoded })
   let issue
   let image
   let report
+  let upload
+  let imageBytes
 
   return {
     async prepare({ cloud, project: targetProject, issue: targetIssue, attachment }) {
@@ -16,7 +18,15 @@ export function createIssueResourceCoverage({ requestJson, assertImageDecoded })
       issue = targetIssue
       image = attachment
       const markdown = `# Issue resource document\n\n**Rendered Markdown**\n\n![Screenshot](wegent://attachments/${image.id})\n\n[Source](./resource-notes.txt)`
-      async function upload(filename, content, type) {
+      const sourceImage = await fetch(
+        `${cloud.backendUrl}/api/v1/loop-item-attachments/${image.id}/content`,
+        {
+          headers: { Authorization: `Bearer ${cloud.authToken}` },
+        }
+      )
+      assert.equal(sourceImage.status, 200)
+      imageBytes = await sourceImage.arrayBuffer()
+      upload = async (filename, content, type) => {
         const form = new FormData()
         form.set('file', new Blob([content], { type }), filename)
         const response = await fetch(
@@ -36,21 +46,19 @@ export function createIssueResourceCoverage({ requestJson, assertImageDecoded })
       }
       report = await upload('resource-report.md', markdown, 'application/octet-stream')
       await upload('resource-notes.txt', 'Issue resource text attachment', 'text/plain')
-      const body = [
-        'Unified Issue resource regression',
-        `![Screenshot](wegent://attachments/${image.id})`,
-        `![${image.display_name}](/home/ubuntu/output/generated-screenshot.png)`,
-        '[resource-report.md](/home/ubuntu/output/generated-report.md)',
-        '[resource-notes.txt](./resource-notes.txt)',
+      const comments = [
+        `Unified Issue resource regression\n\n![Screenshot](wegent://attachments/${image.id})`,
+        `![${image.display_name}](/home/ubuntu/output/generated-screenshot.png)\n\n[resource-report.md](/home/ubuntu/output/generated-report.md)\n\n[resource-notes.txt](./resource-notes.txt)`,
         '![missing-resource.png](/home/ubuntu/missing-resource.png)',
-      ].join('\n\n')
-      await requestJson(
-        `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ body }),
-        }
-      )
+      ]
+      for (const body of comments)
+        await requestJson(
+          `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ body }),
+          }
+        )
     },
     async verify(control) {
       await control.command('openWeworkScheme', 'body', {
@@ -74,6 +82,12 @@ export function createIssueResourceCoverage({ requestJson, assertImageDecoded })
           )
         ),
         1
+      )
+      await upload('missing-resource.png', imageBytes, 'image/png')
+      await control.command('click', `${missing} [data-testid="assistant-markdown-image-retry"]`)
+      await assertImageDecoded(
+        control,
+        `${activity} [data-testid="assistant-markdown-image"][alt="missing-resource.png"]`
       )
       const reportLink = `${activity} [data-testid="issue-comment-file-attachment"][data-resource-name="resource-report.md"]`
       await control.command('scrollIntoView', reportLink)

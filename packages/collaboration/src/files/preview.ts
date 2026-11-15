@@ -35,6 +35,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   "hpp",
   "htm",
   "html",
+  "ini",
   "java",
   "js",
   "json",

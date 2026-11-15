@@ -47,6 +47,9 @@ describe("collaboration file preview classification", () => {
     expect(collaborationFilePreviewKind("data.bin", "application/json")).toBe(
       "text",
     );
+    expect(
+      collaborationFilePreviewKind("settings.ini", "application/octet-stream"),
+    ).toBe("text");
   });
 
   it("detects unknown UTF-8 text without treating binary bytes as text", () => {
