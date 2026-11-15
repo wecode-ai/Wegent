@@ -437,7 +437,8 @@ function writeResponsesStreamingResponse(
   res: http.ServerResponse,
   content: string,
   model: string,
-  doneDelayMs: number
+  doneDelayMs: number,
+  doneGate?: MockResponseGate
 ): void {
   const responseId = `resp_${Date.now()}`
   const messageId = `msg_${Date.now()}`
@@ -471,7 +472,9 @@ function writeResponsesStreamingResponse(
     output_index: 0,
     item: output[0],
   })
-  setTimeout(() => {
+  const finish = async () => {
+    await doneGate?.wait(res)
+    if (res.destroyed) return
     writeResponsesSseEvent(res, {
       type: 'response.completed',
       response: {
@@ -490,7 +493,8 @@ function writeResponsesStreamingResponse(
       },
     })
     res.end()
-  }, doneDelayMs)
+  }
+  setTimeout(() => void finish(), doneDelayMs)
 }
 
 /** Emit tool calls after an optional phase-changing message in the same response. */
@@ -733,7 +737,8 @@ const server = http.createServer((req, res) => {
         res,
         responseContent,
         model,
-        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
+        streamRule?.holdDone ? responseGate : undefined
       )
     } else if (req.url?.includes('/chat/completions')) {
       if (toolScenario && scenarioStep) {
