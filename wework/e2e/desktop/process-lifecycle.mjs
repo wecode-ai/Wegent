@@ -315,6 +315,32 @@ export function windowsTaskkillArguments(processId) {
   return ['/PID', String(processId), '/T', '/F']
 }
 
+/** A failed activation's recovery shell may never connect to the control channel. */
+export async function stopRecoveryProcess(
+  processId,
+  {
+    platform = process.platform,
+    execute = execFileAsync,
+    isAlive = processIsAlive,
+    signal = process.kill,
+  } = {}
+) {
+  if (!Number.isSafeInteger(processId) || processId <= 0)
+    throw new Error('Recovery cleanup requires its recorded process ID')
+  if (!isAlive(processId)) return
+  if (platform === 'win32') {
+    await execute('taskkill', windowsTaskkillArguments(processId), {
+      windowsHide: true,
+      timeout: PROCESS_STOP_TIMEOUT_MS,
+    })
+  } else signal(processId, 'SIGTERM')
+  const deadline = Date.now() + PROCESS_STOP_TIMEOUT_MS
+  while (isAlive(processId)) {
+    if (Date.now() >= deadline) throw new Error(`Recovery process ${processId} survived cleanup`)
+    await new Promise(accept => setTimeout(accept, PROCESS_GROUP_POLL_INTERVAL_MS))
+  }
+}
+
 function ownedCrashTargets(child, snapshot) {
   if (
     !Number.isSafeInteger(child?.pid) ||
