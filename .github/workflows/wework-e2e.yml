@@ -522,7 +522,7 @@ jobs:
           compression-level: 6
 
   build-wework-desktop-windows-core-e2e:
-    name: Build Windows Wework Desktop Core E2E Artifact
+    name: Build Windows Wework Desktop Core E2E Artifact (x64)
     needs:
       - changes
     if: needs.changes.outputs.windows_desktop_core_e2e == 'true'
@@ -696,7 +696,7 @@ jobs:
           compression-level: 6
 
   wework-desktop-windows-core-e2e:
-    name: Wework Desktop Windows E2E (${{ matrix.name }})
+    name: Wework Desktop Windows E2E x64 (${{ matrix.name }})
     needs:
       - changes
       - build-wework-desktop-windows-core-e2e
