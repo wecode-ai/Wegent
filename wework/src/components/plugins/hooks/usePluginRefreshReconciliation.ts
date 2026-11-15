@@ -23,7 +23,15 @@ export function usePluginRefreshReconciliation(options: {
   onError: (error: unknown) => void
 }) {
   const latest = useRef(options)
+  const scopeEpoch = useRef(0)
   useLayoutEffect(() => {
+    const previous = latest.current
+    if (
+      previous.accountKey !== options.accountKey ||
+      previous.deviceId !== options.deviceId ||
+      previous.request !== options.request
+    )
+      scopeEpoch.current += 1
     latest.current = options
   })
   const handled = useRef(0)
@@ -32,6 +40,7 @@ export function usePluginRefreshReconciliation(options: {
     accountKey: string
     deviceId: string
     startedAt: number
+    epoch: number
   } | null>(null)
   const [stage, setStage] = useState<PluginReconciliationStage>('waiting')
   useEffect(() => {
@@ -47,6 +56,7 @@ export function usePluginRefreshReconciliation(options: {
       accountKey: options.accountKey,
       deviceId: options.deviceId,
       startedAt: Date.now(),
+      epoch: scopeEpoch.current,
     }
     const clearActive = () => {
       if (mounted.current) setActive(current => (current === owner ? null : current))
@@ -71,6 +81,7 @@ export function usePluginRefreshReconciliation(options: {
     const isCurrent = () =>
       !cancelled &&
       mounted.current &&
+      scopeEpoch.current === owner.epoch &&
       latest.current.accountKey === accountKey &&
       latest.current.deviceId === deviceId &&
       latest.current.request === request
@@ -148,7 +159,10 @@ export function usePluginRefreshReconciliation(options: {
   ])
   return {
     active: Boolean(
-      active && active.accountKey === options.accountKey && active.deviceId === options.deviceId
+      active &&
+      active.epoch === scopeEpoch.current &&
+      active.accountKey === options.accountKey &&
+      active.deviceId === options.deviceId
     ),
     stage,
     startedAt: active?.startedAt ?? null,
