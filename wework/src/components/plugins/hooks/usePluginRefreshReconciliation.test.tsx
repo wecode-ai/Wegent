@@ -65,6 +65,31 @@ test('HTTP reconciliation runs without a cloud device identity', async () => {
   expect(initial.onError).not.toHaveBeenCalled()
 })
 
+test.each(['available', 'busy', 'localSync'] as const)(
+  'keeps the result of an acquired reconciliation when %s changes in the same scope',
+  async field => {
+    const initial = { ...options(), request: 1, localSync: true }
+    let reject!: (error: Error) => void
+    vi.mocked(reconcilePluginRefresh).mockImplementation(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail
+        })
+    )
+    const { rerender, result } = renderHook(usePluginRefreshReconciliation, {
+      initialProps: initial,
+    })
+    await waitFor(() => expect(reconcilePluginRefresh).toHaveBeenCalledOnce())
+    rerender({ ...initial, [field]: !initial[field] })
+    const error = new Error('Plugin reconciliation failed: PLUGIN_RUNTIME_METADATA_FAILED')
+    await act(async () => reject(error))
+    expect(initial.onError).toHaveBeenCalledExactlyOnceWith(error)
+    expect(initial.onComplete).not.toHaveBeenCalled()
+    expect(reconcilePluginRefresh).toHaveBeenCalledOnce()
+    expect(result.current.active).toBe(false)
+  }
+)
+
 test('does not revive an old reconciliation after switching accounts and back', async () => {
   const initial = { ...options(), request: 1 }
   let finish!: () => void

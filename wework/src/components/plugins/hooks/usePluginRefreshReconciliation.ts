@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   beginPluginDeviceSync,
   pluginDeviceSyncDiagnostic,
@@ -23,7 +23,7 @@ export function usePluginRefreshReconciliation(options: {
   onError: (error: unknown) => void
 }) {
   const latest = useRef(options)
-  useEffect(() => {
+  useLayoutEffect(() => {
     latest.current = options
   })
   const handled = useRef(0)
@@ -122,6 +122,18 @@ export function usePluginRefreshReconciliation(options: {
     }
     start()
     return () => {
+      // Availability and busy flags gate admission. Once acquired, the request
+      // still owns its result until its account, device or request changes.
+      if (
+        acquired &&
+        mounted.current &&
+        latest.current.accountKey === accountKey &&
+        latest.current.deviceId === deviceId &&
+        latest.current.request === request
+      ) {
+        logPluginRefreshPhase('reconcile-gates-changed', { request, current: true })
+        return
+      }
       cancelled = true
       if (timer) clearTimeout(timer)
       if (!acquired) clearActive()
