@@ -176,3 +176,5 @@ For recovery-center and local-service notices during launch, see [Startup recove
 Independent and project Issues are available from **Collaboration → My issues → Needs my action / Created by me / Participating**. Start an independent Issue from **Collaboration → My issues → New Issue**. Existing catalogs are under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. See [Independent Issues and My issues](./projects.md#independent-issues). The collaboration Home retains its existing composer, Issue list and assistant workspace.
 
 Use **Personal group → … → Group settings** to manage the actual personal space owned by the current account. The Projects heading and project rows no longer show plus buttons. See [Project navigation](./projects.md#workspace-resource-controls).
+
+Images, Markdown and file links in Issue activity open attachment previews with retry and original-file download. See [Attachment and document previews](./projects.md#issue-resource-preview).
