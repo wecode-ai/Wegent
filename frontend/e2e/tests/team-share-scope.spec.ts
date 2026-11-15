@@ -899,10 +899,14 @@ test.describe('Agent share scope', () => {
       for (const agentConfig of [
         { bind_model: `${prefix}-missing-model` },
         { bind_model: editorModelName },
-        { bind_model: ownerModelName, bind_model_type: 'public' },
+        {
+          bind_model: ownerModelName,
+          bind_model_type: 'public',
+        },
       ]) {
         const rejected = await fixture.developerApi.put(botPath, {
           team_id: fixture.groupTeamId,
+          model_id: publicModelIds[1],
           agent_config: agentConfig,
           system_prompt: 'An invalid selection must not change the prompt.',
         })
@@ -914,10 +918,14 @@ test.describe('Agent share scope', () => {
 
       for (const agentConfig of [
         { bind_model: publicModelName },
-        { bind_model: publicModelName, bind_model_type: 'public' },
+        {
+          bind_model: publicModelName,
+          bind_model_type: 'public',
+        },
       ]) {
         const selected = await fixture.developerApi.put(botPath, {
           team_id: fixture.groupTeamId,
+          model_id: publicModelIds[1],
           agent_config: agentConfig,
         })
         expect(selected.status, JSON.stringify(selected.data)).toBe(200)
