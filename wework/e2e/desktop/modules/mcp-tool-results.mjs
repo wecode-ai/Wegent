@@ -16,5 +16,10 @@ export function readMcpToolOutput(request, callId) {
   )
   const text = modelToolOutputText(output)
   assert.ok(text, `Real MCP call ${callId} returned no result text`)
+  assert.doesNotMatch(
+    text,
+    /^Script (?:failed|terminated)(?:\n|$)/,
+    `Real MCP call ${callId} failed in native Code Mode:\n${text}`
+  )
   return text
 }

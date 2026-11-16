@@ -58,6 +58,18 @@ describe('native MCP result text', () => {
     ).toEqual(result)
   })
 
+  test.each(['failed', 'terminated'])(
+    'retains the original native script %s cause before a consumer parses JSON',
+    status => {
+      const failure = `Script ${status}\nWall time 0.04 seconds\nOutput:\nScript error:\nNative capability is missing or ambiguous: get_current_context`
+      for (const output of [failure, [{ type: 'input_text', text: failure }]]) {
+        expect(() => JSON.parse(readMcpToolOutput(request(output), callId))).toThrow(
+          `Real MCP call ${callId} failed in native Code Mode:\n${failure}`
+        )
+      }
+    }
+  )
+
   test.each([header, [], [{ type: 'input_text', text: header }]])(
     'rejects a result without application text: %j',
     output => {
