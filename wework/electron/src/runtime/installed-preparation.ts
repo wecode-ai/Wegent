@@ -75,7 +75,9 @@ export async function prepareInstalledEnvironment(
       }),
   })
   const startedAt = performance.now()
-  const components = await preparationStep(options, 'components', () => manager.prepareStartup())
+  const components = await preparationStep(options, 'components', () =>
+    manager.preparePackagedStartup()
+  )
   await preparationStep(options, 'runtimes', () =>
     materializeBundledRuntimes(components.coreDsh, runtimeRoot, ['core'], {
       fetch: bundledAssetsOnly,

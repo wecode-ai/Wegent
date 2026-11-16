@@ -22,6 +22,7 @@ const preparation = vi.hoisted(() => ({
     },
   },
   prepareStartup: vi.fn(),
+  preparePackagedStartup: vi.fn(),
   confirmStartup: vi.fn(),
   materialize: vi.fn(),
   prepareProfile: vi.fn(),
@@ -31,6 +32,7 @@ const preparation = vi.hoisted(() => ({
 vi.mock('./component-update-manager.js', () => ({
   ComponentUpdateManager: class {
     prepareStartup = preparation.prepareStartup
+    preparePackagedStartup = preparation.preparePackagedStartup
     confirmStartup = preparation.confirmStartup
   },
 }))
@@ -81,7 +83,7 @@ test('prepares the Core profile in an isolated version directory without confirm
   await symlink(activeProfile, pointer, process.platform === 'win32' ? 'junction' : 'dir')
   const preparationDirectory = installedPreparationDirectory(root, '1.2.3')
   const profileRoot = installedPreparationProfileRoot(root, '1.2.3')
-  preparation.prepareStartup.mockResolvedValue(preparation.components)
+  preparation.preparePackagedStartup.mockResolvedValue(preparation.components)
   preparation.materialize.mockResolvedValue(join(root, 'managed-runtimes', 'dsh'))
   preparation.prepareProfile.mockImplementation(async options => {
     const preparedProfile = join(options.dataDirectory, 'dsh-core', 'profiles', 'wework-core')
@@ -105,7 +107,8 @@ test('prepares the Core profile in an isolated version directory without confirm
     onProgress: progress,
   })
 
-  expect(preparation.prepareStartup).toHaveBeenCalledOnce()
+  expect(preparation.preparePackagedStartup).toHaveBeenCalledOnce()
+  expect(preparation.prepareStartup).not.toHaveBeenCalled()
   expect(preparation.materialize).toHaveBeenCalledWith(
     preparation.components.coreDsh,
     join(root, 'managed-runtimes', 'dsh'),

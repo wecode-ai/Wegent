@@ -1,6 +1,16 @@
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, expect, test } from 'vitest'
 
@@ -10,6 +20,7 @@ import {
   installedPreparationDirectory,
   installedPreparationMarkerFile,
   installedPreparationProfileRoot,
+  installedPreparationSwitchFile,
   writeInstalledPreparationMarker,
 } from './installed-preparation-state.js'
 import { currentCoreProfile, profileRevision } from './release-profile.js'
@@ -71,7 +82,70 @@ test('does not apply preparation while a release transaction is active', async (
   )
 })
 
-async function createFixture() {
+test('restores the source pointer when profile switching fails', async () => {
+  const fixture = await createFixture()
+  const pointer = currentCoreProfile(fixture.root)
+
+  await expect(
+    applyInstalledPreparation({
+      dataDirectory: fixture.root,
+      version: '1.2.3',
+      releaseTransactionInProgress: false,
+      switchProfile: async () => {
+        await rm(pointer, { force: true })
+        throw new Error('switch failed')
+      },
+    })
+  ).rejects.toThrow('switch failed')
+
+  expect(await realpath(pointer)).toBe(await realpath(fixture.activeProfile))
+  await expect(lstat(installedPreparationMarkerFile(fixture.root, '1.2.3'))).resolves.toBeDefined()
+  await expect(lstat(installedPreparationSwitchFile(fixture.root, '1.2.3'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
+  await expect(
+    applyInstalledPreparation({
+      dataDirectory: fixture.root,
+      version: '1.2.3',
+      releaseTransactionInProgress: false,
+    })
+  ).resolves.toEqual({ applied: true, reason: 'applied' })
+})
+
+test('recovers an interrupted physical profile switch before applying again', async () => {
+  const fixture = await createFixture('directory')
+  const pointer = currentCoreProfile(fixture.root)
+  const preparationDirectory = installedPreparationDirectory(fixture.root, '1.2.3')
+  const token = '7cbbdce1-c1ca-4e50-b3ca-fbf0a282f0a5'
+  const baseline = join(preparationDirectory, 'previous-profiles', token)
+  await mkdir(dirname(baseline), { recursive: true })
+  await rename(pointer, baseline)
+  const marker = JSON.parse(
+    await readFile(installedPreparationMarkerFile(fixture.root, '1.2.3'), 'utf8')
+  )
+  await writeFile(
+    installedPreparationSwitchFile(fixture.root, '1.2.3'),
+    JSON.stringify({
+      schemaVersion: 1,
+      pointer,
+      profileRoot: fixture.profileRoot,
+      baseline,
+      previous: marker.source,
+    })
+  )
+
+  await expect(
+    applyInstalledPreparation({
+      dataDirectory: fixture.root,
+      version: '1.2.3',
+      releaseTransactionInProgress: false,
+    })
+  ).resolves.toEqual({ applied: true, reason: 'applied' })
+  expect(await realpath(pointer)).toBe(await realpath(fixture.profileRoot))
+  expect(await readFile(join(baseline, 'plugin.js'), 'utf8')).toBe('active plugin\n')
+})
+
+async function createFixture(pointerKind: 'directory' | 'symbolicLink' = 'symbolicLink') {
   const root = await mkdtemp(join(tmpdir(), 'wework-installed-state-'))
   roots.push(root)
   const activeProfile = join(root, 'releases', 'active', 'profile')
@@ -88,7 +162,15 @@ async function createFixture() {
   ])
   const pointer = currentCoreProfile(root)
   await mkdir(join(pointer, '..'), { recursive: true })
-  await symlink(activeProfile, pointer, process.platform === 'win32' ? 'junction' : 'dir')
+  if (pointerKind === 'directory') {
+    await mkdir(pointer, { recursive: true })
+    await Promise.all([
+      writeFile(join(pointer, 'package.json'), '{"version":"active"}\n'),
+      writeFile(join(pointer, 'plugin.js'), 'active plugin\n'),
+    ])
+  } else {
+    await symlink(activeProfile, pointer, process.platform === 'win32' ? 'junction' : 'dir')
+  }
   const source = await inspectInstalledProfileSource(pointer)
   await mkdir(installedPreparationDirectory(root, '1.2.3'), { recursive: true })
   await writeInstalledPreparationMarker(root, {
@@ -101,5 +183,5 @@ async function createFixture() {
     source,
     reusedPreparedProfile: false,
   })
-  return { root, activeProfile, profileRoot }
+  return { root, activeProfile: pointerKind === 'directory' ? pointer : activeProfile, profileRoot }
 }

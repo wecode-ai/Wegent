@@ -215,6 +215,12 @@ export class ComponentUpdateManager {
     return paths
   }
 
+  /** Resolve packaged components without reading or advancing the live transaction. */
+  async preparePackagedStartup(): Promise<ComponentPaths> {
+    this.usingPackagedFallback = false
+    return this.checkedPaths(await this.packagedManifest())
+  }
+
   async confirmStartup(): Promise<void> {
     if (this.usingPackagedFallback) return
     const state = await this.readState()
