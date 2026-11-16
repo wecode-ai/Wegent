@@ -840,7 +840,7 @@ class SessionManager:
     # Uses Redis atomic operations for high performance:
     # - accumulated_content: APPEND for O(1) content addition
     # - blocks: RPUSH for O(1) block addition
-    # - blocks_index: HASH of block id -> list index for O(1) block lookup, plus
+    # - blocks_index: HASH of encoded block id -> list index, plus
     #   a watermark of how many blocks at the head of the list are indexed
     # - current_text_block_id: separate key for O(1) read/write
 
@@ -851,6 +851,11 @@ class SessionManager:
     def _get_blocks_index_key(self, subtask_id: int) -> str:
         """Generate Redis key for the block id -> list index hash."""
         return f"{STREAMING_KEY_PREFIX}blocks_index:{subtask_id}"
+
+    @staticmethod
+    def _block_index_field(block_id: Any) -> str:
+        """Keep every business ID separate from index metadata fields."""
+        return f"block:{block_id}"
 
     def _get_current_text_block_key(self, subtask_id: int) -> str:
         """Generate Redis key for current text block ID."""
@@ -962,7 +967,7 @@ class SessionManager:
         """Record where a block sits in the blocks list."""
         index_key = self._get_blocks_index_key(subtask_id)
         async with redis_client.pipeline(transaction=False) as pipe:
-            pipe.hset(index_key, block_id, index)
+            pipe.hset(index_key, self._block_index_field(block_id), index)
             pipe.expire(index_key, STREAMING_TTL)
             await pipe.execute()
 
@@ -1015,7 +1020,7 @@ class SessionManager:
                 continue
             # A repeated id maps to its last block, as appends index it.
             candidate_id = str(block["id"])
-            mapping[candidate_id] = start + offset
+            mapping[self._block_index_field(candidate_id)] = start + offset
             if candidate_id == block_id:
                 found = (start + offset, block)
         mapping[BLOCKS_INDEX_WATERMARK_FIELD] = start + len(blocks_raw)
@@ -1048,7 +1053,11 @@ class SessionManager:
 
         raw_index, raw_watermark, raw_watermark_id = await redis_client.hmget(
             index_key,
-            [field, BLOCKS_INDEX_WATERMARK_FIELD, BLOCKS_INDEX_WATERMARK_ID_FIELD],
+            [
+                self._block_index_field(field),
+                BLOCKS_INDEX_WATERMARK_FIELD,
+                BLOCKS_INDEX_WATERMARK_ID_FIELD,
+            ],
         )
         index = self._parse_block_index(raw_index)
         if index is not None:
@@ -1174,10 +1183,6 @@ class SessionManager:
             server_label: Optional MCP server label
         """
         try:
-            # Finalize current text block before adding tool block
-            await self._finalize_current_text_block(subtask_id)
-            await self._finalize_current_thinking_block(subtask_id)
-
             # Create tool block using unified function
             block = create_tool_block(
                 tool_use_id=tool_use_id,

@@ -627,8 +627,8 @@ async def test_blocks_index_is_rebuilt_for_a_list_written_without_it():
     assert blocks[1]["status"] == "done"
     assert blocks[1]["tool_output"] == "ok"
     assert redis_client.hashes["chat:streaming:blocks_index:902"] == {
-        "call_a": b"0",
-        "call_b": b"1",
+        "block:call_a": b"0",
+        "block:call_b": b"1",
         "_watermark": b"2",
         "_watermark_id": b"call_b",
     }
@@ -643,7 +643,7 @@ async def test_stale_blocks_index_entry_is_repaired():
     await manager.add_tool_block(subtask_id=903, tool_use_id="call_a", tool_name="A")
     await manager.add_tool_block(subtask_id=903, tool_use_id="call_b", tool_name="B")
     # Point call_b at the wrong slot.
-    redis_client.hashes["chat:streaming:blocks_index:903"]["call_b"] = b"0"
+    redis_client.hashes["chat:streaming:blocks_index:903"]["block:call_b"] = b"0"
 
     await manager.update_tool_block_status(
         subtask_id=903, tool_use_id="call_b", status="done"
@@ -652,7 +652,9 @@ async def test_stale_blocks_index_entry_is_repaired():
     blocks = await manager.get_blocks(903)
 
     assert [block["status"] for block in blocks] == ["pending", "done"]
-    assert redis_client.hashes["chat:streaming:blocks_index:903"]["call_b"] == b"1"
+    assert (
+        redis_client.hashes["chat:streaming:blocks_index:903"]["block:call_b"] == b"1"
+    )
 
 
 @pytest.mark.asyncio
@@ -680,7 +682,9 @@ async def test_block_appended_before_it_is_indexed_is_found_past_the_watermark()
     blocks = await manager.get_blocks(904)
     assert len(blocks) == 2
     assert blocks[1]["status"] == "done"
-    assert redis_client.hashes["chat:streaming:blocks_index:904"]["call_b"] == b"1"
+    assert (
+        redis_client.hashes["chat:streaming:blocks_index:904"]["block:call_b"] == b"1"
+    )
 
 
 @pytest.mark.asyncio
@@ -768,7 +772,9 @@ async def test_block_whose_position_write_failed_is_not_duplicated():
     blocks = await manager.get_blocks(908)
     assert len(blocks) == 12
     assert [block["status"] for block in blocks[:2]] == ["pending", "done"]
-    assert redis_client.hashes["chat:streaming:blocks_index:908"]["call_a"] == b"1"
+    assert (
+        redis_client.hashes["chat:streaming:blocks_index:908"]["block:call_a"] == b"1"
+    )
 
 
 @pytest.mark.asyncio
@@ -867,11 +873,36 @@ async def test_blocks_index_of_a_rewritten_list_is_rebuilt():
     assert [block["id"] for block in blocks] == ["call_c", "call_d"]
     assert blocks[0]["status"] == "done"
     assert redis_client.hashes["chat:streaming:blocks_index:911"] == {
-        "call_c": b"0",
-        "call_d": b"1",
+        "block:call_c": b"0",
+        "block:call_d": b"1",
         "_watermark": b"2",
         "_watermark_id": b"call_d",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("block_id", ["_watermark", "_watermark_id", "block:a", "a"])
+async def test_business_block_ids_cannot_overwrite_index_metadata(block_id):
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+    for candidate_id in (block_id, "other_a", "other_b"):
+        await manager.add_block(
+            913, {"id": candidate_id, "type": "tool", "tool_output": "original"}
+        )
+
+    existing = await manager.get_block(913, block_id)
+    assert existing is not None
+    existing["tool_output"] = "updated"
+    await manager.add_block(913, existing)
+
+    blocks = await manager.get_blocks(913)
+    assert [block["id"] for block in blocks] == [block_id, "other_a", "other_b"]
+    assert blocks[0]["tool_output"] == "updated"
+    index = redis_client.hashes["chat:streaming:blocks_index:913"]
+    assert index[f"block:{block_id}"] == b"0"
+    assert index["_watermark"] == b"2"
+    assert index["_watermark_id"] == b"other_a"
 
 
 @pytest.mark.asyncio
@@ -882,7 +913,7 @@ async def test_blocks_index_entry_without_a_block_is_dropped():
 
     await manager.add_tool_block(subtask_id=912, tool_use_id="call_a", tool_name="A")
     # An entry points past the end of the list.
-    redis_client.hashes["chat:streaming:blocks_index:912"]["ghost"] = b"5"
+    redis_client.hashes["chat:streaming:blocks_index:912"]["block:ghost"] = b"5"
 
     assert await manager.get_block(912, "ghost") is None
-    assert "ghost" not in redis_client.hashes["chat:streaming:blocks_index:912"]
+    assert "block:ghost" not in redis_client.hashes["chat:streaming:blocks_index:912"]
