@@ -93,7 +93,7 @@ projectTest(
     await page.goto(path)
     await dragIssueToLane(page, created.id, 'inbox', 'in_progress')
     await expect(page.getByTestId('collaboration-board').getByRole('alert')).toContainText(
-      /机器人没有符合配置且获项目授权的执行环境|No project-authorized execution environment matches this agent/
+      /项目设置 → 执行环境|Project settings → Execution environments/
     )
     await expect(
       page.getByTestId('cloud-todo-column-inbox').getByTestId(`cloud-todo-card-${created.id}`)

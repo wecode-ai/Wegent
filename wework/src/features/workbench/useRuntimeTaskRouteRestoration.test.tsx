@@ -3,6 +3,7 @@ import { useLayoutEffect } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { RuntimeTaskLifecycleProvider, RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
+import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
 let lifecycleStore: RuntimeTaskLifecycleStore
 const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -14,7 +15,8 @@ const workbenchState = vi.hoisted(() => ({
   currentRuntimeTask: {
     deviceId: 'local-device',
     taskId: 'task-a',
-  } as { deviceId: string; taskId: string } | null,
+  } as RuntimeTaskAddress | null,
+  devices: [] as DeviceInfo[],
   isBootstrapping: false,
   runtimeWork: null,
 }))
@@ -45,6 +47,7 @@ describe('useRuntimeTaskRouteRestoration', () => {
       taskId: 'task-a',
     }
     workbenchState.isBootstrapping = false
+    workbenchState.devices = []
     window.history.replaceState({}, '', '/')
   })
 
@@ -81,6 +84,36 @@ describe('useRuntimeTaskRouteRestoration', () => {
 
     const { result } = renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
 
+    expect(result.current).toBeNull()
+    expect(openRuntimeTaskMock).not.toHaveBeenCalled()
+  })
+
+  test('keeps the active conversation when its route uses the cloud device alias', () => {
+    workbenchState.devices = [
+      {
+        id: 75,
+        device_id: 'electron-local',
+        app_device_id: 'electron-local',
+        socket_device_id: 'app-record-75',
+        device_type: 'local',
+        name: 'Local device',
+        status: 'online',
+      } as DeviceInfo,
+    ]
+    workbenchState.currentRuntimeTask = {
+      deviceId: 'electron-local',
+      taskId: 'task-a',
+      workspacePath: '/known',
+    }
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=app-record-75&taskId=task-a')
+    const { result, rerender } = renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
+    expect(result.current).toBeNull()
+    workbenchState.currentRuntimeTask = {
+      deviceId: 'app-record-75',
+      taskId: 'task-a',
+      workspacePath: '/known',
+    }
+    rerender()
     expect(result.current).toBeNull()
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
   })

@@ -269,6 +269,17 @@ pub(super) async fn reserve(
                 }
             }
         }
+        // Recheck the persisted occurrence after authorization under the claim lock.
+        if !matches!(
+            super::device_pull::workday::check_on(
+                &mut query,
+                &execution,
+                chrono::Utc::now().naive_utc(),
+            ).await?,
+            Ok(true)
+        ) {
+            return Ok(false);
+        }
         if !row.execution_scope.is_empty() {
             let occupied: Option<(i64,)> = tx.fetch_optional(
                 format!("SELECT id FROM loop_item_executions WHERE execution_scope=? AND status IN ({CAPACITY_STATUSES}) LIMIT 1 FOR UPDATE"),
@@ -512,7 +523,9 @@ pub(super) async fn select_claimable(
 ) -> anyhow::Result<Option<QueueExecutionRow>> {
     let mut claimable = Vec::new();
     for row in rows {
-        if claimable_by_device(app, owner_user_id, execution_target_id, &row).await? {
+        if claimable_by_device(app, owner_user_id, execution_target_id, &row).await?
+            && super::device_pull::workday::eligible(app, &row.execution()).await?
+        {
             claimable.push(row);
         }
     }

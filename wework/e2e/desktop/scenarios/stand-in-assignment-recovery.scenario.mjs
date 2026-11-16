@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyRoundStandInAssignment } from '../modules/stand-in-round-assignment.mjs'
 import { verifyOrphanStandInRecovery } from '../modules/stand-in-orphan-binding-recovery.mjs'
+import { verifyStandInStartupRecovery } from '../modules/stand-in-startup-recovery.mjs'
 import {
   assistantMessage,
   createSse,
@@ -20,6 +21,7 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   resultDir,
   executorHome,
+  startupRecoveryOnly = false,
 }) {
   let cloud, user, other, otherToken, project, environment, settings
   const evidence = []
@@ -149,6 +151,20 @@ export function createDesktopScenario({
           ],
         },
       })
+      if (startupRecoveryOnly) {
+        await verifyStandInStartupRecovery({
+          request,
+          rpc,
+          project,
+          user,
+          settings,
+          until,
+          control,
+          resultDir,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        return
+      }
       await verifyOrphanStandInRecovery({
         cloud,
         request,
@@ -159,6 +175,17 @@ export function createDesktopScenario({
         until,
         control,
         executorHome,
+        resultDir,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await verifyStandInStartupRecovery({
+        request,
+        rpc,
+        project,
+        user,
+        settings,
+        until,
+        control,
         resultDir,
         timeoutMs: modelResponseTimeoutMs,
       })

@@ -207,5 +207,7 @@ class QueryExecutor:
             return result
 
         merged_result = dict(result)
-        merged_result["records"] = merge_parent_records(records, parent_records)
+        merged_result["records"] = merge_parent_records(
+            records, parent_records, knowledge_id=knowledge_id
+        )
         return merged_result

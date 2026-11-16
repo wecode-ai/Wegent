@@ -263,6 +263,15 @@ where
     }
 }
 
+fn executor_dispatch_http_client() -> brz_http::Result<HttpClient> {
+    // The source creates a client per non-idempotent queue submission. Reusing
+    // an idle socket can lose the submission when the receiver expires it.
+    HttpClient::builder()
+        .read_timeout(DISPATCH_TIMEOUT)
+        .pool_max_idle_per_host(0)
+        .build()
+}
+
 /// The supervisor loop: reap finished local tasks and admit new jobs under the
 /// bounded consumer permits.
 async fn supervise<M, R>(mut receiver: mpsc::Receiver<DispatchJob<M, R>>)
@@ -273,7 +282,7 @@ where
     // The source's OpenAI/httpx client keeps a 300-second per-read timeout for
     // the executor acknowledgement; the chat-shell consumer builds its own
     // client with the same policy.
-    let http = match HttpClient::builder().read_timeout(DISPATCH_TIMEOUT).build() {
+    let http = match executor_dispatch_http_client() {
         Ok(http) => http,
         Err(error) => {
             tracing::error!(%error, "failed to build the responses dispatch client");
@@ -527,7 +536,7 @@ async fn send_executor(
         .timeout(DISPATCH_TIMEOUT)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("{error:?}"))?;
     if !response.status().is_success() {
         return Err(format!("Executor returned HTTP {}", response.status()));
     }
@@ -675,7 +684,7 @@ where
     let package_mode = super::create::package_runtime::is_target(&job.target_url);
     // Image retries reuse the subtask ID, so each attempt owns its own terminal frames.
     let image_stream = super::create::package_runtime::is_image_target(&job.target_url);
-    let consumer = sse_sync::ConsumerContext {
+    let mut consumer = sse_sync::ConsumerContext {
         package_mode,
         mysql: &job.consumer.mysql,
         redis: job.consumer.redis.as_ref(),
@@ -687,48 +696,48 @@ where
         created_task: job.created_task.clone(),
         owner_user_id: job.forward.then_some(job.request.user_id),
         recover_terminal: accepted.is_some() || package_mode || (job.forward && !image_stream),
-        acceptance: accepted.map(|sender| std::sync::Mutex::new(Some(sender))),
+        acceptance: accepted.map(sse_sync::DispatchAcceptance::new),
     };
-    // Keep the streaming state machine off the dispatch worker's stack.
-    let collect = Box::pin(sse_sync::collect(
-        &consumer,
-        &job.target_url,
-        &job.request,
-        &job.request_id,
-        job.request.message_id,
-    ));
     let result = if consumer.acceptance.is_some() {
         let key =
             crate::internal_callback::pipeline::execution_lease_key(job.task_id, job.subtask_id);
         let Some(redis) = consumer.redis else {
             return Err("Redis is required for pipeline dispatch".to_owned());
         };
+        let job_ref = &job;
+        let consumer_ref = &mut consumer;
         crate::internal_callback::completion::with_owned_lease(
             redis,
             &key,
             || "Pipeline execution is already owned or Redis is unavailable".to_owned(),
-            async {
+            Some(|| Collected {
+                content: String::new(),
+            }),
+            move |receipt| async move {
+                consumer_ref
+                    .acceptance
+                    .as_mut()
+                    .expect("pipeline acceptance")
+                    .receipt = Some(receipt);
                 let (_, subtask_table) = crate::internal_callback::completion::resolve_tables(
-                    consumer.app,
-                    consumer.tables,
-                    job.task_id,
+                    consumer_ref.app,
+                    consumer_ref.tables,
+                    job_ref.task_id,
                 )
                 .await
                 .map_err(|error| error.to_string())?;
                 match crate::internal_callback::completion::read_terminal_result(
-                    consumer.mysql,
+                    consumer_ref.mysql,
                     &subtask_table,
-                    job.task_id,
-                    job.subtask_id,
+                    job_ref.task_id,
+                    job_ref.subtask_id,
                 )
                 .await
                 .map_err(|error| error.to_string())?
                 {
                     Some(_) => {
-                        if let Some(sender) = consumer.acceptance.as_ref().and_then(|value| {
-                            value.lock().expect("dispatch acceptance lock").take()
-                        }) {
-                            let _ = sender.send(Ok(()));
+                        if let Some(acceptance) = consumer_ref.acceptance.as_ref() {
+                            acceptance.resolve(Ok(()));
                         }
                         Ok(Collected {
                             content: String::new(),
@@ -737,27 +746,31 @@ where
                     None => {
                         crate::internal_callback::session::cleanup_streaming_state(
                             redis,
-                            job.subtask_id,
+                            job_ref.subtask_id,
                             None,
                         )
                         .await
                         .map_err(|error| error.to_string())?;
-                        collect.await
+                        collect_chat_job(job_ref, consumer_ref).await
                     }
                 }
             },
         )
         .await
     } else {
-        collect.await
+        collect_chat_job(&job, &consumer).await
     };
-    if let Err(error) = &result
-        && let Some(sender) = consumer
-            .acceptance
-            .as_ref()
-            .and_then(|value| value.lock().expect("dispatch acceptance lock").take())
-    {
-        let _ = sender.send(Err(error.clone()));
+    if let Some(acceptance) = consumer.acceptance.as_ref() {
+        match &result {
+            Err(error) => {
+                acceptance.resolve(Err(error.clone()));
+            }
+            // No work closure ran: another live owner supplied the fenced receipt.
+            Ok(_) if acceptance.receipt.is_none() => {
+                acceptance.resolve(Ok(()));
+            }
+            Ok(_) => {}
+        }
     }
     match &result {
         Ok(collected) => tracing::info!(
@@ -777,6 +790,20 @@ where
         ),
     }
     result
+}
+
+async fn collect_chat_job<M: Mysql, R: Redis + Clone>(
+    job: &ChatShellJob<M, R>,
+    consumer: &sse_sync::ConsumerContext<'_, M, R>,
+) -> Result<Collected, String> {
+    Box::pin(sse_sync::collect(
+        consumer,
+        &job.target_url,
+        &job.request,
+        &job.request_id,
+        job.request.message_id,
+    ))
+    .await
 }
 
 /// Build one executor dispatch request with the shared Source client identity.

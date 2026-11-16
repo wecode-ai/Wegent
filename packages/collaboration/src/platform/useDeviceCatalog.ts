@@ -12,20 +12,20 @@ export function useDeviceCatalog(
   api: SharedWorkspaceApi,
   enabled: boolean,
   refreshKey?: string,
-  currentUser?: { id: number; name: string },
+  currentUser?: { id: number; name: string }
 ) {
   const sources = api.resources?.devices
   const local = useExecutionEnvironmentList(
     api,
     'device-local',
     '',
-    enabled && Boolean(sources?.local),
+    enabled && Boolean(sources?.local)
   )
   const cloud = useExecutionEnvironmentList(
     api,
     'device-cloud',
     '',
-    enabled && Boolean(sources?.cloud),
+    enabled && Boolean(sources?.cloud)
   )
   const active = [
     ...(sources?.local ? [{ source: 'local' as const, ...local }] : []),
@@ -54,10 +54,10 @@ export function useDeviceCatalog(
   const cloudItems = cloud.items ?? []
   const localItems = [
     ...new Map(
-      (local.items ?? []).map((device) => [
+      (local.items ?? []).map(device => [
         `${identity(device)}\0${device.runtime_instance_id ?? ''}`,
         device,
-      ]),
+      ])
     ).values(),
   ]
   // A visible local placeholder does not establish the registration identity.
@@ -67,25 +67,33 @@ export function useDeviceCatalog(
       localItems.some(
         device =>
           device.local_identity_unresolved ||
-          !(device.app_device_id?.trim() || device.device_key?.trim()),
+          !(device.app_device_id?.trim() || device.device_key?.trim())
       ))
+  const sameRuntime = (
+    local: CollaborationExecutionEnvironment,
+    cloud: CollaborationExecutionEnvironment
+  ) => {
+    const localRuntime = local.runtime_instance_id?.trim()
+    const cloudRuntime = cloud.runtime_instance_id?.trim()
+    if (localRuntime && cloudRuntime) return localRuntime === cloudRuntime
+    const keys = new Set([local.app_device_id?.trim(), local.device_key?.trim()].filter(Boolean))
+    return [cloud.app_device_id?.trim(), cloud.device_key?.trim()].some(key => key && keys.has(key))
+  }
   const registrationCounts = new Map<string, number>()
   for (const device of cloudItems) {
     const key = identity(device)
     registrationCounts.set(key, (registrationCounts.get(key) ?? 0) + 1)
   }
   const matchedLocal = new Set<CollaborationExecutionEnvironment>()
-  const registered = cloudItems.map((device) => {
+  const registered = cloudItems.map(device => {
     if (localIdentityUnresolved && device.kind === 'local_device') {
       return { ...device, is_current_device_candidate: true }
     }
     const key = identity(device)
     const siblingCount = registrationCounts.get(key) ?? 0
-    const candidates = localItems.filter(
-      (candidate) => identity(candidate) === key,
-    )
+    const candidates = localItems.filter(candidate => sameRuntime(candidate, device))
     const runtime = device.runtime_instance_id?.trim()
-    const current = candidates.find((candidate) => {
+    const current = candidates.find(candidate => {
       const localRuntime = candidate.runtime_instance_id?.trim()
       if (localRuntime && runtime) {
         return localRuntime === runtime
@@ -99,38 +107,33 @@ export function useDeviceCatalog(
     // An app match alone cannot distinguish sibling registrations.
     if (
       siblingCount > 1 &&
-      candidates.some((candidate) => !runtime || !candidate.runtime_instance_id?.trim())
+      candidates.some(candidate => !runtime || !candidate.runtime_instance_id?.trim())
     ) {
       return { ...device, is_current_device_candidate: true }
     }
     return device
   })
-  const devices = [
-    ...localItems.filter((device) => !matchedLocal.has(device)),
-    ...registered,
-  ]
+  const devices = [...localItems.filter(device => !matchedLocal.has(device)), ...registered]
   return {
-    items: devices.sort(compareExecutionEnvironments).map((device) =>
+    items: devices.sort(compareExecutionEnvironments).map(device =>
       device.owner_type === 'user' && !device.owner_id && currentUser
         ? {
             ...device,
             owner_id: String(currentUser.id),
             owner_name: currentUser.name,
           }
-        : device,
+        : device
     ),
-    pending: active.some((source) => source.loading),
-    complete: active.every(
-      (source) => source.items !== undefined && !source.error,
-    ),
+    pending: active.some(source => source.loading),
+    complete: active.every(source => source.items !== undefined && !source.error),
     errors: active
-      .filter((source) => source.error)
+      .filter(source => source.error)
       .map(({ source, error, refresh }) => ({ source, error, retry: refresh })),
     refresh,
     refreshCloud,
     remove(recordId: string) {
       const withoutRecord = (items: CollaborationExecutionEnvironment[]) =>
-        items.filter((device) => device.id !== recordId)
+        items.filter(device => device.id !== recordId)
       cloud.update(withoutRecord)
     },
   }

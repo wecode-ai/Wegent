@@ -131,6 +131,20 @@ fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
             Value::String(error.code.clone()),
         );
     }
+    record_runtime_start_failure(link, error);
+}
+
+fn record_runtime_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    if link.runtime_handle["lastTurnId"].is_null() {
+        let message = crate::agents::redact_diagnostic_text(&error.message);
+        link.runtime_handle["startupFailure"] = json!({
+            "code":error.code,
+            "message":message,
+            "failedAt":link.completed_at.unwrap_or_else(now_ms)
+        });
+        link.runtime_handle["lastError"] = json!(message);
+        link.runtime_handle["lastErrorCode"] = json!(error.code);
+    }
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {

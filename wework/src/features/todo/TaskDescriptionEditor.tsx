@@ -494,12 +494,20 @@ export function TaskDescriptionEditor({
 
   return (
     <div
-      className={cn('task-description-editor', className)}
+      className={cn('task-description-editor relative', className)}
       onPasteCapture={handlePasteCapture}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStartCapture={handleCompositionStartCapture}
       onCompositionEndCapture={handleCompositionEndCapture}
     >
+      {disabled && !normalizeTaskDescription(value).trim() ? (
+        <p
+          data-testid={`${testId}-empty`}
+          className="pointer-events-none absolute inset-x-0 top-0 m-0 text-sm leading-7 text-text-muted"
+        >
+          {placeholder}
+        </p>
+      ) : null}
       <AttachmentImageServicesContext.Provider value={{ readAttachment }}>
         <BlockNoteView
           editor={editor}

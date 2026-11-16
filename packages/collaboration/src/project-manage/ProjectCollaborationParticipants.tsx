@@ -4,7 +4,7 @@
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
-type ParticipantTab = "members" | "agents" | "groups";
+export type ParticipantTab = "members" | "agents" | "groups";
 
 export function CollaborationParticipantsTabs({
   agentsContent,
@@ -16,6 +16,8 @@ export function CollaborationParticipantsTabs({
   membersContent,
   membersLabel,
   testIdPrefix = "collaboration-participants",
+  tabOrder = ["agents", "members", "groups"],
+  onTabChange,
 }: {
   agentsContent: ReactNode;
   agentsLabel: string;
@@ -26,6 +28,8 @@ export function CollaborationParticipantsTabs({
   membersContent?: ReactNode;
   membersLabel?: string;
   testIdPrefix?: string;
+  tabOrder?: readonly ParticipantTab[];
+  onTabChange?(tab: ParticipantTab): void;
 }) {
   const [selectedTab, setSelectedTab] = useState<ParticipantTab>(initialTab);
   const tabRefs = useRef<Record<ParticipantTab, HTMLButtonElement | null>>({
@@ -33,7 +37,7 @@ export function CollaborationParticipantsTabs({
     members: null,
     groups: null,
   });
-  const tabs: Array<{ id: ParticipantTab; label: string }> = [
+  const availableTabs: Array<{ id: ParticipantTab; label: string }> = [
     {
       id: "agents",
       label: agentsLabel,
@@ -51,6 +55,9 @@ export function CollaborationParticipantsTabs({
       label: groupsLabel,
     },
   ];
+  const tabs = tabOrder.flatMap((id) =>
+    availableTabs.filter((tab) => tab.id === id),
+  );
   const content = {
     members: membersContent,
     agents: agentsContent,
@@ -58,6 +65,7 @@ export function CollaborationParticipantsTabs({
   }[selectedTab];
   const selectAndFocusTab = (tab: ParticipantTab) => {
     setSelectedTab(tab);
+    onTabChange?.(tab);
     tabRefs.current[tab]?.focus();
   };
   const handleTabKeyDown = (
@@ -99,7 +107,10 @@ export function CollaborationParticipantsTabs({
             data-testid={`${testIdPrefix}-tab-${tab.id}`}
             id={`${testIdPrefix}-tab-${tab.id}`}
             key={tab.id}
-            onClick={() => setSelectedTab(tab.id)}
+            onClick={() => {
+              setSelectedTab(tab.id);
+              onTabChange?.(tab.id);
+            }}
             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
             ref={(element) => {
               tabRefs.current[tab.id] = element;

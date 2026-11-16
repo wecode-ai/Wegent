@@ -298,6 +298,7 @@ pub(in crate::runtime_work::handler::control) fn native_view(
         ("origin", "origin"),
         ("change_requests", "changeRequests"),
         ("goal", "goal"),
+        ("startup_failure", "startupFailure"),
     ] {
         task[key] = handle.get(field).cloned().unwrap_or(Value::Null);
     }

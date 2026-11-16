@@ -7,6 +7,7 @@ license = "Apache-2.0"
 description = "Durable automation schedules, runs, and recurrence policy"
 
 [dependencies]
+wegent-protocol = { path = "../../../shared/rust/protocol" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 cron = "0.15"

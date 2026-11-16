@@ -2837,8 +2837,13 @@ describe("CollaborationPlatformApp real component flow", () => {
         '[data-testid="collaboration-project-create-leader"]',
       ),
     ).toBeNull();
-    expect(container.textContent).not.toContain(environment.name);
+    expect(
+      (byTestId("template-environment-selection") as HTMLDetailsElement).open,
+    ).toBe(false);
     await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+    );
     expect(
       document.body.querySelector(
         '[data-testid="collaboration-project-create-default-agent"]',
@@ -2964,6 +2969,11 @@ describe("CollaborationPlatformApp real component flow", () => {
       await chooseBlankProjectCreation();
       if (removeAfterSelection) {
         await click(byTestId("collaboration-project-create-add-collaborator"));
+        await click(
+          portalByTestId(
+            "collaboration-project-create-collaborator-tab-agents",
+          ),
+        );
         await click(
           portalByTestId(
             `collaboration-project-create-agent-${defaultAgent.id}`,
@@ -3109,6 +3119,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     await chooseBlankProjectCreation("collaboration-workspace-project-create");
     for (const candidate of agents) {
       await click(byTestId("collaboration-project-create-add-collaborator"));
+      await click(
+        portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+      );
       await click(
         portalByTestId(`collaboration-project-create-agent-${candidate.id}`),
       );
@@ -3319,6 +3332,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       container.querySelector(`[aria-label="取消 ${defaultAgent.name}"]`),
     ).toBeNull();
     await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+    );
     expect(document.body.textContent).toContain(existingAgent.name);
     expect(
       document.body.querySelector(
@@ -4215,7 +4231,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
-  it("keeps project import disabled while creation is pending and restores it on failure", async () => {
+  it("keeps local import actions out of the creation dialog before submission and after failure", async () => {
     const { api } = createApi({
       initialWorkspaces: [localWorkspace],
       initialProjects: [],
@@ -4243,30 +4259,32 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
     await createPersonalProject();
+    const expectNoDialogImports = () => {
+      const dialog = portalByTestId("collaboration-project-name-input").closest(
+        '[role="dialog"]',
+      );
+      expect(dialog).not.toBeNull();
+      expect(dialog!.textContent).not.toContain("从本地文件夹创建");
+      expect(dialog!.textContent).not.toContain("导入已有项目");
+    };
+    expectNoDialogImports();
     await change(
       portalByTestId("collaboration-project-name-input") as HTMLInputElement,
       "Pending project",
     );
     await click(portalByTestId("collaboration-project-create-confirm"));
     expect(api.projects.create).toHaveBeenCalledOnce();
-    for (const id of [
-      "collaboration-workspace-nav-add-folder",
-      "collaboration-workspace-nav-import-existing-project",
-    ]) {
-      const button = portalByTestId(id) as HTMLButtonElement;
-      expect(button.matches(":disabled")).toBe(true);
-      await act(async () => button.click());
-    }
+    expectNoDialogImports();
     expect(
       document.querySelector('[data-testid="test-pending-importer"]'),
     ).toBeNull();
     await act(async () => pending.reject(new Error("creation failed")));
     await flush();
+    expectNoDialogImports();
     expect(
-      portalByTestId("collaboration-workspace-nav-add-folder").matches(
-        ":disabled",
-      ),
-    ).toBe(false);
+      portalByTestId("collaboration-project-name-input").getAttribute("value"),
+    ).toBe("Pending project");
+    expect(document.body.textContent).toContain("creation failed");
   });
 
   it("uses the host importer for local projects and opens existing projects from the add menu", async () => {
@@ -5101,51 +5119,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
-  it.each([
-    ["template_model_default_unavailable", "请先为当前执行环境设置默认模型"],
-    ["template_environment_unavailable", "当前执行设备暂不可用"],
-  ])(
-    "validates template routing before project creation (%s)",
-    async (code, message) => {
-      const { api } = createApi({ initialProjects: [] });
-      const resolveTemplateAgentRouting = vi.fn(async () => {
-        throw new Error(code);
-      });
-      const templateStore = new CollaborationTemplateStore({
-        scope: "preflight",
-        ownerId: 7,
-        persistence: { read: async () => [], write: async () => {} },
-      });
-      await render(
-        <PlatformHarness
-          api={api}
-          templateStore={templateStore}
-          projectAgentConfiguration={{ resolveTemplateAgentRouting }}
-          start={{ ...initialLocation, rootView: "templates" }}
-        />,
-      );
-      await click(byTestId("template-details-product-lifecycle"));
-      await click(byTestId("template-use"));
-      await click(byTestId("collaboration-project-create-confirm"));
-      expect(resolveTemplateAgentRouting).toHaveBeenCalledWith(
-        "codex",
-        "cloud",
-        undefined,
-      );
-      expect(api.projects.create).not.toHaveBeenCalled();
-      expect(api.agents.create).not.toHaveBeenCalled();
-      expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
-      expect(container.textContent).toContain(message);
-      expect(container.textContent).not.toContain("项目已创建");
-      const error = container.querySelector('[role="alert"]')!;
-      expect(
-        error.closest(".collaboration-project-create-footer"),
-      ).not.toBeNull();
-      expect(error.closest(".collaboration-project-create-body")).toBeNull();
-    },
-  );
-
-  it("preflights the template chosen inside the project dialog instead of the background library", async () => {
+  it("uses the template chosen inside the project dialog without a live model preflight", async () => {
     const { api } = createApi({ initialProjects: [] });
     const templateStore = new CollaborationTemplateStore({
       scope: "switch-template",
@@ -5159,32 +5133,16 @@ describe("CollaborationPlatformApp real component flow", () => {
     document.spec.displayName = "尚未配置模型的模板";
     document.spec.resources.collaboration.agents![0].runtime = "claude_code";
     await templateStore.save(document, 7);
-    const resolveTemplateAgentRouting = vi.fn(
-      async (runtime: "codex" | "claude_code") => {
-        if (runtime === "claude_code")
-          throw new Error("template_model_default_unavailable");
-        return {
-          executionPolicy: {
-            mode: "fixed" as const,
-            environment_id: environment.id,
-          },
-          modelPolicy: {
-            mode: "fixed" as const,
-            model: {
-              runtime,
-              provider: "openai",
-              model_id: "default",
-              source: "native" as const,
-            },
-          },
-        };
-      },
-    );
+    api.agents.create = vi.fn(async (_projectId, input) => ({
+      ...agent,
+      id: `template-${input.name}`,
+      team_id: undefined,
+      name: input.name,
+    }));
     await render(
       <PlatformHarness
         api={api}
         templateStore={templateStore}
-        projectAgentConfiguration={{ resolveTemplateAgentRouting }}
         start={{ ...initialLocation, rootView: "templates" }}
       />,
     );
@@ -5209,13 +5167,15 @@ describe("CollaborationPlatformApp real component flow", () => {
       dialog.querySelector('[data-testid="collaboration-template-dialog"]'),
     ).toBeNull();
     await click(byTestId("collaboration-project-create-confirm"));
-    expect(resolveTemplateAgentRouting).toHaveBeenCalledWith(
-      "claude_code",
-      "cloud",
-      undefined,
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    expect(api.agents.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        runtime: "claude_code",
+        executionPolicy: { mode: "user_select" },
+        modelPolicy: { mode: "user_select" },
+      }),
     );
-    expect(api.projects.create).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("请先为当前执行环境设置默认模型");
   });
 
   it("creates a local template project without invoking cloud environment grants", async () => {
@@ -5278,8 +5238,14 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeNull();
   });
 
-  it("requires explicit environment authorization before creating a web template project", async () => {
+  it("creates a template project without runtime setup and keeps authorization optional", async () => {
     const { api } = createApi({ initialProjects: [] });
+    api.agents.create = vi.fn(async (_projectId, input) => ({
+      ...agent,
+      id: `template-${input.name}`,
+      team_id: undefined,
+      name: input.name,
+    }));
     const templateStore = new CollaborationTemplateStore({
       scope: "web-environment",
       ownerId: 7,
@@ -5289,39 +5255,23 @@ describe("CollaborationPlatformApp real component flow", () => {
       <PlatformHarness
         api={api}
         templateStore={templateStore}
-        projectAgentConfiguration={{
-          requiresTemplateEnvironmentSelection: true,
-          resolveTemplateAgentRouting: async () => ({
-            executionPolicy: {
-              mode: "fixed",
-              environment_id: String(environment.device_id),
-            },
-            modelPolicy: {
-              mode: "fixed",
-              model: {
-                runtime: "codex",
-                provider: "openai",
-                model_id: "default",
-              },
-            },
-          }),
-        }}
         start={{ ...initialLocation, rootView: "templates" }}
       />,
     );
     await click(byTestId("template-details-product-lifecycle"));
     await click(byTestId("template-use"));
-    await click(byTestId("collaboration-project-create-confirm"));
-    expect(container.textContent).toContain("请先选择要授权的默认执行环境");
-    expect(api.projects.create).not.toHaveBeenCalled();
-    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
-    await click(byTestId("template-authorize-environment-21"));
+    const disclosure = byTestId(
+      "template-environment-selection",
+    ) as HTMLDetailsElement;
+    expect(disclosure.open).toBe(false);
     await click(byTestId("collaboration-project-create-confirm"));
     expect(api.projects.create).toHaveBeenCalledOnce();
-    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
-      expect.any(String),
-      21,
-    );
+    expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
+    expect(api.agents.create).toHaveBeenCalledTimes(6);
+    for (const [, input] of vi.mocked(api.agents.create).mock.calls) {
+      expect(input.executionPolicy).toEqual({ mode: "user_select" });
+      expect(input.modelPolicy).toEqual({ mode: "user_select" });
+    }
   });
 
   it("locks template selection after a project has been partially configured", async () => {
@@ -5353,7 +5303,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       <PlatformHarness
         api={api}
         templateStore={templateStore}
-        projectAgentConfiguration={{ resolveTemplateAgentRouting }}
         start={{ ...initialLocation, rootView: "templates" }}
       />,
     );
@@ -5691,9 +5640,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("collaboration-devices-row-1876").textContent).toContain(
       "Claude Code",
     );
-    expect(byTestId("collaboration-devices-row-1839").textContent).toContain(
-      "离线",
-    );
+    expect(
+      container.querySelector('[data-testid="collaboration-devices-row-1839"]'),
+    ).toBeNull();
     expect(
       byTestId(`collaboration-devices-row-${availableEnvironment.id}`),
     ).toBeTruthy();
@@ -5824,6 +5773,53 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toContain("设备—");
   });
 
+  it("joins local and registered views by persistent runtime even when their APP aliases differ", async () => {
+    const { api } = createApi();
+    api.resources!.devices = {
+      local: vi.fn(async () => [
+        {
+          ...environment,
+          id: "local-entry",
+          device_key: "ipc-alias",
+          runtime_instance_id: "installation-current",
+        },
+      ]),
+      cloud: vi.fn(async () => [
+        {
+          ...environment,
+          id: "registered",
+          device_key: "registered-route",
+          app_device_id: "app-alias",
+          runtime_instance_id: "installation-current",
+        },
+        {
+          ...environment,
+          id: "different-installation",
+          device_key: "registered-route-2",
+          app_device_id: "app-alias",
+          runtime_instance_id: "installation-other",
+        },
+      ]),
+    };
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, rootView: "devices" }}
+      />,
+    );
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-devices-row-local-entry"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId("collaboration-devices-row-registered").textContent,
+    ).toContain("当前设备");
+    expect(
+      byTestId("collaboration-devices-row-different-installation").textContent,
+    ).not.toContain("当前设备");
+  });
+
   it("marks only the current runtime and sorts devices consistently across response order changes", async () => {
     const current = {
       ...environment,
@@ -5865,6 +5861,11 @@ describe("CollaborationPlatformApp real component flow", () => {
         start={{ ...initialLocation, rootView: "devices" }}
       />,
     );
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-devices-row-old-2"]',
+      ),
+    ).toBeNull();
     const rows = () => [
       ...container.querySelectorAll<HTMLElement>(
         '[data-testid^="collaboration-devices-row-"]',
@@ -5874,23 +5875,10 @@ describe("CollaborationPlatformApp real component flow", () => {
       rows().map((row) =>
         row.dataset.testid?.replace("collaboration-devices-row-", ""),
       );
-    expect(order()).toEqual([
-      "current",
-      "runner-2",
-      "runner-10",
-      "old-2",
-      "old-10",
-    ]);
+    expect(order()).toEqual(["current", "runner-2", "runner-10"]);
     expect(
       rows().filter((row) => row.textContent?.includes("当前设备")),
     ).toEqual([byTestId("collaboration-devices-row-current")]);
-    expect(byTestId("collaboration-devices-bind-old-2")).toBeTruthy();
-    await click(byTestId("collaboration-devices-settings-old-2"));
-    expect(manageResource).toHaveBeenLastCalledWith(
-      "environments",
-      "old-2",
-      "cloud",
-    );
     await click(byTestId("collaboration-devices-settings-current"));
     expect(manageResource).toHaveBeenLastCalledWith(
       "environments",
@@ -5902,13 +5890,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       [...catalog].reverse(),
     );
     await click(byTestId("collaboration-primary-devices"));
-    expect(order()).toEqual([
-      "current",
-      "runner-2",
-      "runner-10",
-      "old-2",
-      "old-10",
-    ]);
+    expect(order()).toEqual(["current", "runner-2", "runner-10"]);
   });
 
   it("shows local and cloud device resources inside collaboration", async () => {
@@ -7190,6 +7172,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.name,
     );
     await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-groups"),
+    );
     await click(portalButtonWithText(collaborationGroup.name));
     expect(container.textContent).toContain(member.user_name);
     expect(container.textContent).toContain(agent.name);
@@ -7253,6 +7238,9 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     await chooseBlankProjectCreation("collaboration-workspace-project-create");
     await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-groups"),
+    );
     await click(portalButtonWithText(collaborationGroup.name));
     await click(
       Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
@@ -7264,7 +7252,11 @@ describe("CollaborationPlatformApp real component flow", () => {
         `[aria-label="取消 ${member.user_name}"]`,
       )!,
     );
-    expect(container.textContent).not.toContain(member.user_name);
+    expect(
+      container.querySelector(
+        ".collaboration-project-create-collaborator-tokens",
+      )?.textContent,
+    ).not.toContain(member.user_name);
     expect(container.textContent).toContain(agent.name);
     await change(
       byTestId("collaboration-project-name-input") as HTMLInputElement,
@@ -7389,6 +7381,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.name,
     );
     await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-groups"),
+    );
     await click(portalButtonWithText(collaborationGroup.name));
     await click(byTestId("collaboration-project-create-confirm"));
 
@@ -7423,6 +7418,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.name,
     );
     await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-groups"),
+    );
     await click(portalButtonWithText(collaborationGroup.name));
     await click(byTestId("collaboration-project-create-confirm"));
 

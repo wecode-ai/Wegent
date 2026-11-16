@@ -36,13 +36,7 @@ import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTu
 import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
 
 import { Bot } from '@/types/api'
-import {
-  botApis,
-  CreateBotRequest,
-  KnowledgeBaseDefaultRef,
-  SkillRefMeta,
-  UpdateBotRequest,
-} from '@/apis/bots'
+import { botApis, CreateBotRequest, KnowledgeBaseDefaultRef, SkillRefMeta } from '@/apis/bots'
 import {
   isPredefinedModel,
   getModelFromConfig,
@@ -77,8 +71,10 @@ export interface BotFormData {
   shell_name: string
   agent_config: Record<string, unknown>
   model_category_type?: ModelCategoryType
+  model_id: number | null
   secondary_model_name: string | null
   secondary_model_namespace: string
+  secondary_model_id: number | null
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
@@ -127,6 +123,9 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Existing Agent context; never applied when creating or cloning a Bot */
+  teamId?: number
+  targetGroupNames?: string[]
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
   /** Allow a Chat Bot to bind a generation model as its primary model */
@@ -148,6 +147,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    teamId,
+    targetGroupNames,
     modelCategoryType = 'llm',
     allowGenerationPrimaryModel = false,
   },
@@ -166,6 +167,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedModelNamespace, setSelectedModelNamespace] = useState<string | undefined>(
     undefined
   )
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
   const [selectedSecondaryModel, setSelectedSecondaryModel] = useState('')
   const [selectedSecondaryModelType, setSelectedSecondaryModelType] = useState<
     ModelTypeEnum | undefined
@@ -173,6 +175,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedSecondaryModelNamespace, setSelectedSecondaryModelNamespace] = useState<
     string | undefined
   >(undefined)
+  const [selectedSecondaryModelId, setSelectedSecondaryModelId] = useState<number | null>(null)
+  const modelSelectionChanged = useRef({ primary: false, secondary: false })
   const [selectedProtocol, setSelectedProtocol] = useState('')
   // Whether to restrict available models (allowed_models whitelist)
   const [restrictModels, setRestrictModels] = useState(false)
@@ -319,6 +323,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const updateAgentName = useCallback(
     (value: string) => {
       if (value !== agentName) {
+        modelSelectionChanged.current = { primary: true, secondary: true }
+        setSelectedModelId(null)
+        setSelectedSecondaryModelId(null)
         resetAgentDependentConfig()
 
         // Adapt MCP config when switching agent type.
@@ -510,7 +517,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         const agentMatches = baseBotShellName === agentName
         const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config)
 
-        if (hasConfig && agentMatches && isPredefined) {
+        if (hasConfig && agentMatches && isPredefined && !modelSelectionChanged.current.primary) {
           const savedModelName = getModelFromConfig(baseBot.agent_config)
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
           const savedModelNamespace = getModelNamespaceFromConfig(baseBot.agent_config)
@@ -524,10 +531,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             setSelectedModel(savedModelName)
             setSelectedModelType(foundModel?.type ?? savedModelType)
             setSelectedModelNamespace(foundModel?.namespace || savedModelNamespace || 'default')
+            // Restoring a saved reference is not an explicit catalog selection.
+            setSelectedModelId(null)
           } else {
             setSelectedModel('')
             setSelectedModelType(undefined)
             setSelectedModelNamespace(undefined)
+            setSelectedModelId(null)
           }
         }
 
@@ -537,12 +547,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             model.name === baseBot?.secondary_model_name &&
             (model.namespace || 'default') === (baseBot?.secondary_model_namespace || 'default')
         )
-        if (baseBot?.secondary_model_name) {
+        if (baseBot?.secondary_model_name && !modelSelectionChanged.current.secondary) {
           setSelectedSecondaryModel(baseBot.secondary_model_name)
           setSelectedSecondaryModelType(secondaryModel?.type)
-          setSelectedSecondaryModelNamespace(
-            secondaryModel?.namespace || baseBot.secondary_model_namespace || 'default'
-          )
+          setSelectedSecondaryModelNamespace(baseBot.secondary_model_namespace || 'default')
+          // Catalog metadata is for display; it cannot identify the owner's saved binding.
+          setSelectedSecondaryModelId(null)
         }
         // Note: Don't clear selectedModel here if agent changed,
         // as it's already cleared in the agent select onChange handler
@@ -556,9 +566,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setSelectedModel('')
         setSelectedModelType(undefined)
         setSelectedModelNamespace(undefined)
+        setSelectedModelId(null)
         setSelectedSecondaryModel('')
         setSelectedSecondaryModelType(undefined)
         setSelectedSecondaryModelNamespace(undefined)
+        setSelectedSecondaryModelId(null)
       } finally {
         setLoadingModels(false)
       }
@@ -584,6 +596,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Reset base form when switching editing object
   useEffect(() => {
+    modelSelectionChanged.current = { primary: false, secondary: false }
+    setSelectedModelId(null)
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
@@ -603,6 +617,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setSelectedSecondaryModel(baseBot?.secondary_model_name || '')
     setSelectedSecondaryModelType(undefined)
     setSelectedSecondaryModelNamespace(baseBot?.secondary_model_namespace || undefined)
+    setSelectedSecondaryModelId(null)
     setAgentConfigError(false)
 
     if (baseBot?.agent_config) {
@@ -830,8 +845,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       shell_name: agentName.trim(),
       agent_config: parsedAgentConfig,
       model_category_type: selectedModelObject?.modelCategoryType,
+      model_id: isCustomModel || isDifyAgent ? null : selectedModelId,
       secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
       secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
+      secondary_model_id: primaryModelIsVideo ? selectedSecondaryModelId : null,
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       default_knowledge_base_refs: defaultKnowledgeBaseRefs,
@@ -878,6 +895,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedSecondaryModel,
     selectedSecondaryModelNamespace,
     selectedModelObject?.modelCategoryType,
+    selectedModelId,
+    selectedSecondaryModelId,
   ])
 
   // Save bot and return the bot id
@@ -931,8 +950,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botData.name,
           shell_name: botData.shell_name,
           agent_config: botData.agent_config,
+          model_id: botData.model_id,
           secondary_model_name: botData.secondary_model_name,
           secondary_model_namespace: botData.secondary_model_namespace,
+          secondary_model_id: botData.secondary_model_id,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
@@ -944,7 +965,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         }
 
         if (editingBotId && editingBotId > 0) {
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          const updated = await botApis.updateBot(editingBotId, {
+            ...botReq,
+            team_id: teamId,
+            target_group_names: targetGroupNames,
+          })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
           return updated.id
         } else {
@@ -962,7 +987,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
+  }, [
+    validateBot,
+    getBotData,
+    editingBotId,
+    setBots,
+    toast,
+    t,
+    scope,
+    groupName,
+    teamId,
+    targetGroupNames,
+  ])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -1101,8 +1137,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botName.trim(),
           shell_name: agentName.trim(), // Use shell_name instead of shell_type
           agent_config: parsedAgentConfig as Record<string, unknown>,
+          model_id: isCustomModel || isDifyAgent ? null : selectedModelId,
           secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
           secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
+          secondary_model_id: primaryModelIsVideo ? selectedSecondaryModelId : null,
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
@@ -1127,7 +1165,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
         if (editingBotId && editingBotId > 0) {
           // Edit existing bot
-          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          const updated = await botApis.updateBot(editingBotId, {
+            ...botReq,
+            team_id: teamId,
+            target_group_names: targetGroupNames,
+          })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
         } else {
           // Create new bot
@@ -1335,22 +1377,29 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       specialOptions={videoPrimaryRequired ? [] : noModelOption}
                       labels={modelCascadeLabels}
                       onSelectModel={model => {
+                        modelSelectionChanged.current.primary = true
                         setSelectedModel(model.name)
                         setSelectedModelType(model.type)
                         setSelectedModelNamespace(model.namespace || 'default')
+                        setSelectedModelId(model.id ?? null)
                         if (model.modelCategoryType !== 'video') {
+                          modelSelectionChanged.current.secondary = true
                           setSelectedSecondaryModel('')
                           setSelectedSecondaryModelType(undefined)
                           setSelectedSecondaryModelNamespace(undefined)
+                          setSelectedSecondaryModelId(null)
                         }
                       }}
                       onSelectSpecialOption={() => {
+                        modelSelectionChanged.current = { primary: true, secondary: true }
                         setSelectedModel('')
                         setSelectedModelType(undefined)
                         setSelectedModelNamespace(undefined)
+                        setSelectedModelId(null)
                         setSelectedSecondaryModel('')
                         setSelectedSecondaryModelType(undefined)
                         setSelectedSecondaryModelNamespace(undefined)
+                        setSelectedSecondaryModelId(null)
                       }}
                       placeholder={
                         !agentName
@@ -1491,14 +1540,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     specialOptions={[]}
                     labels={modelCascadeLabels}
                     onSelectModel={model => {
+                      modelSelectionChanged.current.secondary = true
                       setSelectedSecondaryModel(model.name)
                       setSelectedSecondaryModelType(model.type)
                       setSelectedSecondaryModelNamespace(model.namespace || 'default')
+                      setSelectedSecondaryModelId(model.id ?? null)
                     }}
                     onSelectSpecialOption={() => {
+                      modelSelectionChanged.current.secondary = true
                       setSelectedSecondaryModel('')
                       setSelectedSecondaryModelType(undefined)
                       setSelectedSecondaryModelNamespace(undefined)
+                      setSelectedSecondaryModelId(null)
                     }}
                     placeholder={t('settings:bot.secondary_llm_model_placeholder')}
                     disabled={loadingModels || !agentName || readOnly}

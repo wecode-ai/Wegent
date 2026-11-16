@@ -64,6 +64,17 @@ test("dependency keys follow build inputs and survive application-only changes",
     assert.notEqual(key("backend-rs-deps"), backend);
     writeFileSync(sharedSource, originalSource);
     for (const input of [
+      "shared/assets/calendars/china-workdays.json",
+      "shared/assets/calendars/LICENSE.chinesecalendar",
+    ]) {
+      const source = join(directory, input);
+      const original = readFileSync(source, "utf8");
+      writeFileSync(source, `${original}\nChanged calendar build input\n`);
+      assert.notEqual(key(), executor, input);
+      assert.notEqual(key("backend-rs-deps"), backend, input);
+      writeFileSync(source, original);
+    }
+    for (const input of [
       "shared/assets/codex-models/openai.json",
       "shared/assets/codexDiscoveryInstructions.md",
       "sdk/plugin-auth/tool.py",
@@ -229,15 +240,108 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
           artifact !== "true" && exists !== "true",
         );
         assert.equal(
-          enabled("Restore published fork Executor runtime"),
-          artifact === "true" && exists === "true",
+          enabled("Restore published Executor runtime"),
+          exists === "true",
         );
+        assert.equal(enabled("Extract Executor binary"), true);
         assert.equal(enabled("Archive fork Executor E2E runtime"), archive);
         assert.equal(enabled("Upload fork Executor E2E runtime"), archive);
         assert.equal(enabled("Log in to GHCR"), artifact !== "true");
       }
     }
   }
+});
+
+test("new Executor builds yield a binary when registry readback is unavailable", () => {
+  const producer = workflow("e2e-tests").jobs["build-executor-e2e-runtime"];
+  const build = producer.steps.find(
+    (step) => step.name === "Build and publish Executor E2E image",
+  );
+  assert.equal(build.with.push, true);
+  assert.equal(build.with.load, true);
+  const extract = producer.steps.find(
+    (step) => step.name === "Extract Executor binary",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "executor-local-export-"));
+  try {
+    const docker = join(directory, "docker");
+    writeFileSync(
+      docker,
+      `#!${process.execPath}
+import { appendFileSync, writeFileSync } from 'node:fs'
+const args = process.argv.slice(2)
+appendFileSync(process.env.TEST_DOCKER_LOG, JSON.stringify(args) + '\\n')
+if (args[0] === 'pull') process.exit(37)
+if (args[0] === 'create') {
+  if (args[1] !== process.env.EXECUTOR_E2E_IMAGE) process.exit(38)
+  console.log('built-container')
+} else if (args[0] === 'cp') {
+  if (process.env.TEST_COPY_FAILURE) process.exit(39)
+  writeFileSync(args.at(-1), 'built-executor')
+} else if (args[0] !== 'rm') process.exit(40)
+`,
+    );
+    chmodSync(docker, 0o755);
+    const log = join(directory, "docker.log");
+    for (const copyFailure of ["", "true"]) {
+      writeFileSync(log, "");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", extract.run],
+        {
+          cwd: directory,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            EXECUTOR_E2E_IMAGE: "ghcr.io/example/executor:new-build",
+            TEST_DOCKER_LOG: log,
+            TEST_COPY_FAILURE: copyFailure,
+          },
+        },
+      );
+      assert.equal(result.status, copyFailure ? 39 : 0, result.stderr);
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map(JSON.parse);
+      assert.deepEqual(
+        calls.map((args) => args[0]),
+        ["create", "cp", "rm"],
+      );
+      assert.deepEqual(calls[1], [
+        "cp",
+        "built-container:/app/executor",
+        "executor/target/release/wegent-executor",
+      ]);
+      assert.equal(
+        readFileSync(
+          join(directory, "executor/target/release/wegent-executor"),
+          "utf8",
+        ),
+        "built-executor",
+      );
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Fork Executor consumers do not require a registry login for public images", () => {
+  const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
+  const login = consumer.steps.find((step) => step.name === "Log in to GHCR");
+  const enabled = (eventName, headRepository) =>
+    login.if === undefined || runInNewContext(login.if, {
+      github: {
+        event_name: eventName,
+        repository: "wecode-ai/Wegent",
+        event: { pull_request: { head: { repo: { full_name: headRepository } } } },
+      },
+    });
+  assert.equal(enabled("pull_request", "fork-owner/Wegent"), false);
+  assert.equal(enabled("pull_request", "wecode-ai/Wegent"), true);
+  assert.equal(enabled("workflow_dispatch"), true);
+  assert.equal(enabled("merge_group"), true);
 });
 
 test("Executor consumers pull public pins anonymously and propagate either image pull failure", () => {
@@ -271,26 +375,31 @@ if (image.includes(process.env.TEST_PULL_FAILURE || 'no-failure')) process.exit(
     const log = join(directory, "docker.log");
     const run = (archive, pinned, failure = "") => {
       writeFileSync(log, "");
-      const result = spawnSync("bash", ["-e", "-c", pull.run], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          TMPDIR: directory,
-          PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
-          EXECUTOR_E2E_IMAGE: pinned
-            ? pinnedBase
-            : "ghcr.io/example/executor:source",
-          USE_EXECUTOR_ARTIFACT: String(archive),
-          TEST_DOCKER_LOG: log,
-          TEST_PULL_FAILURE: failure,
+      // Host shell startup files must not put the real Docker ahead of this fixture.
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", pull.run],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            TMPDIR: directory,
+            PLATFORM_E2E_IMAGE: "ghcr.io/example/platform:source",
+            EXECUTOR_E2E_IMAGE: pinned
+              ? pinnedBase
+              : "ghcr.io/example/executor:source",
+            USE_EXECUTOR_ARTIFACT: String(archive),
+            TEST_DOCKER_LOG: log,
+            TEST_PULL_FAILURE: failure,
+          },
         },
-      });
+      );
+      assert.equal(result.status, failure ? 37 : 0, result.stderr);
       const calls = readFileSync(log, "utf8")
         .trim()
         .split("\n")
         .map(JSON.parse);
-      assert.equal(result.status, failure ? 37 : 0, result.stderr);
       for (const call of calls) {
         if (call.args[0] === "--config") {
           assert.deepEqual(call.config, { auths: {} });

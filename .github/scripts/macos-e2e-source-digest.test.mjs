@@ -60,6 +60,8 @@ for (const component of Object.keys(incompleteDigests)) {
       mkdirSync(join(root, ".github/scripts"), { recursive: true });
       const contextInputs = {
         "shared/rust/crypto/src/lib.rs": "pub fn shared_crypto() {}\n",
+        "shared/assets/calendars/china-workdays.json": '{"workdays":[]}\n',
+        "shared/assets/calendars/LICENSE.chinesecalendar": "MIT license\n",
         ".github/scripts/build-macos-e2e-runtimes.sh": "cargo build --locked\n",
         ...(component === "executor"
           ? {

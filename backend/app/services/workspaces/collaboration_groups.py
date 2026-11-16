@@ -201,6 +201,7 @@ class WorkspaceCollaborationGroupService:
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        self._lock_project_for_group_mutation(db, project_id)
         workspace_id = self._require_project_workspace(db, project_id)
         self._validate_name_available(
             db,
@@ -252,6 +253,7 @@ class WorkspaceCollaborationGroupService:
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        self._lock_project_for_group_mutation(db, project_id)
         workspace_id = self._require_project_workspace(db, project_id)
         group = self._get_group(db, workspace_id, group_id)
         existing = self._project_group_grant(db, project_id, group_id)
@@ -285,6 +287,7 @@ class WorkspaceCollaborationGroupService:
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        self._lock_project_for_group_mutation(db, project_id)
         workspace_id = self._require_project_workspace(db, project_id)
         group = self._get_project_owned_group(db, project_id, group_id)
         result = self._update_owned_group(
@@ -309,6 +312,7 @@ class WorkspaceCollaborationGroupService:
         from app.services.cloud_projects.access import require_cloud_project_role
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        self._lock_project_for_group_mutation(db, project_id)
         grant = self._project_group_grant(db, project_id, group_id)
         if grant is None:
             raise HTTPException(
@@ -341,6 +345,19 @@ class WorkspaceCollaborationGroupService:
         pending = revoke_unauthorized_project_work(db, project_id)
         db.commit()
         request_execution_cancellations(pending)
+
+    @staticmethod
+    def _lock_project_for_group_mutation(db: Session, project_id: int) -> None:
+        """Serialize group references with project Agent removal."""
+        project = (
+            db.query(CloudProject)
+            .filter(CloudProject.id == str(project_id))
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+        if project is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
 
     @staticmethod
     def _require_project_workspace(db: Session, project_id: int) -> int:
@@ -668,6 +685,8 @@ class WorkspaceCollaborationGroupService:
                 ProjectChatAgent.cloud_project_id == str(owner_id),
                 ProjectChatAgent.status == "active",
             )
+            .populate_existing()
+            .with_for_update()
             .all()
         )
         return any(

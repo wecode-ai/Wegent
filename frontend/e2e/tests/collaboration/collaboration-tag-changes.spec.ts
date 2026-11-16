@@ -179,7 +179,7 @@ projectTest(
     const error = page.getByTestId('collaboration-issue-table-batch-error')
     await expect(error).toContainText('Rejected bulk Issue')
     await expect(error).toContainText(
-      /机器人没有符合配置且获项目授权的执行环境|No project-authorized execution environment/
+      /项目设置 → 执行环境|Project settings → Execution environments/
     )
     await expect(page.getByTestId(`collaboration-issue-table-select-${issueId}`)).not.toBeChecked()
     await expect(page.getByTestId(`collaboration-issue-table-select-${rejected.id}`)).toBeChecked()

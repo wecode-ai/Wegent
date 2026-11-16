@@ -13,3 +13,5 @@ export {
   IssueHomeComposer,
   type IssueHomeTaskComposerProps,
 } from "./IssueHomeComposer";
+
+export { usePanelData } from './usePanelData'

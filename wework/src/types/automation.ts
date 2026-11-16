@@ -5,7 +5,7 @@ export type AutomationConversationMode = 'independent' | 'continue_thread'
 export type AutomationNotificationPolicy = 'all_runs' | 'attention_only' | 'never'
 
 export type AutomationSchedule =
-  | { type: 'cron'; expression: string }
+  | { type: 'cron'; expression: string; workdayOnly?: boolean }
   | { type: 'interval'; value: number; unit: 'minutes' | 'hours' | 'days' }
   | { type: 'one_time'; executeAt: string }
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,7 @@ class AdminResolvedConfig:
 
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
+    document_ids: list[int] = field(default_factory=list)
 
 
 class ConfigResolutionError(ValueError):
@@ -422,6 +423,16 @@ class ConfigResolver:
                 name=resource.name,
                 namespace=resource.namespace,
             ),
+            document_ids=(
+                [
+                    document_id
+                    for (document_id,) in db.query(KnowledgeDocument.id)
+                    .filter(KnowledgeDocument.kind_id == knowledge_base_id)
+                    .all()
+                ]
+                if operation == "list_chunks"
+                else []
+            ),
         )
 
     # --- Private methods ---
@@ -586,7 +597,7 @@ class ConfigResolver:
                 "config_not_found",
                 f"Document {document_id} not found",
             )
-        return doc.splitter_config or {}
+        return cast(dict[str, Any], doc.splitter_config or {})
 
     def _get_user_name(self, db: Session, user_id: int) -> str | None:
         """Get user_name from users table."""
