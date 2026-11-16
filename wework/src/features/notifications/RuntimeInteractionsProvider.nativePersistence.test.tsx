@@ -4,6 +4,15 @@ import { expect, it, vi } from 'vitest'
 
 const prefix = 'wework.interactions:test:1:'
 
+function storageSnapshot(): Record<string, string> {
+  const entries: Record<string, string> = {}
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key !== null) entries[key] = localStorage.getItem(key)!
+  }
+  return entries
+}
+
 function hostQueue() {
   harness.desktop = true
   let replies = [{ id: 'disk-receipt', interactionId: '', text: 'Recover from the host queue' }]
@@ -29,11 +38,15 @@ it.each(['localStorage', 'disk'])(
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const item = context!.pending[0]
     await act(async () => context!.dismiss(item))
-    const disk = Object.fromEntries(Object.entries(localStorage))
+    const disk = storageSnapshot()
+    expect(JSON.parse(disk[prefix + 'history'])).toContainEqual(
+      expect.objectContaining({ id: item.id, dismissed: true })
+    )
+    const persistedDrafts = disk[prefix + 'drafts']
     let available = false
     harness.flushStorage.mockImplementation(async () => {
       if (!available) throw new Error('Disk unavailable')
-      Object.assign(disk, Object.fromEntries(Object.entries(localStorage)))
+      Object.assign(disk, storageSnapshot())
     })
     const original = Storage.prototype.setItem
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
@@ -44,7 +57,8 @@ it.each(['localStorage', 'disk'])(
     await act(async () => queue.send(item.id))
     expect(queue.get()).toHaveLength(1)
     expect(localStorage.getItem(prefix + 'native-replies') ?? '').not.toContain('disk-receipt')
-    expect(disk[prefix + 'drafts']).not.toContain('disk-receipt')
+    expect(disk[prefix + 'drafts']).toBe(persistedDrafts)
+    expect(disk[prefix + 'drafts'] ?? '').not.toContain('disk-receipt')
     first.unmount()
     available = true
     // Renderer initialization restores the durable snapshot, not the failed in-memory write.
