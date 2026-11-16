@@ -300,10 +300,8 @@ export default function DevicesPage() {
                       onSetDefault={handlers.handleSetDefault}
                       onDelete={handlers.handleDeleteDevice}
                       onCancelTask={handlers.handleCancelTask}
-                      onUpgrade={handlers.handleUpgradeDevice}
+                      onRestart={handlers.handleRestartDevice}
                       onEditAlias={handleOpenEditAliasDialog}
-                      isUpgrading={isDeviceUpgrading(device.device_id)}
-                      upgradeStatus={getUpgradeStatus(device.device_id)}
                     />
                   )}
                 </DeviceSection>

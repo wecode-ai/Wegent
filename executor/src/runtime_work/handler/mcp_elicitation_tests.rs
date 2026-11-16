@@ -68,8 +68,10 @@ fn frozen_interaction_handler(
     let (sender, receiver) = broadcast::channel(64);
     handler.event_tx = Some(sender);
     let execution_id = start_test_execution(&handler, "task-1");
-    let mut request = ExecutionRequest::default();
-    request.subtask_id = "frozen-subtask".into();
+    let mut request = ExecutionRequest {
+        subtask_id: "frozen-subtask".into(),
+        ..Default::default()
+    };
     request
         .extra
         .insert("conversationContext".into(), json!("private_discussion"));

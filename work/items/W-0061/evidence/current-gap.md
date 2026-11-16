@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # W-0061 复现与实现证据
 
-本次实现已适配主线 `5ccea8412`，并采用 Issue 版本 9 的接单回执契约。
+本次实现已适配主线 `c4d4194b8`，并采用 Issue 版本 9 的接单回执契约。
 保留主线的 Rust Socket.IO 主路径、拆分后的 Task 存储、稳定 Issue 会话、
 admission reservation、失败启动恢复和项目配置入口。
 
@@ -30,6 +30,9 @@ admission reservation、失败启动恢复和项目配置入口。
   已准备的自动请求在发送和入队时保留原身份，迟到请求仍被原生检查拒绝。
 - 关闭开关后，已有回执曾继续显示。回滚回归验证新投影隐藏，assignment metadata、
   execution 和原有 human_task_binding 均保留，且不读取设备在线状态。
+- 完整推送门禁中的 Electron 准备会重建根依赖，而 lint/TypeScript 已并发启动，
+  导致缺模块错误。既有门禁协议用例稳定复现该顺序问题；准备现在先同步完成，
+  再启动只读静态检查，保留全部检查及失败传播。
 
 ## 实现边界
 
@@ -58,7 +61,8 @@ admission reservation、失败启动恢复和项目配置入口。
 
 Executor 使用独立的 capabilities 和 Task 目录，不读取主机个人 manifest。
 Rust Backend 使用临时 uv 工具环境提供 CMake，未安装系统软件或更改项目依赖。
-首次推送还需完成仓库的完整 pre-push 检查；最终发布验证以 PR CI 为准。
+完整 pre-push 的 Backend、frontend、Wework 单测和 Executor 全量测试已通过；
+修复依赖准备顺序及 Clippy 初始化告警后仍需重新完成完整门禁，最终发布验证以 PR CI 为准。
 
 本地未运行 E2E 或真实 Electron。既有 CI core-2 的 project-assignment-notification
 场景新增真实在线接单、重复保存、完成但不推进 Issue、同一私人会话续办及共享摘要隔离。
