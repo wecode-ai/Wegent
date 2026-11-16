@@ -1038,7 +1038,8 @@ describe('BotEdit default knowledge bases', () => {
       await renderBotEdit(
         {},
         {
-          scope: 'personal',
+          scope: 'group',
+          groupName: 'engineering',
           targetGroupNames,
           targetGroupsLoading: true,
         }
@@ -1056,7 +1057,8 @@ describe('BotEdit default knowledge bases', () => {
       await renderBotEdit(
         {},
         {
-          scope: 'personal',
+          scope: 'group',
+          groupName: 'engineering',
           targetGroupNames,
           targetGroupsError: true,
           onRetryTargetGroups,
