@@ -9,9 +9,6 @@
  */
 
 import { APIRequestContext, Page, expect, test, type Route } from '@playwright/test'
-import { spawn } from 'node:child_process'
-import { once } from 'node:events'
-import { resolve } from 'node:path'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
@@ -21,6 +18,10 @@ import {
   type PhaseRegressionStep,
 } from '../../utils/codex-phase-regression'
 import { settleMentionTasks } from '../../utils/mention-task-fixtures'
+import {
+  prepareIsolatedDatabaseState,
+  removeExecutorSessionProof,
+} from '../../utils/isolated-database-state'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -109,6 +110,7 @@ test.describe('Agent conversation regression', () => {
   const toolScenarioMatchTexts = new Set<string>()
 
   test.beforeAll(async ({ request }) => {
+    await test.step('Prepare isolated database dependencies', prepareIsolatedDatabaseState)
     apiClient = createApiClient(request)
     const loginResponse = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
     token = loginResponse.data?.access_token || ''
@@ -538,7 +540,7 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(firstRequest.body)).toContain(contextToken)
     const user = await getCurrentUser(request)
-    await removePersistedExecutorSessionProof(taskId, user.id)
+    await removeExecutorSessionProof({ task_id: taskId, user_id: user.id })
 
     // The real Socket.IO continuation, request builder, executor, native Home
     // marker, and model service all run. Removing only the persisted proof
@@ -2799,24 +2801,6 @@ test.describe('Agent conversation regression', () => {
     const id = payload.user_id ?? payload.id
     expect(id, 'The current user response should contain an id').toBeTruthy()
     return { id: id! }
-  }
-
-  async function removePersistedExecutorSessionProof(
-    taskId: number,
-    userId: number
-  ): Promise<void> {
-    const fixture = spawn(
-      'uv',
-      ['run', '--no-sync', 'python', 'tests/e2e_remove_executor_session.py'],
-      {
-        cwd: resolve(process.cwd(), '../backend'),
-        env: { ...process.env, PYTHONPATH: '.:..', UV_NO_SYNC: '1' },
-        stdio: ['pipe', 'inherit', 'inherit'],
-      }
-    )
-    fixture.stdin.end(JSON.stringify({ task_id: taskId, user_id: userId }))
-    const [exitCode] = await once(fixture, 'exit')
-    expect(exitCode, 'The executor-session fixture should update the isolated database').toBe(0)
   }
 
   async function waitForCapturedModelRequest(

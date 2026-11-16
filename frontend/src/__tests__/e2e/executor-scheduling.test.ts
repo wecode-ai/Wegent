@@ -20,7 +20,7 @@ const independent = new Set([
 const expectedCounts: Record<string, number> = {
   'global-setup.ts': 1,
   'global-teardown.ts': 1,
-  'tasks/agent-conversation-regression.spec.ts': 22,
+  'tasks/agent-conversation-regression.spec.ts': 23,
   'tasks/device-artifact-declaration.spec.ts': 3,
   'tasks/device-ide.spec.ts': 1,
   'tasks/claudecode-compaction.spec.ts': 4,

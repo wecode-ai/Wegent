@@ -2,7 +2,6 @@
 
 import json
 import os
-import sys
 from typing import Any
 
 from sqlalchemy.engine import make_url
@@ -13,7 +12,7 @@ def main() -> None:
     if url.get_backend_name() != "mysql" or url.database != "wegent_test":
         raise RuntimeError("Fixture requires the isolated MySQL wegent_test database")
 
-    data = json.load(sys.stdin)
+    data = json.loads(os.environ["WEGENT_ISOLATED_DATABASE_REQUEST"])
     task_id = int(data["task_id"])
     user_id = int(data["user_id"])
 
@@ -33,7 +32,9 @@ def main() -> None:
             .all()
         )
         if not rows:
-            raise RuntimeError("Fixture requires at least one completed assistant subtask")
+            raise RuntimeError(
+                "Fixture requires at least one completed assistant subtask"
+            )
 
         removed = 0
         for row in rows:
