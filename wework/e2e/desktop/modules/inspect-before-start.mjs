@@ -1,4 +1,5 @@
 import { once } from 'node:events'
+import { randomUUID } from 'node:crypto'
 
 /** Read the connected host identity through the native snapshot shipped by historical packages. */
 export async function readConnectedApplicationPid(control) {
@@ -90,7 +91,8 @@ export async function inspectRunningApp(port, expectedPid, expression, log = con
       return evaluate(
         command,
         typeof expression === 'function' ? expression(port) : expression,
-        true
+        true,
+        log
       )
     },
     log
@@ -142,15 +144,58 @@ async function inspectorTarget(port, allowClosed = false) {
   return socketUrl
 }
 
-async function evaluate(command, expression, awaitPromise = false) {
-  const result = await command('Runtime.evaluate', {
-    expression,
-    returnByValue: true,
-    awaitPromise,
-  })
+async function evaluate(command, expression, awaitPromise = false, log = console.log) {
+  const objectGroup = awaitPromise ? `wework-native-inspection-${randomUUID()}` : undefined
+  const source = awaitPromise
+    ? `(value => {
+        const pending = process.getBuiltinModule('node:util').types.isPromise(value)
+          ? value : Promise.resolve(value)
+        // Preserve the original Promise and observe rejection before Node's event loop resumes.
+        Promise.prototype.then.call(pending, () => {}, () => {})
+        return pending
+      })((\n${expression}\n))`
+    : expression
+  const deadline = performance.now() + 10_000
+  const request = (method, params) => {
+    const remaining = deadline - performance.now()
+    if (remaining <= 0) throw new Error('Inspector command timed out: Runtime.evaluate')
+    return command(method, params, remaining)
+  }
+  let failed = false
+  try {
+    const object = evaluationResult(
+      await request('Runtime.evaluate', {
+        expression: source,
+        returnByValue: !awaitPromise,
+        awaitPromise: false,
+        ...(objectGroup && { objectGroup }),
+      })
+    )
+    if (!objectGroup) return object?.value
+    const result = await request('Runtime.awaitPromise', {
+      promiseObjectId: object.objectId,
+      returnByValue: true,
+    })
+    return evaluationResult(result)?.value
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    if (objectGroup) {
+      try {
+        await command('Runtime.releaseObjectGroup', { objectGroup })
+      } catch (error) {
+        if (!failed) throw error
+        log('[desktop-e2e-inspector] object cleanup deferred to disconnect')
+      }
+    }
+  }
+}
+
+function evaluationResult(result) {
   if (result.exceptionDetails)
     throw new Error(`Inspector setup failed: ${result.exceptionDetails.text}`)
-  return result.result?.value
+  return result.result
 }
 
 async function withInspector(socketUrl, operation, log) {
@@ -166,13 +211,15 @@ async function withInspector(socketUrl, operation, log) {
   try {
     await once(socket, 'open', { signal: AbortSignal.timeout(10_000) })
     let id = 0
-    async function command(method, params = {}) {
+    async function command(method, params = {}, timeoutMs = 10_000) {
       log('[desktop-e2e-inspector] command', method)
+      if (socket.readyState !== WebSocket.OPEN)
+        throw new Error(`Inspector disconnected before command: ${method}`)
       const requestId = ++id
       const response = new Promise((accept, reject) => {
         const timer = setTimeout(
           () => finish(new Error(`Inspector command timed out: ${method}`)),
-          10_000
+          timeoutMs
         )
         const received = event => {
           const message = JSON.parse(event.data)
@@ -180,15 +227,23 @@ async function withInspector(socketUrl, operation, log) {
           log('[desktop-e2e-inspector] response', method, message.error ? 'error' : 'ok')
           finish(message.error && new Error(message.error.message), message.result)
         }
+        const disconnected = () =>
+          finish(new Error(`Inspector disconnected during command: ${method}`))
         function finish(error, result) {
           clearTimeout(timer)
           socket.removeEventListener('message', received)
+          socket.removeEventListener('close', disconnected)
           if (error) reject(error)
           else accept(result)
         }
         socket.addEventListener('message', received)
+        socket.addEventListener('close', disconnected)
+        try {
+          socket.send(JSON.stringify({ id: requestId, method, params }))
+        } catch (error) {
+          finish(error)
+        }
       })
-      socket.send(JSON.stringify({ id: requestId, method, params }))
       return response
     }
     return await operation(command, socket)

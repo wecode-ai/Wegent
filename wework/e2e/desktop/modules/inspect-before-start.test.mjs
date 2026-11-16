@@ -4,7 +4,7 @@ import { once } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import {
   inspectBeforeStart,
   inspectRunningApp,
@@ -180,6 +180,291 @@ test('awaits native asynchronous assertions only after startup and verifies the 
     await exited
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+/** Keep protocol regressions on a real, isolated V8 Inspector with deterministic GC. */
+async function withCollectableInspector(operation) {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-inspector-promise-gc-'))
+  const entry = join(directory, 'running.cjs')
+  await writeFile(
+    entry,
+    `globalThis.finishNativeAssertion = reference => {
+      global.gc()
+      setImmediate(() => {
+        global.gc()
+        reference.deref()?.complete({ completed: true })
+      })
+    }
+    setInterval(() => {}, 1000)
+    console.log('ready')`
+  )
+  const child = spawn(process.execPath, ['--inspect=127.0.0.1:0', '--expose-gc', entry], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const exited = once(child, 'exit')
+  const ready = once(child.stdout, 'data', { signal: AbortSignal.timeout(10_000) })
+  try {
+    const [endpoint] = await Promise.all([readInspectorEndpoint(child), ready])
+    await operation(new URL(endpoint).port, child)
+  } finally {
+    child.kill('SIGKILL')
+    await exited
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
+test('retains an asynchronous native assertion across garbage collection until its result is delivered', async () => {
+  await withCollectableInspector(async (port, child) => {
+    const expression = `(() => {
+      let complete
+      const assertion = new Promise(resolve => { complete = resolve })
+      assertion.complete = complete
+      setImmediate(globalThis.finishNativeAssertion, new WeakRef(assertion))
+      return assertion
+    })()`
+    for (const source of [
+      expression,
+      `process.getBuiltinModule('node:vm').runInNewContext(${JSON.stringify(expression)}, {
+        WeakRef, setImmediate, finishNativeAssertion: globalThis.finishNativeAssertion
+      })`,
+    ]) {
+      const events = []
+      assert.deepEqual(
+        await inspectRunningApp(port, child.pid, source, (...event) => events.push(event)),
+        { completed: true }
+      )
+      assert.ok(
+        events.some(
+          event =>
+            event[0].endsWith('response') &&
+            event[1] === 'Runtime.releaseObjectGroup' &&
+            event[2] === 'ok'
+        )
+      )
+      assert.equal(events.at(-1)[0], '[desktop-e2e-inspector] disconnected')
+    }
+  })
+})
+
+test('preserves primitive, ordinary object and asynchronous rejection results and releases their objects', async () => {
+  await withCollectableInspector(async (port, child) => {
+    for (const [expression, expected] of [
+      ['undefined', undefined],
+      ['null', null],
+      ['false', false],
+      [
+        '({ nested: { value: 42 }, values: [true, null] })',
+        { nested: { value: 42 }, values: [true, null] },
+      ],
+      ['({ then(resolve) { resolve({ adopted: true }) } })', { adopted: true }],
+      [
+        `(() => {
+          globalThis.value = 'original value'
+          globalThis.pending = 'original pending'
+          globalThis.assertionCalls = (globalThis.assertionCalls ?? 0) + 1
+          return { value, pending, calls: globalThis.assertionCalls, global: this === globalThis }
+        })()`,
+        { value: 'original value', pending: 'original pending', calls: 1, global: true },
+      ],
+      [
+        'globalThis.commaCalls = (globalThis.commaCalls ?? 0) + 1, Promise.resolve({ calls: globalThis.commaCalls })',
+        { calls: 1 },
+      ],
+      [
+        `(() => {
+          globalThis.resultThenReads = 0
+          const result = { completed: true }
+          Object.defineProperty(result, 'then', { get() {
+            if (++globalThis.resultThenReads > 1) throw new Error('Result was adopted twice')
+          } })
+          return Promise.resolve(result)
+        })()`,
+        { completed: true },
+      ],
+      ['globalThis.resultThenReads', 1],
+    ]) {
+      const events = []
+      assert.deepEqual(
+        await inspectRunningApp(port, child.pid, expression, (...event) => events.push(event)),
+        expected
+      )
+      assert.ok(
+        events.some(
+          event =>
+            event[0].endsWith('response') &&
+            event[1] === 'Runtime.releaseObjectGroup' &&
+            event[2] === 'ok'
+        )
+      )
+      assert.equal(events.at(-1)[0], '[desktop-e2e-inspector] disconnected')
+    }
+    for (const [expression, message] of [
+      [
+        '(() => { throw new Error("native assertion failure") })()',
+        /^Inspector setup failed: Uncaught$/,
+      ],
+      ...[
+        'Promise.reject(new Error("native assertion failure"))',
+        `process.getBuiltinModule('node:vm').runInNewContext('Promise.reject(new Error("native assertion failure"))')`,
+        '({ then(resolve, reject) { reject(new Error("native assertion failure")) } })',
+      ].map(expression => [
+        expression,
+        /^Inspector setup failed: Uncaught \(in promise\) Error: native assertion failure$/,
+      ]),
+    ]) {
+      const events = []
+      await assert.rejects(
+        inspectRunningApp(port, child.pid, expression, (...event) => events.push(event)),
+        { message }
+      )
+      assert.ok(
+        events.some(
+          event =>
+            event[0].endsWith('response') &&
+            event[1] === 'Runtime.releaseObjectGroup' &&
+            event[2] === 'ok'
+        )
+      )
+      assert.equal(events.at(-1)[0], '[desktop-e2e-inspector] disconnected')
+    }
+  })
+})
+
+test('shares the original evaluation deadline across binding and awaiting a Promise', async () => {
+  await withCollectableInspector(async (port, child) => {
+    let now = 0
+    let method
+    const timers = []
+    const originalTimeout = globalThis.setTimeout
+    const clock = mock.method(performance, 'now', () => now)
+    const timer = mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+      timers.push({ method, delay })
+      return originalTimeout(callback, delay, ...args)
+    })
+    try {
+      assert.deepEqual(
+        await inspectRunningApp(
+          port,
+          child.pid,
+          'Promise.resolve({ value: 42 })',
+          (event, command) => {
+            if (event !== '[desktop-e2e-inspector] command') return
+            method = command
+            if (command === 'Runtime.evaluate') now += 6_000
+          }
+        ),
+        { value: 42 }
+      )
+      assert.equal(timers.find(entry => entry.method === 'Runtime.awaitPromise').delay, 4_000)
+      assert.equal(
+        timers.find(entry => entry.method === 'Runtime.releaseObjectGroup').delay,
+        10_000
+      )
+    } finally {
+      timer.mock.restore()
+      clock.mock.restore()
+    }
+  })
+})
+
+test('a consumed evaluation deadline releases its retained Promise without starting another wait', async () => {
+  await withCollectableInspector(async (port, child) => {
+    let now = 0
+    let evaluations = 0
+    const events = []
+    const clock = mock.method(performance, 'now', () => now)
+    try {
+      await assert.rejects(
+        inspectRunningApp(port, child.pid, 'new Promise(() => {})', (...event) => {
+          events.push(event)
+          if (
+            event[0] === '[desktop-e2e-inspector] response' &&
+            event[1] === 'Runtime.evaluate' &&
+            ++evaluations === 2
+          )
+            now += 10_001
+        }),
+        /Inspector command timed out: Runtime.evaluate/
+      )
+      assert.equal(
+        events.some(event => event[1] === 'Runtime.awaitPromise'),
+        false
+      )
+      assert.ok(
+        events.some(
+          event =>
+            event[0].endsWith('response') &&
+            event[1] === 'Runtime.releaseObjectGroup' &&
+            event[2] === 'ok'
+        )
+      )
+      assert.equal(events.at(-1)[0], '[desktop-e2e-inspector] disconnected')
+    } finally {
+      clock.mock.restore()
+    }
+  })
+})
+
+test('disconnect releases groups after cleanup transport failure without masking an assertion failure', async () => {
+  await withCollectableInspector(async (port, child) => {
+    const originalWebSocket = globalThis.WebSocket
+    globalThis.WebSocket = class extends originalWebSocket {
+      send(data) {
+        if (JSON.parse(data).method === 'Runtime.releaseObjectGroup')
+          throw new Error('injected cleanup transport failure')
+        return super.send(data)
+      }
+    }
+    const events = []
+    try {
+      await assert.rejects(
+        inspectRunningApp(
+          port,
+          child.pid,
+          'Promise.reject(new Error("native assertion failure"))',
+          (...event) => events.push(event)
+        ),
+        /Inspector setup failed: Uncaught.*native assertion failure/
+      )
+      assert.ok(events.some(event => event[0].endsWith('object cleanup deferred to disconnect')))
+      assert.equal(events.at(-1)[0], '[desktop-e2e-inspector] disconnected')
+      await assert.rejects(
+        inspectRunningApp(
+          port,
+          child.pid,
+          '(() => { const value = { owned: true }; globalThis.ownedResult = new WeakRef(value); return value })()',
+          () => {}
+        ),
+        /injected cleanup transport failure/
+      )
+    } finally {
+      globalThis.WebSocket = originalWebSocket
+    }
+    assert.equal(
+      await inspectRunningApp(
+        port,
+        child.pid,
+        '(() => { global.gc(); return globalThis.ownedResult.deref() === undefined })()',
+        () => {}
+      ),
+      true
+    )
+  })
+})
+
+test('disconnecting a host rejects its pending assertion and releases the driver command', async () => {
+  await withCollectableInspector(async (port, child) => {
+    const events = []
+    await assert.rejects(
+      inspectRunningApp(port, child.pid, 'new Promise(() => {})', (...event) => {
+        events.push(event)
+        if (event[0] === '[desktop-e2e-inspector] command' && event[1] === 'Runtime.awaitPromise')
+          setImmediate(() => child.kill('SIGKILL'))
+      }),
+      /Inspector disconnected during command: Runtime.awaitPromise/
+    )
+    assert.ok(events.some(event => event[0] === '[desktop-e2e-inspector] disconnected'))
+  })
 })
 
 for (const moduleType of ['cjs', 'mjs']) {
