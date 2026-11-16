@@ -7,7 +7,11 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { isImeComposingEvent } from '@wegent/chat-core/ime'
 
-import type { IssueParticipant } from './issueParticipants'
+import {
+  participantLabel,
+  participantNeedsIdentifier,
+  type IssueParticipant,
+} from './issueParticipants'
 
 export function IssueParticipantPicker({
   api,
@@ -142,31 +146,46 @@ export function IssueParticipantPicker({
     kind === 'agent' ? Bot : kind === 'group' ? Users : UserRound
   const candidates = results.filter(
     person =>
-      person.name.toLocaleLowerCase().includes(searchQuery.toLocaleLowerCase()) &&
-      person.key !== `human:${userId}`
+      participantLabel(person, results)
+        .toLocaleLowerCase()
+        .includes(searchQuery.toLocaleLowerCase()) && person.key !== `human:${userId}`
   )
   return (
     <Popover.Root modal open={open} onOpenChange={setOpen}>
-      <section className="grid gap-2" aria-label={t('independentIssues.participants')}>
+      <section
+        data-testid="issue-participants"
+        className="grid gap-2"
+        aria-label={t('independentIssues.participants')}
+      >
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-sm text-text-secondary">
             {t('independentIssues.participants')}
           </span>
           {selected.map(person => {
             const Icon = icon(person.kind)
+            const label = participantLabel(person, [...selected, ...results], {
+              id: userId,
+              name: t('personalHome.me'),
+            })
+            const identity = `${label} · ${t(`issue_creation.participant_${person.kind}`)}`
+            const identified = participantNeedsIdentifier(person, [...selected, ...results], userId)
             return (
               <span
                 key={person.key}
+                title={identity}
                 className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-muted pl-2 text-sm"
               >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-                <span className="truncate">{person.name}</span>
+                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 truncate">{identified ? person.name : label}</span>
+                {identified && (
+                  <span className="shrink-0 text-text-secondary"> · #{person.id}</span>
+                )}
                 {person.key !== `human:${userId}` && (
                   <button
                     type="button"
                     disabled={disabled}
                     data-testid={`issue-participant-remove-${person.key}`}
-                    aria-label={t('independentIssues.removePerson', { name: person.name })}
+                    aria-label={t('independentIssues.removePerson', { name: identity })}
                     className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md hover:bg-background md:min-h-7 md:min-w-7"
                     onClick={() => onChange(selected.filter(item => item.key !== person.key))}
                   >
@@ -274,7 +293,7 @@ export function IssueParticipantPicker({
               />
             </label>
             {error ? (
-              <div role="alert" className="text-sm text-error">
+              <div role="alert" className="text-sm text-destructive">
                 {t('issue_creation.participants_load_failed')}
                 <button
                   type="button"
@@ -299,6 +318,8 @@ export function IssueParticipantPicker({
                 {candidates.map(person => {
                   const checked = selected.some(item => item.key === person.key)
                   const Icon = icon(person.kind)
+                  const label = participantLabel(person, results)
+                  const identified = participantNeedsIdentifier(person, results, userId)
                   return (
                     <button
                       type="button"
@@ -310,17 +331,25 @@ export function IssueParticipantPicker({
                           : `issue-participant-invite-${person.key}`
                       }
                       aria-pressed={checked}
+                      title={label}
+                      aria-label={`${label} · ${t(`issue_creation.participant_${person.kind}`)}`}
                       onClick={() =>
                         onChange(
                           checked
                             ? selected.filter(item => item.key !== person.key)
-                            : [...selected, person]
+                            : [
+                                ...selected,
+                                identified ? { ...person, needsIdentifier: true } : person,
+                              ]
                         )
                       }
                       className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted md:min-h-8"
                     >
-                      <Icon className="h-4 w-4" />
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                       <span className="min-w-0 flex-1 truncate">{person.name}</span>
+                      {identified && (
+                        <span className="shrink-0 text-text-secondary"> · #{person.id}</span>
+                      )}
                       {checked && <Check className="h-4 w-4" />}
                     </button>
                   )

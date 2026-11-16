@@ -1,9 +1,9 @@
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Folder } from 'lucide-react'
 import { IssueDetailSearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
-import type { CloudProject } from '@/api/deliveries'
+import { usePanelData } from '@wegent/collaboration/platform'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -14,7 +14,13 @@ import {
 } from '@/api/personalIssues'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
 import { IssueProjectSelect } from './IssueProjectSelect'
-import { participantKey, resourceInvitations, type IssueParticipant } from './issueParticipants'
+import {
+  participantKey,
+  participantLabel,
+  participantNeedsIdentifier,
+  resourceInvitations,
+  type IssueParticipant,
+} from './issueParticipants'
 
 export interface IssueCreationInput extends IndependentIssueInput {
   project_id?: string
@@ -70,7 +76,7 @@ export function IndependentIssueEditor({
       key: `human:${owner}`,
       kind: 'human',
       id: owner,
-      name: owner === userId ? t('personalHome.me') : (issue?.people[owner] ?? `#${owner}`),
+      name: issue?.people[owner] ?? `#${owner}`,
     },
     ...(issue?.metadata.direct_participants ?? issue?.metadata.participants ?? [])
       .filter(id => id !== owner)
@@ -89,42 +95,20 @@ export function IndependentIssueEditor({
   ])
   const [projectId, setProjectId] = useState('')
   const [projectStatus, setProjectStatus] = useState('')
-  const [projects, setProjects] = useState<CloudProject[]>([])
-  const [projectError, setProjectError] = useState('')
-  const [revision, setRevision] = useState(0)
-  const [loadingProjects, setLoadingProjects] = useState(canSelectProject)
+  const loadProjects = useCallback(() => api.projects(), [api])
+  const {
+    data: projectPage,
+    error: projectError,
+    loading: loadingProjects,
+    refresh: refreshProjects,
+  } = usePanelData(loadProjects, canSelectProject)
+  const projects = (projectPage?.items ?? []).filter(
+    project =>
+      ['local', 'backend'].includes(project.task_provider) && project.access_role !== 'Viewer'
+  )
   useEffect(() => {
     onDirtyChange?.(JSON.stringify(draft) !== baseline || Boolean(projectId))
   }, [draft, baseline, projectId, onDirtyChange])
-  useEffect(() => {
-    if (!canSelectProject) return
-    let active = true
-    void api
-      .projects()
-      .then(
-        page => {
-          if (active) {
-            setProjects(
-              page.items.filter(
-                project =>
-                  ['local', 'backend'].includes(project.task_provider) &&
-                  project.access_role !== 'Viewer'
-              )
-            )
-            setProjectError('')
-          }
-        },
-        error => {
-          if (active) setProjectError(error instanceof Error ? error.message : String(error))
-        }
-      )
-      .finally(() => {
-        if (active) setLoadingProjects(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, canSelectProject, revision])
   const project = projects.find(row => String(row.id) === projectId)
   const statuses = project?.board_config?.statuses ?? []
   const set = <K extends keyof IndependentIssueInput>(key: K, value: IndependentIssueInput[K]) =>
@@ -155,25 +139,29 @@ export function IndependentIssueEditor({
       ? `human:${draft.assignee_id}`
       : ''
   const assigneeOptions = [
-    { value: '', label: t('independentIssues.unassigned') },
+    { value: '', label: t('independentIssues.unassigned'), description: undefined },
     ...(['human', 'agent', 'group'] as const).flatMap(kind =>
       people
         .filter(person => person.kind === kind)
-        .map(person => ({
-          value: person.key,
-          label: people.some(
-            other => other.key !== person.key && other.kind === kind && other.name === person.name
-          )
-            ? `${person.name} · #${person.id}`
-            : person.name,
-          group: t(`issue_creation.participant_${kind}`),
-          searchText: String(person.id),
-        }))
+        .map(person => {
+          const identified = participantNeedsIdentifier(person, people, userId)
+          return {
+            value: person.key,
+            label: identified
+              ? person.name
+              : participantLabel(person, people, { id: userId, name: t('personalHome.me') }),
+            description: identified ? `#${person.id}` : undefined,
+            group: t(`issue_creation.participant_${kind}`),
+            searchText: String(person.id),
+          }
+        })
     ),
   ]
-  const selection = (label: string) => (
+  const selectedAssignee = assigneeOptions.find(option => option.value === assignee)
+  const selection = (label: string, identifier?: string) => (
     <>
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {identifier && <span className="shrink-0 text-text-secondary">{identifier}</span>}
       <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
     </>
   )
@@ -230,7 +218,7 @@ export function IndependentIssueEditor({
           </label>
           <div className="grid min-w-0 gap-3 border-t border-border pt-3">
             {canSelectProject && (
-              <div className="grid gap-1">
+              <div className="grid grid-cols-1 gap-1">
                 <label className="flex items-center gap-2 text-sm">
                   <Folder className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                   <span className="shrink-0 text-text-secondary">
@@ -248,22 +236,28 @@ export function IndependentIssueEditor({
                     }}
                   />
                 </label>
+                {loadingProjects && (
+                  <p
+                    role="status"
+                    data-testid="issue-project-loading"
+                    className="text-sm text-text-secondary"
+                  >
+                    {t('issue_creation.projects_loading')}
+                  </p>
+                )}
                 {projectId && (
-                  <p className="text-sm text-text-secondary">
+                  <p data-testid="issue-project-scope" className="text-sm text-text-secondary">
                     {t('issue_creation.project_scope_hint')}
                   </p>
                 )}
-                {projectError && (
-                  <p role="alert" className="text-sm text-error">
+                {projectError !== undefined && (
+                  <p role="alert" className="text-sm text-destructive">
                     {t('issue_creation.projects_load_failed')}
                     <button
                       type="button"
                       data-testid="issue-project-retry"
                       className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
-                      onClick={() => {
-                        setLoadingProjects(true)
-                        setRevision(v => v + 1)
-                      }}
+                      onClick={() => void refreshProjects()}
                     >
                       {t('independentIssues.retry')}
                     </button>
@@ -342,8 +336,8 @@ export function IndependentIssueEditor({
                 searchPlaceholder={t('todo.search_assignee')}
                 emptyLabel={t('todo.no_matching_assignee')}
                 triggerContent={selection(
-                  assigneeOptions.find(option => option.value === assignee)?.label ??
-                    t('independentIssues.unassigned')
+                  selectedAssignee?.label ?? t('independentIssues.unassigned'),
+                  selectedAssignee?.description
                 )}
                 onChange={value => {
                   const target = people.find(person => person.key === value)

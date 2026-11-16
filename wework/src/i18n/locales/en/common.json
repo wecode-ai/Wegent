@@ -86,6 +86,7 @@
     "working": "Working…"
   },
   "issue_creation": {
+    "projects_loading": "Loading projects…",
     "unconfirmed_discard_title": "Discard this form's contents?",
     "unconfirmed_discard_hint": "The current form contents will be discarded. Any saved Issue will remain. Check the Issue list after closing to confirm the save result.",
     "save_unconfirmed": "The save result could not be confirmed. Your draft is kept. Check your connection and whether the Issue was saved before retrying.",

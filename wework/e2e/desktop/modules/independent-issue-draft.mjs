@@ -1,6 +1,71 @@
 import assert from 'node:assert/strict'
+import { waitForAttribute } from './workspace-flows.mjs'
 
 const testId = id => `[data-testid="${id}"]`
+
+async function setIssueTestLanguage(control, language) {
+  await control.command('navigate', 'body', { value: '/settings/general' })
+  await control.command('clickWhenEnabled', testId(`general-language-${language}-button`))
+  await waitForAttribute(control, 'html', 'lang', language)
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('clickWhenEnabled', testId('workspace-tab-select-fixed-board'))
+}
+
+/** Selected projects and their permission context must reflow with longer English labels. */
+export async function verifyEnglishLinkedIssueLayout(
+  control,
+  { project, reopen, captureScreenshot }
+) {
+  await setIssueTestLanguage(control, 'en')
+  await reopen()
+  await waitForAttribute(
+    control,
+    testId('independent-issue-project'),
+    'aria-label',
+    'Project association'
+  )
+  await control.command('fill', testId('independent-issue-title'), {
+    value: 'Unsubmitted English reflow regression',
+  })
+  await chooseIssueProperty(control, 'independent-issue-project', String(project.id), project.name)
+  const previousSize = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 390, height: 568 }),
+  })
+  try {
+    await control.command('scrollIntoView', testId('independent-issue-project'))
+    await captureScreenshot(control, 'new-issue-english-linked-narrow.png')
+    const metric = async selector =>
+      JSON.parse(await control.command('getElementMetrics', selector))[0]
+    const scroll = await metric(testId('independent-issue-editor-scroll'))
+    assert.ok(
+      scroll.scrollWidth <= scroll.clientWidth + 1,
+      'A linked English Issue must not introduce horizontal scrolling'
+    )
+    for (const selector of [
+      testId('independent-issue-project'),
+      testId('issue-project-scope'),
+      testId('issue-participants'),
+      `${testId('independent-issue-project')} > svg`,
+    ]) {
+      const row = await metric(selector)
+      assert.ok(
+        row.left >= scroll.left - 1 && row.right <= scroll.right + 1,
+        'Project selection, its arrow, permission copy and participants must stay inside the editor'
+      )
+    }
+    const actions = await metric(testId('independent-issue-editor-actions'))
+    assert.ok(
+      actions.top >= 0 && actions.bottom <= actions.viewportHeight,
+      'The English narrow-window footer must remain reachable'
+    )
+    await control.command('clickWhenEnabled', testId('independent-issue-editor-cancel'))
+    await control.command('clickWhenEnabled', testId('independent-issue-discard-confirm'))
+    await control.command('waitFor', testId('independent-issue-dialog'), { visible: false })
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previousSize })
+  }
+  await setIssueTestLanguage(control, 'zh-CN')
+}
 
 /** Exercise the shared searchable property picker with real keyboard input. */
 export async function chooseIssueProperty(control, id, value, query = '') {

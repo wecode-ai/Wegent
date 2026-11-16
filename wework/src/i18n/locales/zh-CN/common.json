@@ -86,6 +86,7 @@
     "working": "正在处理…"
   },
   "issue_creation": {
+    "projects_loading": "正在加载项目…",
     "unconfirmed_discard_title": "放弃当前表单内容？",
     "unconfirmed_discard_hint": "当前表单内容将被丢弃。已经保存的事项不会被删除；关闭后请在事项列表确认保存结果。",
     "save_unconfirmed": "暂时无法确认保存结果，填写内容已保留。请检查连接，并在重试前确认事项是否已保存。",

@@ -36,6 +36,7 @@ describe('IssueDetailSearchableSelect', () => {
             testId="assignee"
             accessibleLabel="负责人"
             className="trigger"
+            triggerContent="未指派"
             searchPlaceholder="搜索负责人"
             emptyLabel="没有匹配的负责人"
             groupLimit={3}
@@ -73,6 +74,13 @@ describe('IssueDetailSearchableSelect', () => {
   function portalByTestId(testId: string) {
     return document.body.querySelector<HTMLElement>(`[data-testid="${testId}"]`)
   }
+
+  it('renders the selected label once while keeping its accessible description', async () => {
+    await renderSelect()
+    const trigger = container.querySelector('[data-testid="assignee"]')!
+    expect(trigger.textContent?.trim()).toBe('未指派')
+    expect(trigger.getAttribute('title')).toBe('未指派')
+  })
 
   it('limits large groups and expands them without hiding other sections', async () => {
     await renderSelect()

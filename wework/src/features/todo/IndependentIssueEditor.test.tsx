@@ -8,6 +8,93 @@ import userEvent from '@testing-library/user-event'
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
 
+it('announces project loading without blocking the Issue fields', async () => {
+  const personal = api()
+  let resolve!: (page: { items: never[] }) => void
+  vi.mocked(personal.projects).mockReturnValue(
+    new Promise(done => {
+      resolve = done
+    })
+  )
+  render(
+    <IndependentIssueEditor
+      api={personal}
+      userId={7}
+      issue={null}
+      busy={false}
+      onSave={vi.fn()}
+      onCancel={vi.fn()}
+    />
+  )
+  expect(screen.getByTestId('issue-project-loading')).toHaveAttribute('role', 'status')
+  expect(screen.getByTestId('issue-project-loading')).toHaveTextContent(
+    'issue_creation.projects_loading'
+  )
+  expect(screen.getByTestId('independent-issue-project')).toBeDisabled()
+  fireEvent.change(screen.getByTestId('independent-issue-title'), {
+    target: { value: 'Write while loading' },
+  })
+  expect(screen.getByTestId('independent-issue-title')).toHaveValue('Write while loading')
+  expect(screen.getByTestId('independent-issue-save')).toBeEnabled()
+  resolve({ items: [] })
+  await waitFor(() => expect(screen.queryByTestId('issue-project-loading')).not.toBeInTheDocument())
+  expect(screen.getByTestId('independent-issue-project')).toBeEnabled()
+})
+
+it('retains the chosen identity of same-name Agents in chips and assignment without changing invitation payloads', async () => {
+  const collaborationApi = {
+    resources: {
+      list: vi.fn().mockResolvedValue({
+        agents: [12, 13].map(id => ({
+          id: String(id),
+          name: 'Review',
+          owner_type: 'user',
+          owner_id: '7',
+          location: 'cloud',
+        })),
+      }),
+    },
+  } as unknown as SharedWorkspaceApi
+  const save = vi.fn()
+  render(
+    <IndependentIssueEditor
+      api={api()}
+      collaborationApi={collaborationApi}
+      userId={7}
+      issue={null}
+      busy={false}
+      onSave={save}
+      onCancel={vi.fn()}
+    />
+  )
+  fireEvent.change(screen.getByTestId('independent-issue-title'), {
+    target: { value: 'Choose the right Agent' },
+  })
+  fireEvent.click(screen.getByTestId('issue-participant-add'))
+  fireEvent.click(screen.getByTestId('issue-participant-tab-agent'))
+  expect(await screen.findByTestId('issue-participant-invite-agent:12')).toHaveTextContent(
+    'Review · #12'
+  )
+  const target = screen.getByTestId('issue-participant-invite-agent:13')
+  expect(target).toHaveTextContent('Review · #13')
+  expect(target).toHaveAccessibleName('Review · #13 · issue_creation.participant_agent')
+  fireEvent.click(target)
+  fireEvent.click(screen.getByTestId('issue-participant-done'))
+  expect(screen.getByTestId('issue-participants')).toHaveTextContent('Review · #13')
+  fireEvent.click(screen.getByTestId('independent-issue-assignee'))
+  const assignment = screen.getByTestId('independent-issue-assignee-option-agent:13')
+  expect(assignment).toHaveTextContent('Review')
+  expect(assignment).toHaveTextContent('#13')
+  fireEvent.click(assignment)
+  fireEvent.click(screen.getByTestId('independent-issue-save'))
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      resource_participants: [{ kind: 'agent', id: 13 }],
+      assignee_resource: { kind: 'agent', id: 13 },
+    })
+  )
+})
+
 it('searches and distinguishes same-name projects while keeping keyboard navigation inside the draft', async () => {
   const personal = api()
   vi.mocked(personal.projects).mockResolvedValue({

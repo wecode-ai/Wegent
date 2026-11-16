@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId, useRef, useState, type ChangeEventHandler, type ReactNode } from 'react'
+import { useRef, useState, type ChangeEventHandler, type ReactNode } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { Check, Search } from 'lucide-react'
 
@@ -172,7 +172,6 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   onChange,
 }: IssueDetailSearchableSelectProps<TValue>) {
   const portalTheme = useCollaborationPortalTheme()
-  const valueDescriptionId = useId()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -223,16 +222,12 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           data-testid={testId}
           data-value={value}
           aria-label={accessibleLabel}
-          aria-describedby={valueDescriptionId}
           title={selectedDescription}
           aria-haspopup="dialog"
           disabled={disabled}
           className={className}
         >
           {triggerContent}
-          <span id={valueDescriptionId} className="sr-only">
-            {selectedDescription}
-          </span>
         </button>
       </Popover.Trigger>
       <Popover.Portal>

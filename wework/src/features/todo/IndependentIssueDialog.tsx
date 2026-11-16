@@ -274,7 +274,7 @@ export function IndependentIssueDialog({
             {error ? (
               <div
                 role="alert"
-                className={`mb-4 flex shrink-0 flex-wrap items-center gap-3 text-sm text-error ${editing ? 'mx-5 mt-4' : ''}`}
+                className={`mb-4 flex shrink-0 flex-wrap items-center gap-3 text-sm text-destructive ${editing ? 'mx-5 mt-4' : ''}`}
               >
                 {associationPending && (
                   <p data-testid="independent-issue-association-pending" className="w-full">
@@ -375,7 +375,7 @@ export function IndependentIssueDialog({
                       type="button"
                       disabled={busy}
                       data-testid="independent-issue-delete"
-                      className={`${action} text-error`}
+                      className={`${action} text-destructive`}
                       onClick={() => {
                         setError('')
                         setDeleting(true)
@@ -451,7 +451,7 @@ export function IndependentIssueDialog({
                   {t('independentIssues.discussion')}
                 </h3>
                 {commentError ? (
-                  <p role="alert" className="mb-3 text-sm text-error">
+                  <p role="alert" className="mb-3 text-sm text-destructive">
                     {commentError}
                     <button
                       type="button"

@@ -5,6 +5,7 @@ import {
   verifyIssueDeviceLayout,
   verifyIssueAssociationRecovery,
   chooseIssueProperty,
+  verifyEnglishLinkedIssueLayout,
 } from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
@@ -417,6 +418,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         404
       )
       await click(control, 'independent-issue-close')
+      await verifyEnglishLinkedIssueLayout(control, {
+        project,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+        captureScreenshot,
+      })
       await navigate(control, 'collaboration-primary-create-issue')
       await control.command('fill', '[data-testid="independent-issue-title"]', {
         value: `Project selection ${process.pid}`,
