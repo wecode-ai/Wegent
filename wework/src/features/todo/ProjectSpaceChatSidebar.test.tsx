@@ -5,7 +5,13 @@ import userEvent from '@testing-library/user-event'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Attachment, ModelOptions, ModelType, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelOptions,
+  ModelType,
+  RuntimeSendRequest,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 
 const mocks = vi.hoisted(() => ({
@@ -39,6 +45,7 @@ interface MockChatPanelProps {
   initialAddress?: RuntimeTaskAddress | null
   emptyStateText?: string
   placeholder?: string
+  runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   createTask?: (
     message: string,
     options: {
@@ -62,6 +69,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     initialInput,
     emptyStateText,
     placeholder,
+    runtimeContext,
     createTask,
     onAddressChange,
   }: MockChatPanelProps) => {
@@ -74,6 +82,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
         data-mount-id={mountId}
         data-empty-state-text={emptyStateText ?? ''}
         data-placeholder={placeholder ?? ''}
+        data-runtime-context={JSON.stringify(runtimeContext)}
       >
         <button
           type="button"
@@ -245,6 +254,45 @@ describe('ProjectSpaceChatSidebar', () => {
     expect(screen.getByTestId('project-space-chat-menu-list')).toHaveTextContent('本地看板会话')
     expect(screen.getByTestId('project-space-chat-menu-list')).not.toHaveTextContent('最近会话')
   })
+
+  it.each(['local', 'backend'] as const)(
+    'refreshes project Issue context for existing and new %s conversations',
+    async projectStore => {
+      if (projectStore === 'local') {
+        mocks.state.runtimeWork.chats[0]!.tasks[1]!.runtimeHandle = {
+          cloudProjectId: '11',
+          origin: { projectStore: 'local' },
+        } as never
+      }
+      render(
+        <ProjectSpaceChatSidebar
+          project={{ ...project, project_store: projectStore }}
+          localProjects={[]}
+          onClose={vi.fn()}
+        />
+      )
+      const context = () =>
+        JSON.parse(screen.getByTestId('mock-chat-panel').getAttribute('data-runtime-context')!)
+
+      expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-task-id', 'latest-task')
+      const capabilities = screen.getByTestId('project-space-chat-capabilities')
+      for (const text of [project.name, 'Issue', '查一下事项', '查个人任务']) {
+        expect(capabilities).toHaveTextContent(text)
+      }
+      expect(context()).toMatchObject({
+        cloudProjectId: '11',
+        origin: { type: 'project_chat', cloudProjectId: '11', projectStore },
+        additionalContext: {
+          projectSpaceChat: {
+            value: expect.stringContaining('"事项", "查一下事项"'),
+          },
+        },
+      })
+      const existingContext = context()
+      await userEvent.click(screen.getByTestId('project-space-chat-new'))
+      expect(context()).toEqual(existingContext)
+    }
+  )
 
   it('creates a formal project-scoped conversation from a new draft', async () => {
     const address = {

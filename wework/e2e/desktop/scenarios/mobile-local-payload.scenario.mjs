@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
+import { loadMobileLocalPayloadBuilders } from '../modules/mobile-local-payload-builders.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -19,12 +19,6 @@ const INITIAL = 'WEWORK_MOBILE_LOCAL_INITIAL'
 const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
-
-function loadSharedBuilders() {
-  const path = process.env.WEWORK_E2E_SHARED_BUILDERS
-  assert.ok(path, 'The desktop E2E shared builders artifact is not configured')
-  return createRequire(import.meta.url)(path)
-}
 
 // Exercise the phone's shared payload through the existing real executor and Codex.
 // Native iOS scheduling and OAuth are outside this desktop checkpoint's coverage.
@@ -58,7 +52,7 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
-      const builders = loadSharedBuilders()
+      const builders = await loadMobileLocalPayloadBuilders()
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const deviceId = snapshot.workbench?.currentRuntimeTask?.deviceId

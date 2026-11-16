@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import type { Page } from '@playwright/test'
 import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
 import { test, expect, executorMockUrl } from '../../fixtures/executor-test'
-import { createApiClient } from '../../utils/api-client'
+import { createApiClient, createBackendRequestHeaders } from '../../utils/api-client'
 import { runtimeProcess, type Runtime } from '../../utils/pipeline-archive-runtime'
 import { modelToolDefinitions, modelToolMatches } from '../../utils/model-tool-discovery'
 
@@ -210,7 +210,9 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
     await expect
       .poll(
         async () => {
-          const response = await request.get(`${MANAGER}/sandboxes/${taskId}`)
+          const response = await request.get(`${MANAGER}/sandboxes/${taskId}`, {
+            headers: createBackendRequestHeaders(),
+          })
           if (response.status() === 404) return false
           expect(response.status()).toBe(200)
           const sandbox = await response.json()
@@ -416,9 +418,17 @@ test('Chat SSE with a real sandbox survives the stalled-task inspection', async 
         expect((await api.delete(`/api/tasks/${taskId}`)).status).toBe(200)
       })
       await attempt(async () => {
-        const response = await request.delete(`${MANAGER}/sandboxes/${taskId}`)
+        const response = await request.delete(`${MANAGER}/sandboxes/${taskId}`, {
+          headers: createBackendRequestHeaders(),
+        })
         expect([200, 404]).toContain(response.status())
-        expect((await request.get(`${MANAGER}/sandboxes/${taskId}`)).status()).toBe(404)
+        expect(
+          (
+            await request.get(`${MANAGER}/sandboxes/${taskId}`, {
+              headers: createBackendRequestHeaders(),
+            })
+          ).status()
+        ).toBe(404)
       })
     }
     for (const cleanup of cleanups.reverse()) await attempt(cleanup)

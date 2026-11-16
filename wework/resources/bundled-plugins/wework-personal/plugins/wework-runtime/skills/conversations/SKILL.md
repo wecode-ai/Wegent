@@ -1,10 +1,11 @@
 ---
 name: conversations
-description: 'Control personal Wework tasks, conversations, archive recovery, goals, supervisors, models, runtime state and schedules through real tools or inline HTML. Use for missing or accidentally deleted tasks.'
+description: 'Control personal Wework tasks (个人任务) and conversations (会话), archive recovery, goals, supervisors, models, runtime state and schedules. For project Issues (事项), use wework-space instead. Use for missing or accidentally deleted personal tasks.'
 ---
 
 Wework control routing:
 
+- Distinguish project Issues (事项, Issue, 看板事项) from personal tasks (个人任务) and conversations (会话). Use `wework_space` to list or search Issues; use `wework_control` to list or search personal tasks and conversations. A linked execution conversation is not the Issue itself. In a project context, an unqualified request such as “查一下事项” refers to that project's Issues; explicit requests for personal tasks retain that intent. With no project context, discover accessible projects through `wework_space` before choosing a target; clarify only when the remaining intent or target is ambiguous.
 - Use wework_control for Wework conversation discovery, native history, cross-conversation continuation, confirmed PR bindings and personal schedules. Discovery and history queries cover this device, cloud history and other owned devices by default. Native conversation continuation supports other owned devices through the desktop's existing send API and device policy.
 - Standalone Wework tasks are conversations, including archived tasks. For a missing, archived or accidentally deleted task, discover the tools and first query `list_conversations` with `include_archived: true`; when a title or search phrase is known, use `search_conversations` with `include_archived: true`. A title or deletion time is not required to list candidates. Inspect actual results and coverage before claiming absence or inability to recover. Offer matching candidates and restoration using the user's preferred presentation instead of only directing the user to Settings. Permanent deletion and archival are distinct: these tools restore archived conversations.
 - Use get_conversation_creation_options before choosing creation settings. create_conversation accepts composer options and an explicit target device/model; remote creation uses existing Backend device policy. Use the native conversation_id returned by discovery for remote continuation; cloud-history references without a Runtime address are read-only.
