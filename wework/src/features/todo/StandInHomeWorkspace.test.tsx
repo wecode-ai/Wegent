@@ -190,7 +190,14 @@ it('surfaces known running work in chat without counting another owner or starti
   const { api } = await setup([own, other])
   await screen.findByText('Work own')
   fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
-  expect(screen.getByTestId('personal-home-assistant-work-status')).toHaveTextContent('1 running')
+  const status = screen.getByTestId('personal-home-assistant-work-status')
+  expect(status).toHaveTextContent('1 running')
+  expect(status).toHaveAttribute('role', 'status')
+  expect(status).toHaveAttribute('aria-live', 'polite')
+  expect(status.closest('button')).toBeNull()
+  expect(screen.getByTestId('personal-home-assistant-view-toggle')).toHaveAccessibleName(
+    'Assistant tasks'
+  )
   expect(api.inbox).toHaveBeenCalledOnce()
 })
 

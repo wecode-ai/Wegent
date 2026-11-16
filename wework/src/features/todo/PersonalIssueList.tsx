@@ -170,6 +170,11 @@ export function PersonalIssueList({
             </span>
           </h3>
           {items.map(item => {
+            const description = item.description?.trim().replace(/\s+/g, ' ') ?? ''
+            const titlePrefix = item.title.trim().replace(/\s+/g, ' ').replace(/…$/, '')
+            const summary = description.startsWith(titlePrefix)
+              ? description.slice(titlePrefix.length).trim()
+              : description
             const viewerIds =
               project.project_store === 'local'
                 ? (localUserIds ?? [userId])
@@ -247,13 +252,9 @@ export function PersonalIssueList({
                 summary={
                   <PersonalHomeIssueActivity
                     summary={
-                      item.description &&
-                      !item.description
-                        .trim()
-                        .replace(/\s+/g, ' ')
-                        .startsWith(item.title.trim().replace(/\s+/g, ' ').replace(/…$/, '')) ? (
+                      summary ? (
                         <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
-                          {item.description}
+                          {summary}
                         </p>
                       ) : undefined
                     }

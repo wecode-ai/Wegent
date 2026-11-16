@@ -324,7 +324,7 @@ export function WeworkPersonalHome({
             <IndependentIssueList state={independent} hideWhenEmpty />
             <PersonalIssueList
               hideEmpty={
-                !projects.length ||
+                firstUse ||
                 independent.loading ||
                 Boolean(independent.error) ||
                 independent.items.length > 0

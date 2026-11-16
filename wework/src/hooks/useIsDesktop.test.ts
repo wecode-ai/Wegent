@@ -23,7 +23,9 @@ it('tracks the panel breakpoint and releases its media listener', () => {
     query =>
       ({
         media: query,
-        matches: false,
+        get matches() {
+          return window.innerWidth >= 1024
+        },
         addEventListener: (_event: string, listener: typeof change) => {
           change = listener
         },
@@ -33,10 +35,37 @@ it('tracks the panel breakpoint and releases its media listener', () => {
   const { result, unmount } = renderHook(() => useIsDesktop(1024))
   expect(window.matchMedia).toHaveBeenCalledWith('(min-width: 1024px)')
   expect(result.current).toBe(false)
-  act(() => change({ matches: true } as MediaQueryListEvent))
+  act(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1100 })
+    change({ matches: true } as MediaQueryListEvent)
+  })
   expect(result.current).toBe(true)
-  act(() => change({ matches: false } as MediaQueryListEvent))
+  act(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 900 })
+    change({ matches: false } as MediaQueryListEvent)
+  })
   expect(result.current).toBe(false)
   unmount()
   expect(remove).toHaveBeenCalledWith('change', change)
+})
+
+it('updates the composition when its threshold changes without a resize', () => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 900 })
+  vi.spyOn(window, 'matchMedia').mockImplementation(
+    query =>
+      ({
+        media: query,
+        matches: window.innerWidth >= Number(query.match(/\d+/)?.[0]),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }) as unknown as MediaQueryList
+  )
+  const { result, rerender } = renderHook(({ min }) => useIsDesktop(min), {
+    initialProps: { min: 768 },
+  })
+  expect(result.current).toBe(true)
+  rerender({ min: 1024 })
+  expect(result.current).toBe(false)
+  rerender({ min: 768 })
+  expect(result.current).toBe(true)
 })

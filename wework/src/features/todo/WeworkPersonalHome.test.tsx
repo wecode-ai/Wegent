@@ -7,6 +7,8 @@ import type {
   WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
 import i18n from '@/i18n'
+import type { PersonalIssuesApi } from '@/api/personalIssues'
+import { IndependentIssuesContext } from './independentIssuesContext'
 import { useIssueDetailDraft } from '@wegent/collaboration'
 import { WeworkPersonalHome, type PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 import {
@@ -600,5 +602,44 @@ it.each([false, true])(
       />
     )
     expect(screen.getAllByRole('tab')).toHaveLength(2)
+  }
+)
+
+it('keeps recovery available for a connected account without collaboration projects', async () => {
+  const { props, rerender } = await setup([])
+  const list = vi.fn().mockResolvedValue({ items: [], next_cursor: null })
+  rerender(
+    <IndependentIssuesContext.Provider
+      value={{
+        api: { list } as unknown as PersonalIssuesApi,
+        userId: 7,
+        revision: 0,
+        create: vi.fn(),
+        open: vi.fn(),
+      }}
+    >
+      <WeworkPersonalHome {...props} projects={[]} />
+    </IndependentIssuesContext.Provider>
+  )
+  fireEvent.click(await screen.findByTestId('personal-home-empty-action'))
+  await waitFor(() =>
+    expect(list).toHaveBeenLastCalledWith('participating', true, undefined, false, 'attention')
+  )
+})
+
+it.each([
+  [
+    'Investigate timeout',
+    'Investigate timeout\nOnly Windows clients are affected; collect executor logs.',
+    'Only Windows clients are affected; collect executor logs.',
+  ],
+  ['Investigate timeout', 'Investigate timeout', null],
+])(
+  'preserves useful context after a repeated title: %s / %s',
+  async (title, description, summary) => {
+    await setup([source(vi.fn().mockResolvedValue([{ ...issue('context'), title, description }]))])
+    const card = (await screen.findByTestId('personal-home-issue-context')).closest('article')!
+    if (summary) expect(card).toHaveTextContent(summary)
+    else expect(card.textContent?.match(/Investigate timeout/g)).toHaveLength(1)
   }
 )

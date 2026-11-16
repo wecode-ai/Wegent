@@ -1,17 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { RESPONSIVE_BREAKPOINTS } from '@/lib/responsive'
 
 export function useIsDesktop(minWidth: number = RESPONSIVE_BREAKPOINTS.desktopMin): boolean {
-  const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= minWidth)
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-
-    const mql = window.matchMedia(`(min-width: ${minWidth}px)`)
-    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches)
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
-  }, [minWidth])
-
-  return isDesktop
+  const media = useMemo(
+    () =>
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia(`(min-width: ${minWidth}px)`)
+        : undefined,
+    [minWidth]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      media?.addEventListener('change', listener)
+      return () => media?.removeEventListener('change', listener)
+    },
+    [media]
+  )
+  return useSyncExternalStore(subscribe, () => window.innerWidth >= minWidth)
 }
