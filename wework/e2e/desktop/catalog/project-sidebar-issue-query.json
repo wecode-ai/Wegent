@@ -1,6 +1,12 @@
 {
   "order": 125110,
-  "ciHost": "project-ai-settings",
   "scenario": "./scenarios/project-sidebar-issue-query.scenario.mjs",
-  "scenarioOnly": true
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 74110,
+      "shard": 6,
+      "position": 5110
+    }
+  }
 }
