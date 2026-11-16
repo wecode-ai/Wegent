@@ -485,6 +485,68 @@ async fn endpoint_authority_uses_current_locked_consent_instead_of_snapshot_gran
 }
 
 #[tokio::test]
+async fn personal_authority_requires_the_exact_string_execution_identity() {
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+
+    for (execution_id, expected) in [
+        (json!("17"), true),
+        (json!(17), false),
+        (json!("017"), false),
+    ] {
+        let fixture = MysqlRows::start(move |sql| {
+            if sql.contains("FROM users") {
+                return vec![("id", SqlValue::I64(7))];
+            }
+            if sql.contains("FROM loop_items") {
+                let mut dispatch = intent();
+                dispatch["executionId"] = execution_id.clone();
+                dispatch["dispatchState"] = json!("running");
+                let metadata = json!({"event_type":"assignment","action":"assign",
+                    "target_type":"human","target_id":"7","assignment_version":3,
+                    "human_assistant_dispatch":dispatch});
+                return vec![
+                    ("loop_items_id", SqlValue::Text("assignment-1".into())),
+                    ("loop_items_loop_item_id", SqlValue::Text("issue-1".into())),
+                    ("loop_items_description", SqlValue::Null),
+                    ("loop_items_created_by_user_id", SqlValue::I32(7)),
+                    ("loop_items_created_at", SqlValue::Null),
+                    ("loop_items_updated_at", SqlValue::Null),
+                    ("loop_items_metadata", SqlValue::Text(metadata.to_string())),
+                ];
+            }
+            assert!(sql.contains("FROM kinds"), "{sql}");
+            let document = declared_device(advertised_role(7)).json;
+            vec![
+                ("kinds_id", SqlValue::I64(9)),
+                ("kinds_name", SqlValue::Text("owned-device".into())),
+                ("kinds_json", SqlValue::Text(document.to_string())),
+            ]
+        })
+        .await;
+        let mut row = execution("running");
+        row.execution_payload = json!({"origin_context":{
+            "assignment_id":"assignment-1","assignment_version":3}})
+        .to_string();
+        let permitted = fixture
+            .mysql
+            .with_transaction(async |tx| {
+                Ok::<_, MysqlError>(
+                    require_current_on(&mut &mut *tx, &issue(), &row)
+                        .await
+                        .is_ok(),
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(permitted, expected);
+        let queries = fixture.queries();
+        assert_eq!(queries.len(), if expected { 4 } else { 2 }, "{queries:?}");
+        assert!(queries[1].ends_with("FOR UPDATE"), "{queries:?}");
+    }
+}
+
+#[tokio::test]
 async fn personal_authority_rejects_stale_owners_and_inactive_users() {
     let mut tx = RecordingTransaction::default();
     let mut row = execution("running");

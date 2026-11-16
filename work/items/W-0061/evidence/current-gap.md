@@ -58,13 +58,17 @@ admission reservation、失败启动恢复和项目配置入口。
 - 共享 UI：37 passed；桌面相关 3 文件：73 passed；Web adapter：17 passed。
 - 双语文档：7 passed；既有桌面 checkpoint 静态契约：8 passed。
 - 共享包构建、Wework/frontend TypeScript、相关 ESLint、Python Black/isort、Rust 格式通过。
+- PR CI 发现的两处 Rust `cmp_owned` 已稳定复现并修复。显式字符串比较保留冻结身份；
+  15 项设备授权及 4 项运行事件回归通过，数值 ID 和带前导零的 ID 均被拒绝。
+  与 CI 相同的 `cargo clippy --locked --all-targets -- -D warnings` 通过。
 
 Executor 使用独立的 capabilities 和 Task 目录，不读取主机个人 manifest。
 Rust Backend 使用临时 uv 工具环境提供 CMake，未安装系统软件或更改项目依赖。
-完整 pre-push 的 Backend、frontend、Wework 单测和 Executor 全量测试已通过；
-修复依赖准备顺序及 Clippy 初始化告警后仍需重新完成完整门禁，最终发布验证以 PR CI 为准。
+修复依赖准备顺序及 Clippy 初始化告警后，首次推送完整 pre-push 已全部通过：
+Backend pytest、frontend、全部 Wework renderer/Electron/script 单测、Executor 全量测试
+与 Clippy，以及格式、配置和迁移 head 检查。最终发布验证以 PR CI 为准。
 
-本地未运行 E2E 或真实 Electron。既有 CI core-2 的 project-assignment-notification
+本地未运行 E2E 或真实 Electron。既有 CI 桌面 project-assignment-notification
 场景新增真实在线接单、重复保存、完成但不推进 Issue、同一私人会话续办及共享摘要隔离。
 该场景仅替代模型响应，复用真实 Backend、Electron、Executor 和数据库，不新增测试服务。
 本次未部署。

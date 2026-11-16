@@ -290,6 +290,7 @@ pub(crate) async fn require_current_on(
         .await?;
     let context = row.context();
     let owner_id = owner.to_string();
+    let execution_id = row.id.to_string();
     let matches = active_events(&comments).into_iter().any(|event| {
         matches!(
             event.metadata.target_type.as_deref(),
@@ -313,7 +314,7 @@ pub(crate) async fn require_current_on(
                         event.metadata.assignment_version,
                     ) && dispatch["assignmentId"] == context["assignment_id"]
                         && dispatch["assignmentVersion"] == context["assignment_version"]
-                        && dispatch["executionId"] == row.id.to_string()
+                        && dispatch["executionId"].as_str() == Some(execution_id.as_str())
                         && !terminal_dispatch(dispatch)
                 })
     });

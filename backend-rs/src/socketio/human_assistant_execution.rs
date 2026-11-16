@@ -75,9 +75,10 @@ fn origin(row: &ExecutionRow) -> Value {
 
 fn dispatch_matches(row: &ExecutionRow, assignment_id: &str, dispatch: &Value) -> bool {
     let origin = origin(row);
+    let execution_id = row.id.to_string();
     origin["assignment_id"] == assignment_id
         && dispatch["assignmentId"] == assignment_id
-        && dispatch["executionId"] == row.id.to_string()
+        && dispatch["executionId"].as_str() == Some(execution_id.as_str())
         && dispatch["assignmentVersion"].is_i64()
         && dispatch["assignmentVersion"] == origin["assignment_version"]
         && matches!(
@@ -331,12 +332,16 @@ mod tests {
         let row = execution();
         assert!(event_matches(&row, &json!({"executionId":"41"})));
         assert!(!event_matches(&row, &json!({"executionId":"42"})));
+        assert!(!event_matches(&row, &json!({"executionId":41})));
+        assert!(!event_matches(&row, &json!({"executionId":"041"})));
         assert!(!event_matches(&row, &json!({})));
         let dispatch = json!({"assignmentId":"assignment-1","assignmentVersion":2,
             "executionId":"41","dispatchState":"queued"});
         assert!(dispatch_matches(&row, "assignment-1", &dispatch));
         for (key, value) in [
             ("executionId", json!("42")),
+            ("executionId", json!(41)),
+            ("executionId", json!("041")),
             ("assignmentVersion", json!(3)),
             ("assignmentId", json!("assignment-2")),
             ("dispatchState", json!("cancelled")),
