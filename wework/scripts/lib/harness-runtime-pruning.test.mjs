@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -39,6 +39,22 @@ describe('pruneHarnessRuntime', () => {
     await expectMissing(join(root, '@reflink', 'reflink-darwin-arm64'))
     await expectMissing(join(root, '@reflink', 'reflink-win32-x64-msvc'))
     await expectExists(join(root, '@reflink', 'reflink', 'index.js'))
+  })
+
+  test('removes dangling dependency links left by partial installs', async () => {
+    const root = await runtimeFixture()
+    const packageDependencies = join(root, 'node_modules', '.pnpm', 'package@1.0.0', 'node_modules')
+    await mkdir(join(packageDependencies, 'package'), { recursive: true })
+    await symlink('../missing-optional', join(packageDependencies, 'missing-optional'))
+    await symlink(
+      join('.pnpm', 'package@1.0.0', 'node_modules', 'package'),
+      join(root, 'node_modules', 'package')
+    )
+
+    await pruneHarnessRuntime(root, 'macos-arm64')
+
+    await expectMissing(join(packageDependencies, 'missing-optional'))
+    await expectExists(join(root, 'node_modules', 'package'))
   })
 })
 

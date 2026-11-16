@@ -1,4 +1,4 @@
-import { readdir, rm } from 'node:fs/promises'
+import { readdir, realpath, rm } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 const TARGET_NATIVE_ARTIFACTS = {
@@ -40,7 +40,9 @@ async function visit(directory, nativeArtifacts, removed) {
   await Promise.all(
     entries.map(async entry => {
       const child = join(directory, entry.name)
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        await removeBrokenLink(child, removed)
+      } else if (entry.isDirectory()) {
         await visit(child, nativeArtifacts, removed)
       } else if (
         entry.isFile() &&
@@ -69,4 +71,14 @@ async function removeOtherDirectories(directory, retained, removed, prefix = '')
         removed.directories += 1
       })
   )
+}
+
+async function removeBrokenLink(path, removed) {
+  try {
+    await realpath(path)
+  } catch (error) {
+    if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error
+    await rm(path, { force: true })
+    removed.files += 1
+  }
 }
