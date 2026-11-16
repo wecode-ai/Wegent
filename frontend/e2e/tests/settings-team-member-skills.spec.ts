@@ -150,7 +150,8 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
         expect((await api.delete('/api/bots/' + botId + '?force=true')).status).toBe(200)
       if (skillId !== undefined)
         expect((await admin.delete('/api/v1/kinds/skills/' + skillId)).status).toBe(200)
-      for (const group of groups) expect((await admin.deleteGroup(group)).status).toBe(200)
+      for (const group of groups)
+        expect([200, 204]).toContain((await admin.deleteGroup(group)).status)
       expect((await admin.adminDeleteUser(userId)).status).toBe(200)
     }
   },
