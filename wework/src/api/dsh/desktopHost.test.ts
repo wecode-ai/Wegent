@@ -180,6 +180,7 @@ describe('desktop host events', () => {
 
   test('E2E can drop a completed real host response as a transport failure', async () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const gates = await import('@/e2e/runtime-transport-gates')
     gates.armRuntimeTransportGate({
       id: 'finish-drop',
@@ -199,6 +200,16 @@ describe('desktop host events', () => {
         deliveries: 0,
         dropped: true,
       })
+      const reports = errors.mock.calls
+        .filter(call => call[0] === '[wework-e2e-error]')
+        .map(call => JSON.parse(String(call[1])))
+      expect(reports).toContainEqual(
+        expect.objectContaining({
+          type: 'host:attachment.finish',
+          diagnostics: { invocationStack: expect.stringContaining('Electron host invocation') },
+        })
+      )
+      expect(JSON.stringify(reports)).not.toContain('upload-1')
     } finally {
       gates.resetRuntimeTransportGates()
     }

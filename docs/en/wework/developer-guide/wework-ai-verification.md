@@ -109,9 +109,11 @@ Measurement spans control registration through the last received acknowledgement
 
 Analyze measured variation before establishing a baseline: distinguish startup, polling, business actions and lifecycle termination. Runner contention affects timings and polling counts. Keep renders, DOM mutations and paint frames distinct. Future baseline enforcement still requires an explicit first-establishment phase and must never silently bootstrap again after trusted baseline evidence is lost.
 
-### Diagnosing issues exposed by the current run
+### Counting semantics and fault diagnosis
 
 `observations` retains wall-clock sample times and renderer elapsed time; `captures` retains each renderer's start/end times. Totals alone cannot establish request frequency. Commands are counted once at started, not twice for started/result acknowledgements.
+
+Subtree removals use the region containing `MutationRecord.target`; detached nodes cannot establish their former membership through current `contains` checks. Each operation window retains the latest 32 removals with test identifiers, at most 16 identifiers per entry and elapsed time. The shared journal saves new entries at command boundaries without retaining DOM text or node references.
 
 Controlled transport replays retain the raw duplicate-delivery count and separately record `injectedDuplicateDeliveries`. Only duplicates without real fault-injection provenance are marked as invariant anomalies. Provenance comes from the shared transport gate, with no scenario-name exemptions or error ignore lists. Wire replays discarded by deduplication remain separate facts.
 

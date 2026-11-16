@@ -67,6 +67,7 @@ describe('SystemDragBridge', () => {
     mocks.pending = []
     mocks.invoke.mockReset()
     mocks.setInput.mockReset()
+    mocks.setWorkbenchError.mockReset()
     mocks.handleFileSelect.mockReset()
     mocks.startNewChat.mockReset()
     mocks.getAppPreferences.mockReset()
@@ -117,6 +118,37 @@ describe('SystemDragBridge', () => {
         error
       )
     )
+  })
+
+  test('handles a rejected pending-drop poll and continues accepting later drops', async () => {
+    let failed = false
+    mocks.invoke.mockImplementation(command => {
+      if (command !== 'systemDrag.takePending') return Promise.resolve()
+      if (!failed) {
+        failed = true
+        return Promise.reject(new Error('Host disconnected'))
+      }
+      return Promise.resolve(mocks.pending.splice(0))
+    })
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.setWorkbenchError).toHaveBeenCalledWith('Host disconnected'))
+    emitDrop({ action: 'new-chat', text: 'Recovered drop', paths: [] })
+    await waitFor(() => expect(mocks.setInput).toHaveBeenCalledWith('Recovered drop'))
+  })
+
+  test('settles a pending poll rejection after unmount without updating the departed view', async () => {
+    let reject!: (error: Error) => void
+    mocks.invoke.mockImplementation(command =>
+      command === 'systemDrag.takePending'
+        ? new Promise((_, no) => {
+            reject = no
+          })
+        : Promise.resolve()
+    )
+    const view = render(<SystemDragBridge />)
+    view.unmount()
+    await act(async () => reject(new Error('Host stopped')))
+    expect(mocks.setWorkbenchError).not.toHaveBeenCalled()
   })
 
   test('handles rejected panel dismissal when system drag is disabled', async () => {

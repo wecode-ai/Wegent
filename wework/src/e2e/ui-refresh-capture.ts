@@ -135,18 +135,15 @@ function recordRegion(region: Region, records: MutationRecord[]): void {
   counts.observed ||= roots.length > 0
   let affected = false
   for (const record of records) {
-    const added = [...record.addedNodes].filter(node =>
-      roots.some(root => contains(root, node) || contains(node, root))
+    // Removed nodes are detached by delivery time; their target retains membership.
+    const targetInside = roots.some(root => contains(root, record.target))
+    const added = [...record.addedNodes].filter(
+      node => targetInside || roots.some(root => contains(root, node) || contains(node, root))
     )
-    const removed = [...record.removedNodes].filter(node =>
-      roots.some(root => contains(root, node) || contains(node, root))
+    const removed = [...record.removedNodes].filter(
+      node => targetInside || roots.some(root => contains(root, node) || contains(node, root))
     )
-    if (
-      !roots.some(root => contains(root, record.target)) &&
-      added.length === 0 &&
-      removed.length === 0
-    )
-      continue
+    if (!targetInside && added.length === 0 && removed.length === 0) continue
     affected = true
     counts.mutationRecords += 1
     counts.attributeChanges += Number(record.type === 'attributes')
@@ -157,12 +154,12 @@ function recordRegion(region: Region, records: MutationRecord[]): void {
     for (const node of added)
       counts.maxAddedSubtreeElements = Math.max(
         counts.maxAddedSubtreeElements,
-        subtreeSize(node, roots)
+        targetInside ? elements(node) : subtreeSize(node, roots)
       )
     for (const node of removed)
       counts.maxRemovedSubtreeElements = Math.max(
         counts.maxRemovedSubtreeElements,
-        subtreeSize(node, roots)
+        targetInside ? elements(node) : subtreeSize(node, roots)
       )
   }
   counts.mutationBatches += Number(affected)

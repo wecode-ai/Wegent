@@ -109,9 +109,11 @@ async function verifyLocalOperation(control, operationAndWaitForResult) {
 
 建立基线前先分析相同操作的实际波动，区分启动、周期轮询、业务动作和生命周期终止。机器争用会改变耗时和轮询次数；组件 render、DOM 写入、绘制帧数必须分开解释。后续启用 main 基线仍需一次显式建立阶段，首份可信基线产生后强制门禁，不允许丢失产物时静默重新初始化。
 
-### 本轮数据暴露问题的定位
+### 计数口径与故障定位
 
 `observations` 保留采样墙钟时间和当前 renderer 的累计运行时间，`captures` 保留各 renderer 的起止时间，避免仅凭累计请求量判断频率。控制命令在 started 阶段计数一次，不将 started／result 两次回执算成两个操作。
+
+子树移除按 `MutationRecord.target` 所属区域计数；移除后的节点已脱离 DOM，不能用当前 `contains` 判断其原始归属。每个操作窗口保留最近 32 条带测试标识的移除来源，每条至多 16 个标识及相对时间；共享日志按命令保存新增来源，不记录 DOM 文本或保留节点引用。
 
 故障门主动回放的重复投递保留原始计数，并另记 `injectedDuplicateDeliveries`；只有未被真实故障注入上下文解释的重复投递才标记为不变量异常。该归因来自共享 transport gate，不配置场景名或错误忽略列表。普通网络重放到达后被去重丢弃的帧仍单独记录。
 

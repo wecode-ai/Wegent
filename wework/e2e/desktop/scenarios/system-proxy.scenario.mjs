@@ -3,6 +3,14 @@ import { createServer } from 'node:http'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { verifyCodexStartupHistory } from '../modules/codex-startup-history.mjs'
+import {
+  assistantMessage,
+  createSse,
+  handleEmptyReplyPrediction,
+  readRequestBody,
+  responseCompleted,
+  responseCreated,
+} from '../modules/response-protocol.mjs'
 
 const MODEL_ORIGIN = 'http://wework-system-proxy.invalid'
 const PROMPT = 'WEWORK_DESKTOP_E2E_SYSTEM_PROXY'
@@ -10,48 +18,6 @@ const COMPLETION = 'WEWORK_DESKTOP_E2E_SYSTEM_PROXY_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-
-function sse(events) {
-  return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
-}
-
-function modelResponse() {
-  const responseId = `wework-system-proxy-${Date.now()}`
-  return sse([
-    {
-      type: 'response.created',
-      response: { id: responseId },
-    },
-    {
-      type: 'response.output_item.done',
-      item: {
-        id: `${responseId}-message`,
-        type: 'message',
-        role: 'assistant',
-        content: [{ type: 'output_text', text: COMPLETION, annotations: [] }],
-      },
-    },
-    {
-      type: 'response.completed',
-      response: {
-        id: responseId,
-        usage: {
-          input_tokens: 0,
-          input_tokens_details: null,
-          output_tokens: 0,
-          output_tokens_details: null,
-          total_tokens: 0,
-        },
-      },
-    },
-  ])
-}
-
-async function readBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return Buffer.concat(chunks).toString('utf8')
-}
 
 async function waitForProxyRequest(requests, timeoutMs) {
   const startedAt = Date.now()
@@ -103,17 +69,25 @@ export async function createDesktopScenario({
       return
     }
 
-    const body = await readBody(request)
+    const body = await readRequestBody(request)
     requests.push({
-      body,
+      body: JSON.stringify(body),
       method: request.method,
       url: request.url,
     })
+    if (handleEmptyReplyPrediction(body, response)) return
     response.writeHead(200, {
       'Cache-Control': 'no-cache',
       'Content-Type': 'text/event-stream; charset=utf-8',
     })
-    response.end(modelResponse())
+    const responseId = `wework-system-proxy-${Date.now()}`
+    response.end(
+      createSse([
+        responseCreated(responseId),
+        assistantMessage(COMPLETION),
+        responseCompleted(responseId),
+      ])
+    )
   })
   await new Promise((resolvePromise, reject) => {
     server.once('error', reject)

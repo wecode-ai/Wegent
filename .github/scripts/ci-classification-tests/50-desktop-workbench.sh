@@ -381,7 +381,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Claude runtime messaging selects task and Claude coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"claude-runtime"},{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"},{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-5","name":"Core / shard 5","segments":"claude-runtime,runtime-task-readiness"},{"id":"core-6","name":"Core / shard 6","segments":"project-ai-settings"},{"id":"core-10","name":"Core / shard 10","segments":"runtime-input-answer-persistence"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-create,cloud-worktree-tools"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"cloud-worktree-archive-restore,cloud-worktree-capability,cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false

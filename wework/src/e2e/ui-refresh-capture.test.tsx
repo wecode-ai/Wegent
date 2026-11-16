@@ -94,6 +94,17 @@ test('observes a selected root being replaced by its parent and keeps the new ro
   expect(result.finalMatches).toBe(1)
 })
 
+test('counts detached descendants by their mutation target inside the selected region', () => {
+  const sidebar = document.querySelector('#sidebar')!
+  sidebar.innerHTML = '<div data-testid="menu"><button></button><input /></div>'
+  const token = start({ regions: [{ name: 'sidebar', selector: '#sidebar' }] })
+  sidebar.querySelector('div')!.remove()
+  const result = stop(token).regions.sidebar
+  expect(result.removedNodes).toBe(1)
+  expect(result.maxRemovedSubtreeElements).toBe(3)
+  expect(result.rootRemovals).toBe(0)
+})
+
 test('keeps bounded removal provenance without retaining UI text or nodes', () => {
   const token = start({ regions: [{ name: 'body', selector: 'body' }] })
   for (let index = 0; index < 40; index += 1) {

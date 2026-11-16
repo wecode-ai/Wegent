@@ -59,6 +59,7 @@ export async function invokeDesktopHost<Result>(
 ): Promise<Result> {
   const startedAt = performance.now()
   const e2e = import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+  const invocationStack = e2e ? new Error('Electron host invocation').stack : undefined
   const diagnostic = (phase: string, details: Record<string, number | boolean> = {}) => {
     console.debug(
       '[Wework] Electron host diagnostic ' +
@@ -123,7 +124,7 @@ export async function invokeDesktopHost<Result>(
     const result = body.result as Result
     // E2E barriers delay delivery only after the real Electron operation completes.
     return e2e
-      ? gateRuntimeResponse(
+      ? await gateRuntimeResponse(
           capability,
           params,
           result,
@@ -131,7 +132,7 @@ export async function invokeDesktopHost<Result>(
         )
       : result
   } catch (error) {
-    reportE2EError(`host:${capability}`, error)
+    reportE2EError(`host:${capability}`, error, invocationStack ? { invocationStack } : undefined)
     throw error
   } finally {
     if (pendingDiagnostic !== undefined) clearTimeout(pendingDiagnostic)

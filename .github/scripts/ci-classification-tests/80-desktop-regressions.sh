@@ -43,7 +43,7 @@ done
 assert_desktop_case "pane goal updates select conversation and goal synchronization coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"goal-state-sync,native-lifecycle"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"goal-state-sync,native-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"runtime-task-readiness"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/useWorkbenchPaneSession.ts"

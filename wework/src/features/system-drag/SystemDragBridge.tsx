@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import {
   APP_PREFERENCES_CHANGED_EVENT,
@@ -118,6 +118,9 @@ export function SystemDragBridge() {
     workbench.state.runtimeWork,
     workbench.state.currentRuntimeTask
   )
+  const reportError = useCallback((error: unknown) => {
+    latest.current.setWorkbenchError(error instanceof Error ? error.message : String(error))
+  }, [])
 
   useEffect(() => {
     latest.current = workbench
@@ -129,14 +132,18 @@ export function SystemDragBridge() {
 
   useEffect(() => {
     const context = { conversationTitle: currentTask?.title ?? null }
-    void invokeDesktopHost('systemDrag.setContext', context)
-  }, [currentTask?.title])
+    void invokeDesktopHost('systemDrag.setContext', context).catch(reportError)
+  }, [currentTask?.title, reportError])
 
   useEffect(() => {
     let cancelled = false
-    void getAppPreferences().then(preferences => {
-      if (!cancelled) systemDragEnabled.current = preferences.systemDragEnabled
-    })
+    void getAppPreferences()
+      .then(preferences => {
+        if (!cancelled) systemDragEnabled.current = preferences.systemDragEnabled
+      })
+      .catch(error => {
+        if (!cancelled) reportError(error)
+      })
     const handlePreferencesChanged = (event: Event) => {
       systemDragEnabled.current = (event as CustomEvent<AppPreferences>).detail.systemDragEnabled
       if (!systemDragEnabled.current) {
@@ -149,7 +156,7 @@ export function SystemDragBridge() {
       cancelled = true
       window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
     }
-  }, [])
+  }, [reportError])
 
   useEffect(() => {
     const updateDocumentSelection = (preserveCapturedSelection = false) => {
@@ -302,26 +309,28 @@ export function SystemDragBridge() {
     let cancelled = false
     const handlePayload = (payload: SystemDropPayload) => {
       if (payload.action === 'stash') {
-        void getAppPreferences().then(preferences => {
-          const createdAt = Date.now()
-          const title =
-            payload.text?.trim().split('\n')[0].slice(0, 40) ||
-            payload.paths[0]?.split('/').pop() ||
-            '暂存内容'
-          return updateAppPreferences({
-            quickPhrases: [
-              {
-                id: `stash-${createdAt}`,
-                title,
-                content: payload.text?.trim() ?? '',
-                mode: 'normal',
-                attachmentPaths: payload.paths,
-                createdAt,
-              },
-              ...preferences.quickPhrases,
-            ],
+        void getAppPreferences()
+          .then(preferences => {
+            const createdAt = Date.now()
+            const title =
+              payload.text?.trim().split('\n')[0].slice(0, 40) ||
+              payload.paths[0]?.split('/').pop() ||
+              '暂存内容'
+            return updateAppPreferences({
+              quickPhrases: [
+                {
+                  id: `stash-${createdAt}`,
+                  title,
+                  content: payload.text?.trim() ?? '',
+                  mode: 'normal',
+                  attachmentPaths: payload.paths,
+                  createdAt,
+                },
+                ...preferences.quickPhrases,
+              ],
+            })
           })
-        })
+          .catch(reportTransferError)
         return
       }
       if (payload.action === 'follow-up' && !latest.current.state.currentRuntimeTask) return
@@ -336,19 +345,21 @@ export function SystemDragBridge() {
       void apply(payload).catch(reportTransferError)
     }
     const reportTransferError = (error: unknown) => {
-      latest.current.setWorkbenchError(error instanceof Error ? error.message : String(error))
+      if (!cancelled) reportError(error)
     }
     const takePending = () =>
-      invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending').then(payloads => {
-        if (!cancelled) payloads.forEach(handlePayload)
-      })
+      invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending')
+        .then(payloads => {
+          if (!cancelled) payloads.forEach(handlePayload)
+        })
+        .catch(reportTransferError)
     void takePending()
     const poll = window.setInterval(() => void takePending(), 250)
     return () => {
       cancelled = true
       window.clearInterval(poll)
     }
-  }, [])
+  }, [reportError])
 
   return managedSelection ? (
     <SelectionActionsPopover
